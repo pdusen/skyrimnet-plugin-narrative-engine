@@ -35,11 +35,12 @@ for explanation.
 ## Hard Constraints
 - Output strict JSON. No markdown code fences. No prose before or after the
   JSON object.
-- If any Alpha Canon signal is active, lean toward continuity: prefer
-  `advance_phase: false` unless the in-world story is undeniably climaxing,
-  cooling, or resolving.
-- Advance only when the current state clearly belongs to the next phase.
-  Pacing should feel earned, not jumpy.
+
+Everything below the divider is informational input. Read it, integrate it
+into your read of the current moment, and let it drive your tension score
+and advance/stay decision on its own merits — there are no constraints on
+which signals push which direction. The phase advancement is your judgment
+call to make from the full picture.
 
 ---
 
@@ -53,7 +54,7 @@ for explanation.
 - Game time: day {{ player_context.game_days_passed }}, hour {{ player_context.time_of_day_hours }}
 
 {% if length(alpha_canon_signals) > 0 %}
-## Alpha Canon — vanilla content currently in charge
+## Active engine signals
 
 {% for sig in alpha_canon_signals %}- {{ sig }}
 {% endfor %}

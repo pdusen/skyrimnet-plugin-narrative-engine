@@ -36,6 +36,84 @@ namespace NarrativeEngine::EvaluationPipeline
             return std::chrono::duration<double>(now - StartTime()).count();
         }
 
+        // Render the human-readable per-event `text` field that the prompt
+        // template expects. SkyrimNet's events all carry a `type` string
+        // and a `data` object whose shape varies by type; we collapse each
+        // known type to a single readable line. Unknown types fall back to
+        // dumping the raw `data` JSON so the LLM at least sees the content.
+        //
+        // Operates on the event array in place — each object gains a `text`
+        // key. Safe against missing fields (treats them as empty strings).
+        void FormatEventsText(nlohmann::json &events)
+        {
+            for (auto &evt : events) {
+                if (!evt.is_object()) continue;
+
+                const std::string type = evt.value("type", std::string{});
+
+                const nlohmann::json *data = nullptr;
+                if (auto it = evt.find("data"); it != evt.end() && it->is_object()) {
+                    data = &(*it);
+                }
+                const auto str = [&](const char *key) -> std::string {
+                    return data ? data->value(key, std::string{}) : std::string{};
+                };
+
+                std::string text;
+                if (type == "dialogue" || type == "dialogue_background") {
+                    const std::string speaker  = str("speaker");
+                    const std::string listener = str("listener");
+                    const std::string dialogue = str("dialogue");
+                    if (!listener.empty()) {
+                        text = speaker + " -> " + listener + ": \"" + dialogue + "\"";
+                    } else {
+                        text = speaker + ": \"" + dialogue + "\"";
+                    }
+                }
+                else if (type == "dialogue_player_text") {
+                    const std::string speaker  = str("speaker");
+                    const std::string listener = str("listener");
+                    const std::string dialogue = str("dialogue");
+                    if (!listener.empty()) {
+                        text = "(player) " + speaker + " -> " + listener + ": \"" + dialogue + "\"";
+                    } else {
+                        text = "(player) " + speaker + ": \"" + dialogue + "\"";
+                    }
+                }
+                else if (type == "gamemaster_dialogue") {
+                    const std::string speaker  = str("speaker");
+                    const std::string target   = str("target");
+                    const std::string topic    = str("topic");
+                    const std::string dialogue = str("dialogue");
+                    text = speaker + " -> " + target + " (topic: " + topic + "): " + dialogue;
+                }
+                else if (type == "npc_thoughts") {
+                    text = str("npc_name") + " (thinking): \"" + str("thoughts") + "\"";
+                }
+                else if (type == "death") {
+                    text = str("killer") + " killed " + str("victim");
+                }
+                else if (type == "persistent_generic") {
+                    text = str("line");
+                }
+                else {
+                    text = data ? data->dump() : std::string{"(no data)"};
+                }
+
+                // Prepend the in-game timestamp (SkyrimNet's pre-formatted
+                // `gameTimeStr`, e.g. "11:22 AM, Sundas, 31st of Last Seed,
+                // 4E 201"). Putting game time on every line lets the LLM
+                // reason about pacing without us having to teach it the
+                // gameTime float epoch. Falls back to no prefix if missing.
+                const std::string timestamp = evt.value("gameTimeStr", std::string{});
+                if (!timestamp.empty()) {
+                    text = "[" + timestamp + "] " + text;
+                }
+
+                evt["text"] = std::move(text);
+            }
+        }
+
         std::string JoinCSV(const std::vector<std::string> &parts)
         {
             std::string out;
@@ -169,15 +247,28 @@ namespace NarrativeEngine::EvaluationPipeline
             ctx["next_phase"] = PhaseTracker::PhaseName(PhaseTracker::Phase::Exposition);
         }
 
-        // recent_events: pass SkyrimNet's event array through verbatim by
-        // parsing the raw JSON string the snapshot carries. On any parse
-        // failure or non-array result, substitute an empty array and warn.
+        // recent_events: pass SkyrimNet's event array through, but REVERSE
+        // it. SkyrimNet returns events newest-first; the prompt template
+        // renders them in array order and labels the section "(newest last)".
+        // Reversing here makes the data order match the label, and puts the
+        // most recent events at the end of the rendered list — where LLMs
+        // typically attend more. On parse failure or non-array, fall back to
+        // an empty array and warn.
         {
             auto parsed = nlohmann::json::parse(
                 snapshot.skyrimNetEventsJSON, /*cb=*/nullptr,
                 /*allow_exceptions=*/false);
             if (parsed.is_array())
             {
+                std::reverse(parsed.begin(), parsed.end());
+
+                // SkyrimNet events have a `type` discriminator and an
+                // arbitrary `data` payload that varies by type. The prompt
+                // template can't reasonably branch on every shape, so we
+                // synthesize a human-readable `evt.text` here. The template
+                // then just renders `{{ evt.text }}` per event.
+                FormatEventsText(parsed);
+
                 ctx["recent_events"] = std::move(parsed);
             }
             else
