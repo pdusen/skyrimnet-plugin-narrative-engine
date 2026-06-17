@@ -1,0 +1,28 @@
+{
+    // Drive CMake Tools off the CMakePresets.json files (debug/release) plus
+    // CMakeUserPresets.json (local-debug/local-release) rather than the
+    // extension's own legacy "kit" UI.
+    "cmake.useCMakePresets": "always",
+
+    // Auto-reconfigure when CMake files change so the IntelliSense provider
+    // sees new TUs without a manual configure pass.
+    "cmake.configureOnEdit": true,
+    "cmake.configureOnOpen": true,
+
+    // Mirror the active build's compile_commands.json to the workspace root.
+    // Not strictly required when the C/C++ extension uses CMake Tools as its
+    // configuration provider (see c_cpp_properties.json), but useful for
+    // any other tooling (clangd, clang-tidy, etc.) that looks there.
+    "cmake.copyCompileCommands": "${workspaceFolder}/compile_commands.json",
+
+    // Default IntelliSense configuration provider — superseded by the
+    // per-configuration setting in c_cpp_properties.json but harmless to
+    // also state explicitly here.
+    "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+
+    // Ignore the workspace-root compile_commands.json from source control
+    // hygiene checks (it's a build artifact mirrored by cmake.copyCompileCommands).
+    "files.associations": {
+        "*.prompt": "jinja"
+    }
+}

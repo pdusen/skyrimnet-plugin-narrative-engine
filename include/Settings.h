@@ -1,0 +1,51 @@
+#pragma once
+
+#include <cstdint>
+#include <string>
+
+// Author-tunable plugin configuration.
+//
+// Read once at SKSE's kDataLoaded message via Load(). Sources, in order:
+//   1. Data/SKSE/Plugins/NarrativeEngine.ini (the plugin INI)
+//   2. Data/MCM/Settings/NarrativeEngine.ini (MCM Helper-managed; overrides
+//      only the [Dashboard] keys when present)
+//
+// Any missing file or missing key falls back to the default baked into the
+// Config struct below — the plugin is fully functional with no INI at all.
+namespace NarrativeEngine::Settings
+{
+    // Bitmask values for the dashboard hotkey's modifier keys.
+    // Combinable: (kModCtrl | kModShift | kModAlt) == 7.
+    inline constexpr std::uint8_t kModCtrl  = 1;
+    inline constexpr std::uint8_t kModShift = 2;
+    inline constexpr std::uint8_t kModAlt   = 4;
+
+    struct Config
+    {
+        // [General]
+        bool debugMode = false;
+
+        // [Director]
+        int tickIntervalSeconds              = 90;   // wall-clock seconds between evaluations
+        int decisionLogMaxEntries            = 200;  // ring buffer cap
+        int decisionLogTailSizeForPrompt     = 10;   // entries fed into BuildPromptContext
+        int skyrimNetEventTailSizeForPrompt  = 40;   // maxCount passed to PublicGetRecentEvents
+
+        // [AlphaCanon]
+        // Comma-separated list of cell EditorIDs to treat as do-not-disturb.
+        // Empty by default. Whitespace around commas is allowed.
+        std::string doNotDisturbCellEDIDsCSV;
+
+        // [Dashboard]
+        int          dashboardHotkeyVK        = 119; // Windows VK code; 119 == VK_F8; -1 disables
+        std::uint8_t dashboardHotkeyModifiers = 0;   // kModCtrl|kModShift|kModAlt bitmask; 0 = none
+    };
+
+    // Read both INIs (plugin then MCM override) and populate the singleton.
+    // Call once from kDataLoaded BEFORE any subsystem that reads settings.
+    void Load();
+
+    // Access the loaded config. Stable reference for the plugin's lifetime —
+    // Load() populates the singleton; nothing else mutates it.
+    const Config& Get();
+}

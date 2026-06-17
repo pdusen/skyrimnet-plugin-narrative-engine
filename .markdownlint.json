@@ -1,0 +1,16 @@
+{
+  "default": true,
+  "MD013": {
+    "line_length": 120,
+    "code_blocks": false,
+    "tables": false,
+    "headings": false,
+    "stern": false
+  },
+  "MD024": {
+    "siblings_only": true
+  },
+  "MD060": {
+    "style": "aligned"
+  }
+}
