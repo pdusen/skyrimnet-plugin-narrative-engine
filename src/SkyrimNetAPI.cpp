@@ -75,7 +75,18 @@ namespace NarrativeEngine::SkyrimNetAPI
         if (!::PublicGetRecentEvents) {
             return "[]";
         }
-        return ::PublicGetRecentEvents(formId, maxCount, eventTypeFilter.c_str());
+        // SkyrimNet expects nullptr (not "") for "no filter" — passing an
+        // empty C-string makes it route through the filtering branch and
+        // crash. IntelEngine's MemoryDB::GetFormattedRecentEvents uses the
+        // same nullptr-on-empty pattern. The try/catch guards against any
+        // ABI-edge throw across the DLL boundary.
+        const char* filter = eventTypeFilter.empty() ? nullptr : eventTypeFilter.c_str();
+        try {
+            return ::PublicGetRecentEvents(formId, maxCount, filter);
+        } catch (...) {
+            logger::warn("SkyrimNetAPI::GetRecentEvents: exception across DLL boundary");
+            return "[]";
+        }
     }
 
     bool RegisterDecorator(

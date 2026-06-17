@@ -620,7 +620,7 @@ phase tracker's time-in-phase ticks up during unpaused gameplay (and pauses duri
 
 ### Step 9 — Snapshot type and Phase A builder
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** a value-only `Snapshot` struct captured on the main thread per tick, safe to pass to the worker
 thread (no `RE::*` pointers).

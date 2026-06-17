@@ -5,11 +5,20 @@
 # under the hood, but from a plain PowerShell session.
 #
 # Usage:
-#   pwsh -File build.ps1 configure              # cmake --preset local-debug
-#   pwsh -File build.ps1 build                  # cmake --build build/local-debug
+#   pwsh -File build.ps1 configure              # cmake --preset local-release
+#   pwsh -File build.ps1 build                  # cmake --build build/local-release
 #   pwsh -File build.ps1 rebuild                # configure + build (no clean)
 #   pwsh -File build.ps1 clean                  # remove build/<preset>
-#   pwsh -File build.ps1 configure -Preset local-release
+#   pwsh -File build.ps1 build -Preset local-debug
+#
+# Default preset is `local-release`. Debug builds don't currently work at
+# runtime: SkyrimNet's exported APIs return `std::string` by value, and a
+# debug-CRT (`/MTd`, `_ITERATOR_DEBUG_LEVEL=2`) build of NarrativeEngine has
+# an incompatible string ABI with SkyrimNet's release build — the destructor
+# crashes when our DLL tries to free a buffer allocated in theirs. So we
+# default to release for everyday testing; `-Preset local-debug` is still
+# available for the rare case where you want STL asserts on code paths that
+# don't touch SkyrimNet.
 #
 # Each invocation pays the dev-shell load cost (~1-2 s) and the configure
 # step's cmake/vcpkg cost on first run; subsequent builds reuse the cache.
@@ -20,7 +29,7 @@ param(
     [ValidateSet('configure', 'build', 'rebuild', 'clean')]
     [string]$Verb = 'build',
 
-    [string]$Preset = 'local-debug'
+    [string]$Preset = 'local-release'
 )
 
 $ErrorActionPreference = 'Stop'

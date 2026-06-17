@@ -205,12 +205,23 @@ script loads the Visual Studio Developer environment, picks up the user-specific
 `CMakeUserPresets.json` (gitignored — preset names `local-debug` / `local-release`), and forwards to
 `cmake`.
 
+**Default preset: `local-release`.** Debug builds don't work at runtime against the installed SkyrimNet —
+SkyrimNet's exported APIs (e.g. `PublicGetRecentEvents`) return `std::string` by value, and a debug-CRT
+build of NarrativeEngine (`/MTd`, `_ITERATOR_DEBUG_LEVEL=2`) has an incompatible `std::string` ABI with
+SkyrimNet's release build. The `std::string` destructor crashes when our DLL tries to free a buffer that
+SkyrimNet allocated in its heap. So `build.ps1` defaults to release and you should not pass
+`-Preset local-debug` for everyday testing.
+
+`-Preset local-debug` is still available for the rare case where you want STL asserts / iterator debug
+checks on code paths that **don't** touch SkyrimNet. But any test path that triggers a SkyrimNet call
+will crash the game in debug.
+
 ```sh
-pwsh -File build.ps1 build       # incremental build (auto-configures if needed)
+pwsh -File build.ps1 build       # incremental release build (auto-configures if needed)
 pwsh -File build.ps1 configure   # explicit re-configure
 pwsh -File build.ps1 rebuild     # configure + build
-pwsh -File build.ps1 clean       # remove build/local-debug
-pwsh -File build.ps1 build -Preset local-release
+pwsh -File build.ps1 clean       # remove build/local-release
+pwsh -File build.ps1 build -Preset local-debug   # only when SkyrimNet isn't on the test path
 ```
 
 After C++ edits, the right workflow is:
@@ -231,6 +242,9 @@ Notes:
   (`VCPKG_ROOT`, `SKYRIMNET_DIR`, `SKYRIM_MODS_FOLDER`). Don't try to commit it.
 - A clean rebuild is rarely needed. Reach for `clean` only when CMake itself is confused (e.g., after
   changing presets, the toolchain, or `CMakeLists.txt` in ways that affect cache validity).
+- Release builds still produce `.pdb` files (CMake's release config emits them), so Visual Studio's
+  debugger can attach to a release build with mostly-meaningful stack traces. You lose some local-variable
+  visibility to optimization, but it's enough for the rare interactive-debug session.
 
 ## Markdown conventions
 

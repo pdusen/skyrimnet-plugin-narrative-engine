@@ -1,6 +1,7 @@
 #include <Tick.h>
 
 #include <AsyncDispatch.h>
+#include <EvaluationPipeline.h>
 #include <PhaseTracker.h>
 #include <Settings.h>
 #include <logger.h>
@@ -44,15 +45,15 @@ namespace NarrativeEngine::Tick
                     logger::debug("Tick: firing #{}", tickCount);
                 }
 
-                // (a) advance the phase tracker's real-time clock on the main
-                //     thread. PhaseTracker::Tick samples its own steady clock
-                //     and no-ops when the game is paused.
+                // Single main-thread hop for the whole tick:
+                //   (a) advance the phase tracker's real-time clock
+                //       (no-ops while the game is paused).
+                //   (b) kick off the evaluation pipeline. BeginEvaluation
+                //       is no-op-safe — it CAS-guards against overlap.
                 AsyncDispatch::MarshalToMainThread([] {
                     PhaseTracker::Tick();
+                    EvaluationPipeline::BeginEvaluation();
                 });
-
-                // (b) EvaluationPipeline::BeginEvaluation() will be wired in
-                //     here in Step 9 once the pipeline exists.
             }
         }
     }
