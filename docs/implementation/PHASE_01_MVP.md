@@ -663,7 +663,7 @@ in a later phase, the field is added here alongside the registry that produces i
 
 ### Step 10 — Phase B prompt-context builder
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** the worker-thread function that takes a `Snapshot` and produces a JSON context blob to feed the LLM.
 

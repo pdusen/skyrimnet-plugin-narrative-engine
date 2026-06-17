@@ -7,9 +7,12 @@
 #include <SkyrimNetAPI.h>
 #include <logger.h>
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 
 namespace NarrativeEngine::EvaluationPipeline
 {
@@ -126,10 +129,69 @@ namespace NarrativeEngine::EvaluationPipeline
         return s;
     }
 
-    std::string BuildPromptContext(const Snapshot& /*snapshot*/)
+    std::string BuildPromptContext(const Snapshot& snapshot)
     {
-        // Step 10 — Phase B. Not yet implemented.
-        return {};
+        nlohmann::json ctx;
+        ctx["current_phase"]         = snapshot.currentPhase;
+        ctx["time_in_phase_seconds"] = snapshot.timeInPhaseSeconds;
+
+        // recent_events: pass SkyrimNet's event array through verbatim by
+        // parsing the raw JSON string the snapshot carries. On any parse
+        // failure or non-array result, substitute an empty array and warn.
+        {
+            auto parsed = nlohmann::json::parse(
+                snapshot.skyrimNetEventsJSON, /*cb=*/nullptr,
+                /*allow_exceptions=*/false);
+            if (parsed.is_array()) {
+                ctx["recent_events"] = std::move(parsed);
+            } else {
+                if (parsed.is_discarded() && !snapshot.skyrimNetEventsJSON.empty()) {
+                    logger::warn("BuildPromptContext: recent_events JSON failed to parse; using []");
+                } else if (!parsed.is_discarded()) {
+                    logger::warn("BuildPromptContext: recent_events JSON wasn't an array; using []");
+                }
+                ctx["recent_events"] = nlohmann::json::array();
+            }
+        }
+
+        // decision_log_tail: oldest-first per Tail() semantics.
+        {
+            nlohmann::json tail = nlohmann::json::array();
+            for (const auto& r : snapshot.decisionLogTail) {
+                nlohmann::json entry = {
+                    {"t",              r.realTimeSec},
+                    {"tension_score",  r.tensionScore},
+                    {"phase",          PhaseTracker::PhaseName(r.currentPhase)},
+                    {"action",         r.actionSelected},
+                    {"narrative_note", r.narrativeNote},
+                };
+                if (r.advancedToPhase) {
+                    entry["advanced_to"] = PhaseTracker::PhaseName(*r.advancedToPhase);
+                }
+                tail.push_back(std::move(entry));
+            }
+            ctx["decision_log_tail"] = std::move(tail);
+        }
+
+        // player_context. Form IDs go out as "0x........" strings — the
+        // LLM treats them as opaque identifiers, and hex matches how the
+        // rest of the modding tool chain renders them.
+        {
+            char formIdHex[16];
+            std::snprintf(formIdHex, sizeof(formIdHex), "0x%08X", snapshot.player.formID);
+            ctx["player_context"] = {
+                {"player_form_id",    std::string(formIdHex)},
+                {"location_name",     snapshot.player.locationName},
+                {"cell_name",         snapshot.player.cellName},
+                {"cell_is_interior",  snapshot.player.cellIsInterior},
+                {"game_days_passed",  snapshot.player.gameDaysPassed},
+                {"time_of_day_hours", snapshot.player.timeOfDayHours},
+            };
+        }
+
+        ctx["alpha_canon_signals"] = snapshot.alphaCanonSignals;
+
+        return ctx.dump();
     }
 
     DecisionLog::DecisionRecord ParseDecision(const std::string& /*jsonResponse*/,
@@ -169,7 +231,17 @@ namespace NarrativeEngine::EvaluationPipeline
             LogSnapshot(snapshot);
         }
 
-        // Steps 10/11/14 wire the worker dispatch + Phase B/C/D chain here.
+        // Step 10: build the LLM context blob from the snapshot. Pure data
+        // work — no engine APIs touched — so the main-thread call here is
+        // harmless. Step 11 moves this onto the worker thread alongside the
+        // SkyrimNet LLM dispatch.
+        const std::string ctx = BuildPromptContext(snapshot);
+        if (Settings::Get().debugMode) {
+            logger::debug("BuildPromptContext: produced {}B", ctx.size());
+            logger::debug("BuildPromptContext: {}", ctx);
+        }
+
+        // Steps 11/14 wire the worker dispatch + Phase C/D chain here.
         // Until then, end the evaluation immediately so the next tick isn't
         // blocked.
         g_inFlight.store(false);
