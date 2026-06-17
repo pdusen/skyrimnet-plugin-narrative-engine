@@ -495,14 +495,21 @@ file at … using defaults"). Set `bDebugMode=1` in a hand-authored INI; the log
 
 - `include/PhaseTracker.h` — `Phase` enum (`Exposition`, `RisingAction`, `Climax`, `FallingAction`,
   `Resolution`), `PhaseName(p)` / `PhaseFromName(s)` / `NextPhase(p)` helpers, and the namespace API
-  (`Get`, `TimeInPhaseSeconds`, `AdvanceTo`, `Reset`, `Tick(dtSeconds)`, `OnSave`, `OnLoad`, `OnRevert`).
-- `src/PhaseTracker.cpp` — implementation. Storage: `std::mutex` + current phase + accumulated seconds.
+  (`Get`, `TimeInPhaseSeconds`, `AdvanceTo`, `Reset`, `Tick`, `OnSave`, `OnLoad`, `OnRevert`).
+- `src/PhaseTracker.cpp` — implementation. Storage: `std::mutex` + current phase + accumulated base seconds
+  - a `std::chrono::steady_clock` anchor (`g_lastSampleTime`).
 
 **Specifics:**
 
-- `Tick(dt)` is called from the real-time tick driver (Step 8). It increments accumulated seconds only when
-  `RE::UI::GetSingleton()->GameIsPaused()` is false. (`RE::UI::GameIsPaused()` is true during menus, console
-  open, dialogue menu — exactly the "real-time should not advance" cases.)
+- The accumulator is treated as a **continuously sampleable** value rather than one that's only updated at
+  tick boundaries. A private `SampleLocked()` helper computes elapsed real time since `g_lastSampleTime` and
+  rolls it into `g_baseSeconds` (gated on `RE::UI::GameIsPaused()`), then re-anchors `g_lastSampleTime` to
+  now. Every read path (`Tick()`, `TimeInPhaseSeconds()`, `OnSave`) calls `SampleLocked` first so the value
+  reflects time-in-phase as of the moment of the call. Without this, OnSave would persist whatever the last
+  Tick wrote, missing the unpaused time between that Tick and the save moment.
+- `Tick()` is called from the real-time tick driver (Step 8) and just invokes `SampleLocked()` — no externally
+  passed dt. Pause states (`RE::UI::GameIsPaused()` — true during menus, console, dialogue) are sampled at the
+  moment of each call, so paused intervals don't add to the accumulator.
 - `AdvanceTo(newPhase)` resets time-in-phase to 0 and logs the transition. (No event-log write — the
   advancement is already captured in the decision record that triggered it, via its `advancedToPhase` field.)
 - Initial state on `kNewGame`: `Exposition`, time-in-phase 0.
@@ -582,7 +589,7 @@ Exit combat; mask returns to 0.
 
 ### Step 8 — Async dispatch and the tick driver
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** one worker thread for off-main-thread work (the LLM call), one tick-driver thread that fires the
 Director's evaluation cadence.

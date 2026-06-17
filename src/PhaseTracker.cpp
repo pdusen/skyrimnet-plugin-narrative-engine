@@ -3,6 +3,7 @@
 #include <logger.h>
 
 #include <array>
+#include <chrono>
 #include <mutex>
 
 namespace NarrativeEngine::PhaseTracker
@@ -20,9 +21,30 @@ namespace NarrativeEngine::PhaseTracker
         // Bumped on any wire-format change to the OnSave/OnLoad payload.
         constexpr std::uint32_t kRecordVersion = 1;
 
-        std::mutex g_mutex;
-        Phase     g_phase = Phase::Exposition;
-        float     g_timeInPhaseSeconds = 0.0f;
+        using SteadyClock = std::chrono::steady_clock;
+
+        std::mutex            g_mutex;
+        Phase                 g_phase              = Phase::Exposition;
+        float                 g_baseSeconds        = 0.0f;
+        SteadyClock::time_point g_lastSampleTime   = SteadyClock::now();
+
+        // Roll the elapsed wall-clock time since the last sample into the
+        // accumulator (subject to GameIsPaused), then reset the anchor.
+        // MUST be called with g_mutex held. Main thread only — touches RE::UI.
+        void SampleLocked()
+        {
+            const auto now = SteadyClock::now();
+            const float dt = std::chrono::duration<float>(now - g_lastSampleTime).count();
+            g_lastSampleTime = now;
+
+            if (dt <= 0.0f) {
+                return;
+            }
+            if (auto* ui = RE::UI::GetSingleton(); ui && ui->GameIsPaused()) {
+                return;
+            }
+            g_baseSeconds += dt;
+        }
     }
 
     const char* PhaseName(Phase p)
@@ -63,7 +85,8 @@ namespace NarrativeEngine::PhaseTracker
     float TimeInPhaseSeconds()
     {
         std::scoped_lock lock(g_mutex);
-        return g_timeInPhaseSeconds;
+        SampleLocked();
+        return g_baseSeconds;
     }
 
     void AdvanceTo(Phase newPhase)
@@ -71,9 +94,10 @@ namespace NarrativeEngine::PhaseTracker
         Phase previous;
         {
             std::scoped_lock lock(g_mutex);
-            previous = g_phase;
-            g_phase = newPhase;
-            g_timeInPhaseSeconds = 0.0f;
+            previous            = g_phase;
+            g_phase             = newPhase;
+            g_baseSeconds       = 0.0f;
+            g_lastSampleTime    = SteadyClock::now();
         }
         logger::info("PhaseTracker: advanced {} -> {}", PhaseName(previous), PhaseName(newPhase));
     }
@@ -81,23 +105,18 @@ namespace NarrativeEngine::PhaseTracker
     void Reset(Phase initial)
     {
         std::scoped_lock lock(g_mutex);
-        g_phase = initial;
-        g_timeInPhaseSeconds = 0.0f;
+        g_phase             = initial;
+        g_baseSeconds       = 0.0f;
+        g_lastSampleTime    = SteadyClock::now();
     }
 
-    void Tick(float dtSeconds)
+    void Tick()
     {
-        // Real-time clock: pause states (menus, console, dialogue) freeze it.
-        // RE::UI::GameIsPaused() is the same predicate the rest of the engine
-        // uses for "time should not advance right now."
-        if (auto* ui = RE::UI::GetSingleton(); ui && ui->GameIsPaused()) {
-            return;
-        }
-        if (dtSeconds <= 0.0f) {
-            return;
-        }
+        // Pause states (menus, console, dialogue) freeze the clock. The
+        // pause check is sampled at the moment of this call — exactly the
+        // same semantic as the rest of the engine's GameIsPaused gates.
         std::scoped_lock lock(g_mutex);
-        g_timeInPhaseSeconds += dtSeconds;
+        SampleLocked();
     }
 
     void OnSave(SKSE::SerializationInterface* intfc)
@@ -114,8 +133,11 @@ namespace NarrativeEngine::PhaseTracker
         float        timeSnapshot;
         {
             std::scoped_lock lock(g_mutex);
+            // Sample first so the on-disk value reflects time-in-phase as
+            // of the moment of OnSave, not as of the last Tick.
+            SampleLocked();
             phaseByte    = static_cast<std::uint8_t>(g_phase);
-            timeSnapshot = g_timeInPhaseSeconds;
+            timeSnapshot = g_baseSeconds;
         }
         intfc->WriteRecordData(phaseByte);
         intfc->WriteRecordData(timeSnapshot);
@@ -149,8 +171,13 @@ namespace NarrativeEngine::PhaseTracker
 
         {
             std::scoped_lock lock(g_mutex);
-            g_phase              = static_cast<Phase>(phaseByte);
-            g_timeInPhaseSeconds = timeSeconds;
+            g_phase          = static_cast<Phase>(phaseByte);
+            g_baseSeconds    = timeSeconds;
+            // Re-anchor the sample clock to "now" so subsequent Tick /
+            // OnSave / TimeInPhaseSeconds calls add real time on top of the
+            // loaded base, rather than counting elapsed time from before
+            // the load.
+            g_lastSampleTime = SteadyClock::now();
         }
         logger::info("PhaseTracker::OnLoad: restored phase={} timeInPhase={}s",
                      PhaseName(static_cast<Phase>(phaseByte)), timeSeconds);

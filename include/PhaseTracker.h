@@ -47,8 +47,11 @@ namespace NarrativeEngine::PhaseTracker
     // Current phase. Thread-safe.
     Phase Get();
 
-    // Accumulated unpaused real-time seconds spent in the current phase.
-    // Thread-safe.
+    // Accumulated unpaused real-time seconds spent in the current phase, as
+    // of the moment of the call. Internally samples the steady clock and
+    // brings the accumulator up to "now" before returning, so callers always
+    // see a fresh value rather than the value as of the last Tick. Main
+    // thread only (calls RE::UI::GameIsPaused()).
     float TimeInPhaseSeconds();
 
     // Switch phases. Resets time-in-phase to 0 and logs the transition.
@@ -58,10 +61,11 @@ namespace NarrativeEngine::PhaseTracker
     // Reset to a known state (defaults to Exposition, time 0). Main thread.
     void Reset(Phase initial = Phase::Exposition);
 
-    // Increment accumulated time by dtSeconds, *only* when the game isn't
-    // paused (RE::UI::GameIsPaused() — true during menus, console, dialogue).
-    // Called from the tick driver (Step 8) on the main thread.
-    void Tick(float dtSeconds);
+    // Sample the steady clock and roll the elapsed time since the last
+    // sample into the accumulator — but only when the game is not paused
+    // (RE::UI::GameIsPaused() — true during menus, console, dialogue).
+    // Called periodically by the tick driver (Step 8) on the main thread.
+    void Tick();
 
     // SKSE serialization callbacks. OnLoad receives the per-record version
     // and length advanced past the header by the central OnLoad dispatcher

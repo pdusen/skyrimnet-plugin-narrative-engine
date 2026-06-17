@@ -1,10 +1,12 @@
 #include <Plugin.h>
 
+#include <AsyncDispatch.h>
 #include <DecisionLog.h>
 #include <PhaseTracker.h>
 #include <PrismaUI.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
+#include <Tick.h>
 #include <logger.h>
 
 #include <algorithm>
@@ -29,26 +31,28 @@ namespace NarrativeEngine
                         std::max(0, Settings::Get().decisionLogMaxEntries)));
                     SkyrimNetAPI::Initialize();
                     PrismaUI_API::Initialize();
+                    AsyncDispatch::Start();
                     // Remaining subsystem init lands here as later steps wire
-                    // it up (Decorators, AsyncDispatch, ...).
+                    // it up (Decorators, ...).
                     break;
                 case SKSE::MessagingInterface::kNewGame:
                     logger::info("OnMessage: kNewGame");
                     DecisionLog::Clear();
                     PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
-                    // Other subsystem Clear() / Reset() calls land here.
+                    Tick::Start();
                     break;
                 case SKSE::MessagingInterface::kPreLoadGame:
                     logger::info("OnMessage: kPreLoadGame");
-                    // Safe-init every subsystem so OnLoad has a known baseline
-                    // to overwrite. Tick::Stop() will join here in Step 8 so
-                    // an in-flight tick can't fire mid-load.
+                    // Stop the tick driver FIRST so an in-flight tick can't
+                    // fire mid-deserialize, then safe-init every subsystem
+                    // so OnLoad has a known baseline to overwrite.
+                    Tick::Stop();
                     DecisionLog::Clear();
                     PhaseTracker::Reset();
                     break;
                 case SKSE::MessagingInterface::kPostLoadGame:
                     logger::info("OnMessage: kPostLoadGame");
-                    // Post-load hookups go here (e.g. Tick::Start()).
+                    Tick::Start();
                     break;
                 default:
                     break;
