@@ -698,14 +698,15 @@ parses the response and marshals back to the main thread.
 
 **Specifics:**
 
-- The Director uses prompt template name `"narrative_engine_story_eval"` (created in Step 13) and variant `""`
-  (default).
+- The Director uses prompt template name `"narrative_engine_story_eval"` (created in Step 13) and variant
+  `"narrative_engine_director"` (declared in Step 13's manifest).
 - `BeginEvaluation()` flow:
   1. Atomic compare-and-swap on an `inFlight` flag to guarantee single concurrent evaluation.
   2. `Snapshot s = BuildSnapshot();` on the main thread.
   3. `AsyncDispatch::EnqueueWork([s = std::move(s)]() mutable { … })` for the worker.
   4. Worker calls `BuildPromptContext(s)` → `std::string ctx`.
-  5. Worker calls `SkyrimNetAPI::SendCustomPromptToLLM("narrative_engine_story_eval", "", ctx, callback)`.
+  5. Worker calls `SkyrimNetAPI::SendCustomPromptToLLM("narrative_engine_story_eval",
+     "narrative_engine_director", ctx, callback)`.
   6. Callback (on SkyrimNet's thread) calls `ParseDecision(response, snapshot)` → `DecisionRecord`.
   7. Callback `MarshalToMainThread([rec] { ApplyDecision(rec); inFlight = false; })`.
 - If `SendCustomPromptToLLM` returns false (queue failure), set `inFlight = false` and log a warning. Don't
@@ -860,16 +861,43 @@ to no-op if SkyrimNet is unavailable (the wrapper returns false from `RegisterDe
 
 ---
 
-### Step 13 — The Director's prompt template (`narrative_engine_story_eval.prompt`)
+### Step 13 — The Director's prompt template + SkyrimNet manifest
 
 - [ ] Complete
 
 **Goal:** the actual prompt SkyrimNet hands to the LLM when we call
-`SendCustomPromptToLLM("narrative_engine_story_eval", …)`.
+`SendCustomPromptToLLM("narrative_engine_story_eval", "narrative_engine_director", …)`, plus the manifest
+that declares the `narrative_engine_director` LLM-config variant (without which the call falls back to
+SkyrimNet's default Dialogue LLM, which is tuned for creative writing rather than per-tick classification).
 
 **Files:**
 
-- `C:\Modlists\NGVO\mods\NarrativeEngine\SKSE\Plugins\SkyrimNet\prompts\narrative_engine_story_eval.prompt`
+- `statics/SKSE/Plugins/SkyrimNet/prompts/narrative_engine_story_eval.prompt` — the prompt template.
+  Deployed to `<mod folder>/SKSE/Plugins/SkyrimNet/prompts/narrative_engine_story_eval.prompt`.
+- `statics/SKSE/Plugins/SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml` — the plugin manifest.
+  Deployed to `<mod folder>/SKSE/Plugins/SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml`.
+
+**Manifest specifics:**
+
+SkyrimNet auto-discovers any plugin folder under `Data/SKSE/Plugins/SkyrimNet/config/plugins/<plugin>/`
+(filesystem-based, no registration call needed). The manifest has three top-level sections:
+
+- `plugin:` — name, version, description. Identifies our plugin in SkyrimNet's UI.
+- `variants:` — declares one variant `narrative_engine_director`. The variant is a *named LLM-config
+  profile*: when we invoke `SendCustomPromptToLLM(prompt, "narrative_engine_director", …)`, SkyrimNet
+  takes its base LLM config, layers the per-plugin overrides on top, and sends the result. The variant is
+  intentionally generic (not tied to a specific prompt) so future NarrativeEngine prompts (e.g. an
+  action-selection prompt in a later phase) can reuse the same Director-voice config without manifest
+  changes.
+- `schema.fields:` — declares the "LLM Overrides" category exposing `llm.endpoint`, `llm.api_key`,
+  `llm.model_name`, `llm.temperature`, `llm.max_tokens`, `llm.timeout`. SkyrimNet surfaces these in its
+  in-game settings; the user can override any of them per-plugin and SkyrimNet honors the overrides when
+  invoking our variant. The plugin's own code reads none of these — SkyrimNet handles the layering
+  internally. Plugin-specific (non-LLM) settings can be added in their own categories later.
+
+No C++ "register variant" call exists or is needed. The plugin's contract is: ship the manifest
+declaratively, pass the variant name as the 2nd arg to `SendCustomPromptToLLM`. (IntelEngine follows the
+same pattern — see its `manifest.yaml` for the precedent.)
 
 **Specifics:**
 
@@ -908,13 +936,20 @@ The implementer drafts this by hand against the keys `BuildPromptContext` produc
 Director's decision space is narrow.
 
 SkyrimNet auto-discovers any `.prompt` file dropped into `SKSE/Plugins/SkyrimNet/prompts/` (and, recursively,
-its `submodules/*` subfolders). No manifest entry is required — registration is purely by filesystem presence.
-The same is true for the `system_head` submodule from Step 12.
+its `submodules/*` subfolders). The `.prompt` itself doesn't need a manifest entry to be *invokable* — the
+manifest's role is separate (declaring the LLM-config variant and exposing the user-override schema). The
+same is true for the `system_head` submodule from Step 12.
 
-**Verify:** First Director evaluation completes end-to-end: the log shows the prompt being sent, the callback
-firing with a response, and the response parsing into a valid `DecisionRecord` written to the decision log. On
-the next NPC interaction, the `0155_ne_narrative_state.prompt` fragment in the assembled bio reflects the new
-tension/phase.
+**Verify:**
+
+1. First Director evaluation completes end-to-end: the log shows the prompt being sent, the callback firing
+   with a response, and the response parsing into a valid `DecisionRecord` written to the decision log. On
+   the next NPC interaction, the `0155_ne_narrative_state.prompt` fragment in the assembled bio reflects the
+   new tension/phase.
+2. In SkyrimNet's in-game settings UI, a "NarrativeEngine" plugin entry appears with an "LLM Overrides"
+   category exposing endpoint / key / model / temperature / max-tokens / timeout fields. Setting any of them
+   to a non-default value and triggering a tick should cause SkyrimNet to use the override when calling the
+   `narrative_engine_director` variant.
 
 ---
 
@@ -1462,6 +1497,9 @@ SkyrimNet assets:
 
 - `C:\Modlists\NGVO\mods\NarrativeEngine\SKSE\Plugins\SkyrimNet\prompts\narrative_engine_story_eval.prompt` — the
   Director's own LLM prompt (Step 13).
+- `C:\Modlists\NGVO\mods\NarrativeEngine\SKSE\Plugins\SkyrimNet\config\plugins\NarrativeEngine\manifest.yaml`
+  — declares the `narrative_engine_director` LLM-config variant and the user-overridable LLM schema
+  (Step 13).
 - `C:\Modlists\NGVO\mods\NarrativeEngine\SKSE\Plugins\SkyrimNet\prompts\submodules\system_head\0155_ne_narrative_state.prompt`
   — the per-NPC narrative-state injection submodule (Step 12).
 

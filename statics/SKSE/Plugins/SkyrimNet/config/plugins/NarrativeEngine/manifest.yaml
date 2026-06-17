@@ -1,0 +1,84 @@
+# NarrativeEngine — SkyrimNet plugin manifest.
+#
+# SkyrimNet auto-discovers plugin folders under
+# `Data/SKSE/Plugins/SkyrimNet/config/plugins/<plugin>/` and ingests this
+# file. Two purposes:
+#
+#   1. `variants:` declares named LLM-config profiles. When our C++ side
+#      calls `SendCustomPromptToLLM(promptName, variantName, ctx, cb)`,
+#      SkyrimNet picks the LLM config for that variant — base SkyrimNet
+#      config with any "LLM Overrides" the user has set for this plugin
+#      layered on top. Without a variant entry, the call falls back to
+#      SkyrimNet's default Dialogue LLM, which is wrong for a per-tick
+#      classification task.
+#
+#   2. `schema.fields:` declares plugin settings that SkyrimNet exposes in
+#      its in-game UI. The "LLM Overrides" category is the standard set of
+#      override knobs (endpoint, key, model, temperature, max_tokens,
+#      timeout); SkyrimNet stitches them into the variant's effective config
+#      at invocation time. Plugin-specific settings can be added in their own
+#      categories later.
+
+plugin:
+  name: NarrativeEngine
+  version: "0.0.1"
+  description: "AI Director for Skyrim, layered on top of SkyrimNet — judges story-arc pacing per real-time tick."
+
+variants:
+  - name: narrative_engine_director
+    description: "The Narrative Director — per-tick Freytag-pyramid phase + tension evaluation. Shared by all NarrativeEngine prompts (story eval today; future action-selection prompts will reuse this same variant). Uses base SkyrimNet config unless overridden in 'LLM Overrides' below."
+
+schema:
+  fields:
+    # ── LLM Overrides ──────────────────────────────────────────────────────
+    # Leave all of these empty / 0 to use SkyrimNet's base config. Anything
+    # non-empty / non-zero overrides the corresponding base field when the
+    # narrative_engine_director variant is invoked.
+
+    - name: "API Endpoint"
+      path: "llm.endpoint"
+      type: "string"
+      description: "Custom API endpoint URL (e.g., http://localhost:5000/v1, or a different OpenAI-compatible provider). Leave empty to use SkyrimNet's base endpoint."
+      defaultValue: ""
+      category: "LLM Overrides"
+
+    - name: "API Key"
+      path: "llm.api_key"
+      type: "string"
+      description: "API key for the custom endpoint. Leave empty to use SkyrimNet's base API key."
+      defaultValue: ""
+      category: "LLM Overrides"
+
+    - name: "Model Override"
+      path: "llm.model_name"
+      type: "string"
+      description: "Override model name for the Director. The Director's task is structured-JSON classification, not creative writing — a small, cheap, fast model is usually the right pick. Leave empty to use the same model as SkyrimNet dialogue."
+      defaultValue: ""
+      category: "LLM Overrides"
+
+    - name: "Temperature Override"
+      path: "llm.temperature"
+      type: "float"
+      description: "Override sampling temperature. Low values (0.1–0.3) give more consistent tension scoring across ticks; higher values let the read drift more. Set to 0 to use the base config value."
+      defaultValue: 0
+      min: 0.0
+      max: 2.0
+      category: "LLM Overrides"
+
+    - name: "Max Tokens Override"
+      path: "llm.max_tokens"
+      type: "int"
+      description: "Override max response tokens. The Director's response is one small JSON object — 256 is comfortably enough. Set to 0 to use the base config value."
+      defaultValue: 0
+      min: 0
+      max: 4096
+      category: "LLM Overrides"
+
+    - name: "Timeout Override"
+      path: "llm.timeout"
+      type: "int"
+      description: "Override request timeout in seconds. The Director tolerates slow responses (the worst case is just dropping a tick), so this can be generous. Set to 0 to use the base config value."
+      defaultValue: 0
+      min: 0
+      max: 120
+      category: "LLM Overrides"

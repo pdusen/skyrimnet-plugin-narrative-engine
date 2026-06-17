@@ -293,7 +293,12 @@ namespace NarrativeEngine::EvaluationPipeline
             // SkyrimNet worker thread (NOT the main thread); it must
             // marshal back to the main thread before touching engine state.
             const bool queued = SkyrimNetAPI::SendCustomPromptToLLM(
-                "narrative_engine_story_eval", "", ctx,
+                // 2nd arg is the *variant* — a named LLM-config profile
+                // declared in statics/.../SkyrimNet/config/plugins/
+                // NarrativeEngine/manifest.yaml. Without a variant the call
+                // falls back to SkyrimNet's default Dialogue LLM, which is
+                // tuned for creative writing, not per-tick classification.
+                "narrative_engine_story_eval", "narrative_engine_director", ctx,
                 [snapshot = std::move(snapshot)](std::string response, bool success) mutable {
                     if (Settings::Get().debugMode) {
                         logger::debug("LLM callback: success={} body={}B", success, response.size());
