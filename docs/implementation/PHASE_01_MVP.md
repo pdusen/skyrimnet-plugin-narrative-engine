@@ -34,7 +34,7 @@ values are exposed to SkyrimNet through a pair of custom **decorators** (`ne_nar
 `ne_narrative_phase`) that the plugin registers at startup via SkyrimNet's `PublicRegisterDecorator` C API.
 
 A small **`system_head` submodule prompt template** ships in our `Data/` payload at
-`SKSE/Plugins/SkyrimNet/prompts/submodules/system_head/0155_ne_narrative_state.prompt`. SkyrimNet auto-discovers
+`SKSE/Plugins/SkyrimNet/prompts/submodules/system_head/0500_ne_narrative_state.prompt`. SkyrimNet auto-discovers
 any `.prompt` file dropped into that folder and includes it in the head of every LLM prompt — regardless of which
 NPC the prompt is being built for. The numeric prefix (`0155`) controls our submodule's order relative to other
 system_head fragments.
@@ -42,7 +42,7 @@ system_head fragments.
 The template calls the decorators to read the current tension and phase, then renders **one qualitative
 sentence** that the LLM can read. Example rendered output:
 
-> ## World mood
+> ## Scene mood
 >
 > The current mood of the world feels noticeably tense — small troubles feel close at hand. Narratively, events
 > are clearly building toward something.
@@ -156,7 +156,7 @@ Plumbing layers (each described in detail in the implementation plan below):
     so it has nothing of its own to persist.
 11. **The one feature: narrative-state injection** — two custom SkyrimNet decorators
     (`ne_narrative_tension`, `ne_narrative_phase`) registered at startup, plus a shipped `system_head` submodule
-    prompt template (`0155_ne_narrative_state.prompt`) that renders the current Director state into every NPC's
+    prompt template (`0500_ne_narrative_state.prompt`) that renders the current Director state into every NPC's
     LLM context as one qualitative sentence.
 12. **Director prompt template** — one `.prompt` file at
     `SKSE/Plugins/SkyrimNet/prompts/narrative_engine_story_eval.prompt` instructing the LLM to score tension
@@ -213,7 +213,7 @@ The user installs the build, boots Skyrim, and plays normally for 30+ minutes. A
   milestone, a hard fight, an extended quiet stretch).
 - During play, dialogue with NPCs subtly reflects the current narrative phase. (Hard to verify objectively
   short of A/B comparison; the log + a debug-render of the assembled SkyrimNet prompt for any NPC, showing the
-  `0155_ne_narrative_state.prompt` fragment with the right tension/phase wording, is the proxy verification.)
+  `0500_ne_narrative_state.prompt` fragment with the right tension/phase wording, is the proxy verification.)
 - The player can press the dashboard hotkey (default `F8`) to bring up the PrismaUI overlay, see the
   current Director state, watch entries appear in the recent-decisions list as ticks fire, and see
   SkyrimNet's recent-events feed refresh in the recent-events panel.
@@ -719,7 +719,7 @@ response is logged at debug level.
 
 ### Step 12 — The one feature: narrative-state injection (decorators + `system_head` submodule)
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** make every NPC's LLM context aware of the Director's current tension score and Freytag phase, by
 registering two custom SkyrimNet decorators and shipping a `system_head` submodule `.prompt` template that
@@ -741,7 +741,7 @@ renders a qualitative sentence about the current state.
    narrative state is a global property of the world, not a per-NPC fact.
 
 2. **Submodule prompt (asset):** a single `.prompt` file shipped in our `Data/` payload at
-   `Data/SKSE/Plugins/SkyrimNet/prompts/submodules/system_head/0155_ne_narrative_state.prompt`. SkyrimNet
+   `Data/SKSE/Plugins/SkyrimNet/prompts/submodules/system_head/0500_ne_narrative_state.prompt`. SkyrimNet
    auto-discovers `.prompt` files dropped in this folder and includes them in the head of every LLM prompt the
    plugin builds — regardless of which NPC the prompt is for. The numeric prefix `0155` controls our submodule's
    ordering relative to other `system_head` fragments. (The `prompts/submodules/character_bio/` folder is the
@@ -753,7 +753,7 @@ renders a qualitative sentence about the current state.
 - `src/Decorators.cpp` — implements `Register()`, which calls
   `SkyrimNetAPI::RegisterDecorator("ne_narrative_tension", …, callback)` and the equivalent for
   `ne_narrative_phase`. Logs success/failure for each.
-- `Data/SKSE/Plugins/SkyrimNet/prompts/submodules/system_head/0155_ne_narrative_state.prompt` — the Inja/Jinja
+- `Data/SKSE/Plugins/SkyrimNet/prompts/submodules/system_head/0500_ne_narrative_state.prompt` — the Inja/Jinja
   template (lives in the mod folder, not in the C++ source tree).
 - A small getter on `DecisionLog` — `std::optional<uint32_t> LatestTensionScore()` returning the most recent
   record's score, or `std::nullopt` if the log is empty. Add it to `include/DecisionLog.h` + `src/DecisionLog.cpp`.
@@ -789,7 +789,7 @@ renders a qualitative sentence about the current state.
   — if SkyrimNet already has a decorator by that name (built-in or another plugin's), log a warning. The `ne_`
   prefix should keep us out of trouble in practice.
 
-**Prompt template — `0155_ne_narrative_state.prompt`:**
+**Prompt template — `0500_ne_narrative_state.prompt`:**
 
 The template's job is to map the numeric tension and the phase name to a single qualitative sentence the LLM
 can react to. Emitting raw numbers like "tension level 58" gives the model nothing it knows how to act on;
@@ -798,11 +798,11 @@ evocative language ("noticeably tense", "charged") gives it something to lean in
 Sketch (final wording to be refined in implementation):
 
 ```jinja
-{# 0155_ne_narrative_state.prompt — Director narrative-state injection.
+{# 0500_ne_narrative_state.prompt — Director narrative-state injection.
    Reads two custom decorators registered by NarrativeEngine's SKSE plugin
    and renders one qualitative sentence describing the current world mood. #}
-{% set tnum  = ne_narrative_tension(actor_uuid) | int %}
-{% set phase = ne_narrative_phase(actor_uuid) %}
+{% set tnum  = ne_narrative_tension() | int %}
+{% set phase = ne_narrative_phase() %}
 {% if   tnum < 20 %}{% set mood = "calm and unhurried" %}
 {% elif tnum < 45 %}{% set mood = "watchful, with a faint undercurrent of unease" %}
 {% elif tnum < 70 %}{% set mood = "noticeably tense — small troubles feel close at hand" %}
@@ -816,9 +816,10 @@ Sketch (final wording to be refined in implementation):
 {% else                          %}{% set arc = "things have settled into a new normal" %}
 {% endif %}
 
-## World mood
+## Scene mood
 
-The current mood of the world feels {{ mood }}. Narratively, {{ arc }}.
+The current mood of this scene feels {{ mood }}. Narratively, {{ arc }}. All actors present
+should behave accordingly.
 ```
 
 Notes on the template:
@@ -828,10 +829,12 @@ Notes on the template:
   ticked yet. Likewise `ne_narrative_phase` always returns a valid phase (default `Exposition`).
 - The mapping table is intentional and editable. If a play session shows the LLM reacting badly to a particular
   phrasing, the cure is to edit this file and reload the game — no C++ recompile.
-- The exact decorator-call syntax (`ne_narrative_tension(actor_uuid)` vs zero-arg form) should be verified
-  against SkyrimNet's template runtime before commit. The `PublicRegisterDecorator` signature accepts an
-  `RE::Actor*`, so passing the per-render `actor_uuid` and ignoring it on the C++ side is the safe shape.
-- The `## World mood` heading is markdown; SkyrimNet's prompt assembly treats `.prompt` output as raw markdown
+- The template calls the decorators with **no arguments**. Narrative state is a global property of the world,
+  not a per-NPC fact — passing `actor_uuid` would be misleading and unnecessary. SkyrimNet's
+  `PublicRegisterDecorator` C ABI requires the underlying C++ callback to accept an `RE::Actor*` (we ignore
+  it), but SkyrimNet's Inja wrapper supports the no-arg call form on the template side — see e.g. the
+  built-in `get_world_knowledge()` decorator.
+- The `## Scene mood` heading is markdown; SkyrimNet's prompt assembly treats `.prompt` output as raw markdown
   fed to the LLM, so the heading helps the LLM partition this fragment from surrounding context.
 
 **Why no SkyrimNet world-knowledge / memory writes:** SkyrimNet's `PublicAddWorldKnowledge` is designed for
@@ -852,9 +855,9 @@ to no-op if SkyrimNet is unavailable (the wrapper returns false from `RegisterDe
 1. Boot Skyrim. The log shows `Decorators: registered ne_narrative_tension`,
    `Decorators: registered ne_narrative_phase`. If either name was already taken, the log shows a warning.
 2. Talk to any NPC **before** the first Director tick has fired. The assembled prompt contains the
-   `## World mood` paragraph rendered against tension=0 / phase=Exposition (i.e. "calm and unhurried…the story
+   `## Scene mood` paragraph rendered against tension=0 / phase=Exposition (i.e. "calm and unhurried…the story
    is still settling in"). Verifiable via a SkyrimNet debug-render of the prompt for that NPC.
-3. Wait one tick interval for the first evaluation to complete. Talk to any NPC again. The `## World mood`
+3. Wait one tick interval for the first evaluation to complete. Talk to any NPC again. The `## Scene mood`
    paragraph now reflects the just-written tension band and phase.
 4. Reload an earlier save where the Director state was at a different tension/phase. The first NPC interaction
    after the load shows the updated phrasing.
@@ -944,7 +947,7 @@ same is true for the `system_head` submodule from Step 12.
 
 1. First Director evaluation completes end-to-end: the log shows the prompt being sent, the callback firing
    with a response, and the response parsing into a valid `DecisionRecord` written to the decision log. On
-   the next NPC interaction, the `0155_ne_narrative_state.prompt` fragment in the assembled bio reflects the
+   the next NPC interaction, the `0500_ne_narrative_state.prompt` fragment in the assembled bio reflects the
    new tension/phase.
 2. In SkyrimNet's in-game settings UI, a "NarrativeEngine" plugin entry appears with an "LLM Overrides"
    category exposing endpoint / key / model / temperature / max-tokens / timeout fields. Setting any of them
@@ -985,7 +988,7 @@ into `DecisionLog` (and optionally advancing the phase tracker) is the entire "a
 
 **Verify:** Over 5+ ticks, the decision log accumulates entries; each one has a sensible tension score and a
 narrative note that references real recent events (verified by spot-checking against what was happening in-game
-at the timestamp). Talking to an NPC after each tick shows the `0155_ne_narrative_state.prompt` fragment
+at the timestamp). Talking to an NPC after each tick shows the `0500_ne_narrative_state.prompt` fragment
 reflecting the just-written tension band.
 
 ---
@@ -1384,7 +1387,7 @@ can verify rebinds took effect after a save reload.
 
 **Verify:** Build, deploy, boot Skyrim. Start a new game (or load an existing one). Within `tickIntervalSeconds`
 the log shows the first evaluation: snapshot → prompt → response → decision log entry. Talking to any NPC
-afterward shows the `0155_ne_narrative_state.prompt` fragment in the assembled bio. Continue playing for 10+
+afterward shows the `0500_ne_narrative_state.prompt` fragment in the assembled bio. Continue playing for 10+
 minutes; ticks accumulate cleanly. Save, exit to main menu, reload; all state is restored exactly.
 
 ---
@@ -1400,10 +1403,10 @@ The plumbing-and-feature MVP is complete when all of the below are true:
 - [ ] During a 10-minute play session with SkyrimNet's LLM available, the decision log accumulates ≥ 5 entries;
       each entry's `narrative_note` plausibly references real recent events.
 - [ ] After the first Director tick has fired, talking to any NPC produces an assembled SkyrimNet prompt that
-      contains the `## World mood` paragraph from `0155_ne_narrative_state.prompt`, with the qualitative wording
+      contains the `## Scene mood` paragraph from `0500_ne_narrative_state.prompt`, with the qualitative wording
       matching the current `DecisionLog::LatestTensionScore()` band and `PhaseTracker::Get()` phase. (Verifiable
       via a SkyrimNet debug-render of the prompt for the target NPC, or by inspecting SkyrimNet's own logs.)
-- [ ] Before the first tick fires, the `## World mood` paragraph is still present, rendered against tension=0
+- [ ] Before the first tick fires, the `## Scene mood` paragraph is still present, rendered against tension=0
       / phase=Exposition (i.e. "calm and unhurried…the story is still settling in"). The pre-first-tick state
       is a deliberate default, not a silence gate.
 - [ ] Triggering vanilla combat results in combat events appearing in `SkyrimNetAPI::GetRecentEvents(0, 40, "")`
@@ -1500,7 +1503,7 @@ SkyrimNet assets:
 - `C:\Modlists\NGVO\mods\NarrativeEngine\SKSE\Plugins\SkyrimNet\config\plugins\NarrativeEngine\manifest.yaml`
   — declares the `narrative_engine_director` LLM-config variant and the user-overridable LLM schema
   (Step 13).
-- `C:\Modlists\NGVO\mods\NarrativeEngine\SKSE\Plugins\SkyrimNet\prompts\submodules\system_head\0155_ne_narrative_state.prompt`
+- `C:\Modlists\NGVO\mods\NarrativeEngine\SKSE\Plugins\SkyrimNet\prompts\submodules\system_head\0500_ne_narrative_state.prompt`
   — the per-NPC narrative-state injection submodule (Step 12).
 
 MCM Helper assets (in the mod folder):

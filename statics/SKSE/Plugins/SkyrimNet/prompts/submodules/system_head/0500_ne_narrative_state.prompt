@@ -1,0 +1,41 @@
+{# 0500_ne_narrative_state.prompt — Director narrative-state injection.
+
+   SkyrimNet auto-discovers every `.prompt` file under
+   `prompts/submodules/system_head/` and injects it into the head of every
+   assembled LLM prompt, regardless of which NPC is being rendered for.
+   The numeric prefix (0500) controls our ordering relative to other
+   `system_head` submodules.
+
+   Reads two custom decorators registered at startup by NarrativeEngine's
+   SKSE plugin (see Decorators.cpp). Both are zero-arg calls because the
+   Director's narrative state is a global property of the world, not a
+   per-NPC fact. (SkyrimNet's PublicRegisterDecorator C ABI requires the
+   underlying callback to accept an RE::Actor*; our C++ side ignores it.
+   SkyrimNet's Inja wrapper supports the no-arg call form — see e.g. the
+   built-in get_world_knowledge() decorator.)
+
+   Maps the numeric tension (0-100) and the phase name to a single
+   qualitative sentence the LLM can react to. Emitting raw numbers like
+   "tension 58" gives the model nothing it knows how to act on; evocative
+   phrasing ("calm", "watchful", "charged") gives it something to lean
+   into. If the mapping turns out to push the model the wrong way, edit
+   THIS FILE — no C++ recompile required. #}
+{% set tnum  = ne_narrative_tension() | int %}
+{% set phase = ne_narrative_phase() %}
+{% if   tnum < 20 %}{% set mood = "calm and unhurried" %}
+{% elif tnum < 45 %}{% set mood = "watchful, with a faint undercurrent of unease" %}
+{% elif tnum < 70 %}{% set mood = "noticeably tense — small troubles feel close at hand" %}
+{% elif tnum < 90 %}{% set mood = "charged, as though the next hour might change everything" %}
+{% else            %}{% set mood = "hot enough that the air itself seems to crackle" %}
+{% endif %}
+{% if   phase == "Exposition"    %}{% set arc = "the story is still settling in" %}
+{% elif phase == "RisingAction"  %}{% set arc = "events are clearly building toward something" %}
+{% elif phase == "Climax"        %}{% set arc = "matters are coming to a head" %}
+{% elif phase == "FallingAction" %}{% set arc = "the worst seems to have passed, but its echoes linger" %}
+{% else                          %}{% set arc = "things have settled into a new normal, for now" %}
+{% endif %}
+
+## Scene mood
+
+The current mood of this scene feels {{ mood }}. Narratively, {{ arc }}. All actors present
+should behave accordingly.

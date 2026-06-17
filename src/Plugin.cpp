@@ -2,6 +2,7 @@
 
 #include <AsyncDispatch.h>
 #include <DecisionLog.h>
+#include <Decorators.h>
 #include <PhaseTracker.h>
 #include <PrismaUI.h>
 #include <Settings.h>
@@ -30,10 +31,11 @@ namespace NarrativeEngine
                     DecisionLog::SetMaxEntries(static_cast<std::size_t>(
                         std::max(0, Settings::Get().decisionLogMaxEntries)));
                     SkyrimNetAPI::Initialize();
+                    // Decorators must register AFTER SkyrimNetAPI::Initialize
+                    // (it null-checks SkyrimNet availability internally).
+                    Decorators::Register();
                     PrismaUI_API::Initialize();
                     AsyncDispatch::Start();
-                    // Remaining subsystem init lands here as later steps wire
-                    // it up (Decorators, ...).
                     break;
                 case SKSE::MessagingInterface::kNewGame:
                     logger::info("OnMessage: kNewGame");
