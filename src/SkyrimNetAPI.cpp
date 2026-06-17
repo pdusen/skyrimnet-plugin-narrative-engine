@@ -75,6 +75,16 @@ namespace NarrativeEngine::SkyrimNetAPI
         if (!::PublicGetRecentEvents) {
             return "[]";
         }
+        // SkyrimNet's PublicAPI.h example explicitly gates event/memory
+        // queries behind PublicIsMemorySystemReady() — calling them before
+        // the database finishes initializing crashes. The DB isn't ready
+        // immediately at kPostLoadGame for saves with prior history; it
+        // rebuilds asynchronously over some seconds. Returning "[]" here
+        // until it's ready matches the doc's "return empty results gracefully
+        // if called before the database is ready" contract.
+        if (!::PublicIsMemorySystemReady || !::PublicIsMemorySystemReady()) {
+            return "[]";
+        }
         // SkyrimNet expects nullptr (not "") for "no filter" — passing an
         // empty C-string makes it route through the filtering branch and
         // crash. IntelEngine's MemoryDB::GetFormattedRecentEvents uses the

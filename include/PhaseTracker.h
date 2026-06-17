@@ -40,9 +40,10 @@ namespace NarrativeEngine::PhaseTracker
     // Inverse of PhaseName. Returns nullopt on unrecognized input.
     std::optional<Phase> PhaseFromName(std::string_view name);
 
-    // Returns the immediate successor in Freytag order, or nullopt at
-    // Resolution (Resolution is terminal — re-arcing is a later-phase concern).
-    std::optional<Phase> NextPhase(Phase p);
+    // Returns the immediate successor in Freytag order. The loop is
+    // **cyclical**: NextPhase(Resolution) wraps to Exposition. There is no
+    // terminal phase, so this is total — every Phase has a valid successor.
+    Phase NextPhase(Phase p);
 
     // Current phase. Thread-safe.
     Phase Get();

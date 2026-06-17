@@ -150,10 +150,22 @@ if(DEFINED OUTPUT_FOLDER)
     # lands at `<OUTPUT_FOLDER>/SKSE/Plugins/NarrativeEngine.ini`.
     #
     # We enumerate at configure time via GLOB_RECURSE (CONFIGURE_DEPENDS makes
-    # the glob track add/remove). Each file gets a `copy_if_different` post-
-    # build command so unchanged files don't get re-stamped on every build.
+    # the glob re-run at build time and re-trigger configure if the file list
+    # changed). Each file is wired as the OUTPUT of a custom command whose
+    # input is the source-side file, then aggregated into a `deploy_statics`
+    # target that's added to ALL. Two consequences:
+    #
+    #   * Editing a static file alone (no C++ touched) still triggers
+    #     deployment — Ninja sees the OUTPUT is stale relative to its DEPENDS
+    #     input and runs the copy. The previous POST_BUILD-of-main-target
+    #     pattern only fired when the DLL actually re-linked, so prompt-only
+    #     edits would silently skip the deploy.
+    #   * Adding/removing a file is picked up by CONFIGURE_DEPENDS on the next
+    #     build. (Removed files leave their previous deploy behind in the mod
+    #     folder — we don't currently sweep stale outputs.)
+    #
     # `make_directory` is idempotent, so multiple files in the same destination
-    # subdir cause no issues.
+    # subdir cause no issues. `copy_if_different` skips no-op writes.
     set(STATICS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/statics")
     if(IS_DIRECTORY "${STATICS_SOURCE_DIR}")
         file(GLOB_RECURSE STATICS_FILES CONFIGURE_DEPENDS
@@ -161,18 +173,21 @@ if(DEFINED OUTPUT_FOLDER)
             "${STATICS_SOURCE_DIR}/*")
         if(STATICS_FILES)
             message(STATUS "Statics deploy: ${STATICS_SOURCE_DIR} -> ${OUTPUT_FOLDER}")
+            set(STATICS_DEPLOY_OUTPUTS "")
             foreach(rel IN LISTS STATICS_FILES)
                 set(src "${STATICS_SOURCE_DIR}/${rel}")
                 set(dst "${OUTPUT_FOLDER}/${rel}")
                 get_filename_component(dst_dir "${dst}" DIRECTORY)
                 add_custom_command(
-                    TARGET "${PROJECT_NAME}"
-                    POST_BUILD
+                    OUTPUT "${dst}"
+                    DEPENDS "${src}"
                     COMMAND "${CMAKE_COMMAND}" -E make_directory "${dst_dir}"
                     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${src}" "${dst}"
                     VERBATIM
                 )
+                list(APPEND STATICS_DEPLOY_OUTPUTS "${dst}")
             endforeach()
+            add_custom_target(deploy_statics ALL DEPENDS ${STATICS_DEPLOY_OUTPUTS})
         endif()
     endif()
 

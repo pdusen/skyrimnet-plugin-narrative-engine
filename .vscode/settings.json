@@ -4,6 +4,22 @@
     // extension's own legacy "kit" UI.
     "cmake.useCMakePresets": "always",
 
+    // Default to local-release for both configure and build so the IDE's
+    // build button (Ctrl+Shift+B / status-bar Build) lands the same DLL as
+    // `pwsh -File build.ps1 build` (whose default is also local-release).
+    //
+    // Without these pins, CMake Tools picks the first non-hidden preset
+    // listed in CMakePresets.json — which is `debug`, an unprefixed preset
+    // that builds into `build/debug/` with `/MDd` debug-CRT linkage. That
+    // DLL crashes against SkyrimNet's release-CRT std::string ABI; see
+    // CLAUDE.md's "Building C++ changes" section for the full rationale.
+    //
+    // Override per-session via the Command Palette: "CMake: Select Configure
+    // Preset" / "CMake: Select Build Preset" (choose local-debug for STL
+    // asserts on non-SkyrimNet code paths).
+    "cmake.configurePreset": "local-release",
+    "cmake.buildPreset": "local-release",
+
     // Auto-reconfigure when CMake files change so the IntelliSense provider
     // sees new TUs without a manual configure pass.
     "cmake.configureOnEdit": true,
@@ -20,9 +36,11 @@
     // also state explicitly here.
     "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
 
-    // Ignore the workspace-root compile_commands.json from source control
-    // hygiene checks (it's a build artifact mirrored by cmake.copyCompileCommands).
+    // SkyrimNet's `.prompt` files are Jinja templates whose rendered output
+    // is Markdown fed to an LLM. `jinja-md` (provided by Better Jinja —
+    // samuelcolvin.jinjahtml) highlights both layers: Jinja control flow
+    // (`{% if %}`, `{{ var }}`) AND the Markdown structure between the tags.
     "files.associations": {
-        "*.prompt": "jinja"
+        "*.prompt": "jinja-md"
     }
 }

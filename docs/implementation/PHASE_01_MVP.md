@@ -159,8 +159,8 @@ Plumbing layers (each described in detail in the implementation plan below):
     prompt template (`0155_ne_narrative_state.prompt`) that renders the current Director state into every NPC's
     LLM context as one qualitative sentence.
 12. **Director prompt template** — one `.prompt` file at
-    `SKSE/Plugins/SkyrimNet/prompts/narrative_director.prompt` instructing the LLM to score tension and produce
-    the Director's structured decision.
+    `SKSE/Plugins/SkyrimNet/prompts/narrative_engine_story_eval.prompt` instructing the LLM to score tension
+    and produce the Director's structured decision.
 13. **PrismaUI integration** — `LoadLibraryA`-soft-linked C++ wrapper over PrismaUI's public API. Graceful
     degradation when PrismaUI is uninstalled.
 14. **Dashboard build pipeline** — a `dashboard/` directory at the project root with `package.json`,
@@ -496,6 +496,8 @@ file at … using defaults"). Set `bDebugMode=1` in a hand-authored INI; the log
 - `include/PhaseTracker.h` — `Phase` enum (`Exposition`, `RisingAction`, `Climax`, `FallingAction`,
   `Resolution`), `PhaseName(p)` / `PhaseFromName(s)` / `NextPhase(p)` helpers, and the namespace API
   (`Get`, `TimeInPhaseSeconds`, `AdvanceTo`, `Reset`, `Tick`, `OnSave`, `OnLoad`, `OnRevert`).
+  - `NextPhase(p)` is **total** and **cyclical** — `NextPhase(Resolution) == Exposition`. There is no
+    terminal phase; the Director loop arcs continuously.
 - `src/PhaseTracker.cpp` — implementation. Storage: `std::mutex` + current phase + accumulated base seconds
   - a `std::chrono::steady_clock` anchor (`g_lastSampleTime`).
 
@@ -689,20 +691,21 @@ and contains the expected keys.
 
 ### Step 11 — Phase C: the LLM call
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** wraps `SkyrimNetAPI::SendCustomPromptToLLM` with the prompt template name MVP uses; the callback
 parses the response and marshals back to the main thread.
 
 **Specifics:**
 
-- The Director uses prompt template name `"narrative_director"` (created in Step 13) and variant `""` (default).
+- The Director uses prompt template name `"narrative_engine_story_eval"` (created in Step 13) and variant `""`
+  (default).
 - `BeginEvaluation()` flow:
   1. Atomic compare-and-swap on an `inFlight` flag to guarantee single concurrent evaluation.
   2. `Snapshot s = BuildSnapshot();` on the main thread.
   3. `AsyncDispatch::EnqueueWork([s = std::move(s)]() mutable { … })` for the worker.
   4. Worker calls `BuildPromptContext(s)` → `std::string ctx`.
-  5. Worker calls `SkyrimNetAPI::SendCustomPromptToLLM("narrative_director", "", ctx, callback)`.
+  5. Worker calls `SkyrimNetAPI::SendCustomPromptToLLM("narrative_engine_story_eval", "", ctx, callback)`.
   6. Callback (on SkyrimNet's thread) calls `ParseDecision(response, snapshot)` → `DecisionRecord`.
   7. Callback `MarshalToMainThread([rec] { ApplyDecision(rec); inFlight = false; })`.
 - If `SendCustomPromptToLLM` returns false (queue failure), set `inFlight = false` and log a warning. Don't
@@ -857,34 +860,42 @@ to no-op if SkyrimNet is unavailable (the wrapper returns false from `RegisterDe
 
 ---
 
-### Step 13 — The Director's prompt template (`narrative_director.prompt`)
+### Step 13 — The Director's prompt template (`narrative_engine_story_eval.prompt`)
 
 - [ ] Complete
 
 **Goal:** the actual prompt SkyrimNet hands to the LLM when we call
-`SendCustomPromptToLLM("narrative_director", …)`.
+`SendCustomPromptToLLM("narrative_engine_story_eval", …)`.
 
 **Files:**
 
-- `C:\Modlists\NGVO\mods\NarrativeEngine\SKSE\Plugins\SkyrimNet\prompts\narrative_director.prompt`
+- `C:\Modlists\NGVO\mods\NarrativeEngine\SKSE\Plugins\SkyrimNet\prompts\narrative_engine_story_eval.prompt`
 
 **Specifics:**
 
-- Jinja2-style template (SkyrimNet renders these through its Inja engine).
+- Jinja2-style template (SkyrimNet renders these through its Inja engine). Follows the house style in
+  [`../CUSTOM_PROMPTS.md`](../CUSTOM_PROMPTS.md) — `[ system ] ... [ end system ]` + `[ user ] ... [ end user ]`,
+  format-first/format-last, no trigger-cadence language, `{% if %}`-hide whole sections rather than rendering
+  placeholders.
 - The template receives the context JSON from `BuildPromptContext`. It can reference the keys directly:
-  `{{ current_phase }}`, `{{ time_in_phase_seconds }}`, etc.
+  `{{ current_phase }}`, `{{ next_phase }}`, `{{ time_in_phase_seconds }}`, etc.
+- **Binary stay/advance phrasing.** We deliberately don't ask the LLM to pick from all five phase names. The
+  prompt presents two things — the current phase and the immediate next phase (from `BuildPromptContext`'s
+  `next_phase` field, which the C++ side computes from `PhaseTracker::NextPhase`) — and asks for a boolean
+  `advance_phase`. Because the loop is cyclical (`NextPhase(Resolution) == Exposition`), `next_phase` is
+  always a valid Freytag-pyramid phase name; the prompt has no terminal special case. The "never skip, never
+  go backwards" invariant lives in C++ and isn't cognitive load on the model.
 - The instructions tell the LLM to:
   - Score current tension (0–100).
-  - Decide whether to remain in the current Freytag phase or advance to the next one.
-  - Refuse to advance more than one phase per tick.
-  - Refuse to act if any Alpha Canon signal is active (set `"action": null`).
+  - Decide whether to stay (`advance_phase: false`) or advance to the named next phase (`advance_phase: true`).
+  - Lean toward continuity when any Alpha Canon signal is active.
   - Produce a one-sentence narrative note explaining the rationale.
 - Response format is a strict JSON object — no markdown fences:
 
   ```json
   {
     "tension_score": <int 0..100>,
-    "phase": "<Exposition|RisingAction|Climax|FallingAction|Resolution>",
+    "advance_phase": <bool>,
     "narrative_note": "<≤200 chars>"
   }
   ```
@@ -924,8 +935,11 @@ into `DecisionLog` (and optionally advancing the phase tracker) is the entire "a
   - Parses the JSON via `nlohmann::json::parse(jsonString, nullptr, false)`. On parse failure, sets
     `narrativeNote = "parse_failure: <what>"` and returns.
   - Extracts `tension_score` (clamp 0..100).
-  - Extracts `phase` and, if it differs from `snapshot.currentPhase`, accepts the change only if it is
-    `NextPhase(currentPhase)`; otherwise logs a warning and discards the advancement.
+  - Extracts `advance_phase` (bool). When `true`, sets `advancedToPhase` to
+    `NextPhase(snapshot.currentPhase)` — which is always a valid phase since the loop is cyclical
+    (`NextPhase(Resolution) == Exposition`). When `false`, leaves `advancedToPhase` as `nullopt`. The "no
+    skip, no rewind" invariant is enforced here in C++ rather than asked of the LLM; the prompt only exposes
+    the binary stay/advance choice.
   - Extracts `narrative_note` (clamp to 200 chars).
   - `actionSelected` is left as the empty string for MVP (no actions exist).
 - `void ApplyDecision(const DecisionRecord&)` (main thread):
@@ -1446,7 +1460,7 @@ Deployed dashboard payload (post-`npm run build` + deploy step):
 
 SkyrimNet assets:
 
-- `C:\Modlists\NGVO\mods\NarrativeEngine\SKSE\Plugins\SkyrimNet\prompts\narrative_director.prompt` — the
+- `C:\Modlists\NGVO\mods\NarrativeEngine\SKSE\Plugins\SkyrimNet\prompts\narrative_engine_story_eval.prompt` — the
   Director's own LLM prompt (Step 13).
 - `C:\Modlists\NGVO\mods\NarrativeEngine\SKSE\Plugins\SkyrimNet\prompts\submodules\system_head\0155_ne_narrative_state.prompt`
   — the per-NPC narrative-state injection submodule (Step 12).

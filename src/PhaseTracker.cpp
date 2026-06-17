@@ -66,12 +66,13 @@ namespace NarrativeEngine::PhaseTracker
         return std::nullopt;
     }
 
-    std::optional<Phase> NextPhase(Phase p)
+    Phase NextPhase(Phase p)
     {
         const auto idx = static_cast<std::size_t>(p);
+        // Cyclical: Resolution wraps back to Exposition. An out-of-range
+        // input is clamped to the start of the cycle as a defensive fallback.
         if (idx + 1 >= kPhaseNames.size()) {
-            // Resolution (or invalid) — no further advancement.
-            return std::nullopt;
+            return Phase::Exposition;
         }
         return static_cast<Phase>(idx + 1);
     }
