@@ -36,6 +36,72 @@ namespace NarrativeEngine::EvaluationPipeline
             return std::chrono::duration<double>(now - StartTime()).count();
         }
 
+        // Social-media-style relative time bucketing. Precision tapers off
+        // the further back in time we go: seconds → minutes → hours → days
+        // → weeks. Anything in the future or zero-ish reads as "just now".
+        std::string FormatRelativeGameTime(double secondsAgo)
+        {
+            if (secondsAgo < 60.0)        return "just now";
+            if (secondsAgo < 3600.0) {
+                const int m = static_cast<int>(secondsAgo / 60.0);
+                return std::to_string(m) + (m == 1 ? " minute ago" : " minutes ago");
+            }
+            if (secondsAgo < 86400.0) {
+                const int h = static_cast<int>(secondsAgo / 3600.0);
+                return std::to_string(h) + (h == 1 ? " hour ago" : " hours ago");
+            }
+            if (secondsAgo < 7.0 * 86400.0) {
+                const int d = static_cast<int>(secondsAgo / 86400.0);
+                return std::to_string(d) + (d == 1 ? " day ago" : " days ago");
+            }
+            const int w = static_cast<int>(secondsAgo / (7.0 * 86400.0));
+            return std::to_string(w) + (w == 1 ? " week ago" : " weeks ago");
+        }
+
+        // Strip leading/trailing whitespace and a wrapping markdown code
+        // fence (```json ... ``` or ``` ... ```) if present. LLMs sometimes
+        // ignore the "no fences" instruction and wrap their JSON output;
+        // this is a small best-effort tolerance so a fenced response still
+        // parses instead of becoming a parse_failure record.
+        std::string StripMarkdownFences(const std::string &input)
+        {
+            auto isSpace = [](char c) {
+                return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+            };
+            std::size_t start = 0;
+            std::size_t end   = input.size();
+            while (start < end && isSpace(input[start])) ++start;
+            while (end > start && isSpace(input[end - 1])) --end;
+            if (start == end) {
+                return {};
+            }
+
+            std::string trimmed = input.substr(start, end - start);
+            if (trimmed.size() < 6 || trimmed.substr(0, 3) != "```") {
+                return trimmed;
+            }
+
+            // Opening fence found. Skip past the first newline (and the
+            // optional language tag like "json" on the fence line).
+            const std::size_t firstNewline = trimmed.find('\n');
+            if (firstNewline == std::string::npos) {
+                return trimmed;
+            }
+            std::string body = trimmed.substr(firstNewline + 1);
+
+            // Strip the closing fence if it's at the end.
+            const std::size_t closing = body.rfind("```");
+            if (closing != std::string::npos) {
+                body = body.substr(0, closing);
+            }
+
+            // Re-trim trailing whitespace after the closing fence removal.
+            std::size_t bodyEnd = body.size();
+            while (bodyEnd > 0 && isSpace(body[bodyEnd - 1])) --bodyEnd;
+            body.resize(bodyEnd);
+            return body;
+        }
+
         // Render the human-readable per-event `text` field that the prompt
         // template expects. SkyrimNet's events all carry a `type` string
         // and a `data` object whose shape varies by type; we collapse each
@@ -44,7 +110,7 @@ namespace NarrativeEngine::EvaluationPipeline
         //
         // Operates on the event array in place — each object gains a `text`
         // key. Safe against missing fields (treats them as empty strings).
-        void FormatEventsText(nlohmann::json &events)
+        void FormatEventsText(nlohmann::json &events, double currentGameTimeSeconds)
         {
             for (auto &evt : events) {
                 if (!evt.is_object()) continue;
@@ -100,14 +166,16 @@ namespace NarrativeEngine::EvaluationPipeline
                     text = data ? data->dump() : std::string{"(no data)"};
                 }
 
-                // Prepend the in-game timestamp (SkyrimNet's pre-formatted
-                // `gameTimeStr`, e.g. "11:22 AM, Sundas, 31st of Last Seed,
-                // 4E 201"). Putting game time on every line lets the LLM
-                // reason about pacing without us having to teach it the
-                // gameTime float epoch. Falls back to no prefix if missing.
-                const std::string timestamp = evt.value("gameTimeStr", std::string{});
-                if (!timestamp.empty()) {
-                    text = "[" + timestamp + "] " + text;
+                // Prepend a relative-time prefix ("3 minutes ago", "2 days
+                // ago", "just now") computed against the snapshot's current
+                // game time. This gives the LLM an immediate sense of pacing
+                // — knowing how long since the last catalyst matters more
+                // than the absolute timestamp. Falls back to no prefix if
+                // the event lacks a gameTime field.
+                if (evt.contains("gameTime") && evt["gameTime"].is_number()) {
+                    const double eventTime = evt["gameTime"].get<double>();
+                    const double delta = currentGameTimeSeconds - eventTime;
+                    text = "[" + FormatRelativeGameTime(delta < 0.0 ? 0.0 : delta) + "] " + text;
                 }
 
                 evt["text"] = std::move(text);
@@ -164,8 +232,9 @@ namespace NarrativeEngine::EvaluationPipeline
         Snapshot s;
         s.realTimeSec = SecondsSinceStart();
 
-        s.currentPhase = PhaseTracker::PhaseName(PhaseTracker::Get());
-        s.timeInPhaseSeconds = PhaseTracker::TimeInPhaseSeconds();
+        s.currentPhase           = PhaseTracker::PhaseName(PhaseTracker::Get());
+        s.timeInPhaseSeconds     = PhaseTracker::TimeInPhaseSeconds();
+        s.phaseEnteredAtGameTime = PhaseTracker::PhaseEnteredAtGameTime();
         if (debug)
             logger::debug("BuildSnapshot: phase OK");
 
@@ -213,6 +282,10 @@ namespace NarrativeEngine::EvaluationPipeline
         {
             s.player.gameDaysPassed = cal->GetDaysPassed();
             s.player.timeOfDayHours = cal->GetHour();
+            // Convert days-since-epoch → seconds-since-epoch to match
+            // SkyrimNet's per-event gameTime field units. Used by
+            // FormatEventsText for "N units ago" relative timestamps.
+            s.player.gameTimeSeconds = static_cast<double>(cal->GetDaysPassed()) * 86400.0;
         }
         if (debug)
             logger::debug("BuildSnapshot: calendar OK");
@@ -260,14 +333,35 @@ namespace NarrativeEngine::EvaluationPipeline
                 /*allow_exceptions=*/false);
             if (parsed.is_array())
             {
+                // Filter to events that occurred during the current phase.
+                // Events from prior phases have already been "consumed" by
+                // whichever past decision drove the previous advance — if
+                // we leave them in, the LLM keeps re-justifying advances
+                // against the same set of events tick after tick, walking
+                // the phase cycle on idle time alone.
+                const double cutoff = snapshot.phaseEnteredAtGameTime;
+                if (cutoff > 0.0) {
+                    nlohmann::json filtered = nlohmann::json::array();
+                    for (auto &evt : parsed) {
+                        if (!evt.is_object()) continue;
+                        const double et = evt.value("gameTime", 0.0);
+                        if (et >= cutoff) {
+                            filtered.push_back(std::move(evt));
+                        }
+                    }
+                    parsed = std::move(filtered);
+                }
+
                 std::reverse(parsed.begin(), parsed.end());
 
                 // SkyrimNet events have a `type` discriminator and an
                 // arbitrary `data` payload that varies by type. The prompt
                 // template can't reasonably branch on every shape, so we
                 // synthesize a human-readable `evt.text` here. The template
-                // then just renders `{{ evt.text }}` per event.
-                FormatEventsText(parsed);
+                // then just renders `{{ evt.text }}` per event. Passing the
+                // snapshot's current game time lets each event line carry a
+                // "N units ago" relative timestamp.
+                FormatEventsText(parsed, snapshot.player.gameTimeSeconds);
 
                 ctx["recent_events"] = std::move(parsed);
             }
@@ -313,12 +407,14 @@ namespace NarrativeEngine::EvaluationPipeline
             char formIdHex[16];
             std::snprintf(formIdHex, sizeof(formIdHex), "0x%08X", snapshot.player.formID);
             ctx["player_context"] = {
-                {"player_form_id", std::string(formIdHex)},
-                {"location_name", snapshot.player.locationName},
-                {"cell_name", snapshot.player.cellName},
+                {"player_form_id",   std::string(formIdHex)},
+                {"location_name",    snapshot.player.locationName},
+                {"cell_name",        snapshot.player.cellName},
                 {"cell_is_interior", snapshot.player.cellIsInterior},
-                {"game_days_passed", snapshot.player.gameDaysPassed},
-                {"time_of_day_hours", snapshot.player.timeOfDayHours},
+                // No game-time field — the prompt template renders the
+                // current time via SkyrimNet's built-in `{{ gameTime }}`
+                // decorator, so we don't need to push it through the
+                // context JSON ourselves.
             };
         }
 
@@ -327,22 +423,87 @@ namespace NarrativeEngine::EvaluationPipeline
         return ctx.dump();
     }
 
-    DecisionLog::DecisionRecord ParseDecision(const std::string & /*jsonResponse*/,
+    DecisionLog::DecisionRecord ParseDecision(const std::string &jsonResponse,
                                               const Snapshot &snapshot)
     {
-        // Step 14 — Phase D parser. For now, return a snapshot-seeded
-        // record so callers (when wired) get something sensible.
+        // Pre-seed the record from the snapshot so even a total parse
+        // failure produces a valid, dashboard-displayable record (we still
+        // know the time, phase, and alpha-canon snapshot regardless of
+        // what the LLM said).
         DecisionLog::DecisionRecord r;
-        r.realTimeSec = snapshot.realTimeSec;
-        r.gameDaysPassed = snapshot.player.gameDaysPassed;
-        r.currentPhase = PhaseTracker::Get();
+        r.realTimeSec             = snapshot.realTimeSec;
+        r.gameDaysPassed          = snapshot.player.gameDaysPassed;
+        r.currentPhase            = PhaseTracker::PhaseFromName(snapshot.currentPhase)
+                                        .value_or(PhaseTracker::Phase::Exposition);
         r.alphaCanonActiveSignals = snapshot.alphaCanonSignalBitmask;
+        // actionSelected stays empty for MVP (no in-world Director actions).
+
+        const std::string body = StripMarkdownFences(jsonResponse);
+        const auto parsed = nlohmann::json::parse(body, /*cb=*/nullptr,
+                                                  /*allow_exceptions=*/false);
+        if (parsed.is_discarded()) {
+            r.narrativeNote = "parse_failure: invalid JSON";
+            logger::warn("ParseDecision: invalid JSON response: {}", jsonResponse);
+            return r;
+        }
+        if (!parsed.is_object()) {
+            r.narrativeNote = "parse_failure: response was not a JSON object";
+            logger::warn("ParseDecision: response wasn't an object: {}", jsonResponse);
+            return r;
+        }
+
+        // tension_score — accept any number, clamp to 0..100.
+        if (auto it = parsed.find("tension_score"); it != parsed.end() && it->is_number()) {
+            const double raw = it->get<double>();
+            const int clamped = std::clamp(static_cast<int>(raw), 0, 100);
+            r.tensionScore = static_cast<std::uint32_t>(clamped);
+        }
+
+        // advance_phase — boolean. true → advancedToPhase = NextPhase(current),
+        // which is always a valid phase since the loop is cyclical
+        // (NextPhase(Resolution) == Exposition). false → leave nullopt.
+        if (auto it = parsed.find("advance_phase"); it != parsed.end() && it->is_boolean()) {
+            if (it->get<bool>()) {
+                r.advancedToPhase = PhaseTracker::NextPhase(r.currentPhase);
+            }
+        }
+
+        // narrative_note — clamp to 200 chars.
+        if (auto it = parsed.find("narrative_note"); it != parsed.end() && it->is_string()) {
+            std::string note = it->get<std::string>();
+            if (note.size() > 200) {
+                note.resize(200);
+            }
+            r.narrativeNote = std::move(note);
+        }
+
         return r;
     }
 
-    void ApplyDecision(const DecisionLog::DecisionRecord & /*record*/)
+    void ApplyDecision(const DecisionLog::DecisionRecord &record)
     {
-        // Step 14 — Phase D applier. Not yet implemented.
+        // Append first so the next tick's snapshot sees this decision in
+        // its `decisionLogTail`. The `ne_narrative_tension` decorator
+        // (Step 12) will read this record's tensionScore on the very next
+        // NPC bio render.
+        DecisionLog::Append(record);
+
+        // Phase advance, if any. AdvanceTo zeroes time-in-phase. The
+        // `ne_narrative_phase` decorator will see the new phase on the
+        // next bio render.
+        if (record.advancedToPhase) {
+            PhaseTracker::AdvanceTo(*record.advancedToPhase);
+        }
+
+        if (Settings::Get().debugMode) {
+            logger::debug(
+                "ApplyDecision: tension={} advance={} note=\"{}\"",
+                record.tensionScore,
+                record.advancedToPhase
+                    ? PhaseTracker::PhaseName(*record.advancedToPhase)
+                    : "(no)",
+                record.narrativeNote);
+        }
     }
 
     void BeginEvaluation()

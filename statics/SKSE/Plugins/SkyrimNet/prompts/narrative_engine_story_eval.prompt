@@ -51,7 +51,7 @@ call to make from the full picture.
 - Time in current phase: {{ time_in_phase_seconds }} seconds of real time
 - Player location: {{ player_context.location_name }}
 - Cell: {{ player_context.cell_name }} ({% if player_context.cell_is_interior %}interior{% else %}exterior{% endif %})
-- Game time: day {{ player_context.game_days_passed }}, hour {{ player_context.time_of_day_hours }}
+- Game time: {{ gameTime }}
 
 {% if length(alpha_canon_signals) > 0 %}
 ## Active engine signals
@@ -61,7 +61,7 @@ call to make from the full picture.
 {% endif %}
 
 {% if length(recent_events) > 0 %}
-## Recent gameplay events (newest last)
+## Events since entering current phase (newest last)
 
 {% for evt in recent_events %}- [{{ evt.type }}] {{ evt.text }}
 {% endfor %}

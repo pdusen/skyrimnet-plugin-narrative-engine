@@ -22,6 +22,13 @@ namespace NarrativeEngine
         bool          cellIsInterior  = false;
         float         gameDaysPassed  = 0.0f;  // Calendar::GetDaysPassed()
         float         timeOfDayHours  = 0.0f;  // Calendar::GetHour() — [0,24)
+        // Cumulative game-seconds since session epoch — same units as
+        // SkyrimNet's per-event `gameTime` field, so we can compute
+        // "N minutes/hours/days ago" relative timestamps for events. Not
+        // sent to the prompt template; used C++-side only by FormatEventsText.
+        // (The prompt's absolute "current game time" line is rendered by
+        // SkyrimNet's built-in `{{ gameTime }}` decorator, not by us.)
+        double        gameTimeSeconds = 0.0;
     };
 
     struct Snapshot
@@ -33,6 +40,12 @@ namespace NarrativeEngine
         // PhaseTracker state at snapshot time.
         std::string currentPhase;          // PhaseName(PhaseTracker::Get())
         float       timeInPhaseSeconds = 0.0f;
+        // Cumulative game-seconds-since-session-epoch when the current
+        // phase was entered. Used in BuildPromptContext to filter
+        // recent_events to only those that occurred during the current
+        // phase — events from prior phases have already been "consumed"
+        // by past decisions and shouldn't re-justify another advance.
+        double      phaseEnteredAtGameTime = 0.0;
 
         // Raw JSON string from SkyrimNetAPI::GetRecentEvents(0, N, "").
         // Passed through to the prompt context verbatim — no client-side

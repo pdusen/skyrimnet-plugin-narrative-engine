@@ -866,7 +866,7 @@ to no-op if SkyrimNet is unavailable (the wrapper returns false from `RegisterDe
 
 ### Step 13 — The Director's prompt template + SkyrimNet manifest
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** the actual prompt SkyrimNet hands to the LLM when we call
 `SendCustomPromptToLLM("narrative_engine_story_eval", "narrative_engine_director", …)`, plus the manifest
@@ -919,8 +919,13 @@ same pattern — see its `manifest.yaml` for the precedent.)
 - The instructions tell the LLM to:
   - Score current tension (0–100).
   - Decide whether to stay (`advance_phase: false`) or advance to the named next phase (`advance_phase: true`).
-  - Lean toward continuity when any Alpha Canon signal is active.
   - Produce a one-sentence narrative note explaining the rationale.
+- **No hard limiters on the advance decision.** The Alpha Canon signals, recent events, and decision history
+  are all presented as *informational input*, not as constraints biasing the decision either way. The LLM
+  integrates the full picture and makes its own judgment call. (Earlier drafts of this prompt had a "lean
+  toward continuity if Alpha Canon active" rule — it caused the LLM to under-weight player-driven violence
+  because `InActiveCombat` triggered the constraint even during catalyst-worthy events. The fix was to drop
+  the rule, not to enumerate exceptions.)
 - Response format is a strict JSON object — no markdown fences:
 
   ```json
@@ -958,7 +963,7 @@ same is true for the `system_head` submodule from Step 12.
 
 ### Step 14 — Phase D: decision parser and applier
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** parses the LLM JSON response into a `DecisionRecord`, gates phase advancement, and writes the
 decision log entry. There is no in-world action to fire — the narrative-state injection from Step 12 reads
