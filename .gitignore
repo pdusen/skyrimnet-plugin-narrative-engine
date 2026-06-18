@@ -6,3 +6,7 @@ vcpkg_installed/
 CMakeUserPresets.json
 compile_commands.json
 *.user
+
+# Dashboard build artifacts + npm dependency tree (Step 15).
+dashboard/node_modules/
+dashboard/dist/

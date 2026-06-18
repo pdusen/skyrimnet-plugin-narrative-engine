@@ -1,6 +1,7 @@
 #include <Plugin.h>
 
 #include <AsyncDispatch.h>
+#include <DashboardUIManager.h>
 #include <DecisionLog.h>
 #include <Decorators.h>
 #include <PhaseTracker.h>
@@ -35,6 +36,10 @@ namespace NarrativeEngine
                     // (it null-checks SkyrimNet availability internally).
                     Decorators::Register();
                     PrismaUI_API::Initialize();
+                    // DashboardUIManager creates the PrismaUI view and
+                    // registers the hotkey sink; gracefully no-ops when
+                    // PrismaUI is unavailable.
+                    DashboardUIManager::Initialize();
                     AsyncDispatch::Start();
                     break;
                 case SKSE::MessagingInterface::kNewGame:

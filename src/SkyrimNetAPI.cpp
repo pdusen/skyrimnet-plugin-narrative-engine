@@ -41,6 +41,14 @@ namespace NarrativeEngine::SkyrimNetAPI
         return g_available;
     }
 
+    int GetVersion()
+    {
+        if (!g_available || !::PublicGetVersion) {
+            return -1;
+        }
+        return ::PublicGetVersion();
+    }
+
     bool SendCustomPromptToLLM(
         const std::string& promptName,
         const std::string& variant,

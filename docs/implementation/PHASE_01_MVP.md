@@ -99,7 +99,7 @@ Why a dashboard in the MVP — and why this technology choice:
   buttons that mutate Director state. Write-side debug affordances are a later-phase concern.
 
 The dashboard's effect on the player's experience is minimal-and-deliberate: by default it's hidden; the player
-presses a hotkey (configurable + supports arbitrary modifier combinations — defaults to `F8`, can be rebound to
+presses a hotkey (configurable + supports arbitrary modifier combinations — defaults to `F7`, can be rebound to
 anything from `7` to Ctrl+Alt+Shift+`7`) to toggle it. The intent is observability for the developer and for
 curious players, not a gameplay-facing UI.
 
@@ -214,7 +214,7 @@ The user installs the build, boots Skyrim, and plays normally for 30+ minutes. A
 - During play, dialogue with NPCs subtly reflects the current narrative phase. (Hard to verify objectively
   short of A/B comparison; the log + a debug-render of the assembled SkyrimNet prompt for any NPC, showing the
   `0500_ne_narrative_state.prompt` fragment with the right tension/phase wording, is the proxy verification.)
-- The player can press the dashboard hotkey (default `F8`) to bring up the PrismaUI overlay, see the
+- The player can press the dashboard hotkey (default `F7`) to bring up the PrismaUI overlay, see the
   current Director state, watch entries appear in the recent-decisions list as ticks fire, and see
   SkyrimNet's recent-events feed refresh in the recent-events panel.
 
@@ -468,7 +468,7 @@ or missing keys fall back to defaults baked into the `Config` struct.
 - `[Director] iSkyrimNetEventTailSizeForPrompt=40` (passed as `maxCount` to `PublicGetRecentEvents` when
   building each tick's snapshot)
 - `[AlphaCanon] sDoNotDisturbCellEDIDsCSV=` (empty by default; admin can list cell EditorIDs to gate off)
-- `[Dashboard] iHotkeyVK=119` (Windows VK code for `F8`; -1 disables)
+- `[Dashboard] iHotkeyVK=118` (Windows VK code for `F7`; -1 disables)
 - `[Dashboard] iHotkeyModifiers=0` (bitmask: 1=Ctrl, 2=Shift, 4=Alt; 0 = no modifier). Any combination is
   allowed — `7` means Ctrl+Shift+Alt, `5` means Ctrl+Alt, etc.
 
@@ -1000,11 +1000,13 @@ reflecting the just-written tension band.
 
 ### Step 15 — Dashboard build pipeline (TypeScript + React + Rollup)
 
-- [ ] Complete
+- [x] Complete
 
-**Goal:** stand up a self-contained JS bundle, built from TypeScript React source via Rollup, that PrismaUI can
-load as the dashboard view. No CMake involvement — the dashboard build runs independently of the C++ build via
-`npm` scripts.
+**Goal:** stand up a self-contained JS bundle, built from TypeScript React source via Rollup, that PrismaUI
+can load as the dashboard view. **The Rollup build is orchestrated by CMake**, alongside the C++ build —
+running `pwsh -File build.ps1 build` rebuilds everything that has changed (C++ TUs, dashboard JS, prompt
+assets, the INI) and deploys the lot into the mod folder. No more "did I remember to `npm run build:deploy`
+after editing that `.tsx` file?" footgun.
 
 **Directory layout** (everything under a new `dashboard/` directory at the project root):
 
@@ -1031,11 +1033,13 @@ dashboard/
 
 - `"name": "narrativeengine-dashboard"`, `"private": true`, `"type": "module"`.
 - `"scripts"`:
-  - `"build": "rollup -c"` — produces `dist/dashboard.js` (and copies the HTML/CSS shell).
-  - `"deploy": "node deploy.mjs"` — copies `dist/*` into the mod folder's PrismaUI views path (see below).
-  - `"build:deploy": "npm run build && npm run deploy"` — convenience for "after every dashboard edit".
+  - `"build": "rollup -c"` — produces `dist/dashboard.js` (and copies the HTML/CSS shell). This is what
+    CMake invokes; you can also run it by hand for a JS-only iteration loop without going through CMake.
 - `"devDependencies"`: `react`, `react-dom` plus their `@types/*`, `typescript`, `rollup`, and the Rollup
   plugins listed below.
+
+(There is no `deploy` or `build:deploy` script. Deploy is CMake's job — see "CMake integration" below —
+so the mod folder always reflects the latest checked-in source after `pwsh -File build.ps1 build` runs.)
 
 **Rollup plugins** (in `dashboard/rollup.config.mjs`):
 
@@ -1145,21 +1149,47 @@ export interface EventEntry {
 - Minimal styling — dark background, monospace font for the log lists, padding and borders to separate the
   panels. Aim for "looks fine in a webview"; this is not a designed UI.
 
-**`dashboard/deploy.mjs`** — a small Node script that copies `dist/*` to
-`$SKYRIM_MODS_FOLDER/NarrativeEngine/PrismaUI/views/NarrativeEngine/dashboard/`. Reads the env var; errors out
-with a useful message if unset. Creates the destination directory if missing.
-
 **`.gitignore`** at the project root: add `dashboard/node_modules/` and `dashboard/dist/`.
+
+**CMake integration:**
+
+`CMakeLists.txt` orchestrates the dashboard build the same way it orchestrates the statics deploy — by
+declaring `add_custom_command(OUTPUT ... DEPENDS ...)` rules and aggregating them under an ALL target so
+Ninja runs them whenever inputs change. Sketch:
+
+1. **Locate npm.** `find_program(NPM_EXECUTABLE npm REQUIRED)`. Fatal if missing — the dashboard is part of
+   the build now, not an optional add-on.
+2. **Enumerate dashboard sources** via `file(GLOB_RECURSE CONFIGURE_DEPENDS ...)`: every `.ts`/`.tsx` under
+   `dashboard/src/`, plus `dashboard/index.html`, `dashboard/styles.css`, `dashboard/package.json`,
+   `dashboard/package-lock.json`, `dashboard/tsconfig.json`, `dashboard/rollup.config.mjs`. Any of these
+   changing should re-trigger the bundle build.
+3. **`npm install` rule.** `add_custom_command(OUTPUT dashboard/node_modules/.install-stamp
+   DEPENDS dashboard/package.json dashboard/package-lock.json COMMAND npm install COMMAND cmake -E touch
+   ...)`. The stamp file lets Ninja skip the install when dependencies haven't changed.
+4. **Bundle build rule.** `add_custom_command(OUTPUT dashboard/dist/dashboard.js dashboard/dist/index.html
+   dashboard/dist/dashboard.css DEPENDS <all-source-files> <install-stamp> COMMAND npm run build)`. Outputs
+   are the three dist files; depends on every source file plus the install stamp.
+5. **Deploy rules.** For each dist file, an `add_custom_command(OUTPUT
+   $SKYRIM_MODS_FOLDER/NarrativeEngine/PrismaUI/views/NarrativeEngine/dashboard/<file> DEPENDS
+   dashboard/dist/<file> COMMAND cmake -E copy_if_different ...)`. Same pattern as the `statics/` deploy.
+6. **Aggregate.** `add_custom_target(dashboard ALL DEPENDS <deployed-files>)`. ALL hooks it into the default
+   build so `pwsh -File build.ps1 build` always considers it.
+
+Result: editing a `.tsx` re-runs Rollup and redeploys; editing nothing re-runs nothing (Ninja's input/output
+graph handles incremental skipping). The DLL build is independent — touching only dashboard sources doesn't
+re-link the DLL, and vice versa.
 
 **Verify:**
 
-1. From the project root: `cd dashboard && npm install`. No errors.
-2. `npm run build`. Produces `dashboard/dist/dashboard.js` (~150–250 KB minified-ish; React contributes most of
-   it) plus `dashboard/dist/index.html` and `dashboard/dist/dashboard.css`. No TypeScript errors. No Rollup
-   warnings.
-3. Open `dashboard/dist/index.html` in any browser. The dashboard renders the placeholder ("Awaiting first
-   Director evaluation…"). From the browser console, call `window.updateFullState(JSON.stringify(...))` with a
-   sample object matching the `DirectorState` shape — e.g.:
+1. From a clean `build/local-release` (or after `pwsh -File build.ps1 clean`), run
+   `pwsh -File build.ps1 build`. CMake's first dashboard task runs `npm install` (slow the first time —
+   pulls react, rollup, typescript, etc.); subsequent builds skip it via the stamp file. The bundle build
+   runs next, producing `dashboard/dist/{dashboard.js, index.html, dashboard.css}` with no TypeScript
+   errors or Rollup warnings. The deploy step copies all three into
+   `$SKYRIM_MODS_FOLDER/NarrativeEngine/PrismaUI/views/NarrativeEngine/dashboard/`.
+2. Open the deployed `index.html` in any browser. The dashboard renders the placeholder ("Awaiting first
+   Director evaluation…"). From the browser console, call `window.updateFullState(JSON.stringify(...))`
+   with a sample object matching the `DirectorState` shape — e.g.:
 
    ```js
    window.updateFullState(JSON.stringify({
@@ -1178,14 +1208,17 @@ with a useful message if unset. Creates the destination directory if missing.
    ```
 
    The dashboard re-renders with the supplied state.
-4. `npm run deploy`. The files appear at
-   `C:\Modlists\NGVO\mods\NarrativeEngine\PrismaUI\views\NarrativeEngine\dashboard\`.
+3. Edit a single `.tsx` file (e.g. tweak a string in `StatusBanner.tsx`). Re-run `pwsh -File build.ps1 build`.
+   Ninja's incremental graph re-bundles + redeploys the dashboard but skips the C++ link step. Open the
+   deployed `index.html` again — the edit is visible.
+4. Edit a single `.cpp` file. Re-run `pwsh -File build.ps1 build`. Ninja relinks the DLL but skips the
+   dashboard build entirely.
 
 ---
 
 ### Step 16 — `DashboardUIManager` and Director-loop wiring
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** the C++ module that composes the JSON state blob, pushes it to the React dashboard via PrismaUI's
 JS-interop after every Director `ApplyDecision`, and toggles dashboard visibility on a configurable hotkey.
@@ -1210,8 +1243,8 @@ JS-interop after every Director `ApplyDecision`, and toggles dashboard visibilit
    the SKSE input-event-sink pattern (`RE::BSTEventSink<RE::InputEvent*>`) and dispatch on matching key
    events.
 5. **Modifier matching rule.** The configured `iHotkeyModifiers` bitmask must match **exactly** when deciding
-   whether to fire — not "at least these mods." So a hotkey registered as `F8 + Shift` (mask `2`) fires only
-   when Shift is held alone, not when Ctrl+Shift+F8 is pressed. Player-bound combos like Ctrl+Alt+Shift+`7`
+   whether to fire — not "at least these mods." So a hotkey registered as `F7 + Shift` (mask `2`) fires only
+   when Shift is held alone, not when Ctrl+Shift+F7 is pressed. Player-bound combos like Ctrl+Alt+Shift+`7`
    (mask `7`) require all three modifiers held with no others. At keypress time, query each modifier's state
    (`GetAsyncKeyState(VK_CONTROL)`, `VK_SHIFT`, `VK_MENU` for the Alt-key VK; or the equivalent from the SKSE
    input event sink's modifier flags) and compare the assembled bitmask to the configured one.
@@ -1248,12 +1281,13 @@ JS-interop after every Director `ApplyDecision`, and toggles dashboard visibilit
 
 **Verify:**
 
-1. With PrismaUI installed and the dashboard deployed (Step 15 `npm run build:deploy`), boot Skyrim, load a
-   save, wait for the first Director tick. The Papyrus log shows the tick firing. Press `F8`. The dashboard
+1. With PrismaUI installed and the dashboard deployed (a successful `pwsh -File build.ps1 build` covers
+   both the DLL and the dashboard per Step 15), boot Skyrim, load a
+   save, wait for the first Director tick. The Papyrus log shows the tick firing. Press `F7`. The dashboard
    appears, rendering the current state.
 2. Wait for another tick to fire. Without pressing anything, the dashboard's "Last evaluation" panel and the
    recent-decisions list update with the new entry.
-3. Press `F8` again. The dashboard hides.
+3. Press `F7` again. The dashboard hides.
 4. Uninstall PrismaUI, restart Skyrim. The log shows `PrismaUI: not found` and
    `DashboardUIManager: PrismaUI absent; dashboard disabled`. The Director loop continues running normally.
 
@@ -1344,7 +1378,7 @@ can verify rebinds took effect after a save reload.
    `Settings: dashboard hotkey VK=56 mods=3` (or whatever the new combo decoded to).
 5. Press the new hotkey combo in-game. The PrismaUI dashboard toggles.
 6. Uninstall MCM Helper. Boot Skyrim. The plugin loads cleanly. The MCM entry is gone; the hotkey falls back
-   to whatever's in `Data/SKSE/Plugins/NarrativeEngine.ini` (or the default F8).
+   to whatever's in `Data/SKSE/Plugins/NarrativeEngine.ini` (or the default F7).
 
 ---
 
@@ -1422,7 +1456,7 @@ The plumbing-and-feature MVP is complete when all of the below are true:
       phrased injections from the restored tension/phase.
 - [ ] Removing SkyrimNet from the load order causes the plugin to load with a clear error message; the tick
       driver still runs but evaluations are skipped (no crash).
-- [ ] With PrismaUI installed, pressing the configured hotkey (default `F8`) toggles the dashboard view. The
+- [ ] With PrismaUI installed, pressing the configured hotkey (default `F7`) toggles the dashboard view. The
       view renders the current Director state and updates within one tick of each evaluation.
 - [ ] Removing PrismaUI from the load order causes the plugin to load with a `PrismaUI: not found; dashboard
       disabled` log line. The hotkey is unregistered. The Director loop continues running.
@@ -1434,7 +1468,7 @@ The plumbing-and-feature MVP is complete when all of the below are true:
       reloading the save makes the new combo work in-game. Pressing the key alone, or with a wrong modifier
       set, does NOT toggle the dashboard.
 - [ ] Removing MCM Helper from the load order: the plugin loads cleanly, the MCM entry is gone, the hotkey
-      falls back to the value in `Data/SKSE/Plugins/NarrativeEngine.ini` (or the baked-in default `F8`).
+      falls back to the value in `Data/SKSE/Plugins/NarrativeEngine.ini` (or the baked-in default `F7`).
 
 ---
 

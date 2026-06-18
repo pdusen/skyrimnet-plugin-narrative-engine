@@ -47,6 +47,14 @@ namespace NarrativeEngine::PrismaUI_API
     void Show(ViewHandle view);
     void Hide(ViewHandle view);
 
+    // Focus / unfocus. Calling Show alone isn't enough to actually render
+    // the overlay above the game on most setups — the view also needs
+    // input focus. `pauseGame` pauses the underlying game while focused;
+    // `disableFocusMenu` suppresses PrismaUI's "press X to release focus"
+    // hint. No-op when PrismaUI is unavailable or the handle is invalid.
+    void Focus(ViewHandle view, bool pauseGame, bool disableFocusMenu);
+    void Unfocus(ViewHandle view);
+
     // True if the view is currently hidden (i.e. created but not visible).
     // Returns true when PrismaUI is unavailable — "hidden" is the sensible
     // default for a view that doesn't exist.

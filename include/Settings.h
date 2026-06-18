@@ -38,7 +38,7 @@ namespace NarrativeEngine::Settings
         std::string doNotDisturbCellEDIDsCSV;
 
         // [Dashboard]
-        int          dashboardHotkeyVK        = 119; // Windows VK code; 119 == VK_F8; -1 disables
+        int          dashboardHotkeyVK        = 118; // Windows VK code; 118 == VK_F7; -1 disables
         std::uint8_t dashboardHotkeyModifiers = 0;   // kModCtrl|kModShift|kModAlt bitmask; 0 = none
     };
 

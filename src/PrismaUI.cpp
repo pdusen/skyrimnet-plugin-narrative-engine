@@ -91,6 +91,24 @@ namespace NarrativeEngine::PrismaUI_API
         g_api->Hide(view);
     }
 
+    void Focus(ViewHandle view, bool pauseGame, bool disableFocusMenu)
+    {
+        // IVPrismaUI1::Focus(PrismaView, bool pauseGame, bool disableFocusMenu)
+        if (!g_api || view == kInvalidView) {
+            return;
+        }
+        g_api->Focus(view, pauseGame, disableFocusMenu);
+    }
+
+    void Unfocus(ViewHandle view)
+    {
+        // IVPrismaUI1::Unfocus(PrismaView)
+        if (!g_api || view == kInvalidView) {
+            return;
+        }
+        g_api->Unfocus(view);
+    }
+
     bool IsHidden(ViewHandle view)
     {
         // IVPrismaUI1::IsHidden(PrismaView)

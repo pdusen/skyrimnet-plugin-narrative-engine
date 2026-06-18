@@ -1,0 +1,194 @@
+/* NarrativeEngine dashboard — minimal dark theme.
+   "Looks fine in a webview overlay"; not a designed UI. */
+
+* {
+    box-sizing: border-box;
+}
+
+/* The PrismaUI view fills the entire game window. We don't want the
+   dashboard to fill the screen — we want a centered "window" with the
+   game still visible around the edges. Hence: transparent body, then a
+   self-contained .dashboard panel sized to its content and centered with
+   flex. The body gets a slight dim overlay so the panel reads cleanly
+   against busy backgrounds. */
+body {
+    margin: 0;
+    padding: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.35);
+    color: #d8dee9;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 5vh;
+}
+
+.dashboard {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    width: 900px;
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 16px;
+    background: #14171c;
+    border: 1px solid #3a3e46;
+    border-radius: 8px;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.65);
+}
+
+.dashboard.placeholder,
+.dashboard.error {
+    grid-template-columns: 1fr;
+    padding: 32px 24px;
+    text-align: center;
+    font-style: italic;
+}
+
+.dashboard.placeholder {
+    color: #6a6e76;
+}
+
+.dashboard.error {
+    color: #d77;
+}
+
+.status-banner {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #0f1217;
+    border: 1px solid #2a2e36;
+    border-radius: 4px;
+}
+
+.pill {
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.pill.ok {
+    background: #1f3a1f;
+    color: #9be39b;
+}
+
+.pill.bad {
+    background: #3a1f1f;
+    color: #e39b9b;
+}
+
+.panel {
+    background: #0f1217;
+    border: 1px solid #2a2e36;
+    border-radius: 4px;
+    padding: 12px;
+}
+
+.panel h2 {
+    margin: 0 0 8px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #6a6e76;
+}
+
+.phase-panel .phase-name {
+    font-size: 18px;
+    color: #c9d5e6;
+    margin-bottom: 4px;
+}
+
+.phase-panel .phase-time {
+    color: #8a8e96;
+    font-size: 12px;
+}
+
+.last-eval .tension {
+    font-size: 16px;
+    color: #c9d5e6;
+}
+
+.last-eval .advance {
+    color: #9be3c9;
+    margin-top: 4px;
+}
+
+.last-eval .note {
+    font-style: italic;
+    color: #a8b0bd;
+    margin-top: 6px;
+}
+
+.last-eval .signals {
+    color: #8a8e96;
+    font-size: 11px;
+    margin-top: 4px;
+}
+
+.decision-list,
+.event-list {
+    grid-column: 1 / -1;
+}
+
+.decision-list ul,
+.event-list ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.decision-list li,
+.event-list li {
+    padding: 4px 0;
+    border-bottom: 1px solid #1d2026;
+    display: flex;
+    gap: 10px;
+}
+
+.decision-list li:last-child,
+.event-list li:last-child {
+    border-bottom: none;
+}
+
+.decision-list .tension {
+    color: #9be3c9;
+    min-width: 36px;
+    text-align: right;
+}
+
+.decision-list .phase {
+    color: #c9d5e6;
+    min-width: 110px;
+}
+
+.decision-list .note {
+    color: #a8b0bd;
+    flex: 1;
+}
+
+.event-list .type {
+    color: #9bc3e3;
+    min-width: 140px;
+}
+
+.event-list .text {
+    color: #c9d5e6;
+    flex: 1;
+}
+
+.placeholder-inline {
+    color: #5a5e66;
+    font-style: italic;
+}

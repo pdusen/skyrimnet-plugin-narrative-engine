@@ -191,6 +191,94 @@ if(DEFINED OUTPUT_FOLDER)
         endif()
     endif()
 
+    # ---------------------------------------------------------------------
+    # Dashboard (TypeScript + React + Rollup) build & deploy
+    # ---------------------------------------------------------------------
+    #
+    # The dashboard JS bundle is part of the unified build. Editing any
+    # `dashboard/` source triggers a Rollup re-bundle on the next
+    # `pwsh -File build.ps1 build` and the dist outputs deploy into the mod
+    # folder's PrismaUI views path alongside the DLL and statics. CMake
+    # doesn't run Rollup itself — it shells out to npm — but tracks the
+    # input/output graph so Ninja skips unchanged work in both directions
+    # (touch only .tsx → only the bundle rebuilds; touch only .cpp → only
+    # the DLL relinks).
+    #
+    # Required: `npm` on PATH (Node.js install). Fatal if missing — the
+    # dashboard is part of the build, not an optional add-on.
+    find_program(NPM_EXECUTABLE npm REQUIRED)
+
+    set(DASHBOARD_DIR        "${CMAKE_SOURCE_DIR}/dashboard")
+    set(DASHBOARD_DIST_DIR   "${DASHBOARD_DIR}/dist")
+    set(DASHBOARD_INSTALL_STAMP "${DASHBOARD_DIR}/node_modules/.cmake-install-stamp")
+    set(DASHBOARD_DEPLOY_DIR "${OUTPUT_FOLDER}/PrismaUI/views/NarrativeEngine/dashboard")
+
+    # 1. `npm install` — gated on package*.json so the slow install only
+    # runs when dependencies actually change. The stamp file is what Ninja
+    # tracks; `cmake -E touch` writes it after a successful install.
+    file(GLOB DASHBOARD_NPM_MANIFEST CONFIGURE_DEPENDS
+        "${DASHBOARD_DIR}/package.json"
+        "${DASHBOARD_DIR}/package-lock.json"
+    )
+    add_custom_command(
+        OUTPUT "${DASHBOARD_INSTALL_STAMP}"
+        DEPENDS ${DASHBOARD_NPM_MANIFEST}
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${DASHBOARD_DIR}/node_modules"
+        COMMAND "${NPM_EXECUTABLE}" install --no-audit --no-fund --silent
+        COMMAND "${CMAKE_COMMAND}" -E touch "${DASHBOARD_INSTALL_STAMP}"
+        WORKING_DIRECTORY "${DASHBOARD_DIR}"
+        COMMENT "Installing dashboard npm dependencies"
+        VERBATIM
+    )
+
+    # 2. Rollup bundle build — depends on every .ts/.tsx source plus the
+    # static shell, the configs, and the install stamp.
+    file(GLOB_RECURSE DASHBOARD_SOURCES CONFIGURE_DEPENDS
+        "${DASHBOARD_DIR}/src/*.ts"
+        "${DASHBOARD_DIR}/src/*.tsx"
+    )
+    set(DASHBOARD_BUILD_INPUTS
+        ${DASHBOARD_SOURCES}
+        "${DASHBOARD_DIR}/index.html"
+        "${DASHBOARD_DIR}/styles.css"
+        "${DASHBOARD_DIR}/tsconfig.json"
+        "${DASHBOARD_DIR}/rollup.config.mjs"
+        "${DASHBOARD_INSTALL_STAMP}"
+    )
+    set(DASHBOARD_BUILD_OUTPUTS
+        "${DASHBOARD_DIST_DIR}/dashboard.js"
+        "${DASHBOARD_DIST_DIR}/index.html"
+        "${DASHBOARD_DIST_DIR}/dashboard.css"
+    )
+    add_custom_command(
+        OUTPUT ${DASHBOARD_BUILD_OUTPUTS}
+        DEPENDS ${DASHBOARD_BUILD_INPUTS}
+        COMMAND "${NPM_EXECUTABLE}" run build --silent
+        WORKING_DIRECTORY "${DASHBOARD_DIR}"
+        COMMENT "Bundling dashboard via Rollup"
+        VERBATIM
+    )
+
+    # 3. Deploy each dist file into the PrismaUI views path.
+    set(DASHBOARD_DEPLOY_OUTPUTS "")
+    foreach(distFile IN LISTS DASHBOARD_BUILD_OUTPUTS)
+        get_filename_component(distName "${distFile}" NAME)
+        set(deployed "${DASHBOARD_DEPLOY_DIR}/${distName}")
+        add_custom_command(
+            OUTPUT "${deployed}"
+            DEPENDS "${distFile}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${DASHBOARD_DEPLOY_DIR}"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${distFile}" "${deployed}"
+            VERBATIM
+        )
+        list(APPEND DASHBOARD_DEPLOY_OUTPUTS "${deployed}")
+    endforeach()
+
+    # 4. ALL-target aggregator so a default `cmake --build` builds the
+    # dashboard alongside the C++ DLL.
+    add_custom_target(deploy_dashboard ALL DEPENDS ${DASHBOARD_DEPLOY_OUTPUTS})
+    message(STATUS "Dashboard deploy: ${DASHBOARD_DIST_DIR} -> ${DASHBOARD_DEPLOY_DIR}")
+
     # Copy the Papyrus source folder (Source/Scripts/*.psc) into the deployed
     # mod folder. We enumerate the .psc files at configure time so the build
     # tracks them — adding a new .psc requires re-running CMake (or it'll be

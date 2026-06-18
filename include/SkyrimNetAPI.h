@@ -30,6 +30,10 @@ namespace NarrativeEngine::SkyrimNetAPI
     // or Initialize hasn't been called yet.
     bool IsAvailable();
 
+    // The runtime API version SkyrimNet reports (PublicGetVersion). Returns
+    // -1 if SkyrimNet is unavailable. Used by the dashboard's status pill.
+    int GetVersion();
+
     // Queues an async LLM call against the named SkyrimNet prompt template.
     // The callback fires on a SkyrimNet worker thread — do NOT call RE::*
     // functions from it. The const char* response from SkyrimNet is copied
