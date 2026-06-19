@@ -7,21 +7,24 @@
    `system_head` submodules.
 
    Reads two custom decorators registered at startup by NarrativeEngine's
-   SKSE plugin (see Decorators.cpp). Both are zero-arg calls because the
-   Director's narrative state is a global property of the world, not a
-   per-NPC fact. (SkyrimNet's PublicRegisterDecorator C ABI requires the
-   underlying callback to accept an RE::Actor*; our C++ side ignores it.
-   SkyrimNet's Inja wrapper supports the no-arg call form — see e.g. the
-   built-in get_world_knowledge() decorator.)
+   SKSE plugin (see Decorators.cpp). Both are global — the Director's
+   narrative state is a property of the world, not a per-NPC fact — and
+   our C++ side ignores the actor argument. BUT: SkyrimNet's
+   `PublicRegisterDecorator` binds custom decorators as `(uuid) → string`
+   functions, so the template MUST pass an actor UUID for the call to
+   match. (We tried zero-arg calls; they silently returned empty, which
+   in turn made `tnum` default to 0 and `phase` default to "" — both of
+   which fall into the most-relaxed branches below.) We pass `npc.UUID`
+   for whichever NPC SkyrimNet is rendering for; the value gets
+   discarded on our side.
 
-   Maps the numeric tension (0-100) and the phase name to a single
-   qualitative sentence the LLM can react to. Emitting raw numbers like
-   "tension 58" gives the model nothing it knows how to act on; evocative
-   phrasing ("calm", "watchful", "charged") gives it something to lean
-   into. If the mapping turns out to push the model the wrong way, edit
-   THIS FILE — no C++ recompile required. #}
-{% set tnum  = ne_narrative_tension() | int %}
-{% set phase = ne_narrative_phase() %}
+   Defensive `exists` check on `npc` so we don't error in render
+   contexts where no NPC is in scope (we'd rather render nothing than
+   render with default values, which would otherwise gaslight the LLM
+   into thinking the world is always calm). #}
+{% if exists("npc") and existsIn(npc, "UUID") %}
+{% set tnum  = ne_narrative_tension(npc.UUID) | int %}
+{% set phase = ne_narrative_phase(npc.UUID) %}
 {% if   tnum < 20 %}{% set mood = "calm and unhurried" %}
 {% elif tnum < 45 %}{% set mood = "watchful, with a faint undercurrent of unease" %}
 {% elif tnum < 70 %}{% set mood = "noticeably tense — small troubles feel close at hand" %}
@@ -39,3 +42,4 @@
 
 The current mood of this scene feels {{ mood }}. Narratively, {{ arc }}. All actors present
 should behave accordingly.
+{% endif %}
