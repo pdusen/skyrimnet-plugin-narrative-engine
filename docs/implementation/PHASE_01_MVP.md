@@ -1293,9 +1293,23 @@ JS-interop after every Director `ApplyDecision`, and toggles dashboard visibilit
 
 ---
 
-### Step 17 — MCM page (MCM Helper)
+### Step 17 — MCM page (MCM Helper) — DEFERRED
 
-- [ ] Complete
+- [ ] Complete *(deferred — see note)*
+
+> **Deferred 2026-06-18.** MCM Helper requires the consuming mod to provide a real plugin file (`.esp`/`.esl`/
+> `.esm`) containing a Quest with an attached Papyrus script extending `MCM_ConfigBase` (per MCM Helper's wiki:
+> "A configuration menu must at minimum, have a quest with an appropriate Papyrus script attached, and have a
+> `config.json` file defined."). Phase 01 deliberately avoided Creation Kit and Papyrus work — the MVP scope is
+> the C++ SKSE plugin shape only. Bringing up the MCM page would require introducing the `.esp` + Papyrus
+> compilation pipeline ahead of any other feature that needs them. Deferred until a later phase introduces an
+> `.esp` for its own reasons (e.g. the first in-world Director action that needs a Quest / ReferenceAlias).
+>
+> In the meantime, the dashboard hotkey is configured via `Data/SKSE/Plugins/NarrativeEngine.ini` (default `F7`,
+> Settings step's existing surface). The `ApplyMcmOverride` path in `Settings::Load()` remains in place — it
+> reads `Data/MCM/Settings/NarrativeEngine.ini` if it exists — so when MCM is brought up later, no further
+> Settings change is needed beyond deciding whether to use the bitmask form (`iHotkeyModifiers`) or the
+> three-boolean-toggle form (`bHotkeyCtrl`/`Shift`/`Alt`) noted below.
 
 **Goal:** a one-screen Mod Configuration Menu page declared through MCM Helper. Left column: static mod
 credits. Right column: a single setting — the dashboard hotkey, with arbitrary modifier-combo support.
@@ -1462,13 +1476,11 @@ The plumbing-and-feature MVP is complete when all of the below are true:
       disabled` log line. The hotkey is unregistered. The Director loop continues running.
 - [ ] `npm run build` in the `dashboard/` directory produces `dashboard/dist/{index.html, dashboard.js,
       dashboard.css}` with no TypeScript errors and no Rollup warnings.
-- [ ] With MCM Helper installed, a "NarrativeEngine" entry appears in SkyUI's MCM list. Opening it shows the
-      credits text in the left column and the dashboard-hotkey binder in the right.
-- [ ] Rebinding the dashboard hotkey to a multi-modifier combo (e.g. Ctrl+Shift+`7`) in MCM, saving, and
-      reloading the save makes the new combo work in-game. Pressing the key alone, or with a wrong modifier
-      set, does NOT toggle the dashboard.
-- [ ] Removing MCM Helper from the load order: the plugin loads cleanly, the MCM entry is gone, the hotkey
-      falls back to the value in `Data/SKSE/Plugins/NarrativeEngine.ini` (or the baked-in default `F7`).
+- [ ] ~~With MCM Helper installed, a "NarrativeEngine" entry appears in SkyUI's MCM list.~~ *(deferred with Step 17)*
+- [ ] ~~Rebinding the dashboard hotkey to a multi-modifier combo via MCM~~ *(deferred with Step 17)*
+- [ ] ~~Removing MCM Helper from the load order falls back to the plugin INI~~ *(deferred with Step 17;
+      hotkey-from-INI fallback already covered by the SKSE/Plugins/NarrativeEngine.ini default path,
+      which is exercised whenever MCM is absent — i.e. always, until Step 17 ships.)*
 
 ---
 
