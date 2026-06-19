@@ -20,8 +20,12 @@ namespace NarrativeEngine::PhaseTracker
 
         // Bumped on any wire-format change to the OnSave/OnLoad payload.
         // v1: phase byte + base-seconds float.
-        // v2: ...plus phaseEnteredAtGameTime (double).
-        constexpr std::uint32_t kRecordVersion = 2;
+        // v2: ...plus phaseEnteredAtGameTime (double, cumulative game-sec
+        //     since session epoch). Wire-compatible with v3 but the field's
+        //     semantics changed — v2 saves are read into a discarded slot
+        //     and the live filter starts uncutoff'd until the first advance.
+        // v3: ...phaseEnteredAtRealTime (double, Unix-epoch seconds).
+        constexpr std::uint32_t kRecordVersion = 3;
 
         using SteadyClock = std::chrono::steady_clock;
 
@@ -29,20 +33,23 @@ namespace NarrativeEngine::PhaseTracker
         Phase                 g_phase              = Phase::Exposition;
         float                 g_baseSeconds        = 0.0f;
         SteadyClock::time_point g_lastSampleTime   = SteadyClock::now();
-        // Cumulative game-seconds-since-session-epoch when the current phase
-        // was entered. Updated by AdvanceTo / Reset; persisted across saves.
-        double                g_phaseEnteredAtGameTime = 0.0;
+        // Unix-epoch real-wall-clock seconds when the current phase was
+        // entered. Updated by AdvanceTo / Reset; persisted across saves.
+        // Compared against SkyrimNet event `localTime` field — both are
+        // Unix-epoch real seconds, monotonic, and immune to the game-time
+        // quirks that make `evt.gameTime` unsuitable for this comparison
+        // (it's time-of-day, not cumulative, and the engine's calendar
+        // value can be stale at kNewGame before the world finishes
+        // initializing).
+        double                g_phaseEnteredAtRealTime = 0.0;
 
-        // Helper: capture the current game time in seconds from Calendar.
-        // SkyrimNet's per-event `gameTime` field uses the same units, so
-        // direct numeric comparisons work. Returns 0.0 if Calendar isn't
-        // available (e.g. very early init), which means "no filter."
-        double CurrentGameTimeSecondsLocked()
+        // Helper: capture the current Unix-epoch real-time in seconds.
+        // Matches SkyrimNet's per-event `localTime` field so the filter
+        // can use direct numeric comparison.
+        double CurrentRealTimeSecondsLocked()
         {
-            if (auto *cal = RE::Calendar::GetSingleton()) {
-                return static_cast<double>(cal->GetDaysPassed()) * 86400.0;
-            }
-            return 0.0;
+            return std::chrono::duration<double>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
         }
 
         // Roll the elapsed wall-clock time since the last sample into the
@@ -107,29 +114,30 @@ namespace NarrativeEngine::PhaseTracker
         return g_baseSeconds;
     }
 
-    double PhaseEnteredAtGameTime()
+    double PhaseEnteredAtRealTime()
     {
         std::scoped_lock lock(g_mutex);
-        return g_phaseEnteredAtGameTime;
+        return g_phaseEnteredAtRealTime;
     }
 
     void AdvanceTo(Phase newPhase)
     {
         Phase  previous;
-        double newGameTime;
+        double newRealTime;
         {
             std::scoped_lock lock(g_mutex);
             previous                 = g_phase;
             g_phase                  = newPhase;
             g_baseSeconds            = 0.0f;
             g_lastSampleTime         = SteadyClock::now();
-            // Mark the in-game moment this phase started so the evaluation
-            // pipeline can filter SkyrimNet events to "since this advance."
-            g_phaseEnteredAtGameTime = CurrentGameTimeSecondsLocked();
-            newGameTime              = g_phaseEnteredAtGameTime;
+            // Mark the real-time moment this phase started so the
+            // evaluation pipeline can filter SkyrimNet events to
+            // "since this advance."
+            g_phaseEnteredAtRealTime = CurrentRealTimeSecondsLocked();
+            newRealTime              = g_phaseEnteredAtRealTime;
         }
-        logger::info("PhaseTracker: advanced {} -> {} (at gameTime={:.1f}s)",
-                     PhaseName(previous), PhaseName(newPhase), newGameTime);
+        logger::info("PhaseTracker: advanced {} -> {} (at realTime={:.1f})",
+                     PhaseName(previous), PhaseName(newPhase), newRealTime);
     }
 
     void Reset(Phase initial)
@@ -141,7 +149,7 @@ namespace NarrativeEngine::PhaseTracker
         // Anchor "phase started" to *now* so a fresh new-game state filters
         // events to "since now" (i.e. nothing yet). For kPreLoadGame, this
         // value gets immediately overwritten by OnLoad's deserialized value.
-        g_phaseEnteredAtGameTime = CurrentGameTimeSecondsLocked();
+        g_phaseEnteredAtRealTime = CurrentRealTimeSecondsLocked();
     }
 
     void Tick()
@@ -173,7 +181,7 @@ namespace NarrativeEngine::PhaseTracker
             SampleLocked();
             phaseByte              = static_cast<std::uint8_t>(g_phase);
             timeSnapshot           = g_baseSeconds;
-            phaseEnteredAtSnapshot = g_phaseEnteredAtGameTime;
+            phaseEnteredAtSnapshot = g_phaseEnteredAtRealTime;
         }
         intfc->WriteRecordData(phaseByte);
         intfc->WriteRecordData(timeSnapshot);
@@ -185,7 +193,7 @@ namespace NarrativeEngine::PhaseTracker
         if (!intfc) {
             return;
         }
-        if (version != 1 && version != 2) {
+        if (version != 1 && version != 2 && version != 3) {
             logger::warn("PhaseTracker::OnLoad: unrecognized record version {} (length={}); using defaults",
                          version, length);
             Reset();
@@ -206,14 +214,22 @@ namespace NarrativeEngine::PhaseTracker
             return;
         }
 
-        // v2 added phaseEnteredAtGameTime (double). For v1 saves, default to
-        // 0.0, which means "all events visible" — safe fallback that may
-        // overcount events for one tick after load but doesn't break.
-        double phaseEnteredAt = 0.0;
-        if (version >= 2) {
-            if (intfc->ReadRecordData(phaseEnteredAt) != sizeof(phaseEnteredAt)) {
-                logger::error("PhaseTracker::OnLoad: short read on phaseEnteredAtGameTime; defaulting to 0");
-                phaseEnteredAt = 0.0;
+        // v1: no trailing field — leave phaseEnteredAtRealTime at 0 (filter
+        //     allows everything until the next advance/reset writes it).
+        // v2: trailing field is a cumulative-game-seconds value, which no
+        //     longer matches the live filter's units. Read it to consume
+        //     the bytes, then discard — same 0 fallback as v1.
+        // v3: trailing field is Unix-epoch real-seconds — what we want.
+        double phaseEnteredAtRealTime = 0.0;
+        if (version == 2) {
+            double discarded = 0.0;
+            if (intfc->ReadRecordData(discarded) != sizeof(discarded)) {
+                logger::error("PhaseTracker::OnLoad: short read on v2 legacy field; defaulting to 0");
+            }
+        } else if (version >= 3) {
+            if (intfc->ReadRecordData(phaseEnteredAtRealTime) != sizeof(phaseEnteredAtRealTime)) {
+                logger::error("PhaseTracker::OnLoad: short read on phaseEnteredAtRealTime; defaulting to 0");
+                phaseEnteredAtRealTime = 0.0;
             }
         }
 
@@ -221,15 +237,15 @@ namespace NarrativeEngine::PhaseTracker
             std::scoped_lock lock(g_mutex);
             g_phase                  = static_cast<Phase>(phaseByte);
             g_baseSeconds            = timeSeconds;
-            g_phaseEnteredAtGameTime = phaseEnteredAt;
+            g_phaseEnteredAtRealTime = phaseEnteredAtRealTime;
             // Re-anchor the sample clock to "now" so subsequent Tick /
             // OnSave / TimeInPhaseSeconds calls add real time on top of the
             // loaded base, rather than counting elapsed time from before
             // the load.
             g_lastSampleTime = SteadyClock::now();
         }
-        logger::info("PhaseTracker::OnLoad: restored phase={} timeInPhase={}s phaseEnteredAtGameTime={:.1f}s",
-                     PhaseName(static_cast<Phase>(phaseByte)), timeSeconds, phaseEnteredAt);
+        logger::info("PhaseTracker::OnLoad: restored phase={} timeInPhase={}s phaseEnteredAtRealTime={:.1f}",
+                     PhaseName(static_cast<Phase>(phaseByte)), timeSeconds, phaseEnteredAtRealTime);
     }
 
     void OnRevert()

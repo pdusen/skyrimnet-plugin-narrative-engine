@@ -55,15 +55,19 @@ namespace NarrativeEngine::PhaseTracker
     // thread only (calls RE::UI::GameIsPaused()).
     float TimeInPhaseSeconds();
 
-    // Cumulative game-seconds-since-session-epoch at which the current phase
-    // was entered. Used by the evaluation pipeline to filter the SkyrimNet
+    // Unix-epoch real-wall-clock seconds at which the current phase was
+    // entered. Used by the evaluation pipeline to filter the SkyrimNet
     // event tail to only events that occurred during the current phase —
     // events from before the last phase change have already been "consumed"
     // by whichever decision drove that change, and shouldn't justify another
-    // round of advancement. Thread-safe. Returns 0.0 if no advance/reset has
-    // happened yet (filter then includes everything, which is the safe
-    // default).
-    double PhaseEnteredAtGameTime();
+    // round of advancement. Real time (not game time) because SkyrimNet's
+    // per-event `gameTime` is time-of-day-in-seconds, which can't be
+    // compared against a cumulative cutoff once a session crosses a day;
+    // SkyrimNet's `localTime` field is monotonic Unix-epoch real-seconds,
+    // which is what this returns. Thread-safe. Returns 0.0 if no
+    // advance/reset has happened yet (filter then includes everything,
+    // which is the safe default).
+    double PhaseEnteredAtRealTime();
 
     // Switch phases. Resets time-in-phase to 0 and logs the transition.
     // Main thread only.

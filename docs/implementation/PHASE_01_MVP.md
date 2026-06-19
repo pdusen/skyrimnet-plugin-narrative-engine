@@ -1398,7 +1398,7 @@ can verify rebinds took effect after a save reload.
 
 ### Step 18 — Wire it all into `Plugin.cpp`
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** the lifecycle handlers from Step 1 now have real bodies that call into every subsystem.
 
@@ -1447,34 +1447,34 @@ minutes; ticks accumulate cleanly. Save, exit to main menu, reload; all state is
 
 ### Step 19 — Integration verification
 
-- [ ] Complete
+- [x] Complete
 
 The plumbing-and-feature MVP is complete when all of the below are true:
 
-- [ ] Plugin loads without errors. `NarrativeEngine.log` shows `SkyrimNetAPI: initialized (version=<N>)` and
+- [x] Plugin loads without errors. `NarrativeEngine.log` shows `SkyrimNetAPI: initialized (version=<N>)` and
       `Decorators: registered ne_narrative_tension`, `Decorators: registered ne_narrative_phase`.
-- [ ] During a 10-minute play session with SkyrimNet's LLM available, the decision log accumulates ≥ 5 entries;
+- [x] During a 10-minute play session with SkyrimNet's LLM available, the decision log accumulates ≥ 5 entries;
       each entry's `narrative_note` plausibly references real recent events.
-- [ ] After the first Director tick has fired, talking to any NPC produces an assembled SkyrimNet prompt that
+- [x] After the first Director tick has fired, talking to any NPC produces an assembled SkyrimNet prompt that
       contains the `## Scene mood` paragraph from `0500_ne_narrative_state.prompt`, with the qualitative wording
       matching the current `DecisionLog::LatestTensionScore()` band and `PhaseTracker::Get()` phase. (Verifiable
       via a SkyrimNet debug-render of the prompt for the target NPC, or by inspecting SkyrimNet's own logs.)
-- [ ] Before the first tick fires, the `## Scene mood` paragraph is still present, rendered against tension=0
+- [x] Before the first tick fires, the `## Scene mood` paragraph is still present, rendered against tension=0
       / phase=Exposition (i.e. "calm and unhurried…the story is still settling in"). The pre-first-tick state
       is a deliberate default, not a silence gate.
-- [ ] Triggering vanilla combat results in combat events appearing in `SkyrimNetAPI::GetRecentEvents(0, 40, "")`
+- [x] Triggering vanilla combat results in combat events appearing in `SkyrimNetAPI::GetRecentEvents(0, 40, "")`
       output (verifiable from the dashboard's recent-events panel or from a debug log dump of the snapshot).
       The Director's logged decisions reference the combat in their narrative notes within a tick or two.
-- [ ] Saving mid-session and reloading preserves the decision log, phase, and time-in-phase. The decorators
+- [x] Saving mid-session and reloading preserves the decision log, phase, and time-in-phase. The decorators
       have nothing of their own to persist — they read live state — so a load immediately produces correctly
       phrased injections from the restored tension/phase.
-- [ ] Removing SkyrimNet from the load order causes the plugin to load with a clear error message; the tick
+- [x] Removing SkyrimNet from the load order causes the plugin to load with a clear error message; the tick
       driver still runs but evaluations are skipped (no crash).
-- [ ] With PrismaUI installed, pressing the configured hotkey (default `F7`) toggles the dashboard view. The
+- [x] With PrismaUI installed, pressing the configured hotkey (default `F7`) toggles the dashboard view. The
       view renders the current Director state and updates within one tick of each evaluation.
-- [ ] Removing PrismaUI from the load order causes the plugin to load with a `PrismaUI: not found; dashboard
+- [x] Removing PrismaUI from the load order causes the plugin to load with a `PrismaUI: not found; dashboard
       disabled` log line. The hotkey is unregistered. The Director loop continues running.
-- [ ] `npm run build` in the `dashboard/` directory produces `dashboard/dist/{index.html, dashboard.js,
+- [x] `npm run build` in the `dashboard/` directory produces `dashboard/dist/{index.html, dashboard.js,
       dashboard.css}` with no TypeScript errors and no Rollup warnings.
 - [ ] ~~With MCM Helper installed, a "NarrativeEngine" entry appears in SkyUI's MCM list.~~ *(deferred with Step 17)*
 - [ ] ~~Rebinding the dashboard hotkey to a multi-modifier combo via MCM~~ *(deferred with Step 17)*

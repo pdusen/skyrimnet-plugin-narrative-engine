@@ -40,12 +40,17 @@ namespace NarrativeEngine
         // PhaseTracker state at snapshot time.
         std::string currentPhase;          // PhaseName(PhaseTracker::Get())
         float       timeInPhaseSeconds = 0.0f;
-        // Cumulative game-seconds-since-session-epoch when the current
-        // phase was entered. Used in BuildPromptContext to filter
-        // recent_events to only those that occurred during the current
-        // phase — events from prior phases have already been "consumed"
-        // by past decisions and shouldn't re-justify another advance.
-        double      phaseEnteredAtGameTime = 0.0;
+        // Unix-epoch real-wall-clock seconds at which the current phase was
+        // entered. Used in BuildPromptContext to filter recent_events to
+        // only those that occurred during the current phase — events from
+        // prior phases have already been "consumed" by past decisions and
+        // shouldn't re-justify another advance. We use real time (not
+        // game time) because SkyrimNet's per-event `gameTime` field is
+        // time-of-day-in-seconds [0..86400), which can't be compared
+        // against a cumulative-since-epoch cutoff once a session crosses
+        // a day boundary. SkyrimNet's `localTime` is monotonic Unix-epoch
+        // seconds — matches what we capture here via `system_clock::now()`.
+        double      phaseEnteredAtRealTime = 0.0;
 
         // Raw JSON string from SkyrimNetAPI::GetRecentEvents(0, N, "").
         // Passed through to the prompt context verbatim — no client-side

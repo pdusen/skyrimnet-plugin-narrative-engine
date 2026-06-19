@@ -134,7 +134,7 @@ namespace NarrativeEngine::EvaluationPipeline
 
         s.currentPhase           = PhaseTracker::PhaseName(PhaseTracker::Get());
         s.timeInPhaseSeconds     = PhaseTracker::TimeInPhaseSeconds();
-        s.phaseEnteredAtGameTime = PhaseTracker::PhaseEnteredAtGameTime();
+        s.phaseEnteredAtRealTime = PhaseTracker::PhaseEnteredAtRealTime();
         if (debug)
             logger::debug("BuildSnapshot: phase OK");
 
@@ -239,12 +239,21 @@ namespace NarrativeEngine::EvaluationPipeline
                 // we leave them in, the LLM keeps re-justifying advances
                 // against the same set of events tick after tick, walking
                 // the phase cycle on idle time alone.
-                const double cutoff = snapshot.phaseEnteredAtGameTime;
+                //
+                // Filter on `evt.localTime` (Unix-epoch real seconds), not
+                // `evt.gameTime`: SkyrimNet's gameTime field is time-of-day
+                // in seconds [0..86400), which can't be compared against a
+                // cumulative cutoff once a session crosses a day. localTime
+                // is monotonic real seconds, immune to that and to the
+                // stale-Calendar race we hit at kNewGame (the engine's
+                // GetDaysPassed can briefly return the previous session's
+                // value before the new world finishes initializing).
+                const double cutoff = snapshot.phaseEnteredAtRealTime;
                 if (cutoff > 0.0) {
                     nlohmann::json filtered = nlohmann::json::array();
                     for (auto &evt : parsed) {
                         if (!evt.is_object()) continue;
-                        const double et = evt.value("gameTime", 0.0);
+                        const double et = evt.value("localTime", 0.0);
                         if (et >= cutoff) {
                             filtered.push_back(std::move(evt));
                         }
