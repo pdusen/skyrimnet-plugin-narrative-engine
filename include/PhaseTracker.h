@@ -45,6 +45,14 @@ namespace NarrativeEngine::PhaseTracker
     // terminal phase, so this is total — every Phase has a valid successor.
     Phase NextPhase(Phase p);
 
+    // Given a tension score in [0..100] and the current phase, decides
+    // whether the Director should advance into NextPhase(current). Pure
+    // function — reads only Settings::Get() thresholds. Returns the new
+    // phase when this current-phase's threshold has been crossed, nullopt
+    // to remain. Used by EvaluationPipeline::ParseDecision so the LLM only
+    // has to produce a tension score, not a stay-or-advance verdict.
+    std::optional<Phase> EvaluateAdvance(Phase current, std::uint32_t tensionScore);
+
     // Current phase. Thread-safe.
     Phase Get();
 

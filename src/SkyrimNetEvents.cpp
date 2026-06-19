@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <string>
 #include <utility>
 #include <vector>
@@ -26,6 +27,25 @@ namespace NarrativeEngine::SkyrimNetEvents
         }
         const int w = static_cast<int>(secondsAgo / (7.0 * 86400.0));
         return std::to_string(w) + (w == 1 ? " week ago" : " weeks ago");
+    }
+
+    std::string FormatRelativeGameDuration(double seconds)
+    {
+        if (seconds < 60.0)        return "less than a minute";
+        if (seconds < 3600.0) {
+            const int m = static_cast<int>(seconds / 60.0);
+            return std::to_string(m) + (m == 1 ? " minute" : " minutes");
+        }
+        if (seconds < 86400.0) {
+            const int h = static_cast<int>(seconds / 3600.0);
+            return std::to_string(h) + (h == 1 ? " hour" : " hours");
+        }
+        if (seconds < 7.0 * 86400.0) {
+            const int d = static_cast<int>(seconds / 86400.0);
+            return std::to_string(d) + (d == 1 ? " day" : " days");
+        }
+        const int w = static_cast<int>(seconds / (7.0 * 86400.0));
+        return std::to_string(w) + (w == 1 ? " week" : " weeks");
     }
 
     void FormatEventsText(nlohmann::json &events, double currentGameTimeSeconds)
@@ -286,6 +306,13 @@ namespace NarrativeEngine::SkyrimNetEvents
                                        nlohmann::json combatEvents,
                                        double         currentGameTimeSeconds)
     {
+        // Game-time staleness: drop anything past this age, append an idle
+        // marker once we go this long without anything fresh. Game time so
+        // the player's `wait`/`sleep` actions advance the clock the same
+        // way real-time elapsed activity would.
+        constexpr double kMaxEventAgeGameSeconds         = 3600.0;  // 1 hour
+        constexpr double kIdleMarkerThresholdGameSeconds = 600.0;   // 10 min
+
         // Concatenate, guarding against the inputs not being arrays.
         std::vector<nlohmann::json> merged;
         if (skyrimNetEvents.is_array()) {
@@ -295,6 +322,17 @@ namespace NarrativeEngine::SkyrimNetEvents
         if (combatEvents.is_array()) {
             for (auto& e : combatEvents) merged.push_back(std::move(e));
         }
+
+        // Age cap (game-time). Applied pre-condensation so straddling runs
+        // of hits get summarized from only the still-fresh hits, not from
+        // a mix that includes hour-old ones.
+        merged.erase(std::remove_if(merged.begin(), merged.end(),
+                                    [currentGameTimeSeconds](const nlohmann::json& e) {
+                                        if (!e.is_object()) return true;
+                                        const double gt = e.value("gameTime", 0.0);
+                                        return (currentGameTimeSeconds - gt) > kMaxEventAgeGameSeconds;
+                                    }),
+                     merged.end());
 
         // Stable sort by localTime ascending so equal timestamps preserve
         // input order (SkyrimNet events tend to precede our internal events
@@ -324,6 +362,50 @@ namespace NarrativeEngine::SkyrimNetEvents
             }
         }
         flushPending();
+
+        // Idle marker — synthetic "newest" entry the LLM will see at the
+        // bottom of the list when nothing has happened recently. Without
+        // this, the LLM keeps re-reading the same stale combat events tick
+        // after tick and tension stays artificially pinned high long after
+        // the actual fight has ended. The marker gives it a concrete signal
+        // that time has passed and the world is currently quiet.
+        bool   needMarker   = false;
+        double sinceSeconds = 0.0;
+        if (out.empty()) {
+            // Everything got filtered (or nothing was ever there). Use the
+            // sentinel "over an hour" phrasing — we don't know the exact
+            // gap because we just dropped the last event we could have
+            // measured against.
+            needMarker   = true;
+            sinceSeconds = -1.0;
+        } else {
+            const auto&  last  = out.back();
+            const double gt    = last.is_object() ? last.value("gameTime", 0.0) : 0.0;
+            const double delta = currentGameTimeSeconds - gt;
+            if (delta > kIdleMarkerThresholdGameSeconds) {
+                needMarker   = true;
+                sinceSeconds = delta;
+            }
+        }
+        if (needMarker) {
+            const std::string duration = (sinceSeconds < 0.0)
+                ? std::string("over an hour")
+                : FormatRelativeGameDuration(sinceSeconds);
+
+            nlohmann::json marker;
+            marker["type"]    = "idle_marker";
+            marker["ne_kind"] = "idle_marker";
+            // Game time = "now" so the marker sits naturally at the tail
+            // by gameTime ordering. localTime uses the same Unix-epoch
+            // basis as real events so any downstream sort puts it last.
+            marker["gameTime"]  = currentGameTimeSeconds;
+            marker["localTime"] = std::chrono::duration<double>(
+                                      std::chrono::system_clock::now().time_since_epoch())
+                                      .count();
+            marker["text"] = "Nothing notable has happened for " + duration;
+            out.push_back(std::move(marker));
+        }
+
         return out;
     }
 }

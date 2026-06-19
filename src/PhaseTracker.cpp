@@ -1,5 +1,6 @@
 #include <PhaseTracker.h>
 
+#include <Settings.h>
 #include <logger.h>
 
 #include <array>
@@ -107,6 +108,31 @@ namespace NarrativeEngine::PhaseTracker
             return Phase::Exposition;
         }
         return static_cast<Phase>(idx + 1);
+    }
+
+    std::optional<Phase> EvaluateAdvance(Phase current, std::uint32_t tensionScore)
+    {
+        const auto& cfg = Settings::Get();
+        const int score = static_cast<int>(tensionScore);
+        switch (current) {
+            case Phase::Exposition:
+                if (score >= cfg.advanceThresholdExposition)    return Phase::RisingAction;
+                return std::nullopt;
+            case Phase::RisingAction:
+                if (score >= cfg.advanceThresholdRisingAction)  return Phase::Climax;
+                return std::nullopt;
+            case Phase::Climax:
+                if (score <= cfg.advanceThresholdClimax)        return Phase::FallingAction;
+                return std::nullopt;
+            case Phase::FallingAction:
+                if (score <= cfg.advanceThresholdFallingAction) return Phase::Resolution;
+                return std::nullopt;
+            case Phase::Resolution:
+                if (score >= cfg.advanceThresholdResolution)    return Phase::Exposition;
+                return std::nullopt;
+            default:
+                return std::nullopt;
+        }
     }
 
     Phase Get()

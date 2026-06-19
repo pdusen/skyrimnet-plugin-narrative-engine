@@ -197,21 +197,9 @@ namespace NarrativeEngine::EvaluationPipeline
         nlohmann::json ctx;
         ctx["current_phase"] = snapshot.currentPhase;
         ctx["time_in_phase_seconds"] = snapshot.timeInPhaseSeconds;
-
-        // next_phase: name of the immediate cyclical successor. The loop
-        // wraps — NextPhase(Resolution) = Exposition — so this is always a
-        // valid phase name; there is no terminal case. The prompt template
-        // uses this to present the LLM with a binary stay/advance choice
-        // rather than the full five-phase enumeration.
-        if (auto cur = PhaseTracker::PhaseFromName(snapshot.currentPhase); cur)
-        {
-            ctx["next_phase"] = PhaseTracker::PhaseName(PhaseTracker::NextPhase(*cur));
-        }
-        else
-        {
-            // Defensive fallback for a malformed snapshot.
-            ctx["next_phase"] = PhaseTracker::PhaseName(PhaseTracker::Phase::Exposition);
-        }
+        // No `next_phase` in the prompt context — phase advancement is no
+        // longer the LLM's call. The system applies per-phase thresholds
+        // (PhaseTracker::EvaluateAdvance) to the returned tension score.
 
         // recent_events: pass SkyrimNet's event array through, but REVERSE
         // it. SkyrimNet returns events newest-first; the prompt template
@@ -402,14 +390,12 @@ namespace NarrativeEngine::EvaluationPipeline
             r.tensionScore = static_cast<std::uint32_t>(clamped);
         }
 
-        // advance_phase — boolean. true → advancedToPhase = NextPhase(current),
-        // which is always a valid phase since the loop is cyclical
-        // (NextPhase(Resolution) == Exposition). false → leave nullopt.
-        if (auto it = parsed.find("advance_phase"); it != parsed.end() && it->is_boolean()) {
-            if (it->get<bool>()) {
-                r.advancedToPhase = PhaseTracker::NextPhase(r.currentPhase);
-            }
-        }
+        // System-side phase advancement: compare the LLM's tension score
+        // against the per-current-phase threshold. The LLM no longer votes
+        // on this directly — it just scores tension, and the thresholds
+        // capture the dramatic shape of each transition (rises into
+        // Exposition/Climax, drops out of Climax/FallingAction).
+        r.advancedToPhase = PhaseTracker::EvaluateAdvance(r.currentPhase, r.tensionScore);
 
         // narrative_note — clamp to 200 chars.
         if (auto it = parsed.find("narrative_note"); it != parsed.end() && it->is_string()) {

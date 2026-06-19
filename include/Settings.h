@@ -32,6 +32,20 @@ namespace NarrativeEngine::Settings
         int decisionLogTailSizeForPrompt     = 10;   // entries fed into BuildPromptContext
         int skyrimNetEventTailSizeForPrompt  = 40;   // maxCount passed to PublicGetRecentEvents
 
+        // Per-current-phase tension thresholds that drive Freytag advancement.
+        // The LLM returns only a tension score; the system decides advancement
+        // by comparing that score against the threshold for the *current*
+        // phase. Each threshold is either a "rises above" or "drops below"
+        // gate depending on the dramatic shape of the transition out of that
+        // phase — Exposition/RisingAction/Resolution rise into their successor,
+        // Climax/FallingAction wind down into theirs. All values are
+        // 0..100 to match the tension-score domain.
+        int advanceThresholdExposition       = 45;   // -> RisingAction when score >=
+        int advanceThresholdRisingAction     = 80;   // -> Climax when score >=
+        int advanceThresholdClimax           = 60;   // -> FallingAction when score <=
+        int advanceThresholdFallingAction    = 30;   // -> Resolution when score <=
+        int advanceThresholdResolution       = 25;   // -> Exposition when score >=
+
         // [AlphaCanon]
         // Comma-separated list of cell EditorIDs to treat as do-not-disturb.
         // Empty by default. Whitespace around commas is allowed.

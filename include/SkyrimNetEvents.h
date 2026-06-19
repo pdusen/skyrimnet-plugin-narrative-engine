@@ -15,6 +15,13 @@ namespace NarrativeEngine::SkyrimNetEvents
     // Used as the leading "[N units ago]" prefix on each rendered event line.
     std::string FormatRelativeGameTime(double secondsAgo);
 
+    // Bare-duration variant of FormatRelativeGameTime — drops the trailing
+    // "ago" so it can be substituted into "for X" / "in X" phrasing.
+    // ("5 minutes" instead of "5 minutes ago", "2 hours" instead of "2 hours
+    // ago"). Sub-minute durations render as "less than a minute" so the
+    // phrasing stays grammatical.
+    std::string FormatRelativeGameDuration(double seconds);
+
     // Walks a parsed SkyrimNet events array in place. For each object event,
     // synthesizes an `evt.text` field based on `evt.type` and `evt.data`,
     // prepended with a relative-time bucket computed against the supplied

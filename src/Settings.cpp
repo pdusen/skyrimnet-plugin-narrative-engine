@@ -39,6 +39,22 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("Director", "iSkyrimNetEventTailSizeForPrompt",
                                  g_config.skyrimNetEventTailSizeForPrompt));
 
+            g_config.advanceThresholdExposition = static_cast<int>(
+                ini.GetLongValue("Director", "iAdvanceThresholdExposition",
+                                 g_config.advanceThresholdExposition));
+            g_config.advanceThresholdRisingAction = static_cast<int>(
+                ini.GetLongValue("Director", "iAdvanceThresholdRisingAction",
+                                 g_config.advanceThresholdRisingAction));
+            g_config.advanceThresholdClimax = static_cast<int>(
+                ini.GetLongValue("Director", "iAdvanceThresholdClimax",
+                                 g_config.advanceThresholdClimax));
+            g_config.advanceThresholdFallingAction = static_cast<int>(
+                ini.GetLongValue("Director", "iAdvanceThresholdFallingAction",
+                                 g_config.advanceThresholdFallingAction));
+            g_config.advanceThresholdResolution = static_cast<int>(
+                ini.GetLongValue("Director", "iAdvanceThresholdResolution",
+                                 g_config.advanceThresholdResolution));
+
             g_config.doNotDisturbCellEDIDsCSV = ini.GetValue(
                 "AlphaCanon", "sDoNotDisturbCellEDIDsCSV",
                 g_config.doNotDisturbCellEDIDsCSV.c_str());
