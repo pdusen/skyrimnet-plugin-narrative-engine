@@ -287,6 +287,81 @@ Put a file there if **all** of these are true:
 - Don't rename or restructure `statics/` subfolders to differ from the runtime layout; the 1:1 mapping is
   the whole point.
 
+## ESP and Papyrus workflow
+
+CK-authored content (the `.esp`) and Papyrus source (`.psc`) live under `esp/` in the repo. The build deploys
+or syncs everything into the MO2 mod folder at `$SKYRIM_MODS_FOLDER/NarrativeEngine/` so CK, the player's game,
+and our tooling all see the same files.
+
+### Repo paths
+
+- `esp/NarrativeEngine.esp` — authoritative repo-side ESP. A version-controlled mirror of what CK edits.
+- `esp/Source/Scripts/*.psc` — authoritative Papyrus source. Junctioned (see below) so CK and VS Code edit
+  these files directly.
+- `NarrativeEngine.ppj.in` (repo root) — template for the Papyrus project file. CMake `configure_file`
+  substitutes machine-specific absolute paths into `NarrativeEngine.ppj` (gitignored) at the repo root.
+- `setup-mod-folder.ps1` (repo root) — one-time per-machine setup; creates the mod folder and the
+  `Source/Scripts/` junction.
+- `sync-esp.ps1` (repo root) — mod folder → repo ESP sync, invoked by CMake on every build.
+
+### One-time setup
+
+After cloning, run:
+
+```pwsh
+pwsh -File setup-mod-folder.ps1
+```
+
+This creates `$SKYRIM_MODS_FOLDER/NarrativeEngine/` if needed, and creates an NTFS directory junction at
+`<mod-folder>/Source/Scripts/` pointing at `<repo>/esp/Source/Scripts/`. Junctions don't require admin or
+Developer Mode and are transparent to MO2's USVFS. The script is idempotent — safe to re-run.
+
+We chose junctions over file symlinks because junctions are NTFS-native reparse points with a long, boring
+track record in Skyrim modding tooling. File symlinks have reported MO2 / CK compatibility quirks; junctions
+don't.
+
+### ESP flow (one-direction: mod folder → repo)
+
+The `.esp` only ever flows from the mod folder into the repo. CK edits the file in place (via MO2's
+virtualized Data folder, which resolves to the mod folder). On every build, `sync-esp.ps1` compares
+timestamps and copies the mod-folder file into the repo if it's newer.
+
+The build never pushes the repo's `.esp` back to the mod folder. In the rare case where the repo has a newer
+ESP than the mod folder (e.g. after a `git pull` that includes ESP changes from elsewhere — uncommon in solo
+development), you must manually copy `<repo>/esp/NarrativeEngine.esp` → `<mod-folder>/NarrativeEngine.esp`.
+The build will not do this for you.
+
+Override the auto-sync via `-DNE_SKIP_ESP_SYNC=ON` on the cmake configure line if you have a specific reason
+to bypass it.
+
+### Papyrus flow
+
+`.psc` files live in `esp/Source/Scripts/`. CK and VS Code both edit them via the junction (so a CK
+quest-fragment edit lands in the repo immediately). On every build, the CMake `compile_papyrus` target
+invokes `PapyrusCompiler.exe` against the project's generated `NarrativeEngine.ppj`, and the `.pex` output
+deploys directly into `<mod-folder>/Scripts/`. `.pex` files are never tracked in the repo — they're build
+output that lives only in the mod folder.
+
+The Papyrus compile target is **conditional** on `.psc` files existing under `esp/Source/Scripts/`. Until
+the first `.psc` is authored, the step is dormant — no compiler invocation, no `PAPYRUS_COMPILER` env-var
+requirement.
+
+### Required env vars (when Papyrus is active)
+
+- `PAPYRUS_COMPILER` — absolute path to `PapyrusCompiler.exe`, typically `<CK_DIR>/Papyrus Compiler/PapyrusCompiler.exe`.
+- `NE_PAPYRUS_IMPORT_SKYRIM` — vanilla Skyrim Papyrus source folder. Defaults to `$SKYRIM_FOLDER/Data/Source/Scripts`
+  when `SKYRIM_FOLDER` is set.
+- `NE_PAPYRUS_IMPORT_SKSE` — SKSE Papyrus source folder (no auto-detection; ships in the SKSE archive).
+
+These are only checked when `.psc` files are present, so they aren't needed for the initial Step 1 / Step 2
+setup.
+
+### VS Code Papyrus extension
+
+The generated `NarrativeEngine.ppj` at the repo root is what the VS Code Papyrus extension uses to discover
+source folders, output folders, and imports. Run a CMake configure (`pwsh -File build.ps1 configure`) at
+least once so the `.ppj` is generated before opening VS Code; from then on the extension auto-discovers it.
+
 ## Writing SkyrimNet `.prompt` files
 
 The `.prompt` files we ship under `statics/SKSE/Plugins/SkyrimNet/prompts/` are Jinja templates that render to

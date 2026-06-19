@@ -1,0 +1,31 @@
+<?xml version='1.0'?>
+<!--
+  NarrativeEngine.ppj.in — template for the Papyrus project file.
+
+  CMake's configure_file substitutes @VAR@ placeholders with absolute,
+  machine-specific paths and writes the result to <repo>/NarrativeEngine.ppj
+  (gitignored, since the values are per-machine).
+
+  Consumed by:
+    * Bethesda's PapyrusCompiler.exe via `PapyrusCompiler.exe NarrativeEngine.ppj`
+    * The VS Code Papyrus extension (auto-discovers .ppj files in the workspace)
+    * The CMake `compile_papyrus` custom target
+
+  The .ppj lives at the repo root (not under esp/) because the VS Code
+  Papyrus extension expects to find .ppj files at the workspace root.
+-->
+<PapyrusProject xmlns="PapyrusProject.xsd"
+                Flags="TESV_Papyrus_Flags.flg"
+                Output="@NE_PAPYRUS_OUTPUT_DIR@"
+                Optimize="true"
+                Release="true"
+                Final="true"
+                Anonymize="false">
+    <Imports>
+        <Import>@NE_PAPYRUS_IMPORT_SKYRIM@</Import>
+        <Import>@NE_PAPYRUS_IMPORT_SKSE@</Import>
+    </Imports>
+    <Folders>
+        <Folder>@NE_PAPYRUS_SOURCE_DIR@</Folder>
+    </Folders>
+</PapyrusProject>

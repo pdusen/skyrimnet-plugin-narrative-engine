@@ -10,3 +10,15 @@ compile_commands.json
 # Dashboard build artifacts + npm dependency tree (Step 15).
 dashboard/node_modules/
 dashboard/dist/
+
+# Papyrus compile output (deployed directly to the mod folder; never tracked).
+*.pex
+
+# CK backup / temp files.
+*.esp.bak
+*.esm.bak
+*.esl.bak
+
+# Generated Papyrus project file (substituted from NarrativeEngine.ppj.in by
+# CMake configure with machine-specific absolute paths).
+/NarrativeEngine.ppj

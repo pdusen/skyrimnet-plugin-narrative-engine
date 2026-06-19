@@ -624,7 +624,7 @@ self-contained verification.
 
 ### Step 1 — Workflow scaffolding for ESP and Papyrus authoring
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 

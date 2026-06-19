@@ -279,30 +279,112 @@ if(DEFINED OUTPUT_FOLDER)
     add_custom_target(deploy_dashboard ALL DEPENDS ${DASHBOARD_DEPLOY_OUTPUTS})
     message(STATUS "Dashboard deploy: ${DASHBOARD_DIST_DIR} -> ${DASHBOARD_DEPLOY_DIR}")
 
-    # Copy the Papyrus source folder (Source/Scripts/*.psc) into the deployed
-    # mod folder. We enumerate the .psc files at configure time so the build
-    # tracks them — adding a new .psc requires re-running CMake (or it'll be
-    # picked up on the next configure). Each file uses copy_if_different so
-    # touched files are skipped.
-    set(PAPYRUS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/Source/Scripts")
-    set(PAPYRUS_DEPLOY_DIR "${OUTPUT_FOLDER}/Source/Scripts")
-    file(GLOB PAPYRUS_SOURCE_FILES CONFIGURE_DEPENDS "${PAPYRUS_SOURCE_DIR}/*.psc")
-    if(PAPYRUS_SOURCE_FILES)
-        message(STATUS "Papyrus source deploy folder: ${PAPYRUS_DEPLOY_DIR}")
-        add_custom_command(
-            TARGET "${PROJECT_NAME}"
-            POST_BUILD
-            COMMAND "${CMAKE_COMMAND}" -E make_directory "${PAPYRUS_DEPLOY_DIR}"
+    # -------------------------------------------------------------------
+    # ESP sync (mod folder -> repo, via sync-esp.ps1)
+    # -------------------------------------------------------------------
+    #
+    # Pre-build target that runs `sync-esp.ps1` on every build. The script
+    # pulls the .esp from <mod-folder>/NarrativeEngine.esp into
+    # <repo>/esp/NarrativeEngine.esp when the former is newer (i.e. after a
+    # CK session). One direction only — the repo never pushes the ESP back
+    # to the mod folder. See sync-esp.ps1 for the full decision matrix.
+    #
+    # Wired as an ALL custom target plus add_dependencies so it runs before
+    # the DLL link step. Uses pwsh from PATH; if you want a different
+    # PowerShell, override via NE_PWSH_EXECUTABLE.
+    #
+    # `add_custom_command(... PRE_BUILD ...)` is NOT used here because the
+    # PRE_BUILD timing only fires for the Visual Studio generator, not
+    # Ninja; our setup is Ninja.
+    option(NE_SKIP_ESP_SYNC "Skip the mod folder -> repo ESP sync on each build" OFF)
+    if(NOT NE_SKIP_ESP_SYNC)
+        if(NOT DEFINED NE_PWSH_EXECUTABLE)
+            find_program(NE_PWSH_EXECUTABLE pwsh REQUIRED)
+        endif()
+        add_custom_target(sync_esp ALL
+            COMMAND "${NE_PWSH_EXECUTABLE}" -NoProfile -File "${CMAKE_SOURCE_DIR}/sync-esp.ps1"
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            COMMENT "Syncing NarrativeEngine.esp from mod folder to repo (if newer)"
             VERBATIM
         )
-        foreach(psc IN LISTS PAPYRUS_SOURCE_FILES)
-            get_filename_component(psc_name "${psc}" NAME)
-            add_custom_command(
-                TARGET "${PROJECT_NAME}"
-                POST_BUILD
-                COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${psc}" "${PAPYRUS_DEPLOY_DIR}/${psc_name}"
-                VERBATIM
-            )
-        endforeach()
+        add_dependencies("${PROJECT_NAME}" sync_esp)
+        message(STATUS "ESP sync: enabled (sync_esp pre-build target wired)")
+    else()
+        message(STATUS "ESP sync: SKIPPED (NE_SKIP_ESP_SYNC=ON)")
+    endif()
+
+    # -------------------------------------------------------------------
+    # Papyrus compile (esp/Source/Scripts/*.psc -> <mod-folder>/Scripts/*.pex)
+    # -------------------------------------------------------------------
+    #
+    # Conditional on .psc files existing. Until the user authors the first
+    # script (Step 7), this whole block is dormant. Once a .psc appears,
+    # CONFIGURE_DEPENDS picks it up on the next build, this block activates,
+    # and Bethesda's PapyrusCompiler.exe is invoked against the project's
+    # generated .ppj file (configured below from NarrativeEngine.ppj.in).
+    file(GLOB PAPYRUS_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/esp/Source/Scripts/*.psc")
+    if(PAPYRUS_SOURCES)
+        # Detect PapyrusCompiler.exe. Required once .psc files exist.
+        if(NOT DEFINED NE_PAPYRUS_COMPILER)
+            if(DEFINED ENV{PAPYRUS_COMPILER} AND EXISTS "$ENV{PAPYRUS_COMPILER}")
+                set(NE_PAPYRUS_COMPILER "$ENV{PAPYRUS_COMPILER}")
+            endif()
+        endif()
+        if(NOT NE_PAPYRUS_COMPILER)
+            message(FATAL_ERROR
+                "Papyrus sources found under esp/Source/Scripts/ but PAPYRUS_COMPILER "
+                "is not set. Point the PAPYRUS_COMPILER environment variable at your "
+                "PapyrusCompiler.exe (typically <CK_DIR>/Papyrus Compiler/PapyrusCompiler.exe).")
+        endif()
+
+        # Default vanilla / SKSE Papyrus source import paths. Override either
+        # via NE_PAPYRUS_IMPORT_SKYRIM / NE_PAPYRUS_IMPORT_SKSE env vars; the
+        # detection below picks the common defaults relative to SKYRIM_FOLDER
+        # and SKSE_DIR if present.
+        if(NOT DEFINED NE_PAPYRUS_IMPORT_SKYRIM)
+            if(DEFINED ENV{NE_PAPYRUS_IMPORT_SKYRIM})
+                set(NE_PAPYRUS_IMPORT_SKYRIM "$ENV{NE_PAPYRUS_IMPORT_SKYRIM}")
+            elseif(DEFINED ENV{SKYRIM_FOLDER} AND IS_DIRECTORY "$ENV{SKYRIM_FOLDER}/Data/Source/Scripts")
+                set(NE_PAPYRUS_IMPORT_SKYRIM "$ENV{SKYRIM_FOLDER}/Data/Source/Scripts")
+            endif()
+        endif()
+        if(NOT DEFINED NE_PAPYRUS_IMPORT_SKSE)
+            if(DEFINED ENV{NE_PAPYRUS_IMPORT_SKSE})
+                set(NE_PAPYRUS_IMPORT_SKSE "$ENV{NE_PAPYRUS_IMPORT_SKSE}")
+            endif()
+        endif()
+        if(NOT NE_PAPYRUS_IMPORT_SKYRIM OR NOT NE_PAPYRUS_IMPORT_SKSE)
+            message(FATAL_ERROR
+                "Papyrus sources found but vanilla / SKSE import paths aren't set. "
+                "Set NE_PAPYRUS_IMPORT_SKYRIM and NE_PAPYRUS_IMPORT_SKSE env vars "
+                "(or define them as CMake cache vars). Vanilla is typically "
+                "<SkyrimSE>/Data/Source/Scripts; SKSE source ships in the SKSE archive.")
+        endif()
+
+        # Generate NarrativeEngine.ppj at the repo root from the template,
+        # substituting the absolute machine-specific paths. The generated
+        # .ppj is gitignored; VS Code's Papyrus extension picks it up from
+        # the repo root automatically.
+        set(NE_PAPYRUS_SOURCE_DIR  "${CMAKE_SOURCE_DIR}/esp/Source/Scripts")
+        set(NE_PAPYRUS_OUTPUT_DIR  "${OUTPUT_FOLDER}/Scripts")
+        configure_file(
+            "${CMAKE_SOURCE_DIR}/NarrativeEngine.ppj.in"
+            "${CMAKE_SOURCE_DIR}/NarrativeEngine.ppj"
+            @ONLY
+        )
+
+        # Compile target — invokes PapyrusCompiler.exe against the .ppj. Marked
+        # ALL so a default build compiles scripts alongside the DLL.
+        add_custom_target(compile_papyrus ALL
+            COMMAND "${NE_PAPYRUS_COMPILER}" "${CMAKE_SOURCE_DIR}/NarrativeEngine.ppj"
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            DEPENDS ${PAPYRUS_SOURCES}
+            COMMENT "Compiling Papyrus scripts to ${NE_PAPYRUS_OUTPUT_DIR}"
+            VERBATIM
+        )
+        message(STATUS "Papyrus compile: ${NE_PAPYRUS_SOURCE_DIR} -> ${NE_PAPYRUS_OUTPUT_DIR}")
+    else()
+        message(STATUS "Papyrus compile: no .psc files yet; step dormant")
     endif()
 endif()
