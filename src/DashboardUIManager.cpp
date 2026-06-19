@@ -54,6 +54,25 @@ namespace NarrativeEngine::DashboardUIManager
                     // via MapVirtualKeyW so the comparison is in VK space.
                     const std::uint32_t vk = ::MapVirtualKeyW(scanCode, MAPVK_VSC_TO_VK);
                     if (vk == 0) continue;
+
+                    // ESC closes the dashboard when it's open and no
+                    // modifier keys are held. Doesn't open it when closed
+                    // — matches the standard "Escape dismisses overlays"
+                    // affordance without stealing the keybind in normal
+                    // play (where ESC opens the pause menu). Modifier-
+                    // combo ESC bindings are left alone so the player can
+                    // still use them for other mods.
+                    if (vk == VK_ESCAPE) {
+                        if (!g_visible.load()) continue;
+                        const bool anyMod =
+                            (::GetAsyncKeyState(VK_CONTROL) & 0x8000) ||
+                            (::GetAsyncKeyState(VK_SHIFT)   & 0x8000) ||
+                            (::GetAsyncKeyState(VK_MENU)    & 0x8000);
+                        if (anyMod) continue;
+                        fire = true;
+                        break;
+                    }
+
                     if (static_cast<int>(vk) != Settings::Get().dashboardHotkeyVK) continue;
 
                     // Modifier match is exact, not a superset. (F7+Shift is
