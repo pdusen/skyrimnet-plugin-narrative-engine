@@ -711,7 +711,7 @@ run.
 
 ### Step 2 — Mod folder setup, ESP creation, and ESL flagging
 
-- [ ] Complete
+- [x] Complete
 
 **[USER]**
 
