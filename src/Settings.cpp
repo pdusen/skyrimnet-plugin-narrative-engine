@@ -48,6 +48,13 @@ namespace NarrativeEngine::Settings
             g_config.dashboardHotkeyModifiers = static_cast<std::uint8_t>(
                 ini.GetLongValue("Dashboard", "iHotkeyModifiers", g_config.dashboardHotkeyModifiers));
 
+            g_config.combatEventsHitRadiusUnits = static_cast<int>(
+                ini.GetLongValue("CombatEvents", "iHitRadiusUnits",
+                                 g_config.combatEventsHitRadiusUnits));
+            g_config.combatEventsMaxStored = static_cast<int>(
+                ini.GetLongValue("CombatEvents", "iMaxStored",
+                                 g_config.combatEventsMaxStored));
+
             return true;
         }
 

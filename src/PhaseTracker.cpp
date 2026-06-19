@@ -6,6 +6,14 @@
 #include <chrono>
 #include <mutex>
 
+// Forward decl to avoid pulling CombatEventLog into the PhaseTracker header.
+// Keeps the dependency one-way (PhaseTracker.cpp → CombatEventLog) and out
+// of every translation unit that includes PhaseTracker.h.
+namespace NarrativeEngine::CombatEventLog
+{
+    void OnPhaseAdvanced();
+}
+
 namespace NarrativeEngine::PhaseTracker
 {
     namespace
@@ -136,20 +144,28 @@ namespace NarrativeEngine::PhaseTracker
             g_phaseEnteredAtRealTime = CurrentRealTimeSecondsLocked();
             newRealTime              = g_phaseEnteredAtRealTime;
         }
+        // Notify CombatEventLog outside our mutex — it takes its own lock,
+        // and we don't want to hold two at once.
+        CombatEventLog::OnPhaseAdvanced();
         logger::info("PhaseTracker: advanced {} -> {} (at realTime={:.1f})",
                      PhaseName(previous), PhaseName(newPhase), newRealTime);
     }
 
     void Reset(Phase initial)
     {
-        std::scoped_lock lock(g_mutex);
-        g_phase              = initial;
-        g_baseSeconds        = 0.0f;
-        g_lastSampleTime     = SteadyClock::now();
-        // Anchor "phase started" to *now* so a fresh new-game state filters
-        // events to "since now" (i.e. nothing yet). For kPreLoadGame, this
-        // value gets immediately overwritten by OnLoad's deserialized value.
-        g_phaseEnteredAtRealTime = CurrentRealTimeSecondsLocked();
+        {
+            std::scoped_lock lock(g_mutex);
+            g_phase              = initial;
+            g_baseSeconds        = 0.0f;
+            g_lastSampleTime     = SteadyClock::now();
+            // Anchor "phase started" to *now* so a fresh new-game state
+            // filters events to "since now" (i.e. nothing yet). For
+            // kPreLoadGame, this value gets immediately overwritten by
+            // OnLoad's deserialized value.
+            g_phaseEnteredAtRealTime = CurrentRealTimeSecondsLocked();
+        }
+        // Same notify-outside-mutex discipline as AdvanceTo.
+        CombatEventLog::OnPhaseAdvanced();
     }
 
     void Tick()

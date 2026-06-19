@@ -2,7 +2,10 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace NarrativeEngine::SkyrimNetEvents
 {
@@ -78,7 +81,23 @@ namespace NarrativeEngine::SkyrimNetEvents
                 text = str("line");
             }
             else {
-                text = data ? data->dump() : std::string{"(no data)"};
+                // Unknown discriminator. Many third-party SkyrimNet plugins
+                // (e.g. SeverActions' "follower_left") emit events whose
+                // `data` is just a pre-rendered string sentence — perfect
+                // for our purposes. Use it directly when that's the shape.
+                // Fall back to a JSON dump of an object payload, and to a
+                // last-resort "(no data)" when the field is missing.
+                if (auto it = evt.find("data"); it != evt.end()) {
+                    if (it->is_string()) {
+                        text = it->get<std::string>();
+                    } else if (it->is_object() || it->is_array()) {
+                        text = it->dump();
+                    } else {
+                        text = "(no data)";
+                    }
+                } else {
+                    text = "(no data)";
+                }
             }
 
             if (evt.contains("gameTime") && evt["gameTime"].is_number()) {
@@ -89,5 +108,222 @@ namespace NarrativeEngine::SkyrimNetEvents
 
             evt["text"] = std::move(text);
         }
+    }
+
+    namespace
+    {
+        // ---- Condensation pieces for BuildMergedTimeline -----------------
+
+        bool IsInternalEvent(const nlohmann::json& e)
+        {
+            return e.is_object() && e.contains("ne_kind") && e["ne_kind"].is_string();
+        }
+
+        bool IsHit(const nlohmann::json& e)
+        {
+            return IsInternalEvent(e) && e["ne_kind"].get<std::string>() == "hit";
+        }
+
+        // Unordered actor-pair key for "Hans vs Luke" grouping. Canonicalize
+        // by ordering the two names so {Hans,Luke} == {Luke,Hans}.
+        std::string PairKey(const std::string& a, const std::string& b)
+        {
+            return (a < b) ? (a + "\x1f" + b) : (b + "\x1f" + a);
+        }
+
+        struct ActorPairStats
+        {
+            std::string a, b;             // canonical (a <= b)
+            int         aToB = 0;
+            int         bToA = 0;
+            int Total() const { return aToB + bToA; }
+        };
+
+        struct EnvBucket
+        {
+            std::string target;
+            std::string sourceLabel;  // "" for bare fallback
+            int         count = 0;
+        };
+
+        // Render a single condensed entry's body text from the pending hits.
+        // Plan rules:
+        //   - 1 actor-vs-actor hit         → "A strikes B"
+        //   - 1 pair, one-sided (count>1)  → "A attacks B"
+        //   - 1 pair, both sides           → "A and B trade blows"
+        //   - multiple pairs               → "Combat continues: A attacks B; C attacks D"
+        //                                     (top 3, ", and others" suffix if >3)
+        //   - 1 env hit, with label        → "T took damage from <L>"
+        //   - >1 env hit, same (T,L)       → "T took repeated damage from <L>"
+        //   - 1 env hit, no label          → "T took damage"
+        //   - >1 env hit, same T, no label → "T took repeated damage"
+        //   - mixed                        → actor summary, then env summaries,
+        //                                     joined with "; "
+        std::string RenderCondensedBody(const std::vector<nlohmann::json>& hits)
+        {
+            std::vector<ActorPairStats>             pairs;
+            std::vector<EnvBucket>                  envs;
+
+            auto findPair = [&](const std::string& canA, const std::string& canB) -> ActorPairStats& {
+                for (auto& p : pairs) {
+                    if (p.a == canA && p.b == canB) return p;
+                }
+                pairs.push_back({canA, canB, 0, 0});
+                return pairs.back();
+            };
+            auto findEnv = [&](const std::string& target, const std::string& label) -> EnvBucket& {
+                for (auto& e : envs) {
+                    if (e.target == target && e.sourceLabel == label) return e;
+                }
+                envs.push_back({target, label, 0});
+                return envs.back();
+            };
+
+            for (const auto& h : hits) {
+                const bool   namedActor = h.value("ne_actor_is_named", false);
+                const std::string actor = h.value("originatingActorName", std::string{});
+                const std::string targ  = h.value("targetActorName",      std::string{});
+                if (namedActor && !actor.empty() && !targ.empty()) {
+                    const std::string canA = (actor < targ) ? actor : targ;
+                    const std::string canB = (actor < targ) ? targ  : actor;
+                    auto& p = findPair(canA, canB);
+                    if (actor == canA) p.aToB++; else p.bToA++;
+                } else {
+                    findEnv(targ, actor).count++;
+                }
+            }
+
+            std::string actorSummary;
+            if (!pairs.empty()) {
+                if (pairs.size() == 1) {
+                    auto& p = pairs.front();
+                    const int total = p.Total();
+                    if (total <= 1) {
+                        // Single hit; render with attacker first.
+                        const std::string& aggressor = (p.aToB > 0) ? p.a : p.b;
+                        const std::string& victim    = (p.aToB > 0) ? p.b : p.a;
+                        actorSummary = aggressor + " strikes " + victim;
+                    } else if (p.aToB == 0 || p.bToA == 0) {
+                        const std::string& aggressor = (p.aToB > 0) ? p.a : p.b;
+                        const std::string& victim    = (p.aToB > 0) ? p.b : p.a;
+                        actorSummary = aggressor + " attacks " + victim;
+                    } else {
+                        actorSummary = p.a + " and " + p.b + " trade blows";
+                    }
+                } else {
+                    // Multiple distinct pairs — top 3 by total hits.
+                    std::sort(pairs.begin(), pairs.end(),
+                              [](const ActorPairStats& x, const ActorPairStats& y) {
+                                  return x.Total() > y.Total();
+                              });
+                    actorSummary = "Combat continues: ";
+                    const std::size_t cap = std::min<std::size_t>(3, pairs.size());
+                    for (std::size_t i = 0; i < cap; ++i) {
+                        if (i > 0) actorSummary += "; ";
+                        const auto& p = pairs[i];
+                        const std::string& aggressor = (p.aToB >= p.bToA) ? p.a : p.b;
+                        const std::string& victim    = (p.aToB >= p.bToA) ? p.b : p.a;
+                        actorSummary += aggressor + " attacks " + victim;
+                    }
+                    if (pairs.size() > cap) {
+                        actorSummary += ", and others";
+                    }
+                }
+            }
+
+            std::vector<std::string> envSummaries;
+            envSummaries.reserve(envs.size());
+            for (const auto& e : envs) {
+                std::string s;
+                if (e.count <= 1) {
+                    s = e.target + " took damage";
+                    if (!e.sourceLabel.empty()) s += " from " + e.sourceLabel;
+                } else {
+                    s = e.target + " took repeated damage";
+                    if (!e.sourceLabel.empty()) s += " from " + e.sourceLabel;
+                }
+                envSummaries.push_back(std::move(s));
+            }
+
+            std::string body;
+            if (!actorSummary.empty()) body = actorSummary;
+            for (auto& s : envSummaries) {
+                if (!body.empty()) body += "; ";
+                body += s;
+            }
+            return body;
+        }
+
+        // Build the final condensed JSON entry from the pending-hits buffer.
+        // Inherits the timestamp + relative-prefix from the *most recent*
+        // hit in the run.
+        nlohmann::json BuildCondensedEntry(const std::vector<nlohmann::json>& hits,
+                                           double                              currentGameTimeSeconds)
+        {
+            const auto& tail = hits.back();
+            const double localTime = tail.value("localTime", 0.0);
+            const double gameTime  = tail.value("gameTime",  0.0);
+            const double delta     = currentGameTimeSeconds - gameTime;
+
+            const std::string body = RenderCondensedBody(hits);
+            const std::string text =
+                "[" + FormatRelativeGameTime(delta < 0.0 ? 0.0 : delta) + "] " + body;
+
+            nlohmann::json j;
+            // Same shared `type` the individual combat events use, so the
+            // dashboard / prompt see a single uniform label across the
+            // whole combat family. `ne_kind` keeps the finer label.
+            j["type"]      = "combat_event";
+            j["ne_kind"]   = "combat_summary";
+            j["localTime"] = localTime;
+            j["gameTime"]  = gameTime;
+            j["text"]      = text;
+            return j;
+        }
+    }
+
+    nlohmann::json BuildMergedTimeline(nlohmann::json skyrimNetEvents,
+                                       nlohmann::json combatEvents,
+                                       double         currentGameTimeSeconds)
+    {
+        // Concatenate, guarding against the inputs not being arrays.
+        std::vector<nlohmann::json> merged;
+        if (skyrimNetEvents.is_array()) {
+            merged.reserve(skyrimNetEvents.size() + (combatEvents.is_array() ? combatEvents.size() : 0));
+            for (auto& e : skyrimNetEvents) merged.push_back(std::move(e));
+        }
+        if (combatEvents.is_array()) {
+            for (auto& e : combatEvents) merged.push_back(std::move(e));
+        }
+
+        // Stable sort by localTime ascending so equal timestamps preserve
+        // input order (SkyrimNet events tend to precede our internal events
+        // when they share a tick boundary).
+        std::stable_sort(merged.begin(), merged.end(),
+                         [](const nlohmann::json& a, const nlohmann::json& b) {
+                             const double at = a.is_object() ? a.value("localTime", 0.0) : 0.0;
+                             const double bt = b.is_object() ? b.value("localTime", 0.0) : 0.0;
+                             return at < bt;
+                         });
+
+        nlohmann::json              out = nlohmann::json::array();
+        std::vector<nlohmann::json> pendingHits;
+
+        const auto flushPending = [&]() {
+            if (pendingHits.empty()) return;
+            out.push_back(BuildCondensedEntry(pendingHits, currentGameTimeSeconds));
+            pendingHits.clear();
+        };
+
+        for (auto& evt : merged) {
+            if (IsHit(evt)) {
+                pendingHits.push_back(std::move(evt));
+            } else {
+                flushPending();
+                out.push_back(std::move(evt));
+            }
+        }
+        flushPending();
+        return out;
     }
 }

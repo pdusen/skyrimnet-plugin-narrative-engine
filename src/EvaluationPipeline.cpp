@@ -2,6 +2,7 @@
 
 #include <AlphaCanon.h>
 #include <AsyncDispatch.h>
+#include <CombatEventLog.h>
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
 #include <PhaseTracker.h>
@@ -24,18 +25,15 @@ namespace NarrativeEngine::EvaluationPipeline
     {
         std::atomic<bool> g_inFlight = false;
 
-        // Wall-clock anchor for Snapshot::realTimeSec — monotonic seconds
-        // since the first BuildSnapshot() call.
-        const std::chrono::steady_clock::time_point &StartTime()
+        // Unix-epoch seconds. Used as the canonical timestamp on every
+        // DecisionRecord so the dashboard can order entries correctly
+        // across save/load boundaries. (A per-process steady-clock anchor
+        // resets every session, which made loaded records from a prior
+        // session bury a fresh decision whose anchor was just initialized.)
+        double NowUnixSeconds()
         {
-            static const auto start = std::chrono::steady_clock::now();
-            return start;
-        }
-
-        double SecondsSinceStart()
-        {
-            const auto now = std::chrono::steady_clock::now();
-            return std::chrono::duration<double>(now - StartTime()).count();
+            return std::chrono::duration<double>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
         }
 
         // Strip leading/trailing whitespace and a wrapping markdown code
@@ -120,17 +118,12 @@ namespace NarrativeEngine::EvaluationPipeline
 
     Snapshot BuildSnapshot()
     {
-        // Ensure the static anchor is initialized on the first call. This
-        // also implicitly pins the start time to the first tick rather than
-        // to plugin load — close enough that the difference doesn't matter.
-        (void)StartTime();
-
         const bool debug = Settings::Get().debugMode;
         if (debug)
             logger::debug("BuildSnapshot: begin");
 
         Snapshot s;
-        s.realTimeSec = SecondsSinceStart();
+        s.realTimeSec = NowUnixSeconds();
 
         s.currentPhase           = PhaseTracker::PhaseName(PhaseTracker::Get());
         s.timeInPhaseSeconds     = PhaseTracker::TimeInPhaseSeconds();
@@ -272,19 +265,60 @@ namespace NarrativeEngine::EvaluationPipeline
                 // "N units ago" relative timestamp.
                 SkyrimNetEvents::FormatEventsText(parsed, snapshot.player.gameTimeSeconds);
 
-                ctx["recent_events"] = std::move(parsed);
+                // Drop events with no usable text (FormatEventsText's
+                // "(no data)" last-resort case — typically third-party
+                // event types whose `data` field is missing entirely).
+                // Sending them to the LLM is pure noise. We log each
+                // dropped event so the unrecognized `type` surfaces in
+                // logs and we can add a renderer for it if it turns out
+                // to be narratively meaningful.
+                {
+                    static constexpr std::string_view kNoData = "(no data)";
+                    nlohmann::json kept = nlohmann::json::array();
+                    for (auto& evt : parsed) {
+                        if (!evt.is_object()) continue;
+                        auto it = evt.find("text");
+                        if (it != evt.end() && it->is_string()) {
+                            const auto& s = it->get_ref<const std::string&>();
+                            if (s.size() >= kNoData.size() &&
+                                s.compare(s.size() - kNoData.size(),
+                                          kNoData.size(), kNoData) == 0) {
+                                logger::warn(
+                                    "BuildPromptContext: dropping event with no usable text: {}",
+                                    evt.dump());
+                                continue;
+                            }
+                        }
+                        kept.push_back(std::move(evt));
+                    }
+                    parsed = std::move(kept);
+                }
+
+                // Merge in NarrativeEngine's internal combat events (Phase
+                // 02). The combat tail is already phase-pruned in memory,
+                // so no extra filter pass is needed on it. BuildMergedTimeline
+                // sorts by localTime and condenses runs of hit events.
+                ctx["recent_events"] = SkyrimNetEvents::BuildMergedTimeline(
+                    std::move(parsed),
+                    CombatEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
+                    snapshot.player.gameTimeSeconds);
             }
             else
             {
                 if (parsed.is_discarded() && !snapshot.skyrimNetEventsJSON.empty())
                 {
-                    logger::warn("BuildPromptContext: recent_events JSON failed to parse; using []");
+                    logger::warn("BuildPromptContext: recent_events JSON failed to parse; using combat-only tail");
                 }
                 else if (!parsed.is_discarded())
                 {
-                    logger::warn("BuildPromptContext: recent_events JSON wasn't an array; using []");
+                    logger::warn("BuildPromptContext: recent_events JSON wasn't an array; using combat-only tail");
                 }
-                ctx["recent_events"] = nlohmann::json::array();
+                // Even with no SkyrimNet events, we still want our internal
+                // combat events to reach the prompt.
+                ctx["recent_events"] = SkyrimNetEvents::BuildMergedTimeline(
+                    nlohmann::json::array(),
+                    CombatEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
+                    snapshot.player.gameTimeSeconds);
             }
         }
 

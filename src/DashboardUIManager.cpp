@@ -2,6 +2,7 @@
 
 #include <AlphaCanon.h>
 #include <AsyncDispatch.h>
+#include <CombatEventLog.h>
 #include <DecisionLog.h>
 #include <PhaseTracker.h>
 #include <PrismaUI.h>
@@ -203,23 +204,27 @@ namespace NarrativeEngine::DashboardUIManager
             j["last_evaluation"] = nullptr;
         }
 
-        // recent_events — SkyrimNet's tail, formatted via the shared helper
-        // (same `text` synthesis the LLM prompt uses, so the dashboard reads
-        // identically to what the Director sees).
+        // recent_events — SkyrimNet's tail merged with NarrativeEngine's
+        // internal combat tail, formatted via the shared helper (same
+        // `text` synthesis + condensation the LLM prompt uses, so the
+        // dashboard reads identically to what the Director sees).
+        double currentGameTimeSeconds = 0.0;
+        if (auto* cal = RE::Calendar::GetSingleton()) {
+            currentGameTimeSeconds = static_cast<double>(cal->GetDaysPassed()) * 86400.0;
+        }
+
         const auto eventsJson = SkyrimNetAPI::GetRecentEvents(0, 20, "");
         auto parsed = nlohmann::json::parse(eventsJson, /*cb=*/nullptr, /*allow_exceptions=*/false);
-        nlohmann::json events = nlohmann::json::array();
+        nlohmann::json skyrimSide = nlohmann::json::array();
         if (parsed.is_array()) {
             std::reverse(parsed.begin(), parsed.end());
-
-            double currentGameTimeSeconds = 0.0;
-            if (auto* cal = RE::Calendar::GetSingleton()) {
-                currentGameTimeSeconds = static_cast<double>(cal->GetDaysPassed()) * 86400.0;
-            }
             SkyrimNetEvents::FormatEventsText(parsed, currentGameTimeSeconds);
-            events = std::move(parsed);
+            skyrimSide = std::move(parsed);
         }
-        j["recent_events"] = std::move(events);
+        j["recent_events"] = SkyrimNetEvents::BuildMergedTimeline(
+            std::move(skyrimSide),
+            CombatEventLog::GetRenderedTail(currentGameTimeSeconds),
+            currentGameTimeSeconds);
 
         return j.dump();
     }

@@ -23,4 +23,16 @@ namespace NarrativeEngine::SkyrimNetEvents
     // so the consumer at least sees the raw content. Defensive against
     // missing fields and non-object entries.
     void FormatEventsText(nlohmann::json& events, double currentGameTimeSeconds);
+
+    // Merges a SkyrimNet event array (already FormatEventsText'd, oldest-
+    // first) with a CombatEventLog rendered tail (oldest-first), produces a
+    // single oldest-first timeline sorted ascending by `localTime`, and
+    // condenses runs of consecutive internal `hit` events between non-hit
+    // events into one summary entry. Discriminates internal events by the
+    // presence of `ne_kind` — SkyrimNet events have no such field. The
+    // condensed entry carries `type = "narrative_engine_combat_summary"` so
+    // the dashboard can style it if it wants; the LLM reads only `text`.
+    nlohmann::json BuildMergedTimeline(nlohmann::json skyrimNetEvents,
+                                       nlohmann::json combatEvents,
+                                       double         currentGameTimeSeconds);
 }

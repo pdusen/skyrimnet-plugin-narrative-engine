@@ -1,6 +1,7 @@
 #include <Plugin.h>
 
 #include <AsyncDispatch.h>
+#include <CombatEventLog.h>
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
 #include <Decorators.h>
@@ -40,11 +41,16 @@ namespace NarrativeEngine
                     // registers the hotkey sink; gracefully no-ops when
                     // PrismaUI is unavailable.
                     DashboardUIManager::Initialize();
+                    // CombatEventLog hooks SKSE's combat/hit/bleedout
+                    // events. Safe to register at kDataLoaded — the event
+                    // source holder exists by then.
+                    CombatEventLog::Initialize();
                     AsyncDispatch::Start();
                     break;
                 case SKSE::MessagingInterface::kNewGame:
                     logger::info("OnMessage: kNewGame");
                     DecisionLog::Clear();
+                    CombatEventLog::OnRevert();
                     PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
                     Tick::Start();
                     break;
@@ -55,10 +61,15 @@ namespace NarrativeEngine
                     // so OnLoad has a known baseline to overwrite.
                     Tick::Stop();
                     DecisionLog::Clear();
+                    CombatEventLog::OnRevert();
                     PhaseTracker::Reset();
                     break;
                 case SKSE::MessagingInterface::kPostLoadGame:
                     logger::info("OnMessage: kPostLoadGame");
+                    // Rebuild the bleedingOut set from currently-loaded
+                    // high-process actors so recovery detection works for
+                    // any actor mid-bleedout at save time.
+                    CombatEventLog::OnPostLoadGame();
                     Tick::Start();
                     break;
                 default:
@@ -71,6 +82,7 @@ namespace NarrativeEngine
             logger::debug("OnSave");
             PhaseTracker::OnSave(intfc);
             DecisionLog::OnSave(intfc);
+            CombatEventLog::OnSave(intfc);
             // Future subsystems append their OnSave calls here.
         }
 
@@ -92,6 +104,9 @@ namespace NarrativeEngine
                     case DecisionLog::kRecordTypeId:
                         DecisionLog::OnLoad(intfc, version, length);
                         break;
+                    case CombatEventLog::kRecordTypeId:
+                        CombatEventLog::OnLoad(intfc, version, length);
+                        break;
                     default:
                         // Unknown record — likely from a newer build or a
                         // removed subsystem. GetNextRecordInfo's next call
@@ -109,6 +124,7 @@ namespace NarrativeEngine
             logger::debug("OnRevert");
             PhaseTracker::OnRevert();
             DecisionLog::OnRevert();
+            CombatEventLog::OnRevert();
             // Future subsystems append their OnRevert calls here.
         }
     }

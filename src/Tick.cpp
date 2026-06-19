@@ -1,6 +1,7 @@
 #include <Tick.h>
 
 #include <AsyncDispatch.h>
+#include <CombatEventLog.h>
 #include <EvaluationPipeline.h>
 #include <PhaseTracker.h>
 #include <Settings.h>
@@ -60,6 +61,12 @@ namespace NarrativeEngine::Tick
                 return;
             }
             g_unpausedSecondsSinceLastTick += elapsedSec;
+
+            // Drive CombatEventLog's main-thread poll: detects player
+            // combat-state flips (combat_start / combat_end) and bleedout
+            // recoveries (regain_footing). Cheap — bool compare plus a
+            // small map walk.
+            CombatEventLog::Poll();
 
             const double intervalSec =
                 static_cast<double>(std::max(1, Settings::Get().tickIntervalSeconds));

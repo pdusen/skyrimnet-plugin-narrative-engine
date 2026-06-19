@@ -40,6 +40,10 @@ namespace NarrativeEngine::Settings
         // [Dashboard]
         int          dashboardHotkeyVK        = 118; // Windows VK code; 118 == VK_F7; -1 disables
         std::uint8_t dashboardHotkeyModifiers = 0;   // kModCtrl|kModShift|kModAlt bitmask; 0 = none
+
+        // [CombatEvents]
+        int combatEventsHitRadiusUnits = 6000;  // ~90 ft; distance gate for hit / collapse capture
+        int combatEventsMaxStored      = 256;   // ring-buffer cap on retained internal combat events
     };
 
     // Read both INIs (plugin then MCM override) and populate the singleton.
