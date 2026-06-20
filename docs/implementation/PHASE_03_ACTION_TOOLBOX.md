@@ -796,7 +796,7 @@ warnings panel.
 
 ### Step 3 — Settings expansion and PhaseTracker direction helper
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -824,7 +824,7 @@ INI and reload — log reflects the new value via debug mode.
 
 ### Step 4 — IAction interface and ActionRegistry
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -846,7 +846,7 @@ this is pure scaffolding so later steps have something to plug into.
 
 ### Step 5 — ActionDispatcher infrastructure (state, gates, completion sink, persistence)
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -893,7 +893,7 @@ the final "would consider action" line. Save with `g_actionInFlight` empty; relo
 
 ### Step 6 — Action-select prompt and dispatcher LLM call
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 

@@ -55,6 +55,32 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("Director", "iAdvanceThresholdResolution",
                                  g_config.advanceThresholdResolution));
 
+            g_config.idealDurationExposition = static_cast<int>(
+                ini.GetLongValue("Director", "iIdealDurationExposition",
+                                 g_config.idealDurationExposition));
+            g_config.idealDurationRisingAction = static_cast<int>(
+                ini.GetLongValue("Director", "iIdealDurationRisingAction",
+                                 g_config.idealDurationRisingAction));
+            g_config.idealDurationClimax = static_cast<int>(
+                ini.GetLongValue("Director", "iIdealDurationClimax",
+                                 g_config.idealDurationClimax));
+            g_config.idealDurationFallingAction = static_cast<int>(
+                ini.GetLongValue("Director", "iIdealDurationFallingAction",
+                                 g_config.idealDurationFallingAction));
+            g_config.idealDurationResolution = static_cast<int>(
+                ini.GetLongValue("Director", "iIdealDurationResolution",
+                                 g_config.idealDurationResolution));
+
+            g_config.actionCooldownSeconds = static_cast<int>(
+                ini.GetLongValue("Director", "iActionCooldownSeconds",
+                                 g_config.actionCooldownSeconds));
+            g_config.actionRepetitionWindowSeconds = static_cast<int>(
+                ini.GetLongValue("Director", "iActionRepetitionWindowSeconds",
+                                 g_config.actionRepetitionWindowSeconds));
+            g_config.actionStaleLockTimeoutSeconds = static_cast<int>(
+                ini.GetLongValue("Director", "iActionStaleLockTimeoutSeconds",
+                                 g_config.actionStaleLockTimeoutSeconds));
+
             g_config.doNotDisturbCellEDIDsCSV = ini.GetValue(
                 "AlphaCanon", "sDoNotDisturbCellEDIDsCSV",
                 g_config.doNotDisturbCellEDIDsCSV.c_str());
@@ -70,6 +96,25 @@ namespace NarrativeEngine::Settings
             g_config.combatEventsMaxStored = static_cast<int>(
                 ini.GetLongValue("CombatEvents", "iMaxStored",
                                  g_config.combatEventsMaxStored));
+
+            g_config.ambushDefaultBanditCount = static_cast<int>(
+                ini.GetLongValue("Actions", "iAmbushDefaultBanditCount",
+                                 g_config.ambushDefaultBanditCount));
+            g_config.ambushDefaultSpawnDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Actions", "iAmbushDefaultSpawnDistanceUnits",
+                                 g_config.ambushDefaultSpawnDistanceUnits));
+            g_config.ambushMinBanditCount = static_cast<int>(
+                ini.GetLongValue("Actions", "iAmbushMinBanditCount",
+                                 g_config.ambushMinBanditCount));
+            g_config.ambushMaxBanditCount = static_cast<int>(
+                ini.GetLongValue("Actions", "iAmbushMaxBanditCount",
+                                 g_config.ambushMaxBanditCount));
+            g_config.ambushMinSpawnDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Actions", "iAmbushMinSpawnDistanceUnits",
+                                 g_config.ambushMinSpawnDistanceUnits));
+            g_config.ambushMaxSpawnDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Actions", "iAmbushMaxSpawnDistanceUnits",
+                                 g_config.ambushMaxSpawnDistanceUnits));
 
             return true;
         }

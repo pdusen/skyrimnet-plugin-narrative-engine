@@ -1,5 +1,6 @@
 #include <EvaluationPipeline.h>
 
+#include <ActionDispatcher.h>
 #include <AlphaCanon.h>
 #include <AsyncDispatch.h>
 #include <CombatEventLog.h>
@@ -36,50 +37,6 @@ namespace NarrativeEngine::EvaluationPipeline
                 std::chrono::system_clock::now().time_since_epoch()).count();
         }
 
-        // Strip leading/trailing whitespace and a wrapping markdown code
-        // fence (```json ... ``` or ``` ... ```) if present. LLMs sometimes
-        // ignore the "no fences" instruction and wrap their JSON output;
-        // this is a small best-effort tolerance so a fenced response still
-        // parses instead of becoming a parse_failure record.
-        std::string StripMarkdownFences(const std::string &input)
-        {
-            auto isSpace = [](char c) {
-                return c == ' ' || c == '\t' || c == '\r' || c == '\n';
-            };
-            std::size_t start = 0;
-            std::size_t end   = input.size();
-            while (start < end && isSpace(input[start])) ++start;
-            while (end > start && isSpace(input[end - 1])) --end;
-            if (start == end) {
-                return {};
-            }
-
-            std::string trimmed = input.substr(start, end - start);
-            if (trimmed.size() < 6 || trimmed.substr(0, 3) != "```") {
-                return trimmed;
-            }
-
-            // Opening fence found. Skip past the first newline (and the
-            // optional language tag like "json" on the fence line).
-            const std::size_t firstNewline = trimmed.find('\n');
-            if (firstNewline == std::string::npos) {
-                return trimmed;
-            }
-            std::string body = trimmed.substr(firstNewline + 1);
-
-            // Strip the closing fence if it's at the end.
-            const std::size_t closing = body.rfind("```");
-            if (closing != std::string::npos) {
-                body = body.substr(0, closing);
-            }
-
-            // Re-trim trailing whitespace after the closing fence removal.
-            std::size_t bodyEnd = body.size();
-            while (bodyEnd > 0 && isSpace(body[bodyEnd - 1])) --bodyEnd;
-            body.resize(bodyEnd);
-            return body;
-        }
-
         std::string JoinCSV(const std::vector<std::string> &parts)
         {
             std::string out;
@@ -114,6 +71,44 @@ namespace NarrativeEngine::EvaluationPipeline
     bool IsEvaluationInFlight()
     {
         return g_inFlight.load();
+    }
+
+    std::string StripMarkdownFences(const std::string& input)
+    {
+        // Trim leading/trailing whitespace. If the result begins with ```
+        // (optionally followed by a language tag and newline), skip past
+        // that opening fence and strip the closing fence too.
+        auto isSpace = [](char c) {
+            return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+        };
+        std::size_t start = 0;
+        std::size_t end   = input.size();
+        while (start < end && isSpace(input[start])) ++start;
+        while (end > start && isSpace(input[end - 1])) --end;
+        if (start == end) {
+            return {};
+        }
+
+        std::string trimmed = input.substr(start, end - start);
+        if (trimmed.size() < 6 || trimmed.substr(0, 3) != "```") {
+            return trimmed;
+        }
+
+        const std::size_t firstNewline = trimmed.find('\n');
+        if (firstNewline == std::string::npos) {
+            return trimmed;
+        }
+        std::string body = trimmed.substr(firstNewline + 1);
+
+        const std::size_t closing = body.rfind("```");
+        if (closing != std::string::npos) {
+            body = body.substr(0, closing);
+        }
+
+        std::size_t bodyEnd = body.size();
+        while (bodyEnd > 0 && isSpace(body[bodyEnd - 1])) --bodyEnd;
+        body.resize(bodyEnd);
+        return body;
     }
 
     Snapshot BuildSnapshot()
@@ -506,13 +501,18 @@ namespace NarrativeEngine::EvaluationPipeline
                     }
 
                     // Phase D parser runs on this (SkyrimNet) thread — it
-                    // touches no engine state. Phase D applier marshals
-                    // back to the main thread.
+                    // touches no engine state. The marshal hands snapshot
+                    // + rec to ActionDispatcher::ConsiderAction, which
+                    // takes ownership and is responsible for calling
+                    // ApplyDecision (possibly after a deferred LLM round-
+                    // trip) and the finalizer exactly once.
                     DecisionLog::DecisionRecord rec = ParseDecision(response, snapshot);
-                    AsyncDispatch::MarshalToMainThread([rec = std::move(rec)] {
-                        ApplyDecision(rec);
-                        g_inFlight.store(false);
-                    });
+                    AsyncDispatch::MarshalToMainThread(
+                        [snapshot = std::move(snapshot), rec = std::move(rec)]() mutable {
+                            ActionDispatcher::ConsiderAction(
+                                std::move(snapshot), std::move(rec),
+                                [] { g_inFlight.store(false); });
+                        });
                 });
 
             if (!queued) {

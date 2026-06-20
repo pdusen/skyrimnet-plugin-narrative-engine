@@ -135,6 +135,24 @@ namespace NarrativeEngine::PhaseTracker
         }
     }
 
+    Direction OutgoingDirection(Phase p)
+    {
+        // Mirrors the threshold direction in EvaluateAdvance: rises out of
+        // Exposition / RisingAction / Resolution; drops out of Climax /
+        // FallingAction. Out-of-range inputs default to Raise (the most
+        // common direction across the cycle).
+        switch (p) {
+            case Phase::Climax:
+            case Phase::FallingAction:
+                return Direction::Lower;
+            case Phase::Exposition:
+            case Phase::RisingAction:
+            case Phase::Resolution:
+            default:
+                return Direction::Raise;
+        }
+    }
+
     Phase Get()
     {
         std::scoped_lock lock(g_mutex);

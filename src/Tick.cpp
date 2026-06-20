@@ -1,5 +1,6 @@
 #include <Tick.h>
 
+#include <ActionDispatcher.h>
 #include <AsyncDispatch.h>
 #include <CombatEventLog.h>
 #include <EvaluationPipeline.h>
@@ -67,6 +68,12 @@ namespace NarrativeEngine::Tick
             // recoveries (regain_footing). Cheap — bool compare plus a
             // small map walk.
             CombatEventLog::Poll();
+
+            // Drive ActionDispatcher's main-thread tick: currently just
+            // the stale-lock check (auto-clear an in-flight action whose
+            // completion ModEvent never arrived). Cheap — bool compare
+            // plus a time delta.
+            ActionDispatcher::OnTick();
 
             const double intervalSec =
                 static_cast<double>(std::max(1, Settings::Get().tickIntervalSeconds));

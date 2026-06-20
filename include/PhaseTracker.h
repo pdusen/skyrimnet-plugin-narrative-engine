@@ -29,6 +29,13 @@ namespace NarrativeEngine::PhaseTracker
         Count,  // sentinel for bounds-checking; not a real phase
     };
 
+    // Which way tension needs to move to leave a given phase. Used by the
+    // ActionDispatcher to filter the toolbox down to candidates whose
+    // polarity matches the current phase's outgoing direction.
+    //   Exposition / RisingAction / Resolution → Raise
+    //   Climax / FallingAction                 → Lower
+    enum class Direction : std::uint8_t { Raise, Lower };
+
     // SKSE co-save record type ID for the phase tracker. Frozen — changing it
     // would orphan every previously-saved PhaseTracker payload.
     inline constexpr std::uint32_t kRecordTypeId = 'PHTR';
@@ -52,6 +59,11 @@ namespace NarrativeEngine::PhaseTracker
     // to remain. Used by EvaluationPipeline::ParseDecision so the LLM only
     // has to produce a tension score, not a stay-or-advance verdict.
     std::optional<Phase> EvaluateAdvance(Phase current, std::uint32_t tensionScore);
+
+    // Returns the tension-movement direction the cycle wants in order to
+    // leave the given phase. Total — every Phase has a defined direction.
+    // Pure, stateless; safe to call from any thread.
+    Direction OutgoingDirection(Phase p);
 
     // Current phase. Thread-safe.
     Phase Get();

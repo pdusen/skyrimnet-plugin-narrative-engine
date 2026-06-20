@@ -46,6 +46,22 @@ namespace NarrativeEngine::Settings
         int advanceThresholdFallingAction    = 30;   // -> Resolution when score <=
         int advanceThresholdResolution       = 25;   // -> Exposition when score >=
 
+        // Per-phase ideal durations in unpaused real-time seconds. The
+        // ActionDispatcher gates on these — actions may only fire after
+        // the current phase has overstayed its ideal duration. Total ideal
+        // cycle at defaults: 1200s (20 min); proportions follow the design
+        // narrative — Exposition and Resolution sit longer; Climax is brief.
+        int idealDurationExposition          = 330;  // 5.5 min
+        int idealDurationRisingAction        = 225;  // 3.75 min
+        int idealDurationClimax              = 90;   // 1.5 min
+        int idealDurationFallingAction       = 225;  // 3.75 min
+        int idealDurationResolution          = 330;  // 5.5 min
+
+        // ActionDispatcher knobs.
+        int actionCooldownSeconds            = 120;  // wall-clock seconds after action COMPLETION before next may fire
+        int actionRepetitionWindowSeconds    = 300;  // window during which the same action name is excluded from picks
+        int actionStaleLockTimeoutSeconds    = 900;  // auto-clear an in-flight action that never sends completion
+
         // [AlphaCanon]
         // Comma-separated list of cell EditorIDs to treat as do-not-disturb.
         // Empty by default. Whitespace around commas is allowed.
@@ -58,6 +74,19 @@ namespace NarrativeEngine::Settings
         // [CombatEvents]
         int combatEventsHitRadiusUnits = 6000;  // ~90 ft; distance gate for hit / collapse capture
         int combatEventsMaxStored      = 256;   // ring-buffer cap on retained internal combat events
+
+        // [Actions]
+        // AmbushAction parameter defaults + clamps. The LLM may supply
+        // bandit_count and spawn_distance_units in its action-select
+        // response; the action validates against these bounds and falls
+        // back to the default when the supplied value is out of range or
+        // missing. See PHASE_03_ACTION_TOOLBOX.md.
+        int ambushDefaultBanditCount         = 3;
+        int ambushDefaultSpawnDistanceUnits  = 2000;
+        int ambushMinBanditCount             = 2;
+        int ambushMaxBanditCount             = 4;
+        int ambushMinSpawnDistanceUnits      = 1500;
+        int ambushMaxSpawnDistanceUnits      = 3000;
     };
 
     // Read both INIs (plugin then MCM override) and populate the singleton.

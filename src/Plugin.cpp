@@ -1,5 +1,6 @@
 #include <Plugin.h>
 
+#include <ActionDispatcher.h>
 #include <AsyncDispatch.h>
 #include <CombatEventLog.h>
 #include <DashboardUIManager.h>
@@ -46,11 +47,18 @@ namespace NarrativeEngine
                     // source holder exists by then.
                     CombatEventLog::Initialize();
                     AsyncDispatch::Start();
+                    // ActionDispatcher registers the _ne_ActionCompleted
+                    // ModEvent sink. Order matters: AsyncDispatch must be
+                    // up because the sink marshals through it. Future steps
+                    // will also call ActionRegistry::Register here for each
+                    // shipped action.
+                    ActionDispatcher::Initialize();
                     break;
                 case SKSE::MessagingInterface::kNewGame:
                     logger::info("OnMessage: kNewGame");
                     DecisionLog::Clear();
                     CombatEventLog::OnRevert();
+                    ActionDispatcher::OnRevert();
                     PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
                     Tick::Start();
                     break;
@@ -62,6 +70,7 @@ namespace NarrativeEngine
                     Tick::Stop();
                     DecisionLog::Clear();
                     CombatEventLog::OnRevert();
+                    ActionDispatcher::OnRevert();
                     PhaseTracker::Reset();
                     break;
                 case SKSE::MessagingInterface::kPostLoadGame:
@@ -83,6 +92,7 @@ namespace NarrativeEngine
             PhaseTracker::OnSave(intfc);
             DecisionLog::OnSave(intfc);
             CombatEventLog::OnSave(intfc);
+            ActionDispatcher::OnSave(intfc);
             // Future subsystems append their OnSave calls here.
         }
 
@@ -107,6 +117,9 @@ namespace NarrativeEngine
                     case CombatEventLog::kRecordTypeId:
                         CombatEventLog::OnLoad(intfc, version, length);
                         break;
+                    case ActionDispatcher::kRecordTypeId:
+                        ActionDispatcher::OnLoad(intfc, version, length);
+                        break;
                     default:
                         // Unknown record — likely from a newer build or a
                         // removed subsystem. GetNextRecordInfo's next call
@@ -125,6 +138,7 @@ namespace NarrativeEngine
             PhaseTracker::OnRevert();
             DecisionLog::OnRevert();
             CombatEventLog::OnRevert();
+            ActionDispatcher::OnRevert();
             // Future subsystems append their OnRevert calls here.
         }
     }

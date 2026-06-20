@@ -46,4 +46,11 @@ namespace NarrativeEngine::EvaluationPipeline
     // Phase D applier — main thread. Appends to DecisionLog and applies any
     // phase advance. Stubbed for Step 9.
     void ApplyDecision(const DecisionLog::DecisionRecord& record);
+
+    // Strip leading/trailing whitespace and a wrapping markdown code fence
+    // (```json ... ``` or ``` ... ```) if present. LLMs sometimes wrap their
+    // JSON output despite a "no fences" instruction; this is a small
+    // best-effort tolerance so a fenced response still parses. Exposed for
+    // ActionDispatcher and any other future LLM consumer.
+    std::string StripMarkdownFences(const std::string& input);
 }

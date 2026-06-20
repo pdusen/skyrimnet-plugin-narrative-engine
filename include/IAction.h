@@ -1,0 +1,87 @@
+#pragma once
+
+#include <cstdint>
+#include <string>
+
+#include <nlohmann/json_fwd.hpp>
+
+namespace RE { class Actor; }
+
+// IAction — the interface every Director-fireable action implements.
+//
+// The action toolbox is a flat registry of IAction instances. The
+// ActionDispatcher filters the registry on every tick (situational
+// availability + recency), asks the LLM to pick one of the survivors, and
+// then calls Start() on the chosen action with the LLM-supplied parameters.
+//
+// Actions are long-running by default: Start() reports success-of-start, not
+// success-of-completion. Completion arrives asynchronously through the
+// shared `_ne_ActionCompleted` ModEvent (Papyrus → C++), which the
+// dispatcher's sink consumes to clear in-flight state. Trivial actions that
+// complete synchronously (e.g. a future internal-flag flip) should still fit
+// this shape by sending the completion ModEvent at the end of Start.
+namespace NarrativeEngine
+{
+    enum class ActionPolarity : std::uint8_t { Raise, Lower, Either };
+
+    // Read-only snapshot of the world state an action needs to decide
+    // availability and to execute. Built by the dispatcher just before each
+    // IsAvailable / Start call; actions may not extend it.
+    struct ActionContext
+    {
+        RE::Actor*  player           = nullptr;
+        bool        playerInCombat   = false;
+        bool        playerInDialogue = false;
+        bool        playerInInterior = false;
+        std::string locationName;   // current Location's display name, may be empty
+        std::string cellName;       // current Cell's display name, may be empty
+    };
+
+    struct StartResult
+    {
+        // True when the action's start signal has been dispatched
+        // successfully (e.g. the quest start ModEvent was sent and the
+        // quest was confirmed running). Does NOT mean the action has
+        // completed — completion arrives asynchronously via the
+        // _ne_ActionCompleted ModEvent. False means the action could not
+        // even begin (precondition changed, dependency missing, etc.).
+        bool        started = false;
+        std::string detail;   // one-line outcome description for the log
+    };
+
+    class IAction
+    {
+    public:
+        virtual ~IAction() = default;
+
+        // Stable snake_case identifier. Used as the value of
+        // DecisionRecord::actionSelected, as the discriminator the LLM
+        // returns in the selection response, and as the action-name field
+        // the _ne_ActionCompleted ModEvent carries when this action
+        // resolves. Never empty; never changes for a given action class.
+        virtual std::string Name() const = 0;
+
+        // One-paragraph description for the LLM. Read by the
+        // action-select prompt template so the LLM understands what each
+        // candidate does and when it's appropriate.
+        virtual std::string Description() const = 0;
+
+        virtual ActionPolarity Polarity() const = 0;
+
+        // Cheap synchronous check: does current world state permit this
+        // action to fire right now? Main thread. Called once per action
+        // per tick to build the candidate manifest. Must be side-effect
+        // free.
+        virtual bool IsAvailable(const ActionContext& ctx) const = 0;
+
+        // Start the action. Main thread. The action owns parameter
+        // validation — unknown / missing / out-of-range fields should
+        // fall back to defaults rather than abort. The action does NOT
+        // block until completion; it kicks off whatever long-running
+        // process it owns (quest start, ModEvent send, etc.) and returns.
+        // The dispatcher tracks the in-flight state until the action
+        // sends back _ne_ActionCompleted carrying this action's Name().
+        virtual StartResult Start(const ActionContext& ctx,
+                                  const nlohmann::json& parameters) = 0;
+    };
+}
