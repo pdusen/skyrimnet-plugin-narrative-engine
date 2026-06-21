@@ -375,10 +375,22 @@ if(DEFINED OUTPUT_FOLDER)
             @ONLY
         )
 
-        # Compile target — invokes PapyrusCompiler.exe against the .ppj. Marked
-        # ALL so a default build compiles scripts alongside the DLL.
+        # Compile target — Bethesda's stock PapyrusCompiler.exe doesn't parse
+        # .ppj files (that's a Caprica / VS Code extension convention; the
+        # stock compiler treats any non-script argument as a script name and
+        # bails with "unable to locate script"). Invoke it via its native
+        # CLI: <folder> -all -f=<flags> -i=<imports> -o=<output>, derived from
+        # the same variables that get baked into the .ppj for IDE use.
+        # Imports list the project's own source folder first so cross-script
+        # references resolve before any vanilla / SKSE fallbacks.
         add_custom_target(compile_papyrus ALL
-            COMMAND "${NE_PAPYRUS_COMPILER}" "${CMAKE_SOURCE_DIR}/NarrativeEngine.ppj"
+            COMMAND "${NE_PAPYRUS_COMPILER}"
+                "${NE_PAPYRUS_SOURCE_DIR}"
+                -all
+                "-f=TESV_Papyrus_Flags.flg"
+                "-i=${NE_PAPYRUS_SOURCE_DIR};${NE_PAPYRUS_IMPORT_SKYRIM};${NE_PAPYRUS_IMPORT_SKSE}"
+                "-o=${NE_PAPYRUS_OUTPUT_DIR}"
+                -op
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             DEPENDS ${PAPYRUS_SOURCES}
             COMMENT "Compiling Papyrus scripts to ${NE_PAPYRUS_OUTPUT_DIR}"

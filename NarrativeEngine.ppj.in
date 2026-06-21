@@ -7,14 +7,20 @@
   (gitignored, since the values are per-machine).
 
   Consumed by:
-    * Bethesda's PapyrusCompiler.exe via `PapyrusCompiler.exe NarrativeEngine.ppj`
-    * The VS Code Papyrus extension (auto-discovers .ppj files in the workspace)
-    * The CMake `compile_papyrus` custom target
+    * The VS Code Papyrus extension (auto-discovers .ppj files in the workspace
+      and uses them for project context and IntelliSense paths).
+    * Caprica / PCA, if you ever swap them in for the stock Bethesda compiler.
+
+  NOT consumed by Bethesda's stock PapyrusCompiler.exe — that compiler doesn't
+  parse .ppj files; it only takes `<object or folder>` plus `-f`/`-i`/`-o` CLI
+  flags. The CMake `compile_papyrus` target invokes it directly with those
+  flags, derived from the same machine-specific values substituted in here.
 
   The .ppj lives at the repo root (not under esp/) because the VS Code
   Papyrus extension expects to find .ppj files at the workspace root.
 -->
 <PapyrusProject xmlns="PapyrusProject.xsd"
+                Game="sse" 
                 Flags="TESV_Papyrus_Flags.flg"
                 Output="@NE_PAPYRUS_OUTPUT_DIR@"
                 Optimize="true"
