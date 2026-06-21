@@ -280,14 +280,15 @@ if(DEFINED OUTPUT_FOLDER)
     message(STATUS "Dashboard deploy: ${DASHBOARD_DIST_DIR} -> ${DASHBOARD_DEPLOY_DIR}")
 
     # -------------------------------------------------------------------
-    # ESP sync (mod folder -> repo, via sync-esp.ps1)
+    # ESP sync (bidirectional, via sync-esp.ps1)
     # -------------------------------------------------------------------
     #
     # Pre-build target that runs `sync-esp.ps1` on every build. The script
-    # pulls the .esp from <mod-folder>/NarrativeEngine.esp into
-    # <repo>/esp/NarrativeEngine.esp when the former is newer (i.e. after a
-    # CK session). One direction only — the repo never pushes the ESP back
-    # to the mod folder. See sync-esp.ps1 for the full decision matrix.
+    # compares <mod-folder>/NarrativeEngine.esp against
+    # <repo>/esp/NarrativeEngine.esp and copies whichever is newer over the
+    # older. CK edits in the mod folder propagate into the repo; pulled
+    # repo changes propagate out to the mod folder. See sync-esp.ps1 for
+    # the full decision matrix.
     #
     # Wired as an ALL custom target plus add_dependencies so it runs before
     # the DLL link step. Uses pwsh from PATH; if you want a different
@@ -296,7 +297,7 @@ if(DEFINED OUTPUT_FOLDER)
     # `add_custom_command(... PRE_BUILD ...)` is NOT used here because the
     # PRE_BUILD timing only fires for the Visual Studio generator, not
     # Ninja; our setup is Ninja.
-    option(NE_SKIP_ESP_SYNC "Skip the mod folder -> repo ESP sync on each build" OFF)
+    option(NE_SKIP_ESP_SYNC "Skip the bidirectional ESP sync on each build" OFF)
     if(NOT NE_SKIP_ESP_SYNC)
         if(NOT DEFINED NE_PWSH_EXECUTABLE)
             find_program(NE_PWSH_EXECUTABLE pwsh REQUIRED)

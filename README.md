@@ -207,7 +207,7 @@ and our tooling all see the same files.
   substitutes machine-specific absolute paths into `NarrativeEngine.ppj` (gitignored) at the repo root.
 - `setup-mod-folder.ps1` (repo root) — one-time per-machine setup; creates the mod folder and the
   `Source/Scripts/` junction.
-- `sync-esp.ps1` (repo root) — mod folder → repo ESP sync, invoked by CMake on every build.
+- `sync-esp.ps1` (repo root) — bidirectional ESP sync (newest copy wins), invoked by CMake on every build.
 
 ### One-time setup
 
@@ -217,27 +217,57 @@ After cloning, run:
 pwsh -File setup-mod-folder.ps1
 ```
 
-This creates `$SKYRIM_MODS_FOLDER/NarrativeEngine/` if needed, and creates an NTFS directory junction at
-`<mod-folder>/Source/Scripts/` pointing at `<repo>/esp/Source/Scripts/`. Junctions don't require admin or
-Developer Mode and are transparent to MO2's USVFS. The script is idempotent — safe to re-run.
+This does three things:
 
-We chose junctions over file symlinks because junctions are NTFS-native reparse points with a long, boring
-track record in Skyrim modding tooling. File symlinks have reported MO2 / CK compatibility quirks; junctions
-don't.
+- Creates `$SKYRIM_MODS_FOLDER/NarrativeEngine/` if needed.
+- Creates an NTFS directory junction at `<mod-folder>/Source/Scripts/` pointing at
+  `<repo>/esp/Source/Scripts/`. Junctions don't require admin or Developer Mode and are transparent to MO2's
+  USVFS. We chose junctions over file symlinks because junctions are NTFS-native reparse points with a long,
+  boring track record in Skyrim modding tooling; file symlinks have reported MO2 / CK compatibility quirks.
+- Installs a git pre-commit hook (see [Pre-commit hook](#pre-commit-hook) below).
 
-### ESP flow (one-direction: mod folder → repo)
+The script is idempotent — safe to re-run. A second run reports each piece as "already exists" or
+"updated" and exits cleanly.
 
-The `.esp` only ever flows from the mod folder into the repo. CK edits the file in place (via MO2's
-virtualized Data folder, which resolves to the mod folder). On every build, `sync-esp.ps1` compares
-timestamps and copies the mod-folder file into the repo if it's newer.
+### ESP flow (bidirectional, newest wins)
 
-The build never pushes the repo's `.esp` back to the mod folder. In the rare case where the repo has a newer
-ESP than the mod folder (e.g. after a `git pull` that includes ESP changes from elsewhere — uncommon in solo
-development), you must manually copy `<repo>/esp/NarrativeEngine.esp` → `<mod-folder>/NarrativeEngine.esp`.
-The build will not do this for you.
+The `.esp` exists in two locations: `<repo>/esp/NarrativeEngine.esp` (version-controlled) and
+`<mod-folder>/NarrativeEngine.esp` (what CK edits and what Skyrim loads). On every build, `sync-esp.ps1`
+compares their modification times and copies whichever is newer over the older. Two cases this handles
+without any manual intervention:
+
+- After a CK session, the mod-folder copy is newer → it propagates back into the repo so you can commit.
+- After a `git pull` that brings in an ESP change from elsewhere, the repo copy is newer → it propagates
+  out to the mod folder so Skyrim picks it up on the next launch.
+
+When both copies have equal mtime, nothing happens.
 
 Override the auto-sync via `-DNE_SKIP_ESP_SYNC=ON` on the cmake configure line if you have a specific reason
-to bypass it.
+to bypass it (e.g. you're hand-editing one side and don't want the build clobbering the other).
+
+### Pre-commit hook
+
+`setup-mod-folder.ps1` installs `.git/hooks/pre-commit` that runs `sync-esp.ps1` before every commit and
+stages the repo's ESP if the sync updated it. The full behavior:
+
+1. Snapshot the current `git hash-object` of `esp/NarrativeEngine.esp`.
+2. Run `sync-esp.ps1`. If it fails for any reason, the commit aborts.
+3. Re-hash the ESP. If the hash changed (the sync pulled in a CK edit from the mod folder), `git add` the
+   ESP so it rides along in the same commit you were already making.
+
+What this means in practice: you can `git commit -m "..."` immediately after a CK session and the latest
+ESP state is guaranteed to be part of the commit, without remembering to sync first.
+
+Operational notes:
+
+- **Detection by marker comment.** The script identifies its own hook via a marker line in the script
+  body. If a third-party `pre-commit` hook already exists, the setup script warns and leaves it alone
+  rather than clobbering. If the marker is present, the setup script overwrites freely — re-running setup
+  is how you pick up any future hook-body changes.
+- **LF line endings.** The hook is written with Unix line endings so git-bash on Windows can execute it
+  cleanly.
+- **Escape hatch.** `git commit --no-verify` bypasses the hook the standard git-wide way. Use it
+  intentionally when you want to commit without picking up the latest CK state.
 
 ### Papyrus flow
 

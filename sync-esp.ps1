@@ -1,19 +1,20 @@
-# sync-esp.ps1 — copy NarrativeEngine.esp from the mod folder to the repo
-# when the mod folder's copy is newer. One direction only: mod folder -> repo.
-# The repo never pushes the ESP back to the mod folder.
+# sync-esp.ps1 — bidirectional sync of NarrativeEngine.esp between the
+# repo's authoritative path and the deployed mod folder. Whichever copy is
+# newer wins; the older one is overwritten.
 #
 # Invoked automatically by CMake's `sync_esp` ALL target on every build, so
-# CK edits made between builds get pulled into the repo before anything else
-# runs. Also safe to run standalone for diagnostics — pass -DryRun for a
-# verbose decision trace without writing anything.
+# CK edits made between builds get pulled into the repo AND repo changes
+# (e.g. after a `git pull`) get pushed back out to the mod folder before
+# anything else runs. Also safe to run standalone for diagnostics — pass
+# -DryRun for a verbose decision trace without writing anything.
 #
 # Decision matrix:
 #   neither exists           → silent no-op (pre-Step-2 state)
-#   only mod exists          → first-time sync (mod -> repo)
-#   only repo exists         → silent no-op (deploy is the user's manual job;
-#                              this is rare in solo development)
-#   both exist, mod newer    → sync (mod -> repo)
-#   both exist, mod ≤ repo   → silent no-op
+#   only mod exists          → mod → repo (first-time sync into repo)
+#   only repo exists         → repo → mod (first-time deploy to mod folder)
+#   both exist, mod newer    → mod → repo
+#   both exist, repo newer   → repo → mod
+#   both exist, equal mtime  → silent no-op
 #
 # In DryRun mode the script always prints its decision (including no-op
 # cases), and never copies anything.
@@ -29,6 +30,16 @@ function Write-NoOp([string]$message) {
     if ($DryRun) {
         Write-Host $message -ForegroundColor DarkGray
     }
+}
+
+function Copy-Esp([string]$src, [string]$dst, [string]$label) {
+    Write-Host $label -ForegroundColor Green
+    if ($DryRun) { return }
+    $dstDir = Split-Path $dst -Parent
+    if (-not (Test-Path $dstDir)) {
+        New-Item -ItemType Directory -Path $dstDir -Force | Out-Null
+    }
+    Copy-Item -Path $src -Destination $dst -Force
 }
 
 $modsRoot = $env:SKYRIM_MODS_FOLDER
@@ -49,19 +60,12 @@ if (-not $modExists -and -not $repoExists) {
 }
 
 if ($modExists -and -not $repoExists) {
-    Write-Host "ESP: first-time sync from mod folder" -ForegroundColor Green
-    if (-not $DryRun) {
-        $repoDir = Split-Path $repoEsp -Parent
-        if (-not (Test-Path $repoDir)) {
-            New-Item -ItemType Directory -Path $repoDir -Force | Out-Null
-        }
-        Copy-Item -Path $modEsp -Destination $repoEsp -Force
-    }
+    Copy-Esp $modEsp $repoEsp "ESP: first-time sync from mod folder to repo"
     return
 }
 
 if (-not $modExists -and $repoExists) {
-    Write-NoOp "no action — only repo ESP exists; deploy is the user's manual responsibility."
+    Copy-Esp $repoEsp $modEsp "ESP: first-time deploy from repo to mod folder"
     return
 }
 
@@ -71,11 +75,12 @@ $repoTime = (Get-Item $repoEsp).LastWriteTime
 
 if ($modTime -gt $repoTime) {
     $deltaSec = [int]($modTime - $repoTime).TotalSeconds
-    Write-Host "ESP: synced from mod folder (CK edits detected, deployed ${deltaSec}s newer)" -ForegroundColor Green
-    if (-not $DryRun) {
-        Copy-Item -Path $modEsp -Destination $repoEsp -Force
-    }
+    Copy-Esp $modEsp $repoEsp "ESP: mod folder → repo (CK edits detected, mod folder ${deltaSec}s newer)"
+}
+elseif ($repoTime -gt $modTime) {
+    $deltaSec = [int]($repoTime - $modTime).TotalSeconds
+    Copy-Esp $repoEsp $modEsp "ESP: repo → mod folder (repo ${deltaSec}s newer)"
 }
 else {
-    Write-NoOp "no action — repo ESP is up to date (mod=$modTime, repo=$repoTime)."
+    Write-NoOp "no action — both copies have equal mtime (mod=$modTime, repo=$repoTime)."
 }

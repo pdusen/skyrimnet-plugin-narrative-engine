@@ -87,6 +87,83 @@ else {
     Write-Host "Created junction: $junctionPath -> $repoSource" -ForegroundColor Green
 }
 
+# --- install git pre-commit hook --------------------------------------------
+#
+# Runs sync-esp.ps1 before every commit. If the sync updates
+# esp/NarrativeEngine.esp (because the mod-folder copy was newer), the hook
+# also stages the updated file so the change rides along in the same commit
+# the developer was already making — no risk of forgetting to commit the
+# latest CK edits.
+#
+# The hook is written with LF line endings so git-bash (which executes hooks
+# on Windows) can run it cleanly. Detection of "is this hook ours" is by a
+# marker comment in the script body; we replace our own version freely and
+# leave any third-party hook alone with a warning.
+
+$gitDir = Join-Path $PSScriptRoot '.git'
+if (Test-Path $gitDir -PathType Container) {
+    $hooksDir = Join-Path $gitDir 'hooks'
+    if (-not (Test-Path $hooksDir)) {
+        New-Item -ItemType Directory -Path $hooksDir | Out-Null
+    }
+    $hookPath = Join-Path $hooksDir 'pre-commit'
+    $marker   = '# NarrativeEngine pre-commit hook — managed by setup-mod-folder.ps1'
+
+    # Hook body. Escape $ as `$ inside the here-string so PowerShell doesn't
+    # interpolate the shell variables.
+    $hookBody = @"
+#!/bin/sh
+$marker
+# Runs sync-esp.ps1 so the repo's ESP matches the mod folder, and stages any
+# resulting ESP change so it's part of this commit.
+
+REPO_ROOT="`$(git rev-parse --show-toplevel)"
+ESP_PATH="`$REPO_ROOT/esp/NarrativeEngine.esp"
+
+# Hash before — `git hash-object` returns the same hash git would store, so
+# it's exactly the right shape for "did the file content change."
+BEFORE_HASH=`$(git hash-object "`$ESP_PATH" 2>/dev/null || echo "")
+
+if ! pwsh -NoProfile -File "`$REPO_ROOT/sync-esp.ps1"; then
+    echo "pre-commit: sync-esp.ps1 failed; aborting commit" >&2
+    exit 1
+fi
+
+AFTER_HASH=`$(git hash-object "`$ESP_PATH" 2>/dev/null || echo "")
+if [ "`$BEFORE_HASH" != "`$AFTER_HASH" ] && [ -f "`$ESP_PATH" ]; then
+    echo "pre-commit: sync-esp.ps1 updated esp/NarrativeEngine.esp; staging the change"
+    git add -- "`$ESP_PATH"
+fi
+"@
+
+    $shouldInstall = $false
+    $action        = $null
+    if (-not (Test-Path $hookPath)) {
+        $shouldInstall = $true
+        $action        = 'Installed'
+    }
+    else {
+        $existing = Get-Content $hookPath -Raw -ErrorAction SilentlyContinue
+        if ($existing -and $existing.Contains($marker)) {
+            $shouldInstall = $true
+            $action        = 'Updated'
+        }
+        else {
+            Write-Warning "$hookPath exists and was not installed by this script; leaving it alone. Merge the sync-esp behavior in manually if you want it."
+        }
+    }
+
+    if ($shouldInstall) {
+        # Normalize to LF so git-bash executes the hook on Windows.
+        $lfBody = $hookBody -replace "`r`n", "`n"
+        [System.IO.File]::WriteAllText($hookPath, $lfBody)
+        Write-Host "$action pre-commit hook: $hookPath" -ForegroundColor Green
+    }
+}
+else {
+    Write-Host "No .git directory found at $gitDir; skipping pre-commit hook install" -ForegroundColor DarkGray
+}
+
 # --- sanity-check PAPYRUS_COMPILER (warn-only) ------------------------------
 #
 # Needed by the CMake Papyrus compile step once .psc files exist. Not needed

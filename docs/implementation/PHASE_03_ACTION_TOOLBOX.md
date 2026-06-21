@@ -582,7 +582,7 @@ New ESP / Papyrus workflow scaffolding (Step 1):
 
 - `setup-mod-folder.ps1` (repo root) — one-time per-machine setup; creates the mod folder and
   the `Source/Scripts/` junction.
-- `sync-esp.ps1` (repo root) — mod folder → repo ESP sync; invoked by CMake on every build.
+- `sync-esp.ps1` (repo root) — bidirectional ESP sync (newest copy wins); invoked by CMake on every build.
 - `NarrativeEngine.ppj` (repo root) — Papyrus project file; consumed by CK, the VS Code Papyrus
   extension, and the CMake Papyrus step.
 - `esp/` — authoritative repo-side ESP location (mirrored from the mod folder).
@@ -595,8 +595,8 @@ New ModEvent names (no CK forms — registered by name):
 
 Modified:
 
-- `CMakeLists.txt` — add a `sync_esp` pre-build custom target that invokes `sync-esp.ps1`, plus
-  the Papyrus compile step (no ESP deploy; ESP flows mod folder → repo via `sync-esp.ps1`).
+- `CMakeLists.txt` — add a `sync_esp` pre-build custom target that invokes `sync-esp.ps1`
+  (bidirectional, newest copy wins), plus the Papyrus compile step.
 - `CMakePresets.json` — add `PAPYRUS_COMPILER` cache var.
 - `CLAUDE.md` — document the ESP / Papyrus workflow.
 - `.gitignore` — add `*.pex` and CK temp/backup patterns.
@@ -642,18 +642,15 @@ Pure infrastructure; nothing CK-side yet.
   (`SKYRIM_MODS_FOLDER`, `PAPYRUS_COMPILER`) and `vswhere`-style sanity-checks
   `PapyrusCompiler.exe` exists. Idempotent — safe to re-run; skips steps already done. Does NOT
   create the ESP — that's the user's job in Step 2.
-- `sync-esp.ps1` (repo root) — dedicated mod → repo ESP sync script. The ESP only ever flows
-  in this direction (the mod folder is authoritative; CK edits it live, the repo's copy is a
-  version-controlled mirror). Logic:
-  - Read mtime of `<mod-folder>/NarrativeEngine.esp` vs. `<repo>/esp/NarrativeEngine.esp`.
-  - Mod folder strictly newer → copy mod folder → repo. Log `ESP: synced from mod folder (CK
-    edits detected, deployed Ns newer)`.
-  - Only mod folder exists → copy mod folder → repo. Log `ESP: first-time sync from mod folder`.
-  - Only repo exists, or repo is newer / equal → no-op silently. (A repo-newer state should be
-    rare in solo development; if it ever happens — e.g. after a git pull that brings in an ESP
-    edit from elsewhere — the user manually copies repo → mod folder, since the build will not
-    do that direction automatically.)
-  - Neither exists → no-op silently (pre-Step-2 state).
+- `sync-esp.ps1` (repo root) — bidirectional ESP sync. Compares the mtime of
+  `<mod-folder>/NarrativeEngine.esp` and `<repo>/esp/NarrativeEngine.esp` and copies whichever
+  is newer over the older. Logic:
+  - Both exist, mod newer → mod → repo (CK edit propagated into the repo).
+  - Both exist, repo newer → repo → mod (pulled change propagated out for Skyrim to see).
+  - Both exist, equal mtime → silent no-op.
+  - Only mod exists → mod → repo (first-time sync into repo).
+  - Only repo exists → repo → mod (first-time deploy to mod folder).
+  - Neither exists → silent no-op (pre-Step-2 state).
   - Accept `-DryRun` for diagnostics.
 - `CMakeLists.txt` — two additions:
   1. A custom target that invokes `pwsh -File <repo>/sync-esp.ps1` as a pre-build step. Wire
@@ -666,7 +663,7 @@ Pure infrastructure; nothing CK-side yet.
   2. A Papyrus compile step driven by the project's `.ppj` file: invoke `$PAPYRUS_COMPILER
      -ppj <repo>/NarrativeEngine.ppj`, output going directly into `<mod-folder>/Scripts/`.
      `CONFIGURE_DEPENDS` on `<repo>/esp/Source/Scripts/*.psc`.
-  **No ESP deploy step** — the repo never pushes the ESP back to the mod folder.
+  All ESP movement happens through `sync-esp.ps1`; there is no separate ESP deploy step.
 - `CMakePresets.json` — add `PAPYRUS_COMPILER` cache var documenting the expected path to the
   user's `PapyrusCompiler.exe` (typically `<CK_DIR>/Papyrus Compiler/PapyrusCompiler.exe`).
 - `NarrativeEngine.ppj` (repo root) — Papyrus project file. Declares source folder
@@ -691,10 +688,9 @@ Pure infrastructure; nothing CK-side yet.
 - The junction approach is what makes the `Source/Scripts/` story work: junctions are NTFS-native
   reparse points that all userspace software (including MO2's USVFS) handles transparently. No
   Developer Mode required, no admin elevation, no file-symlink robustness questions.
-- The pre-sync timestamp comparison handles the common case correctly: after a CK session, mod
-  folder is newer → sync into repo. After a `git pull` that brings in an ESP change, repo is
-  newer → no sync; the user must manually copy repo → mod folder if they want the pulled change
-  visible to Skyrim, since neither the script nor CMake will push that direction automatically.
+- The bidirectional timestamp comparison handles both common cases automatically: after a CK
+  session, mod folder is newer → mod → repo. After a `git pull` that brings in an ESP change,
+  repo is newer → repo → mod folder so Skyrim sees the update on next launch.
 - `setup-mod-folder.ps1` must not assume `<mod-folder>/Source/Scripts/` already exists when
   creating the junction. `New-Item -ItemType Junction` requires the target to not exist; the
   script should `Test-Path` first and either delete (if empty) or refuse with an error (if
