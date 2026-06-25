@@ -103,6 +103,69 @@ What does *not* take the prefix:
 When adding any new CK form, Papyrus script, or ModEvent, give it the `_ne_` prefix unless one of the above
 exceptions applies.
 
+## Environment setup
+
+Configure, build, ESP sync, and Papyrus compile all read paths from environment variables that
+point at this machine's vcpkg root, MO2 mods folder, Skyrim install, SkyrimNet location, and a
+couple of dependency-specific spots. Set these once per development machine (typically as Windows
+user environment variables) before running `setup-mod-folder.ps1` or `build.ps1`.
+
+Any of these can alternatively be pinned per-preset in `CMakeUserPresets.json` (gitignored) —
+useful when you want different values per build preset or prefer not to pollute your global
+environment.
+
+### Required for every build
+
+- `VCPKG_ROOT` — absolute path to your vcpkg checkout. CMake's toolchain file is resolved as
+  `$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake` (see `CMakePresets.json`).
+- `SKYRIM_MODS_FOLDER` — absolute path to your MO2 (or Vortex) `mods/` folder. The build deploys
+  the compiled DLL, `statics/` payload, dashboard bundle, and `.pex` files under
+  `$SKYRIM_MODS_FOLDER/NarrativeEngine/`. `setup-mod-folder.ps1` and `sync-esp.ps1` also read it.
+- `PRISMA_UI_INCLUDE` — absolute path to the directory containing `PrismaUI_API.h`. CMake
+  `FATAL_ERROR`s if the header isn't found at this path.
+
+### SkyrimNet location (one of)
+
+CMake needs SkyrimNet's `CppAPI/` headers on the include path. It looks in two places, in order:
+
+- `SKYRIMNET_DIR` — explicit absolute path to the SkyrimNet mod folder (the one containing
+  `CppAPI/PublicAPI.h`). Takes precedence when set.
+- `$SKYRIM_MODS_FOLDER/SkyrimNet/` — automatic fallback when `SKYRIM_MODS_FOLDER` is set and
+  SkyrimNet is installed at the standard subpath. No additional env var needed in the common case.
+
+CMake `FATAL_ERROR`s if neither resolves to a valid `CppAPI/` directory.
+
+### Required once `.psc` sources exist
+
+The repo now contains Papyrus sources under `esp/Source/Scripts/`, so these are required at
+configure time (not deferred):
+
+- `PAPYRUS_COMPILER` — absolute path to Bethesda's `PapyrusCompiler.exe`, typically
+  `<CK_DIR>/Papyrus Compiler/PapyrusCompiler.exe`.
+- `NE_PAPYRUS_IMPORT_SKYRIM` — vanilla Skyrim Papyrus source folder. Auto-defaults to
+  `$SKYRIM_FOLDER/Data/Source/Scripts` when `SKYRIM_FOLDER` is set, so you can usually leave this
+  unset.
+- `NE_PAPYRUS_IMPORT_SKSE` — SKSE Papyrus source folder. No auto-detection — ships in the SKSE
+  archive and must be pointed at explicitly.
+
+### Optional
+
+- `SKYRIM_FOLDER` — absolute path to your Skyrim Special Edition install. Used (a) as a fallback
+  `OUTPUT_FOLDER` when `SKYRIM_MODS_FOLDER` is unset (rare — most contributors are on a mod
+  manager) and (b) to auto-default `NE_PAPYRUS_IMPORT_SKYRIM`.
+
+### Verifying your setup
+
+In a fresh PowerShell window after setting the variables:
+
+```pwsh
+pwsh -File setup-mod-folder.ps1      # creates mod folder + junction + git pre-commit hook
+pwsh -File build.ps1 configure       # confirms CMake can locate vcpkg, SkyrimNet, PrismaUI, the Papyrus compiler, and the imports
+```
+
+If `configure` exits 0, every required path resolved correctly. After that,
+`pwsh -File build.ps1 build` performs incremental builds.
+
 ## Building C++ changes
 
 Always build through `build.ps1` at the repo root, invoked via **PowerShell** (not Bash). The
@@ -283,12 +346,9 @@ requirement.
 
 ### Required env vars (when Papyrus is active)
 
-- `PAPYRUS_COMPILER` — absolute path to `PapyrusCompiler.exe`, typically `<CK_DIR>/Papyrus Compiler/PapyrusCompiler.exe`.
-- `NE_PAPYRUS_IMPORT_SKYRIM` — vanilla Skyrim Papyrus source folder. Defaults to `$SKYRIM_FOLDER/Data/Source/Scripts`
-  when `SKYRIM_FOLDER` is set.
-- `NE_PAPYRUS_IMPORT_SKSE` — SKSE Papyrus source folder (no auto-detection; ships in the SKSE archive).
-
-These are only checked when `.psc` files are present, so they aren't needed for the initial repo setup.
+`PAPYRUS_COMPILER`, `NE_PAPYRUS_IMPORT_SKYRIM`, and `NE_PAPYRUS_IMPORT_SKSE` are required at
+configure time once `.psc` files exist under `esp/Source/Scripts/` (which they now do). See
+[Environment setup](#environment-setup) for the full list and their default-resolution rules.
 
 ### VS Code Papyrus extension
 
