@@ -926,58 +926,106 @@ registered). No regression to ordinary ticks.
 
 ---
 
-### Step 7 — Ambush quest, AI package, alias slots, Papyrus script
+### Step 7 — Ambush quest, AI package, alias slots, Papyrus scripts
 
-- [ ] Complete
+- [x] Complete
 
 **[USER — Creation Kit + Papyrus]**
 
 **Goal:** Author all the CK-side and Papyrus-side content for the ambush. After this step the
-quest is self-contained and the user can fire it from the console via `SendModEvent
-"_ne_StartAmbushAction" "3|2000"` — bandits spawn, fight the player, and on death the quest
-sends `_ne_ActionCompleted`. No C++ from NarrativeEngine is involved in this verification.
+quest is self-contained: starting it (via console `startquest _ne_BanditAmbushQuest` for now,
+later via the C++ `AmbushAction` dispatch in Step 8) causes bandits to spawn from existing
+world markers near the player, jog into engagement range, fight to the death, and complete the
+quest. The C++/ModEvent integration is deliberately deferred to Step 8.
+
+The design intentionally diverged from the original sketch in several places. Notes below
+record both the final shape and the non-obvious findings that drove the divergence — they're
+captured here because they apply to any future "spawn-and-engage" action, not just Ambush.
 
 **Sub-tasks:**
 
-1. **AI Package — `_ne_BanditAttackPlayer`** (in CK, on `NarrativeEngine.esp`):
-   - Template: `DefaultCombat`.
-   - Target: Specific Reference → `PlayerRef`.
-   - Save; CK reports no errors.
+1. **AI Package — `_ne_BanditAmbushTravel`** (in CK, on `NarrativeEngine.esp`):
+   - Template: `Travel`.
+   - Travel Location: Alias `PlayerRef`, Near Reference.
+   - Preferred Speed: Jog.
+   - **No conditions** — the script flips the bandit out of the package by raising aggression
+     and starting combat at the release threshold; vanilla combat interrupt then preempts.
+   - **Critical flags:** `Ignore Combat` = FALSE, `Interrupt Override` = None. With either of
+     these set the way the UseWeapon experiments left them (`Ignore Combat` = TRUE, `Interrupt
+     Override` = Combat) the package dominated over `StartCombat`, the bandit would jog to the
+     package destination and stand idle for 5–10s after script release before vanilla combat
+     AI eventually took over.
 
 2. **Quest — `_ne_BanditAmbushQuest`** (in CK):
    - Quest Data: Run Once OFF, Allow Repeated Stages ON, Priority 90, Type None.
-   - Stages: 0 (init), 10 (encounter active), 100 (resolved — check **Complete Quest**).
-   - Reference Aliases: `_ne_BanditAlias00`, `_ne_BanditAlias01`, `_ne_BanditAlias02`,
-     `_ne_BanditAlias03`. Each: Fill Type = Forced, Optional ON, Packages =
-     `_ne_BanditAttackPlayer`.
-   - Faction membership for spawned actors is handled by `LCharBandit`'s own
-     `BanditFaction` membership at leveled-list resolution — no extra alias-level setup needed.
+   - Stages: 0 (init), 100 (resolved — **Complete Quest** flag checked).
+   - One **Location alias** for the player's current Location (used by the bandit aliases'
+     FMR conditions to constrain marker selection to the player's loaded space).
+   - One **PlayerRef** ReferenceAlias (Forced fill → PlayerRef) for use by the spawned bandits.
+   - Six bandit ReferenceAliases (`Bandit01Ref` through `Bandit06Ref`). Each:
+     - **Fill Type: Find Matching Reference** (not Forced — we use existing world markers
+       rather than `PlaceAtMe`-style programmatic spawning).
+     - **FMR conditions** select an `XMarker`/`XMarkerHeading` with a `GetDistance > PlayerRef`
+       band (close enough to feel ambushy, far enough to not pop into the player's eyeline),
+       `IsInInterior == 0`, and `GetInCurrentLocAlias` matching the player-Location alias
+       (keeps markers to the same Location as the player so the bandit has a reachable
+       navmesh).
+     - Optional ON, Packages = `_ne_BanditAmbushTravel`.
+     - Script: `_ne_BanditAmbushQuest_SpawnedBandit` (see sub-task 3).
+   - Faction setup is handled by the leveled bandit's own faction membership at level-list
+     resolution; no extra alias-level faction work needed.
 
-3. **Papyrus script — `_ne_BanditAmbushQuest.psc`** (in `<repo>/esp/Source/Scripts/`):
-   - Per the script sketch in the **ESP content** section above.
-   - Properties: `BanditLevList` (LeveledActor → `LCharBandit`), `BanditAliases`
-     (ReferenceAlias[] → the four alias slots).
-   - `OnInit`: register for `_ne_StartAmbushAction` ModEvent.
-   - `OnStartAmbushAction(strArg)`: parse `<count>|<distance>`; for each bandit, compute spawn
-     point (player pos + random unit vector in `[120°, 240°]` of player heading, scaled by
-     distance), `PlaceAtMe(BanditLevList)`, `SetPosition`, `ForceRefTo` on alias slot, register
-     OnDeath; then `SetStage(10)`.
-   - Per-alias `OnDeath`: decrement `AliveCount`; when zero, `SetStage(100)`.
-   - Stage 100 fragment: `SendModEvent("_ne_ActionCompleted", "ambush", 0.0)`, then `Stop()`.
+3. **Papyrus scripts** (in `<repo>/esp/Source/Scripts/`):
+
+   `_ne_BanditAmbushQuest.psc` (quest script):
+
+   - Properties: `Bandit01Ref` through `Bandit06Ref` (ReferenceAlias each).
+   - `CheckAllBanditsDead()`: early-return if `GetStage() >= 100`; otherwise count alive
+     bandits across all six aliases (a `None` alias or a `None` actor counts as dead, so a
+     partial FMR fill doesn't strand the quest); when count is zero, `SetStage(100)`,
+     `CompleteQuest()`, `Stop()`. All three are needed: stage 100 alone marks the journal entry
+     complete and runs the stage fragment, `CompleteQuest()` flips the IsCompleted flag, and
+     `Stop()` actually halts the quest so its aliases release.
+
+   `_ne_BanditAmbushQuest_SpawnedBandit.psc` (alias script on each Bandit*Ref):
+
+   - Property: `PlayerRef` (ReferenceAlias).
+   - `OnAliasInit` / `OnLoad` → `Initialize()`: guard against double-init; set Aggression to 0
+     (so the bandit doesn't initiate combat with civilians/guards encountered en route — the
+     Travel package handles approach, not the bandit's own AI); `DrawWeapon`;
+     `EvaluatePackage`; register single update.
+   - `OnUpdate` (poll every 0.5s): if not yet released and distance to player ≤ 1500 units,
+     raise Aggression to 2, `EvaluatePackage`, `StartCombat(player)`, set a 3-tick post-release
+     lock; otherwise re-register. During the lock window, re-assert `StartCombat(player)` if
+     combat AI's target has drifted.
+   - `OnDeath(akKiller)` / `OnDying(akKiller)`: cast `GetOwningQuest() as
+     _ne_BanditAmbushQuest`, call `CheckAllBanditsDead()`. Both events are wired because the
+     reliability of `OnDeath` on runtime-aliased actors is variable; `OnDying` fires more
+     consistently, and `CheckAllBanditsDead` is idempotent (it early-returns once stage 100 is
+     set), so duplicate calls are harmless.
 
 4. **Build + deploy:**
-   - Run `pwsh -File build.ps1 build`. CMake's `sync_esp` target pulls the CK-edited `.esp`
-     from the mod folder into `<repo>/esp/NarrativeEngine.esp`. The Papyrus compile step produces
-     `_ne_BanditAmbushQuest.pex` in `$SKYRIM_MODS_FOLDER/NarrativeEngine/Scripts/`.
-   - `git status` shows the updated `esp/NarrativeEngine.esp` and the new `.psc` ready to
-     commit.
+   - Run `pwsh -File build.ps1 build`. The Papyrus compile step produces both
+     `.pex` files; the sync hook copies them and the `.esp` into the mod folder.
 
-**Verify:** Boot Skyrim, load a save outside Whiterun's walls. Open console.
-`SendModEvent "_ne_StartAmbushAction" "3|2000"` → within a few seconds, three bandits spawn
-behind the player and attack. Kill them all. The Papyrus log
-(`Documents/My Games/Skyrim Special Edition/Logs/Script/Papyrus.0.log`) shows
-`[_ne_BanditAmbushQuest]: stage 100 reached; sending _ne_ActionCompleted`. The quest resets and
-can be retriggered immediately with the same console command.
+**Non-obvious findings worth not relearning:**
+
+- `Actor.SetGhost(true)` disables package execution. Used initially to make bandits
+  non-targetable en route; effect was that the Travel package silently failed to drive any
+  movement at all. Use Aggression=0 (and faction membership tricks if needed) instead.
+- Pure-script movement (`PathToReference`, `KeepOffsetFromActor`) without an active AI package
+  is unreliable — the engine quietly defers to the actor's base default behavior. A minimal
+  Travel package is required to anchor movement.
+- `GetOwningQuest()` cast to the quest's script type is preferable to an explicit
+  `BanditAmbushQuest` property on the alias — the property has to be filled per-alias in CK
+  (six times here), is easy to leave None, and is invisible when None (the `if quest` guard
+  short-circuits silently rather than logging).
+
+**Verify:** Boot Skyrim, load a save outside a settlement with several XMarkers nearby. Open
+console, `startquest _ne_BanditAmbushQuest`. Within ~1s, up to six bandits spawn at nearby
+markers, jog toward the player ignoring intervening NPCs, and engage in vanilla combat at
+~1500 units. Kill them all; `sqv _ne_BanditAmbushQuest` reports `State: Stopped`, `Stage: 100`,
+`Completed: Yes`, `Enabled: No`. The quest can be restarted immediately with the same command.
 
 ---
 
