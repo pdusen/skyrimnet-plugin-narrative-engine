@@ -1,7 +1,6 @@
 #include <AmbushAction.h>
 
 #include <AlphaCanon.h>
-#include <ConsoleCommand.h>
 #include <LocationKeywords.h>
 #include <Settings.h>
 #include <logger.h>
@@ -214,29 +213,26 @@ namespace NarrativeEngine
                     "' not found by EditorID (ESP not loaded, or powerofthree's Tweaks missing?)"};
         }
 
-        // TEMPORARY: dispatching via the console `startquest` command
-        // rather than the direct C++ API.
-        //
-        // The direct path (commented out below) — SetEnabled(true) +
-        // ResetAndUpdate() — successfully flips the quest's enabled /
-        // running flags and runs the stage 0 fragment, but does NOT
-        // trigger FMR alias evaluation, leaving the quest "running at
-        // stage 10" with empty alias slots. The same quest, in the same
-        // in-game state, starts cleanly (including FMR fill) when
-        // `startquest _ne_BanditAmbushQuest` is typed at the console.
-        //
-        // Until we identify the C++ entry point that fully replicates
-        // console behavior, we route through ConsoleCommand::Run, which
-        // compiles and dispatches the command exactly as the console's
-        // input handler does. This is a workaround, not the intended
-        // long-term path.
+        // EnsureQuestStarted(result, startNow=true) is the C++ entry
+        // point that matches console `startquest` semantics — full
+        // engine promotion including the stage-0 fragment AND
+        // Find-Matching-Reference alias evaluation. Other direct paths
+        // we tried (SetEnabled+Start, SetEnabled+ResetAndUpdate, VM-
+        // dispatched Start) flipped flags and sometimes advanced the
+        // stage but never triggered the FMR pass, leaving alias slots
+        // empty. See docs/engine-findings/starting-a-quest-from-cpp.md
+        // for the full investigation.
         logger::info(
-            "AmbushAction: starting '{}' via console command (banditCount={} spawnDistance={})",
+            "AmbushAction: starting '{}' (banditCount={} spawnDistance={})",
             kQuestEditorID, banditCount, spawnDistance);
 
-        // quest->SetEnabled(true);
-        // quest->ResetAndUpdate();
-        ConsoleCommand::Run(std::string("startquest ") + kQuestEditorID);
+        bool       engineResult = false;
+        const bool callOk       = quest->EnsureQuestStarted(engineResult, true);
+        if (!callOk || !engineResult) {
+            logger::warn(
+                "AmbushAction: EnsureQuestStarted reported failure (callOk={} engineResult={})",
+                callOk, engineResult);
+        }
 
         char detail[160];
         std::snprintf(detail, sizeof(detail),
