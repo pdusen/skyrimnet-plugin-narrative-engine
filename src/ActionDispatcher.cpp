@@ -647,37 +647,132 @@ namespace NarrativeEngine::ActionDispatcher
 
     void OnTick()
     {
-        // Stale-lock check: if an action has been in flight longer than
-        // iActionStaleLockTimeoutSeconds, the completion ModEvent likely
-        // never came (quest force-stopped externally, Papyrus crashed,
-        // etc.). Clear it so the Director can resume firing.
-        std::string staleName;
-        double      staleAge = 0.0;
+        // Snapshot in-flight state once under the lock so the rest of
+        // this function operates on stable values without re-locking
+        // for every read.
+        std::string inFlightName;
+        double      startedAt = 0.0;
         {
             std::scoped_lock lock(g_mutex);
             if (g_actionInFlight.empty() || g_actionStartedAt <= 0.0) {
                 return;
             }
-            const double now    = NowUnixSeconds();
-            const double age    = now - g_actionStartedAt;
-            const double timeout = static_cast<double>(
-                Settings::Get().actionStaleLockTimeoutSeconds);
-            if (age <= timeout) {
-                return;
-            }
-            staleName = g_actionInFlight;
-            staleAge  = age;
-            g_actionInFlight.clear();
-            g_actionStartedAt       = 0.0;
-            g_lastActionCompletedAt = now;  // Treat the stale-clear as a completion
-                                            // for cooldown purposes — otherwise we'd
-                                            // immediately retry.
+            inFlightName = g_actionInFlight;
+            startedAt    = g_actionStartedAt;
         }
 
-        logger::warn(
-            "ActionDispatcher: stale-lock auto-clear: action '{}' was in flight for {:.0f}s (timeout {}s); clearing",
-            staleName, staleAge, Settings::Get().actionStaleLockTimeoutSeconds);
-        DashboardUIManager::PushFullState();
+        const double now = NowUnixSeconds();
+        const double age = now - startedAt;
+
+        // ---------- Stale-lock check ----------
+        // If an action has been in flight longer than
+        // iActionStaleLockTimeoutSeconds, the completion ModEvent likely
+        // never came (quest force-stopped externally, Papyrus crashed,
+        // etc.). Clear it so the Director can resume firing. We treat
+        // the stale-clear as a completion for cooldown purposes —
+        // otherwise the next tick would immediately re-fire.
+        const double timeout = static_cast<double>(
+            Settings::Get().actionStaleLockTimeoutSeconds);
+        if (age > timeout) {
+            bool didClear = false;
+            {
+                std::scoped_lock lock(g_mutex);
+                if (g_actionInFlight == inFlightName) {
+                    g_actionInFlight.clear();
+                    g_actionStartedAt       = 0.0;
+                    g_lastActionCompletedAt = now;
+                    didClear                = true;
+                }
+            }
+            if (didClear) {
+                logger::warn(
+                    "ActionDispatcher: stale-lock auto-clear: action '{}' was in flight for {:.0f}s (timeout {}s); clearing",
+                    inFlightName, age, Settings::Get().actionStaleLockTimeoutSeconds);
+                DashboardUIManager::PushFullState();
+            }
+            return;
+        }
+
+        // ---------- Failed-start verification ----------
+        // Ask the action whether its start visibly failed (e.g. a quest
+        // that we lit up but the engine never actually promoted). If so,
+        // the action has already torn down its engine-side state by the
+        // time DetectAndRollbackFailedStart returns; the dispatcher just
+        // needs to clear its own in-flight bookkeeping so the next tick
+        // can pick the action again.
+        //
+        // Note: NO cooldown is applied on this path (g_lastActionCompletedAt
+        // is intentionally NOT updated). The user wants immediate retry —
+        // a failed start isn't a successful action, so the global cooldown
+        // shouldn't gate the retry attempt.
+        auto* action = ActionRegistry::Find(inFlightName);
+        if (!action) {
+            return;
+        }
+
+        ActionContext ctx;
+        ctx.player = RE::PlayerCharacter::GetSingleton();
+        if (ctx.player) {
+            ctx.playerInCombat   = ctx.player->IsInCombat();
+            ctx.playerInInterior = ctx.player->GetParentCell() &&
+                                   ctx.player->GetParentCell()->IsInteriorCell();
+        }
+        if (auto* ui = RE::UI::GetSingleton()) {
+            ctx.playerInDialogue = ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME);
+        }
+
+        if (action->DetectAndRollbackFailedStart(ctx, age)) {
+            bool didClear = false;
+            {
+                std::scoped_lock lock(g_mutex);
+                // Re-check under lock — the completion ModEvent could have
+                // arrived between the DetectAndRollbackFailedStart return
+                // and our re-lock, in which case in-flight is already
+                // cleared and we shouldn't double-handle.
+                if (g_actionInFlight == inFlightName) {
+                    g_actionInFlight.clear();
+                    g_actionStartedAt = 0.0;
+                    // Deliberately do NOT touch g_lastActionCompletedAt:
+                    // a failed start should be retryable on the very next
+                    // tick without a cooldown gate.
+                    didClear = true;
+                }
+            }
+            if (didClear) {
+                logger::info(
+                    "ActionDispatcher: action '{}' rolled back after failed start (age={:.1f}s); cleared in-flight for retry",
+                    inFlightName, age);
+                DashboardUIManager::PushFullState();
+            }
+            return;
+        }
+
+        // ---------- Completion verification ----------
+        // Some actions resolve via engine-observable state (e.g. a quest
+        // reaching its "Complete Quest" marked stage) rather than via a
+        // Papyrus-sent _ne_ActionCompleted ModEvent. Ask the action
+        // whether it considers itself done; on true, the action has
+        // already torn down its engine-side state and we just clear our
+        // bookkeeping and apply the post-action cooldown — same shape as
+        // the ModEvent sink path, just initiated from the poll side.
+        if (action->DetectCompletion(ctx, age)) {
+            bool didClear = false;
+            {
+                std::scoped_lock lock(g_mutex);
+                if (g_actionInFlight == inFlightName) {
+                    g_actionInFlight.clear();
+                    g_actionStartedAt       = 0.0;
+                    g_lastActionCompletedAt = now;
+                    didClear                = true;
+                }
+            }
+            if (didClear) {
+                logger::info(
+                    "ActionDispatcher: action '{}' completed via poll (age={:.1f}s); cleared in-flight, cooldown applied",
+                    inFlightName, age);
+                DashboardUIManager::PushFullState();
+            }
+        }
     }
 
     bool IsActionInFlight()

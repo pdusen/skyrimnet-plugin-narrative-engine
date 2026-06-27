@@ -1031,14 +1031,13 @@ markers, jog toward the player ignoring intervening NPCs, and engage in vanilla 
 
 ### Step 8 — AmbushAction C++ implementation and registration
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
 **Goal:** Implement the thin C++ side of the ambush and register it with the toolbox. After this
 step the full end-to-end Director loop works: tension overrun → dispatcher fires action-select →
-LLM picks ambush → ModEvent → quest spawns → fight → completion clears in-flight → cooldown
-applies.
+LLM picks ambush → quest starts → fight → completion clears in-flight → cooldown applies.
 
 **Files:**
 
@@ -1046,14 +1045,23 @@ applies.
 - `src/AmbushAction.cpp` — implementation:
   - `Name() = "ambush"`. `Polarity() = Raise`. `Description()` returns the LLM-facing
     one-paragraph blurb.
-  - `IsAvailable(ctx)` per the preconditions list above (exterior + not in combat / dialogue,
-    location lacks city/town/inn/settlement keywords, cell not in `sDoNotDisturbCellEDIDsCSV`).
-  - `Start(ctx, params)`: clamp `bandit_count` / `spawn_distance_units` per settings; look up
-    `_ne_BanditAmbushQuest` via `RE::TESForm::LookupByEditorID("_ne_BanditAmbushQuest")`
-    (returns null when ESP not loaded); if missing, return `started=false`; if the quest is
-    already running, return `started=false` with `quest_already_running`; otherwise send
-    `_ne_StartAmbushAction` ModEvent with `strArg = "<count>|<distance>"`; return
+  - `IsAvailable(ctx)` per the preconditions list above (exterior + not in combat / dialogue /
+    scripted scene, location lacks city/town/inn/habitation keywords, cell not in
+    `sDoNotDisturbCellEDIDsCSV`).
+  - `Start(ctx, params)`: clamp `bandit_count` / `spawn_distance_units` per settings (advisory
+    only for Phase 03 — the quest's six FMR-filled aliases ignore them; clamping is here so
+    the values land sensibly in the DecisionRecord and so Phase 04 can wire them through
+    without redoing parameter handling); look up `_ne_BanditAmbushQuest` via
+    `RE::TESForm::LookupByEditorID("_ne_BanditAmbushQuest")` (relies on
+    powerofthree's-Tweaks-style runtime EditorID retention; returns null when ESP not loaded);
+    if missing, return `started=false`; if `IsRunning()`, return `started=false` with
+    `quest_already_running`; otherwise call `quest->Start()` directly and return
     `started=true` with a one-line detail.
+- `esp/Source/Scripts/_ne_BanditAmbushQuest.psc` — extend `CheckAllBanditsDead()` to send the
+  `_ne_ActionCompleted` ModEvent with `strArg = "ambush"` before `Stop()`. This is the only
+  signal the C++ dispatcher's completion sink uses to clear in-flight state; without it the
+  dispatcher would stale-lock until `iActionStaleLockTimeoutSeconds` and block follow-up
+  actions for 15 minutes.
 - `src/Plugin.cpp` — at `kDataLoaded`, after `ActionDispatcher::Initialize()`, call
   `ActionRegistry::Register(std::make_unique<AmbushAction>())`.
 
@@ -1061,9 +1069,19 @@ applies.
 
 - `LookupByEditorID` is the right surface — avoids hardcoding the local FormID CK assigned the
   quest, which would otherwise be a fragile coupling between the C++ and the ESP.
-- ModEvent send: `SKSE::ModCallbackEvent` constructed with `eventName =
-  "_ne_StartAmbushAction"`, `strArg`, `numArg=0.0`, `sender=nullptr`, dispatched via
-  `SKSE::GetModCallbackEventSource()->SendEvent(&event)`.
+- `quest->Start()` (the CommonLibSSE-NG `RE::TESQuest::Start` method) is the C++ equivalent of
+  the `startquest` console command and of Papyrus's `Quest.Start()`. It triggers alias fill
+  (including the bandit aliases' Find-Matching-Reference logic) and runs the OnAliasInit /
+  OnLoad events on each newly-bound actor.
+- Location-keyword check uses `RE::TESForm::LookupByEditorID` once per keyword and caches the
+  resulting `BGSKeyword*` pointer in function-local statics. The keywords queried are
+  `LocTypeCity`, `LocTypeTown`, `LocTypeInn`, and `LocTypeHabitation`. A keyword failing to
+  resolve degrades that single check open (action allowed) and logs a warning once — better
+  than failing closed and silently blocking the action everywhere.
+- The original sketch had C++ send a `_ne_StartAmbushAction` ModEvent that Papyrus would
+  handle. Step 7's actual Papyrus design has no central handler (the FMR-based aliases each
+  self-initialize via `OnAliasInit`/`OnLoad`), so the indirection is dropped: C++ calls
+  `quest->Start()` directly.
 
 **Verify:** Boot Skyrim. Walk outside Whiterun. Drop `iIdealDurationExposition` to 60 for the
 test. Wait through one tick past the threshold. The SKSE log shows: tension call → action-select

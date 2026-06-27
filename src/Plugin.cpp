@@ -1,6 +1,8 @@
 #include <Plugin.h>
 
 #include <ActionDispatcher.h>
+#include <ActionRegistry.h>
+#include <AmbushAction.h>
 #include <AsyncDispatch.h>
 #include <CombatEventLog.h>
 #include <DashboardUIManager.h>
@@ -14,6 +16,7 @@
 #include <logger.h>
 
 #include <algorithm>
+#include <memory>
 
 namespace NarrativeEngine
 {
@@ -49,10 +52,12 @@ namespace NarrativeEngine
                     AsyncDispatch::Start();
                     // ActionDispatcher registers the _ne_ActionCompleted
                     // ModEvent sink. Order matters: AsyncDispatch must be
-                    // up because the sink marshals through it. Future steps
-                    // will also call ActionRegistry::Register here for each
-                    // shipped action.
+                    // up because the sink marshals through it.
                     ActionDispatcher::Initialize();
+                    // Register the one shipped action. The dispatcher must
+                    // be live first so its completion sink is in place
+                    // before the action can fire.
+                    ActionRegistry::Register(std::make_unique<AmbushAction>());
                     break;
                 case SKSE::MessagingInterface::kNewGame:
                     logger::info("OnMessage: kNewGame");

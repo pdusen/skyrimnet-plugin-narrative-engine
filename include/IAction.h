@@ -83,5 +83,58 @@ namespace NarrativeEngine
         // sends back _ne_ActionCompleted carrying this action's Name().
         virtual StartResult Start(const ActionContext& ctx,
                                   const nlohmann::json& parameters) = 0;
+
+        // Poll, called from the dispatcher's main-thread tick driver
+        // periodically while this action is in-flight. Returns true to
+        // signal "the start visibly failed — the dispatcher should roll
+        // back its in-flight bookkeeping so this action can be re-
+        // selected on the next tick."
+        //
+        // Implementations that return true MUST also tear down any
+        // engine-side state Start() brought up (stop the quest, disable
+        // it, clear partial alias fills, etc.) BEFORE returning, so a
+        // fresh Start() on the next attempt starts from a clean baseline.
+        //
+        // The dispatcher honors an internal grace period before it
+        // begins calling this — actions don't need to early-return for
+        // "just started" themselves, though an extra-defensive check
+        // doesn't hurt.
+        //
+        // Default implementation always returns false: the only way out
+        // of in-flight is the _ne_ActionCompleted ModEvent.
+        virtual bool DetectAndRollbackFailedStart(const ActionContext& ctx,
+                                                  double                secondsSinceStart)
+        {
+            (void)ctx;
+            (void)secondsSinceStart;
+            return false;
+        }
+
+        // Poll, called from the dispatcher's main-thread tick driver
+        // periodically while this action is in-flight (after the
+        // failed-start check). Returns true to signal "the action has
+        // completed successfully — the dispatcher should clear in-flight
+        // and apply the post-action cooldown."
+        //
+        // Implementations that return true MUST tear down any engine-side
+        // state Start() brought up (stop + reset the quest, disable it,
+        // etc.) BEFORE returning, so a future Start() begins from a clean
+        // baseline.
+        //
+        // This is a complementary path to the _ne_ActionCompleted
+        // ModEvent: actions whose Papyrus reliably sends that ModEvent
+        // can ignore this hook; actions whose completion is observable
+        // from engine state but doesn't reach Papyrus (e.g. quest reached
+        // its "Complete Quest" stage without our script being involved)
+        // can use this poll instead.
+        //
+        // Default implementation always returns false.
+        virtual bool DetectCompletion(const ActionContext& ctx,
+                                      double                secondsSinceStart)
+        {
+            (void)ctx;
+            (void)secondsSinceStart;
+            return false;
+        }
     };
 }

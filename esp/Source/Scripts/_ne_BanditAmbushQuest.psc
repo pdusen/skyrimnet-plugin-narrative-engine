@@ -13,7 +13,7 @@ ReferenceAlias Property Bandit05Ref  Auto
 ReferenceAlias Property Bandit06Ref  Auto
 
 Function CheckAllBanditsDead()
-    if GetStage() >= 100
+    if GetStage() >= 200
         return
     endif
     int aliveCount = 0
@@ -38,8 +38,17 @@ Function CheckAllBanditsDead()
     Debug.Trace("[NE_Ambush] CheckAllBanditsDead aliveCount=" + aliveCount)
     if aliveCount == 0
         Debug.Trace("[NE_Ambush] Completing quest")
-        SetStage(100)
+        SetStage(200)
         CompleteQuest()
+        ; Notify the C++ ActionDispatcher that the ambush has resolved so it
+        ; clears in-flight state and starts the global action cooldown.
+        ; strArg must match the action's IAction::Name() ("ambush").
+        int handle = ModEvent.Create("_ne_ActionCompleted")
+        if handle
+            ModEvent.PushString(handle, "ambush")
+            ModEvent.PushFloat(handle, 0.0)
+            ModEvent.Send(handle)
+        endif
         Stop()
     endif
 EndFunction
