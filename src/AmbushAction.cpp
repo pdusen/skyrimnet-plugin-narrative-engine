@@ -119,20 +119,32 @@ namespace NarrativeEngine
             }
         }
 
-        // Quest existence check only — TESQuest::IsRunning() and
-        // IsEnabled() share the same underlying kEnabled flag bit, so
-        // IsRunning() returns true for any quest with the enabled flag
-        // set, including quests that have never actually been promoted
-        // / started. That makes it useless as an "is the ambush
-        // currently running" signal. The dispatcher's in-flight
-        // tracking (g_actionInFlight) is the authoritative source of
-        // truth there; this method just gates on "can this action
-        // physically dispatch."
+        // Quest state is the source of truth for "is this ambush ready
+        // to run?", with two caveats on which TESQuest flags are
+        // actually trustworthy:
+        //
+        //   * IsCompleted() reads the kCompleted data-flag bit, which
+        //     Papyrus CompleteQuest() sets and our cleanup path clears
+        //     via Stop+Reset. Reliable — gate on it.
+        //
+        //   * IsRunning() reads the kEnabled bit, the SAME bit IsEnabled
+        //     reads. It returns true for any enabled quest, including
+        //     ones that have never been promoted (e.g. a "Start Game
+        //     Enabled" quest at game load). Useless as a "really
+        //     running" signal — do NOT gate on it.
+        //
+        //   * GetCurrentStageID() > 0 is the behavior-defined "really
+        //     running" check: the quest's stage 0 fragment advances to
+        //     stage 10 when the engine actually promotes the quest, and
+        //     Reset() drops it back to 0 during cleanup. Combined with
+        //     !IsCompleted(), this catches the in-flight window cleanly.
         //
         // No quest → can't ever run; treat as unavailable rather than
         // surfacing a Start-time failure.
         auto* quest = LookupAmbushQuest();
-        if (!quest)                  return blocked("quest not found by EditorID");
+        if (!quest)                          return blocked("quest not found by EditorID");
+        if (quest->IsCompleted())            return blocked("quest IsCompleted");
+        if (quest->GetCurrentStageID() > 0)  return blocked("quest stage > 0 (in flight)");
 
         // Per-action in-game-hour cooldown. This sits on top of the
         // dispatcher's wall-clock global cooldown — the global gate
