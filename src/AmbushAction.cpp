@@ -1,6 +1,5 @@
 #include <AmbushAction.h>
 
-#include <AlphaCanon.h>
 #include <LocationKeywords.h>
 #include <Settings.h>
 #include <logger.h>
@@ -102,15 +101,10 @@ namespace NarrativeEngine
             return false;
         };
 
+        // Globally-disqualifying conditions (player in combat / dialogue /
+        // scripted scene / DND cell) are gated by the ActionDispatcher; we
+        // only need to check action-specific preconditions here.
         if (ctx.playerInInterior)   return blocked("playerInInterior");
-        if (ctx.playerInCombat)     return blocked("playerInCombat");
-        if (ctx.playerInDialogue)   return blocked("playerInDialogue");
-
-        // AlphaCanon already covers scripted-scene and do-not-disturb cell
-        // checks against live engine state — cheap to consult here even
-        // though the dispatcher also gates on them at the snapshot level.
-        if (AlphaCanon::IsInScriptedScene())    return blocked("AlphaCanon scripted scene");
-        if (AlphaCanon::IsInDoNotDisturbCell()) return blocked("AlphaCanon do-not-disturb cell");
 
         if (ctx.player) {
             if (LocationKeywords::IsSafe(ctx.player->GetCurrentLocation())) {

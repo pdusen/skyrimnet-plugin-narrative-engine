@@ -1039,68 +1039,162 @@ markers, jog toward the player ignoring intervening NPCs, and engage in vanilla 
 step the full end-to-end Director loop works: tension overrun → dispatcher fires action-select →
 LLM picks ambush → quest starts → fight → completion clears in-flight → cooldown applies.
 
+The shape of "C++ starts the quest, Papyrus signals completion via ModEvent" sketched in earlier
+steps mostly didn't survive contact with the engine. The final shape treats the
+**`RE::TESQuest` instance as the single source of truth** for ready / running / completed; both
+the start path and the completion path are pure native C++ that read and mutate that instance.
+Notes below record the final design and the non-obvious findings that drove the divergence —
+they apply to any future quest-backed action, not just Ambush. The per-finding deep-dives live
+under `docs/engine-findings/`.
+
 **Files:**
 
-- `include/AmbushAction.h` — declares `class AmbushAction : public IAction`.
+- `include/IAction.h` — extend the interface with two new optional poll hooks the dispatcher
+  drives every tick while the action is in flight:
+  - `virtual bool DetectAndRollbackFailedStart(ctx, secondsSinceStart)` — return true if Start
+    visibly didn't take (e.g. required alias slots never filled). The action must tear down its
+    own engine-side state before returning true so the next tick's re-attempt starts clean.
+  - `virtual bool DetectCompletion(ctx, secondsSinceStart)` — return true once the action has
+    visibly completed (quest reached its Complete-Quest stage, etc.). The action must tear down
+    engine-side state before returning true. Complementary to the `_ne_ActionCompleted`
+    ModEvent path: actions whose Papyrus reliably sends that event can ignore this hook;
+    actions whose completion is observable from native state can use this instead.
+  Both hooks default to `return false`.
+- `include/AmbushAction.h` — declares `class AmbushAction : public IAction`, overrides Start +
+  the two new poll hooks, and forward-declares an `AmbushAction_Persistence` namespace that
+  owns this action's co-save record (`'NEAB'`).
 - `src/AmbushAction.cpp` — implementation:
   - `Name() = "ambush"`. `Polarity() = Raise`. `Description()` returns the LLM-facing
     one-paragraph blurb.
-  - `IsAvailable(ctx)` per the preconditions list above (exterior + not in combat / dialogue /
-    scripted scene, location lacks city/town/inn/habitation keywords, cell not in
-    `sDoNotDisturbCellEDIDsCSV`).
-  - `Start(ctx, params)`: clamp `bandit_count` / `spawn_distance_units` per settings (advisory
-    only for Phase 03 — the quest's six FMR-filled aliases ignore them; clamping is here so
-    the values land sensibly in the DecisionRecord and so Phase 04 can wire them through
-    without redoing parameter handling); look up `_ne_BanditAmbushQuest` via
-    `RE::TESForm::LookupByEditorID("_ne_BanditAmbushQuest")` (relies on
-    powerofthree's-Tweaks-style runtime EditorID retention; returns null when ESP not loaded);
-    if missing, return `started=false`; if `IsRunning()`, return `started=false` with
-    `quest_already_running`; otherwise call `quest->Start()` directly and return
-    `started=true` with a one-line detail.
-- `esp/Source/Scripts/_ne_BanditAmbushQuest.psc` — extend `CheckAllBanditsDead()` to send the
-  `_ne_ActionCompleted` ModEvent with `strArg = "ambush"` before `Stop()`. This is the only
-  signal the C++ dispatcher's completion sink uses to clear in-flight state; without it the
-  dispatcher would stale-lock until `iActionStaleLockTimeoutSeconds` and block follow-up
-  actions for 15 minutes.
+  - `IsAvailable(ctx)`:
+    - Cheap snapshot gates (`playerInInterior`, `playerInCombat`, `playerInDialogue`).
+    - **`AlphaCanon::IsInScriptedScene()` and `AlphaCanon::IsInDoNotDisturbCell()`** for the
+      scripted-scene and DND-cell guards — re-using the shared module rather than recomputing
+      keyword / cell checks inline.
+    - **`LocationKeywords::IsSafe(ctx.player->GetCurrentLocation())`** for the
+      city/town/inn/habitation check — also a shared module, with its own keyword caching and
+      "fail open on missing keyword" policy.
+    - **Quest-state gates, with the IsRunning caveat:**
+      - `!quest` → unavailable (ESP not loaded or EditorID lookup failed).
+      - `quest->IsCompleted()` → unavailable (still in completion-pending state).
+      - `quest->GetCurrentStageID() > 0` → unavailable (stage 10+ means really running).
+      - **Do NOT** gate on `quest->IsRunning()` — see specifics below.
+    - **Per-action in-game-hour cooldown.** If `iAmbushPerActionCooldownGameHours > 0` and the
+      stored `g_lastCompletionGameHours` is non-zero, block when
+      `Calendar::GetHoursPassed() - lastCompletionGameHours < cooldownHours`.
+  - `Start(ctx, params)`: re-validate `IsAvailable` (engine state may have shifted since the
+    dispatcher's filter pass); clamp `bandit_count` / `spawn_distance_units` per settings
+    (advisory only for Phase 03 — the FMR-filled aliases ignore them; clamping is here so the
+    values land sensibly in the DecisionRecord and Phase 04 can wire them through without
+    re-shaping parameter handling); look up the quest via
+    `RE::TESForm::LookupByEditorID("_ne_BanditAmbushQuest")`; call
+    `quest->EnsureQuestStarted(engineResult, /*startNow=*/true)`. Return `started=true` with a
+    one-line detail; log a warning on engine-reported failure but still return started=true
+    (the dispatcher's `DetectAndRollbackFailedStart` poll will catch a genuine non-promotion).
+  - `DetectAndRollbackFailedStart(ctx, secondsSinceStart)`: after a 2s grace period, walk
+    `quest->aliases`; for every required (`!FLAGS::kOptional`) `BGSRefAlias`, check
+    `GetReference() != nullptr`. If not all required ref aliases are filled, run the teardown
+    trio (`Stop()` → `Reset()` → `SetEnabled(false)`) and return true so the dispatcher rolls
+    back in-flight and the action can re-fire next tick.
+  - `DetectCompletion(ctx, secondsSinceStart)`: read `quest->IsCompleted()`; if true, run the
+    same teardown trio, stamp `g_lastCompletionGameHours = Calendar::GetHoursPassed()`, and
+    return true.
+  - `AmbushAction_Persistence::OnSave/OnLoad/OnRevert` — read/write a single
+    `double g_lastCompletionGameHours` under co-save record `'NEAB'`, version 1.
+- `esp/Source/Scripts/_ne_BanditAmbushQuest.psc` — `CheckAllBanditsDead()` advances to
+  **stage 200** (not 100), calls `CompleteQuest()`, sends the `_ne_ActionCompleted` ModEvent
+  (kept for the dispatcher's existing sink path; the C++ `DetectCompletion` poll is an
+  independent and now-primary completion signal), then `Stop()`. The stage marker move from 100
+  to 200 keeps stage 100 free as a future "actively winding down" marker if a later action
+  needs one.
+- `include/ActionDispatcher.h` / `src/ActionDispatcher.cpp` — drive the new poll hooks from
+  `OnTick`: while an action is in-flight, call `DetectAndRollbackFailedStart` first, then
+  `DetectCompletion`. On a true return from completion, update `g_lastActionCompletedAt = now`
+  so the global cooldown starts running. (The existing `_ne_ActionCompleted` ModEvent sink
+  still works; the poll is an additional path, not a replacement.)
+- `include/Settings.h`, `src/Settings.cpp` — add
+  `int ambushPerActionCooldownGameHours = 24;` read from
+  `[Actions] iAmbushPerActionCooldownGameHours`.
+- `statics/SKSE/Plugins/NarrativeEngine.ini` — document the new key.
 - `src/Plugin.cpp` — at `kDataLoaded`, after `ActionDispatcher::Initialize()`, call
-  `ActionRegistry::Register(std::make_unique<AmbushAction>())`.
+  `ActionRegistry::Register(std::make_unique<AmbushAction>())`. Wire
+  `AmbushAction_Persistence::OnSave/OnLoad/OnRevert` into the central serialization callbacks
+  alongside the existing per-subsystem records.
 
-**Specifics:**
+Auxiliary files created during the investigation and retained for future use:
 
-- `LookupByEditorID` is the right surface — avoids hardcoding the local FormID CK assigned the
-  quest, which would otherwise be a fragile coupling between the C++ and the ESP.
-- `quest->Start()` (the CommonLibSSE-NG `RE::TESQuest::Start` method) is the C++ equivalent of
-  the `startquest` console command and of Papyrus's `Quest.Start()`. It triggers alias fill
-  (including the bandit aliases' Find-Matching-Reference logic) and runs the OnAliasInit /
-  OnLoad events on each newly-bound actor.
-- Location-keyword check uses `RE::TESForm::LookupByEditorID` once per keyword and caches the
-  resulting `BGSKeyword*` pointer in function-local statics. The keywords queried are
-  `LocTypeCity`, `LocTypeTown`, `LocTypeInn`, and `LocTypeHabitation`. A keyword failing to
-  resolve degrades that single check open (action allowed) and logs a warning once — better
-  than failing closed and silently blocking the action everywhere.
-- The original sketch had C++ send a `_ne_StartAmbushAction` ModEvent that Papyrus would
-  handle. Step 7's actual Papyrus design has no central handler (the FMR-based aliases each
-  self-initialize via `OnAliasInit`/`OnLoad`), so the indirection is dropped: C++ calls
-  `quest->Start()` directly.
+- `include/ConsoleCommand.h` / `src/ConsoleCommand.cpp` — a small `Run(std::string_view)`
+  utility that builds a transient `RE::Script`, calls `CompileAndRun(nullptr)`, and deletes it.
+  Briefly used as a workaround when no native quest-start path was working; replaced by
+  `EnsureQuestStarted`. Kept around because it's the obvious tool for future "run an arbitrary
+  console command from C++" needs.
+
+**Specifics — what did and didn't work:**
+
+- **`LookupByEditorID` is the right surface.** Avoids hardcoding the local FormID CK assigned
+  the quest, which would otherwise be a fragile coupling between C++ and the ESP. Requires
+  powerofthree's Tweaks (or equivalent runtime EditorID retention) to be loaded.
+- **`EnsureQuestStarted(result, /*startNow=*/true)`** is the C++ entry point that matches
+  console `startquest` semantics — full engine promotion including the stage-0 fragment AND
+  Find-Matching-Reference alias evaluation. Other native paths we tried (`Start()` alone,
+  `SetEnabled(true)` + `Start()`, `SetEnabled(true)` + `ResetAndUpdate()`, VM-dispatched
+  `Quest.Start`) variously flipped flags, sometimes advanced the stage, but **never triggered
+  the FMR pass**, leaving alias slots empty. The full investigation lives in
+  `docs/engine-findings/starting-a-quest-from-cpp.md`.
+- **`TESQuest::IsRunning()` is unreliable.** It reads the same `kEnabled` bit
+  `IsEnabled()` reads — returns true for any enabled quest, including ones that have never
+  been promoted (e.g. a "Start Game Enabled" quest at load). Useless as a "really running"
+  signal. The behavior-defined check is `GetCurrentStageID() > 0`: stage 0's fragment advances
+  to stage 10 (or whatever the first encounter-active stage is) when the engine actually
+  promotes the quest, and `Reset()` drops it back to 0 on cleanup. Memory:
+  `feedback-tesquest-isrunning-unreliable`.
+- **Completion is detected by polling `IsCompleted()`, not by the ModEvent.** Papyrus's
+  CompleteQuest at stage 200 sets the `kCompleted` data-flag bit; `IsCompleted` reads it. The
+  poll is independent of the Papyrus completion fragment running correctly, runs on the same
+  cadence the dispatcher already drives, and gave us a single self-contained C++ teardown path
+  (`Stop()` → `Reset()` → `SetEnabled(false)`) instead of two halves of the same operation
+  living on opposite sides of the boundary. The Papyrus-side `_ne_ActionCompleted` send is
+  kept (it's free and the dispatcher's sink still works on it) so the ModEvent path remains
+  available for any future action whose completion isn't observable from quest flags.
+- **Stage 200, not 100, is the Complete-Quest marker.** Stage 100 is left free for a future
+  "actively winding down" intermediate marker; jumping straight to 200 also avoided an
+  observed quirk where reading `IsCompleted` immediately after `SetStage(100)` returned false
+  briefly even though completion had effectively fired.
+- **Per-action cooldown is in game hours, not real seconds.** The dispatcher's global cooldown
+  is real wall-clock and prevents back-to-back firings across all actions; this per-action
+  gate prevents the same action firing twice in the same in-fiction afternoon. In-game time
+  has the nice property that long real-world pauses (alt-tabbing for hours) don't accidentally
+  clear it, and time spent sleeping / waiting / fast-traveling does count toward unlocking.
+  Persisted via the `'NEAB'` co-save record (single `double`, version 1).
+- **DetectAndRollbackFailedStart checks alias fill, not stage advancement.** We observed that
+  partial promotion paths (the ones that didn't trigger FMR) still advanced the stage — so
+  "stage > 0" by itself was a false-positive success signal. The reliable correlate of "the
+  encounter actually exists in the world" is "every required `BGSRefAlias` has a non-null
+  `GetReference()`." The check is restricted to `BGSRefAlias` because that's the only alias
+  type we have a clean introspection API for; other alias types (LocationAlias, etc.) are
+  skipped rather than treated as failures.
+
+**Other engine findings from this work** (full write-ups in `docs/engine-findings/`):
+
+- `ai-package-flags-for-script-driven-combat-handoff.md` — the approach package needs
+  `Ignore Combat` unchecked and `Interrupt Override = None` for a script-driven combat handoff
+  to preempt cleanly. The opposite settings produce a 5-10s stare-before-swinging gap.
+  Memory: `feedback-ck-package-combat-handoff`.
+- `avoid-setghost-with-ai-packages.md` — `Actor.SetGhost(true)` silently breaks AI package
+  execution. Use `Aggression=0` or temporary faction membership for "ignored by NPCs"
+  instead. Memory: `feedback-ck-setghost-breaks-packages`.
 
 **Verify:** Boot Skyrim. Walk outside Whiterun. Drop `iIdealDurationExposition` to 60 for the
-test. Wait through one tick past the threshold. The SKSE log shows: tension call → action-select
-call → ModEvent sent → Papyrus log shows spawn → fight unfolds → kill the bandits → Papyrus
-sends `_ne_ActionCompleted` → C++ log shows reception → `g_actionInFlight` cleared. Now wait
-under `iActionCooldownSeconds` (2 min default) and force another tick past ideal duration; the
-gate blocks. Beyond cooldown but inside `iActionRepetitionWindowSeconds` (5 min), the same
-action is filtered out of candidates → "0 candidates" log. Inside Whiterun, the action is also
-filtered out via `IsAvailable`.
-
-Additional smoke tests, post-success:
-
-- **Stale-lock recovery.** Spawn an ambush; before it resolves, console-kill the quest with
-  `StopQuest _ne_BanditAmbushQuest`. The completion ModEvent never fires. Wait
-  `iActionStaleLockTimeoutSeconds` (15 min default); confirm the dispatcher auto-clears with a
-  logged warning naming the action.
-- **Save/load mid-encounter.** Spawn an ambush; save while bandits are alive; reload. Confirm
-  `g_actionInFlight` is restored from co-save; the quest is still running per Skyrim's own
-  persistence; killing the remaining bandits still triggers completion correctly.
+test. Wait through one tick past the threshold. The SKSE log shows: tension call →
+action-select call → `EnsureQuestStarted` call → Papyrus log shows spawn → fight unfolds →
+kill the bandits → stage 200 / `IsCompleted` fires → C++ `DetectCompletion` logs cleanup and
+sets the cooldown stamp → `g_actionInFlight` cleared. Now wait under `iActionCooldownSeconds`
+(2 min default) and force another tick past ideal duration; the dispatcher's global gate
+blocks. Beyond cooldown but inside the **24 in-game-hour per-action** cooldown, `IsAvailable`
+filters ambush out (look for the `per-action cooldown` debug log line). Inside Whiterun, the
+action is also filtered out via the `LocationKeywords::IsSafe` check. Save/load mid-encounter:
+the in-game-hour stamp survives via `'NEAB'`, and the in-flight quest survives via Skyrim's
+own quest persistence — killing the remaining bandits still triggers completion correctly.
 
 ---
 

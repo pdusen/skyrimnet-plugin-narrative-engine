@@ -1,6 +1,7 @@
 #include <ActionDispatcher.h>
 
 #include <ActionRegistry.h>
+#include <AlphaCanon.h>
 #include <AsyncDispatch.h>
 #include <CombatEventLog.h>
 #include <DashboardUIManager.h>
@@ -225,6 +226,35 @@ namespace NarrativeEngine::ActionDispatcher
             return ctx;
         }
 
+        // ---------- global action preconditions ----------
+        // Conditions under which NO action should fire, regardless of which
+        // action the LLM might pick. Checked twice per action-firing tick:
+        //
+        //   1. Before sending the action-select prompt — saves an LLM round
+        //      trip when we know up-front no action would be allowed to run
+        //      anyway.
+        //   2. After receiving the LLM response, just before the chosen
+        //      action's Start — guards against the state changing during
+        //      the round trip (player walked into combat, opened a dialogue
+        //      menu, etc.).
+        //
+        // Individual actions' IsAvailable still owns *action-specific*
+        // preconditions (e.g. "ambush requires exterior cell"). The split
+        // is: globally-disqualifying world state lives here; per-action
+        // situational fit lives on the action.
+        //
+        // Returns nullptr when all preconditions hold; otherwise returns a
+        // short literal naming the gate that blocked. Caller logs the
+        // reason; the literal lifetime is the program (string literal).
+        const char* CheckGlobalActionPreconditions(const ActionContext& ctx)
+        {
+            if (ctx.playerInCombat)                  return "playerInCombat";
+            if (ctx.playerInDialogue)                return "playerInDialogue";
+            if (AlphaCanon::IsInScriptedScene())     return "scriptedScene";
+            if (AlphaCanon::IsInDoNotDisturbCell())  return "doNotDisturbCell";
+            return nullptr;
+        }
+
         // ---------- tension delta ----------
 
         int ComputeTensionDelta(PhaseTracker::Phase phase, std::uint32_t currentTension)
@@ -395,6 +425,23 @@ namespace NarrativeEngine::ActionDispatcher
             // needs to act on).
             const ActionContext ctx = BuildActionContextFromSnapshot(snapshot);
 
+            // Re-check global preconditions: the LLM round trip may have
+            // taken seconds, during which the player could have entered
+            // combat, opened a dialogue, walked into a scripted scene, or
+            // crossed into a DND cell. Bailing here cleanly drops the
+            // action with no cooldown — the same gate would block the
+            // next tick's pre-call check too, but if the situation has
+            // already cleared by then we want immediate re-eligibility.
+            if (const char* blockedBy = CheckGlobalActionPreconditions(ctx)) {
+                if (Settings::Get().debugMode) {
+                    logger::debug(
+                        "ActionDispatcher: global preconditions changed during LLM round trip (blocked: {}); dropping chosen action '{}'",
+                        blockedBy, chosenAction);
+                }
+                FinalizeWithoutAction(std::move(rec), std::move(onFinalized));
+                return;
+            }
+
             // Populate the record fields up-front. actionSelected is
             // tentatively the action name; the failure path below will
             // overwrite it with the "(failed: ...)" form if Start fails.
@@ -499,8 +546,20 @@ namespace NarrativeEngine::ActionDispatcher
             return;
         }
 
-        // Gate 5: at least one candidate must survive IsAvailable + recency.
+        // Gate 5: global action preconditions (player not in combat /
+        // dialogue / scripted scene / DND cell). Checked before candidate
+        // filtering so we don't pay the per-action IsAvailable cost — and
+        // more importantly, before the LLM round trip below.
         const ActionContext ctx = BuildActionContextFromSnapshot(snapshot);
+        if (const char* blockedBy = CheckGlobalActionPreconditions(ctx)) {
+            if (debug) {
+                logger::debug("ActionDispatcher: gate global_preconditions blocked: {}", blockedBy);
+            }
+            FinalizeWithoutAction(std::move(rec), std::move(onFinalized));
+            return;
+        }
+
+        // Gate 6: at least one candidate must survive IsAvailable + recency.
         const auto direction = PhaseTracker::OutgoingDirection(*currentPhaseOpt);
         const ActionPolarity desired =
             (direction == PhaseTracker::Direction::Raise)
