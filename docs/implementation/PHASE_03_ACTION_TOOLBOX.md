@@ -1200,7 +1200,7 @@ own quest persistence — killing the remaining bandits still triggers completio
 
 ### Step 9 — Dashboard action-in-flight surfacing
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 

@@ -24,6 +24,17 @@ export interface DirectorState {
         narrative_note: string;
         advanced_to: string | null;   // PhaseName when the eval triggered an advance
         alpha_canon_signals: string[];
+        // Action selected for this evaluation, if any. Either a snake_case
+        // action name (e.g. "ambush") for a successful start, or a string
+        // starting with "(failed:" carrying the failure reason. Null when
+        // no action fired this tick.
+        action: string | null;
+    } | null;
+    // Currently-running action, or null. `started_at` is Unix-epoch seconds
+    // (same time base as `last_evaluation.timestamp`).
+    action_in_flight: {
+        name: string;
+        started_at: number;
     } | null;
     recent_decisions: DecisionEntry[];
     recent_events: EventEntry[];

@@ -1,5 +1,6 @@
 #include <DashboardUIManager.h>
 
+#include <ActionDispatcher.h>
 #include <AlphaCanon.h>
 #include <AsyncDispatch.h>
 #include <CombatEventLog.h>
@@ -199,9 +200,24 @@ namespace NarrativeEngine::DashboardUIManager
                                             ? nlohmann::json(PhaseTracker::PhaseName(*latest.advancedToPhase))
                                             : nlohmann::json(nullptr)},
                 {"alpha_canon_signals", AlphaCanon::Names(mask)},
+                {"action",              latest.actionSelected.empty()
+                                            ? nlohmann::json(nullptr)
+                                            : nlohmann::json(latest.actionSelected)},
             };
         } else {
             j["last_evaluation"] = nullptr;
+        }
+
+        // action_in_flight — populated from the dispatcher's live state, not
+        // the decision log (the log captures the start of an action; the
+        // in-flight badge needs to reflect "is it still running right now").
+        if (auto info = ActionDispatcher::GetInFlightInfo()) {
+            j["action_in_flight"] = {
+                {"name",       info->name},
+                {"started_at", info->startedAt},
+            };
+        } else {
+            j["action_in_flight"] = nullptr;
         }
 
         // recent_events — SkyrimNet's tail merged with NarrativeEngine's

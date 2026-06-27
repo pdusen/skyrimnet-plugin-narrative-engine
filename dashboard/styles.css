@@ -113,6 +113,12 @@ body {
     font-size: 12px;
 }
 
+.phase-panel .action-in-flight {
+    color: #e3c99b;
+    font-size: 12px;
+    margin-top: 6px;
+}
+
 .last-eval .tension {
     font-size: 16px;
     color: #c9d5e6;
@@ -120,6 +126,16 @@ body {
 
 .last-eval .advance {
     color: #9be3c9;
+    margin-top: 4px;
+}
+
+.last-eval .fired {
+    color: #e3c99b;
+    margin-top: 4px;
+}
+
+.last-eval .failed {
+    color: #e39b9b;
     margin-top: 4px;
 }
 

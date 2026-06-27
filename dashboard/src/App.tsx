@@ -28,7 +28,11 @@ export function App() {
     return (
         <div className="dashboard">
             <StatusBanner status={s.status} />
-            <PhasePanel phase={s.current_phase} timeInPhaseSeconds={s.time_in_phase_seconds} />
+            <PhasePanel
+                phase={s.current_phase}
+                timeInPhaseSeconds={s.time_in_phase_seconds}
+                actionInFlight={s.action_in_flight}
+            />
             <LastEvaluation evaluation={s.last_evaluation} />
             <DecisionList items={s.recent_decisions} />
             <EventList items={s.recent_events} />
