@@ -87,6 +87,11 @@ namespace NarrativeEngine::Settings
         int ambushMaxBanditCount             = 4;
         int ambushMinSpawnDistanceUnits      = 1500;
         int ambushMaxSpawnDistanceUnits      = 3000;
+        // Per-action cooldown in *in-game hours* applied after a
+        // successful ambush completion (the global
+        // iActionCooldownSeconds also applies on top of this). 0
+        // disables. Persists via the action's own co-save record.
+        int ambushPerActionCooldownGameHours = 24;
     };
 
     // Read both INIs (plugin then MCM override) and populate the singleton.

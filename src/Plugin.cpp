@@ -98,6 +98,7 @@ namespace NarrativeEngine
             DecisionLog::OnSave(intfc);
             CombatEventLog::OnSave(intfc);
             ActionDispatcher::OnSave(intfc);
+            AmbushAction_Persistence::OnSave(intfc);
             // Future subsystems append their OnSave calls here.
         }
 
@@ -125,6 +126,9 @@ namespace NarrativeEngine
                     case ActionDispatcher::kRecordTypeId:
                         ActionDispatcher::OnLoad(intfc, version, length);
                         break;
+                    case AmbushAction_Persistence::kRecordTypeId:
+                        AmbushAction_Persistence::OnLoad(intfc, version, length);
+                        break;
                     default:
                         // Unknown record — likely from a newer build or a
                         // removed subsystem. GetNextRecordInfo's next call
@@ -144,6 +148,7 @@ namespace NarrativeEngine
             DecisionLog::OnRevert();
             CombatEventLog::OnRevert();
             ActionDispatcher::OnRevert();
+            AmbushAction_Persistence::OnRevert();
             // Future subsystems append their OnRevert calls here.
         }
     }

@@ -115,6 +115,9 @@ namespace NarrativeEngine::Settings
             g_config.ambushMaxSpawnDistanceUnits = static_cast<int>(
                 ini.GetLongValue("Actions", "iAmbushMaxSpawnDistanceUnits",
                                  g_config.ambushMaxSpawnDistanceUnits));
+            g_config.ambushPerActionCooldownGameHours = static_cast<int>(
+                ini.GetLongValue("Actions", "iAmbushPerActionCooldownGameHours",
+                                 g_config.ambushPerActionCooldownGameHours));
 
             return true;
         }

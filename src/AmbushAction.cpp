@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <mutex>
 #include <string_view>
 
 namespace NarrativeEngine
@@ -17,6 +18,31 @@ namespace NarrativeEngine
     namespace
     {
         constexpr const char* kQuestEditorID = "_ne_BanditAmbushQuest";
+
+        // Co-save record schema version. Bump only when the on-disk
+        // layout changes; OnLoad falls back to clearing state on a
+        // mismatch.
+        constexpr std::uint32_t kRecordVersion = 1;
+
+        // In-game hour stamp (RE::Calendar::GetHoursPassed at completion
+        // time) of the most recent successful ambush. 0.0 means "never
+        // completed since this character started." Guarded by g_mutex
+        // because OnSave runs from SKSE's serialization callback while
+        // the rest of the action runs from the main-thread tick driver.
+        std::mutex g_mutex;
+        double     g_lastCompletionGameHours = 0.0;
+
+        // Current game-time in hours since the game's calendar epoch.
+        // Safe to call on the main thread; nullopt if the calendar isn't
+        // available yet (very early in plugin lifecycle).
+        double CurrentGameHours()
+        {
+            auto* calendar = RE::Calendar::GetSingleton();
+            if (!calendar) {
+                return 0.0;
+            }
+            return static_cast<double>(calendar->GetHoursPassed());
+        }
 
         RE::TESQuest* LookupAmbushQuest()
         {
@@ -69,19 +95,72 @@ namespace NarrativeEngine
 
     bool AmbushAction::IsAvailable(const ActionContext& ctx) const
     {
-        if (ctx.playerInInterior)   return false;
-        if (ctx.playerInCombat)     return false;
-        if (ctx.playerInDialogue)   return false;
+        const bool debug = Settings::Get().debugMode;
+        const auto blocked = [debug](const char* reason) {
+            if (debug) {
+                logger::debug("AmbushAction::IsAvailable: blocked ({})", reason);
+            }
+            return false;
+        };
+
+        if (ctx.playerInInterior)   return blocked("playerInInterior");
+        if (ctx.playerInCombat)     return blocked("playerInCombat");
+        if (ctx.playerInDialogue)   return blocked("playerInDialogue");
 
         // AlphaCanon already covers scripted-scene and do-not-disturb cell
         // checks against live engine state — cheap to consult here even
         // though the dispatcher also gates on them at the snapshot level.
-        if (AlphaCanon::IsInScriptedScene())    return false;
-        if (AlphaCanon::IsInDoNotDisturbCell()) return false;
+        if (AlphaCanon::IsInScriptedScene())    return blocked("AlphaCanon scripted scene");
+        if (AlphaCanon::IsInDoNotDisturbCell()) return blocked("AlphaCanon do-not-disturb cell");
 
         if (ctx.player) {
             if (LocationKeywords::IsSafe(ctx.player->GetCurrentLocation())) {
-                return false;
+                return blocked("LocationKeywords::IsSafe");
+            }
+        }
+
+        // Quest existence check only — TESQuest::IsRunning() and
+        // IsEnabled() share the same underlying kEnabled flag bit, so
+        // IsRunning() returns true for any quest with the enabled flag
+        // set, including quests that have never actually been promoted
+        // / started. That makes it useless as an "is the ambush
+        // currently running" signal. The dispatcher's in-flight
+        // tracking (g_actionInFlight) is the authoritative source of
+        // truth there; this method just gates on "can this action
+        // physically dispatch."
+        //
+        // No quest → can't ever run; treat as unavailable rather than
+        // surfacing a Start-time failure.
+        auto* quest = LookupAmbushQuest();
+        if (!quest)                  return blocked("quest not found by EditorID");
+
+        // Per-action in-game-hour cooldown. This sits on top of the
+        // dispatcher's wall-clock global cooldown — the global gate
+        // prevents back-to-back firing across all actions; this one
+        // throttles the SAME action against in-fiction time so the
+        // player doesn't get ambushed twice in the same afternoon.
+        // Game-time also has the nice property that long real-world
+        // pauses (alt-tabbing for hours) don't accidentally clear the
+        // gate, and time spent sleeping / waiting / fast-traveling
+        // does count toward unlocking it.
+        const int cooldownHours = Settings::Get().ambushPerActionCooldownGameHours;
+        if (cooldownHours > 0) {
+            double lastCompletion = 0.0;
+            {
+                std::scoped_lock lock(g_mutex);
+                lastCompletion = g_lastCompletionGameHours;
+            }
+            if (lastCompletion > 0.0) {
+                const double elapsed = CurrentGameHours() - lastCompletion;
+                if (elapsed < static_cast<double>(cooldownHours)) {
+                    if (debug) {
+                        logger::debug(
+                            "AmbushAction::IsAvailable: blocked (per-action cooldown: "
+                            "elapsed={:.2f}h < cooldown={}h, lastCompletion={:.2f}h current={:.2f}h)",
+                            elapsed, cooldownHours, lastCompletion, CurrentGameHours());
+                    }
+                    return false;
+                }
             }
         }
 
@@ -266,6 +345,73 @@ namespace NarrativeEngine
         quest->Reset();
         quest->SetEnabled(false);
 
+        // Stamp the in-game hour of this successful completion so the
+        // per-action cooldown (checked in IsAvailable) starts running.
+        // Done AFTER the teardown so a teardown that throws / aborts
+        // doesn't trip the cooldown gate on a non-completion.
+        const double completionHours = CurrentGameHours();
+        {
+            std::scoped_lock lock(g_mutex);
+            g_lastCompletionGameHours = completionHours;
+        }
+        logger::info(
+            "AmbushAction: per-action cooldown stamp set to gameHours={:.2f}",
+            completionHours);
+
         return true;
+    }
+
+    namespace AmbushAction_Persistence
+    {
+        void OnSave(SKSE::SerializationInterface* intfc)
+        {
+            if (!intfc) return;
+            if (!intfc->OpenRecord(kRecordTypeId, kRecordVersion)) {
+                logger::error("AmbushAction::OnSave: OpenRecord failed");
+                return;
+            }
+
+            double stampCopy = 0.0;
+            {
+                std::scoped_lock lock(g_mutex);
+                stampCopy = g_lastCompletionGameHours;
+            }
+            intfc->WriteRecordData(stampCopy);
+        }
+
+        void OnLoad(SKSE::SerializationInterface* intfc,
+                    std::uint32_t                 version,
+                    std::uint32_t                 length)
+        {
+            if (!intfc) return;
+            if (version != kRecordVersion) {
+                logger::warn(
+                    "AmbushAction::OnLoad: unknown version {} (length={}); clearing cooldown stamp",
+                    version, length);
+                OnRevert();
+                return;
+            }
+
+            double stampLoaded = 0.0;
+            if (intfc->ReadRecordData(stampLoaded) != sizeof(stampLoaded)) {
+                logger::error("AmbushAction::OnLoad: short read on completion stamp; clearing");
+                OnRevert();
+                return;
+            }
+
+            {
+                std::scoped_lock lock(g_mutex);
+                g_lastCompletionGameHours = stampLoaded;
+            }
+            logger::info(
+                "AmbushAction::OnLoad: restored lastCompletionGameHours={:.2f}",
+                stampLoaded);
+        }
+
+        void OnRevert()
+        {
+            std::scoped_lock lock(g_mutex);
+            g_lastCompletionGameHours = 0.0;
+        }
     }
 }

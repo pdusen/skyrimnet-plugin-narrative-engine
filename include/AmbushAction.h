@@ -2,6 +2,13 @@
 
 #include <IAction.h>
 
+#include <cstdint>
+
+namespace SKSE
+{
+    class SerializationInterface;
+}
+
 // AmbushAction — the Director's "raise tension" reach into the world: spawn
 // a small group of leveled bandits near the player and let vanilla combat
 // run its course. Backed by the `_ne_BanditAmbushQuest` quest in
@@ -14,6 +21,10 @@
 // approach + combat handoff. The completion signal arrives via the shared
 // `_ne_ActionCompleted` ModEvent that the quest's Papyrus sends when all
 // bandits are dead — see ActionDispatcher's sink.
+//
+// Per-action state: the in-game hour stamp of the most recent successful
+// completion. Used to enforce iAmbushPerActionCooldownGameHours on top of
+// the dispatcher's global cooldown. Persists via the 'NEAB' co-save record.
 namespace NarrativeEngine
 {
     class AmbushAction : public IAction
@@ -29,4 +40,15 @@ namespace NarrativeEngine
         bool           DetectCompletion(const ActionContext& ctx,
                                         double                secondsSinceStart) override;
     };
+
+    namespace AmbushAction_Persistence
+    {
+        // SKSE co-save record type ID for the per-action cooldown stamp.
+        // Frozen — changing it would orphan previously-saved data.
+        inline constexpr std::uint32_t kRecordTypeId = 'NEAB';
+
+        void OnSave(SKSE::SerializationInterface* intfc);
+        void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);
+        void OnRevert();
+    }
 }
