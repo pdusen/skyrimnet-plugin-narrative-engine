@@ -86,3 +86,9 @@ for what *shape* of payload a SkyrimNet plugin tends to have.
 [`PATTERNS_AND_LESSONS.md`](PATTERNS_AND_LESSONS.md) — Patterns that worked in IntelEngine's context
 (three-phase async, fuzzy cascade, escalating recovery, soft dependency loading, dispatch ring buffer,
 save-scum recovery, single source of truth). Read as candidates to consider, not defaults.
+
+[`NAME_RESOLUTION_FAILURE_MODES.md`](NAME_RESOLUTION_FAILURE_MODES.md) — Concrete case study of how
+IntelEngine's NPC / location / item resolvers fail, why, and what to do differently. Read **before**
+designing any system that resolves an LLM-supplied name back to a game entity (actor, marker,
+location, reference, item). Pairs with `PATTERNS_AND_LESSONS.md`'s "fuzzy search cascade" entry —
+that one says "here's the pattern," this one says "here's how the pattern bites."
