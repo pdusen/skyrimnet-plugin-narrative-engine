@@ -406,6 +406,7 @@ The prompt — `statics/SKSE/Plugins/SkyrimNet/prompts/narrative_engine_letter_c
 - `tension_delta`: positive integer; how much to nudge.
 - `sender_candidates`: array, capped at top ~12 by engagement score so the prompt
   stays bounded. Each entry is:
+
   ```
   {
     form_id,
@@ -421,6 +422,7 @@ The prompt — `statics/SKSE/Plugins/SkyrimNet/prompts/narrative_engine_letter_c
     ]
   }
   ```
+
   No separate top-level player-events array — every memory is already attributed to
   the candidate who holds it, in that candidate's own voice ("I saw the Dragonborn
   defeat a dragon at Whiterun" rather than "the player defeated a dragon at
@@ -438,7 +440,14 @@ Output: a JSON object with five keys.
 - `sender_npc_form_id` — string (hex FormID). MUST match one of the `sender_candidates`
   FormIDs. Validated; mismatch → fail the action with `bad_sender` detail.
 - `sender_label` — the FULL field for the book ("Letter from Ysolda", "A note from a
-  stablehand"). 1–40 chars. Substituted into the Book form via `SetFullName`.
+  stablehand"). **Hard cap: 24 characters.** The engine's Book FULL field is a fixed
+  24-byte buffer; longer strings get silently truncated at runtime, which produces
+  ugly mid-word cuts in the player's inventory list. The prompt MUST instruct the
+  LLM to keep `sender_label` ≤ 24 chars (count carefully — include spaces and
+  punctuation). If the LLM violates the cap anyway, our side falls back to a
+  generated label using the **Sender-label fallback** algorithm below rather than
+  trusting the over-long value or failing the action. Substituted into the Book
+  form via `SetFullName`.
 - `body` — the letter body. Plain text, no font tags (the action wraps it in the
   handwritten-font tag on receipt, as the smoke test established). 60–180 words.
 - `mood` — one of `{ warm, neutral, urgent, menacing, mournful, businesslike }`. Used
@@ -453,6 +462,53 @@ grievance / gossip / social obligation) and explicitly instructs the LLM to inve
 specific situation itself, not pull from a list — the smoke test established that any
 concrete topic list becomes an attractor and collapses the output distribution.
 
+### Sender-label fallback
+
+The Book form's FULL field is hard-capped at 24 bytes by the engine. The prompt
+instructs the LLM to respect that cap on `sender_label`, but the LLM does not
+always comply — past prompt-following experience says we should plan for it
+ignoring the constraint at least some of the time. Rather than fail the action
+or accept a silently-truncated label, the validator falls back to a
+deterministic name we synthesize ourselves.
+
+Trigger: validated `sender_label.length() > 24` (UTF-8 byte length, not glyph
+count — the engine's buffer is byte-bounded). On trigger, drop the LLM's label
+and replace it with `"Note from " + senderName`, where `senderName` is picked
+from this preference list and the **first** candidate whose resulting full
+string (including the `"Note from "` prefix, 10 chars) is ≤ 24 wins:
+
+1. The sender NPC's full `GetDisplayFullName()` value (the in-game Name field).
+2. The sender NPC's `ShortName` value, if SkyrimNet exposes one for this NPC
+   (see SkyrimNet's NPC metadata decorators — `decnpc(uuid).short_name` or
+   equivalent). Many NPCs don't have one, in which case this candidate is
+   skipped.
+3. The full name with any trailing `" the X"` title stripped. Pattern:
+   case-insensitive match on `" the "` followed by one or more whitespace-
+   separated words to end of string; remove the match and everything after.
+   `"Mjoll the Lioness"` → `"Mjoll"`, `"Jarl Balgruuf the Greater"` → `"Jarl
+   Balgruuf"`, `"Miraak the Last Dragonborn"` → `"Miraak"`.
+4. Suffix-stripped (as #3) AND with any leading title prefix stripped. Prefix
+   list (case-insensitive, whole-word, followed by whitespace): `Jarl`,
+   `Thane`, `Master`, `Mistress`, `Captain`, `Commander`, `Housecarl`, `Lord`,
+   `Lady`, `Sir`, `Brother`, `Sister`, `Mother`, `Father`. `"Jarl Balgruuf the
+   Greater"` → `"Balgruuf"`. Single pass; we don't chase multi-token prefixes.
+5. Last resort: take the #4 result and right-truncate the *whole final string*
+   (prefix included) to exactly 24 bytes. Guarantees fit even when the
+   surviving name alone is too long.
+
+`"Note from "` is 10 chars; that leaves 14 chars for the sender name in
+candidates 1–4 before falling to truncation. Names ≤ 14 bytes pass at the
+first candidate that produces a valid string; longer names cascade down the
+list.
+
+The fallback runs in `LetterComposer`'s validation step (Step 10) — the
+validator returns either the LLM's label (if ≤ 24 bytes) or the
+fallback-generated label, and `Start` substitutes whichever it received into
+`SetFullName` without further checks. A log line names which candidate fired
+(`LetterComposer: sender_label fell back to candidate #N ("...")`), so prompt
+drift can be tracked over time and the prompt tightened if cap violations
+become frequent.
+
 ### SkyrimNet memory integration
 
 SkyrimNet exposes `PublicAddMemory(formId, contentText, importance, memoryType, emotion,
@@ -462,6 +518,7 @@ cognitively engaged with the letter:
 
 1. **Sender NPC memory of having sent** — fired at delivery (in
    `LetterPool::MarkDelivered`):
+
    ```
    formId       = sender_npc_form_id
    contentText  = "Sent a letter to the Dragonborn about <topic_tag>."
@@ -474,6 +531,7 @@ cognitively engaged with the letter:
    ```
 
 2. **Player memory of receiving** — fired at read (in `LetterPool::MarkRead`):
+
    ```
    formId       = player FormID (0x14)
    contentText  = "Received a letter from <sender_label> — <topic_tag>."
@@ -1122,7 +1180,7 @@ confirm the read path.
 
 ### Step 3 — Author the 20 pooled letter Book forms in Creation Kit
 
-- [ ] Complete
+- [x] Complete
 
 **[USER]**
 
@@ -1435,6 +1493,7 @@ yet — this step verifies the prompt round-trips and the response parses.
   topic lists), instruct the LLM to invent the specific situation, output the
   five-key JSON object.
 - `include/LetterComposer.h` / `src/LetterComposer.cpp` — new helper module. API:
+
   ```cpp
   struct LetterComposition
   {
@@ -1450,6 +1509,7 @@ yet — this step verifies the prompt round-trips and the response parses.
                int                  urgencyHint,    // 0=low, 1=med, 2=high
                std::function<void(std::optional<LetterComposition>)> callback);
   ```
+
 - `src/LetterComposer.cpp` — builds the candidate pool by calling
   `PublicGetActorEngagement` (top 12 by engagement), then for each candidate
   calls `PublicGetMemoriesForActor(form_id, kPerCandidateMemoryCap,
@@ -1473,9 +1533,23 @@ yet — this step verifies the prompt round-trips and the response parses.
 - Validation rejects responses missing any required key, with body length outside
   bounds, or with `sender_npc_form_id` not in the candidate set. Failures pass
   `std::nullopt` to the callback.
+- **`sender_label` cap enforcement** (per **Sender-label fallback** in Core
+  concepts). The prompt itself must include an explicit instruction that
+  `sender_label` is hard-capped at 24 characters — count spaces and
+  punctuation, no exceptions, name only (no quote marks, no trailing
+  punctuation) — and the LetterComposer validator measures
+  `sender_label.size()` (UTF-8 bytes, not glyphs) against the cap on the way
+  back. If the LLM violates the cap, the validator does NOT reject the
+  response; it drops the LLM's label and substitutes the deterministic
+  `"Note from <SENDER_NAME>"` fallback per the algorithm in that section. The
+  helper that produces the fallback label lives in `LetterComposer` so the
+  prompt-side cap and the C++-side fallback stay in one file. Log the
+  fall-through path (which candidate fired) every time so we have visibility
+  into how often the LLM ignores the cap and can tighten the prompt if it
+  becomes the norm.
 - If `PublicGetMemoriesForActor` returns an empty array for a candidate, that
   candidate is still kept in the pool (the LLM might pick them based on name
-  + engagement alone) but flagged in the prompt as having no recent
+  - engagement alone) but flagged in the prompt as having no recent
   player-involving memories — useful signal that the LLM should bias toward
   candidates that DO have memory to draw on.
 
@@ -1690,6 +1764,7 @@ is purely about the LetterPool's lifecycle hooks for memory integration.
   Ysolda — debt repayment").
 
 **Verify:** Build clean. Trigger a letter dispatch.
+
 - After delivery (before the player opens the letter): log shows
   `LetterPool: sender NPC memory written (formId=0x..., importance=X)` but
   NOT a player memory write. Talk to the sender NPC and ask about a letter
