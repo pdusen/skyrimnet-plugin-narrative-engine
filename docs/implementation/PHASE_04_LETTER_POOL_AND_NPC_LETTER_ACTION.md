@@ -1814,7 +1814,7 @@ returns to Free and the action is immediately re-selectable.
 
 ---
 
-### Step 14 — Author the Papyrus script AND one delivery quest in Creation Kit (bring-up)
+### Step 14 — Author the state-bearing Papyrus script AND one delivery quest in CK (bring-up)
 
 - [ ] Complete
 
@@ -1829,8 +1829,32 @@ strategy at minimum scope — the reusable Papyrus script plus one
 delivery quest bound to pool slot 0. The other 19 quests don't get
 duplicated until Step 15's C++ orchestration is end-to-end verified
 against this single quest (see Step 16). Duplicating 20 identical quests
-is cheap; redoing them after we discover the alias setup needs a tweak
-is not.
+is cheap; redoing them after we discover the alias / stage setup needs a
+tweak is not.
+
+A key design choice for this step (revising the prior draft): **the
+quest is deliberately state-bearing for *lifecycle*, but not for
+*content*.** Specifically, the quest carries the letter's current
+lifecycle position (queued → in courier container → delivered → read →
+disposed/recycled) on its stage value, which the engine auto-persists
+across save/load. The cosave's per-slot `State` enum can be dropped in
+favor of querying `Quest.GetStage()` on the matching per-slot quest.
+
+The per-dispatch *content* — sender label, body text, topic tag, mood,
+sender FormID — stays C++-side, in the existing LetterPool slot fields
+and the existing cosave layout. The content is received from the LLM
+in C++, consumed by the C++ MinHook detours (which can't call into
+Papyrus on the hot read path anyway), and surfaced to the dashboard
+from C++. Round-tripping it through Papyrus member variables just for
+persistence would add a VM dispatch on the dispatch path with no
+matching read-path consumer.
+
+The headline practical win is on Stage 10: the fragment calls
+`WICourierScript.AddItemToContainer` directly in Papyrus — no VM
+dispatch from C++ for the courier handoff. C++'s job for delivery
+becomes `ForceFillSender` → `Start` → done; the quest stage advances
+under its own steam to Stage 20 (verified), with C++ subsequently
+nudging it through Stage 30/40/50/60 as engine events fire.
 
 **Files:**
 
@@ -1844,10 +1868,17 @@ is not.
   ReferenceAlias Property Sender    Auto
   ReferenceAlias Property LetterRef Auto
 
-  ; Vanilla WICourier, set via CK property. The script accesses it as
-  ; WICourierScript so the AddItemToContainer call resolves.
-  Quest Property WICourier Auto
+  ; Vanilla WICourier, set via CK property. Typed as WICourierScript directly
+  ; (the script attached to vanilla WICourier quest) so the
+  ; AddItemToContainer call resolves without an `as` cast at the call site.
+  ; CK accepts a Quest form here because WICourierScript extends Quest.
+  WICourierScript Property WICourier Auto
 
+  ; --- Called from C++ ---
+
+  ; Force-fills the Sender alias before quest start. C++ invokes this once
+  ; per dispatch via VM dispatch on the quest itself; the alias-index lookup
+  ; stays inside Papyrus.
   Function ForceFillSender(Actor akSender)
       if akSender == None
           Debug.Trace("[_ne_PooledLetterQuest] ForceFillSender: None")
@@ -1856,20 +1887,116 @@ is not.
       Sender.ForceRefTo(akSender)
   EndFunction
 
+  ; --- Internal ---
+
+  ; Reads LetterRef (the alias-spawned letter REFR inside the Sender's
+  ; inventory) and hands it to vanilla WICourier for delivery. Called from
+  ; Stage 10's fragment. On a None LetterRef (alias-create failure), self-
+  ; routes to Stage 60 so the recycle path runs immediately instead of
+  ; waiting for the C++ verification poll to time out.
   Function DispatchLetterToCourier()
-      ObjectReference letterRef = LetterRef.GetReference()
-      if letterRef == None
+      ObjectReference letterObjRef = LetterRef.GetReference()
+      if letterObjRef == None
           Debug.Trace("[_ne_PooledLetterQuest] LetterRef empty")
+          SetStage(60)
           return
       endIf
-      (WICourier as WICourierScript).AddItemToContainer(letterRef as Form, 1)
+      WICourier.AddItemToContainer(letterObjRef, 1)
+  EndFunction
+
+  ; Terminal teardown. Called by Stage 200's fragment (which Stages 50 and
+  ; 60 both route to). Stop() stops the quest; Reset() then clears all
+  ; alias fills (the Sender forced ref and any still-tracked LetterRef
+  ; created ref) and resets the stage to none. After Reset returns, the
+  ; quest is in a "freshly authored" state, ready for the next allocation
+  ; of this slot.
+  Function Shutdown()
+      Stop()
+      Reset()
   EndFunction
   ```
 
-  Verify against the actual `WICourierScript.AddItemToContainer` signature
-  exposed by Skyrim.esm before final commit — if it differs from
-  `(Form akItem, int aiCount)`, adjust the call. The CK Wiki's courier
-  tutorial documents the supported invocations.
+  Verify the actual `WICourierScript.AddItemToContainer` signature
+  exposed by Skyrim.esm before stage 10's fragment is final — if it
+  differs from `(Form akItem, int aiCount)`, adjust the call. The
+  CK Wiki's courier tutorial documents the supported invocations.
+
+**The quest's stage map (the lifecycle):**
+
+The whole letter lifecycle lives in stage numbers. C++ either advances
+the stage directly (`TESQuest::SetCurrentStageID` from CommonLibSSE-NG,
+or a `Quest.SetStage` VM dispatch if a native isn't exposed) or relies
+on a fragment to advance itself. Each stage's fragment is small —
+mostly markers and `SetStage` routers; any **real** Papyrus logic
+(the courier-dispatch + None-guard, the `Stop` + `Reset` teardown)
+lives in `_ne_PooledLetterQuest.psc` as a named function that the
+fragment calls into.
+
+**Why the split:** Stage fragments are stored on each quest's
+auto-generated `QF_<EditorID>_<FormID>.psc` script, which is unique
+per quest. Logic placed in a fragment gets duplicated across all 20
+delivery quests when we duplicate `_ne_PooledLetterQuest01` in
+Step 16 — twenty copies of the same `if letterObjRef == None …` block
+that all have to be re-edited together if the logic ever changes.
+`_ne_PooledLetterQuest.psc`, by contrast, is the **single attached
+script** referenced by all 20 quests; one edit there changes the
+behavior for every slot in the pool. The fragment side stays the
+thinnest possible glue (a `SetStage` call or a one-line
+`kmyQuest.Foo()` call) so that the duplicate step is mechanical and
+copies essentially no logic.
+
+| Stage | Semantic                                    | Set by                                             | Fragment does                                                                                          |
+| ----: | ------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+|     0 | Startup; force-filled Sender, alias-spawned LetterRef | Engine (Startup Stage flag) on `Self.Start()`     | `SetStage(10)` (auto-advance)                                                                          |
+|    10 | Queue letter for courier                    | Stage 0 fragment                                   | Calls `kmyQuest.DispatchLetterToCourier()` on the attached script. The function reads `LetterRef.GetReference()`; on non-None it dispatches to vanilla WICourier; on None it logs and self-routes via `SetStage(60)`. |
+|    20 | In courier container (verified)             | C++ `DetectCompletion` poll once the pool book is found in `WICourierContainerRef` | Empty marker. (Director-side action completion happens C++-side at this same point.)                   |
+|    30 | Delivered to player inventory               | C++ `TESContainerChangedEvent` sink (`newContainer == player`) | Empty marker. (Sender-side SkyrimNet memory write fires C++-side at this same point — Step 17.)        |
+|    40 | Read by player                              | C++ `MenuOpenCloseEvent` sink (BookMenu close)     | Empty marker. (Player-side SkyrimNet memory write fires C++-side at this same point — Step 17.)        |
+|    50 | Disposed by player (sold / dropped / given) | C++ `TESContainerChangedEvent` sink (`oldContainer == player`, `newContainer != player`) | `SetStage(200)` — routes to the terminal shutdown stage. No defensive scan needed (player already moved the letter). |
+|    60 | Recycled by C++ allocator (eviction or failed dispatch) | C++ allocator on eviction; Stage 10's `DispatchLetterToCourier` self-sets it on a None `LetterRef`. The C++-side defensive scan runs *before* C++ sets this stage. | `SetStage(200)` — routes to the terminal shutdown stage. |
+|   200 | Terminal shutdown                            | Stages 50 and 60 fragments                         | Calls `kmyQuest.Shutdown()` on the attached script (`Stop()` + `Reset()` — clears alias fills and stage back to a freshly-authored quest ready for the next allocation). |
+
+Stages 50 and 60 both route through a dedicated terminal Stage 200
+that owns the actual teardown. This is a single point of `Shutdown()`
+invocation, which is cleaner than having both terminal stages call
+`Shutdown()` directly: the teardown path is one place to look at,
+fix, and instrument.
+
+CK-side stage configuration (in the Quest Stages tab):
+
+- **Stage 0** — Flags: **Startup Stage** ON. Log Entry empty. Fragment:
+  ```papyrus
+  ; Quest is starting up
+  SetStage(10)
+  ```
+- **Stage 10** — Flags: none. Fragment:
+  ```papyrus
+  ; Queue letter for courier
+  kmyQuest.DispatchLetterToCourier()
+  ```
+  (`kmyQuest` is CK's autocast variable for the attached
+  `_ne_PooledLetterQuest` script; CK generates the autocast preamble
+  automatically when a fragment references the typed script.)
+- **Stages 20, 30, 40** — Flags: none. Fragments: empty. CK still
+  emits a `Fragment_<N>()` shell for each, but its body is left blank
+  — the stages exist purely as markers driven by C++.
+- **Stage 50** — Flags: none. Fragment:
+  ```papyrus
+  ; Letter disposed by player
+  SetStage(200)
+  ```
+- **Stage 60** — Flags: none. Fragment:
+  ```papyrus
+  ; Letter recycled by allocator
+  SetStage(200)
+  ```
+- **Stage 200** — Flags: **Complete Quest** ON (this is the only stage
+  that "completes" the quest, for telemetry legibility in console /
+  xEdit). Fragment:
+  ```papyrus
+  ; Quest shutdown
+  kmyQuest.Shutdown()
+  ```
 
 **Sub-tasks:**
 
@@ -1878,15 +2005,20 @@ is not.
    the `_ne_PooledLetterQuest` script via CK's script editor. Resolve
    any compile errors against the actual `WICourierScript` signature
    before moving on.
-3. Create the delivery quest:
+3. Open the existing `_ne_PooledLetterQuest01` quest (Stages 0 and 10
+   already set up). Add stages 20, 30, 40, 50, 60, and the terminal
+   200 per the stage map above. The Stage 10 fragment calls
+   `kmyQuest.DispatchLetterToCourier()`; the None-guard +
+   `SetStage(60)` fall-through lives inside that script function,
+   not in the fragment.
+4. Confirm the quest header settings:
    - EditorID: `_ne_PooledLetterQuest01`.
    - Quest Data: **Start Game Enabled** OFF, **Run Once** OFF,
-     **Allow Repeated Stages** off. Priority is irrelevant for our use
-     (we never run stages). Event = `None`.
-   - **Scripts tab**: attach the compiled `_ne_PooledLetterQuest`
-     script. Set the `WICourier` property to vanilla `WICourier`
-     (FormID `0x00039F82`).
-   - **Aliases tab**: create two reference aliases.
+     **Allow Repeated Stages** off. Priority is irrelevant. Event =
+     `None`.
+   - **Scripts tab**: `_ne_PooledLetterQuest` attached; `WICourier`
+     property set to vanilla `WICourier` (FormID `0x00039F82`).
+   - **Aliases tab**: two reference aliases.
      - Alias name: `Sender`.
        - Fill Type: leave the rule empty (no Specific Reference, no
          Find Matching, no Create, no Unique Actor).
@@ -1899,50 +2031,84 @@ is not.
          Sender alias index).
        - Level: `None`.
        - Flags: `Optional` ON. All others OFF.
-4. Save the ESP.
+5. Save the ESP.
 
 **Specifics:**
 
-- The script is deliberately stateless — no stages, no event handlers,
-  no `OnInit`. Every meaningful operation is one of the two functions,
-  both driven by C++.
+- **The quest is deliberately stateful for lifecycle only.** Stages
+  encode the lifecycle position; content (body / label / topic / mood /
+  sender FormID) stays in the C++ LetterPool slot fields and the
+  existing cosave layout. Step 15+ simplifies C++ accordingly by
+  dropping the per-slot `State` enum in favor of `Quest.GetStage()`,
+  but the cosave's content fields stay as-is — they're the C++ side's
+  natural storage for data that was authored in C++ and consumed in
+  C++.
 - `Sender` and `LetterRef` are wired by alias *name*, not by index.
-  Every per-slot quest (this one, and the 19 in Step 16) must use those
-  exact alias names so the script binds correctly on each attachment.
+  Every per-slot quest (this one, and the 19 in Step 16) must use
+  those exact alias names so the script binds correctly on each
+  attachment.
 - `Debug.Trace` calls are temporary diagnostics for early bring-up;
   once the integration is stable they can be deleted or downgraded.
-- The `Sender` alias's empty fill rule + `Optional` flag is what lets
-  us start the quest from C++ even when nothing has filled `Sender`
-  yet (although in practice we always force-fill before `Start`, the
-  `Optional` flag is the safety net that prevents quest-start failures
-  during early bring-up).
+- The `Sender` alias's empty fill rule + `Optional` flag is what
+  lets us start the quest from C++ even when nothing has filled
+  `Sender` yet (although in practice we always force-fill before
+  `Start`, the `Optional` flag is the safety net that prevents
+  quest-start failures during early bring-up).
 - `Allow Reserved` on `Sender` is defensive against other quests
   holding reservations on the chosen NPC — letters should fire even
   when the sender NPC is mid-vanilla-quest. The forced fill bypasses
   reservation contention.
 - The `LetterRef` alias's `Optional` flag is defensive against the
-  `Create Reference` step failing (sender in an unloaded cell at quest
-  start, etc.); without `Optional` a failed create would block quest
-  start. With `Optional`, the quest starts anyway, `LetterRef` resolves
-  to `None`, and the Step 15 verification poll catches the no-op
-  cleanly.
+  `Create Reference` step failing (sender in an unloaded cell at
+  quest start, etc.); without `Optional` a failed create would
+  block quest start. With `Optional`, the quest starts anyway,
+  `LetterRef` resolves to `None`, and Stage 10's None-guard
+  immediately self-recycles via `SetStage(60)` — no waiting for
+  the C++ verification window.
+- The SkyrimNet memory writes (Step 17) deliberately fire C++-side
+  from the same event sinks that set stages 30 / 40, **not** from
+  the stage fragments. Reason: `PublicAddMemory` is a C++ API; a
+  Papyrus → C++ call requires a ModEvent round-trip and gains
+  nothing over the C++ sink doing the write directly inline.
+- The defensive scan-and-cleanup for stage 60 (eviction) runs
+  **before** C++ sets the stage, not inside the Papyrus fragment.
+  Reason: the scan is C++-only (walks SKSE process lists +
+  `Cell::ForEachReference`); doing it in Papyrus would require
+  another VM bridge and lose the synchronous "scan completes
+  before stage advances" ordering.
 - Because only slot 0's quest exists in this step, Step 15's C++
   resolver will report 19 unresolved quests and disable slots 1–19
   from the allocator. That's expected for bring-up; every test
-  dispatch in Step 15 will route through slot 0. Step 16 fills in the
-  rest once the pipeline is proven.
+  dispatch in Step 15 will route through slot 0. Step 16 fills in
+  the rest once the pipeline is proven.
 
-**Verify:** Open xEdit on `NarrativeEngine.esp`. Confirm one QUST record
-named `_ne_PooledLetterQuest01` exists with two reference aliases
-(`Sender` and `LetterRef`), the `_ne_PooledLetterQuest` script attached,
-the `WICourier` property set to `0x00039F82`, and `LetterRef.ALCO`
-pointing at `_ne_PooledLetter01`. Confirm the CK script editor compiled
-`_ne_PooledLetterQuest.psc` without errors and the CK property panel for
-the quest shows all three script properties bound (`Sender`,
-`LetterRef`, `WICourier`). Run `pwsh -File build.ps1 build`; boot
-Skyrim; SKSE log shows no ESP-load errors and no Papyrus-side
-script-binding warnings on `_ne_PooledLetterQuest01`. No runtime test
-yet — nothing dispatches a letter until Step 15.
+**Verify:** Open xEdit on `NarrativeEngine.esp`. Confirm one QUST
+record named `_ne_PooledLetterQuest01` exists with:
+
+- two reference aliases (`Sender` and `LetterRef`), each configured
+  per the sub-tasks above,
+- the `_ne_PooledLetterQuest` script attached with all three
+  properties bound (`Sender`, `LetterRef`, `WICourier`),
+- `LetterRef.ALCO` pointing at `_ne_PooledLetter01`,
+- stages 0, 10, 20, 30, 40, 50, 60, 200 present, with Stage 0
+  marked **Startup Stage**, Stage 200 marked **Complete Quest**,
+  and the fragments as specified.
+
+Confirm the CK script editor compiled `_ne_PooledLetterQuest.psc`
+without errors and the CK property panel for the quest shows all
+three script properties bound. Run `pwsh -File build.ps1 build`;
+boot Skyrim; SKSE log shows no ESP-load errors and no Papyrus-side
+script-binding warnings on `_ne_PooledLetterQuest01`.
+
+No end-to-end runtime test yet — nothing dispatches a letter until
+Step 15. However, a minimal smoke test is possible right now by
+console-starting the quest after manually filling Sender via
+`<refID>.ForceRefTo` against the alias: confirm the quest auto-
+advances 0 → 10, dispatches a letter REFR into `WICourierContainerRef`
+(visible via console `GetContainerRefID 39FB9` then opening that
+container), and stalls at stage 10 (because nothing is setting
+stage 20 yet). That validates stages 0 and 10 in isolation before
+Step 15 wires the rest.
 
 ---
 
