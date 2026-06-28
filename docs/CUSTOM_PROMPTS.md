@@ -54,6 +54,58 @@ Why this matters:
 The user section should be **≤5 rendered lines** in almost every case. If it's growing, the content probably
 belongs in `[ system ]`.
 
+## Referring to the player character
+
+**Never call the player "the Dragonborn" or any other lore-anchored
+title in a prompt.** Mods can replace the main quest, skip Helgen, or
+otherwise produce a save where the player character isn't on the
+Dragonborn path at all — for those saves, "Dragonborn" is a false
+identity that pollutes every letter, memory write, dialogue line, and
+piece of in-fiction content with a fact the world doesn't actually
+support.
+
+Use the SkyrimNet decorator `{{ player.name }}` instead. SkyrimNet
+resolves it at render time to the live player character's actual
+display name, whatever the player set during character creation:
+
+- ✗ "...will have a courier deliver to the Dragonborn."
+- ✗ "Pick an NPC who knows the Dragonborn and..."
+- ✓ "...will have a courier deliver to {{ player.name }}."
+- ✓ "Pick an NPC who knows {{ player.name }} and..."
+
+`{{ player.name }}` renders to a proper noun (`Bob Dole`, `Lydia`,
+whatever the player typed at character creation), so do NOT precede it
+with an article or demonstrative. The patterns that worked with the
+old "Dragonborn" title don't survive the substitution:
+
+- ✗ "deliver to the {{ player.name }}" → "deliver to the Bob Dole"
+- ✗ "warning the {{ player.name }} about" → "warning the Bob Dole about"
+- ✓ "deliver to {{ player.name }}" → "deliver to Bob Dole"
+- ✓ "warning {{ player.name }} about" → "warning Bob Dole about"
+
+Watch for the article hiding on the previous line when the source
+sentence wraps — the substitution leaves "the\n{{ player.name }}"
+together and the rendered output reads the same way.
+
+The same rule applies in any other context that might leak into LLM
+output — semantic search queries, memory text we write via
+`PublicAddMemory`, knowledge entries, decorator return values. If a
+string is going to end up in front of either an LLM or the player, the
+player's actual name belongs there, not a generic title.
+
+The one place this rule doesn't apply is action / module descriptions
+written as C++ string constants (e.g. `IAction::Description`) that get
+embedded into a prompt as a raw JSON value. Inja doesn't re-render
+nested template syntax inside string values by default, so
+`{{ player.name }}` written inside a C++ literal would print
+literally as those characters. In those cases, use neutral phrasing
+("the player", "the player character") and let SkyrimNet-rendered
+context elsewhere in the prompt carry the actual name.
+
+Where to source the name from C++ when you need it in a search query
+or memory write: `RE::PlayerCharacter::GetSingleton()->GetDisplayFullName()`,
+called on the main thread.
+
 ## What NOT to tell the LLM
 
 **Do not describe what triggered this call.** The prompt should describe the *current state* and the *task*,

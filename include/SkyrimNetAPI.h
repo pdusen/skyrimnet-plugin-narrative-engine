@@ -71,4 +71,46 @@ namespace NarrativeEngine::SkyrimNetAPI
     // from another plugin). Use before RegisterDecorator if you want to log
     // collisions.
     bool HasDecorator(const std::string& name);
+
+    // True iff SkyrimNet's memory database is loaded and ready. Memory
+    // calls before this returns true crash inside SkyrimNet (per the
+    // PublicAPI.h header doc). Returns false if SkyrimNet is
+    // unavailable.
+    bool IsMemorySystemReady();
+
+    // Returns per-actor engagement statistics as a JSON array, ranked
+    // by SkyrimNet's internal scoring. Used by NPCLetterAction to pick
+    // a sender pool. Empty array if SkyrimNet or its memory system
+    // isn't ready.
+    //
+    // maxCount=0 returns every actor with any activity.
+    // shortWindow / mediumWindow are in *game* seconds (86400=1 day,
+    // 604800=7 days are sensible defaults).
+    std::string GetActorEngagement(int    maxCount,
+                                   bool   excludePlayer,
+                                   bool   playerEventsOnly,
+                                   double shortWindowSeconds,
+                                   double mediumWindowSeconds);
+
+    // Returns a JSON array of memory entries for the given actor,
+    // optionally biased toward entries matching the contextQuery via
+    // SkyrimNet's vector search. Empty contextQuery falls back to
+    // recency. Returns "[]" if SkyrimNet or its memory system isn't
+    // ready.
+    std::string GetMemoriesForActor(std::uint32_t      formId,
+                                    int                maxCount,
+                                    const std::string& contextQuery);
+
+    // Write a memory to SkyrimNet's per-actor store. Returns the
+    // memory's id on success, -1 if SkyrimNet / memory system are
+    // unavailable. importance is 0.0..1.0; memoryType is one of
+    // SkyrimNet's enums ("EXPERIENCE", "OBSERVATION", ...); emotion is
+    // a free-form short tag; location is a player-visible cell / loc
+    // name (empty for "unknown").
+    int AddMemory(std::uint32_t      formId,
+                  const std::string& contentText,
+                  float              importance,
+                  const std::string& memoryType,
+                  const std::string& emotion,
+                  const std::string& location);
 }

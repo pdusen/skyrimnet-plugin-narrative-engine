@@ -8,6 +8,8 @@
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
 #include <Decorators.h>
+#include <LetterPool.h>
+#include <NPCLetterAction.h>
 #include <PhaseTracker.h>
 #include <PrismaUI.h>
 #include <Settings.h>
@@ -54,10 +56,28 @@ namespace NarrativeEngine
                     // ModEvent sink. Order matters: AsyncDispatch must be
                     // up because the sink marshals through it.
                     ActionDispatcher::Initialize();
-                    // Register the one shipped action. The dispatcher must
-                    // be live first so its completion sink is in place
-                    // before the action can fire.
+                    // Register shipped actions. The dispatcher must be
+                    // live first so its completion sink is in place
+                    // before any action can fire.
                     ActionRegistry::Register(std::make_unique<AmbushAction>());
+                    ActionRegistry::Register(std::make_unique<NPCLetterAction>());
+                    // Resolve the 20 _ne_PooledLetterNN EditorIDs to Book
+                    // FormIDs. Must run AFTER kDataLoaded fires the rest
+                    // of the registry chain because TESForm lookups by
+                    // EditorID rely on powerofthree's Tweaks (or similar)
+                    // having populated the lookup table by now.
+                    LetterPool::Initialize();
+                    // Install the MinHook detours that route engine
+                    // book-body reads through the pool's content cache.
+                    LetterPool::InstallHooks();
+                    // Register the MenuOpenCloseEvent sink so the pool
+                    // can detect when a letter the player opened gets
+                    // closed (the "read" lifecycle edge).
+                    LetterPool::RegisterMenuEventSink();
+                    // TESContainerChangedEvent sink drives MarkDelivered
+                    // (courier → player) and the discard / drop recycle
+                    // paths.
+                    LetterPool::RegisterContainerEventSink();
                     break;
                 case SKSE::MessagingInterface::kNewGame:
                     logger::info("OnMessage: kNewGame");
@@ -99,6 +119,7 @@ namespace NarrativeEngine
             CombatEventLog::OnSave(intfc);
             ActionDispatcher::OnSave(intfc);
             AmbushAction_Persistence::OnSave(intfc);
+            LetterPool::OnSave(intfc);
             // Future subsystems append their OnSave calls here.
         }
 
@@ -129,6 +150,9 @@ namespace NarrativeEngine
                     case AmbushAction_Persistence::kRecordTypeId:
                         AmbushAction_Persistence::OnLoad(intfc, version, length);
                         break;
+                    case LetterPool::kRecordTypeId:
+                        LetterPool::OnLoad(intfc, version, length);
+                        break;
                     default:
                         // Unknown record — likely from a newer build or a
                         // removed subsystem. GetNextRecordInfo's next call
@@ -149,6 +173,7 @@ namespace NarrativeEngine
             CombatEventLog::OnRevert();
             ActionDispatcher::OnRevert();
             AmbushAction_Persistence::OnRevert();
+            LetterPool::OnRevert();
             // Future subsystems append their OnRevert calls here.
         }
     }

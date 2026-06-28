@@ -105,42 +105,12 @@ namespace NarrativeEngine::ActionDispatcher
             return false;
         }
 
-        // Completion handler — runs on the main thread after the ModEvent
-        // sink marshals to us.
-        void HandleCompletionOnMain(std::string actionName)
-        {
-            const double now = NowUnixSeconds();
-
-            {
-                std::scoped_lock lock(g_mutex);
-                if (g_actionInFlight.empty()) {
-                    logger::warn(
-                        "ActionDispatcher: received _ne_ActionCompleted (action='{}') but no action is in flight; ignoring",
-                        actionName);
-                    return;
-                }
-                if (g_actionInFlight != actionName) {
-                    logger::warn(
-                        "ActionDispatcher: received _ne_ActionCompleted (action='{}') but in-flight action is '{}'; ignoring",
-                        actionName, g_actionInFlight);
-                    return;
-                }
-                logger::info("ActionDispatcher: action '{}' completed (started={:.1f}, duration={:.1f}s)",
-                             g_actionInFlight, g_actionStartedAt, now - g_actionStartedAt);
-                g_recentlyFired.push_back({g_actionInFlight, now});
-                TrimRecentlyFiredLocked(now);
-                g_actionInFlight.clear();
-                g_actionStartedAt       = 0.0;
-                g_lastActionCompletedAt = now;
-            }
-
-            // Push a fresh dashboard state so any in-flight indicator clears.
-            DashboardUIManager::PushFullState();
-        }
-
         // -----------------------------------------------------------------
         // ModEvent sink
         // -----------------------------------------------------------------
+        //
+        // CompleteAction (public, defined below) owns the shared body;
+        // this sink just unwraps the BSFixedString and marshals.
 
         struct CompletionSink : public RE::BSTEventSink<SKSE::ModCallbackEvent>
         {
@@ -156,7 +126,7 @@ namespace NarrativeEngine::ActionDispatcher
                 std::string actionName{a_event->strArg.c_str()};
                 AsyncDispatch::MarshalToMainThread(
                     [actionName = std::move(actionName)]() mutable {
-                        HandleCompletionOnMain(std::move(actionName));
+                        CompleteAction(actionName);
                     });
                 return RE::BSEventNotifyControl::kContinue;
             }
@@ -205,6 +175,38 @@ namespace NarrativeEngine::ActionDispatcher
         } else {
             logger::error("ActionDispatcher: SKSE::GetModCallbackEventSource() returned null; completion sink NOT registered");
         }
+    }
+
+    void CompleteAction(std::string_view actionName)
+    {
+        const double now = NowUnixSeconds();
+
+        {
+            std::scoped_lock lock(g_mutex);
+            if (g_actionInFlight.empty()) {
+                logger::warn(
+                    "ActionDispatcher::CompleteAction: action='{}' but no action is in flight; ignoring",
+                    actionName);
+                return;
+            }
+            if (g_actionInFlight != actionName) {
+                logger::warn(
+                    "ActionDispatcher::CompleteAction: action='{}' but in-flight action is '{}'; ignoring",
+                    actionName, g_actionInFlight);
+                return;
+            }
+            logger::info(
+                "ActionDispatcher: action '{}' completed (started={:.1f}, duration={:.1f}s)",
+                g_actionInFlight, g_actionStartedAt, now - g_actionStartedAt);
+            g_recentlyFired.push_back({g_actionInFlight, now});
+            TrimRecentlyFiredLocked(now);
+            g_actionInFlight.clear();
+            g_actionStartedAt       = 0.0;
+            g_lastActionCompletedAt = now;
+        }
+
+        // Push a fresh dashboard state so any in-flight indicator clears.
+        DashboardUIManager::PushFullState();
     }
 
     namespace

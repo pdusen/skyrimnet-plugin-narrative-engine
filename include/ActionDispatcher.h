@@ -7,6 +7,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace SKSE
 {
@@ -93,6 +94,19 @@ namespace NarrativeEngine::ActionDispatcher
         double      startedAt = 0.0;
     };
     std::optional<InFlightInfo> GetInFlightInfo();
+
+    // Public C++ entry point for marking an action as completed —
+    // does the same work as the _ne_ActionCompleted ModEvent sink
+    // (push to recently-fired ring, clear in-flight, stamp
+    // lastActionCompletedAt, push a fresh dashboard state). Use this
+    // for actions whose completion is best signaled from C++ rather
+    // than via a Papyrus round trip (e.g. NPCLetterAction's LLM-
+    // failure branch, which we'd otherwise have to bounce through
+    // Papyrus just to land on the same handler).
+    //
+    // Main-thread only. Safe to call when the named action is the
+    // current in-flight; logs a warning and no-ops if not.
+    void CompleteAction(std::string_view actionName);
 
     // Co-save serialization callbacks. OnLoad receives the per-record
     // version and length advanced past the header by the central OnLoad

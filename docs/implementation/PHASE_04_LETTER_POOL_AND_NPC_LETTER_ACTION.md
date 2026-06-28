@@ -1219,7 +1219,7 @@ ESP.
 
 ### Step 4 — LetterPool C++ scaffold
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1261,7 +1261,7 @@ nothing exercises `Allocate` until Step 13.
 
 ### Step 5 — Co-save persistence for LetterPool
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1297,7 +1297,7 @@ and every slot in `Free` state. Reload; SKSE log shows
 
 ### Step 6 — Install MinHook detours against the pool
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1342,7 +1342,7 @@ the hooks are installed but every call falls through.
 
 ### Step 7 — MenuOpenCloseEvent sink for read detection
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1384,7 +1384,7 @@ Step 13) and reading it should fire `LetterPool: slot N marked Read`.
 
 ### Step 8 — TESContainerChangedEvent sink for location tracking
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1440,7 +1440,7 @@ detected (action=<deliver/discard/drop>)` makes manual console testing possible
 
 ### Step 9 — Eviction logic in `Allocate`
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1477,7 +1477,7 @@ will be Free → Free no-ops, but the code paths get exercised).
 
 ### Step 10 — Letter-compose prompt and content-LLM call wiring
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1564,7 +1564,7 @@ hook before merging.
 
 ### Step 11 — NPCLetterAction skeleton and registration
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1608,7 +1608,7 @@ check should show the action declining with the `IsDangerous` reason.
 
 ### Step 12 — Dispatcher C++-side completion API + ActionContext propagation
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1637,7 +1637,7 @@ prep.)
 
 ### Step 13 — NPCLetterAction: `Start` + dispatch verification (`DetectAndRollbackFailedStart` + `DetectCompletion`)
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
