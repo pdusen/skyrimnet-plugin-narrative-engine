@@ -210,7 +210,10 @@ namespace NarrativeEngine::ActionDispatcher
     {
         // ---------- ActionContext rebuild on main thread ----------
 
-        ActionContext BuildActionContextFromSnapshot(const Snapshot& snapshot)
+        ActionContext BuildActionContextFromSnapshot(
+            const Snapshot&              snapshot,
+            PhaseTracker::Direction      desiredDirection = PhaseTracker::Direction::Raise,
+            int                          tensionDelta     = 0)
         {
             ActionContext ctx;
             ctx.player = RE::PlayerCharacter::GetSingleton();
@@ -223,6 +226,8 @@ namespace NarrativeEngine::ActionDispatcher
             if (auto* ui = RE::UI::GetSingleton()) {
                 ctx.playerInDialogue = ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME);
             }
+            ctx.desiredDirection = desiredDirection;
+            ctx.tensionDelta     = tensionDelta;
             return ctx;
         }
 
@@ -393,6 +398,8 @@ namespace NarrativeEngine::ActionDispatcher
                                      std::string                   chosenAction,
                                      nlohmann::json                parameters,
                                      std::string                   narrativeNote,
+                                     PhaseTracker::Direction       direction,
+                                     int                           tensionDelta,
                                      FinalizedCallback             onFinalized)
         {
             // Validate name is in the candidate set.
@@ -422,8 +429,12 @@ namespace NarrativeEngine::ActionDispatcher
 
             // Rebuild ActionContext on the main thread (snapshot data may
             // be slightly stale; the live player / UI state is what Start
-            // needs to act on).
-            const ActionContext ctx = BuildActionContextFromSnapshot(snapshot);
+            // needs to act on). Direction and tensionDelta were captured
+            // before the LLM round trip — they don't change as a function
+            // of the LLM response, and Either-polarity actions consume
+            // them inside Start.
+            const ActionContext ctx =
+                BuildActionContextFromSnapshot(snapshot, direction, tensionDelta);
 
             // Re-check global preconditions: the LLM round trip may have
             // taken seconds, during which the player could have entered
@@ -546,11 +557,18 @@ namespace NarrativeEngine::ActionDispatcher
             return;
         }
 
+        // Compute direction + tension delta now so they can flow into the
+        // ActionContext (consumed by Either-polarity actions like
+        // NPCLetterAction) AND into the action-select prompt.
+        const auto direction = PhaseTracker::OutgoingDirection(*currentPhaseOpt);
+        const int  tensionDelta = ComputeTensionDelta(*currentPhaseOpt, rec.tensionScore);
+
         // Gate 5: global action preconditions (player not in combat /
         // dialogue / scripted scene / DND cell). Checked before candidate
         // filtering so we don't pay the per-action IsAvailable cost — and
         // more importantly, before the LLM round trip below.
-        const ActionContext ctx = BuildActionContextFromSnapshot(snapshot);
+        const ActionContext ctx =
+            BuildActionContextFromSnapshot(snapshot, direction, tensionDelta);
         if (const char* blockedBy = CheckGlobalActionPreconditions(ctx)) {
             if (debug) {
                 logger::debug("ActionDispatcher: gate global_preconditions blocked: {}", blockedBy);
@@ -560,7 +578,6 @@ namespace NarrativeEngine::ActionDispatcher
         }
 
         // Gate 6: at least one candidate must survive IsAvailable + recency.
-        const auto direction = PhaseTracker::OutgoingDirection(*currentPhaseOpt);
         const ActionPolarity desired =
             (direction == PhaseTracker::Direction::Raise)
                 ? ActionPolarity::Raise
@@ -588,7 +605,6 @@ namespace NarrativeEngine::ActionDispatcher
 
         // All gates passed — fire the action-select LLM call.
         const char* dirName = (direction == PhaseTracker::Direction::Raise) ? "raise" : "lower";
-        const int   tensionDelta = ComputeTensionDelta(*currentPhaseOpt, rec.tensionScore);
         logger::info(
             "ActionDispatcher: firing action-select (direction={}, tension_delta={}, candidates={}, dwell={:.1f}/{}s)",
             dirName, tensionDelta, candidates.size(), snapshot.timeInPhaseSeconds, ideal);
@@ -620,7 +636,9 @@ namespace NarrativeEngine::ActionDispatcher
             [snapshot       = std::move(snapshot),
              rec            = std::move(rec),
              candidateNames = std::move(candidateNames),
-             onFinalized    = std::move(onFinalized)]
+             onFinalized    = std::move(onFinalized),
+             direction,
+             tensionDelta]
             (std::string response, bool success) mutable
             {
                 if (!success) {
@@ -685,11 +703,14 @@ namespace NarrativeEngine::ActionDispatcher
                      chosenAction   = std::move(chosenAction),
                      parameters     = std::move(parameters),
                      narrativeNote  = std::move(narrativeNote),
+                     direction,
+                     tensionDelta,
                      onFinalized    = std::move(onFinalized)]() mutable {
                         FinalizeWithLLMResponse(
                             std::move(snapshot), std::move(rec),
                             std::move(candidateNames), std::move(chosenAction),
                             std::move(parameters), std::move(narrativeNote),
+                            direction, tensionDelta,
                             std::move(onFinalized));
                     });
             });

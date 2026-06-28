@@ -1061,7 +1061,7 @@ self-contained verification.
 
 ### Step 1 — Remove the throwaway smoke test
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1096,7 +1096,7 @@ deletions).
 
 ### Step 2 — Settings expansion and ActionContext extension
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 

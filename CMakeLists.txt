@@ -44,8 +44,9 @@ find_package(nlohmann_json CONFIG REQUIRED)
 # Setup your SKSE plugin as an SKSE plugin!
 find_package(CommonLibSSE CONFIG REQUIRED)
 # MinHook — battle-tested function-entry detour library. Used by the
-# LetterSmokeTest GetDescription hook; we'd otherwise have to hand-roll
-# prologue disassembly + trampoline construction.
+# LetterPool hooks (TESDescription::GetDescription, BookMenu::OpenBookMenu);
+# we'd otherwise have to hand-roll prologue disassembly + trampoline
+# construction.
 find_package(minhook CONFIG REQUIRED)
 # simpleini ships as a header-only library — no CMake config, just an include path.
 find_path(SIMPLEINI_INCLUDE_DIRS "SimpleIni.h" REQUIRED)

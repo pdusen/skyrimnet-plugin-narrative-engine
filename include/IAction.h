@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <string>
 
+#include <PhaseTracker.h>
+
 #include <nlohmann/json_fwd.hpp>
 
 namespace RE { class Actor; }
@@ -35,6 +37,14 @@ namespace NarrativeEngine
         bool        playerInInterior = false;
         std::string locationName;   // current Location's display name, may be empty
         std::string cellName;       // current Cell's display name, may be empty
+
+        // Which way the Director wants tension to move on this tick. Actions
+        // whose Polarity is Either (e.g. NPCLetterAction) consume this to
+        // shape their behavior; actions with a fixed polarity (Ambush =
+        // Raise) ignore it. The dispatcher populates both fields from the
+        // same values it already computed for the action-select prompt.
+        PhaseTracker::Direction desiredDirection = PhaseTracker::Direction::Raise;
+        int                     tensionDelta     = 0;
     };
 
     struct StartResult

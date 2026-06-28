@@ -62,6 +62,12 @@ namespace NarrativeEngine::Settings
         int actionRepetitionWindowSeconds    = 300;  // window during which the same action name is excluded from picks
         int actionStaleLockTimeoutSeconds    = 900;  // auto-clear an in-flight action that never sends completion
 
+        // NPCLetterAction precondition: minimum number of recently-engaged
+        // NPCs SkyrimNet must report before the action becomes available.
+        // Below this, the letter would either fail or fall back to a
+        // generated persona; we'd rather skip the action than ship that.
+        int letterMinSenderCandidates        = 3;
+
         // [AlphaCanon]
         // Comma-separated list of cell EditorIDs to treat as do-not-disturb.
         // Empty by default. Whitespace around commas is allowed.
@@ -92,6 +98,18 @@ namespace NarrativeEngine::Settings
         // iActionCooldownSeconds also applies on top of this). 0
         // disables. Persists via the action's own co-save record.
         int ambushPerActionCooldownGameHours = 24;
+
+        // NPCLetterAction / LetterPool content + dispatch knobs. See
+        // PHASE_04_LETTER_POOL_AND_NPC_LETTER_ACTION.md.
+        int letterContentMinWords                = 60;   // lower bound on LLM body length
+        int letterContentMaxWords                = 180;  // upper bound on LLM body length
+        int letterPoolSize                       = 20;   // informational; ESP defines the actual 20 forms
+        int letterDispatchVerifyDelaySeconds     = 5;    // grace window before DetectAndRollbackFailedStart gives up
+        int letterPendingDeliveryTimeoutSeconds  = 600;  // load-time demotion gate for stuck PendingDelivery slots
+
+        // [LetterPool]
+        // 0 = silent, 1 = log evictions, 2 = log every state transition.
+        int letterPoolEvictionLogVerbosity       = 1;
     };
 
     // Read both INIs (plugin then MCM override) and populate the singleton.

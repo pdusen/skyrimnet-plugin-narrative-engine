@@ -81,6 +81,10 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("Director", "iActionStaleLockTimeoutSeconds",
                                  g_config.actionStaleLockTimeoutSeconds));
 
+            g_config.letterMinSenderCandidates = static_cast<int>(
+                ini.GetLongValue("Director", "iLetterMinSenderCandidates",
+                                 g_config.letterMinSenderCandidates));
+
             g_config.doNotDisturbCellEDIDsCSV = ini.GetValue(
                 "AlphaCanon", "sDoNotDisturbCellEDIDsCSV",
                 g_config.doNotDisturbCellEDIDsCSV.c_str());
@@ -118,6 +122,26 @@ namespace NarrativeEngine::Settings
             g_config.ambushPerActionCooldownGameHours = static_cast<int>(
                 ini.GetLongValue("Actions", "iAmbushPerActionCooldownGameHours",
                                  g_config.ambushPerActionCooldownGameHours));
+
+            g_config.letterContentMinWords = static_cast<int>(
+                ini.GetLongValue("Actions", "iLetterContentMinWords",
+                                 g_config.letterContentMinWords));
+            g_config.letterContentMaxWords = static_cast<int>(
+                ini.GetLongValue("Actions", "iLetterContentMaxWords",
+                                 g_config.letterContentMaxWords));
+            g_config.letterPoolSize = static_cast<int>(
+                ini.GetLongValue("Actions", "iLetterPoolSize",
+                                 g_config.letterPoolSize));
+            g_config.letterDispatchVerifyDelaySeconds = static_cast<int>(
+                ini.GetLongValue("Actions", "iLetterDispatchVerifyDelaySeconds",
+                                 g_config.letterDispatchVerifyDelaySeconds));
+            g_config.letterPendingDeliveryTimeoutSeconds = static_cast<int>(
+                ini.GetLongValue("Actions", "iLetterPendingDeliveryTimeoutSeconds",
+                                 g_config.letterPendingDeliveryTimeoutSeconds));
+
+            g_config.letterPoolEvictionLogVerbosity = static_cast<int>(
+                ini.GetLongValue("LetterPool", "iLetterPoolEvictionLogVerbosity",
+                                 g_config.letterPoolEvictionLogVerbosity));
 
             return true;
         }

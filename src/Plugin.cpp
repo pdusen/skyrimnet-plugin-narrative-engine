@@ -8,7 +8,6 @@
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
 #include <Decorators.h>
-#include <LetterSmokeTest.h>
 #include <PhaseTracker.h>
 #include <PrismaUI.h>
 #include <Settings.h>
@@ -59,10 +58,6 @@ namespace NarrativeEngine
                     // be live first so its completion sink is in place
                     // before the action can fire.
                     ActionRegistry::Register(std::make_unique<AmbushAction>());
-                    // Throwaway: verifies dynamic-letter mutation. Delete
-                    // this call (and the LetterSmokeTest module) when the
-                    // smoke test is done.
-                    LetterSmokeTest::Initialize();
                     break;
                 case SKSE::MessagingInterface::kNewGame:
                     logger::info("OnMessage: kNewGame");
@@ -71,7 +66,6 @@ namespace NarrativeEngine
                     ActionDispatcher::OnRevert();
                     PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
                     Tick::Start();
-                    LetterSmokeTest::OnPostLoadGame();
                     break;
                 case SKSE::MessagingInterface::kPreLoadGame:
                     logger::info("OnMessage: kPreLoadGame");
@@ -91,7 +85,6 @@ namespace NarrativeEngine
                     // any actor mid-bleedout at save time.
                     CombatEventLog::OnPostLoadGame();
                     Tick::Start();
-                    LetterSmokeTest::OnPostLoadGame();
                     break;
                 default:
                     break;
