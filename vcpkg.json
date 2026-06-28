@@ -6,6 +6,7 @@
         "commonlibsse-ng-fork",
         "directxtk",
         "simpleini",
-        "nlohmann-json"
+        "nlohmann-json",
+        "minhook"
     ]
 }

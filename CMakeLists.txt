@@ -43,13 +43,17 @@ find_package(directxtk CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 # Setup your SKSE plugin as an SKSE plugin!
 find_package(CommonLibSSE CONFIG REQUIRED)
+# MinHook — battle-tested function-entry detour library. Used by the
+# LetterSmokeTest GetDescription hook; we'd otherwise have to hand-roll
+# prologue disassembly + trampoline construction.
+find_package(minhook CONFIG REQUIRED)
 # simpleini ships as a header-only library — no CMake config, just an include path.
 find_path(SIMPLEINI_INCLUDE_DIRS "SimpleIni.h" REQUIRED)
 add_commonlibsse_plugin(${PROJECT_NAME} SOURCES ${source_files} plugin.cpp)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23) # <--- use C++23 standard
 target_precompile_headers(${PROJECT_NAME} PRIVATE PCH.h) # <--- PCH.h is required!
 target_include_directories(${PROJECT_NAME} PRIVATE include "${SIMPLEINI_INCLUDE_DIRS}")
-target_link_libraries(${PROJECT_NAME} PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(${PROJECT_NAME} PRIVATE nlohmann_json::nlohmann_json minhook::minhook)
 
 # ---------------------------------------------------------------------------
 # SkyrimNet integration
