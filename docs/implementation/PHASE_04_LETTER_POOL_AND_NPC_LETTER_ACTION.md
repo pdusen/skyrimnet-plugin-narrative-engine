@@ -67,9 +67,14 @@ memory integration on both sides of the exchange.
     shops) are explicitly fine — the vanilla courier system queues the delivery and
     spawns on the player's next cell-change.
   - On `Start`: allocates a LetterPool slot, runs the content-generation LLM call,
-    populates the slot, **VM-dispatches to vanilla `WICourierScript.AddItemToContainer`**
-    so the existing vanilla courier system delivers the letter. No custom courier quest,
-    no custom AI package, no custom Papyrus.
+    populates the slot, then drives the slot's pre-authored delivery quest:
+    force-fills the chosen sender NPC into the quest's `Sender` reference alias,
+    starts the quest (which spawns a per-dispatch letter REFR in the sender's
+    inventory via a CK "Create Reference to Object" alias), and calls a small
+    `_ne_PooledLetterQuest` Papyrus function that hands that spawned REFR to
+    vanilla `WICourierScript.AddItemToContainer`. The vanilla courier system
+    handles physical delivery from there. No custom courier NPC, no custom AI
+    package.
   - After dispatch, the action's `DetectAndRollbackFailedStart` and `DetectCompletion`
     polls verify the dispatch by checking the vanilla courier's inventory for the
     queued letter. If the letter appears within a short verification window
@@ -90,8 +95,14 @@ memory integration on both sides of the exchange.
     open it; an unread letter leaves no memory.
 - Extension of `ActionContext` to include `DesiredDirection` so actions whose Polarity is
   `Either` know which way the Director wants tension to move.
-- ESP content: 20 letter Book forms. No custom quest, no custom aliases, no custom
-  AI package — the vanilla courier system handles dispatch.
+- ESP content: 20 letter Book forms; 20 thin per-slot delivery quests
+  (`_ne_PooledLetterQuest01..20`), each carrying a forced-fill `Sender`
+  reference alias and a "Create Reference to Object" `LetterRef` alias pinned
+  to the matching pool book and created in `Sender`; and one reusable
+  `_ne_PooledLetterQuest` Papyrus script attached to each delivery quest. No
+  custom courier NPC, no custom AI package — the vanilla courier system still
+  handles physical delivery; the new quests only handle the per-dispatch REFR
+  creation and the handoff into the vanilla courier container.
 - Co-save persistence for LetterPool slot state (body text, sender label, sender FormID,
   timestamps, state, current container handle).
 - Dashboard surface: small "letter pool" panel showing pool occupancy, plus the existing
@@ -167,8 +178,9 @@ namespace NarrativeEngine::LetterPool
 
     // Populate slot content (called after LLM round-trip). Mutates the underlying Book
     // form's FULL field via SetFullName and caches the body in the in-memory map the
-    // hooks read from. Does NOT add to player inventory — that's the vanilla
-    // courier's job once we VM-dispatch to WICourierScript.AddItemToContainer.
+    // hooks read from. Does NOT add to player inventory — that's the per-slot
+    // delivery quest's job (Sender alias force-fill → quest start → Papyrus
+    // DispatchLetterToCourier → WICourierScript.AddItemToContainer).
     void PopulateSlot(std::size_t        slotIndex,
                       std::string         senderLabel,    // title (FULL)
                       std::string         body,           // hook-substituted body
@@ -290,8 +302,11 @@ The Slot struct deliberately does **not** track the letter's current container
 co-save). The container is always derivable from state for the steady-state
 lifecycle:
 
-- `PendingDelivery` → vanilla courier (resolved via cached `WICourier` /
-  `CourierRef` alias).
+- `PendingDelivery` → vanilla `WICourierContainerRef` (resolved at
+  `kDataLoaded` via `WICourier`'s `Container` alias, with a fallback to
+  the `0x00039FB9` ref by FormID). The per-dispatch letter REFR lives
+  inside that container until the vanilla courier picks it up for the
+  handoff event.
 - `InInventory` / `Read` → player (by definition; `MarkDelivered` was triggered
   by `TESContainerChangedEvent` with `newContainer == player`).
 - `Discarded` → transient, cleaned up synchronously inside the event sink
@@ -613,74 +628,133 @@ Each form:
 The 20 forms are mechanically identical — only the EditorID differs. They're a pool of
 interchangeable carriers for content; the differentiation happens at runtime.
 
-### Vanilla courier dispatch via `WICourierScript.AddItemToContainer`
+### Vanilla courier dispatch via per-slot delivery quests
 
 Skyrim's vanilla world-interaction layer already implements the entire courier
-dispatch pipeline: queueing items for delivery, picking spawn locations, walking the
-courier to the player, performing the handoff dialogue, and despawning the courier
-afterward. The relevant Papyrus surface is the `WICourierScript` script attached to
-Bethesda's `WICourier` quest (vanilla form). It exposes `AddItemToContainer(Form
-akItem, int aiCount)` (and related variants) for queuing an item for the next
+dispatch pipeline: queueing items for delivery, picking spawn locations, walking
+the courier to the player, performing the handoff dialogue, and despawning the
+courier afterward. The relevant Papyrus surface is the `WICourierScript` script
+attached to Bethesda's `WICourier` quest (vanilla form). It exposes
+`AddItemToContainer(Form akItem, ...)` for queuing an item for the next
 delivery cycle.
 
-We **do not** author a custom courier quest, courier NPC, AI package, or
-delivery-side Papyrus script. The phase needs **zero** new quest/alias/package CK
-content beyond the 20 pooled Book forms in the previous subsection.
+What does **not** work is the obvious approach of VM-dispatching
+`AddItemToContainer` from C++ with the base book form as the `akItem` argument:
+during Step 13 we exhausted that path. Every variant we tried — passing the
+base Book form, passing a runtime-`PlaceObjectAtMe` REFR, doing an
+`AddObjectToContainer` then walking the inventory for an `ExtraReferenceHandle`,
+capturing the spawn via `TESContainerChangedEvent` — either crashed in the
+engine's inventory-merge path or produced an inventory entry with no
+per-instance REFR to hand off. The CK Wiki's own courier tutorial
+(https://ck.uesp.net/wiki/Using_the_Vanilla_Courier) reveals why: the supported
+path is to spawn the letter via a reference alias configured for
+"Create Reference to Object", with "Create In" pointing at the sender NPC's
+alias, and then pass *the alias-spawned REFR* to `AddItemToContainer`. The
+engine routes the move through the live REFR's own extras and the courier
+quest stages itself off the result.
 
-What we do need is a way to call into the vanilla script from C++. SKSE's
-`BSScript::Internal::VirtualMachine` exposes `DispatchMethodCall` for invoking
-Papyrus member functions on script-attached forms from native code. The pattern:
+Doing that purely from C++ is awkward — there is no clean CommonLibSSE-NG
+wrapper for `ReferenceAlias.ForceRefTo`, and the "Create Reference to Object"
+fill rule is a CK-authored alias property, not a runtime API. The cleanest
+shape is to lift the alias work into CK and the script work into a tiny
+attached Papyrus, and keep C++ as the orchestrator:
 
-```cpp
-auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-auto* policy = vm->GetObjectHandlePolicy();
+- **20 thin delivery quests**, one per pool slot
+  (`_ne_PooledLetterQuest01..20`). Each is identical except for which pool
+  book its `LetterRef` alias creates. `Run Once = false`,
+  `Start Game Enabled = false`. We start them on demand from C++ and stop
+  them after dispatch so they can be reused on the next allocation of that
+  slot.
+- **Each delivery quest carries two reference aliases**:
+  - `Sender` — Fill Type empty; flags `Optional`, `Allow Reserved`. Filled
+    from C++ via VM-dispatched `ReferenceAlias.ForceRefTo(akActor)` before
+    the quest starts.
+  - `LetterRef` — Fill Type `Created` (ALCO points at the slot's matching
+    `_ne_PooledLetterNN` Book form; ALCA points at `Sender` with the
+    `Create In` (kIn) bit set). On quest start the engine spawns a fresh
+    REFR of the pool book inside the `Sender` actor's inventory, and the
+    REFR is reachable via `LetterRef.GetReference()`.
+- **One reusable `_ne_PooledLetterQuest` Papyrus script**, attached to each
+  of the 20 quests. Two functions:
+  - `Function ForceFillSender(Actor akSender)` — wraps
+    `(Self.GetAlias(senderAliasIndex) as ReferenceAlias).ForceRefTo(akSender)`.
+    Available for the C++ side to invoke via VM dispatch on the quest
+    itself, as an alternative to dispatching `ForceRefTo` directly against
+    the alias. Either path works; this one keeps the alias-index lookup on
+    the Papyrus side so C++ doesn't need to hardcode the index.
+  - `Function DispatchLetterToCourier()` — reads
+    `LetterRef.GetReference()` and calls
+    `WICourier.AddItemToContainer(letterRef, 1)` (where `WICourier` is a
+    script-property pointer at the vanilla `WICourierScript`). This is the
+    *one Papyrus statement* that the C++ side fundamentally cannot do
+    cleanly, and the entire reason the per-slot quest exists.
 
-// Resolve the vanilla WICourier quest by FormID (looked up at startup; cached).
-RE::TESQuest* courierQuest = /* vanilla WICourier from Skyrim.esm */;
-auto handle = policy->GetHandleForObject(RE::TESQuest::FORMTYPE, courierQuest);
+The C++ flow per dispatch:
 
-// Build arguments. RE::MakeFunctionArguments handles the Form*+int marshal.
-auto args = RE::MakeFunctionArguments(
-    static_cast<RE::TESForm*>(poolBook),
-    static_cast<std::int32_t>(1));
-
-// Fire-and-forget — we don't need a return value. Empty callback functor.
-RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
-vm->DispatchMethodCall(handle, "WICourierScript"sv,
-                       "AddItemToContainer"sv, args, callback);
+```
+1. Allocate LetterPool slot N. PopulateSlot(...) sets FULL and body cache.
+2. Resolve cached _ne_PooledLetterQuestN pointer.
+3. VM-dispatch _ne_PooledLetterQuest.ForceFillSender(sendingActor) on the
+   quest. (Or, equivalently, VM-dispatch ReferenceAlias.ForceRefTo on the
+   Sender alias resolved through quest->aliases.)
+4. VM-dispatch Quest.Start() on the quest. Engine resolves the LetterRef
+   alias, spawning a per-dispatch REFR of _ne_PooledLetterNN inside the
+   sender's inventory.
+5. VM-dispatch _ne_PooledLetterQuest.DispatchLetterToCourier() on the
+   quest. The Papyrus function reads LetterRef, passes the REFR to
+   WICourierScript.AddItemToContainer.
+6. The dispatcher's verification polls (next subsection) confirm the
+   letter landed in the vanilla courier's container.
+7. On verified completion, VM-dispatch Quest.Stop() so the quest is
+   re-usable on the next allocation of slot N.
 ```
 
-This is the only "obstacle" the user named — the VM dispatch path requires a little
-more boilerplate than a flat C++ call, but it's a known-good SKSE pattern. SkyrimNet
-itself, IntelEngine, and most non-trivial SKSE plugins use it.
+Steps 3–5 each run inside an LLM-callback main-thread continuation; the
+dispatcher is already structured to wait for those without blocking the
+game loop.
 
-The dispatch is **asynchronous from the engine's perspective**: queueing an item
-returns immediately; the courier shows up later when world conditions permit
+This pattern keeps every native CK feature on its native side: alias
+creation, fill-rule resolution, and the `AddItemToContainer` call live in
+CK/Papyrus (where they have first-class engine support), and C++ owns the
+parts it is good at — slot allocation, LLM orchestration, force-fill
+arguments, verification polling, completion bookkeeping. The Papyrus
+script is deliberately tiny (two functions, no state machine, no stages)
+so there is essentially no Papyrus-side logic to debug.
+
+The vanilla courier system itself is **asynchronous from the engine's
+perspective**: queueing an item via `AddItemToContainer` returns
+immediately; the courier shows up later when world conditions permit
 (player out of combat, not in dialogue, in a place a courier can reach).
 
 ### Dispatch verification
 
-A VM dispatch to `AddItemToContainer` is fire-and-forget — there's no return
-value and no synchronous failure signal. The vanilla courier system could be in
-a degraded state (`WICourier` quest stalled, mod conflict, save corruption that
-broke the queue) and our dispatch would silently land nowhere. The same
-verification pattern AmbushAction uses to confirm its quest actually started —
-the `DetectAndRollbackFailedStart` / `DetectCompletion` polls on `IAction` —
-applies here.
+The orchestration sequence (force-fill, start, `DispatchLetterToCourier`) has
+several silent-failure modes: `ForceRefTo` could land on a stale alias, the
+quest could fail to start due to alias-reservation conflicts, the
+`Created`-fill alias could fail to resolve (sender unloaded, mod
+interference), or `WICourierScript.AddItemToContainer` itself could no-op in
+a degraded courier state. None of those surface a synchronous error to the
+C++ side. The same verification pattern AmbushAction uses to confirm its
+quest actually started — the `DetectAndRollbackFailedStart` /
+`DetectCompletion` polls on `IAction` — applies here.
 
 NPCLetterAction implements both:
 
 - **`DetectAndRollbackFailedStart`**: until `secondsSinceStart` reaches
   `iLetterDispatchVerifyDelaySeconds` (default 5s), returns false (too early
-  to give up). After the window, queries the vanilla courier's inventory for
-  the pool book FormID we dispatched. If absent → calls
-  `LetterPool::AbortPending(slotIndex)`, returns true so the dispatcher rolls
-  back its in-flight bookkeeping (no cooldown applied; action can re-fire on
-  the next tick).
-- **`DetectCompletion`**: queries the same courier inventory. If the letter is
-  present → returns true. The dispatcher clears in-flight and starts the
-  global cooldown. Polled every tick; succeeds as soon as the dispatch lands
-  (usually within one or two ticks).
+  to give up). After the window, queries the vanilla courier *container*'s
+  inventory for the slot's pool-book base FormID. If absent → calls
+  `LetterPool::AbortPending(slotIndex)`, VM-dispatches `Quest.Stop()` on the
+  per-slot delivery quest so the slot is reusable, returns true so the
+  dispatcher rolls back its in-flight bookkeeping (no cooldown applied;
+  action can re-fire on the next tick).
+- **`DetectCompletion`**: queries the same container inventory. If the
+  pool book is present → VM-dispatches `Quest.Stop()` on the per-slot
+  delivery quest (the live letter REFR remains in the courier container;
+  stopping the source quest does not delete it) and returns true. The
+  dispatcher clears in-flight and starts the global cooldown. Polled
+  every tick; succeeds as soon as the dispatch lands (usually within one
+  or two ticks).
 
 The two polls check the same condition with inverted semantics: presence =
 completion, sustained-absence-past-window = rollback. The dispatcher invokes
@@ -688,14 +762,18 @@ completion, sustained-absence-past-window = rollback. The dispatcher invokes
 so the ordering is naturally "is this a failed dispatch yet? if not, has it
 landed yet?" — no race between the two.
 
-**Locating the courier's inventory.** Vanilla `WICourier` has a persistent
-`CourierRef` reference alias filled with the actual Courier NPC. The action
-caches a pointer to `WICourier` at `kDataLoaded` (resolved by FormID), and on
-each verification poll resolves the alias's reference and calls `GetItemCount`
-on it. The Courier exists persistently across the game world's lifetime, so
-the reference lookup is reliable as long as `WICourier` itself is in a sane
-state — and if `WICourier` is broken, every letter dispatch will (correctly)
-roll back on the verification step.
+**Locating the courier's container.** Vanilla `WICourier` has a `Container`
+reference alias pinned to `WICourierContainerRef` (FormID `0x00039FB9`),
+itself backed by the `WICourierContainer` (FormID `0x00039FB8`) container
+form — that container is the actual destination `AddItemToContainer`
+deposits items into. The action resolves it once at `kDataLoaded` (preferred
+path: walk `WICourier->aliases` for the alias named `"Container"` and cache
+its filled reference; fallback path: cache `WICourierContainerRef` directly
+by FormID) and calls `GetItemCount(poolBook)` on it for each verification
+poll. The container is persistent across the game world's lifetime, so the
+lookup is reliable as long as `WICourier` itself is in a sane state — and
+if `WICourier` is broken, every letter dispatch will (correctly) roll back
+on the verification step.
 
 ### Director-side completion semantics
 
@@ -799,9 +877,14 @@ using the player's actual SkyrimNet history.
    - On success: call `LetterPool::PopulateSlot(...)` with the parsed response. The slot
      transitions to `PendingDelivery`. The Book form's FULL is now the sender label, and
      the hook's body cache holds the LLM's body.
-   - VM-dispatch to `WICourierScript.AddItemToContainer(poolBook, 1)` per the
-     **Vanilla courier dispatch** section. The vanilla courier system queues the
-     delivery and will resolve it on its own timeline.
+   - Drive the per-slot delivery quest per the **Vanilla courier dispatch via
+     per-slot delivery quests** section: resolve the cached
+     `_ne_PooledLetterQuestN` pointer, VM-dispatch `ForceFillSender(sendingActor)`,
+     VM-dispatch `Quest.Start()`, then VM-dispatch
+     `DispatchLetterToCourier()`. The Papyrus side spawns the per-dispatch
+     letter REFR in the sender's inventory and hands it to
+     `WICourierScript.AddItemToContainer`. The vanilla courier system queues
+     delivery and resolves it on its own timeline.
    - **Do not** call `CompleteAction` here. The action stays in-flight; the
      dispatcher will see completion via `DetectCompletion` once the dispatch is
      verified (or rollback via `DetectAndRollbackFailedStart` if not). See
@@ -1063,9 +1146,25 @@ New prompt:
 New ESP content (authored in CK against `NarrativeEngine.esp`):
 
 - `_ne_PooledLetter01` through `_ne_PooledLetter20` Book records (20 forms).
+- `_ne_PooledLetterQuest01` through `_ne_PooledLetterQuest20` quest records
+  (20 forms), each carrying a `Sender` reference alias (empty fill rule,
+  `Optional`, `Allow Reserved`) and a `LetterRef` reference alias
+  (`Created` fill rule pinned to the matching pool Book, `Create In` =
+  `Sender`).
 
-No new Papyrus, no new quest, no new aliases, no new AI package — the vanilla
-`WICourierScript.AddItemToContainer` handles all delivery logic.
+New Papyrus:
+
+- `esp/Source/Scripts/_ne_PooledLetterQuest.psc` — `extends Quest`. Two
+  functions: `ForceFillSender(Actor akSender)` and
+  `DispatchLetterToCourier()`. One script property: a `Quest` pointer at
+  the vanilla `WICourier` quest, accessed as a `WICourierScript` for the
+  `AddItemToContainer` call. Attached to each of the 20 delivery quests
+  above.
+
+No new AI package, no custom courier NPC — vanilla `WICourier` still
+handles physical delivery; the new quests and script only handle the
+per-dispatch REFR creation and the handoff into the vanilla courier
+container.
 
 No new ModEvent names. Letters complete via a direct C++ call into
 `ActionDispatcher::CompleteAction`; Phase 03's existing `_ne_ActionCompleted`
@@ -1368,8 +1467,8 @@ transition the slot to `Read`. Same pattern the smoke test proved.
 
 - `MarkRead` fires the **player-side** SkyrimNet memory write (the player only
   "knows what was in the letter" once they actually open it). The sender-side
-  memory fires at delivery instead (Step 14). The memory call itself is added
-  in Step 14; for this step, `MarkRead` just sets the slot state, `readAt`
+  memory fires at delivery instead (Step 17). The memory call itself is added
+  in Step 17; for this step, `MarkRead` just sets the slot state, `readAt`
   timestamp, and logs.
 - Stale-event guard same as the smoke test: if the close fires when no slot is in
   state `InInventory` (the player closed BookMenu for a book that wasn't ours), the
@@ -1399,7 +1498,7 @@ Step 13) and reading it should fire `LetterPool: slot N marked Read`.
 - `src/LetterPool.cpp` — implement the three. `MarkDelivered` transitions
   `PendingDelivery → InInventory`, sets `deliveredAt` to the actual delivery
   time, and leaves the **sender-side** SkyrimNet memory write as a stub to be
-  filled in by Step 14. (The player-side memory write does NOT fire here;
+  filled in by Step 17. (The player-side memory write does NOT fire here;
   that lives on `MarkRead`. No container handle is stored on the slot — the
   player's identity is implicit in the `InInventory` state, per the **Slot
   container tracking** subsection in Core concepts.)
@@ -1689,7 +1788,7 @@ which the action does not gate on.
   in-flight, applies cooldown, and the LetterPool slot stays in
   `PendingDelivery` until `TESContainerChangedEvent` fires with the player as
   the receiving container (which transitions it to `InInventory` and triggers
-  the sender-side memory write — see Step 14).
+  the sender-side memory write — see Step 17).
 - **Logging.** Both polls log at debug level on every invocation
   (`LetterAction: verify@<secondsSinceStart>s — courier has N copies`) so the
   verification timeline is visible in the log.
@@ -1715,7 +1814,327 @@ returns to Free and the action is immediately re-selectable.
 
 ---
 
-### Step 14 — SkyrimNet memory writes (sender at delivery, player at read)
+### Step 14 — Author the Papyrus script AND one delivery quest in Creation Kit (bring-up)
+
+- [ ] Complete
+
+**[USER]** (Claude drafts the `.psc`; user authors the quest in CK and
+compiles the script there. Both halves are worked simultaneously because
+they're tightly coupled — the script's properties bind to the quest's
+aliases, and the quest's Scripts tab can't attach the script until it
+compiles, so the user iterates on both at once.)
+
+**Goal:** Stand up the entire CK-side delivery surface for the new
+strategy at minimum scope — the reusable Papyrus script plus one
+delivery quest bound to pool slot 0. The other 19 quests don't get
+duplicated until Step 15's C++ orchestration is end-to-end verified
+against this single quest (see Step 16). Duplicating 20 identical quests
+is cheap; redoing them after we discover the alias setup needs a tweak
+is not.
+
+**Files:**
+
+- `esp/Source/Scripts/_ne_PooledLetterQuest.psc` — new file. Skeleton:
+
+  ```papyrus
+  Scriptname _ne_PooledLetterQuest extends Quest
+
+  ; Wired to the matching CK alias by name. Both aliases must exist on every
+  ; quest this script is attached to.
+  ReferenceAlias Property Sender    Auto
+  ReferenceAlias Property LetterRef Auto
+
+  ; Vanilla WICourier, set via CK property. The script accesses it as
+  ; WICourierScript so the AddItemToContainer call resolves.
+  Quest Property WICourier Auto
+
+  Function ForceFillSender(Actor akSender)
+      if akSender == None
+          Debug.Trace("[_ne_PooledLetterQuest] ForceFillSender: None")
+          return
+      endIf
+      Sender.ForceRefTo(akSender)
+  EndFunction
+
+  Function DispatchLetterToCourier()
+      ObjectReference letterRef = LetterRef.GetReference()
+      if letterRef == None
+          Debug.Trace("[_ne_PooledLetterQuest] LetterRef empty")
+          return
+      endIf
+      (WICourier as WICourierScript).AddItemToContainer(letterRef as Form, 1)
+  EndFunction
+  ```
+
+  Verify against the actual `WICourierScript.AddItemToContainer` signature
+  exposed by Skyrim.esm before final commit — if it differs from
+  `(Form akItem, int aiCount)`, adjust the call. The CK Wiki's courier
+  tutorial documents the supported invocations.
+
+**Sub-tasks:**
+
+1. Add the `.psc` file above to `esp/Source/Scripts/`.
+2. Open Creation Kit through MO2; load `NarrativeEngine.esp`. Compile
+   the `_ne_PooledLetterQuest` script via CK's script editor. Resolve
+   any compile errors against the actual `WICourierScript` signature
+   before moving on.
+3. Create the delivery quest:
+   - EditorID: `_ne_PooledLetterQuest01`.
+   - Quest Data: **Start Game Enabled** OFF, **Run Once** OFF,
+     **Allow Repeated Stages** off. Priority is irrelevant for our use
+     (we never run stages). Event = `None`.
+   - **Scripts tab**: attach the compiled `_ne_PooledLetterQuest`
+     script. Set the `WICourier` property to vanilla `WICourier`
+     (FormID `0x00039F82`).
+   - **Aliases tab**: create two reference aliases.
+     - Alias name: `Sender`.
+       - Fill Type: leave the rule empty (no Specific Reference, no
+         Find Matching, no Create, no Unique Actor).
+       - Flags: `Optional` ON, `Allow Reserved` ON, `Allow Disabled`
+         ON. All others OFF.
+     - Alias name: `LetterRef`.
+       - Fill Type: **Create Reference to Object**.
+       - Object: `_ne_PooledLetter01` (the matching slot's pool book).
+       - "Create In Alias": `Sender` (selects the kIn flag against the
+         Sender alias index).
+       - Level: `None`.
+       - Flags: `Optional` ON. All others OFF.
+4. Save the ESP.
+
+**Specifics:**
+
+- The script is deliberately stateless — no stages, no event handlers,
+  no `OnInit`. Every meaningful operation is one of the two functions,
+  both driven by C++.
+- `Sender` and `LetterRef` are wired by alias *name*, not by index.
+  Every per-slot quest (this one, and the 19 in Step 16) must use those
+  exact alias names so the script binds correctly on each attachment.
+- `Debug.Trace` calls are temporary diagnostics for early bring-up;
+  once the integration is stable they can be deleted or downgraded.
+- The `Sender` alias's empty fill rule + `Optional` flag is what lets
+  us start the quest from C++ even when nothing has filled `Sender`
+  yet (although in practice we always force-fill before `Start`, the
+  `Optional` flag is the safety net that prevents quest-start failures
+  during early bring-up).
+- `Allow Reserved` on `Sender` is defensive against other quests
+  holding reservations on the chosen NPC — letters should fire even
+  when the sender NPC is mid-vanilla-quest. The forced fill bypasses
+  reservation contention.
+- The `LetterRef` alias's `Optional` flag is defensive against the
+  `Create Reference` step failing (sender in an unloaded cell at quest
+  start, etc.); without `Optional` a failed create would block quest
+  start. With `Optional`, the quest starts anyway, `LetterRef` resolves
+  to `None`, and the Step 15 verification poll catches the no-op
+  cleanly.
+- Because only slot 0's quest exists in this step, Step 15's C++
+  resolver will report 19 unresolved quests and disable slots 1–19
+  from the allocator. That's expected for bring-up; every test
+  dispatch in Step 15 will route through slot 0. Step 16 fills in the
+  rest once the pipeline is proven.
+
+**Verify:** Open xEdit on `NarrativeEngine.esp`. Confirm one QUST record
+named `_ne_PooledLetterQuest01` exists with two reference aliases
+(`Sender` and `LetterRef`), the `_ne_PooledLetterQuest` script attached,
+the `WICourier` property set to `0x00039F82`, and `LetterRef.ALCO`
+pointing at `_ne_PooledLetter01`. Confirm the CK script editor compiled
+`_ne_PooledLetterQuest.psc` without errors and the CK property panel for
+the quest shows all three script properties bound (`Sender`,
+`LetterRef`, `WICourier`). Run `pwsh -File build.ps1 build`; boot
+Skyrim; SKSE log shows no ESP-load errors and no Papyrus-side
+script-binding warnings on `_ne_PooledLetterQuest01`. No runtime test
+yet — nothing dispatches a letter until Step 15.
+
+---
+
+### Step 15 — Replace Step 13's stub with the quest-driven dispatch flow (verify on slot 0)
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+**Goal:** Replace `NPCLetterAction::VMDispatchAddItemToContainer`'s current
+TODO stub with the orchestration sequence described in **Vanilla courier
+dispatch via per-slot delivery quests**: force-fill `Sender`, start the
+delivery quest, dispatch `DispatchLetterToCourier`, and on
+verified-completion stop the quest so the slot is reusable. The
+verification polls themselves are already in place from Step 13; this
+step rewires them to query `WICourierContainerRef`'s container (rather
+than the courier NPC, which was an interim choice that we now know is
+wrong — the courier NPC holds the letter only fleetingly between
+container deposit and handoff).
+
+This step's verification is the end-to-end correctness test for the new
+strategy, run against the **single** `_ne_PooledLetterQuest01` authored
+in Step 14. Only slot 0 has a quest in this step; slots 1–19 are
+correctly skipped by the allocator's unresolved-quest gate, so every
+test dispatch routes through slot 0. Step 16 duplicates the quest 19
+more times only after this end-to-end verification passes.
+
+**Files:**
+
+- `src/NPCLetterAction.cpp`:
+  - Add a `kDataLoaded`-time resolution pass that caches, for each pool
+    slot index 0..19, a `RE::TESQuest*` pointer to
+    `_ne_PooledLetterQuestNN`. Any unresolved quest logs an error and
+    permanently disables that slot from the allocator (the allocator
+    already skips slots whose `bookFormID == 0`; extend the same gate to
+    cover unresolved quests).
+  - Replace `VMDispatchAddItemToContainer`'s TODO body with the
+    three-VM-dispatch sequence:
+    1. `_ne_PooledLetterQuest.ForceFillSender(senderActor)` on the
+       slot's quest.
+    2. `Quest.Start()` on the slot's quest. (Use the
+       `BSScript::Internal::VirtualMachine::DispatchMethodCall` pattern
+       Step 13 established for `WICourierScript.AddItemToContainer`.)
+    3. `_ne_PooledLetterQuest.DispatchLetterToCourier()` on the slot's
+       quest.
+
+    Each dispatch's completion callback chains into the next so we don't
+    race the quest's alias resolution. Specifically: `Start` MUST
+    complete before `DispatchLetterToCourier` runs, or `LetterRef` may
+    not yet hold a reference. The simplest implementation is sequential
+    callbacks; an alternative is a short main-thread delay between
+    `Start` and `DispatchLetterToCourier` (one or two ticks), but
+    chained callbacks are cleaner if `DispatchMethodCall`'s callback
+    fires reliably for `Start`.
+  - Update `DetectAndRollbackFailedStart` and `DetectCompletion` to
+    query `GetItemCount(slot.bookFormID)` on **the cached
+    `WICourierContainerRef`** rather than on the Courier NPC. The
+    container resolution should follow the hybrid path documented in
+    **Locating the courier's container**: at `kDataLoaded`, walk
+    `WICourier->aliases` for the alias named `"Container"` and cache
+    its filled reference; if that fails, cache `WICourierContainerRef`
+    directly by FormID.
+  - In `DetectCompletion` and `DetectAndRollbackFailedStart`, when
+    returning `true`, also VM-dispatch `Quest.Stop()` on the slot's
+    delivery quest so the slot's quest is back to a stopped state and
+    its `LetterRef` alias clears. Stopping the quest does NOT remove
+    the spawned letter REFR from the courier container — once
+    `AddItemToContainer` moves it across, the REFR's lifetime is
+    governed by the courier system, not the source quest.
+- `include/LetterPool.h` / `src/LetterPool.cpp`:
+  - No structural change. `bookFormID` per slot already drives the
+    verification query.
+  - In `Initialize`, the unresolved-form gate already exists; no new
+    fields needed on `Slot`.
+
+**Specifics:**
+
+- The `kDataLoaded` resolution pass logs
+  `NPCLetterAction: resolved per-slot delivery quests (N of 20)`. If
+  fewer than 20 resolved, log each missing EditorID by name for
+  diagnosis. During this step it is **expected** that only 1 of 20
+  resolves (the lone `_ne_PooledLetterQuest01` from Step 14) — the
+  remaining 19 missing-EditorID lines are bring-up artifacts, not
+  errors, and disappear once Step 16 adds the rest.
+- `_ne_PooledLetterQuestN` quest resolution at `kDataLoaded` uses
+  `RE::TESForm::LookupByEditorID`, same path as the pool books in Step 4.
+  The 20 quests are looked up alongside the 20 books and stored in
+  parallel arrays.
+- `ForceFillSender`'s VM dispatch self handle is the **quest**, not the
+  alias. The Papyrus function does the alias-index lookup internally via
+  `Self.GetAlias(...)`. This keeps the alias index off the C++ side and
+  lets CK reorder aliases without breaking the bridge.
+- The `Quest.Start()` dispatch returns a bool; check it. If it returns
+  false, treat it as a failed dispatch (`AbortPending`, do not invoke
+  `DispatchLetterToCourier`). Quest start can fail for engine reasons
+  outside our control (mod conflict, save corruption); the verification
+  poll catches it as a secondary safety net, but the direct return
+  value lets us fail fast without waiting for the verification window.
+- `Quest.Stop()` is fire-and-forget; no return-value check needed. The
+  next `Allocate` of this slot will re-enter the flow from a stopped
+  quest as expected.
+
+**Verify:** Build clean. Boot Skyrim; trigger a phase advance so the
+dispatcher picks `npc_letter`. SKSE log shows:
+
+- action-select picks `npc_letter` → content LLM round-trip →
+  `LetterPool: populated slot N (sender=<...>, body=N chars)` →
+  `NPCLetterAction: ForceFillSender(0xXXXXX) on _ne_PooledLetterQuestNN` →
+  `NPCLetterAction: Quest.Start succeeded` →
+  `NPCLetterAction: DispatchLetterToCourier dispatched`.
+- Within ~1-5 seconds, `LetterAction: verify@Ns — courier container has
+  1 copies` → `DetectCompletion: complete` →
+  `NPCLetterAction: Quest.Stop on _ne_PooledLetterQuestNN` → dispatcher
+  applies cooldown. The slot is now in `PendingDelivery` state; the
+  dashboard's `actionInFlight` indicator clears.
+- Within a few in-game minutes, the vanilla courier finds the player
+  and hands over the letter. Reading it shows the LLM-generated body.
+
+Rollback path: temporarily break the dispatch by disabling `WICourier`
+via console (`StopQuest WICourier`) before triggering. The verification
+poll should log `courier container has 0 copies` →
+`DetectAndRollbackFailedStart: rolling back` → slot returns to Free and
+the quest is stopped; the action is immediately re-selectable.
+
+Repeat-fire sanity: trigger 3–5 letter dispatches in a row (each
+preceded by a phase advance, or by lowering `iActionCooldownSeconds`
+temporarily). All 3–5 should route through slot 0, complete the full
+quest-driven flow, and survive the `Quest.Stop()` → next-allocation →
+`Quest.Start()` cycle without leaking state. If the second dispatch
+fails where the first succeeded, the quest-reuse path is broken — fix
+before proceeding to Step 16.
+
+---
+
+### Step 16 — Duplicate the remaining 19 delivery quests in Creation Kit
+
+- [ ] Complete
+
+**[USER]**
+
+**Goal:** Now that the single-quest path is end-to-end verified in
+Step 15, duplicate `_ne_PooledLetterQuest01` 19 more times so the full
+pool is available. This is mechanical and low-risk because the script
+binding, alias names, alias flags, and the `WICourier` property all
+stay identical across copies — only the `LetterRef.Object` differs per
+copy.
+
+**Sub-tasks:**
+
+1. Open Creation Kit through MO2; load `NarrativeEngine.esp`.
+2. Duplicate `_ne_PooledLetterQuest01` 19 times via right-click →
+   Duplicate. For each new quest:
+   - Rename EditorID to the next number:
+     `_ne_PooledLetterQuest02` through `_ne_PooledLetterQuest20`.
+   - On the `LetterRef` alias, change the Object pointer to the
+     matching pool book (`_ne_PooledLetter02` through
+     `_ne_PooledLetter20`).
+   - Verify the `_ne_PooledLetterQuest` script is still attached and
+     the `WICourier` property still resolves (duplication should
+     preserve both; spot-check 2–3 of the duplicates explicitly).
+   - Verify both alias names (`Sender`, `LetterRef`) and all alias
+     flags survived the duplicate unchanged.
+3. Save the ESP.
+
+**Specifics:**
+
+- The 20 quests must be mechanically identical structurally; only the
+  `LetterRef.Object` differs. The script binding, the `Sender` alias,
+  the `WICourier` property, and the alias names all stay constant —
+  that's what lets the single Step 14 script and alias setup propagate
+  correctly across all 20.
+- CK has a known quirk where duplicating a quest with an attached
+  script sometimes drops the script's property values. If the spot
+  check finds `WICourier` unset on a duplicate, re-set it manually on
+  each affected copy.
+
+**Verify:** Open xEdit on `NarrativeEngine.esp`. Confirm 20 QUST
+records named `_ne_PooledLetterQuest01..20` exist, each with two
+reference aliases (`Sender` and `LetterRef`), each with the
+`_ne_PooledLetterQuest` script attached, each with the `WICourier`
+property set to `0x00039F82`, and each `LetterRef.ALCO` pointing at
+the matching pool Book FormID (slot N → pool book N). Run
+`pwsh -File build.ps1 build`; boot Skyrim; SKSE log shows
+`NPCLetterAction: resolved per-slot delivery quests (20 of 20)` with
+no missing-EditorID lines. Trigger a handful of dispatches and
+confirm the allocator now spreads across slots beyond slot 0 (e.g.
+exhaust the pool deliberately to force eviction and verify multiple
+slot indices appear in the dispatch log).
+
+---
+
+### Step 17 — SkyrimNet memory writes (sender at delivery, player at read)
 
 - [ ] Complete
 
@@ -1725,7 +2144,7 @@ returns to Free and the action is immediately re-selectable.
 events, mirroring actual cognitive engagement: sender writes on delivery (when
 their part of the act is complete), player writes on read (when they actually
 process the contents). Director-side completion happened earlier (during
-Step 13's `DetectCompletion` poll once the dispatch was verified); this step
+Step 15's `DetectCompletion` poll once the dispatch was verified); this step
 is purely about the LetterPool's lifecycle hooks for memory integration.
 
 **Files:**
@@ -1778,7 +2197,7 @@ is purely about the LetterPool's lifecycle hooks for memory integration.
 
 ---
 
-### Step 15 — Dashboard: tab bar + Letters tab (pool + recent-dispatch detail)
+### Step 18 — Dashboard: tab bar + Letters tab (pool + recent-dispatch detail)
 
 - [ ] Complete
 
@@ -1864,7 +2283,7 @@ dispatch:
 
 ---
 
-### Step 16 — End-to-end verification
+### Step 19 — End-to-end verification
 
 - [ ] Complete
 
@@ -1925,8 +2344,8 @@ the actual in-game inventory state.
 
 Phase 04 is complete when:
 
-- All 16 implementation steps are checked off.
-- The integration-verification run (Step 16) passes without intervention.
+- All 19 implementation steps are checked off.
+- The integration-verification run (Step 19) passes without intervention.
 - The SKSE log over a 30-minute in-game session shows letters being dispatched,
   delivered, read, and slots being recycled without errors or stale-lock
   warnings.
