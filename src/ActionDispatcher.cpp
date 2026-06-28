@@ -7,6 +7,7 @@
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
 #include <EvaluationPipeline.h>
+#include <LLMTextSanitizer.h>
 #include <PhaseTracker.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -688,9 +689,12 @@ namespace NarrativeEngine::ActionDispatcher
                 if (auto it = parsed.find("parameters"); it != parsed.end() && it->is_object()) {
                     parameters = *it;
                 }
+                // narrative_note — sanitize first (smart quotes, em-dash,
+                // ellipsis, NBSP, accented Latin → ASCII per
+                // docs/LLM_RESPONSE_HANDLING.md), then clamp to 200 chars.
                 std::string narrativeNote;
                 if (auto it = parsed.find("narrative_note"); it != parsed.end() && it->is_string()) {
-                    narrativeNote = it->get<std::string>();
+                    narrativeNote = LLMTextSanitizer::Sanitize(it->get<std::string>());
                     if (narrativeNote.size() > 200) {
                         narrativeNote.resize(200);
                     }

@@ -20,6 +20,28 @@ When a phase doc is itself under revision (the user is reshaping a step before c
 treat the doc as the contract: edits to the doc come first, implementation follows the doc, and
 the implementation should not silently include scope the doc doesn't reflect.
 
+## LLM-returned strings: always sanitize
+
+Every free-form string we accept back from an LLM MUST pass through
+`NarrativeEngine::LLMTextSanitizer::Sanitize(...)` at the point of
+extraction from the response JSON, before being stored, persisted to
+co-save, written to any `RE::TESForm` field, displayed in UI, fed into
+another LLM call, or used in any other downstream way.
+
+The reason: LLMs routinely return smart quotes, em-dashes, ellipses,
+NBSPs, accented Latin letters, and zero-width formatting characters
+that look fine in chat but break visible-text use in Skyrim (missing
+glyphs, silent truncation in ASCII-only engine fields, garbled co-save
+payloads). The sanitizer is a single canonical pass that maps these to
+ASCII equivalents or drops them, and trims surrounding whitespace.
+
+When adding a new LLM-driven feature, wrap every `get<std::string>()`
+call for a free-form field in `LLMTextSanitizer::Sanitize(...)` — do
+not defer to a later normalization step. See
+[`docs/LLM_RESPONSE_HANDLING.md`](docs/LLM_RESPONSE_HANDLING.md) for the
+substitution table, the library-vs-manual rationale, and worked
+examples of how to identify which response fields need sanitizing.
+
 ## What NOT to assume
 
 - That a pattern IntelEngine uses is automatically appropriate for NarrativeEngine. The right

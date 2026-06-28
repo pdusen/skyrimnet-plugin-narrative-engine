@@ -6,6 +6,7 @@
 #include <CombatEventLog.h>
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
+#include <LLMTextSanitizer.h>
 #include <PhaseTracker.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -392,9 +393,12 @@ namespace NarrativeEngine::EvaluationPipeline
         // Exposition/Climax, drops out of Climax/FallingAction).
         r.advancedToPhase = PhaseTracker::EvaluateAdvance(r.currentPhase, r.tensionScore);
 
-        // narrative_note — clamp to 200 chars.
+        // narrative_note — sanitize LLM-returned Unicode noise (smart quotes,
+        // em-dashes, ellipsis, NBSPs, etc.) per docs/LLM_RESPONSE_HANDLING.md,
+        // then clamp to 200 chars. Sanitization happens BEFORE the clamp so
+        // the truncation lands on a well-defined byte boundary.
         if (auto it = parsed.find("narrative_note"); it != parsed.end() && it->is_string()) {
-            std::string note = it->get<std::string>();
+            std::string note = LLMTextSanitizer::Sanitize(it->get<std::string>());
             if (note.size() > 200) {
                 note.resize(200);
             }
