@@ -646,7 +646,7 @@ base Book form, passing a runtime-`PlaceObjectAtMe` REFR, doing an
 capturing the spawn via `TESContainerChangedEvent` — either crashed in the
 engine's inventory-merge path or produced an inventory entry with no
 per-instance REFR to hand off. The CK Wiki's own courier tutorial
-(https://ck.uesp.net/wiki/Using_the_Vanilla_Courier) reveals why: the supported
+(<https://ck.uesp.net/wiki/Using_the_Vanilla_Courier>) reveals why: the supported
 path is to spawn the letter via a reference alias configured for
 "Create Reference to Object", with "Create In" pointing at the sender NPC's
 alias, and then pass *the alias-spawned REFR* to `AddItemToContainer`. The
@@ -1816,7 +1816,7 @@ returns to Free and the action is immediately re-selectable.
 
 ### Step 14 — Author the state-bearing Papyrus script AND one delivery quest in CK (bring-up)
 
-- [ ] Complete
+- [x] Complete
 
 **[USER]** (Claude drafts the `.psc`; user authors the quest in CK and
 compiles the script there. Both halves are worked simultaneously because
@@ -1965,15 +1965,19 @@ fix, and instrument.
 CK-side stage configuration (in the Quest Stages tab):
 
 - **Stage 0** — Flags: **Startup Stage** ON. Log Entry empty. Fragment:
+
   ```papyrus
   ; Quest is starting up
   SetStage(10)
   ```
+
 - **Stage 10** — Flags: none. Fragment:
+
   ```papyrus
   ; Queue letter for courier
   kmyQuest.DispatchLetterToCourier()
   ```
+
   (`kmyQuest` is CK's autocast variable for the attached
   `_ne_PooledLetterQuest` script; CK generates the autocast preamble
   automatically when a fragment references the typed script.)
@@ -1981,18 +1985,23 @@ CK-side stage configuration (in the Quest Stages tab):
   emits a `Fragment_<N>()` shell for each, but its body is left blank
   — the stages exist purely as markers driven by C++.
 - **Stage 50** — Flags: none. Fragment:
+
   ```papyrus
   ; Letter disposed by player
   SetStage(200)
   ```
+
 - **Stage 60** — Flags: none. Fragment:
+
   ```papyrus
   ; Letter recycled by allocator
   SetStage(200)
   ```
+
 - **Stage 200** — Flags: **Complete Quest** ON (this is the only stage
   that "completes" the quest, for telemetry legibility in console /
   xEdit). Fragment:
+
   ```papyrus
   ; Quest shutdown
   kmyQuest.Shutdown()
