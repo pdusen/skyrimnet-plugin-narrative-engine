@@ -1061,6 +1061,8 @@ self-contained verification.
 
 ### Step 1 — Remove the throwaway smoke test
 
+- [ ] Complete
+
 **[CLAUDE]**
 
 **Goal:** Delete the smoke-test scaffolding so Phase 04 starts from a clean baseline.
@@ -1094,6 +1096,8 @@ deletions).
 
 ### Step 2 — Settings expansion and ActionContext extension
 
+- [ ] Complete
+
 **[CLAUDE]**
 
 **Goal:** Add every new INI key Phase 04 needs and extend the `IAction::ActionContext`
@@ -1117,6 +1121,8 @@ confirm the read path.
 ---
 
 ### Step 3 — Author the 20 pooled letter Book forms in Creation Kit
+
+- [ ] Complete
 
 **[USER]**
 
@@ -1154,6 +1160,8 @@ ESP.
 ---
 
 ### Step 4 — LetterPool C++ scaffold
+
+- [ ] Complete
 
 **[CLAUDE]**
 
@@ -1195,6 +1203,8 @@ nothing exercises `Allocate` until Step 13.
 
 ### Step 5 — Co-save persistence for LetterPool
 
+- [ ] Complete
+
 **[CLAUDE]**
 
 **Goal:** Add the `'NELP'` co-save record so pool state survives save/reload.
@@ -1228,6 +1238,8 @@ and every slot in `Free` state. Reload; SKSE log shows
 ---
 
 ### Step 6 — Install MinHook detours against the pool
+
+- [ ] Complete
 
 **[CLAUDE]**
 
@@ -1272,6 +1284,8 @@ the hooks are installed but every call falls through.
 
 ### Step 7 — MenuOpenCloseEvent sink for read detection
 
+- [ ] Complete
+
 **[CLAUDE]**
 
 **Goal:** Detect when the player closes BookMenu and, if it was a pool letter,
@@ -1311,6 +1325,8 @@ Step 13) and reading it should fire `LetterPool: slot N marked Read`.
 ---
 
 ### Step 8 — TESContainerChangedEvent sink for location tracking
+
+- [ ] Complete
 
 **[CLAUDE]**
 
@@ -1366,6 +1382,8 @@ detected (action=<deliver/discard/drop>)` makes manual console testing possible
 
 ### Step 9 — Eviction logic in `Allocate`
 
+- [ ] Complete
+
 **[CLAUDE]**
 
 **Goal:** Replace the Step 4 placeholder `Allocate` with the full allocation
@@ -1400,6 +1418,8 @@ will be Free → Free no-ops, but the code paths get exercised).
 ---
 
 ### Step 10 — Letter-compose prompt and content-LLM call wiring
+
+- [ ] Complete
 
 **[CLAUDE]**
 
@@ -1470,6 +1490,8 @@ hook before merging.
 
 ### Step 11 — NPCLetterAction skeleton and registration
 
+- [ ] Complete
+
 **[CLAUDE]**
 
 **Goal:** Implement the action's metadata (name/description/polarity/IsAvailable)
@@ -1512,6 +1534,8 @@ check should show the action declining with the `IsDangerous` reason.
 
 ### Step 12 — Dispatcher C++-side completion API + ActionContext propagation
 
+- [ ] Complete
+
 **[CLAUDE]**
 
 **Goal:** Expose `ActionDispatcher::CompleteAction(std::string_view)` as a public
@@ -1538,6 +1562,8 @@ prep.)
 ---
 
 ### Step 13 — NPCLetterAction: `Start` + dispatch verification (`DetectAndRollbackFailedStart` + `DetectCompletion`)
+
+- [ ] Complete
 
 **[CLAUDE]**
 
@@ -1617,6 +1643,8 @@ returns to Free and the action is immediately re-selectable.
 
 ### Step 14 — SkyrimNet memory writes (sender at delivery, player at read)
 
+- [ ] Complete
+
 **[CLAUDE]**
 
 **Goal:** Fire both `PublicAddMemory` calls at their respective lifecycle
@@ -1676,6 +1704,8 @@ is purely about the LetterPool's lifecycle hooks for memory integration.
 ---
 
 ### Step 15 — Dashboard: tab bar + Letters tab (pool + recent-dispatch detail)
+
+- [ ] Complete
 
 **[CLAUDE]**
 
@@ -1760,6 +1790,8 @@ dispatch:
 ---
 
 ### Step 16 — End-to-end verification
+
+- [ ] Complete
 
 **[USER]**
 
