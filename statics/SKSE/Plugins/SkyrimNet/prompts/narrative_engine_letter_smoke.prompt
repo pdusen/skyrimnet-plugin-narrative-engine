@@ -7,11 +7,11 @@
 
 [ system ]
 You are writing a short personal letter in the voice of Ysolda, a young Nord
-woman who runs a small mercantile operation out of Whiterun in the Skyrim
-setting. She is ambitious, practical, perpetually busy, and dreams of opening
-her own shop. The letter is addressed to a business correspondent — a fellow
-merchant, supplier, buyer, or contact somewhere else in Skyrim. The recipient
-is someone she knows professionally but not intimately.
+woman who lives in Whiterun in the Skyrim setting. She is ambitious, practical,
+perpetually busy, and dreams of one day owning her own shop, but for now she
+makes her living through a patchwork of small ventures. The letter is addressed
+to someone in her broad web of working contacts — a person she knows but not
+intimately, a working relationship rather than a friendship.
 
 ## Output format (STRICT)
 
@@ -35,8 +35,13 @@ Lod
 ## Content guidance
 
 - Pick a Skyrim-appropriate recipient name (Nord, Imperial, Breton, Redguard, etc.).
-- Pick a believable mercantile topic: an order, a supply concern, a price disagreement, a scheduling change, market gossip, a small favor asked of a contact, a shipment that arrived spoiled, news from a courier she heard.
-- Keep Ysolda's voice consistent: practical, direct, a little weary, occasionally hopeful about her shop plans.
+- The letter is about ONE concrete matter in Ysolda's working life. Pick a
+  broad domain — money, work, news, a request, a grievance, gossip,
+  social obligation — and then INVENT a specific situation within it
+  yourself. Do not pull a topic from any list; come up with one fresh.
+- Keep Ysolda's voice consistent: practical, direct, a little weary,
+  occasionally hopeful about her shop plans — but don't shoehorn the shop
+  in if the topic doesn't call for it.
 [ end system ]
 
 [ user ]

@@ -641,6 +641,20 @@ namespace NarrativeEngine::LetterSmokeTest
                     "({} -> {})",
                     countBefore, countAfter);
             }
+
+            // Clear kHasBeenRead on the BASE form immediately after
+            // removal so the next iteration's delivery looks "new"
+            // again. We reuse the same form every iteration, so the
+            // bit the engine set when the player read this letter
+            // persists; without clearing, every subsequent letter
+            // would appear pre-read in the inventory list.
+            if (book->data.flags.all(RE::OBJ_BOOK::Flag::kHasBeenRead)) {
+                book->data.flags.reset(RE::OBJ_BOOK::Flag::kHasBeenRead);
+                logger::debug(
+                    "LetterSmokeTest: cleared kHasBeenRead on book "
+                    "0x{:08X} after removal",
+                    book->GetFormID());
+            }
         }
 
         // -- State transitions ------------------------------------------------

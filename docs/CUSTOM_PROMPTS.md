@@ -78,6 +78,108 @@ Reasons:
 
 The model's job is to look at what's true *right now* and decide. Not to model how the request got to it.
 
+## Don't tell the model what NOT to write
+
+Negative content instructions ("don't mention X", "avoid Y", "don't make every
+response about Z") frequently produce the opposite of what you want. The
+mechanism is the same as "don't picture a pink elephant" — to comply with
+the rule, the model first has to model the forbidden thing, and modeling it
+raises its salience. The banned topic becomes the most active concept in
+context just as generation starts.
+
+We hit this concretely while writing a prompt asking for a letter in the
+voice of a Whiterun working woman: we included "do NOT make every letter
+about textiles or cloth" because earlier iterations all came back about
+fabric shipments. Every subsequent generation was *still* about fabric
+shipments. Removing the negation broke the textile fixation immediately.
+(The replacement we tried — a long list of *desired* topics — ran into a
+separate problem; see the next section. But the fabric anchor was gone.)
+
+The fix: state what you DO want, framed as an abstract domain rather
+than a list of specific examples.
+
+- ✗ "Don't make every letter about textiles."
+- ✓ "Pick a broad domain — money, work, gossip, a request, a grievance,
+  social obligation — and invent a specific situation within it."
+
+- ✗ "Avoid dark themes."
+- ✓ "Keep the tone light — focus on small everyday matters rather than
+  weighty themes."
+
+If you catch yourself writing "don't" in a content guidance section, invert
+it: write the positive form, but be careful not to swap one anchor for
+another (read the next section before writing the replacement).
+
+**Caveat: this applies to *content* steering, not to output-shape rules.**
+"Output JSON only — no markdown fences" and "Return exactly the object,
+no prose before or after" stay phrased as negations. Those are
+once-at-generation-start structural checks the model honors fine; they
+don't raise the salience of "write markdown fences" as a generation
+target the way content negations do.
+
+## Specific examples become attractors
+
+Even when phrased positively, any list of specific concrete examples in
+a content-guidance section tends to collapse the model's output
+distribution onto one of those examples — or onto whatever concrete noun
+fits the closest semantic neighborhood. The model treats specifics as
+anchor points and generates near them rather than ranging across the
+full implied domain. This is the same underlying mechanic as the
+"don't picture a pink elephant" failure above, just on the positive
+side: any concrete token in the prompt becomes an attention anchor that
+gets surfaced in generation, regardless of whether it was framed as ✓
+or ✗.
+
+We hit this twice in a row writing the same letter-generation prompt:
+
+1. The first character description listed Ysolda's goods as "hides,
+   mead, wheat, salted meat, dyed wool, secondhand armor..." Every
+   generation came back about textiles — "dyed wool" was the strongest
+   anchor and the model followed it.
+2. After stripping the goods list, we kept a long list of "plausible
+   topics" in the content guidance: "an overdue debt, a stablehand who
+   didn't show up, ..., a shipment of *any* kind of goods that arrived
+   spoiled or late, ..." Every generation came back about salted hake —
+   "shipment ... spoiled" was the strongest anchor, and the model
+   converged on the same specific concrete instance call after call.
+
+The fix: don't give concrete examples in content guidance. Name the
+abstract domain(s) the response should land in, and explicitly tell the
+model to invent the specific situation itself.
+
+- ✗ "Plausible topics: a stablehand who didn't show up, a borrowed mule
+  that hasn't returned, market gossip about a rival, weather wrecking
+  a delivery..."
+- ✓ "Pick a broad domain — money, work, news, a request, a grievance,
+  gossip, social obligation — and invent a specific situation within
+  it yourself. Do not pull a topic from any list; come up with one
+  fresh."
+
+- ✗ Character profile: "She handles whatever's in front of her: hides,
+  mead, wheat, salted meat, dyed wool, secondhand armor, small
+  carvings, alchemy ingredients, firewood..."
+- ✓ Character profile: "She makes her living through a patchwork of
+  small ventures."
+
+The principle generalizes beyond topic lists. Anywhere a "for example"
+might creep in — prop lists, recipient types, possible reactions,
+sample phrasings — the same dynamic applies. If you list five specific
+things, expect the next generation to be about one of those five things
+or its closest semantic neighbor.
+
+When you need a wide distribution of outputs, give the model an
+ontology of domains, not a menu of specifics.
+
+**Caveat: this is about *content* generation, not *output structure*.**
+Specific examples of the required output *shape* (e.g. a sample JSON
+object showing field names and types, a sample call-and-response
+exchange showing turn format) are still good — those are demonstrating
+the schema, not seeding the content distribution. The pink-elephant
+dynamic only kicks in when the example competes with the model's
+content-generation choice. Use ✓/✗ inline shape examples freely; just
+don't bury the model in concrete topical examples and expect it to
+generalize.
+
 ## Useful conventions
 
 Patterns worth copying from `gamemaster_action_selector.prompt`:
