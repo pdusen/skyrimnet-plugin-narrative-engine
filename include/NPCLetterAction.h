@@ -2,6 +2,8 @@
 
 #include <IAction.h>
 
+#include <SKSE/SKSE.h>
+
 // NPCLetterAction — the Director's first social lever and its first
 // Either-polarity action. Composes a letter via LetterComposer, then
 // VM-dispatches to vanilla `WICourierScript.AddItemToContainer` so the
@@ -42,5 +44,34 @@ namespace NarrativeEngine
         //
         // Idempotent — second call rewires nothing and is cheap.
         void Initialize();
+    }
+
+    namespace NPCLetterAction_Cooldowns
+    {
+        // Called by LetterPool from its MarkDelivered path once the
+        // vanilla courier has handed a letter to the player. Stamps the
+        // per-sender cooldown so this NPC won't be picked as a candidate
+        // again for `iLetterSenderCooldownGameHours` in-game hours.
+        // Silently no-ops if `senderNpcFormID == 0`.
+        void OnLetterDelivered(RE::FormID senderNpcFormID);
+
+        // Filter helper — returns true if this sender is currently
+        // within their per-sender cooldown window. Called by
+        // LetterComposer during candidate filtering. Also returns false
+        // if `iLetterSenderCooldownGameHours <= 0` (cooldown disabled).
+        bool IsSenderOnCooldown(RE::FormID senderNpcFormID);
+    }
+
+    namespace NPCLetterAction_Persistence
+    {
+        // SKSE co-save record type ID for the letter action's cooldown
+        // state (global action cooldown stamp + per-sender delivery
+        // stamps). Frozen — changing it would orphan previously-saved
+        // data.
+        inline constexpr std::uint32_t kRecordTypeId = 'NELE';
+
+        void OnSave(SKSE::SerializationInterface* intfc);
+        void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);
+        void OnRevert();
     }
 }

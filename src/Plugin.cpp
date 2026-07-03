@@ -90,6 +90,8 @@ namespace NarrativeEngine
                     DecisionLog::Clear();
                     CombatEventLog::OnRevert();
                     ActionDispatcher::OnRevert();
+                    AmbushAction_Persistence::OnRevert();
+                    NPCLetterAction_Persistence::OnRevert();
                     PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
                     Tick::Start();
                     break;
@@ -98,10 +100,20 @@ namespace NarrativeEngine
                     // Stop the tick driver FIRST so an in-flight tick can't
                     // fire mid-deserialize, then safe-init every subsystem
                     // so OnLoad has a known baseline to overwrite.
+                    //
+                    // Every persistence module gets its OnRevert() called
+                    // here so that OnLoad's dispatch — which only fires
+                    // for records actually present in the save — starts
+                    // from a clean baseline. Without this, cooldown /
+                    // in-flight state can leak across save loads (e.g.
+                    // Character A's saved state persists into Character
+                    // B's session if B's save doesn't have the record).
                     Tick::Stop();
                     DecisionLog::Clear();
                     CombatEventLog::OnRevert();
                     ActionDispatcher::OnRevert();
+                    AmbushAction_Persistence::OnRevert();
+                    NPCLetterAction_Persistence::OnRevert();
                     PhaseTracker::Reset();
                     break;
                 case SKSE::MessagingInterface::kPostLoadGame:
@@ -125,6 +137,7 @@ namespace NarrativeEngine
             CombatEventLog::OnSave(intfc);
             ActionDispatcher::OnSave(intfc);
             AmbushAction_Persistence::OnSave(intfc);
+            NPCLetterAction_Persistence::OnSave(intfc);
             LetterPool::OnSave(intfc);
             // Future subsystems append their OnSave calls here.
         }
@@ -156,6 +169,9 @@ namespace NarrativeEngine
                     case AmbushAction_Persistence::kRecordTypeId:
                         AmbushAction_Persistence::OnLoad(intfc, version, length);
                         break;
+                    case NPCLetterAction_Persistence::kRecordTypeId:
+                        NPCLetterAction_Persistence::OnLoad(intfc, version, length);
+                        break;
                     case LetterPool::kRecordTypeId:
                         LetterPool::OnLoad(intfc, version, length);
                         break;
@@ -179,6 +195,7 @@ namespace NarrativeEngine
             CombatEventLog::OnRevert();
             ActionDispatcher::OnRevert();
             AmbushAction_Persistence::OnRevert();
+            NPCLetterAction_Persistence::OnRevert();
             LetterPool::OnRevert();
             // Future subsystems append their OnRevert calls here.
         }

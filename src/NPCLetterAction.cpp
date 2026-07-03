@@ -24,6 +24,8 @@
 #include <RE/T/TESQuest.h>
 #include <RE/V/VirtualMachine.h>
 
+#include <RE/C/Calendar.h>
+
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -34,6 +36,7 @@
 #include <mutex>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace NarrativeEngine
@@ -250,6 +253,42 @@ namespace NarrativeEngine
         // rollback against the same slot.
         std::atomic<double> g_dispatchChainCompletedAt = 0.0;
         std::atomic<bool>   g_dispatchChainFailed       = false;
+
+        // --- Cooldowns (in-game hours) ------------------------------
+        //
+        // Two independent cooldowns, both persisted via the action's
+        // co-save record (kRecordTypeId 'NELE'):
+        //
+        //   g_lastDispatchGameHours — stamped by DetectCompletion when
+        //     the letter reaches WICourierContainerRef. Gates
+        //     IsAvailable so the action can't fire again for
+        //     `iLetterActionCooldownGameHours` in-game hours.
+        //
+        //   g_senderLastDeliveryGameHours — stamped by
+        //     NPCLetterAction_Cooldowns::OnLetterDelivered (called
+        //     from LetterPool::MarkDelivered) when the vanilla courier
+        //     actually hands the letter to the player. LetterComposer
+        //     filters candidates whose entry here is within
+        //     `iLetterSenderCooldownGameHours` in-game hours.
+        //
+        // Both are guarded by g_cooldownMutex — reads/writes happen
+        // from the main thread (IsAvailable, DetectCompletion,
+        // LetterComposer callbacks) and the SKSE serialization thread
+        // (OnSave / OnLoad).
+        std::mutex                                g_cooldownMutex;
+        double                                    g_lastDispatchGameHours = 0.0;
+        std::unordered_map<RE::FormID, double>    g_senderLastDeliveryGameHours;
+
+        // Current game-time in hours since the calendar epoch. Returns
+        // 0 if the calendar isn't available (very early in plugin
+        // lifecycle); the cooldown gates treat a 0 stamp as "never
+        // dispatched" so this fail-open behavior is intentional.
+        double LetterCurrentGameHours()
+        {
+            auto* calendar = RE::Calendar::GetSingleton();
+            if (!calendar) return 0.0;
+            return static_cast<double>(calendar->GetHoursPassed());
+        }
 
         // Stage IDs the C++ side directly sets on the per-slot quest.
         // Stage 60 = "recycled by C++ allocator" → routes to Stage 200 (Shutdown).
@@ -986,6 +1025,157 @@ namespace NarrativeEngine
         }
     }
 
+    namespace NPCLetterAction_Cooldowns
+    {
+        void OnLetterDelivered(RE::FormID senderNpcFormID)
+        {
+            if (senderNpcFormID == 0) return;
+            const double nowHours = LetterCurrentGameHours();
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                g_senderLastDeliveryGameHours[senderNpcFormID] = nowHours;
+            }
+            logger::info(
+                "NPCLetterAction: per-sender cooldown stamp set for 0x{:08X} at "
+                "gameHours={:.2f}",
+                senderNpcFormID, nowHours);
+        }
+
+        bool IsSenderOnCooldown(RE::FormID senderNpcFormID)
+        {
+            const int cooldownHours = Settings::Get().letterSenderCooldownGameHours;
+            if (cooldownHours <= 0 || senderNpcFormID == 0)
+                return false;
+            double stamp = 0.0;
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                auto it = g_senderLastDeliveryGameHours.find(senderNpcFormID);
+                if (it == g_senderLastDeliveryGameHours.end())
+                    return false;
+                stamp = it->second;
+            }
+            if (stamp <= 0.0) return false;
+            const double elapsed = LetterCurrentGameHours() - stamp;
+            return elapsed < static_cast<double>(cooldownHours);
+        }
+    }
+
+    namespace NPCLetterAction_Persistence
+    {
+        constexpr std::uint32_t kRecordVersion = 1;
+
+        void OnSave(SKSE::SerializationInterface *intfc)
+        {
+            if (!intfc) return;
+            if (!intfc->OpenRecord(kRecordTypeId, kRecordVersion))
+            {
+                logger::error("NPCLetterAction::OnSave: OpenRecord failed");
+                return;
+            }
+
+            // Snapshot under lock, then write outside the lock so
+            // SKSE's serialization thread doesn't hold g_cooldownMutex
+            // during file I/O.
+            double lastDispatch = 0.0;
+            std::vector<std::pair<RE::FormID, double>> senderStamps;
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                lastDispatch = g_lastDispatchGameHours;
+                senderStamps.reserve(g_senderLastDeliveryGameHours.size());
+                for (const auto &kv : g_senderLastDeliveryGameHours)
+                {
+                    senderStamps.emplace_back(kv.first, kv.second);
+                }
+            }
+
+            intfc->WriteRecordData(lastDispatch);
+            const std::uint32_t count = static_cast<std::uint32_t>(senderStamps.size());
+            intfc->WriteRecordData(count);
+            for (const auto &kv : senderStamps)
+            {
+                intfc->WriteRecordData(kv.first);
+                intfc->WriteRecordData(kv.second);
+            }
+        }
+
+        void OnLoad(SKSE::SerializationInterface *intfc,
+                    std::uint32_t                 version,
+                    std::uint32_t                 length)
+        {
+            if (!intfc) return;
+            if (version != kRecordVersion)
+            {
+                logger::warn(
+                    "NPCLetterAction::OnLoad: unknown version {} (length={}); "
+                    "clearing cooldown state",
+                    version, length);
+                OnRevert();
+                return;
+            }
+
+            double lastDispatch = 0.0;
+            if (intfc->ReadRecordData(lastDispatch) != sizeof(lastDispatch))
+            {
+                logger::error(
+                    "NPCLetterAction::OnLoad: short read on lastDispatch stamp; clearing");
+                OnRevert();
+                return;
+            }
+            std::uint32_t count = 0;
+            if (intfc->ReadRecordData(count) != sizeof(count))
+            {
+                logger::error(
+                    "NPCLetterAction::OnLoad: short read on sender-count; clearing");
+                OnRevert();
+                return;
+            }
+
+            std::unordered_map<RE::FormID, double> loaded;
+            loaded.reserve(count);
+            for (std::uint32_t i = 0; i < count; ++i)
+            {
+                RE::FormID fid = 0;
+                double     h   = 0.0;
+                if (intfc->ReadRecordData(fid) != sizeof(fid) ||
+                    intfc->ReadRecordData(h) != sizeof(h))
+                {
+                    logger::error(
+                        "NPCLetterAction::OnLoad: short read on sender entry {}; "
+                        "clearing everything and bailing",
+                        i);
+                    OnRevert();
+                    return;
+                }
+                // ResolveFormID converts saved formIDs across load-order
+                // changes. If the sender's mod is no longer loaded, skip
+                // the entry rather than resurrecting a stale FormID.
+                RE::FormID resolved = 0;
+                if (intfc->ResolveFormID(fid, resolved) && resolved != 0)
+                {
+                    loaded[resolved] = h;
+                }
+            }
+
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                g_lastDispatchGameHours       = lastDispatch;
+                g_senderLastDeliveryGameHours = std::move(loaded);
+            }
+            logger::info(
+                "NPCLetterAction::OnLoad: restored lastDispatchGameHours={:.2f}, "
+                "senderCount={}",
+                lastDispatch,
+                count);
+        }
+
+        void OnRevert()
+        {
+            std::scoped_lock lock(g_cooldownMutex);
+            g_lastDispatchGameHours = 0.0;
+            g_senderLastDeliveryGameHours.clear();
+        }
+    }
+
     std::string NPCLetterAction::Name() const
     {
         return "npc_letter";
@@ -1040,6 +1230,34 @@ namespace NarrativeEngine
             return blocked("WICourier quest not resolved");
         }
 
+        // Per-action in-game-hours cooldown. Stamped by DetectCompletion
+        // when a dispatch verifies as landed in the courier container.
+        const int cooldownHours = Settings::Get().letterActionCooldownGameHours;
+        if (cooldownHours > 0)
+        {
+            double lastDispatch = 0.0;
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                lastDispatch = g_lastDispatchGameHours;
+            }
+            if (lastDispatch > 0.0)
+            {
+                const double nowHours = LetterCurrentGameHours();
+                const double elapsed  = nowHours - lastDispatch;
+                if (elapsed < static_cast<double>(cooldownHours))
+                {
+                    if (debug)
+                    {
+                        logger::debug(
+                            "NPCLetterAction::IsAvailable: blocked (per-action cooldown: "
+                            "elapsed={:.2f}h < cooldown={}h, lastDispatch={:.2f}h current={:.2f}h)",
+                            elapsed, cooldownHours, lastDispatch, nowHours);
+                    }
+                    return false;
+                }
+            }
+        }
+
         // Location must not be flagged dangerous (dungeon / lair / camp).
         if (ctx.player)
         {
@@ -1084,6 +1302,22 @@ namespace NarrativeEngine
     StartResult NPCLetterAction::Start(const ActionContext &ctx,
                                        const nlohmann::json &parameters)
     {
+        // Reset the dispatch-chain state atomics at the very top of
+        // Start, before any allocator or IAction poll can observe stale
+        // state left over from a prior successful dispatch. If we only
+        // reset inside DispatchLetterViaPerSlotQuest, the ~1–2s
+        // LetterComposer LLM window between Allocate and the actual
+        // dispatch runs with the previous dispatch's completion
+        // timestamp still live, so the IAction poll computes
+        // `sinceChainDone = now - <old timestamp>` (arbitrarily large)
+        // and fires a spurious "Phase C failure" rollback against the
+        // brand-new in-flight slot. Zeroing here means the poll's
+        // "chainCompletedAt <= 0 → still setting up, don't fail yet"
+        // gate keeps it silent until this dispatch's chain actually
+        // completes.
+        g_dispatchChainCompletedAt.store(0.0);
+        g_dispatchChainFailed.store(false);
+
         // 1. Allocate a pool slot up-front. If this fails the dispatcher
         // gets an immediate started=false with no LLM round-trip cost.
         auto alloc = LetterPool::Allocate();
@@ -1329,6 +1563,21 @@ namespace NarrativeEngine
             "after {:.1f}s; action complete (slot stays PendingDelivery until "
             "courier hands off to player)",
             bookFormID, secondsSinceStart);
+
+        // Stamp the per-action in-game-hours cooldown. Done here (on
+        // successful courier deposit), not in the delivery-to-player
+        // path, so the action-level pacing starts as soon as we know
+        // the letter is in flight — not when it arrives, which can be
+        // an arbitrarily long game-time delay depending on where the
+        // player wanders.
+        const double dispatchHours = LetterCurrentGameHours();
+        {
+            std::scoped_lock lock(g_cooldownMutex);
+            g_lastDispatchGameHours = dispatchHours;
+        }
+        logger::info(
+            "NPCLetterAction: per-action cooldown stamp set to gameHours={:.2f}",
+            dispatchHours);
 
         // Advance the per-slot quest to its terminal Stage 200, which
         // Papyrus uses to Stop + Reset the quest so it's ready for the

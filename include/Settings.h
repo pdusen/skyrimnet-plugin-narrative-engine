@@ -107,6 +107,24 @@ namespace NarrativeEngine::Settings
         int letterDispatchVerifyDelaySeconds     = 5;    // grace window before DetectAndRollbackFailedStart gives up
         int letterPendingDeliveryTimeoutSeconds  = 600;  // load-time demotion gate for stuck PendingDelivery slots
 
+        // Per-action cooldown in *in-game hours* applied after the
+        // letter successfully reaches the vanilla courier container
+        // (Phase C verified by DetectCompletion). Independent of the
+        // global iActionCooldownSeconds real-time cooldown, which
+        // still applies on top. 0 disables. Persists via the action's
+        // own co-save record. See notes in AmbushAction for the same
+        // pattern.
+        int letterActionCooldownGameHours        = 24;
+
+        // Per-sender cooldown in *in-game hours* applied after the
+        // vanilla courier hands the letter to the player (delivery
+        // event). Prevents the same sender from being picked as a
+        // candidate again for this many in-game hours, avoiding the
+        // "three letters from Ancano in one session" pathology. 0
+        // disables the filter. Persists per-sender-FormID in the
+        // action's co-save record.
+        int letterSenderCooldownGameHours        = 72;
+
         // [LetterPool]
         // 0 = silent, 1 = log evictions, 2 = log every state transition.
         int letterPoolEvictionLogVerbosity       = 1;

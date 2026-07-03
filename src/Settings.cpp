@@ -138,6 +138,12 @@ namespace NarrativeEngine::Settings
             g_config.letterPendingDeliveryTimeoutSeconds = static_cast<int>(
                 ini.GetLongValue("Actions", "iLetterPendingDeliveryTimeoutSeconds",
                                  g_config.letterPendingDeliveryTimeoutSeconds));
+            g_config.letterActionCooldownGameHours = static_cast<int>(
+                ini.GetLongValue("Actions", "iLetterActionCooldownGameHours",
+                                 g_config.letterActionCooldownGameHours));
+            g_config.letterSenderCooldownGameHours = static_cast<int>(
+                ini.GetLongValue("Actions", "iLetterSenderCooldownGameHours",
+                                 g_config.letterSenderCooldownGameHours));
 
             g_config.letterPoolEvictionLogVerbosity = static_cast<int>(
                 ini.GetLongValue("LetterPool", "iLetterPoolEvictionLogVerbosity",

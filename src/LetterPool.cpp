@@ -1,5 +1,6 @@
 #include <LetterPool.h>
 
+#include <NPCLetterAction.h>
 #include <Settings.h>
 #include <logger.h>
 
@@ -802,21 +803,28 @@ namespace NarrativeEngine::LetterPool
             logger::error("LetterPool::MarkDelivered: slotIndex {} out of range", slotIndex);
             return;
         }
-        std::scoped_lock lock(g_mutex);
-        auto& slot = g_slots[slotIndex];
-        if (slot.state != State::PendingDelivery) {
-            // Defensive — duplicate container events or moves on a
-            // slot that already advanced shouldn't re-trigger delivery
-            // memory writes (Step 14 hangs the sender-side memory off
-            // this transition).
-            return;
+        RE::FormID senderFormID = 0;
+        {
+            std::scoped_lock lock(g_mutex);
+            auto& slot = g_slots[slotIndex];
+            if (slot.state != State::PendingDelivery) {
+                // Defensive — duplicate container events or moves on a
+                // slot that already advanced shouldn't re-trigger
+                // delivery memory writes (Step 14 hangs the sender-
+                // side memory off this transition).
+                return;
+            }
+            slot.state       = State::InInventory;
+            slot.deliveredAt = NowUnixSeconds();  // overwrite the queued-
+                                                  // with-courier timestamp
+                                                  // set by PopulateSlot.
+            senderFormID     = slot.senderNpcFormID;
+            logger::info("LetterPool: slot {} marked Delivered (InInventory)", slotIndex);
         }
-        slot.state       = State::InInventory;
-        slot.deliveredAt = NowUnixSeconds();  // overwrite the queued-
-                                              // with-courier timestamp
-                                              // set by PopulateSlot.
-        logger::info("LetterPool: slot {} marked Delivered (InInventory)", slotIndex);
+        // Fire the per-sender cooldown stamp outside our mutex to avoid
+        // any risk of lock inversion with NPCLetterAction's own mutex.
         // Step 14 layers the sender-side SkyrimNet memory write here.
+        NPCLetterAction_Cooldowns::OnLetterDelivered(senderFormID);
     }
 
     void MarkDiscardedToContainer(std::size_t slotIndex, RE::TESObjectREFR* destination)
@@ -831,6 +839,32 @@ namespace NarrativeEngine::LetterPool
             "LetterPool: slot {} discarded to container (destFormID=0x{:08X})",
             slotIndex,
             destination ? destination->GetFormID() : 0u);
+
+        // Delete the letter from the destination container BEFORE
+        // EvictSlot clears slot state. EvictSlot's sweep only walks
+        // actors (via ProcessLists) and the current cell, which misses
+        // merchant chests (container REFRs, not actors) — the exact
+        // path a sold letter takes. The destination REFR is already
+        // handed to us here; do the removal directly.
+        //
+        // kRemove with a null moveToRef despawns the item outright,
+        // matching the player-inventory sweep pattern in EvictSlot.
+        RE::FormID bookFormID = 0;
+        {
+            std::scoped_lock lock(g_mutex);
+            bookFormID = g_slots[slotIndex].bookFormID;
+        }
+        if (destination && bookFormID != 0) {
+            auto* book = LookupBook(bookFormID);
+            if (book) {
+                destination->RemoveItem(
+                    book,
+                    std::numeric_limits<std::int32_t>::max(),
+                    RE::ITEM_REMOVE_REASON::kRemove,
+                    nullptr, nullptr);
+            }
+        }
+
         EvictSlot(slotIndex);
     }
 

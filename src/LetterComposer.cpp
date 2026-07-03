@@ -2,6 +2,7 @@
 
 #include <EvaluationPipeline.h>
 #include <LLMTextSanitizer.h>
+#include <NPCLetterAction.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <logger.h>
@@ -92,6 +93,7 @@ namespace NarrativeEngine::LetterComposer
             int skippedDead     = 0;
             int skippedDisabled = 0;
             int skippedMissing  = 0;
+            int skippedCooldown = 0;
             for (auto& entry : enrolled) {
                 if (!entry.is_object()) continue;
                 Candidate c;
@@ -120,6 +122,16 @@ namespace NarrativeEngine::LetterComposer
                 }
                 if (actor->IsDisabled()) {
                     ++skippedDisabled;
+                    continue;
+                }
+
+                // Per-sender in-game-hours cooldown. Stamped by
+                // NPCLetterAction_Cooldowns::OnLetterDelivered whenever
+                // the courier hands the player a letter from this NPC.
+                // Prevents the same sender from being picked back-to-
+                // back in a way that reads as repetitive.
+                if (NPCLetterAction_Cooldowns::IsSenderOnCooldown(c.formId)) {
+                    ++skippedCooldown;
                     continue;
                 }
 
@@ -155,11 +167,13 @@ namespace NarrativeEngine::LetterComposer
                 out.push_back(std::move(c));
             }
 
-            if (skippedMissing || skippedDead || skippedDisabled) {
+            if (skippedMissing || skippedDead || skippedDisabled || skippedCooldown) {
                 logger::info(
                     "LetterComposer: filtered candidates (kept={}, "
-                    "skipped: missing-actor={}, dead={}, disabled={})",
-                    out.size(), skippedMissing, skippedDead, skippedDisabled);
+                    "skipped: missing-actor={}, dead={}, disabled={}, "
+                    "sender-cooldown={})",
+                    out.size(), skippedMissing, skippedDead, skippedDisabled,
+                    skippedCooldown);
             }
             return out;
         }

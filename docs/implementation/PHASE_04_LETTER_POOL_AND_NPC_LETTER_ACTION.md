@@ -2205,7 +2205,7 @@ logic and the full dispatch chain are Step 15's concern.
 
 ### Step 15 — Replace Step 13's stub with the quest-driven dispatch flow (verify on slot 0)
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2317,11 +2317,11 @@ more times only after this end-to-end verification passes.
     returning `true`, VM-dispatch `Quest.SetStage(N)` on the slot's
     delivery quest to route it through Papyrus's terminal-shutdown
     path:
-      - `DetectCompletion` (success) → `SetStage(200)` directly. The
+    - `DetectCompletion` (success) → `SetStage(200)` directly. The
         Stage 200 fragment calls `kmyQuest.Shutdown()`, which does
         `Stop()` + `Reset()` — quest is now in a freshly-startable
         state with all aliases cleared.
-      - `DetectAndRollbackFailedStart` (timeout) → `SetStage(60)`.
+    - `DetectAndRollbackFailedStart` (timeout) → `SetStage(60)`.
         The Stage 60 fragment ("Recycled by C++") routes to
         Stage 200 via `SetStage(200)`, which then runs Shutdown.
         The intermediate stage exists for telemetry — the rollback
