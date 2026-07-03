@@ -187,6 +187,20 @@ namespace NarrativeEngine::SkyrimNetAPI
         }
     }
 
+    std::string GetRecentDialogue(std::uint32_t formId, int maxExchanges)
+    {
+        if (!::PublicGetRecentDialogue) return "[]";
+        if (!::PublicIsMemorySystemReady || !::PublicIsMemorySystemReady()) {
+            return "[]";
+        }
+        try {
+            return ::PublicGetRecentDialogue(formId, maxExchanges);
+        } catch (...) {
+            logger::warn("SkyrimNetAPI::GetRecentDialogue: exception across DLL boundary");
+            return "[]";
+        }
+    }
+
     int AddMemory(std::uint32_t      formId,
                   const std::string& contentText,
                   float              importance,

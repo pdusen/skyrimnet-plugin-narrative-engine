@@ -107,6 +107,13 @@ namespace NarrativeEngine::SkyrimNetAPI
                                     int                maxCount,
                                     const std::string& contextQuery);
 
+    // Returns a JSON array of the most recent dialogue exchanges
+    // between the player and the given NPC (chronological, oldest
+    // first). Each entry is `{speaker, text, gameTime}`. maxExchanges
+    // <= 0 defaults to 10 on the SkyrimNet side. Returns "[]" if
+    // SkyrimNet or its memory system isn't ready.
+    std::string GetRecentDialogue(std::uint32_t formId, int maxExchanges);
+
     // Write a memory to SkyrimNet's per-actor store. Returns the
     // memory's id on success, -1 if SkyrimNet / memory system are
     // unavailable. importance is 0.0..1.0; memoryType is one of

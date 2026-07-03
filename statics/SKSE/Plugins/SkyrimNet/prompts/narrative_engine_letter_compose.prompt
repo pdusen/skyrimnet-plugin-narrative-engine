@@ -3,7 +3,8 @@
    sender; this call embodies them and writes the letter.
    Receives the JSON object produced by LetterComposer::BuildComposePromptContext:
      desired_direction, tension_delta, urgency_hint, min_words, max_words,
-     player_name, sender { form_id, name, memories },
+     player_name,
+     sender { form_id, name, memories, recent_dialogue },
      npc { UUID } — required by SkyrimNet's system_head / character_profile
                     submodules; keys every character-bio decorator. #}
 [ system ]
@@ -106,11 +107,22 @@ letter. Nothing else accompanies it, in fact or in implication.
 
 Think of it as a snapshot of your state of mind, fixed in time. The
 player reads it, your voice lands, and they move on.
-
 ## Your recent memories about {{ player_name }}
 
 {% if length(sender.memories) == 0 %}*No recent player-involving memories on file. Draw on what a person like you would plausibly know about {{ player_name }} from your station, location, and role — but keep the letter's specifics grounded rather than inventing dramatic backstory.*
 {% else %}{% for mem in sender.memories %}- [{{ mem.type }}, {{ mem.age_hours }}h ago{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
+{% endfor %}{% endif %}
+
+{% if length(sender.recent_dialogue) > 0 %}
+## Your recent spoken exchanges with {{ player_name }}
+
+The most recent times the two of you have actually spoken face-to-face,
+oldest first. Use this as a reference for how you address each other in
+practice — vocabulary, warmth, formality, running references — so the
+letter sounds like it comes from the same person {{ player_name }} has
+been talking to.
+
+{% for line in sender.recent_dialogue %}- [{{ line.age_str }}] **{{ line.speaker }}:** {{ line.text }}
 {% endfor %}{% endif %}
 [ end system ]
 
