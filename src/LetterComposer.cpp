@@ -86,12 +86,74 @@ namespace NarrativeEngine::LetterComposer
             Dead,
             Disabled,
             SenderCooldown,
+            CurrentlyLoaded,
+            WalkingDistance,
         };
+
+        // Test whether an actor is within "walking distance" of the
+        // player using Skyrim's Location tree. Location is the right
+        // abstraction here because it cleanly bridges interior /
+        // exterior cells that share the same hub — the Bannered Mare
+        // interior and the Whiterun Market exterior are distinct cells
+        // (so Is3DLoaded doesn't catch cross-cell proximity) but they
+        // both parent up to the Whiterun location. If either actor's
+        // location chain, walked up one level, shares a node with the
+        // other's, they're at the same hub.
+        //
+        // The one-level walk (depth <= 1) is deliberately tight. Going
+        // deeper would fold in the containing Hold and catch Riverwood
+        // NPCs when the player is in Whiterun proper, which stretches
+        // "walking distance" past what it should mean.
+        //
+        // Returns false when either location can't be resolved (the
+        // player is in unmarked wilderness, or the actor's cell has no
+        // location assignment). Better to fail open than to over-filter
+        // on a null-location case we can't reason about.
+        bool IsWithinWalkingDistanceOfPlayer(const RE::Actor* actor)
+        {
+            if (!actor) return false;
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (!player) return false;
+
+            const auto* playerLoc = player->GetCurrentLocation();
+            const auto* actorLoc  = actor->GetCurrentLocation();
+            if (!playerLoc || !actorLoc) return false;
+
+            constexpr int kMaxDepth = 1;
+            std::set<const RE::BGSLocation*> playerAncestry;
+            {
+                const auto* p = playerLoc;
+                for (int i = 0; i <= kMaxDepth && p; ++i) {
+                    playerAncestry.insert(p);
+                    p = p->parentLoc;
+                }
+            }
+            const auto* a = actorLoc;
+            for (int i = 0; i <= kMaxDepth && a; ++i) {
+                if (playerAncestry.contains(a)) return true;
+                a = a->parentLoc;
+            }
+            return false;
+        }
 
         // Test whether a single actor is viable as a letter sender right
         // now: form resolves, actor exists, not dead, not disabled, not
-        // on the per-sender cooldown. Shared between the pool build and
-        // the compose-time re-validation.
+        // on the per-sender cooldown, not currently loaded (present in a
+        // loaded cell — see below), and not within walking distance of
+        // the player (same location hub — see IsWithinWalkingDistanceOfPlayer).
+        // Shared between the pool build and the compose-time
+        // re-validation.
+        //
+        // The `CurrentlyLoaded` and `WalkingDistance` checks overlap
+        // in the common case (loaded actors are usually in the same
+        // hub) but each catches cases the other doesn't:
+        //   - CurrentlyLoaded is triggered by nearby exterior actors
+        //     even outside any named location.
+        //   - WalkingDistance catches an actor across an interior/
+        //     exterior boundary (Whiterun Market NPC vs. player inside
+        //     the Bannered Mare) whose 3D isn't loaded.
+        // Check loaded first so the more specific reason surfaces in
+        // the log when both apply.
         SenderViability CheckSenderViability(RE::FormID formId)
         {
             auto* form  = RE::TESForm::LookupByID(formId);
@@ -99,6 +161,8 @@ namespace NarrativeEngine::LetterComposer
             if (!actor)                                              return SenderViability::MissingActor;
             if (actor->IsDead())                                     return SenderViability::Dead;
             if (actor->IsDisabled())                                 return SenderViability::Disabled;
+            if (actor->Is3DLoaded())                                 return SenderViability::CurrentlyLoaded;
+            if (IsWithinWalkingDistanceOfPlayer(actor))              return SenderViability::WalkingDistance;
             if (NPCLetterAction_Cooldowns::IsSenderOnCooldown(formId)) return SenderViability::SenderCooldown;
             return SenderViability::Viable;
         }
@@ -106,11 +170,13 @@ namespace NarrativeEngine::LetterComposer
         const char* SenderViabilityName(SenderViability v)
         {
             switch (v) {
-                case SenderViability::Viable:         return "viable";
-                case SenderViability::MissingActor:   return "missing-actor";
-                case SenderViability::Dead:           return "dead";
-                case SenderViability::Disabled:       return "disabled";
-                case SenderViability::SenderCooldown: return "sender-cooldown";
+                case SenderViability::Viable:          return "viable";
+                case SenderViability::MissingActor:    return "missing-actor";
+                case SenderViability::Dead:            return "dead";
+                case SenderViability::Disabled:        return "disabled";
+                case SenderViability::SenderCooldown:  return "sender-cooldown";
+                case SenderViability::CurrentlyLoaded: return "currently-loaded";
+                case SenderViability::WalkingDistance: return "walking-distance";
             }
             return "unknown";
         }
@@ -312,11 +378,13 @@ namespace NarrativeEngine::LetterComposer
             return out;
         }
 
-        int skippedDead       = 0;
-        int skippedDisabled   = 0;
-        int skippedMissing    = 0;
-        int skippedCooldown   = 0;
-        int skippedNoMemories = 0;
+        int skippedDead          = 0;
+        int skippedDisabled      = 0;
+        int skippedMissing       = 0;
+        int skippedCooldown      = 0;
+        int skippedLoaded        = 0;
+        int skippedWalkingDist   = 0;
+        int skippedNoMemories    = 0;
         for (auto& entry : enrolled) {
             if (!entry.is_object()) continue;
             if (static_cast<int>(out.size()) >= kCandidateRenderCap) {
@@ -342,14 +410,21 @@ namespace NarrativeEngine::LetterComposer
             // then silently fail the alias-fill, leaving `LetterRef`
             // empty and stranding the dispatch. Filter them out here.
             //
+            // Also drops candidates whose 3D is currently loaded:
+            // they're near enough to the player to just walk up and
+            // speak instead of writing. Sending a letter from someone
+            // the player could see across the room breaks the fiction.
+            //
             // Also enforces the per-sender in-game-hours cooldown
             // (stamped by NPCLetterAction_Cooldowns::OnLetterDelivered).
             switch (CheckSenderViability(c.formId)) {
-                case SenderViability::Viable:                                break;
-                case SenderViability::MissingActor:   ++skippedMissing;  continue;
-                case SenderViability::Dead:           ++skippedDead;     continue;
-                case SenderViability::Disabled:       ++skippedDisabled; continue;
-                case SenderViability::SenderCooldown: ++skippedCooldown; continue;
+                case SenderViability::Viable:                                     break;
+                case SenderViability::MissingActor:    ++skippedMissing;      continue;
+                case SenderViability::Dead:            ++skippedDead;         continue;
+                case SenderViability::Disabled:        ++skippedDisabled;     continue;
+                case SenderViability::SenderCooldown:  ++skippedCooldown;     continue;
+                case SenderViability::CurrentlyLoaded: ++skippedLoaded;       continue;
+                case SenderViability::WalkingDistance: ++skippedWalkingDist;  continue;
             }
 
             if (auto it = entry.find("name"); it != entry.end() && it->is_string()) {
@@ -384,13 +459,16 @@ namespace NarrativeEngine::LetterComposer
         }
 
         if (skippedMissing || skippedDead || skippedDisabled ||
-            skippedCooldown || skippedNoMemories) {
+            skippedCooldown || skippedLoaded || skippedWalkingDist ||
+            skippedNoMemories) {
             logger::info(
                 "LetterComposer: filtered candidates (kept={}, "
                 "skipped: missing-actor={}, dead={}, disabled={}, "
-                "sender-cooldown={}, no-significant-memories={})",
+                "sender-cooldown={}, currently-loaded={}, "
+                "walking-distance={}, no-significant-memories={})",
                 out.size(), skippedMissing, skippedDead, skippedDisabled,
-                skippedCooldown, skippedNoMemories);
+                skippedCooldown, skippedLoaded, skippedWalkingDist,
+                skippedNoMemories);
         }
 
         // Shuffle before returning. SkyrimNet emits engagement in
