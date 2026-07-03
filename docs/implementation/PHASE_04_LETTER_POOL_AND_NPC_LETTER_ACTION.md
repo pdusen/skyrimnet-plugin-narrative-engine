@@ -434,7 +434,8 @@ The prompt — `statics/SKSE/Plugins/SkyrimNet/prompts/narrative_engine_letter_c
     engagement_score,
     last_interacted_at,
     memories: [   // this candidate's memory tail involving the player —
-                  // pulled via PublicGetMemoriesForActor(form_id, ~6, "Dragonborn")
+                  // pulled via PublicGetMemoriesForActor(form_id, ~6, <player_name>)
+                  // where <player_name> is the player actor's live display name,
                   // so the semantic-search rank biases toward player-involving
                   // entries. Each memory:
         { text, importance, timestamp, type },
@@ -444,7 +445,7 @@ The prompt — `statics/SKSE/Plugins/SkyrimNet/prompts/narrative_engine_letter_c
   ```
 
   No separate top-level player-events array — every memory is already attributed to
-  the candidate who holds it, in that candidate's own voice ("I saw the Dragonborn
+  the candidate who holds it, in that candidate's own voice ("I saw <player_name>
   defeat a dragon at Whiterun" rather than "the player defeated a dragon at
   Whiterun"). That's exactly the shape the letter LLM needs to author a letter from
   any given candidate's perspective without having to cross-reference a global feed.
@@ -540,25 +541,47 @@ cognitively engaged with the letter:
    `LetterPool::MarkDelivered`):
 
    ```
-   formId       = sender_npc_form_id
-   contentText  = "Sent a letter to the Dragonborn about <topic_tag>."
-   importance   = mood → importance map (urgent/menacing/mournful → ~0.7; warm → ~0.5;
-                  neutral/businesslike → ~0.3)
-   memoryType   = "EXPERIENCE"
-   emotion      = mood
-   location     = sender NPC's known location (via SkyrimNet's GetNPCLocation if
-                  exposed; fall back to player's location)
+   formId            = sender_npc_form_id
+   contentText       = "I wrote and sent a letter to <player_name>. The contents were as follows:\n\n<full_letter_text>"
+                       where <player_name> is the player actor's live display name
+                       (never the epithet "Dragonborn" or any other title) and
+                       <full_letter_text> is the composed letter body verbatim
+   importance        = mood → importance map (urgent/menacing/mournful → ~0.7; warm → ~0.5;
+                       neutral/businesslike → ~0.3)
+   memoryType        = "EXPERIENCE"
+   emotion           = mood
+   location          = sender NPC's known location (via SkyrimNet's GetNPCLocation if
+                       exposed; fall back to player's location)
+   relatedActorsJson = "[<player_form_id_hex>]" — single-element JSON array of the
+                       player FormID (0x14), so SkyrimNet cross-links this memory
+                       to the player for later recall
+   tagsJSON          = JSON string array — de-duplicated union of the composer's
+                       `topic_tag` (a single string) and `tags` (an array of 2–6
+                       facet strings). `topic_tag` first, then tags entries that
+                       aren't already present (case-insensitive comparison). E.g.
+                       `["debt repayment", "smithing contract", "Whiterun market"]`.
+                       nullptr when both fields are empty — never synthesized from
+                       mood or other fields.
    ```
 
 2. **Player memory of receiving** — fired at read (in `LetterPool::MarkRead`):
 
    ```
-   formId       = player FormID (0x14)
-   contentText  = "Received a letter from <sender_label> — <topic_tag>."
-   importance   = same mood → importance map
-   memoryType   = "EXPERIENCE"
-   emotion      = mood
-   location     = player's current location at read time
+   formId            = player FormID (0x14)
+   contentText       = "I received and read a letter from <sender>. The contents were as follows:\n\n<full_letter_text>"
+                       where <sender> is the sender NPC's live display name and
+                       <full_letter_text> is the same composed letter body verbatim
+                       that was persisted on the sender's side
+   importance        = same mood → importance map
+   memoryType        = "EXPERIENCE"
+   emotion           = mood
+   location          = player's current location at read time
+   relatedActorsJson = "[<sender_npc_form_id_hex>]" — single-element JSON array of
+                       the sender NPC's FormID, mirroring the sender-side write so
+                       recall is symmetric across both actors
+   tagsJSON          = identical to the sender-side write's tagsJSON — the same
+                       de-duplicated union of `topic_tag` and `tags`, so both
+                       actors' memories share subject vocabulary
    ```
 
 The asymmetry is deliberate and models actual cognitive engagement:
@@ -1664,7 +1687,8 @@ yet — this step verifies the prompt round-trips and the response parses.
 - `src/LetterComposer.cpp` — builds the candidate pool by calling
   `PublicGetActorEngagement` (top 12 by engagement), then for each candidate
   calls `PublicGetMemoriesForActor(form_id, kPerCandidateMemoryCap,
-  "Dragonborn")` to pull a player-relevant memory tail from that candidate's
+  <player_name>)` — where `<player_name>` is the player actor's live display
+  name — to pull a player-relevant memory tail from that candidate's
   perspective. Assembles the per-candidate context per the
   **Content-generation LLM call** section, fires `SendCustomPromptToLLM`,
   parses the response with the `StripMarkdownFences` helper Phase 03 already
@@ -1677,7 +1701,8 @@ yet — this step verifies the prompt round-trips and the response parses.
 - Per-candidate memory cap: ~6 entries (`kPerCandidateMemoryCap = 6`). With 12
   candidates that's 72 memory snippets in the prompt — bounded, and each is
   short (a one-line text + small metadata block). The
-  `contextQuery = "Dragonborn"` argument biases SkyrimNet's vector search
+  `contextQuery = <player_name>` argument (resolved from the player actor's
+  live display name) biases SkyrimNet's vector search
   toward player-involving entries; the alternative (empty contextQuery for
   recency-first) is also viable since candidates are already pre-filtered for
   high player engagement, but the semantic bias tightens the relevance signal.
@@ -2517,17 +2542,100 @@ is purely about the LetterPool's lifecycle hooks for memory integration.
 
 **Files:**
 
+- `statics/SKSE/Plugins/SkyrimNet/prompts/narrative_engine_letter_compose.prompt`:
+  Extend the `## Output Format` block to add a fifth key, `tags`, alongside
+  `sender_label` / `body` / `mood` / `topic_tag`. Spec text (adapt to fit the
+  surrounding formatting):
+
+  > `tags` — array of 2–6 short strings. Additional retrieval tags for the
+  > memory record — concrete nouns and situations the letter's content
+  > touches (e.g. `["debt", "smithing contract", "Whiterun market"]`).
+  > Lowercase, 1–3 words each. Complementary to `topic_tag` (which names
+  > the single primary subject); `tags` captures the surrounding facets
+  > that would make a later dialogue query resurface this memory.
+
+  Also update `## Hard Constraints` to say the response has exactly five
+  keys (was four) and that `tags` MUST be a JSON array of strings, empty
+  array allowed if the letter is genuinely topic-diffuse. Update the
+  header sentence ("Return a JSON object with exactly these four keys.")
+  to say "five keys".
+
+- `include/LetterComposer.h`: add `std::vector<std::string> tags;` to
+  `LetterComposition`. Keep `topicTag` — `topic_tag` is the primary
+  subject and stays as a single string; `tags` is the additional facet
+  set. Neither replaces the other.
+
+- `src/LetterComposer.cpp`: parse the new `tags` array in the response.
+  Each string passes through `LLMTextSanitizer::Sanitize(...)` (same
+  discipline as every other free-form LLM string in this project). Drop
+  empty-after-sanitize entries silently. If the `tags` key is missing or
+  the value isn't a JSON array of strings, log a parse warning and treat
+  it as an empty array — this is a soft-fail, not a validation failure;
+  the letter is still usable without tags. `topic_tag` parsing stays
+  exactly as it is; do not fold `topic_tag` into `tags` at parse time
+  (the memory-write step composes the final `tagsJSON` union, so parse
+  keeps the two fields distinct).
+
 - `src/LetterPool.cpp`:
   - `MarkDelivered` (stubbed in Step 8) now fires the **sender-side**
     `PublicAddMemory` call per the **SkyrimNet memory integration** section
-    (formId = `senderNpcFormID` from the slot, text "Sent a letter to the
-    Dragonborn about <topic_tag>.", importance per mood, emotion = mood,
+    (formId = `senderNpcFormID` from the slot, text `"I wrote and sent a
+    letter to <player_name>. The contents were as follows:\n\n<full_letter_text>"`
+    where `<player_name>` is resolved from the player actor's live display
+    name at write time and `<full_letter_text>` is the composed letter body
+    verbatim, importance per mood, emotion = mood,
     location = sender's known location via `SkyrimNetAPI::GetNPCLocation` if
-    available, falling back to player's location).
+    available, falling back to player's location, **`relatedActorsJson` = a
+    single-element JSON array containing the player's FormID (0x14)** so
+    SkyrimNet's cross-actor recall links this memory to the player).
   - `MarkRead` (stubbed in Step 7) now fires the **player-side**
-    `PublicAddMemory` call (formId = player [0x14], text "Received a letter
-    from <sender_label> — <topic_tag>.", importance per mood, emotion = mood,
-    location = player's current location at read time).
+    `PublicAddMemory` call (formId = player [0x14], text `"I received and
+    read a letter from <sender>. The contents were as follows:\n\n<full_letter_text>"`
+    where `<sender>` is the sender NPC's live display name and
+    `<full_letter_text>` is the same composed letter body verbatim,
+    importance per mood, emotion = mood,
+    location = player's current location at read time, **`relatedActorsJson`
+    = a single-element JSON array containing the sender NPC's FormID** so
+    the recall is symmetric — the player's memory of receiving points back
+    at the sender, mirroring the sender's memory pointing at the player).
+
+  Both sides MUST populate `relatedActorsJson`; the current
+  `SkyrimNetAPI::AddMemory` wrapper hard-codes `nullptr` for the related-actors
+  parameter and needs a new overload (or an extra argument) that forwards a
+  caller-supplied JSON array of related FormIDs. Extend the wrapper in this
+  step rather than shipping this write with related actors omitted — the
+  linkage is what lets SkyrimNet surface "the letter from Ysolda" when the
+  player later talks to Ysolda (and vice-versa).
+
+  Both sides MUST also populate `tagsJSON` from the composer's response.
+  The composer now returns two tag-shaped fields: `topic_tag` (single
+  string, primary subject) and `tags` (array of 2–6 facet strings).
+  Build `tagsJSON` as the **de-duplicated union** of both — start with
+  `topic_tag` as the first element, then append every entry of `tags`
+  that isn't a case-insensitive match against something already in the
+  list. Trim, lowercase-normalize for the comparison only (final entries
+  keep the composer's original casing). Serialize as a JSON string
+  array (e.g. `["debt repayment", "smithing contract", "Whiterun
+  market"]`).
+
+  Same `tagsJSON` on both actors' writes — the letter is one shared
+  event, and both memories should be discoverable under the same subject
+  vocabulary. Never diverge the tag sets between the two writes.
+
+  The wrapper extension for `tagsJSON` mirrors the `relatedActorsJson`
+  change: the current wrapper hard-codes `nullptr` for the tags
+  parameter and needs a new overload/argument to forward the caller's
+  array.
+
+  Edge cases:
+  - `topic_tag` empty/whitespace but `tags` non-empty: use `tags`
+    verbatim.
+  - `tags` missing/empty but `topic_tag` non-empty: single-element
+    `[topic_tag]`.
+  - Both empty: pass `nullptr` for `tagsJSON`. Do NOT fabricate a
+    placeholder tag from `mood`, `sender_label`, or any other field.
+    Tags are only meaningful when they carry the composer's own subject
+    signal; a synthesized tag is worse than none.
 
 **Specifics:**
 
@@ -2544,24 +2652,60 @@ is purely about the LetterPool's lifecycle hooks for memory integration.
   but easy guard).
 - Failure to write either memory is logged but doesn't fail the lifecycle.
   The letter still works; we just lose that side of the recall.
-- The sender's memory text is deliberately first-person from the NPC's frame
-  ("Sent a letter to the Dragonborn about...") so it reads naturally when
-  SkyrimNet surfaces the memory in that NPC's own conversational context
-  later. Same first-person framing for the player ("Received a letter from
-  Ysolda — debt repayment").
+- The memory text on each side is deliberately first-person from that actor's
+  own frame ("I wrote and sent a letter to <player_name>." / "I received and
+  read a letter from <sender>.") so it reads naturally when SkyrimNet
+  surfaces the memory in that actor's own conversational context later.
+- The full composed letter body is embedded verbatim in *both* memory writes,
+  separated from the leading sentence by two newlines. This is deliberate:
+  the letter body is the substantive content the actor is remembering, not
+  its topic tag or mood label. Persisting the full text on both sides means
+  either party can later recall specifics ("what did the letter actually
+  say?") in dialogue with SkyrimNet, rather than only the fact that a letter
+  happened. Do not summarize, truncate, or paraphrase — write the exact body
+  the composer produced.
+- Resolve `<player_name>` from the player actor's live display name at write
+  time and `<sender>` from the sender NPC's live display name — never
+  hard-code "the Dragonborn" or any other epithet. The actor's actual
+  character name is what belongs in every generated string across this
+  project; NPCs address and remember the player by name, not by title.
+- The `relatedActorsJson` payload on each side is the *counterpart* actor —
+  never self-referential and never a broader group. Sender's memory lists
+  `[player_formid]`; player's memory lists `[sender_formid]`. Anything else
+  (empty array, self-reference, additional actors) breaks the symmetric
+  linkage SkyrimNet relies on for cross-actor recall.
+- The `tagsJSON` payload on each side is identical — the same JSON array
+  built from the de-duplicated union of the composer's `topic_tag` and
+  `tags` fields (see the Files section for the union algorithm and edge
+  cases). Both actors' memories of the same letter share the same subject
+  vocabulary so a later dialogue query ("what did I hear about debt
+  repayment?") surfaces both sides. Never diverge the tag sets between
+  the two writes.
 
 **Verify:** Build clean. Trigger a letter dispatch.
 
+- Inspect the compose LLM response in the log — the parsed
+  `LetterComposition` should now include a non-empty `tags` array
+  alongside `topic_tag`. If `tags` is missing or malformed, the parse
+  warning should fire but the letter should still be usable.
 - After delivery (before the player opens the letter): log shows
-  `LetterPool: sender NPC memory written (formId=0x..., importance=X)` but
-  NOT a player memory write. Talk to the sender NPC and ask about a letter
+  `LetterPool: sender NPC memory written (formId=0x..., importance=X,
+  tagsJSON=[...])` but NOT a player memory write. The logged `tagsJSON`
+  should be the de-duplicated union — `topic_tag` first, then unique
+  entries from `tags`. Talk to the sender NPC and ask about a letter
   — the sender memory should surface.
 - Talk to a different NPC (not the sender) about the letter — they should
   NOT have any memory of it, because the player never read it (so the
   player's memory was never written, so SkyrimNet has no recall to surface).
 - Now read the letter. Log shows `LetterPool: player memory written
-  (importance=X)`. Talk to any NPC about a recent letter — the player
-  memory should surface.
+  (importance=X, tagsJSON=[...])` with the exact same `tagsJSON` value
+  as the sender-side write. Talk to any NPC about a recent letter — the
+  player memory should surface.
+- Query SkyrimNet's memory system for one of the specific `tags` entries
+  (via dialogue or debug tooling). Both the sender and player memories
+  for this letter should be retrievable through that tag, confirming the
+  facet tags are actually indexed rather than the query only matching
+  `topic_tag`.
 
 ---
 
