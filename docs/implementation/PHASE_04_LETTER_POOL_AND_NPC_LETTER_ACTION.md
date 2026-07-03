@@ -1519,8 +1519,8 @@ transition the slot to `Read`. Same pattern the smoke test proved.
 
 - `MarkRead` fires the **player-side** SkyrimNet memory write (the player only
   "knows what was in the letter" once they actually open it). The sender-side
-  memory fires at delivery instead (Step 17). The memory call itself is added
-  in Step 17; for this step, `MarkRead` just sets the slot state, `readAt`
+  memory fires at delivery instead (Step 16). The memory call itself is added
+  in Step 16; for this step, `MarkRead` just sets the slot state, `readAt`
   timestamp, and logs.
 - Stale-event guard same as the smoke test: if the close fires when no slot is in
   state `InInventory` (the player closed BookMenu for a book that wasn't ours), the
@@ -1550,7 +1550,7 @@ Step 13) and reading it should fire `LetterPool: slot N marked Read`.
 - `src/LetterPool.cpp` — implement the three. `MarkDelivered` transitions
   `PendingDelivery → InInventory`, sets `deliveredAt` to the actual delivery
   time, and leaves the **sender-side** SkyrimNet memory write as a stub to be
-  filled in by Step 17. (The player-side memory write does NOT fire here;
+  filled in by Step 16. (The player-side memory write does NOT fire here;
   that lives on `MarkRead`. No container handle is stored on the slot — the
   player's identity is implicit in the `InInventory` state, per the **Slot
   container tracking** subsection in Core concepts.)
@@ -1840,7 +1840,7 @@ which the action does not gate on.
   in-flight, applies cooldown, and the LetterPool slot stays in
   `PendingDelivery` until `TESContainerChangedEvent` fires with the player as
   the receiving container (which transitions it to `InInventory` and triggers
-  the sender-side memory write — see Step 17).
+  the sender-side memory write — see Step 16).
 - **Logging.** Both polls log at debug level on every invocation
   (`LetterAction: verify@<secondsSinceStart>s — courier has N copies`) so the
   verification timeline is visible in the log.
@@ -1880,7 +1880,7 @@ compiles, so the user iterates on both at once.)
 strategy at minimum scope — the reusable Papyrus script plus one
 delivery quest bound to pool slot 0. The other 19 quests don't get
 duplicated until Step 15's C++ orchestration is end-to-end verified
-against this single quest (see Step 16). Duplicating 20 identical quests
+against this single quest (see Step 19). Duplicating 20 identical quests
 is cheap; redoing them after we discover the alias / stage setup needs a
 tweak is not.
 
@@ -2002,7 +2002,7 @@ fragment calls into.
 auto-generated `QF_<EditorID>_<FormID>.psc` script, which is unique
 per quest. Logic placed in a fragment gets duplicated across all 20
 delivery quests when we duplicate `_ne_PooledLetterQuest01` in
-Step 16 — twenty copies of the same `if letterObjRef == None …` block
+Step 19 — twenty copies of the same `if letterObjRef == None …` block
 that all have to be re-edited together if the logic ever changes.
 `_ne_PooledLetterQuest.psc`, by contrast, is the **single attached
 script** referenced by all 20 quests; one edit there changes the
@@ -2016,8 +2016,8 @@ copies essentially no logic.
 |     0 | Startup; Sender filled via faction FMR, LetterRef spawned via Create-in-Sender | Engine (Startup Stage flag) on `EnsureQuestStarted`, after its alias-fill pass runs | `SetStage(10)` (auto-advance)                                                                          |
 |    10 | Queue letter for courier                    | Stage 0 fragment                                   | Calls `kmyQuest.DispatchLetterToCourier()` on the attached script. The function reads `LetterRef.GetReference()`; on non-None it dispatches to vanilla WICourier; on None it logs and self-routes via `SetStage(60)`. |
 |    20 | In courier container (verified)             | C++ `DetectCompletion` poll once the pool book is found in `WICourierContainerRef` | Empty marker. (Director-side action completion happens C++-side at this same point.)                   |
-|    30 | Delivered to player inventory               | C++ `TESContainerChangedEvent` sink (`newContainer == player`) | Empty marker. (Sender-side SkyrimNet memory write fires C++-side at this same point — Step 17.)        |
-|    40 | Read by player                              | C++ `MenuOpenCloseEvent` sink (BookMenu close)     | Empty marker. (Player-side SkyrimNet memory write fires C++-side at this same point — Step 17.)        |
+|    30 | Delivered to player inventory               | C++ `TESContainerChangedEvent` sink (`newContainer == player`) | Empty marker. (Sender-side SkyrimNet memory write fires C++-side at this same point — Step 16.)        |
+|    40 | Read by player                              | C++ `MenuOpenCloseEvent` sink (BookMenu close)     | Empty marker. (Player-side SkyrimNet memory write fires C++-side at this same point — Step 16.)        |
 |    50 | Disposed by player (sold / dropped / given) | C++ `TESContainerChangedEvent` sink (`oldContainer == player`, `newContainer != player`) | `SetStage(200)` — routes to the terminal shutdown stage. No defensive scan needed (player already moved the letter). |
 |    60 | Recycled by C++ allocator (eviction or failed dispatch) | C++ allocator on eviction; Stage 10's `DispatchLetterToCourier` self-sets it on a None `LetterRef`. The C++-side defensive scan runs *before* C++ sets this stage. | `SetStage(200)` — routes to the terminal shutdown stage. |
 |   200 | Terminal shutdown                            | Stages 50 and 60 fragments                         | Calls `kmyQuest.Shutdown()` on the attached script (`Stop()` + `Reset()` — clears alias fills and stage back to a freshly-authored quest ready for the next allocation). |
@@ -2135,7 +2135,7 @@ CK-side stage configuration (in the Quest Stages tab):
   natural storage for data that was authored in C++ and consumed in
   C++.
 - `Sender` and `LetterRef` are wired by alias *name*, not by index.
-  Every per-slot quest (this one, and the 19 in Step 16) must use
+  Every per-slot quest (this one, and the 19 in Step 19) must use
   those exact alias names so the script binds correctly on each
   attachment.
 - The remaining `Debug.Trace` call in `DispatchLetterToCourier` is a
@@ -2158,7 +2158,7 @@ CK-side stage configuration (in the Quest Stages tab):
   dispatch chain rolls back immediately with a specific diagnostic.
   With Optional ON, the failure would silently proceed to Stage 10's
   None-guard and self-recycle — slower to diagnose and less specific.
-- The SkyrimNet memory writes (Step 17) deliberately fire C++-side
+- The SkyrimNet memory writes (Step 16) deliberately fire C++-side
   from the same event sinks that set stages 30 / 40, **not** from
   the stage fragments. Reason: `PublicAddMemory` is a C++ API; a
   Papyrus → C++ call requires a ModEvent round-trip and gains
@@ -2172,7 +2172,7 @@ CK-side stage configuration (in the Quest Stages tab):
 - Because only slot 0's quest exists in this step, Step 15's C++
   resolver will report 19 unresolved quests and disable slots 1–19
   from the allocator. That's expected for bring-up; every test
-  dispatch in Step 15 will route through slot 0. Step 16 fills in
+  dispatch in Step 15 will route through slot 0. Step 19 fills in
   the rest once the pipeline is proven.
 
 **Verify:** Open xEdit on `NarrativeEngine.esp`. Confirm:
@@ -2226,7 +2226,7 @@ This step's verification is the end-to-end correctness test for the new
 strategy, run against the **single** `_ne_PooledLetterQuest01` authored
 in Step 14. Only slot 0 has a quest in this step; slots 1–19 are
 correctly skipped by the allocator's unresolved-quest gate, so every
-test dispatch routes through slot 0. Step 16 duplicates the quest 19
+test dispatch routes through slot 0. Step 19 duplicates the quest 19
 more times only after this end-to-end verification passes.
 
 **Files:**
@@ -2387,7 +2387,7 @@ more times only after this end-to-end verification passes.
   diagnosis. During this step it is **expected** that only 1 of 20
   resolves (the lone `_ne_PooledLetterQuest01` from Step 14) — the
   remaining 19 missing-EditorID lines are bring-up artifacts, not
-  errors, and disappear once Step 16 adds the rest.
+  errors, and disappear once Step 19 adds the rest.
 - `_ne_PooledLetterQuestN` quest resolution at `kDataLoaded` uses
   `RE::TESForm::LookupByEditorID`, same path as the pool books in Step 4.
   The 20 quests are looked up alongside the 20 books and stored in
@@ -2498,68 +2498,11 @@ quest-driven flow, and survive the `Shutdown` → next-allocation →
 `EnsureQuestStarted` cycle without leaking state. Faction demote
 should fire on every completion. If the second dispatch fails where
 the first succeeded, either the quest-reuse path or the faction-
-cleanup path is broken — fix before proceeding to Step 16.
+cleanup path is broken — fix before proceeding to Step 19.
 
 ---
 
-### Step 16 — Duplicate the remaining 19 delivery quests in Creation Kit
-
-- [ ] Complete
-
-**[USER]**
-
-**Goal:** Now that the single-quest path is end-to-end verified in
-Step 15, duplicate `_ne_PooledLetterQuest01` 19 more times so the full
-pool is available. This is mechanical and low-risk because the script
-binding, alias names, alias flags, and the `WICourier` property all
-stay identical across copies — only the `LetterRef.Object` differs per
-copy.
-
-**Sub-tasks:**
-
-1. Open Creation Kit through MO2; load `NarrativeEngine.esp`.
-2. Duplicate `_ne_PooledLetterQuest01` 19 times via right-click →
-   Duplicate. For each new quest:
-   - Rename EditorID to the next number:
-     `_ne_PooledLetterQuest02` through `_ne_PooledLetterQuest20`.
-   - On the `LetterRef` alias, change the Object pointer to the
-     matching pool book (`_ne_PooledLetter02` through
-     `_ne_PooledLetter20`).
-   - Verify the `_ne_PooledLetterQuest` script is still attached and
-     the `WICourier` property still resolves (duplication should
-     preserve both; spot-check 2–3 of the duplicates explicitly).
-   - Verify both alias names (`Sender`, `LetterRef`) and all alias
-     flags survived the duplicate unchanged.
-3. Save the ESP.
-
-**Specifics:**
-
-- The 20 quests must be mechanically identical structurally; only the
-  `LetterRef.Object` differs. The script binding, the `Sender` alias,
-  the `WICourier` property, and the alias names all stay constant —
-  that's what lets the single Step 14 script and alias setup propagate
-  correctly across all 20.
-- CK has a known quirk where duplicating a quest with an attached
-  script sometimes drops the script's property values. If the spot
-  check finds `WICourier` unset on a duplicate, re-set it manually on
-  each affected copy.
-
-**Verify:** Open xEdit on `NarrativeEngine.esp`. Confirm 20 QUST
-records named `_ne_PooledLetterQuest01..20` exist, each with two
-reference aliases (`Sender` and `LetterRef`), each with the
-`_ne_PooledLetterQuest` script attached, each with the `WICourier`
-property set to `0x00039F82`, and each `LetterRef.ALCO` pointing at
-the matching pool Book FormID (slot N → pool book N). Run
-`pwsh -File build.ps1 build`; boot Skyrim; SKSE log shows
-`NPCLetterAction: resolved per-slot delivery quests (20 of 20)` with
-no missing-EditorID lines. Trigger a handful of dispatches and
-confirm the allocator now spreads across slots beyond slot 0 (e.g.
-exhaust the pool deliberately to force eviction and verify multiple
-slot indices appear in the dispatch log).
-
----
-
-### Step 17 — SkyrimNet memory writes (sender at delivery, player at read)
+### Step 16 — SkyrimNet memory writes (sender at delivery, player at read)
 
 - [ ] Complete
 
@@ -2622,7 +2565,7 @@ is purely about the LetterPool's lifecycle hooks for memory integration.
 
 ---
 
-### Step 18 — Dashboard: tab bar + Letters tab (pool + recent-dispatch detail)
+### Step 17 — Dashboard: tab bar + Letters tab (pool + recent-dispatch detail)
 
 - [ ] Complete
 
@@ -2708,7 +2651,7 @@ dispatch:
 
 ---
 
-### Step 19 — End-to-end verification
+### Step 18 — End-to-end verification
 
 - [ ] Complete
 
@@ -2765,12 +2708,70 @@ the actual in-game inventory state.
 
 ---
 
+### Step 19 — Duplicate the remaining 19 delivery quests in Creation Kit
+
+- [ ] Complete
+
+**[USER]**
+
+**Goal:** Now that the single-quest path is end-to-end verified in
+Step 15 and the memory writes, dashboard, and integration loop are all
+proven against slot 0, duplicate `_ne_PooledLetterQuest01` 19 more
+times so the full pool is available. This is mechanical and low-risk
+because the script binding, alias names, alias flags, and the
+`WICourier` property all stay identical across copies — only the
+`LetterRef.Object` differs per copy.
+
+**Sub-tasks:**
+
+1. Open Creation Kit through MO2; load `NarrativeEngine.esp`.
+2. Duplicate `_ne_PooledLetterQuest01` 19 times via right-click →
+   Duplicate. For each new quest:
+   - Rename EditorID to the next number:
+     `_ne_PooledLetterQuest02` through `_ne_PooledLetterQuest20`.
+   - On the `LetterRef` alias, change the Object pointer to the
+     matching pool book (`_ne_PooledLetter02` through
+     `_ne_PooledLetter20`).
+   - Verify the `_ne_PooledLetterQuest` script is still attached and
+     the `WICourier` property still resolves (duplication should
+     preserve both; spot-check 2–3 of the duplicates explicitly).
+   - Verify both alias names (`Sender`, `LetterRef`) and all alias
+     flags survived the duplicate unchanged.
+3. Save the ESP.
+
+**Specifics:**
+
+- The 20 quests must be mechanically identical structurally; only the
+  `LetterRef.Object` differs. The script binding, the `Sender` alias,
+  the `WICourier` property, and the alias names all stay constant —
+  that's what lets the single Step 14 script and alias setup propagate
+  correctly across all 20.
+- CK has a known quirk where duplicating a quest with an attached
+  script sometimes drops the script's property values. If the spot
+  check finds `WICourier` unset on a duplicate, re-set it manually on
+  each affected copy.
+
+**Verify:** Open xEdit on `NarrativeEngine.esp`. Confirm 20 QUST
+records named `_ne_PooledLetterQuest01..20` exist, each with two
+reference aliases (`Sender` and `LetterRef`), each with the
+`_ne_PooledLetterQuest` script attached, each with the `WICourier`
+property set to `0x00039F82`, and each `LetterRef.ALCO` pointing at
+the matching pool Book FormID (slot N → pool book N). Run
+`pwsh -File build.ps1 build`; boot Skyrim; SKSE log shows
+`NPCLetterAction: resolved per-slot delivery quests (20 of 20)` with
+no missing-EditorID lines. Trigger a handful of dispatches and
+confirm the allocator now spreads across slots beyond slot 0 (e.g.
+exhaust the pool deliberately to force eviction and verify multiple
+slot indices appear in the dispatch log).
+
+---
+
 ## Done condition
 
 Phase 04 is complete when:
 
 - All 19 implementation steps are checked off.
-- The integration-verification run (Step 19) passes without intervention.
+- The integration-verification run (Step 18) passes without intervention.
 - The SKSE log over a 30-minute in-game session shows letters being dispatched,
   delivered, read, and slots being recycled without errors or stale-lock
   warnings.
