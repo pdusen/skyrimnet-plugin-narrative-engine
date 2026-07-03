@@ -136,6 +136,17 @@ namespace NarrativeEngine::SkyrimNetAPI
         }
     }
 
+    std::uint64_t FormIDToUUID(std::uint32_t formId)
+    {
+        if (!::PublicFormIDToUUID) return 0;
+        try {
+            return ::PublicFormIDToUUID(formId);
+        } catch (...) {
+            logger::warn("SkyrimNetAPI::FormIDToUUID: exception across DLL boundary");
+            return 0;
+        }
+    }
+
     std::string GetActorEngagement(int    maxCount,
                                    bool   excludePlayer,
                                    bool   playerEventsOnly,

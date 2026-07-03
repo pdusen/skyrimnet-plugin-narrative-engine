@@ -145,8 +145,16 @@ namespace NarrativeEngine::LetterComposer
         // the real names are `content` and `importance_score`. Verified
         // against a captured memory payload — do not "fix" back to the
         // doc names.
+        // `includeDiaries` controls the diary-entry filter. Action-
+        // select uses false: the LLM only needs the sender's summary
+        // memories to judge tonal fit, and long first-person diary
+        // rambles just crowd out the shorter, more distinguishing
+        // entries the pick should turn on. Compose uses true: the
+        // sender's diary is exactly the kind of private, in-voice
+        // material a letter-writing prompt should have on hand.
         nlohmann::json FetchSenderMemories(RE::FormID formId,
-                                           const std::string& playerName)
+                                           const std::string& playerName,
+                                           bool               includeDiaries)
         {
             // Over-fetch so client-side importance filtering leaves us
             // with roughly kPerCandidateMemoryCap survivors even when
@@ -175,28 +183,25 @@ namespace NarrativeEngine::LetterComposer
             for (auto& m : raw) {
                 if (!m.is_object()) continue;
 
-                // Diary-entry filter. SkyrimNet's memory store folds
-                // NPC diary entries into the same table that
+                // Diary-entry filter, applied only when
+                // `includeDiaries` is false. SkyrimNet's memory store
+                // folds NPC diary entries into the same table that
                 // PublicGetMemoriesForActor queries, tagged with the
                 // regular `EXPERIENCE` type but with content that
-                // opens with `Diary Entry:`. These are the sender's
-                // private, first-person journaling — hundreds of words
-                // of interior monologue that the *sender* wrote for
-                // themselves, not memories they'd ever draw on when
-                // writing a letter. They also dominate the semantic-
-                // relevance ranking (they're long and mention the
-                // player), pushing out shorter but more directly
-                // useful memories. Drop them here rather than
-                // client-side, so the importance / recency selection
-                // below picks from real memories only. There is no
-                // server-side flag; the content prefix is the only
-                // reliable discriminator we have.
-                if (auto it = m.find("content");
-                    it != m.end() && it->is_string()) {
-                    const auto& contentRef = it->get_ref<const std::string&>();
-                    if (contentRef.rfind("Diary Entry:", 0) == 0) {
-                        ++droppedDiary;
-                        continue;
+                // opens with `Diary Entry:`. There is no server-side
+                // flag; the content prefix is the only reliable
+                // discriminator we have. Callers whose consumers want
+                // in-voice interior monologue (letter composition)
+                // opt in; callers whose consumers just need summary
+                // memory shape (action selection) opt out.
+                if (!includeDiaries) {
+                    if (auto it = m.find("content");
+                        it != m.end() && it->is_string()) {
+                        const auto& contentRef = it->get_ref<const std::string&>();
+                        if (contentRef.rfind("Diary Entry:", 0) == 0) {
+                            ++droppedDiary;
+                            continue;
+                        }
                     }
                 }
 
@@ -368,7 +373,8 @@ namespace NarrativeEngine::LetterComposer
             // others. Drop them entirely rather than render a
             // memory-less entry that biases the LLM toward "there's
             // nothing to say" letters.
-            c.memories = FetchSenderMemories(c.formId, playerName);
+            c.memories = FetchSenderMemories(
+                c.formId, playerName, /*includeDiaries=*/false);
             if (!c.memories.is_array() || c.memories.empty()) {
                 ++skippedNoMemories;
                 continue;
@@ -457,6 +463,26 @@ namespace NarrativeEngine::LetterComposer
             sender["name"]     = senderName;
             sender["memories"] = senderMemories;
             root["sender"]     = std::move(sender);
+
+            // SkyrimNet's system_head / character_profile submodules
+            // read the sender from the `npc.UUID` context key — that's
+            // the seat they use for `decnpc(...)`, `render_character_profile(...)`,
+            // and every downstream personality / bio decorator. Seed
+            // it here so `{{ render_subcomponent("system_head", "full") }}`
+            // in our prompt resolves against the actual letter sender
+            // instead of failing silently or falling back to whoever
+            // the ambient dialogue context points at.
+            const std::uint64_t senderUUID =
+                SkyrimNetAPI::FormIDToUUID(senderFormID);
+            if (senderUUID == 0) {
+                logger::warn(
+                    "LetterComposer: FormIDToUUID(0x{:X}) returned 0; "
+                    "system_head submodules will render against a null NPC",
+                    senderFormID);
+            }
+            nlohmann::json npc = nlohmann::json::object();
+            npc["UUID"] = senderUUID;
+            root["npc"] = std::move(npc);
             return root;
         }
 
@@ -642,7 +668,8 @@ namespace NarrativeEngine::LetterComposer
         // Fresh memories at compose time — captures any SkyrimNet
         // events generated between action-select and compose (the
         // round-trip is seconds, not zero).
-        const auto memories = FetchSenderMemories(senderNpcFormID, playerName);
+        const auto memories = FetchSenderMemories(
+            senderNpcFormID, playerName, /*includeDiaries=*/true);
 
         const auto promptCtx = BuildComposePromptContext(
             ctx, urgencyHint, playerName, senderName, senderNpcFormID, memories);
@@ -662,9 +689,17 @@ namespace NarrativeEngine::LetterComposer
         // forever for a result that never comes.
         auto callbackBackup = callback;
 
+        // Route through SkyrimNet's default LLM variant (empty string),
+        // the same one that services normal NPC dialogue. Letter
+        // composition is a creative-writing task in the sender's voice
+        // — same shape as dialogue generation — so the dialogue-tuned
+        // profile is a better fit than the Director's evaluation
+        // profile. Action selection and tension evaluation stay on
+        // `narrative_engine_director` because those are structured-JSON
+        // decision calls, not authorial voice work.
         const bool queued = SkyrimNetAPI::SendCustomPromptToLLM(
             "narrative_engine_letter_compose",
-            "narrative_engine_director",
+            /*variant=*/"",
             promptCtxStr,
             [callback = std::move(callback),
              senderNpcFormID,

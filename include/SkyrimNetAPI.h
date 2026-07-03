@@ -78,6 +78,12 @@ namespace NarrativeEngine::SkyrimNetAPI
     // unavailable.
     bool IsMemorySystemReady();
 
+    // Convert a Skyrim FormID to SkyrimNet's internal 64-bit UUID.
+    // Needed to seed the `npc.UUID` context variable that SkyrimNet's
+    // character-profile / system_head submodules key on. Returns 0 if
+    // SkyrimNet is unavailable or the actor is unknown to SkyrimNet.
+    std::uint64_t FormIDToUUID(std::uint32_t formId);
+
     // Returns per-actor engagement statistics as a JSON array, ranked
     // by SkyrimNet's internal scoring. Used by NPCLetterAction to pick
     // a sender pool. Empty array if SkyrimNet or its memory system
