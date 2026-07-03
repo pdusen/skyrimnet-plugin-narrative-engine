@@ -103,6 +103,13 @@ namespace NarrativeEngine::Settings
         // PHASE_04_LETTER_POOL_AND_NPC_LETTER_ACTION.md.
         int letterContentMinWords                = 60;   // lower bound on LLM body length
         int letterContentMaxWords                = 180;  // upper bound on LLM body length
+        // Minimum `importance_score` (0.0–1.0) a SkyrimNet memory must
+        // have to be included in the sender's memory tail passed to
+        // the LLM. Filters out low-signal chatter so both the
+        // action-select "who should send this?" pick and the compose
+        // "what should they say?" call see only memories that carried
+        // real weight when they happened.
+        float letterMemoryImportanceThreshold    = 0.4f;
         int letterPoolSize                       = 20;   // informational; ESP defines the actual 20 forms
         int letterDispatchVerifyDelaySeconds     = 5;    // grace window before DetectAndRollbackFailedStart gives up
         int letterPendingDeliveryTimeoutSeconds  = 600;  // load-time demotion gate for stuck PendingDelivery slots

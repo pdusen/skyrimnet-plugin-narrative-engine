@@ -8,6 +8,7 @@
 #include <DecisionLog.h>
 #include <EvaluationPipeline.h>
 #include <LLMTextSanitizer.h>
+#include <LetterComposer.h>
 #include <PhaseTracker.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -293,24 +294,46 @@ namespace NarrativeEngine::ActionDispatcher
         // the full history.
         constexpr std::size_t kActionSelectEventTailSize = 10;
 
-        std::string BuildActionPromptContext(const Snapshot&              snapshot,
-                                             const std::vector<IAction*>& candidates,
-                                             PhaseTracker::Direction       direction,
-                                             int                           tensionDelta)
+        std::string BuildActionPromptContext(
+            const Snapshot&                                    snapshot,
+            const std::vector<IAction*>&                       candidates,
+            PhaseTracker::Direction                            direction,
+            int                                                tensionDelta,
+            const std::vector<LetterComposer::SenderCandidate>& letterSenderCandidates)
         {
             nlohmann::json ctx;
             ctx["desired_direction"] =
                 (direction == PhaseTracker::Direction::Raise) ? "raise" : "lower";
             ctx["tension_delta"] = tensionDelta;
 
-            // candidates
+            // candidates. Sender candidates for npc_letter are attached
+            // inline on that candidate's own entry so the prompt can
+            // render them under the same "## Available actions" block
+            // as its description. Keeping the list co-located with the
+            // action keeps the LLM's attention distributed evenly
+            // across choices — a top-level "letter sender candidates"
+            // block would bias selection toward npc_letter just by
+            // its visual footprint.
+            const auto serializedSenderCandidates =
+                letterSenderCandidates.empty()
+                    ? nlohmann::json::array()
+                    : LetterComposer::SerializeSenderCandidates(letterSenderCandidates);
+            // Every candidate carries a (possibly-empty)
+            // letter_sender_candidates array so the template can render
+            // it with a plain `length(...) > 0` check without needing
+            // an existsIn-style guard.
             nlohmann::json candArr = nlohmann::json::array();
             for (auto* a : candidates) {
                 if (!a) continue;
-                candArr.push_back({
+                nlohmann::json cj = {
                     {"name",        a->Name()},
                     {"description", a->Description()},
-                });
+                    {"letter_sender_candidates",
+                        (a->Name() == "npc_letter")
+                            ? serializedSenderCandidates
+                            : nlohmann::json::array()},
+                };
+                candArr.push_back(std::move(cj));
             }
             ctx["candidates"] = std::move(candArr);
 
@@ -606,14 +629,48 @@ namespace NarrativeEngine::ActionDispatcher
             return;
         }
 
+        // Gate 7: if npc_letter is among the candidates, collect its
+        // sender candidate list up-front so the action-select LLM can
+        // pick a sender at the same time it picks the action. If the
+        // filtered pool falls under the min-candidate threshold, drop
+        // npc_letter from the candidate list rather than exposing the
+        // LLM to a starved (or empty) sender pool.
+        std::vector<LetterComposer::SenderCandidate> letterSenderCandidates;
+        const auto isLetterAction = [](IAction* a) {
+            return a && a->Name() == "npc_letter";
+        };
+        const bool npcLetterPresent =
+            std::any_of(candidates.begin(), candidates.end(), isLetterAction);
+        if (npcLetterPresent) {
+            letterSenderCandidates = LetterComposer::CollectSenderCandidates();
+            const int minSenders = Settings::Get().letterMinSenderCandidates;
+            if (static_cast<int>(letterSenderCandidates.size()) < minSenders) {
+                if (debug) {
+                    logger::debug(
+                        "ActionDispatcher: dropping npc_letter from candidates ({} viable senders < min {})",
+                        letterSenderCandidates.size(), minSenders);
+                }
+                candidates.erase(
+                    std::remove_if(candidates.begin(), candidates.end(), isLetterAction),
+                    candidates.end());
+                letterSenderCandidates.clear();
+                if (candidates.empty()) {
+                    FinalizeWithoutAction(std::move(rec), std::move(onFinalized));
+                    return;
+                }
+            }
+        }
+
         // All gates passed — fire the action-select LLM call.
         const char* dirName = (direction == PhaseTracker::Direction::Raise) ? "raise" : "lower";
         logger::info(
-            "ActionDispatcher: firing action-select (direction={}, tension_delta={}, candidates={}, dwell={:.1f}/{}s)",
-            dirName, tensionDelta, candidates.size(), snapshot.timeInPhaseSeconds, ideal);
+            "ActionDispatcher: firing action-select (direction={}, tension_delta={}, candidates={}, letter_sender_candidates={}, dwell={:.1f}/{}s)",
+            dirName, tensionDelta, candidates.size(), letterSenderCandidates.size(),
+            snapshot.timeInPhaseSeconds, ideal);
 
         const std::string promptCtx =
-            BuildActionPromptContext(snapshot, candidates, direction, tensionDelta);
+            BuildActionPromptContext(snapshot, candidates, direction, tensionDelta,
+                                     letterSenderCandidates);
         if (debug) {
             logger::debug("ActionDispatcher: action-select prompt context: {}", promptCtx);
         }

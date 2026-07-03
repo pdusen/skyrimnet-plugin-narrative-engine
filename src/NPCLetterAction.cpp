@@ -1223,9 +1223,10 @@ namespace NarrativeEngine
 
     std::string NPCLetterAction::Description() const
     {
-        return "An NPC who knows the player character — picked from the player's recent "
-               "interaction history — sends a personal letter via the vanilla "
-               "courier system. Tone and polarity are driven by the generated "
+        return "An NPC who knows the player character — chosen by you at "
+               "action-select time from the letter sender candidates listed "
+               "below — sends a personal letter via the vanilla courier "
+               "system. Tone and polarity are driven by the generated "
                "content: warm thank-yous, mournful condolences, businesslike "
                "follow-ups, and urgent or menacing demands are all in scope, so "
                "this action can serve either a raising or lowering direction "
@@ -1236,15 +1237,23 @@ namespace NarrativeEngine
                "dungeon, lair, or other hostile area (the courier can't get "
                "there anyway, and a letter beat doesn't fit those moments).\n"
                "\n"
-               "Parameters: this action accepts EXACTLY ONE optional "
-               "parameter, `urgency_hint`, a string of `low` / `medium` / "
-               "`high`. Defaults to `medium`. Do NOT include any other "
-               "parameter fields — sender NPC, letter body, tone, mood, "
-               "topic, and recipient are all decided by the action's own "
-               "internal pipeline using the player's recent SkyrimNet "
-               "engagement history. Any other fields you put in "
-               "`parameters` will be silently ignored and won't influence "
-               "the letter that gets sent.";
+               "Parameters:\n"
+               "  - `sender_npc_form_id` (REQUIRED, string): hex FormID of "
+               "ONE entry from the `letter_sender_candidates` list at the "
+               "end of this prompt (e.g. `\"0xA2C8E\"`). Pick the NPC "
+               "whose recent memories about the player best carry the tone "
+               "this moment needs. If this field is missing, unparseable, "
+               "or names a form outside the candidate list, the action "
+               "fails to start.\n"
+               "  - `urgency_hint` (optional, string): `low` / `medium` / "
+               "`high`. Defaults to `medium`. One input among several to "
+               "the letter-writing prompt — not a hard directive.\n"
+               "\n"
+               "Do NOT include any other parameter fields — letter body, "
+               "tone, mood, topic, and recipient are all decided by the "
+               "action's own internal letter-writing pipeline, which "
+               "embodies the sender you chose. Extra fields will be "
+               "silently ignored.";
     }
 
     ActionPolarity NPCLetterAction::Polarity() const
@@ -1342,6 +1351,45 @@ namespace NarrativeEngine
     StartResult NPCLetterAction::Start(const ActionContext &ctx,
                                        const nlohmann::json &parameters)
     {
+        // 1. Parse the required sender_npc_form_id parameter. The
+        // action-select LLM chose the sender from the candidate list;
+        // if that's missing or malformed, fail Start immediately
+        // (before allocating a pool slot) so we don't burn a slot on
+        // a request we can't fulfill.
+        if (!parameters.is_object())
+        {
+            return StartResult{.started = false,
+                               .detail  = "parameters is not a JSON object"};
+        }
+        RE::FormID senderNpcFormID = 0;
+        {
+            auto it = parameters.find("sender_npc_form_id");
+            if (it == parameters.end() || !it->is_string())
+            {
+                return StartResult{
+                    .started = false,
+                    .detail  = "parameters.sender_npc_form_id missing or not a string"};
+            }
+            const auto idStr = it->get<std::string>();
+            try
+            {
+                senderNpcFormID = static_cast<RE::FormID>(
+                    std::stoul(idStr, nullptr, /*base=*/0));
+            }
+            catch (...)
+            {
+                return StartResult{
+                    .started = false,
+                    .detail  = "parameters.sender_npc_form_id unparseable: '" + idStr + "'"};
+            }
+            if (senderNpcFormID == 0)
+            {
+                return StartResult{
+                    .started = false,
+                    .detail  = "parameters.sender_npc_form_id resolved to 0"};
+            }
+        }
+
         // Reset the dispatch-chain state atomics at the very top of
         // Start, before any allocator or IAction poll can observe stale
         // state left over from a prior successful dispatch. If we only
@@ -1358,7 +1406,7 @@ namespace NarrativeEngine
         g_dispatchChainCompletedAt.store(0.0);
         g_dispatchChainFailed.store(false);
 
-        // 1. Allocate a pool slot up-front. If this fails the dispatcher
+        // 2. Allocate a pool slot up-front. If this fails the dispatcher
         // gets an immediate started=false with no LLM round-trip cost.
         auto alloc = LetterPool::Allocate();
         if (!alloc)
@@ -1384,32 +1432,29 @@ namespace NarrativeEngine
             g_lastVerifyLogTime = 0.0;
         }
 
-        // 2. Decode urgency_hint from parameters (low/medium/high).
+        // 3. Decode urgency_hint from parameters (low/medium/high).
         // Defaults to medium when missing or out of range — the action's
         // own LLM call gets the final say on emotional weight via the
         // generated mood.
         LetterComposer::UrgencyHint urgency = LetterComposer::UrgencyHint::Medium;
-        if (parameters.is_object())
+        if (auto it = parameters.find("urgency_hint");
+            it != parameters.end() && it->is_string())
         {
-            if (auto it = parameters.find("urgency_hint");
-                it != parameters.end() && it->is_string())
-            {
-                const auto v = it->get<std::string>();
-                if (v == "low")
-                    urgency = LetterComposer::UrgencyHint::Low;
-                else if (v == "high")
-                    urgency = LetterComposer::UrgencyHint::High;
-            }
+            const auto v = it->get<std::string>();
+            if (v == "low")
+                urgency = LetterComposer::UrgencyHint::Low;
+            else if (v == "high")
+                urgency = LetterComposer::UrgencyHint::High;
         }
 
-        // 3. Fire the async content-LLM call. The callback fires on a
+        // 4. Fire the async content-LLM call. The callback fires on a
         // SkyrimNet worker thread; we marshal back to main before
         // touching engine state. While composing, the action is
         // formally in-flight from the dispatcher's perspective.
         const std::size_t slotForLambda = slotIndex;
         const RE::FormID bookForLambda = bookFormID;
         LetterComposer::Compose(
-            ctx, urgency,
+            ctx, urgency, senderNpcFormID,
             [slotForLambda, bookForLambda](std::optional<LetterComposer::LetterComposition> comp)
             {
                 AsyncDispatch::MarshalToMainThread(

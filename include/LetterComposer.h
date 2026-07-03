@@ -2,10 +2,13 @@
 
 #include <IAction.h>
 
+#include <nlohmann/json.hpp>
+
 #include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include <RE/Skyrim.h>
 
@@ -43,18 +46,53 @@ namespace NarrativeEngine::LetterComposer
         High   = 2,
     };
 
-    // Async. Builds the candidate context, fires the LLM prompt, parses
-    // and validates the response. The callback fires on a SkyrimNet
-    // worker thread — marshal back to the main thread before touching
-    // anything engine-side.
+    // A single viable letter sender, resolved on the main thread by
+    // CollectSenderCandidates. Passed to the action-select stage so
+    // the LLM sees who's available and can pick one; also passed
+    // (indirectly, via form_id) into Compose so the letter-writing
+    // prompt has the full context without re-fetching.
+    struct SenderCandidate
+    {
+        RE::FormID     formId           = 0;
+        std::string    name;
+        double         engagementScore  = 0.0;
+        double         lastInteractedAt = 0.0;
+        nlohmann::json memories         = nlohmann::json::array();
+    };
+
+    // Main-thread only. Ranks recent engagement, filters out dead /
+    // disabled / cooldown / missing candidates, and pulls each survivor's
+    // player-involving memory tail from SkyrimNet. Bounded output size
+    // (kCandidateCap internally). Empty when SkyrimNet is unavailable or
+    // no viable candidates exist.
+    //
+    // Called by ActionDispatcher when npc_letter is among the action-
+    // select candidates, so the LLM sees a live list at pick time.
+    std::vector<SenderCandidate> CollectSenderCandidates();
+
+    // Serialize a candidate list into the JSON shape the action-select
+    // and letter-compose prompts consume: [{form_id (hex str), name,
+    // engagement_score, last_interacted_at, memories}].
+    nlohmann::json SerializeSenderCandidates(
+        const std::vector<SenderCandidate>& candidates);
+
+    // Async. Composes a letter FROM a pre-chosen sender — the action-
+    // select LLM picks the sender, this call embodies them. Fresh-
+    // fetches the sender's current memories on the main thread (so
+    // any events between action-select and compose surface here), then
+    // fires the compose prompt.
+    //
+    // The callback fires on a SkyrimNet worker thread — marshal back to
+    // the main thread before touching anything engine-side.
     //
     // The callback receives nullopt on any failure path (SkyrimNet
-    // unavailable, candidate list empty, LLM error, parse failure,
+    // unavailable, sender no longer viable, LLM error, parse failure,
     // validation failure). Failure reasons are logged so the call site
     // doesn't need to forward error details.
     void Compose(
         const ActionContext& ctx,
         UrgencyHint          urgencyHint,
+        RE::FormID           senderNpcFormID,
         std::function<void(std::optional<LetterComposition>)> callback);
 
     // -----------------------------------------------------------------

@@ -129,6 +129,9 @@ namespace NarrativeEngine::Settings
             g_config.letterContentMaxWords = static_cast<int>(
                 ini.GetLongValue("Actions", "iLetterContentMaxWords",
                                  g_config.letterContentMaxWords));
+            g_config.letterMemoryImportanceThreshold = static_cast<float>(
+                ini.GetDoubleValue("Actions", "fLetterMemoryImportanceThreshold",
+                                   g_config.letterMemoryImportanceThreshold));
             g_config.letterPoolSize = static_cast<int>(
                 ini.GetLongValue("Actions", "iLetterPoolSize",
                                  g_config.letterPoolSize));

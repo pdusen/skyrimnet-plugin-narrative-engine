@@ -14,9 +14,9 @@
 #include <cctype>
 #include <cstdio>
 #include <optional>
+#include <random>
 #include <set>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -27,8 +27,29 @@ namespace NarrativeEngine::LetterComposer
         // Sender-pool size and per-candidate memory tail caps. Smaller
         // than IntelEngine-style "all relevant NPCs" lists; bounded so
         // the prompt stays cheap.
-        constexpr int kCandidateCap          = 12;
+        //
+        // Fetch cap is intentionally larger than render cap so that
+        // client-side filtering (dead / disabled / cooldown / no
+        // memories left after threshold) still leaves us with a full
+        // render tail. Multiplier matches the memory fetch's
+        // headroom for the same reason.
+        constexpr int kCandidateRenderCap    = 12;
+        constexpr int kCandidateFetchCap     = kCandidateRenderCap * 3;
         constexpr int kPerCandidateMemoryCap = 6;
+
+        // How many memories to actually request from SkyrimNet per
+        // candidate. SkyrimNet's `PublicGetMemoriesForActor` has no
+        // server-side importance filter — it only accepts a maxCount
+        // and a semantic-search bias query — so we over-fetch and
+        // filter client-side, then truncate to kPerCandidateMemoryCap.
+        // The multiplier is a heuristic: at threshold 0.4, most
+        // memories in a live actor's tail pass, so 4× gives us
+        // headroom without paying much in wasted work when the
+        // threshold is loose. If someone raises the threshold hard
+        // via INI, they may see shorter tails — that's expected.
+        constexpr int kMemoryFetchMultiplier = 4;
+        constexpr int kMemoryFetchCap        =
+            kPerCandidateMemoryCap * kMemoryFetchMultiplier;
 
         // SkyrimNet engagement-window defaults. Short = 1 game-day,
         // medium = 7 game-days. Plays well with the
@@ -46,141 +67,372 @@ namespace NarrativeEngine::LetterComposer
             return kSet;
         }
 
-        // Mirror of the SkyrimNet engagement entry we care about.
-        struct Candidate
+        // Fetch the player's display name for use as a semantic-search
+        // bias query when we pull each candidate's memory tail.
+        std::string GetPlayerDisplayName()
         {
-            std::uint32_t      formId = 0;
-            std::string        name;
-            double             engagementScore   = 0.0;
-            double             lastInteractedAt  = 0.0;
-            nlohmann::json     memories = nlohmann::json::array();
-        };
-
-        // Build the candidate pool by calling SkyrimNet's engagement
-        // ranker, then pulling each top candidate's player-involving
-        // memory tail. Must run on the main thread (the action's Start
-        // is on the main thread; the SkyrimNet calls themselves are
-        // safe off-thread but the action call sites are simpler if we
-        // bundle them with the rest of the main-thread setup).
-        std::vector<Candidate> CollectCandidates()
-        {
-            std::vector<Candidate> out;
-
-            // Pull the live player name once; SkyrimNet's
-            // PublicGetMemoriesForActor takes this as a semantic-search
-            // bias query, so it has to be the actual player character's
-            // name — not a literal "Dragonborn" string that won't match
-            // anything for players who aren't on the main-quest path.
-            std::string playerName;
             if (auto* player = RE::PlayerCharacter::GetSingleton()) {
                 if (const char* dn = player->GetDisplayFullName()) {
-                    playerName = dn;
+                    return dn;
                 }
             }
+            return {};
+        }
 
-            const auto enrolledJson = SkyrimNetAPI::GetActorEngagement(
-                kCandidateCap, /*excludePlayer=*/true,
-                /*playerEventsOnly=*/false,
-                kShortWindowSeconds, kMediumWindowSeconds);
-            auto enrolled = nlohmann::json::parse(enrolledJson, nullptr, false);
-            if (enrolled.is_discarded() || !enrolled.is_array()) {
-                logger::warn(
-                    "LetterComposer: GetActorEngagement returned non-array; "
-                    "raw='{}'", enrolledJson);
-                return out;
+        enum class SenderViability
+        {
+            Viable,
+            MissingActor,
+            Dead,
+            Disabled,
+            SenderCooldown,
+        };
+
+        // Test whether a single actor is viable as a letter sender right
+        // now: form resolves, actor exists, not dead, not disabled, not
+        // on the per-sender cooldown. Shared between the pool build and
+        // the compose-time re-validation.
+        SenderViability CheckSenderViability(RE::FormID formId)
+        {
+            auto* form  = RE::TESForm::LookupByID(formId);
+            auto* actor = form ? form->As<RE::Actor>() : nullptr;
+            if (!actor)                                              return SenderViability::MissingActor;
+            if (actor->IsDead())                                     return SenderViability::Dead;
+            if (actor->IsDisabled())                                 return SenderViability::Disabled;
+            if (NPCLetterAction_Cooldowns::IsSenderOnCooldown(formId)) return SenderViability::SenderCooldown;
+            return SenderViability::Viable;
+        }
+
+        const char* SenderViabilityName(SenderViability v)
+        {
+            switch (v) {
+                case SenderViability::Viable:         return "viable";
+                case SenderViability::MissingActor:   return "missing-actor";
+                case SenderViability::Dead:           return "dead";
+                case SenderViability::Disabled:       return "disabled";
+                case SenderViability::SenderCooldown: return "sender-cooldown";
+            }
+            return "unknown";
+        }
+
+        // Pull a single actor's player-involving memory tail from
+        // SkyrimNet, filter by importance floor, and reduce each entry
+        // to the minimal shape the prompts render:
+        // `{type, content, age_hours, emotion, location}`.
+        //
+        // Memories with `importance_score` below the configured floor
+        // are dropped: SkyrimNet's own retrieval returns a top-N ranked
+        // list, but the tail of that list is often incidental chatter
+        // that just clutters the prompt without helping the LLM pick
+        // a sender or write a letter. `importance_score` itself is not
+        // forwarded — the LLM doesn't need a numeric weight once
+        // filtering has already gated on it.
+        //
+        // SkyrimNet's raw memory objects carry ~20 fields — actor_uuid,
+        // related_actors, embedding_checksum, condition_expr, pack_id,
+        // tags, related_event_ids, and more — that only inflate prompt
+        // token count without helping the LLM. Trimming here also pins
+        // the schema our prompts depend on: if SkyrimNet renames a
+        // field upstream, this function is the single point of
+        // adaptation instead of every prompt file.
+        //
+        // `content`, `emotion`, and `location` are free-form strings
+        // and are sanitized per project rule. Returns an empty array
+        // on any failure.
+        //
+        // NOTE: SkyrimNet's PublicAPI.h documents the old field names
+        // (`text`, `importance`) that no longer match runtime output;
+        // the real names are `content` and `importance_score`. Verified
+        // against a captured memory payload — do not "fix" back to the
+        // doc names.
+        nlohmann::json FetchSenderMemories(RE::FormID formId,
+                                           const std::string& playerName)
+        {
+            // Over-fetch so client-side importance filtering leaves us
+            // with roughly kPerCandidateMemoryCap survivors even when
+            // the tail of the semantic-search result set has a few
+            // low-importance entries. See kMemoryFetchMultiplier above.
+            const auto memoriesJson = SkyrimNetAPI::GetMemoriesForActor(
+                formId, kMemoryFetchCap, playerName);
+            auto raw = nlohmann::json::parse(memoriesJson, nullptr, false);
+            if (!raw.is_array()) {
+                return nlohmann::json::array();
             }
 
-            int skippedDead     = 0;
-            int skippedDisabled = 0;
-            int skippedMissing  = 0;
-            int skippedCooldown = 0;
-            for (auto& entry : enrolled) {
-                if (!entry.is_object()) continue;
-                Candidate c;
-                if (auto it = entry.find("formId"); it != entry.end() && it->is_number_unsigned()) {
-                    c.formId = it->get<std::uint32_t>();
-                }
-                if (c.formId == 0) continue;
+            const double threshold = static_cast<double>(
+                Settings::Get().letterMemoryImportanceThreshold);
 
-                // Viability gate. A letter sender must be a live, enabled
-                // actor in the world right now — the per-slot delivery
-                // quest's `LetterRef` alias uses "Create Reference to
-                // Object" with Create-In = Sender, and the engine can only
-                // spawn a REFR into an instantiated, enabled, non-corpse
-                // inventory. Dead or disabled candidates pass selection but
-                // then silently fail the alias-fill, leaving `LetterRef`
-                // empty and stranding the dispatch. Filter them out here.
-                auto* form  = RE::TESForm::LookupByID(c.formId);
-                auto* actor = form ? form->As<RE::Actor>() : nullptr;
-                if (!actor) {
-                    ++skippedMissing;
-                    continue;
-                }
-                if (actor->IsDead()) {
-                    ++skippedDead;
-                    continue;
-                }
-                if (actor->IsDisabled()) {
-                    ++skippedDisabled;
-                    continue;
-                }
+            // Collect ALL above-threshold survivors first; do not
+            // short-circuit at the render cap here. We select the
+            // final N by recency below, and that pick has to see the
+            // whole survivor set — stopping at the first N in
+            // SkyrimNet's returned (relevance-ordered) list would
+            // instead keep the N most-*relevant*, then chronologically
+            // sort those, which is the opposite of the intent.
+            auto trimmed = nlohmann::json::array();
+            int droppedBelowThreshold = 0;
+            int droppedDiary          = 0;
+            for (auto& m : raw) {
+                if (!m.is_object()) continue;
 
-                // Per-sender in-game-hours cooldown. Stamped by
-                // NPCLetterAction_Cooldowns::OnLetterDelivered whenever
-                // the courier hands the player a letter from this NPC.
-                // Prevents the same sender from being picked back-to-
-                // back in a way that reads as repetitive.
-                if (NPCLetterAction_Cooldowns::IsSenderOnCooldown(c.formId)) {
-                    ++skippedCooldown;
-                    continue;
-                }
-
-                if (auto it = entry.find("name"); it != entry.end() && it->is_string()) {
-                    // SkyrimNet-returned text — sanitize before we cache or
-                    // forward to the prompt.
-                    c.name = LLMTextSanitizer::Sanitize(it->get<std::string>());
-                }
-                if (c.name.empty()) continue;
-                if (auto it = entry.find("totalMemoryImportance"); it != entry.end() && it->is_number()) {
-                    c.engagementScore = it->get<double>();
-                }
-                if (auto it = entry.find("lastEventTime"); it != entry.end() && it->is_number()) {
-                    c.lastInteractedAt = it->get<double>();
-                }
-
-                const auto memoriesJson = SkyrimNetAPI::GetMemoriesForActor(
-                    c.formId, kPerCandidateMemoryCap, playerName);
-                auto memories = nlohmann::json::parse(memoriesJson, nullptr, false);
-                if (memories.is_array()) {
-                    // Sanitize free-form text inside each memory entry
-                    // (the rest are numeric / typed enums and pass
-                    // through unchanged).
-                    for (auto& m : memories) {
-                        if (!m.is_object()) continue;
-                        if (auto it = m.find("text");
-                            it != m.end() && it->is_string()) {
-                            *it = LLMTextSanitizer::Sanitize(it->get<std::string>());
-                        }
+                // Diary-entry filter. SkyrimNet's memory store folds
+                // NPC diary entries into the same table that
+                // PublicGetMemoriesForActor queries, tagged with the
+                // regular `EXPERIENCE` type but with content that
+                // opens with `Diary Entry:`. These are the sender's
+                // private, first-person journaling — hundreds of words
+                // of interior monologue that the *sender* wrote for
+                // themselves, not memories they'd ever draw on when
+                // writing a letter. They also dominate the semantic-
+                // relevance ranking (they're long and mention the
+                // player), pushing out shorter but more directly
+                // useful memories. Drop them here rather than
+                // client-side, so the importance / recency selection
+                // below picks from real memories only. There is no
+                // server-side flag; the content prefix is the only
+                // reliable discriminator we have.
+                if (auto it = m.find("content");
+                    it != m.end() && it->is_string()) {
+                    const auto& contentRef = it->get_ref<const std::string&>();
+                    if (contentRef.rfind("Diary Entry:", 0) == 0) {
+                        ++droppedDiary;
+                        continue;
                     }
-                    c.memories = std::move(memories);
                 }
-                out.push_back(std::move(c));
+
+                double importance = 0.0;
+                if (auto it = m.find("importance_score");
+                    it != m.end() && it->is_number()) {
+                    importance = it->get<double>();
+                }
+                if (importance < threshold) {
+                    ++droppedBelowThreshold;
+                    continue;
+                }
+
+                nlohmann::json out = nlohmann::json::object();
+                if (auto it = m.find("type"); it != m.end() && it->is_string()) {
+                    out["type"] = it->get<std::string>();
+                }
+                if (auto it = m.find("content"); it != m.end() && it->is_string()) {
+                    out["content"] = LLMTextSanitizer::Sanitize(it->get<std::string>());
+                }
+                if (auto it = m.find("age_hours"); it != m.end() && it->is_number()) {
+                    out["age_hours"] = it->get<double>();
+                }
+                // `emotion` and `location` are optional on the memory
+                // object — SkyrimNet emits `null` when not set. Always
+                // materialize as (possibly-empty) strings so the
+                // prompt template's `length(...) > 0` guard is safe.
+                std::string emotion;
+                if (auto it = m.find("emotion");
+                    it != m.end() && it->is_string()) {
+                    emotion = LLMTextSanitizer::Sanitize(it->get<std::string>());
+                }
+                out["emotion"] = std::move(emotion);
+                std::string location;
+                if (auto it = m.find("location");
+                    it != m.end() && it->is_string()) {
+                    location = LLMTextSanitizer::Sanitize(it->get<std::string>());
+                }
+                out["location"] = std::move(location);
+                trimmed.push_back(std::move(out));
+            }
+            // Sort the kept memories oldest-to-newest so the prompt
+            // reads as a chronological narrative. SkyrimNet returns
+            // memories ranked by semantic relevance to the search
+            // query (the player's name), which is the right lens for
+            // *which* memories to consider — but a jumbled order
+            // confuses the LLM when it's trying to reason about how
+            // the sender's relationship with the player has evolved.
+            //
+            // Sort ascending on age_hours (newest first) so the
+            // truncate step below keeps the most recent survivors,
+            // then reverse for oldest-to-newest presentation.
+            std::sort(trimmed.begin(), trimmed.end(),
+                [](const nlohmann::json& a, const nlohmann::json& b) {
+                    const double aAge = a.value("age_hours", 0.0);
+                    const double bAge = b.value("age_hours", 0.0);
+                    return aAge < bAge;
+                });
+
+            // Truncate to the render cap. AFTER the sort so we're
+            // keeping the most-recent N above-threshold memories, not
+            // the most-relevant N. The `break at cap` shortcut in the
+            // collection loop would have given the wrong semantics.
+            int droppedBeyondCap = 0;
+            if (static_cast<int>(trimmed.size()) > kPerCandidateMemoryCap) {
+                droppedBeyondCap =
+                    static_cast<int>(trimmed.size()) - kPerCandidateMemoryCap;
+                trimmed.erase(
+                    trimmed.begin() + kPerCandidateMemoryCap, trimmed.end());
             }
 
-            if (skippedMissing || skippedDead || skippedDisabled || skippedCooldown) {
-                logger::info(
-                    "LetterComposer: filtered candidates (kept={}, "
-                    "skipped: missing-actor={}, dead={}, disabled={}, "
-                    "sender-cooldown={})",
-                    out.size(), skippedMissing, skippedDead, skippedDisabled,
-                    skippedCooldown);
+            // Reverse to oldest-first for the LLM's chronological read.
+            std::reverse(trimmed.begin(), trimmed.end());
+
+            if ((droppedBelowThreshold > 0 || droppedBeyondCap > 0 ||
+                 droppedDiary > 0) && Settings::Get().debugMode) {
+                logger::debug(
+                    "LetterComposer: sender 0x{:X} — memories kept={}, "
+                    "dropped diary={}, dropped below threshold {:.2f}={}, "
+                    "dropped as older than the most-recent {}={}",
+                    formId, trimmed.size(), droppedDiary,
+                    threshold, droppedBelowThreshold,
+                    kPerCandidateMemoryCap, droppedBeyondCap);
             }
+            return trimmed;
+        }
+    }
+
+    std::vector<SenderCandidate> CollectSenderCandidates()
+    {
+        std::vector<SenderCandidate> out;
+
+        if (!SkyrimNetAPI::IsAvailable() || !SkyrimNetAPI::IsMemorySystemReady()) {
             return out;
         }
 
-        nlohmann::json BuildPromptContext(const ActionContext&            ctx,
-                                          UrgencyHint                     urgencyHint,
-                                          const std::vector<Candidate>&   candidates)
+        const std::string playerName = GetPlayerDisplayName();
+
+        const auto enrolledJson = SkyrimNetAPI::GetActorEngagement(
+            kCandidateFetchCap, /*excludePlayer=*/true,
+            /*playerEventsOnly=*/false,
+            kShortWindowSeconds, kMediumWindowSeconds);
+        auto enrolled = nlohmann::json::parse(enrolledJson, nullptr, false);
+        if (enrolled.is_discarded() || !enrolled.is_array()) {
+            logger::warn(
+                "LetterComposer: GetActorEngagement returned non-array; "
+                "raw='{}'", enrolledJson);
+            return out;
+        }
+
+        int skippedDead       = 0;
+        int skippedDisabled   = 0;
+        int skippedMissing    = 0;
+        int skippedCooldown   = 0;
+        int skippedNoMemories = 0;
+        for (auto& entry : enrolled) {
+            if (!entry.is_object()) continue;
+            if (static_cast<int>(out.size()) >= kCandidateRenderCap) {
+                // Filled the render tail — no reason to look up the
+                // remaining engagement entries or pay for their memory
+                // fetches. Engagement is returned in descending
+                // relevance, so the tail is what we'd drop anyway.
+                break;
+            }
+
+            SenderCandidate c;
+            if (auto it = entry.find("formId"); it != entry.end() && it->is_number_unsigned()) {
+                c.formId = it->get<std::uint32_t>();
+            }
+            if (c.formId == 0) continue;
+
+            // Viability gate. A letter sender must be a live, enabled
+            // actor in the world right now — the per-slot delivery
+            // quest's `LetterRef` alias uses "Create Reference to
+            // Object" with Create-In = Sender, and the engine can only
+            // spawn a REFR into an instantiated, enabled, non-corpse
+            // inventory. Dead or disabled candidates pass selection but
+            // then silently fail the alias-fill, leaving `LetterRef`
+            // empty and stranding the dispatch. Filter them out here.
+            //
+            // Also enforces the per-sender in-game-hours cooldown
+            // (stamped by NPCLetterAction_Cooldowns::OnLetterDelivered).
+            switch (CheckSenderViability(c.formId)) {
+                case SenderViability::Viable:                                break;
+                case SenderViability::MissingActor:   ++skippedMissing;  continue;
+                case SenderViability::Dead:           ++skippedDead;     continue;
+                case SenderViability::Disabled:       ++skippedDisabled; continue;
+                case SenderViability::SenderCooldown: ++skippedCooldown; continue;
+            }
+
+            if (auto it = entry.find("name"); it != entry.end() && it->is_string()) {
+                // SkyrimNet-returned text — sanitize before we cache or
+                // forward to the prompt.
+                c.name = LLMTextSanitizer::Sanitize(it->get<std::string>());
+            }
+            if (c.name.empty()) continue;
+            if (auto it = entry.find("totalMemoryImportance"); it != entry.end() && it->is_number()) {
+                c.engagementScore = it->get<double>();
+            }
+            if (auto it = entry.find("lastEventTime"); it != entry.end() && it->is_number()) {
+                c.lastInteractedAt = it->get<double>();
+            }
+
+            // Memory-tail filter. A candidate whose memories all fall
+            // below the importance threshold has nothing concrete for
+            // the LLM to draw on — the compose prompt would be forced
+            // to invent context, and the action-select prompt would
+            // just see a name with no reason to pick them over the
+            // others. Drop them entirely rather than render a
+            // memory-less entry that biases the LLM toward "there's
+            // nothing to say" letters.
+            c.memories = FetchSenderMemories(c.formId, playerName);
+            if (!c.memories.is_array() || c.memories.empty()) {
+                ++skippedNoMemories;
+                continue;
+            }
+
+            out.push_back(std::move(c));
+        }
+
+        if (skippedMissing || skippedDead || skippedDisabled ||
+            skippedCooldown || skippedNoMemories) {
+            logger::info(
+                "LetterComposer: filtered candidates (kept={}, "
+                "skipped: missing-actor={}, dead={}, disabled={}, "
+                "sender-cooldown={}, no-significant-memories={})",
+                out.size(), skippedMissing, skippedDead, skippedDisabled,
+                skippedCooldown, skippedNoMemories);
+        }
+
+        // Shuffle before returning. SkyrimNet emits engagement in
+        // descending-relevance order, which biases the LLM toward the
+        // top few candidates just from prompt position — the same
+        // "most engaged NPC" ends up picked run after run. A random
+        // presentation order breaks that anchor and lets tonal /
+        // memory-content fit drive the pick instead.
+        {
+            std::random_device rd;
+            std::mt19937 rng(rd());
+            std::shuffle(out.begin(), out.end(), rng);
+        }
+        return out;
+    }
+
+    nlohmann::json SerializeSenderCandidates(
+        const std::vector<SenderCandidate>& candidates)
+    {
+        auto out = nlohmann::json::array();
+        for (const auto& c : candidates) {
+            nlohmann::json cj = nlohmann::json::object();
+            // Hex string so the LLM sees the form in a recognizable
+            // format (matches IntelEngine convention).
+            char idBuf[16];
+            std::snprintf(idBuf, sizeof(idBuf), "0x%X", c.formId);
+            cj["form_id"]            = idBuf;
+            cj["name"]               = c.name;
+            cj["engagement_score"]   = c.engagementScore;
+            cj["last_interacted_at"] = c.lastInteractedAt;
+            cj["memories"]           = c.memories;
+            out.push_back(std::move(cj));
+        }
+        return out;
+    }
+
+    namespace
+    {
+        // Build the letter-compose prompt context for a single, already-
+        // chosen sender. Fresh memories are supplied by the caller so we
+        // don't re-fetch after already validating on the main thread.
+        nlohmann::json BuildComposePromptContext(
+            const ActionContext&  ctx,
+            UrgencyHint           urgencyHint,
+            const std::string&    playerName,
+            const std::string&    senderName,
+            RE::FormID            senderFormID,
+            const nlohmann::json& senderMemories)
         {
             const auto& cfg = Settings::Get();
 
@@ -196,21 +448,15 @@ namespace NarrativeEngine::LetterComposer
             root["min_words"] = cfg.letterContentMinWords;
             root["max_words"] = cfg.letterContentMaxWords;
 
-            auto candidatesJson = nlohmann::json::array();
-            for (const auto& c : candidates) {
-                nlohmann::json cj = nlohmann::json::object();
-                // Hex string so the LLM sees the form in a recognizable
-                // format (matches IntelEngine convention).
-                char idBuf[16];
-                std::snprintf(idBuf, sizeof(idBuf), "0x%X", c.formId);
-                cj["form_id"]            = idBuf;
-                cj["name"]               = c.name;
-                cj["engagement_score"]   = c.engagementScore;
-                cj["last_interacted_at"] = c.lastInteractedAt;
-                cj["memories"]           = c.memories;
-                candidatesJson.push_back(std::move(cj));
-            }
-            root["sender_candidates"] = std::move(candidatesJson);
+            root["player_name"] = playerName;
+
+            char idBuf[16];
+            std::snprintf(idBuf, sizeof(idBuf), "0x%X", senderFormID);
+            nlohmann::json sender = nlohmann::json::object();
+            sender["form_id"]  = idBuf;
+            sender["name"]     = senderName;
+            sender["memories"] = senderMemories;
+            root["sender"]     = std::move(sender);
             return root;
         }
 
@@ -341,9 +587,16 @@ namespace NarrativeEngine::LetterComposer
 
     void Compose(const ActionContext& ctx,
                  UrgencyHint          urgencyHint,
+                 RE::FormID           senderNpcFormID,
                  std::function<void(std::optional<LetterComposition>)> callback)
     {
         if (!callback) return;
+
+        if (senderNpcFormID == 0) {
+            logger::warn("LetterComposer: Compose called with sender formID=0");
+            callback(std::nullopt);
+            return;
+        }
 
         if (!SkyrimNetAPI::IsAvailable() || !SkyrimNetAPI::IsMemorySystemReady()) {
             logger::warn("LetterComposer: SkyrimNet unavailable or memory system not ready");
@@ -351,26 +604,48 @@ namespace NarrativeEngine::LetterComposer
             return;
         }
 
-        auto candidates = CollectCandidates();
-        if (static_cast<int>(candidates.size()) < Settings::Get().letterMinSenderCandidates) {
+        // Re-check viability. The action-select round-trip may have
+        // taken several seconds; the chosen sender could have died,
+        // been disabled, or hit their cooldown in the interim.
+        const auto viab = CheckSenderViability(senderNpcFormID);
+        if (viab != SenderViability::Viable) {
             logger::warn(
-                "LetterComposer: only {} sender candidates available; "
-                "minimum is {} — declining to compose",
-                candidates.size(),
-                Settings::Get().letterMinSenderCandidates);
+                "LetterComposer: chosen sender 0x{:X} no longer viable ({}); "
+                "declining to compose",
+                senderNpcFormID, SenderViabilityName(viab));
             callback(std::nullopt);
             return;
         }
 
-        // Side table: form_id → cached display name, so the worker-
-        // thread callback can compute the sender-label fallback without
-        // touching the engine.
-        std::unordered_map<std::uint32_t, std::string> nameByFormID;
-        for (const auto& c : candidates) {
-            nameByFormID.emplace(c.formId, c.name);
+        // Resolve the sender's live display name on the main thread —
+        // GetDisplayFullName touches engine state. The worker-thread
+        // callback needs this later for the label-fallback path, so
+        // capture it into the lambda.
+        std::string senderName;
+        if (auto* form = RE::TESForm::LookupByID(senderNpcFormID)) {
+            if (auto* actor = form->As<RE::Actor>()) {
+                if (const char* dn = actor->GetDisplayFullName()) {
+                    senderName = LLMTextSanitizer::Sanitize(dn);
+                }
+            }
+        }
+        if (senderName.empty()) {
+            logger::warn(
+                "LetterComposer: chosen sender 0x{:X} has no resolvable display name",
+                senderNpcFormID);
+            callback(std::nullopt);
+            return;
         }
 
-        const auto promptCtx = BuildPromptContext(ctx, urgencyHint, candidates);
+        const std::string playerName = GetPlayerDisplayName();
+
+        // Fresh memories at compose time — captures any SkyrimNet
+        // events generated between action-select and compose (the
+        // round-trip is seconds, not zero).
+        const auto memories = FetchSenderMemories(senderNpcFormID, playerName);
+
+        const auto promptCtx = BuildComposePromptContext(
+            ctx, urgencyHint, playerName, senderName, senderNpcFormID, memories);
         const auto promptCtxStr = promptCtx.dump();
         if (Settings::Get().debugMode) {
             logger::debug("LetterComposer: prompt context: {}", promptCtxStr);
@@ -392,7 +667,8 @@ namespace NarrativeEngine::LetterComposer
             "narrative_engine_director",
             promptCtxStr,
             [callback = std::move(callback),
-             nameByFormID = std::move(nameByFormID),
+             senderNpcFormID,
+             senderName = std::move(senderName),
              minWords, maxWords]
             (std::string response, bool success) mutable
             {
@@ -413,7 +689,9 @@ namespace NarrativeEngine::LetterComposer
                     return;
                 }
 
-                // Required fields.
+                // Required fields. sender_npc_form_id is NOT expected
+                // from the LLM anymore — the sender was chosen at the
+                // action-select stage and is captured above.
                 auto getStr = [&](const char* key, std::string& out) -> bool {
                     auto it = parsed.find(key);
                     if (it == parsed.end() || !it->is_string()) return false;
@@ -421,33 +699,12 @@ namespace NarrativeEngine::LetterComposer
                     return true;
                 };
 
-                std::string idStr, label, bodyText, mood, topic;
-                if (!getStr("sender_npc_form_id", idStr) ||
-                    !getStr("sender_label",       label) ||
-                    !getStr("body",               bodyText) ||
-                    !getStr("mood",               mood) ||
-                    !getStr("topic_tag",          topic)) {
+                std::string label, bodyText, mood, topic;
+                if (!getStr("sender_label", label) ||
+                    !getStr("body",         bodyText) ||
+                    !getStr("mood",         mood) ||
+                    !getStr("topic_tag",    topic)) {
                     logger::warn("LetterComposer: response missing one of the required keys");
-                    callback(std::nullopt);
-                    return;
-                }
-
-                // sender_npc_form_id must be a hex form ID that matches
-                // one of the candidates.
-                std::uint32_t senderFormID = 0;
-                try {
-                    senderFormID = static_cast<std::uint32_t>(
-                        std::stoul(idStr, nullptr, /*base=*/0));
-                } catch (...) {
-                    logger::warn("LetterComposer: sender_npc_form_id unparseable: '{}'", idStr);
-                    callback(std::nullopt);
-                    return;
-                }
-                auto nameIt = nameByFormID.find(senderFormID);
-                if (nameIt == nameByFormID.end()) {
-                    logger::warn(
-                        "LetterComposer: sender_npc_form_id 0x{:X} not in candidate set",
-                        senderFormID);
                     callback(std::nullopt);
                     return;
                 }
@@ -476,7 +733,7 @@ namespace NarrativeEngine::LetterComposer
                 // bytes hard.
                 if (label.size() > 24) {
                     const std::string original = label;
-                    label = SynthesizeFallbackLabel(nameIt->second);
+                    label = SynthesizeFallbackLabel(senderName);
                     logger::info(
                         "LetterComposer: sender_label '{}' exceeded 24-byte cap "
                         "(was {} bytes); fell back to '{}'",
@@ -484,7 +741,7 @@ namespace NarrativeEngine::LetterComposer
                 }
 
                 LetterComposition comp;
-                comp.senderNpcFormID = senderFormID;
+                comp.senderNpcFormID = senderNpcFormID;
                 comp.senderLabel     = std::move(label);
                 comp.body            = std::move(bodyText);
                 comp.mood            = std::move(mood);
@@ -493,7 +750,7 @@ namespace NarrativeEngine::LetterComposer
                 logger::info(
                     "LetterComposer: composed letter (sender=0x{:X} '{}', "
                     "label='{}', body={} words, mood='{}', topic='{}')",
-                    comp.senderNpcFormID, nameIt->second,
+                    comp.senderNpcFormID, senderName,
                     comp.senderLabel, wc, comp.mood, comp.topicTag);
                 callback(std::move(comp));
             });

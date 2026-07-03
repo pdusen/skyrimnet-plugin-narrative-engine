@@ -3,7 +3,16 @@
    recency filtering is done plugin-side; every entry in `candidates`
    below is a valid pick.
    Receives the JSON object produced by ActionDispatcher::BuildActionPromptContext:
-   desired_direction, tension_delta, candidates, player_context, recent_events. #}
+   desired_direction, tension_delta, candidates, player_context, recent_events.
+   Individual candidates may carry their own action-specific context
+   (e.g. npc_letter carries a letter_sender_candidates list).
+
+   Template style: every {% ... %} scope tag lives on its own line and
+   is indented by its nesting depth so open/close tags line up visually.
+   `{%- ... -%}` whitespace-trim markers strip the template's own
+   indentation and the tag lines' trailing newlines so the rendered
+   output is unchanged from the compact form. Preserve this discipline
+   when editing — nested scopes here get hard to follow otherwise. #}
 [ system ]
 ## Task
 You are the Narrative Director for a Skyrim playthrough. The story has
@@ -38,24 +47,44 @@ before or after the object.
 **{{ desired_direction }}** tension by approximately {{ tension_delta }}/100.
 
 ## Where the player is
+{% if length(player_context.location_name) > 0 -%}
 - Location: {{ player_context.location_name }}
+{% endif -%}
 - Cell: {{ player_context.cell_name }} ({% if player_context.cell_is_interior %}interior{% else %}exterior{% endif %})
 - Game time: {{ gameTime }}
 
-{% if length(recent_events) > 0 %}
+{% if length(recent_events) > 0 -%}
 ## Recent events (newest last)
 
-{% for evt in recent_events %}- [{{ evt.type }}] {{ evt.text }}
+{% for evt in recent_events -%}
+- [{{ evt.type }}] {{ evt.text }}
 {% endfor %}
-{% endif %}
+{% endif -%}
 
 ## Available actions
 
-{% for cand in candidates %}### {{ cand.name }}
+{% for cand in candidates -%}
+### {{ cand.name }}
 
 {{ cand.description }}
 
-{% endfor %}
+    {%- if length(cand.letter_sender_candidates) > 0 %}
+#### Available letter senders
+
+If you pick this action, choose ONE of the NPCs below to be the letter's
+sender and include their `form_id` as `sender_npc_form_id` inside
+`parameters`. Prefer candidates whose recent memories about the player
+support the tone the moment needs.
+
+        {%- for s in cand.letter_sender_candidates %}
+##### {{ s.name }} (form_id: {{ s.form_id }})
+
+            {%- for mem in s.memories %}
+- [{{ mem.type }}, {{ mem.age_hours }}h ago{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
+            {%- endfor %}
+        {% endfor -%}
+    {% endif %}
+{% endfor -%}
 [ end system ]
 
 [ user ]
