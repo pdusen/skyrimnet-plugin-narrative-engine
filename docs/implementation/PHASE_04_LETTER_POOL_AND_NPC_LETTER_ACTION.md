@@ -68,13 +68,17 @@ memory integration on both sides of the exchange.
     spawns on the player's next cell-change.
   - On `Start`: allocates a LetterPool slot, runs the content-generation LLM call,
     populates the slot, then drives the slot's pre-authored delivery quest:
-    force-fills the chosen sender NPC into the quest's `Sender` reference alias,
-    starts the quest (which spawns a per-dispatch letter REFR in the sender's
-    inventory via a CK "Create Reference to Object" alias), and calls a small
-    `_ne_PooledLetterQuest` Papyrus function that hands that spawned REFR to
-    vanilla `WICourierScript.AddItemToContainer`. The vanilla courier system
-    handles physical delivery from there. No custom courier NPC, no custom AI
-    package.
+    promotes the chosen sender NPC to rank 4 in the `_ne_LetterSenderFaction`
+    marker faction (sweeping any stale rank-4 stragglers first), starts the
+    quest via `EnsureQuestStarted` (the engine's alias-fill pass picks up the
+    sender via a Find-Matching-Reference rule keyed on the faction rank, then
+    spawns a per-dispatch letter REFR in the sender's inventory via a
+    "Create Reference to Object → In Sender" alias), and the quest's Stage 10
+    fragment automatically hands the spawned REFR to
+    `WICourierScript.AddItemToContainer`. The vanilla courier system handles
+    physical delivery from there. On the completion callback (success or
+    failure), the sender is demoted back to rank 0. No custom courier NPC,
+    no custom AI package.
   - After dispatch, the action's `DetectAndRollbackFailedStart` and `DetectCompletion`
     polls verify the dispatch by checking the vanilla courier's inventory for the
     queued letter. If the letter appears within a short verification window
@@ -179,8 +183,9 @@ namespace NarrativeEngine::LetterPool
     // Populate slot content (called after LLM round-trip). Mutates the underlying Book
     // form's FULL field via SetFullName and caches the body in the in-memory map the
     // hooks read from. Does NOT add to player inventory — that's the per-slot
-    // delivery quest's job (Sender alias force-fill → quest start → Papyrus
-    // DispatchLetterToCourier → WICourierScript.AddItemToContainer).
+    // delivery quest's job (faction promote → EnsureQuestStarted → engine alias-fill
+    // pass spawns letter in Sender's inventory → Papyrus DispatchLetterToCourier →
+    // WICourierScript.AddItemToContainer).
     void PopulateSlot(std::size_t        slotIndex,
                       std::string         senderLabel,    // title (FULL)
                       std::string         body,           // hook-substituted body
@@ -653,11 +658,14 @@ alias, and then pass *the alias-spawned REFR* to `AddItemToContainer`. The
 engine routes the move through the live REFR's own extras and the courier
 quest stages itself off the result.
 
-Doing that purely from C++ is awkward — there is no clean CommonLibSSE-NG
-wrapper for `ReferenceAlias.ForceRefTo`, and the "Create Reference to Object"
-fill rule is a CK-authored alias property, not a runtime API. The cleanest
-shape is to lift the alias work into CK and the script work into a tiny
-attached Papyrus, and keep C++ as the orchestrator:
+Doing that purely from C++ is awkward — the "Create Reference to Object"
+fill rule is a CK-authored alias property, not a runtime API, and driving
+the sender-alias fill from C++ turned out to be fragile (see the design-
+history note below on why the initial `ReferenceAlias.ForceRefTo` approach
+was abandoned). The cleanest shape is to lift the alias work into CK
+(including the sender-selection mechanism itself, via a marker faction
+that C++ mutates), keep the script work in a tiny attached Papyrus, and
+keep C++ as the orchestrator:
 
 - **20 thin delivery quests**, one per pool slot
   (`_ne_PooledLetterQuest01..20`). Each is identical except for which pool
@@ -665,61 +673,94 @@ attached Papyrus, and keep C++ as the orchestrator:
   `Start Game Enabled = false`. We start them on demand from C++ and stop
   them after dispatch so they can be reused on the next allocation of that
   slot.
+- **One marker faction `_ne_LetterSenderFaction`.** Empty (no reactions,
+  no crime, no relations). Used only to distinguish the current dispatch's
+  designated sender from previously-considered candidates. Rank 4 means
+  "currently designated"; rank 0 means "previously candidate, not right
+  now"; rank -1 means "never touched."
 - **Each delivery quest carries two reference aliases**:
-  - `Sender` — Fill Type empty; flags `Optional`, `Allow Reserved`. Filled
-    from C++ via VM-dispatched `ReferenceAlias.ForceRefTo(akActor)` before
-    the quest starts.
+  - `Sender` — Fill Type `Find Matching Reference`; "In Loaded Area"
+    UNCHECKED (senders are remote by design); one condition
+    `GetFactionRank _ne_LetterSenderFaction >= 4`; flags `Optional`
+    OFF. Engine's alias-fill pass picks whichever actor is currently
+    at rank 4 in the faction.
   - `LetterRef` — Fill Type `Created` (ALCO points at the slot's matching
     `_ne_PooledLetterNN` Book form; ALCA points at `Sender` with the
-    `Create In` (kIn) bit set). On quest start the engine spawns a fresh
-    REFR of the pool book inside the `Sender` actor's inventory, and the
-    REFR is reachable via `LetterRef.GetReference()`.
+    `Create In` (kIn) bit set); flags `Optional` OFF. On quest start
+    the engine spawns a fresh REFR of the pool book inside the `Sender`
+    actor's inventory, and the REFR is reachable via
+    `LetterRef.GetReference()`.
 - **One reusable `_ne_PooledLetterQuest` Papyrus script**, attached to each
-  of the 20 quests. Two functions:
-  - `Function ForceFillSender(Actor akSender)` — wraps
-    `(Self.GetAlias(senderAliasIndex) as ReferenceAlias).ForceRefTo(akSender)`.
-    Available for the C++ side to invoke via VM dispatch on the quest
-    itself, as an alternative to dispatching `ForceRefTo` directly against
-    the alias. Either path works; this one keeps the alias-index lookup on
-    the Papyrus side so C++ doesn't need to hardcode the index.
+  of the 20 quests. One meaningful function:
   - `Function DispatchLetterToCourier()` — reads
     `LetterRef.GetReference()` and calls
     `WICourier.AddItemToContainer(letterRef, 1)` (where `WICourier` is a
     script-property pointer at the vanilla `WICourierScript`). This is the
     *one Papyrus statement* that the C++ side fundamentally cannot do
-    cleanly, and the entire reason the per-slot quest exists.
+    cleanly, and the entire reason the per-slot quest exists. Called from
+    the Stage 10 fragment.
+
+  Plus `Shutdown()` for terminal teardown (`Stop() + Reset()`, called from
+  Stage 200's fragment).
 
 The C++ flow per dispatch:
 
 ```
 1. Allocate LetterPool slot N. PopulateSlot(...) sets FULL and body cache.
 2. Resolve cached _ne_PooledLetterQuestN pointer.
-3. VM-dispatch _ne_PooledLetterQuest.ForceFillSender(sendingActor) on the
-   quest. (Or, equivalently, VM-dispatch ReferenceAlias.ForceRefTo on the
-   Sender alias resolved through quest->aliases.)
-4. VM-dispatch Quest.Start() on the quest. Engine resolves the LetterRef
-   alias, spawning a per-dispatch REFR of _ne_PooledLetterNN inside the
-   sender's inventory.
-5. VM-dispatch _ne_PooledLetterQuest.DispatchLetterToCourier() on the
-   quest. The Papyrus function reads LetterRef, passes the REFR to
-   WICourierScript.AddItemToContainer.
-6. The dispatcher's verification polls (next subsection) confirm the
+3. Sweep _ne_LetterSenderFaction: for any loaded actor currently at
+   rank >= 4 that isn't the intended sender, AddToFaction(fact, 0) to
+   demote (defensive cleanup for crash-mid-dispatch stragglers).
+4. Promote intended sender to rank 4 in _ne_LetterSenderFaction. Handles
+   three states: not-in-faction (add at rank 4), in-faction at rank < 4
+   (promote), already at rank 4 (no-op).
+5. Call quest->EnsureQuestStarted(engineResult, /*startNow=*/true)
+   natively. Engine's alias-fill pass runs Sender's FMR rule (picks the
+   rank-4 actor), then LetterRef's Create-in-Sender rule (spawns the
+   book in the sender's inventory). Then the Stage 0 fragment fires
+   automatically, advancing to Stage 10, whose fragment calls
+   DispatchLetterToCourier().
+6. Poll Sender.GetReference() and LetterRef.GetReference() for
+   non-null (belt-and-suspenders — with Optional OFF, both fill
+   synchronously inside EnsureQuestStarted in the happy path).
+7. The dispatcher's verification polls (next subsection) confirm the
    letter landed in the vanilla courier's container.
-7. On verified completion, VM-dispatch Quest.Stop() so the quest is
-   re-usable on the next allocation of slot N.
+8. On verified completion OR any failure: demote sender back to rank 0
+   in the faction, then VM-dispatch Quest.SetStage(200 for success, 60
+   for rollback) so the Papyrus fragment chain runs Shutdown() and
+   the quest returns to a fresh state ready for the next allocation.
 ```
 
-Steps 3–5 each run inside an LLM-callback main-thread continuation; the
-dispatcher is already structured to wait for those without blocking the
-game loop.
+Steps 3–6 run inside an LLM-callback main-thread continuation; steps
+6–7 poll off an AsyncDispatch worker with predicate marshaling back to
+main. The dispatcher is already structured to wait for those without
+blocking the game loop.
 
 This pattern keeps every native CK feature on its native side: alias
 creation, fill-rule resolution, and the `AddItemToContainer` call live in
 CK/Papyrus (where they have first-class engine support), and C++ owns the
-parts it is good at — slot allocation, LLM orchestration, force-fill
-arguments, verification polling, completion bookkeeping. The Papyrus
-script is deliberately tiny (two functions, no state machine, no stages)
-so there is essentially no Papyrus-side logic to debug.
+parts it is good at — slot allocation, LLM orchestration, faction
+membership manipulation, verification polling, completion bookkeeping.
+The Papyrus script is deliberately tiny (two functions, no state
+machine beyond the stage fragments the engine drives) so there is
+essentially no Papyrus-side logic to debug.
+
+**Why faction rather than ForceRefTo (design history).** The initial
+design used `ReferenceAlias.ForceRefTo` on the Sender alias before
+quest start. That approach hit two failure modes: (a) ForceRefTo on a
+stopped quest is documented as unreliable — the fill can be discarded
+by the engine's alias-fill pass at quest start — and (b) the CK's alias
+Fill Type UI doesn't offer a truly-empty option, so the closest
+approximation (`Specific Reference` with no picked ref) marks the
+alias as fill-failed at start, which poisons the LetterRef
+Create-in-Sender rule downstream. The faction approach sidesteps both:
+the engine's Find Matching Reference rule fills Sender through its
+own canonical path against a real (non-null) condition, so
+LetterRef's Create-in-Sender rule fires correctly. Empirically, the
+force persisted through EnsureQuestStarted in some tests but the
+Create-in-Sender rule still no-op'd — the specific rejection was
+never fully characterized, but the faction path bypasses whatever
+was going wrong.
 
 The vanilla courier system itself is **asynchronous from the engine's
 perspective**: queueing an item via `AddItemToContainer` returns
@@ -728,15 +769,19 @@ immediately; the courier shows up later when world conditions permit
 
 ### Dispatch verification
 
-The orchestration sequence (force-fill, start, `DispatchLetterToCourier`) has
-several silent-failure modes: `ForceRefTo` could land on a stale alias, the
-quest could fail to start due to alias-reservation conflicts, the
-`Created`-fill alias could fail to resolve (sender unloaded, mod
-interference), or `WICourierScript.AddItemToContainer` itself could no-op in
-a degraded courier state. None of those surface a synchronous error to the
-C++ side. The same verification pattern AmbushAction uses to confirm its
-quest actually started — the `DetectAndRollbackFailedStart` /
-`DetectCompletion` polls on `IAction` — applies here.
+The orchestration sequence (faction promote, `EnsureQuestStarted`,
+Stage 10's `DispatchLetterToCourier`, faction demote) has several
+silent-failure modes even after the faction rework: a stale rank-4
+straggler could survive the sweep and be picked by the FMR rule instead
+of the intended target, the `Created`-fill alias could fail to resolve
+(sender in a state the engine's spawn refuses), or
+`WICourierScript.AddItemToContainer` itself could no-op in a degraded
+courier state. Most of these now surface via `engineResult=false` from
+`EnsureQuestStarted` (both aliases are `Optional` OFF, so a fill failure
+aborts start), but the container-inventory verification is still needed
+as the ultimate ground truth. The same verification pattern AmbushAction
+uses — the `DetectAndRollbackFailedStart` / `DetectCompletion` polls on
+`IAction` — applies here.
 
 NPCLetterAction implements both:
 
@@ -879,12 +924,15 @@ using the player's actual SkyrimNet history.
      the hook's body cache holds the LLM's body.
    - Drive the per-slot delivery quest per the **Vanilla courier dispatch via
      per-slot delivery quests** section: resolve the cached
-     `_ne_PooledLetterQuestN` pointer, VM-dispatch `ForceFillSender(sendingActor)`,
-     VM-dispatch `Quest.Start()`, then VM-dispatch
-     `DispatchLetterToCourier()`. The Papyrus side spawns the per-dispatch
-     letter REFR in the sender's inventory and hands it to
-     `WICourierScript.AddItemToContainer`. The vanilla courier system queues
-     delivery and resolves it on its own timeline.
+     `_ne_PooledLetterQuestN` pointer, sweep stale rank-4 members from
+     `_ne_LetterSenderFaction`, promote the chosen sender to rank 4, and
+     call `EnsureQuestStarted` natively. The engine's alias-fill pass
+     picks up the sender via the FMR condition, spawns the per-dispatch
+     letter REFR in the sender's inventory via Create-in-Sender, and the
+     Stage 10 fragment automatically hands it to
+     `WICourierScript.AddItemToContainer`. On the completion callback
+     (success or failure), demote the sender back to rank 0. The vanilla
+     courier system queues delivery and resolves it on its own timeline.
    - **Do not** call `CompleteAction` here. The action stays in-flight; the
      dispatcher will see completion via `DetectCompletion` once the dispatch is
      verified (or rollback via `DetectAndRollbackFailedStart` if not). See
@@ -1146,20 +1194,24 @@ New prompt:
 New ESP content (authored in CK against `NarrativeEngine.esp`):
 
 - `_ne_PooledLetter01` through `_ne_PooledLetter20` Book records (20 forms).
+- `_ne_LetterSenderFaction` marker faction (no reactions, no crime, no
+  relations — used only as the rank-based signal the Sender alias's FMR
+  condition checks).
 - `_ne_PooledLetterQuest01` through `_ne_PooledLetterQuest20` quest records
-  (20 forms), each carrying a `Sender` reference alias (empty fill rule,
-  `Optional`, `Allow Reserved`) and a `LetterRef` reference alias
-  (`Created` fill rule pinned to the matching pool Book, `Create In` =
-  `Sender`).
+  (20 forms), each carrying a `Sender` reference alias (Find Matching
+  Reference with condition `GetFactionRank _ne_LetterSenderFaction >= 4`,
+  Optional OFF, "In Loaded Area" unchecked) and a `LetterRef` reference
+  alias (`Created` fill rule pinned to the matching pool Book, `Create In`
+  = `Sender`, Optional OFF).
 
 New Papyrus:
 
 - `esp/Source/Scripts/_ne_PooledLetterQuest.psc` — `extends Quest`. Two
-  functions: `ForceFillSender(Actor akSender)` and
-  `DispatchLetterToCourier()`. One script property: a `Quest` pointer at
-  the vanilla `WICourier` quest, accessed as a `WICourierScript` for the
-  `AddItemToContainer` call. Attached to each of the 20 delivery quests
-  above.
+  functions: `DispatchLetterToCourier()` (called from Stage 10's fragment)
+  and `Shutdown()` (called from Stage 200's fragment). One script property:
+  a `Quest` pointer at the vanilla `WICourier` quest, accessed as a
+  `WICourierScript` for the `AddItemToContainer` call. Attached to each of
+  the 20 delivery quests above.
 
 No new AI package, no custom courier NPC — vanilla `WICourier` still
 handles physical delivery; the new quests and script only handle the
@@ -1852,9 +1904,32 @@ matching read-path consumer.
 The headline practical win is on Stage 10: the fragment calls
 `WICourierScript.AddItemToContainer` directly in Papyrus — no VM
 dispatch from C++ for the courier handoff. C++'s job for delivery
-becomes `ForceFillSender` → `Start` → done; the quest stage advances
-under its own steam to Stage 20 (verified), with C++ subsequently
-nudging it through Stage 30/40/50/60 as engine events fire.
+becomes `PromoteSenderToDesignated` → `EnsureQuestStarted` →
+`DemoteSenderToCandidate` (once verification confirms delivery); the
+quest stage advances under its own steam to Stage 20 (verified), with
+C++ subsequently nudging it through Stage 30/40/50/60 as engine events
+fire.
+
+**How Sender gets filled (revised — the ForceFillSender approach was
+abandoned mid-implementation).** Rather than force-filling the Sender
+alias from C++ before quest start (`ReferenceAlias.ForceRefTo` is
+documented as unreliable on stopped quests, and the CK doesn't allow
+truly-empty Fill Type via its UI — the closest option, `Specific
+Reference` with no picked ref, marks the alias as "fill failed" and
+poisons dependent Create-in-Sender rules), we use a marker faction.
+Every candidate NPC becomes a member of `_ne_LetterSenderFaction`
+on first designation; the currently-designated sender is promoted to
+rank 4; all others sit at rank 0. The `Sender` alias's Fill Type is
+`Find Matching Reference` with condition `GetFactionRank
+_ne_LetterSenderFaction >= 4`, so the engine's own alias-fill pass
+picks up the designated sender natively. `LetterRef`'s
+`Create Reference to Object → In Sender` rule then works correctly
+because Sender was filled through the canonical path.
+
+The C++ side promotes the sender, runs `EnsureQuestStarted`, then
+demotes the sender back to rank 0 in the completion callback (both
+success and failure paths). See Step 15 for the C++ orchestration
+detail.
 
 **Files:**
 
@@ -1864,7 +1939,10 @@ nudging it through Stage 30/40/50/60 as engine events fire.
   Scriptname _ne_PooledLetterQuest extends Quest
 
   ; Wired to the matching CK alias by name. Both aliases must exist on every
-  ; quest this script is attached to.
+  ; quest this script is attached to. Both fill natively during the engine's
+  ; alias-fill pass inside EnsureQuestStarted — Sender via Find Matching
+  ; Reference on the _ne_LetterSenderFaction rank condition, LetterRef via
+  ; Create Reference to Object → In Sender.
   ReferenceAlias Property Sender    Auto
   ReferenceAlias Property LetterRef Auto
 
@@ -1874,30 +1952,19 @@ nudging it through Stage 30/40/50/60 as engine events fire.
   ; CK accepts a Quest form here because WICourierScript extends Quest.
   WICourierScript Property WICourier Auto
 
-  ; --- Called from C++ ---
-
-  ; Force-fills the Sender alias before quest start. C++ invokes this once
-  ; per dispatch via VM dispatch on the quest itself; the alias-index lookup
-  ; stays inside Papyrus.
-  Function ForceFillSender(Actor akSender)
-      if akSender == None
-          Debug.Trace("[_ne_PooledLetterQuest] ForceFillSender: None")
-          return
-      endIf
-      Sender.ForceRefTo(akSender)
-  EndFunction
-
   ; --- Internal ---
 
   ; Reads LetterRef (the alias-spawned letter REFR inside the Sender's
   ; inventory) and hands it to vanilla WICourier for delivery. Called from
-  ; Stage 10's fragment. On a None LetterRef (alias-create failure), self-
-  ; routes to Stage 60 so the recycle path runs immediately instead of
-  ; waiting for the C++ verification poll to time out.
+  ; Stage 10's fragment. On a None LetterRef, self-routes to Stage 60 as a
+  ; defensive fallback — with LetterRef's Optional flag now OFF, a failed
+  ; Create-in-Sender aborts EnsureQuestStarted before Stage 10 ever runs,
+  ; so this branch should be unreachable in practice; kept as belt-and-
+  ; suspenders in case of an unexpected engine deferral.
   Function DispatchLetterToCourier()
       ObjectReference letterObjRef = LetterRef.GetReference()
       if letterObjRef == None
-          Debug.Trace("[_ne_PooledLetterQuest] LetterRef empty")
+          Debug.Trace("[_ne_PooledLetterQuest] LetterRef empty at Stage 10")
           SetStage(60)
           return
       endIf
@@ -1905,11 +1972,10 @@ nudging it through Stage 30/40/50/60 as engine events fire.
   EndFunction
 
   ; Terminal teardown. Called by Stage 200's fragment (which Stages 50 and
-  ; 60 both route to). Stop() stops the quest; Reset() then clears all
-  ; alias fills (the Sender forced ref and any still-tracked LetterRef
-  ; created ref) and resets the stage to none. After Reset returns, the
-  ; quest is in a "freshly authored" state, ready for the next allocation
-  ; of this slot.
+  ; 60 both route to). Stop() stops the quest; Reset() then clears the
+  ; alias fills (Sender's FMR pick and LetterRef's created ref) and resets
+  ; the stage to none. After Reset returns, the quest is in a "freshly
+  ; authored" state, ready for the next allocation of this slot.
   Function Shutdown()
       Stop()
       Reset()
@@ -1947,7 +2013,7 @@ copies essentially no logic.
 
 | Stage | Semantic                                    | Set by                                             | Fragment does                                                                                          |
 | ----: | ------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-|     0 | Startup; force-filled Sender, alias-spawned LetterRef | Engine (Startup Stage flag) on `Self.Start()`     | `SetStage(10)` (auto-advance)                                                                          |
+|     0 | Startup; Sender filled via faction FMR, LetterRef spawned via Create-in-Sender | Engine (Startup Stage flag) on `EnsureQuestStarted`, after its alias-fill pass runs | `SetStage(10)` (auto-advance)                                                                          |
 |    10 | Queue letter for courier                    | Stage 0 fragment                                   | Calls `kmyQuest.DispatchLetterToCourier()` on the attached script. The function reads `LetterRef.GetReference()`; on non-None it dispatches to vanilla WICourier; on None it logs and self-routes via `SetStage(60)`. |
 |    20 | In courier container (verified)             | C++ `DetectCompletion` poll once the pool book is found in `WICourierContainerRef` | Empty marker. (Director-side action completion happens C++-side at this same point.)                   |
 |    30 | Delivered to player inventory               | C++ `TESContainerChangedEvent` sink (`newContainer == player`) | Empty marker. (Sender-side SkyrimNet memory write fires C++-side at this same point — Step 17.)        |
@@ -2014,13 +2080,21 @@ CK-side stage configuration (in the Quest Stages tab):
    the `_ne_PooledLetterQuest` script via CK's script editor. Resolve
    any compile errors against the actual `WICourierScript` signature
    before moving on.
-3. Open the existing `_ne_PooledLetterQuest01` quest (Stages 0 and 10
+3. **Create the marker faction `_ne_LetterSenderFaction`** (Character →
+   Faction → New):
+   - EditorID: `_ne_LetterSenderFaction`.
+   - No reactions, no crime, no combat behavior, no vendors, no
+     relations to any other faction. A pure marker.
+   - Ranks tab: no rank labels needed — the C++ side uses raw rank
+     numbers (0 = candidate, 4 = designated) directly.
+   - Save.
+4. Open the existing `_ne_PooledLetterQuest01` quest (Stages 0 and 10
    already set up). Add stages 20, 30, 40, 50, 60, and the terminal
    200 per the stage map above. The Stage 10 fragment calls
-   `kmyQuest.DispatchLetterToCourier()`; the None-guard +
+   `kmyQuest.DispatchLetterToCourier()`; the defensive None-guard +
    `SetStage(60)` fall-through lives inside that script function,
    not in the fragment.
-4. Confirm the quest header settings:
+5. Confirm the quest header settings:
    - EditorID: `_ne_PooledLetterQuest01`.
    - Quest Data: **Start Game Enabled** OFF, **Run Once** OFF,
      **Allow Repeated Stages** off. Priority is irrelevant. Event =
@@ -2029,18 +2103,26 @@ CK-side stage configuration (in the Quest Stages tab):
      property set to vanilla `WICourier` (FormID `0x00039F82`).
    - **Aliases tab**: two reference aliases.
      - Alias name: `Sender`.
-       - Fill Type: leave the rule empty (no Specific Reference, no
-         Find Matching, no Create, no Unique Actor).
-       - Flags: `Optional` ON, `Allow Reserved` ON, `Allow Disabled`
-         ON. All others OFF.
+       - Fill Type: **Find Matching Reference**.
+       - "In Loaded Area": **unchecked**. Senders are remote by
+         design — the courier's job is to cross the distance. Without
+         this box, the engine iterates persistent references, which
+         includes named NPCs whether or not their cell is currently
+         loaded.
+       - "Closest": unchecked.
+       - Conditions: one condition — Function `GetFactionRank`,
+         Parameters `Faction = _ne_LetterSenderFaction`, Comparison
+         `>=`, Value `4`. Run On: Subject.
+       - Flags: `Optional` **OFF**. All others OFF. (See specifics
+         section on why Optional is off now.)
      - Alias name: `LetterRef`.
        - Fill Type: **Create Reference to Object**.
        - Object: `_ne_PooledLetter01` (the matching slot's pool book).
        - "Create In Alias": `Sender` (selects the kIn flag against the
          Sender alias index).
        - Level: `None`.
-       - Flags: `Optional` ON. All others OFF.
-5. Save the ESP.
+       - Flags: `Optional` **OFF**. All others OFF.
+6. Save the ESP.
 
 **Specifics:**
 
@@ -2056,24 +2138,26 @@ CK-side stage configuration (in the Quest Stages tab):
   Every per-slot quest (this one, and the 19 in Step 16) must use
   those exact alias names so the script binds correctly on each
   attachment.
-- `Debug.Trace` calls are temporary diagnostics for early bring-up;
-  once the integration is stable they can be deleted or downgraded.
-- The `Sender` alias's empty fill rule + `Optional` flag is what
-  lets us start the quest from C++ even when nothing has filled
-  `Sender` yet (although in practice we always force-fill before
-  `Start`, the `Optional` flag is the safety net that prevents
-  quest-start failures during early bring-up).
-- `Allow Reserved` on `Sender` is defensive against other quests
-  holding reservations on the chosen NPC — letters should fire even
-  when the sender NPC is mid-vanilla-quest. The forced fill bypasses
-  reservation contention.
-- The `LetterRef` alias's `Optional` flag is defensive against the
-  `Create Reference` step failing (sender in an unloaded cell at
-  quest start, etc.); without `Optional` a failed create would
-  block quest start. With `Optional`, the quest starts anyway,
-  `LetterRef` resolves to `None`, and Stage 10's None-guard
-  immediately self-recycles via `SetStage(60)` — no waiting for
-  the C++ verification window.
+- The remaining `Debug.Trace` call in `DispatchLetterToCourier` is a
+  temporary diagnostic for the (rarely-reached) LetterRef-None branch;
+  once we have some real-world runtime experience it can be deleted.
+- **`_ne_LetterSenderFaction` must be a pure marker.** No reactions,
+  no crime factions, no relations. C++ mutates NPC membership during
+  every dispatch, so any faction-driven gameplay side effect (dialogue
+  gating, combat aggression, vendor pricing) would fire briefly and
+  visibly. Rank semantics:
+  - `-1`: never touched.
+  - `0`: previously designated, currently a candidate.
+  - `4`: currently designated as this dispatch's sender.
+- **Optional OFF on both aliases** is deliberate: the faction-mediated
+  Sender fill and the Create-in-Sender LetterRef fill are both
+  expected to succeed on every dispatch. If either fails (stale
+  rank-4 straggler survived a sweep and matches instead of the target,
+  or the sender's inventory rejects the create), we want
+  `EnsureQuestStarted` to return `engineResult=false` so the C++
+  dispatch chain rolls back immediately with a specific diagnostic.
+  With Optional ON, the failure would silently proceed to Stage 10's
+  None-guard and self-recycle — slower to diagnose and less specific.
 - The SkyrimNet memory writes (Step 17) deliberately fire C++-side
   from the same event sinks that set stages 30 / 40, **not** from
   the stage fragments. Reason: `PublicAddMemory` is a C++ API; a
@@ -2091,33 +2175,31 @@ CK-side stage configuration (in the Quest Stages tab):
   dispatch in Step 15 will route through slot 0. Step 16 fills in
   the rest once the pipeline is proven.
 
-**Verify:** Open xEdit on `NarrativeEngine.esp`. Confirm one QUST
-record named `_ne_PooledLetterQuest01` exists with:
+**Verify:** Open xEdit on `NarrativeEngine.esp`. Confirm:
 
-- two reference aliases (`Sender` and `LetterRef`), each configured
-  per the sub-tasks above,
-- the `_ne_PooledLetterQuest` script attached with all three
-  properties bound (`Sender`, `LetterRef`, `WICourier`),
-- `LetterRef.ALCO` pointing at `_ne_PooledLetter01`,
-- stages 0, 10, 20, 30, 40, 50, 60, 200 present, with Stage 0
-  marked **Startup Stage**, Stage 200 marked **Complete Quest**,
-  and the fragments as specified.
+- one FACT record named `_ne_LetterSenderFaction` with no reactions,
+  no crime, no relations,
+- one QUST record named `_ne_PooledLetterQuest01` with:
+  - two reference aliases (`Sender` and `LetterRef`), each configured
+    per the sub-tasks above (Sender = Find Matching Reference with the
+    `GetFactionRank` condition; LetterRef = Create Reference in Sender),
+  - the `_ne_PooledLetterQuest` script attached with all three
+    properties bound (`Sender`, `LetterRef`, `WICourier`),
+  - `LetterRef.ALCO` pointing at `_ne_PooledLetter01`,
+  - stages 0, 10, 20, 30, 40, 50, 60, 200 present, with Stage 0
+    marked **Startup Stage**, Stage 200 marked **Complete Quest**,
+    and the fragments as specified.
 
 Confirm the CK script editor compiled `_ne_PooledLetterQuest.psc`
 without errors and the CK property panel for the quest shows all
 three script properties bound. Run `pwsh -File build.ps1 build`;
 boot Skyrim; SKSE log shows no ESP-load errors and no Papyrus-side
-script-binding warnings on `_ne_PooledLetterQuest01`.
+script-binding warnings on `_ne_PooledLetterQuest01`. The
+`NPCLetterAction: sender faction resolved (formID=0x…)` log line
+confirms the C++ side found the faction at kDataLoaded.
 
-No end-to-end runtime test yet — nothing dispatches a letter until
-Step 15. However, a minimal smoke test is possible right now by
-console-starting the quest after manually filling Sender via
-`<refID>.ForceRefTo` against the alias: confirm the quest auto-
-advances 0 → 10, dispatches a letter REFR into `WICourierContainerRef`
-(visible via console `GetContainerRefID 39FB9` then opening that
-container), and stalls at stage 10 (because nothing is setting
-stage 20 yet). That validates stages 0 and 10 in isolation before
-Step 15 wires the rest.
+No end-to-end runtime test at this step — the faction promote/demote
+logic and the full dispatch chain are Step 15's concern.
 
 ---
 
@@ -2129,14 +2211,16 @@ Step 15 wires the rest.
 
 **Goal:** Replace `NPCLetterAction::VMDispatchAddItemToContainer`'s current
 TODO stub with the orchestration sequence described in **Vanilla courier
-dispatch via per-slot delivery quests**: force-fill `Sender`, start the
-delivery quest, dispatch `DispatchLetterToCourier`, and on
-verified-completion stop the quest so the slot is reusable. The
-verification polls themselves are already in place from Step 13; this
-step rewires them to query `WICourierContainerRef`'s container (rather
-than the courier NPC, which was an interim choice that we now know is
-wrong — the courier NPC holds the letter only fleetingly between
-container deposit and handoff).
+dispatch via per-slot delivery quests**: promote the chosen sender to
+rank 4 in `_ne_LetterSenderFaction` (sweeping any stale rank-4 members
+first), start the delivery quest, let its Stage 10 fragment dispatch
+the letter to the courier, and on verified-completion (or any failure)
+demote the sender back to rank 0 and stop the quest so the slot is
+reusable. The verification polls themselves are already in place from
+Step 13; this step rewires them to query `WICourierContainerRef`'s
+container (rather than the courier NPC, which was an interim choice
+that we now know is wrong — the courier NPC holds the letter only
+fleetingly between container deposit and handoff).
 
 This step's verification is the end-to-end correctness test for the new
 strategy, run against the **single** `_ne_PooledLetterQuest01` authored
@@ -2150,48 +2234,126 @@ more times only after this end-to-end verification passes.
 - `src/NPCLetterAction.cpp`:
   - Add a `kDataLoaded`-time resolution pass that caches, for each pool
     slot index 0..19, a `RE::TESQuest*` pointer to
-    `_ne_PooledLetterQuestNN`. Any unresolved quest logs an error and
+    `_ne_PooledLetterQuestNN`, plus the `BGSRefAlias*` for `Sender` and
+    `LetterRef` on each. Any unresolved quest logs an error and
     permanently disables that slot from the allocator (the allocator
-    already skips slots whose `bookFormID == 0`; extend the same gate to
-    cover unresolved quests).
-  - Replace `VMDispatchAddItemToContainer`'s TODO body with the
-    three-VM-dispatch sequence:
-    1. `_ne_PooledLetterQuest.ForceFillSender(senderActor)` on the
-       slot's quest.
-    2. `Quest.Start()` on the slot's quest. (Use the
-       `BSScript::Internal::VirtualMachine::DispatchMethodCall` pattern
-       Step 13 established for `WICourierScript.AddItemToContainer`.)
-    3. `_ne_PooledLetterQuest.DispatchLetterToCourier()` on the slot's
-       quest.
+    already skips slots whose `bookFormID == 0`; extend the same gate
+    to cover unresolved quests).
+  - Add a `kDataLoaded`-time resolution of the
+    `_ne_LetterSenderFaction` marker faction. Log an error if it
+    doesn't resolve (mis-authored ESP).
+  - Add three faction helpers:
+    - `SweepStaleDesignatedSenders(TESFaction*, Actor* target)` —
+      walks `RE::ProcessLists`' four actor lists (high, middleHigh,
+      middleLow, low), and for any actor at rank ≥ 4 that isn't the
+      target, calls `AddToFaction(fact, 0)` to demote. This handles
+      the corner case where a prior dispatch left an actor at rank 4
+      (a crash between promote and demote, or a save mid-dispatch).
+      The sweep only walks loaded actors — an unloaded persistent
+      actor left at rank 4 could theoretically survive across a
+      reload and get matched by FMR before our newly-promoted target;
+      the mitigation, if we see it in practice, is to persist the
+      currently-designated sender FormID in the co-save and demote on
+      `OnLoad`. Not needed for bring-up.
+    - `PromoteSenderToDesignated(Actor* sender)` — sweeps first, then
+      elevates the sender to rank 4 via `AddToFaction(fact, 4)`
+      (which is both add-and-set-rank in CommonLibSSE-NG). Handles
+      all three current-state cases: not in faction → add at 4,
+      in-faction at < 4 → promote to 4, already at 4 → no-op.
+    - `DemoteSenderToCandidate(Actor* sender)` — sets rank back to 0.
+      Called from both success and failure branches of the completion
+      callback so faction state is always clean afterward.
+  - Replace `VMDispatchAddItemToContainer`'s TODO body with an async
+    two-phase chain:
+    1. `PromoteSenderToDesignated(sender)` (main thread, synchronous).
+       Sweeps stragglers + elevates target.
+    2. `quest->EnsureQuestStarted(engineResult, /*a_startNow=*/true)`
+       (main thread, synchronous). The engine's alias-fill pass runs
+       Sender's Find-Matching-Reference rule (picks the rank-4
+       actor), then LetterRef's Create-in-Sender rule (spawns the
+       pooled book in the sender's inventory). **Do NOT VM-dispatch
+       `Quest.Start()`** — see `docs/engine-findings/starting-a-quest-
+       from-cpp.md`; that path flips internal flags but skips the
+       alias-fill pass. On `callOk == false || engineResult == false`
+       the chain fails immediately with a specific diagnostic. With
+       both aliases now `Optional` OFF, an alias-fill failure
+       propagates cleanly via `engineResult=false`.
+    3. Poll `senderAlias->GetReference()` (100ms interval, 5s cap) on
+       an `AsyncDispatch` worker with predicate marshaling to main.
+       In the happy path the fill happens synchronously inside
+       `EnsureQuestStarted` and the first poll succeeds; the timeout
+       exists as belt-and-suspenders in case the engine defers.
+    4. Poll `letterRefAlias->GetReference()` (same shape). On success,
+       stamp `g_dispatchChainCompletedAt` and hand off to the IAction
+       verification polls.
+    5. Regardless of outcome, the completion callback calls
+       `DemoteSenderToCandidate(sender)` before invoking the caller's
+       `onComplete(ok)`, so faction state is always clean when the
+       IAction polls take over.
 
-    Each dispatch's completion callback chains into the next so we don't
-    race the quest's alias resolution. Specifically: `Start` MUST
-    complete before `DispatchLetterToCourier` runs, or `LetterRef` may
-    not yet hold a reference. The simplest implementation is sequential
-    callbacks; an alternative is a short main-thread delay between
-    `Start` and `DispatchLetterToCourier` (one or two ticks), but
-    chained callbacks are cleaner if `DispatchMethodCall`'s callback
-    fires reliably for `Start`.
+    The `DispatchLetterToCourier` step that the prior spec called out
+    as a third C++ dispatch is no longer needed — Step 14 moved that
+    call into the Stage 10 fragment, which fires automatically when
+    `EnsureQuestStarted` advances Stage 0 → Stage 10.
   - Update `DetectAndRollbackFailedStart` and `DetectCompletion` to
-    query `GetItemCount(slot.bookFormID)` on **the cached
+    query `GetInventoryCounts(predicate)` on **the cached
     `WICourierContainerRef`** rather than on the Courier NPC. The
     container resolution should follow the hybrid path documented in
     **Locating the courier's container**: at `kDataLoaded`, walk
     `WICourier->aliases` for the alias named `"Container"` and cache
     its filled reference; if that fails, cache `WICourierContainerRef`
-    directly by FormID.
+    directly by FormID. (Do NOT use `InventoryChanges::GetItemCount`
+    — that returns a delta-from-base that can be wildly negative for
+    a CONT-backed container like `WICourierContainerRef`. Only
+    `GetInventoryCounts` returns absolute counts.)
+  - Both IAction polls treat `g_dispatchChainCompletedAt == 0` as
+    "still setting up, don't fail yet" and `g_dispatchChainFailed`
+    as "chain already diagnosed and rolled back, second rollback
+    would double-count." The verify-window clock starts at
+    `g_dispatchChainCompletedAt`, not `secondsSinceStart`, so a slow
+    faction/alias setup doesn't eat into the courier verification
+    budget.
   - In `DetectCompletion` and `DetectAndRollbackFailedStart`, when
-    returning `true`, also VM-dispatch `Quest.Stop()` on the slot's
-    delivery quest so the slot's quest is back to a stopped state and
-    its `LetterRef` alias clears. Stopping the quest does NOT remove
-    the spawned letter REFR from the courier container — once
-    `AddItemToContainer` moves it across, the REFR's lifetime is
-    governed by the courier system, not the source quest.
+    returning `true`, VM-dispatch `Quest.SetStage(N)` on the slot's
+    delivery quest to route it through Papyrus's terminal-shutdown
+    path:
+      - `DetectCompletion` (success) → `SetStage(200)` directly. The
+        Stage 200 fragment calls `kmyQuest.Shutdown()`, which does
+        `Stop()` + `Reset()` — quest is now in a freshly-startable
+        state with all aliases cleared.
+      - `DetectAndRollbackFailedStart` (timeout) → `SetStage(60)`.
+        The Stage 60 fragment ("Recycled by C++") routes to
+        Stage 200 via `SetStage(200)`, which then runs Shutdown.
+        The intermediate stage exists for telemetry — the rollback
+        path is distinguishable from the success path in the log /
+        console.
+    Stopping the quest does NOT remove the spawned letter REFR from
+    the courier container — once `AddItemToContainer` moves it across,
+    the REFR's lifetime is governed by the courier system, not the
+    source quest.
+
+  - **Bring-up simplification (intentional):** the Step 14 stage map
+    describes a fuller lifecycle (Stage 20 = verified, 30 = delivered,
+    40 = read, 50 = disposed). Step 15 skips straight from Stage 10 to
+    Stage 200 on success because the C++ event sinks that would drive
+    20/30/40/50 are wired in later steps; landing the verification +
+    reuse loop now is enough to validate the dispatch strategy. The
+    intermediate stages exist on the quest already (the markers are
+    cheap), so the deeper wiring can land non-invasively when the
+    SkyrimNet memory-write step layers it on.
 - `include/LetterPool.h` / `src/LetterPool.cpp`:
   - No structural change. `bookFormID` per slot already drives the
     verification query.
   - In `Initialize`, the unresolved-form gate already exists; no new
     fields needed on `Slot`.
+- `src/LetterComposer.cpp`:
+  - Candidate filter: reject dead or disabled candidates before they
+    reach the LLM. The faction promotion + alias fill will silently
+    misbehave on a disabled sender (Create-in-Sender depends on the
+    target actor being world-instantiated), so the filter is
+    belt-and-suspenders with the equivalent guard inside
+    `DispatchLetterViaPerSlotQuest`. Log a summary line of how many
+    were rejected per pass.
 
 **Specifics:**
 
@@ -2206,49 +2368,90 @@ more times only after this end-to-end verification passes.
   `RE::TESForm::LookupByEditorID`, same path as the pool books in Step 4.
   The 20 quests are looked up alongside the 20 books and stored in
   parallel arrays.
-- `ForceFillSender`'s VM dispatch self handle is the **quest**, not the
-  alias. The Papyrus function does the alias-index lookup internally via
-  `Self.GetAlias(...)`. This keeps the alias index off the C++ side and
-  lets CK reorder aliases without breaking the bridge.
-- The `Quest.Start()` dispatch returns a bool; check it. If it returns
-  false, treat it as a failed dispatch (`AbortPending`, do not invoke
-  `DispatchLetterToCourier`). Quest start can fail for engine reasons
-  outside our control (mod conflict, save corruption); the verification
-  poll catches it as a secondary safety net, but the direct return
-  value lets us fail fast without waiting for the verification window.
-- `Quest.Stop()` is fire-and-forget; no return-value check needed. The
-  next `Allocate` of this slot will re-enter the flow from a stopped
-  quest as expected.
+- **Why faction rank rather than membership.** The alias condition
+  compares `GetFactionRank`, not `GetInFaction`. This lets us
+  distinguish "known candidate" (rank 0) from "currently designated"
+  (rank 4) without cycling the actor's `ExtraFactionChanges` entry in
+  and out (which would happen with `RemoveFromFaction` between
+  dispatches and add save-game churn — though empirically Skyrim's
+  `RemoveFromFaction` leaves the entry in place with a sentinel rank
+  anyway, so the practical bloat difference is close to zero; the
+  rank approach is chosen mainly for legibility).
+- **Rank 4 (not rank 1)** is the "designated" rank purely so we have
+  headroom to introduce intermediate rank-band semantics later
+  (e.g., "candidate that failed a prior dispatch, deprioritize") if
+  they turn out to be useful. Any value >= 1 would satisfy the alias
+  condition; 4 is the reserved band-top.
+- **VM dispatch is only used for `Quest.SetStage`** — the stage-nudge
+  from `DetectCompletion` / `DetectAndRollbackFailedStart`. Quest
+  start is native (`EnsureQuestStarted`). Sender fill is engine-
+  driven (Find Matching Reference). LetterRef fill is engine-driven
+  (Create Reference in Sender). No VM dispatch on the dispatch or
+  fill paths.
+- `DispatchMethodCall` returns a bool for whether the *dispatch was
+  queued*, not whether the Papyrus function succeeded — synchronous
+  return-value capture would require a custom IStackCallbackFunctor
+  and isn't worth the wiring here. Treat a false return as a hard
+  failure (VM down, handle policy missing) and treat success as
+  "queued, will run on the next VM tick." For `Quest.SetStage`
+  specifically, the Papyrus fragment chain handles teardown, after
+  which the next `Allocate` of this slot will re-enter the flow from
+  a freshly-reset quest.
 
-**Verify:** Build clean. Boot Skyrim; trigger a phase advance so the
-dispatcher picks `npc_letter`. SKSE log shows:
+**Verify:** Build clean. Boot Skyrim; SKSE log shows
+`NPCLetterAction: sender faction resolved (formID=0x…)` at
+`kDataLoaded`.
+
+Trigger a phase advance so the dispatcher picks `npc_letter`. SKSE
+log shows:
 
 - action-select picks `npc_letter` → content LLM round-trip →
-  `LetterPool: populated slot N (sender=<...>, body=N chars)` →
-  `NPCLetterAction: ForceFillSender(0xXXXXX) on _ne_PooledLetterQuestNN` →
-  `NPCLetterAction: Quest.Start succeeded` →
-  `NPCLetterAction: DispatchLetterToCourier dispatched`.
-- Within ~1-5 seconds, `LetterAction: verify@Ns — courier container has
-  1 copies` → `DetectCompletion: complete` →
-  `NPCLetterAction: Quest.Stop on _ne_PooledLetterQuestNN` → dispatcher
-  applies cooldown. The slot is now in `PendingDelivery` state; the
-  dashboard's `actionInFlight` indicator clears.
+  `LetterPool: populated slot N (sender=<...>, body=N chars)`.
+- `NPCLetterAction: dispatching slot N (quest=0x…) → Phase A:
+  faction promote (sender=0x… → rank 4)` →
+  `NPCLetterAction[FACTION]: added sender 0x… to faction at rank 4`
+  (first time this NPC has ever been designated) or
+  `promoted sender 0x… from rank 0 to rank 4` (subsequent times).
+- `NPCLetterAction: slot N EnsureQuestStarted ok (quest=0x…); polling
+  for Sender then LetterRef fill`.
+- `NPCLetterAction: slot N Phase B complete — Sender alias filled
+  (REFR=0x…, expected 0x…)` — the "expected" FormID should match the
+  designated sender. A mismatch is a symptom of a stale rank-4
+  survivor and warrants the co-save-persistence follow-up mentioned
+  in the sweep helper's docstring.
+- `NPCLetterAction: slot N Phase C complete — LetterRef filled
+  (REFR=0x…)`.
+- Within ~1-5 seconds, `LetterAction: verify@Ns — courier container
+  has 1 copies` → `DetectCompletion: complete` →
+  `NPCLetterAction[FACTION]: demoted sender 0x… from rank 4 back to
+  rank 0` → dispatcher applies cooldown. The slot is now in
+  `PendingDelivery` state; the dashboard's `actionInFlight` indicator
+  clears.
 - Within a few in-game minutes, the vanilla courier finds the player
   and hands over the letter. Reading it shows the LLM-generated body.
 
 Rollback path: temporarily break the dispatch by disabling `WICourier`
 via console (`StopQuest WICourier`) before triggering. The verification
 poll should log `courier container has 0 copies` →
-`DetectAndRollbackFailedStart: rolling back` → slot returns to Free and
-the quest is stopped; the action is immediately re-selectable.
+`DetectAndRollbackFailedStart: rolling back` → the same faction demote
+line fires from the failure branch → slot returns to Free and the
+quest is stopped; the action is immediately re-selectable.
+
+Sweep-of-stragglers sanity: manually promote an unrelated loaded NPC
+to rank 4 via console (`<refid>.addtofaction _ne_LetterSenderFaction
+4`), then trigger a dispatch. The pre-dispatch sweep should log
+`NPCLetterAction[FACTION]: swept stale rank-4+ member 0x… → rank 0`
+for that NPC, and the dispatch should proceed against the intended
+target.
 
 Repeat-fire sanity: trigger 3–5 letter dispatches in a row (each
 preceded by a phase advance, or by lowering `iActionCooldownSeconds`
 temporarily). All 3–5 should route through slot 0, complete the full
-quest-driven flow, and survive the `Quest.Stop()` → next-allocation →
-`Quest.Start()` cycle without leaking state. If the second dispatch
-fails where the first succeeded, the quest-reuse path is broken — fix
-before proceeding to Step 16.
+quest-driven flow, and survive the `Shutdown` → next-allocation →
+`EnsureQuestStarted` cycle without leaking state. Faction demote
+should fire on every completion. If the second dispatch fails where
+the first succeeded, either the quest-reuse path or the faction-
+cleanup path is broken — fix before proceeding to Step 16.
 
 ---
 

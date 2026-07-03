@@ -132,4 +132,19 @@ namespace NarrativeEngine::PrismaUI_API
         }
         g_api->InteropCall(view, functionName.c_str(), argument.c_str());
     }
+
+    void RegisterJSListener(ViewHandle view, const std::string& functionName, JSListenerCallback callback)
+    {
+        // IVPrismaUI1::RegisterJSListener(PrismaView, const char* functionName, JSListenerCallback)
+        // Our wrapper's JSListenerCallback typedef is ABI-compatible with
+        // PRISMA_UI_API::JSListenerCallback (same signature); reinterpret is
+        // used to keep upstream headers out of PrismaUI.h.
+        if (!g_api || view == kInvalidView || !callback) {
+            return;
+        }
+        g_api->RegisterJSListener(
+            view,
+            functionName.c_str(),
+            reinterpret_cast<PRISMA_UI_API::JSListenerCallback>(callback));
+    }
 }

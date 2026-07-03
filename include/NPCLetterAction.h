@@ -28,4 +28,19 @@ namespace NarrativeEngine
         bool           DetectCompletion(const ActionContext& ctx,
                                         double                secondsSinceStart) override;
     };
+
+    namespace NPCLetterAction_Init
+    {
+        // Resolve the 20 `_ne_PooledLetterQuestNN` EditorIDs into the
+        // per-slot delivery-quest cache, and warm the vanilla WICourier /
+        // courier-container resolution so the verification polls don't
+        // have to do the lookup lazily on first use.
+        //
+        // Must run AFTER LetterPool::Initialize at kDataLoaded, because
+        // the per-slot quest array is keyed against LetterPool slot
+        // indices.
+        //
+        // Idempotent — second call rewires nothing and is cheap.
+        void Initialize();
+    }
 }

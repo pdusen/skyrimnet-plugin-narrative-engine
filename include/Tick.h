@@ -18,4 +18,13 @@ namespace NarrativeEngine::Tick
     // Signal the tick thread to exit and join it. Idempotent. Call from
     // kPreLoadGame so an in-flight tick can't fire during deserialization.
     void Stop();
+
+    // Runtime killswitch for the tick's main-thread poll. When disabled,
+    // PollOnMainThread returns immediately without accumulating time,
+    // polling CombatEventLog, driving the ActionDispatcher tick, or firing
+    // PhaseTracker/EvaluationPipeline. Used by the dashboard debug toggle
+    // to suspend all timed Director behavior while diagnosing specific
+    // subsystems in isolation. Defaults to true. Thread-safe.
+    void SetEnabled(bool enabled);
+    bool IsEnabled();
 }

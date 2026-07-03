@@ -89,6 +89,9 @@ namespace NarrativeEngine::LetterComposer
                 return out;
             }
 
+            int skippedDead     = 0;
+            int skippedDisabled = 0;
+            int skippedMissing  = 0;
             for (auto& entry : enrolled) {
                 if (!entry.is_object()) continue;
                 Candidate c;
@@ -96,6 +99,30 @@ namespace NarrativeEngine::LetterComposer
                     c.formId = it->get<std::uint32_t>();
                 }
                 if (c.formId == 0) continue;
+
+                // Viability gate. A letter sender must be a live, enabled
+                // actor in the world right now — the per-slot delivery
+                // quest's `LetterRef` alias uses "Create Reference to
+                // Object" with Create-In = Sender, and the engine can only
+                // spawn a REFR into an instantiated, enabled, non-corpse
+                // inventory. Dead or disabled candidates pass selection but
+                // then silently fail the alias-fill, leaving `LetterRef`
+                // empty and stranding the dispatch. Filter them out here.
+                auto* form  = RE::TESForm::LookupByID(c.formId);
+                auto* actor = form ? form->As<RE::Actor>() : nullptr;
+                if (!actor) {
+                    ++skippedMissing;
+                    continue;
+                }
+                if (actor->IsDead()) {
+                    ++skippedDead;
+                    continue;
+                }
+                if (actor->IsDisabled()) {
+                    ++skippedDisabled;
+                    continue;
+                }
+
                 if (auto it = entry.find("name"); it != entry.end() && it->is_string()) {
                     // SkyrimNet-returned text — sanitize before we cache or
                     // forward to the prompt.
@@ -128,6 +155,12 @@ namespace NarrativeEngine::LetterComposer
                 out.push_back(std::move(c));
             }
 
+            if (skippedMissing || skippedDead || skippedDisabled) {
+                logger::info(
+                    "LetterComposer: filtered candidates (kept={}, "
+                    "skipped: missing-actor={}, dead={}, disabled={})",
+                    out.size(), skippedMissing, skippedDead, skippedDisabled);
+            }
             return out;
         }
 

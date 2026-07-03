@@ -10,6 +10,7 @@
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
+#include <Tick.h>
 #include <logger.h>
 
 #include <nlohmann/json.hpp>
@@ -110,6 +111,20 @@ namespace NarrativeEngine::DashboardUIManager
         // file from the real filesystem. Pass the views-root-relative
         // path and let PrismaUI handle resolution.
         constexpr const char* kHtmlPath = "NarrativeEngine/dashboard/index.html";
+
+        // JS -> C++ listener for the dashboard debug tick killswitch.
+        // Fires on PrismaUI's worker thread when the dashboard checkbox
+        // is toggled; marshal to the main thread before touching engine
+        // state. Payload is `"true"` or `"false"` (JSON booleans stringified).
+        void OnSetTickEnabled(const char* argument)
+        {
+            const std::string arg = argument ? argument : "";
+            const bool enabled = (arg == "true" || arg == "1");
+            logger::info("DashboardUIManager: ne_setTickEnabled({}) received", arg);
+            AsyncDispatch::MarshalToMainThread([enabled] {
+                Tick::SetEnabled(enabled);
+            });
+        }
     }
 
     void Initialize()
@@ -129,6 +144,11 @@ namespace NarrativeEngine::DashboardUIManager
         // Start hidden; the player toggles with the configured hotkey.
         PrismaUI_API::Hide(g_view);
         g_visible = false;
+
+        // JS -> C++ listener for the debug tick killswitch checkbox.
+        // Registered before the view goes live so the first Show()/user
+        // interaction can immediately route into the handler.
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setTickEnabled", &OnSetTickEnabled);
 
         // Hook input events for the hotkey.
         if (auto* inputManager = RE::BSInputDeviceManager::GetSingleton()) {
@@ -164,6 +184,9 @@ namespace NarrativeEngine::DashboardUIManager
             // plugin loaded.
             {"director_enabled",     true},
             {"prisma_ui_available",  PrismaUI_API::IsAvailable()},
+            // Runtime debug killswitch. The dashboard renders a checkbox
+            // bound to this and calls back via `window.ne_setTickEnabled`.
+            {"tick_enabled",         Tick::IsEnabled()},
         };
 
         // phase

@@ -1,23 +1,15 @@
-Scriptname _ne_PooledLetterQuest extends Quest  
+Scriptname _ne_PooledLetterQuest extends Quest
 
-ReferenceAlias Property Sender  Auto  
+ReferenceAlias Property Sender  Auto
 
-ReferenceAlias Property LetterRef  Auto  
+ReferenceAlias Property LetterRef  Auto
 
-WICourierScript Property WICourier  Auto  
-
-Function ForceFillSender(Actor akSender)
-    if akSender == None
-        Debug.Trace("[_ne_PooledLetterQuest] ForceFillSender: None")
-        return
-    endIf
-    Sender.ForceRefTo(akSender)
-EndFunction
+WICourierScript Property WICourier  Auto
 
 Function DispatchLetterToCourier()
     ObjectReference letterObjRef = LetterRef.GetReference()
     if letterObjRef == None
-        Debug.Trace("[_ne_PooledLetterQuest] LetterRef empty")
+        Debug.Trace("[_ne_PooledLetterQuest] LetterRef empty at Stage 10")
         SetStage(60)
         return
     endIf

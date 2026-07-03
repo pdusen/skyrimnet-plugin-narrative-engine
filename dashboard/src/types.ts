@@ -15,6 +15,11 @@ export interface DirectorState {
         skyrim_net_version: number;
         director_enabled: boolean;
         prisma_ui_available: boolean;
+        // Runtime debug killswitch. When false, the C++ Tick module skips
+        // its main-thread poll — no phase advance, no evaluation, no
+        // dispatcher / combat-log ticking. Toggled via the checkbox in
+        // StatusBanner which calls `window.ne_setTickEnabled('true'|'false')`.
+        tick_enabled: boolean;
     };
     current_phase: PhaseName;
     time_in_phase_seconds: number;

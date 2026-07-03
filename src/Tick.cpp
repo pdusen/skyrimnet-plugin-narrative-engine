@@ -9,6 +9,7 @@
 #include <logger.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
@@ -39,6 +40,11 @@ namespace NarrativeEngine::Tick
         // overhead is negligible (~2 main-thread tasks per second).
         constexpr std::chrono::milliseconds kPollInterval{500};
 
+        // Runtime killswitch. When false, PollOnMainThread returns
+        // immediately. Set from any thread via SetEnabled (dashboard
+        // JS listener marshals from the PrismaUI worker thread).
+        std::atomic<bool> g_enabled{true};
+
         // Main-thread poll: sample wall-clock elapsed since the last poll,
         // accumulate it only when the engine isn't paused, and fire the
         // tick when the unpaused accumulator crosses the configured
@@ -50,6 +56,14 @@ namespace NarrativeEngine::Tick
             const double elapsedSec =
                 std::chrono::duration<double>(now - g_lastSampleTime).count();
             g_lastSampleTime = now;
+
+            // Killswitch — when the dashboard's debug toggle is off, we
+            // consume the elapsed sample above (so re-enabling doesn't
+            // credit paused time) but skip all downstream ticking.
+            if (!g_enabled.load(std::memory_order_acquire)) {
+                (void)elapsedSec;
+                return;
+            }
 
             // The same pause predicate the rest of the engine uses for
             // "real time should not advance right now" (menus, console,
@@ -132,6 +146,19 @@ namespace NarrativeEngine::Tick
         g_thread     = std::thread(DriverLoop);
         logger::info("Tick: driver thread started (interval={}s, paused-aware)",
                      Settings::Get().tickIntervalSeconds);
+    }
+
+    void SetEnabled(bool enabled)
+    {
+        const bool prev = g_enabled.exchange(enabled, std::memory_order_acq_rel);
+        if (prev != enabled) {
+            logger::info("Tick: killswitch -> {}", enabled ? "enabled" : "disabled");
+        }
+    }
+
+    bool IsEnabled()
+    {
+        return g_enabled.load(std::memory_order_acquire);
     }
 
     void Stop()

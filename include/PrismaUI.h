@@ -64,4 +64,15 @@ namespace NarrativeEngine::PrismaUI_API
     // context using PrismaUI's JS-interop fast path. The argument is a single
     // string — for structured data, serialize it as JSON before calling.
     void InvokeJS(ViewHandle view, const std::string& functionName, const std::string& argument);
+
+    // Signature for a JS -> C++ listener. `argument` is the single string
+    // the JS side passes to `window.<functionName>(arg)`. The callback is
+    // invoked on PrismaUI's worker thread — marshal to the main thread
+    // before touching engine state.
+    using JSListenerCallback = void (*)(const char* argument);
+
+    // Registers a JS listener so calls to `window.<functionName>(arg)` in
+    // the view's JavaScript context route into `callback`. No-op when
+    // PrismaUI is unavailable or the handle is invalid.
+    void RegisterJSListener(ViewHandle view, const std::string& functionName, JSListenerCallback callback);
 }

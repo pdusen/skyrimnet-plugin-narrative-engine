@@ -78,6 +78,12 @@ namespace NarrativeEngine
                     // (courier → player) and the discard / drop recycle
                     // paths.
                     LetterPool::RegisterContainerEventSink();
+                    // Warm the WICourier resolution and resolve the 20
+                    // _ne_PooledLetterQuestNN per-slot delivery quests
+                    // into NPCLetterAction's dispatch cache. Must run
+                    // AFTER LetterPool::Initialize so the slot indexing
+                    // is consistent across both subsystems.
+                    NPCLetterAction_Init::Initialize();
                     break;
                 case SKSE::MessagingInterface::kNewGame:
                     logger::info("OnMessage: kNewGame");
