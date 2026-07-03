@@ -2332,15 +2332,39 @@ more times only after this end-to-end verification passes.
     the REFR's lifetime is governed by the courier system, not the
     source quest.
 
-  - **Bring-up simplification (intentional):** the Step 14 stage map
-    describes a fuller lifecycle (Stage 20 = verified, 30 = delivered,
-    40 = read, 50 = disposed). Step 15 skips straight from Stage 10 to
-    Stage 200 on success because the C++ event sinks that would drive
-    20/30/40/50 are wired in later steps; landing the verification +
-    reuse loop now is enough to validate the dispatch strategy. The
-    intermediate stages exist on the quest already (the markers are
-    cheap), so the deeper wiring can land non-invasively when the
-    SkyrimNet memory-write step layers it on.
+  - **Full-lifecycle stage advancement:** The C++ side drives the
+    per-slot quest through the whole map from Step 14, not just the
+    terminal Stage 200. Concretely:
+    - `DetectCompletion` advances the quest to **Stage 20** ("in
+      courier container, verified") — not Stage 200. The action
+      completes from the Director's perspective, but the quest keeps
+      running to track the rest of the lifecycle.
+    - `LetterPool::MarkDelivered` (courier → player) advances to
+      **Stage 30**.
+    - `LetterPool::MarkRead` (BookMenu close on a pool letter)
+      advances to **Stage 40**.
+    - `LetterPool::MarkDiscardedToContainer` and
+      `LetterPool::MarkDroppedToCell` (player → non-player) advance to
+      **Stage 50** before `EvictSlot`. The Stage 50 fragment routes to
+      Stage 200 → `Shutdown()`.
+    - The allocator's recycle path (a slot picked for reuse that
+      currently holds a delivered / read letter) calls
+      `NPCLetterAction_QuestControl::ShutdownSlotQuestSync` before
+      `EvictSlot`. This uses the native `TESQuest::Stop()` +
+      `TESQuest::Reset()` methods synchronously (equivalent to
+      Papyrus's `Shutdown()` function but without going through the
+      VM). Sync shutdown is required here because `Allocate` is
+      followed immediately in the same frame by `PopulateSlot` +
+      `EnsureQuestStarted`; a VM-dispatched Stage 60 → 200 → Shutdown
+      chain would race that and `EnsureQuestStarted` would see the
+      quest still running and skip the alias-fill pass.
+
+    Player-driven advancement (Stages 30/40/50) goes through
+    `NPCLetterAction_QuestControl::AdvanceSlotStage`, a thin
+    `Quest.SetStage` VM dispatch keyed by slot index. Safe on
+    already-stopped quests: Papyrus's `SetStage` on a non-running
+    quest is a no-op, so calling this on a Free slot (whose quest was
+    stopped by a prior Shutdown) does nothing.
 - `include/LetterPool.h` / `src/LetterPool.cpp`:
   - No structural change. `bookFormID` per slot already drives the
     verification query.
@@ -2422,13 +2446,36 @@ log shows:
 - `NPCLetterAction: slot N Phase C complete — LetterRef filled
   (REFR=0x…)`.
 - Within ~1-5 seconds, `LetterAction: verify@Ns — courier container
-  has 1 copies` → `DetectCompletion: complete` →
+  has 1 copies` → `DetectCompletion: complete` → the per-slot quest is
+  advanced to **Stage 20** ("in courier container, verified") →
   `NPCLetterAction[FACTION]: demoted sender 0x… from rank 4 back to
   rank 0` → dispatcher applies cooldown. The slot is now in
   `PendingDelivery` state; the dashboard's `actionInFlight` indicator
-  clears.
+  clears. The delivery quest **stays running** (it doesn't shut down
+  yet); confirm via console `sqv _ne_PooledLetterQuest01` — stage is
+  20 and state is Running.
 - Within a few in-game minutes, the vanilla courier finds the player
-  and hands over the letter. Reading it shows the LLM-generated body.
+  and hands over the letter. Log shows
+  `LetterPool: slot N marked Delivered (InInventory)` — the per-slot
+  quest advances to **Stage 30**. Reading the letter shows the LLM-
+  generated body; on close, log shows `LetterPool: slot N marked Read`
+  — the per-slot quest advances to **Stage 40** and stays there.
+- Dispose of the letter (drop it, sell it, or place it into a
+  container). Log shows either
+  `LetterPool: slot N discarded to container` or
+  `LetterPool: slot N dropped to cell` — the per-slot quest advances
+  to **Stage 50**, whose fragment routes to **Stage 200** →
+  `Shutdown()` is called, and the slot returns to Free. Confirm via
+  console `sqv _ne_PooledLetterQuest01` — quest is Stopped and stage
+  is back at 0 (Reset() cleared it).
+
+Alternate terminal path (allocator recycle): don't dispose of the
+letter — instead, trigger enough dispatches to force the allocator
+to pick the still-InInventory / Read slot for reuse. Log shows
+`NPCLetterAction: slot N recycled by allocator (quest=0x…,
+wasRunning=true, native Stop+Reset)` before EvictSlot completes and
+the new dispatch chain starts. Confirm the new dispatch works
+normally against the freshly-shut-down slot.
 
 Rollback path: temporarily break the dispatch by disabling `WICourier`
 via console (`StopQuest WICourier`) before triggering. The verification

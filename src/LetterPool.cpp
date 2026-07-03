@@ -268,6 +268,15 @@ namespace NarrativeEngine::LetterPool
         }
 
         if (needsEvict) {
+            // Synchronously Stop() + Reset() the per-slot delivery
+            // quest. Allocate is followed immediately (same frame) by
+            // PopulateSlot + PromoteSender + EnsureQuestStarted; a
+            // VM-dispatched Stage 60 → 200 → Shutdown would race that
+            // and EnsureQuestStarted would see the quest still running
+            // and skip the alias-fill pass. The native Stop+Reset is
+            // idempotent on an already-stopped quest, so the Free-slot
+            // case is fine too.
+            NPCLetterAction_QuestControl::ShutdownSlotQuestSync(chosen);
             EvictSlot(chosen);
             // Re-check FormID under the lock — defensive against the
             // (very unlikely) case where the slot's form unloaded
@@ -636,6 +645,10 @@ namespace NarrativeEngine::LetterPool
         slot.readAt = NowUnixSeconds();
         logger::info("LetterPool: slot {} marked Read", slotIndex);
         // Step 14 layers the player-side SkyrimNet memory write here.
+        // Advance the per-slot delivery quest to Stage 40 ("read by
+        // player"). The quest stays running until disposal (Stage 50)
+        // or allocator eviction (Stage 60).
+        NPCLetterAction_QuestControl::AdvanceSlotStage(slotIndex, 40);
     }
 
     namespace
@@ -825,6 +838,7 @@ namespace NarrativeEngine::LetterPool
         // any risk of lock inversion with NPCLetterAction's own mutex.
         // Step 14 layers the sender-side SkyrimNet memory write here.
         NPCLetterAction_Cooldowns::OnLetterDelivered(senderFormID);
+        NPCLetterAction_QuestControl::AdvanceSlotStage(slotIndex, 30);
     }
 
     void MarkDiscardedToContainer(std::size_t slotIndex, RE::TESObjectREFR* destination)
@@ -865,6 +879,13 @@ namespace NarrativeEngine::LetterPool
             }
         }
 
+        // Advance the per-slot delivery quest to Stage 50 ("disposed by
+        // player"). The Stage 50 fragment routes to Stage 200, which
+        // runs Shutdown() (Stop + Reset). Must fire before EvictSlot
+        // wipes state so the quest advances against a still-populated
+        // slot; the terminal shutdown races EvictSlot but the two are
+        // independent (quest lifecycle vs. slot lifecycle).
+        NPCLetterAction_QuestControl::AdvanceSlotStage(slotIndex, 50);
         EvictSlot(slotIndex);
     }
 
@@ -880,6 +901,7 @@ namespace NarrativeEngine::LetterPool
             "LetterPool: slot {} dropped to cell (worldRefFormID=0x{:08X})",
             slotIndex,
             worldRef ? worldRef->GetFormID() : 0u);
+        NPCLetterAction_QuestControl::AdvanceSlotStage(slotIndex, 50);
         EvictSlot(slotIndex);
     }
 

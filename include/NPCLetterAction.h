@@ -46,6 +46,29 @@ namespace NarrativeEngine
         void Initialize();
     }
 
+    namespace NPCLetterAction_QuestControl
+    {
+        // Advance the per-slot delivery quest to a specific stage. Called
+        // by LetterPool from player-driven lifecycle transitions
+        // (delivered → 30, read → 40, disposed → 50). Silently no-ops if
+        // `slotIndex` is out of range or its quest didn't resolve at
+        // kDataLoaded. Safe to call on a stopped quest — the underlying
+        // VM-dispatch is fire-and-forget and Papyrus's SetStage is a
+        // no-op on a non-running quest.
+        void AdvanceSlotStage(std::size_t slotIndex, std::uint32_t stage);
+
+        // Synchronously Stop() + Reset() the per-slot delivery quest so
+        // it's ready for the next allocation of this slot. Used by the
+        // allocator's recycle path — which is followed immediately (same
+        // frame) by PopulateSlot + EnsureQuestStarted, so the async
+        // Stage 50/60 → 200 → Shutdown fragment chain would race the
+        // new dispatch. This shortcut uses the native `Stop()` +
+        // `Reset()` methods on TESQuest, which do exactly what Papyrus's
+        // Shutdown() does but synchronously. Safe on an already-stopped
+        // quest (Stop and Reset are idempotent).
+        void ShutdownSlotQuestSync(std::size_t slotIndex);
+    }
+
     namespace NPCLetterAction_Cooldowns
     {
         // Called by LetterPool from its MarkDelivered path once the

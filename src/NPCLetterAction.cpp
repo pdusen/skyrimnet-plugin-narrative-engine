@@ -212,7 +212,8 @@ namespace NarrativeEngine
             // accepts only our specific book avoids the cost of iterating
             // every CONT entry on every poll.
             const auto counts = containerRef->GetInventoryCounts(
-                [book](RE::TESBoundObject &obj) { return &obj == book; });
+                [book](RE::TESBoundObject &obj)
+                { return &obj == book; });
             auto it = counts.find(book);
             return it != counts.end() ? it->second : 0;
         }
@@ -252,7 +253,7 @@ namespace NarrativeEngine
         // poll should treat that as the rollback and not try a second
         // rollback against the same slot.
         std::atomic<double> g_dispatchChainCompletedAt = 0.0;
-        std::atomic<bool>   g_dispatchChainFailed       = false;
+        std::atomic<bool> g_dispatchChainFailed = false;
 
         // --- Cooldowns (in-game hours) ------------------------------
         //
@@ -275,9 +276,9 @@ namespace NarrativeEngine
         // from the main thread (IsAvailable, DetectCompletion,
         // LetterComposer callbacks) and the SKSE serialization thread
         // (OnSave / OnLoad).
-        std::mutex                                g_cooldownMutex;
-        double                                    g_lastDispatchGameHours = 0.0;
-        std::unordered_map<RE::FormID, double>    g_senderLastDeliveryGameHours;
+        std::mutex g_cooldownMutex;
+        double g_lastDispatchGameHours = 0.0;
+        std::unordered_map<RE::FormID, double> g_senderLastDeliveryGameHours;
 
         // Current game-time in hours since the calendar epoch. Returns
         // 0 if the calendar isn't available (very early in plugin
@@ -285,23 +286,33 @@ namespace NarrativeEngine
         // dispatched" so this fail-open behavior is intentional.
         double LetterCurrentGameHours()
         {
-            auto* calendar = RE::Calendar::GetSingleton();
-            if (!calendar) return 0.0;
+            auto *calendar = RE::Calendar::GetSingleton();
+            if (!calendar)
+                return 0.0;
             return static_cast<double>(calendar->GetHoursPassed());
         }
 
         // Stage IDs the C++ side directly sets on the per-slot quest.
-        // Stage 60 = "recycled by C++ allocator" → routes to Stage 200 (Shutdown).
-        // Stage 200 = "terminal shutdown" → fragment calls Shutdown() to Stop+Reset.
-        //
-        // Stages 0/10 advance automatically via Papyrus (Stage 0 is the
-        // Startup Stage; Stage 10's fragment calls DispatchLetterToCourier).
-        //
-        // Stages 20/30/40/50 are markers in the Step 14 stage map but
-        // are not driven by Step 15 — the success path skips straight
-        // to Stage 200 so the quest is reusable. Wiring 20/30/40/50
-        // (and the C++ event sinks that set them) is future-step work;
-        // the markers exist so that work can land non-invasively.
+        // The full lifecycle from Step 14's stage map:
+        //   Stage  0 — Startup; alias fills happen here.
+        //   Stage 10 — Papyrus fragment dispatches the letter to WICourier.
+        //   Stage 20 — C++ DetectCompletion verified the letter reached
+        //              WICourierContainerRef.
+        //   Stage 30 — C++ TESContainerChangedEvent sink saw the letter
+        //              land in the player's inventory.
+        //   Stage 40 — C++ MenuOpenCloseEvent sink saw the player close
+        //              BookMenu on the letter (read).
+        //   Stage 50 — C++ TESContainerChangedEvent sink saw the letter
+        //              leave the player's inventory (sold / dropped /
+        //              given). Fragment routes → Stage 200.
+        //   Stage 60 — C++ allocator evicted the slot. Fragment routes
+        //              → Stage 200.
+        //   Stage 200 — Terminal shutdown; fragment calls Shutdown() to
+        //              Stop+Reset the quest for reuse.
+        constexpr std::uint32_t kStageInCourierContainer = 20;
+        constexpr std::uint32_t kStageDeliveredToPlayer = 30;
+        constexpr std::uint32_t kStageReadByPlayer = 40;
+        constexpr std::uint32_t kStageDisposedByPlayer = 50;
         constexpr std::uint32_t kStageRecycledByCpp = 60;
         constexpr std::uint32_t kStageTerminalShutdown = 200;
 
@@ -451,12 +462,12 @@ namespace NarrativeEngine
         // captured by-move into the worker-thread lambda; they must
         // own everything they touch (no dangling references).
         void PollUntilOrTimeout(
-            std::function<bool()>     predicate,
-            std::function<void()>     onSuccess,
-            std::function<void()>     onTimeout,
+            std::function<bool()> predicate,
+            std::function<void()> onSuccess,
+            std::function<void()> onTimeout,
             std::chrono::milliseconds interval,
             std::chrono::milliseconds maxDuration,
-            std::string               diagLabel = "")
+            std::string diagLabel = "")
         {
             AsyncDispatch::EnqueueWork(
                 [predicate = std::move(predicate),
@@ -466,12 +477,12 @@ namespace NarrativeEngine
                  diagLabel = std::move(diagLabel)]() mutable
                 {
                     const auto start = std::chrono::steady_clock::now();
-                    int        iter  = 0;
+                    int iter = 0;
                     while (true)
                     {
                         ++iter;
                         auto promise = std::make_shared<std::promise<bool>>();
-                        auto future  = promise->get_future();
+                        auto future = promise->get_future();
                         AsyncDispatch::MarshalToMainThread(
                             [promise, &predicate]()
                             {
@@ -541,12 +552,12 @@ namespace NarrativeEngine
         // and out with the same effective co-save cost, plus a lifecycle
         // gotcha where a version-specific "removed" sentinel can bring
         // back the bloat we were trying to avoid).
-        constexpr const char *kSenderFactionEditorID   = "_ne_LetterSenderFaction";
-        constexpr std::int8_t kSenderRankCandidate     = 0;
-        constexpr std::int8_t kSenderRankDesignated    = 4;
+        constexpr const char *kSenderFactionEditorID = "_ne_LetterSenderFaction";
+        constexpr std::int8_t kSenderRankCandidate = 0;
+        constexpr std::int8_t kSenderRankDesignated = 4;
 
-        std::atomic<bool>  g_senderFactionResolved = false;
-        RE::TESFaction    *g_senderFaction         = nullptr;
+        std::atomic<bool> g_senderFactionResolved = false;
+        RE::TESFaction *g_senderFaction = nullptr;
 
         RE::TESFaction *ResolveSenderFaction()
         {
@@ -589,7 +600,7 @@ namespace NarrativeEngine
         // across reloads in practice, add co-save persistence of the
         // currently-designated sender FormID and demote on OnLoad.
         void SweepStaleDesignatedSenders(RE::TESFaction *fact,
-                                         RE::Actor      *target)
+                                         RE::Actor *target)
         {
             if (!fact)
                 return;
@@ -598,12 +609,12 @@ namespace NarrativeEngine
                 return;
 
             std::size_t swept = 0;
-            const auto  walk =
+            const auto walk =
                 [&](const RE::BSTArray<RE::ActorHandle> &list)
             {
                 for (const auto &h : list)
                 {
-                    auto  ref   = h.get();
+                    auto ref = h.get();
                     auto *actor = ref.get();
                     if (!actor || actor == target)
                         continue;
@@ -759,9 +770,9 @@ namespace NarrativeEngine
         // On false, the chain diagnosed and logged a specific failure
         // and the caller should roll back the slot + dispatcher state.
         void DispatchLetterViaPerSlotQuest(
-            std::size_t                slotIndex,
-            RE::FormID                 senderActorFormID,
-            std::function<void(bool)>  onComplete)
+            std::size_t slotIndex,
+            RE::FormID senderActorFormID,
+            std::function<void(bool)> onComplete)
         {
             auto *quest = GetPerSlotQuest(slotIndex);
             if (!quest)
@@ -775,9 +786,9 @@ namespace NarrativeEngine
                 return;
             }
 
-            auto *senderAlias    = (slotIndex < g_perSlotSenderAlias.size())
-                                       ? g_perSlotSenderAlias[slotIndex]
-                                       : nullptr;
+            auto *senderAlias = (slotIndex < g_perSlotSenderAlias.size())
+                                    ? g_perSlotSenderAlias[slotIndex]
+                                    : nullptr;
             auto *letterRefAlias = (slotIndex < g_perSlotLetterRefAlias.size())
                                        ? g_perSlotLetterRefAlias[slotIndex]
                                        : nullptr;
@@ -794,7 +805,7 @@ namespace NarrativeEngine
                 return;
             }
 
-            auto *form   = RE::TESForm::LookupByID(senderActorFormID);
+            auto *form = RE::TESForm::LookupByID(senderActorFormID);
             auto *sender = form ? form->As<RE::Actor>() : nullptr;
             if (!sender)
             {
@@ -876,8 +887,8 @@ namespace NarrativeEngine
             // fill pass runs Sender's Find-Matching-Reference rule (picks
             // our rank-4 actor), then LetterRef's Create-in-Sender rule
             // (spawns the pooled book in the sender's inventory).
-            bool       engineResult = false;
-            const bool callOk       =
+            bool engineResult = false;
+            const bool callOk =
                 quest->EnsureQuestStarted(engineResult, /*a_startNow=*/true);
             if (!callOk || !engineResult)
             {
@@ -1025,11 +1036,37 @@ namespace NarrativeEngine
         }
     }
 
+    namespace NPCLetterAction_QuestControl
+    {
+        void AdvanceSlotStage(std::size_t slotIndex, std::uint32_t stage)
+        {
+            auto *quest = GetPerSlotQuest(slotIndex);
+            if (!quest)
+                return;
+            VMDispatchQuestSetStage(quest, stage);
+        }
+
+        void ShutdownSlotQuestSync(std::size_t slotIndex)
+        {
+            auto *quest = GetPerSlotQuest(slotIndex);
+            if (!quest)
+                return;
+            const bool wasRunning = quest->IsRunning();
+            quest->Stop();
+            quest->Reset();
+            logger::info(
+                "NPCLetterAction: slot {} recycled by allocator "
+                "(quest=0x{:08X}, wasRunning={}, native Stop+Reset)",
+                slotIndex, quest->GetFormID(), wasRunning);
+        }
+    }
+
     namespace NPCLetterAction_Cooldowns
     {
         void OnLetterDelivered(RE::FormID senderNpcFormID)
         {
-            if (senderNpcFormID == 0) return;
+            if (senderNpcFormID == 0)
+                return;
             const double nowHours = LetterCurrentGameHours();
             {
                 std::scoped_lock lock(g_cooldownMutex);
@@ -1054,7 +1091,8 @@ namespace NarrativeEngine
                     return false;
                 stamp = it->second;
             }
-            if (stamp <= 0.0) return false;
+            if (stamp <= 0.0)
+                return false;
             const double elapsed = LetterCurrentGameHours() - stamp;
             return elapsed < static_cast<double>(cooldownHours);
         }
@@ -1066,7 +1104,8 @@ namespace NarrativeEngine
 
         void OnSave(SKSE::SerializationInterface *intfc)
         {
-            if (!intfc) return;
+            if (!intfc)
+                return;
             if (!intfc->OpenRecord(kRecordTypeId, kRecordVersion))
             {
                 logger::error("NPCLetterAction::OnSave: OpenRecord failed");
@@ -1099,10 +1138,11 @@ namespace NarrativeEngine
         }
 
         void OnLoad(SKSE::SerializationInterface *intfc,
-                    std::uint32_t                 version,
-                    std::uint32_t                 length)
+                    std::uint32_t version,
+                    std::uint32_t length)
         {
-            if (!intfc) return;
+            if (!intfc)
+                return;
             if (version != kRecordVersion)
             {
                 logger::warn(
@@ -1135,7 +1175,7 @@ namespace NarrativeEngine
             for (std::uint32_t i = 0; i < count; ++i)
             {
                 RE::FormID fid = 0;
-                double     h   = 0.0;
+                double h = 0.0;
                 if (intfc->ReadRecordData(fid) != sizeof(fid) ||
                     intfc->ReadRecordData(h) != sizeof(h))
                 {
@@ -1158,7 +1198,7 @@ namespace NarrativeEngine
 
             {
                 std::scoped_lock lock(g_cooldownMutex);
-                g_lastDispatchGameHours       = lastDispatch;
+                g_lastDispatchGameHours = lastDispatch;
                 g_senderLastDeliveryGameHours = std::move(loaded);
             }
             logger::info(
@@ -1243,7 +1283,7 @@ namespace NarrativeEngine
             if (lastDispatch > 0.0)
             {
                 const double nowHours = LetterCurrentGameHours();
-                const double elapsed  = nowHours - lastDispatch;
+                const double elapsed = nowHours - lastDispatch;
                 if (elapsed < static_cast<double>(cooldownHours))
                 {
                     if (debug)
@@ -1479,7 +1519,7 @@ namespace NarrativeEngine
                     .count()) /
             1000.0;
         const double sinceChainDone = nowSec - chainCompletedAt;
-        const double verifyDelay    = static_cast<double>(
+        const double verifyDelay = static_cast<double>(
             Settings::Get().letterDispatchVerifyDelaySeconds);
         if (sinceChainDone < verifyDelay)
         {
@@ -1487,11 +1527,11 @@ namespace NarrativeEngine
         }
 
         RE::FormID bookFormID = 0;
-        int        slotIndex  = -1;
+        int slotIndex = -1;
         {
             std::scoped_lock lock(g_inFlightMutex);
             bookFormID = g_inFlightBookFormID;
-            slotIndex  = g_inFlightSlot;
+            slotIndex = g_inFlightSlot;
         }
         if (bookFormID == 0 || slotIndex < 0)
         {
@@ -1579,25 +1619,19 @@ namespace NarrativeEngine
             "NPCLetterAction: per-action cooldown stamp set to gameHours={:.2f}",
             dispatchHours);
 
-        // Advance the per-slot quest to its terminal Stage 200, which
-        // Papyrus uses to Stop + Reset the quest so it's ready for the
-        // next allocation of this slot. The letter REFR itself has
-        // already been transferred to the vanilla courier container by
-        // the Stage 10 dispatch; stopping the source quest does NOT
-        // disturb the REFR (its lifetime is now owned by WICourier).
-        //
-        // NOTE (bring-up simplification): Step 14's stage map describes
-        // a fuller lifecycle (Stage 20 = verified, 30 = delivered,
-        // 40 = read, 50 = disposed). Step 15 skips straight from 10
-        // to 200 because the C++ event sinks that drive 30/40/50 are
-        // wired in later steps; landing the verification + reuse loop
-        // now is enough to validate the dispatch strategy.
+        // Advance the per-slot quest to Stage 20 ("in courier
+        // container, verified"). The quest stays running through the
+        // rest of the lifecycle (30 = delivered, 40 = read, 50 =
+        // disposed) driven by LetterPool's TESContainerChangedEvent
+        // and MenuOpenCloseEvent sinks; only Stage 50 (or Stage 60,
+        // from the allocator's recycle path) routes to the terminal
+        // Stage 200 Shutdown. See kStage* constants above for the map.
         if (slotIndex >= 0)
         {
             if (auto *quest = GetPerSlotQuest(
                     static_cast<std::size_t>(slotIndex)))
             {
-                VMDispatchQuestSetStage(quest, kStageTerminalShutdown);
+                VMDispatchQuestSetStage(quest, kStageInCourierContainer);
             }
         }
 
