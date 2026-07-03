@@ -689,17 +689,20 @@ namespace NarrativeEngine::LetterComposer
         // forever for a result that never comes.
         auto callbackBackup = callback;
 
-        // Route through SkyrimNet's default LLM variant (empty string),
-        // the same one that services normal NPC dialogue. Letter
-        // composition is a creative-writing task in the sender's voice
-        // — same shape as dialogue generation — so the dialogue-tuned
-        // profile is a better fit than the Director's evaluation
-        // profile. Action selection and tension evaluation stay on
-        // `narrative_engine_director` because those are structured-JSON
-        // decision calls, not authorial voice work.
+        // Route through the `narrative_engine_composer` variant —
+        // NarrativeEngine's second registered SkyrimNet profile,
+        // dedicated to creative writing in an NPC's voice. Declared
+        // alongside `narrative_engine_director` in the plugin
+        // manifest; defaults to inheriting SkyrimNet's base dialogue
+        // config, and exposes its own "Composer LLM Overrides"
+        // category in the SkyrimNet UI so the user can tune model /
+        // temperature / max_tokens independently from the Director's
+        // decision-making variant. Any future in-voice prompts
+        // (dialogue lines, narrative interstitials, in-world text)
+        // should reuse this same variant.
         const bool queued = SkyrimNetAPI::SendCustomPromptToLLM(
             "narrative_engine_letter_compose",
-            /*variant=*/"",
+            "narrative_engine_composer",
             promptCtxStr,
             [callback = std::move(callback),
              senderNpcFormID,

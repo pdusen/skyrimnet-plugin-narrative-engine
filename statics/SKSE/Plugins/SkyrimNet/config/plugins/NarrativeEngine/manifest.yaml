@@ -7,17 +7,25 @@
 #   1. `variants:` declares named LLM-config profiles. When our C++ side
 #      calls `SendCustomPromptToLLM(promptName, variantName, ctx, cb)`,
 #      SkyrimNet picks the LLM config for that variant — base SkyrimNet
-#      config with any "LLM Overrides" the user has set for this plugin
+#      config with any overrides the user has set for this plugin
 #      layered on top. Without a variant entry, the call falls back to
-#      SkyrimNet's default Dialogue LLM, which is wrong for a per-tick
-#      classification task.
+#      SkyrimNet's default Dialogue LLM.
+#
+#      NarrativeEngine declares two variants:
+#
+#        - narrative_engine_director  — structured-JSON decision work
+#                                       (per-tick tension eval, action select).
+#                                       A small, cheap, low-temperature model
+#                                       is usually the right pick.
+#        - narrative_engine_composer  — creative writing in a specific NPC's
+#                                       voice (letter composition today). The
+#                                       task shape matches SkyrimNet dialogue,
+#                                       so the base dialogue model is a
+#                                       sensible default.
 #
 #   2. `schema.fields:` declares plugin settings that SkyrimNet exposes in
-#      its in-game UI. The "LLM Overrides" category is the standard set of
-#      override knobs (endpoint, key, model, temperature, max_tokens,
-#      timeout); SkyrimNet stitches them into the variant's effective config
-#      at invocation time. Plugin-specific settings can be added in their own
-#      categories later.
+#      its in-game UI. Override categories below are named per-variant so
+#      the user can tune each independently.
 
 plugin:
   name: NarrativeEngine
@@ -26,44 +34,47 @@ plugin:
 
 variants:
   - name: narrative_engine_director
-    description: "The Narrative Director — per-tick Freytag-pyramid phase + tension evaluation. Shared by all NarrativeEngine prompts (story eval today; future action-selection prompts will reuse this same variant). Uses base SkyrimNet config unless overridden in 'LLM Overrides' below."
+    description: "The Narrative Director — per-tick Freytag-pyramid phase + tension evaluation and action-select decisions. Structured-JSON classification work; benefits from a small, cheap, low-temperature model. Uses base SkyrimNet config unless overridden in 'Director LLM Overrides' below."
+
+  - name: narrative_engine_composer
+    description: "The Narrative Composer — creative writing in a specific NPC's voice (letter composition today; future in-voice prompts will reuse this same variant). Shape matches SkyrimNet dialogue generation, so the base dialogue model is a sensible default. Uses base SkyrimNet config unless overridden in 'Composer LLM Overrides' below."
 
 schema:
   fields:
-    # ── LLM Overrides ──────────────────────────────────────────────────────
+    # ── Director LLM Overrides ────────────────────────────────────────────
     # Leave all of these empty / 0 to use SkyrimNet's base config. Anything
     # non-empty / non-zero overrides the corresponding base field when the
-    # narrative_engine_director variant is invoked.
+    # `narrative_engine_director` variant is invoked.
 
     - name: "API Endpoint"
       path: "llm.endpoint"
       type: "string"
       description: "Custom API endpoint URL (e.g., http://localhost:5000/v1, or a different OpenAI-compatible provider). Leave empty to use SkyrimNet's base endpoint."
       defaultValue: ""
-      category: "LLM Overrides"
+      category: "Director LLM Overrides"
 
     - name: "API Key"
       path: "llm.api_key"
       type: "string"
       description: "API key for the custom endpoint. Leave empty to use SkyrimNet's base API key."
       defaultValue: ""
-      category: "LLM Overrides"
+      category: "Director LLM Overrides"
 
     - name: "Model Override"
       path: "llm.model_name"
       type: "string"
       description: "Override model name for the Director. The Director's task is structured-JSON classification, not creative writing — a small, cheap, fast model is usually the right pick. Leave empty to use the same model as SkyrimNet dialogue."
-      defaultValue: ""
-      category: "LLM Overrides"
+      defaultValue: "deepseek/deepseek-v4-flash"
+      category: "Director LLM Overrides"
 
     - name: "Temperature Override"
       path: "llm.temperature"
       type: "float"
-      description: "Override sampling temperature. Low values (0.1–0.3) give more consistent tension scoring across ticks; higher values let the read drift more. Set to 0 to use the base config value."
+      description: "Override sampling temperature. Low values (0.1-0.3) give more consistent tension scoring across ticks; higher values let the read drift more. Set to 0 to use the base config value."
       defaultValue: 0
       min: 0.0
       max: 2.0
-      category: "LLM Overrides"
+      category: "Director LLM Overrides"
 
     - name: "Max Tokens Override"
       path: "llm.max_tokens"
@@ -72,7 +83,7 @@ schema:
       defaultValue: 0
       min: 0
       max: 4096
-      category: "LLM Overrides"
+      category: "Director LLM Overrides"
 
     - name: "Timeout Override"
       path: "llm.timeout"
@@ -81,4 +92,57 @@ schema:
       defaultValue: 0
       min: 0
       max: 120
-      category: "LLM Overrides"
+      category: "Director LLM Overrides"
+
+    # ── Composer LLM Overrides ────────────────────────────────────────────
+    # Leave all of these empty / 0 to use SkyrimNet's base config. Anything
+    # non-empty / non-zero overrides the corresponding base field when the
+    # `narrative_engine_composer` variant is invoked.
+
+    - name: "API Endpoint"
+      path: "composer_llm.endpoint"
+      type: "string"
+      description: "Custom API endpoint URL for creative-writing prompts. Leave empty to use SkyrimNet's base endpoint."
+      defaultValue: ""
+      category: "Composer LLM Overrides"
+
+    - name: "API Key"
+      path: "composer_llm.api_key"
+      type: "string"
+      description: "API key for the custom composer endpoint. Leave empty to use SkyrimNet's base API key."
+      defaultValue: ""
+      category: "Composer LLM Overrides"
+
+    - name: "Model Override"
+      path: "composer_llm.model_name"
+      type: "string"
+      description: "Override model name for the Composer. The Composer's task is creative writing in a specific NPC's voice — a larger, better-prose model helps here, at the cost of latency. Leave empty to use the same model as SkyrimNet dialogue."
+      defaultValue: ""
+      category: "Composer LLM Overrides"
+
+    - name: "Temperature Override"
+      path: "composer_llm.temperature"
+      type: "float"
+      description: "Override sampling temperature. Higher values (0.7-1.0) give more expressive, distinctive letter voices; lower values are more predictable. Set to 0 to use the base config value."
+      defaultValue: 0
+      min: 0.0
+      max: 2.0
+      category: "Composer LLM Overrides"
+
+    - name: "Max Tokens Override"
+      path: "composer_llm.max_tokens"
+      type: "int"
+      description: "Override max response tokens. A composed letter is at most a few hundred words plus the JSON envelope — 2048 is generous. Set to 0 to use the base config value."
+      defaultValue: 0
+      min: 0
+      max: 4096
+      category: "Composer LLM Overrides"
+
+    - name: "Timeout Override"
+      path: "composer_llm.timeout"
+      type: "int"
+      description: "Override request timeout in seconds. Letter composition can be slower than dialogue turns; a generous timeout avoids dropped compositions. Set to 0 to use the base config value."
+      defaultValue: 0
+      min: 0
+      max: 120
+      category: "Composer LLM Overrides"
