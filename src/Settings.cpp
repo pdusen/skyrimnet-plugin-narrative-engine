@@ -101,6 +101,11 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("CombatEvents", "iMaxStored",
                                  g_config.combatEventsMaxStored));
 
+            g_config.enableAmbush = ini.GetBoolValue(
+                "Actions", "bEnableAmbush", g_config.enableAmbush);
+            g_config.enableNpcLetter = ini.GetBoolValue(
+                "Actions", "bEnableNpcLetter", g_config.enableNpcLetter);
+
             g_config.ambushDefaultBanditCount = static_cast<int>(
                 ini.GetLongValue("Actions", "iAmbushDefaultBanditCount",
                                  g_config.ambushDefaultBanditCount));

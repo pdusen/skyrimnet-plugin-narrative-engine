@@ -50,10 +50,10 @@ prose before or after the object.
 - `topic_tag` — string. 2-5 words naming the letter's single primary
   subject (e.g. `"debt repayment"`, `"market gossip"`, `"asking for
   help"`). Used for memory attribution; keep concrete and short.
-- `tags` — array of 2–6 short strings. Additional retrieval tags for
+- `tags` — array of 2-6 short strings. Additional retrieval tags for
   the memory record — concrete nouns and situations the letter's
   content touches (e.g. `["debt", "smithing contract", "Whiterun
-  market"]`). Lowercase, 1–3 words each. Complementary to `topic_tag`
+  market"]`). Lowercase, 1-3 words each. Complementary to `topic_tag`
   (which names the single primary subject); `tags` captures the
   surrounding facets that would make a later dialogue query resurface
   this memory. Empty array is allowed for genuinely topic-diffuse

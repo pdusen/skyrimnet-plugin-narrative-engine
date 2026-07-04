@@ -172,6 +172,21 @@ namespace NarrativeEngine
         return true;
     }
 
+    double AmbushAction::RemainingCooldownGameHours() const
+    {
+        const int cooldownHours = Settings::Get().ambushPerActionCooldownGameHours;
+        if (cooldownHours <= 0) return 0.0;
+        double lastCompletion = 0.0;
+        {
+            std::scoped_lock lock(g_mutex);
+            lastCompletion = g_lastCompletionGameHours;
+        }
+        if (lastCompletion <= 0.0) return 0.0;
+        const double elapsed = CurrentGameHours() - lastCompletion;
+        const double remaining = static_cast<double>(cooldownHours) - elapsed;
+        return remaining > 0.0 ? remaining : 0.0;
+    }
+
     StartResult AmbushAction::Start(const ActionContext&  ctx,
                                     const nlohmann::json& parameters)
     {

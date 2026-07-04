@@ -108,6 +108,22 @@ namespace NarrativeEngine::ActionDispatcher
     // current in-flight; logs a warning and no-ops if not.
     void CompleteAction(std::string_view actionName);
 
+    // Force-dispatch an action via the debug UI. Runs the normal
+    // action-select LLM pipeline but with a one-element candidate list
+    // (the named action) and bypasses every cooldown / dwell /
+    // repetition gate — the action's own IsAvailable() is skipped too.
+    // The single-flight lock is still respected: refuses cleanly when
+    // an action is already in-flight (log + return; the dashboard's
+    // Dispatch button is disabled in that case anyway).
+    //
+    // The "rest of the pipeline behaves normally" after the LLM call
+    // fires: response goes through the standard FinalizeWithLLMResponse
+    // path, so validation, in-flight bookkeeping, and completion
+    // handling all follow the shared code path.
+    //
+    // Main-thread only. Silently no-ops on unknown action names.
+    void ForceDispatchAction(std::string_view actionName);
+
     // Co-save serialization callbacks. OnLoad receives the per-record
     // version and length advanced past the header by the central OnLoad
     // dispatcher in Plugin.cpp.

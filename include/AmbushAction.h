@@ -39,6 +39,7 @@ namespace NarrativeEngine
                                                     double                secondsSinceStart) override;
         bool           DetectCompletion(const ActionContext& ctx,
                                         double                secondsSinceStart) override;
+        double         RemainingCooldownGameHours() const override;
     };
 
     namespace AmbushAction_Persistence

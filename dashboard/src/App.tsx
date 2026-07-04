@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { StatusBanner } from './components/StatusBanner';
 import { TabBar, type TabId } from './components/TabBar';
 import { DirectorTab } from './components/tabs/DirectorTab';
+import { DispatchTab } from './components/tabs/DispatchTab';
 import { LettersTab } from './components/tabs/LettersTab';
 import { stateStore, type Snapshot } from './stateStore';
 
@@ -34,9 +35,9 @@ export function App() {
         <div className="dashboard">
             <StatusBanner status={s.status} />
             <TabBar active={activeTab} onChange={setActiveTab} />
-            {activeTab === 'director'
-                ? <DirectorTab state={s} />
-                : <LettersTab pool={s.letter_pool} nowSeconds={nowSeconds} />}
+            {activeTab === 'director' && <DirectorTab state={s} />}
+            {activeTab === 'letters'  && <LettersTab pool={s.letter_pool} nowSeconds={nowSeconds} />}
+            {activeTab === 'dispatch' && <DispatchTab state={s} nowSeconds={nowSeconds} />}
         </div>
     );
 }

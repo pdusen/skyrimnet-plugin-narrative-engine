@@ -44,6 +44,16 @@ export interface DirectorState {
     recent_decisions: DecisionEntry[];
     recent_events: EventEntry[];
     letter_pool: LetterPoolState;
+    actions: ActionInfo[];
+}
+
+// One entry per action registered with ActionRegistry. The C++ side
+// emits these in registration order.
+export interface ActionInfo {
+    name: string;                       // snake_case (e.g. "npc_letter")
+    enabled: boolean;                   // false = filtered out of candidate list
+    last_dispatched_at: number;         // Unix-epoch seconds; 0 = never (session)
+    remaining_cooldown_hours: number;   // in-game hours; 0 = fireable now
 }
 
 export type LetterSlotState =

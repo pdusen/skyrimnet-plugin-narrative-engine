@@ -1072,6 +1072,61 @@ namespace NarrativeEngine
                 "(quest=0x{:08X}, wasRunning={}, native Stop+Reset)",
                 slotIndex, quest->GetFormID(), wasRunning);
         }
+
+        void DeleteLetterRef(std::size_t slotIndex)
+        {
+            if (slotIndex >= g_perSlotLetterRefAlias.size())
+                return;
+            auto *alias = g_perSlotLetterRefAlias[slotIndex];
+            if (!alias)
+                return;
+            auto *ref = alias->GetReference();
+            if (!ref)
+                return;
+            const auto refID = ref->GetFormID();
+            ref->Disable();
+            ref->SetDelete(true);
+            logger::info(
+                "NPCLetterAction: deleted LetterRef 0x{:08X} for slot {}",
+                refID, slotIndex);
+        }
+
+        void ReleaseLetterFromCourier(std::size_t slotIndex)
+        {
+            if (slotIndex >= g_perSlotLetterRefAlias.size())
+                return;
+            auto *alias = g_perSlotLetterRefAlias[slotIndex];
+            if (!alias)
+                return;
+            auto *ref = alias->GetReference();
+            if (!ref)
+                return;
+            auto *courier = ResolveCourierQuest();
+            if (!courier)
+                return;
+            // VM-dispatch WICourierScript.removeRefFromContainer(ref, false).
+            // The call queues on Papyrus and runs on a subsequent VM tick;
+            // by then the caller has typically already fired
+            // ShutdownSlotQuestSync natively. That's fine — the REFR
+            // pointer we pass is by-value and remains a valid argument
+            // for the Papyrus call regardless of whether our alias has
+            // been unfilled by that point.
+            const bool giveToPlayer = false;
+            const bool queued = VMDispatchOnQuest(
+                courier, "WICourierScript"sv, "removeRefFromContainer"sv,
+                ref, giveToPlayer);
+            if (queued) {
+                logger::info(
+                    "NPCLetterAction: released LetterRef 0x{:08X} from "
+                    "WICourier for slot {} (VM-dispatched)",
+                    ref->GetFormID(), slotIndex);
+            } else {
+                logger::warn(
+                    "NPCLetterAction: ReleaseLetterFromCourier VM dispatch "
+                    "failed for slot {} (VM unavailable or handle failed)",
+                    slotIndex);
+            }
+        }
     }
 
     namespace NPCLetterAction_Cooldowns
@@ -1227,6 +1282,21 @@ namespace NarrativeEngine
             g_lastDispatchGameHours = 0.0;
             g_senderLastDeliveryGameHours.clear();
         }
+    }
+
+    double NPCLetterAction::RemainingCooldownGameHours() const
+    {
+        const int cooldownHours = Settings::Get().letterActionCooldownGameHours;
+        if (cooldownHours <= 0) return 0.0;
+        double lastDispatch = 0.0;
+        {
+            std::scoped_lock lock(g_cooldownMutex);
+            lastDispatch = g_lastDispatchGameHours;
+        }
+        if (lastDispatch <= 0.0) return 0.0;
+        const double elapsed = LetterCurrentGameHours() - lastDispatch;
+        const double remaining = static_cast<double>(cooldownHours) - elapsed;
+        return remaining > 0.0 ? remaining : 0.0;
     }
 
     std::string NPCLetterAction::Name() const
@@ -1424,10 +1494,17 @@ namespace NarrativeEngine
         auto alloc = LetterPool::Allocate();
         if (!alloc)
         {
+            // EvictionFailed covers two shapes: (a) every dispatchable
+            // slot is in PendingDelivery (the normal "no room for
+            // another letter right now" outcome), OR (b) NO slot is
+            // dispatchable to begin with — no per-slot quest resolved
+            // for it. The dashboard's Dispatchability line under
+            // startup log is the definitive answer; the message here
+            // is best-effort description.
             const char *reason =
                 (alloc.error() == LetterPool::AllocationFailure::PoolNotResolved)
                     ? "letter pool not resolved (Initialize never ran or all forms failed)"
-                    : "letter pool exhausted (all slots PendingDelivery)";
+                    : "letter pool exhausted (no dispatchable slot: either every dispatchable slot is PendingDelivery, or none has a resolved per-slot quest)";
             logger::warn("NPCLetterAction::Start: {}", reason);
             return StartResult{.started = false, .detail = reason};
         }

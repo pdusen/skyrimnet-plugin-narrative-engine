@@ -498,14 +498,34 @@ namespace NarrativeEngine::LetterPool
         }
 
         if (needsEvict) {
-            // Synchronously Stop() + Reset() the per-slot delivery
-            // quest. Allocate is followed immediately (same frame) by
-            // PopulateSlot + PromoteSender + EnsureQuestStarted; a
-            // VM-dispatched Stage 60 → 200 → Shutdown would race that
-            // and EnsureQuestStarted would see the quest still running
-            // and skip the alias-fill pass. The native Stop+Reset is
-            // idempotent on an already-stopped quest, so the Free-slot
-            // case is fine too.
+            // Ask vanilla WICourier to release its tracking of the
+            // letter FIRST — this VM-dispatches removeRefFromContainer,
+            // which decrements the WICourierItemCount global and
+            // removes the letter from the courier's staging container
+            // if it's still there. Mirrors the same cleanup call in
+            // _ne_PooledLetterQuest.Shutdown() (which the discard path
+            // routes through, but which this native-Stop+Reset path
+            // deliberately bypasses for same-frame timing). Must fire
+            // while LetterRef is still filled — the VM call captures
+            // the REFR argument by-value up-front.
+            NPCLetterAction_QuestControl::ReleaseLetterFromCourier(chosen);
+            // Then delete the letter REFR via the LetterRef alias
+            // BEFORE resetting the quest — quest.Reset() clears alias
+            // fills, and after that the REFR is unreachable through
+            // the alias handle. The alias tracks the REFR wherever it
+            // lives (player inventory, merchant chest, world drop),
+            // so a single Disable+SetDelete catches world-drop cases
+            // the sweep in EvictSlot might miss.
+            NPCLetterAction_QuestControl::DeleteLetterRef(chosen);
+            // Then synchronously Stop() + Reset() the per-slot
+            // delivery quest. Allocate is followed immediately (same
+            // frame) by PopulateSlot + PromoteSender +
+            // EnsureQuestStarted; a VM-dispatched Stage 60 → 200 →
+            // Shutdown would race that and EnsureQuestStarted would
+            // see the quest still running and skip the alias-fill
+            // pass. The native Stop+Reset is idempotent on an
+            // already-stopped quest, so the Free-slot case is fine
+            // too.
             NPCLetterAction_QuestControl::ShutdownSlotQuestSync(chosen);
             EvictSlot(chosen);
             // Re-check FormID under the lock — defensive against the
@@ -1018,11 +1038,19 @@ namespace NarrativeEngine::LetterPool
         // slot's book from the player, every loaded actor, and every
         // loaded cell; clears the kHasBeenRead flag on the base form so
         // a future delivery looks "new"; resets slot state to Free.
-        // Called both by the allocator (when it needs to evict an
-        // older slot) and by the discard sink (when the player
-        // sells/gives/drops a letter). Same semantics in both cases:
-        // the slot returns to the pool ready for re-allocation, and
-        // any lingering REFRs in loaded space are cleaned up.
+        //
+        // The sweeps below match by BASE form, not by specific REFR.
+        // The caller is expected to have already called
+        // `NPCLetterAction_QuestControl::DeleteLetterRef(slotIndex)`
+        // BEFORE the quest was reset — that path Disable+SetDeletes
+        // the specific persistent REFR via the LetterRef alias, which
+        // catches world-drop and other exotic-container cases the
+        // sweeps below can miss (containers we don't scan, unloaded
+        // followers, etc.). The two approaches together cover
+        // everything: the alias-based delete handles the "where is
+        // the specific REFR right now" case, and the base-form sweeps
+        // handle the common inventory-held cases where Disable/SetDelete
+        // on the REFR doesn't affect its InventoryChanges entry.
         //
         // Main-thread only — touches engine APIs (RemoveItem, cell
         // ForEachReference, Disable/SetDelete) that aren't safe to
@@ -1050,10 +1078,12 @@ namespace NarrativeEngine::LetterPool
                 // 2. Sweep every loaded actor (high + middle-high +
                 // middle-low + low process lists). These are the only
                 // actors whose inventories are simulated; unloaded NPCs
-                // aren't accessible. The unloaded-follower edge case is
-                // documented in PHASE_04_LETTER_POOL_AND_NPC_LETTER_ACTION.md
-                // (Slot container tracking) as a known minor cosmetic
-                // limit.
+                // aren't accessible. The unloaded-follower edge case
+                // is a known minor cosmetic limit (documented in the
+                // phase plan under "Slot container tracking") — the
+                // alias-based DeleteLetterRef mostly-covers it since
+                // the persistent REFR is still marked for delete even
+                // when the follower's not simulated.
                 if (auto* pl = RE::ProcessLists::GetSingleton()) {
                     auto sweep = [book](RE::BSTArray<RE::ActorHandle>& list) {
                         for (auto& handle : list) {
@@ -1089,14 +1119,13 @@ namespace NarrativeEngine::LetterPool
                 }
 
                 // 4. Clear kHasBeenRead on the base form so a future
-                // delivery doesn't appear pre-read in the inventory list
-                // (proven by the smoke test).
+                // delivery doesn't appear pre-read in the inventory list.
                 if (book->data.flags.all(RE::OBJ_BOOK::Flag::kHasBeenRead)) {
                     book->data.flags.reset(RE::OBJ_BOOK::Flag::kHasBeenRead);
                 }
             }
 
-            // 5. Clear slot fields, reset state to Free.
+            // Clear slot fields, reset state to Free.
             std::scoped_lock lock(g_mutex);
             auto& slot = g_slots[slotIndex];
             const auto priorState = slot.state;
@@ -1204,15 +1233,18 @@ namespace NarrativeEngine::LetterPool
             slotIndex,
             destination ? destination->GetFormID() : 0u);
 
-        // Delete the letter from the destination container BEFORE
-        // EvictSlot clears slot state. EvictSlot's sweep only walks
-        // actors (via ProcessLists) and the current cell, which misses
-        // merchant chests (container REFRs, not actors) — the exact
-        // path a sold letter takes. The destination REFR is already
-        // handed to us here; do the removal directly.
-        //
-        // kRemove with a null moveToRef despawns the item outright,
-        // matching the player-inventory sweep pattern in EvictSlot.
+        // Belt-and-suspenders cleanup for the letter itself, before
+        // slot state is wiped:
+        //   - DeleteLetterRef Disable+SetDeletes the specific
+        //     persistent REFR via the alias. Handles world-drop /
+        //     unloaded-follower cases the sweeps miss.
+        //   - destination->RemoveItem removes the letter from the
+        //     merchant chest / arbitrary container REFR the player
+        //     just dropped it into. EvictSlot's sweep only walks
+        //     actors (via ProcessLists) and the player's current
+        //     cell, which misses container REFRs like merchant
+        //     chests — the exact path a sold letter takes.
+        NPCLetterAction_QuestControl::DeleteLetterRef(slotIndex);
         RE::FormID bookFormID = 0;
         {
             std::scoped_lock lock(g_mutex);
@@ -1251,6 +1283,8 @@ namespace NarrativeEngine::LetterPool
             "LetterPool: slot {} dropped to cell (worldRefFormID=0x{:08X})",
             slotIndex,
             worldRef ? worldRef->GetFormID() : 0u);
+        // Delete the letter REFR via the alias (see MarkDiscardedToContainer).
+        NPCLetterAction_QuestControl::DeleteLetterRef(slotIndex);
         NPCLetterAction_QuestControl::AdvanceSlotStage(slotIndex, 50);
         EvictSlot(slotIndex);
     }
@@ -1555,9 +1589,21 @@ namespace NarrativeEngine::LetterPool
         }
 
         // Commit the loaded snapshot, then run the reconciliation pass.
+        //
+        // The per-slot quest pointer is a SESSION-ONLY binding
+        // established by NPCLetterAction at kDataLoaded via
+        // SetPerSlotQuests. It's NOT persisted (engine form pointers
+        // aren't stable across sessions anyway), and it isn't re-bound
+        // on save load. Preserve it here by snapshotting the current
+        // quest pointers into `loaded` before the assignment, so a
+        // save load doesn't silently strip dispatchability from every
+        // slot.
         std::size_t demoted = 0;
         {
             std::scoped_lock lock(g_mutex);
+            for (std::size_t i = 0; i < kPoolSize; ++i) {
+                loaded[i].quest = g_slots[i].quest;
+            }
             g_slots = loaded;
 
             for (std::size_t i = 0; i < kPoolSize; ++i) {

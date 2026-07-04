@@ -82,6 +82,14 @@ namespace NarrativeEngine::Settings
         int combatEventsMaxStored      = 256;   // ring-buffer cap on retained internal combat events
 
         // [Actions]
+        // Per-action enable defaults seeded into ActionRegistry at
+        // Register time. Dashboard Dispatch tab surfaces runtime
+        // toggles for these, but runtime changes don't write back to
+        // INI — reload the game and the INI value wins again. Debug
+        // testing aid, not a persistent config surface.
+        bool enableAmbush    = true;
+        bool enableNpcLetter = true;
+
         // AmbushAction parameter defaults + clamps. The LLM may supply
         // bandit_count and spawn_distance_units in its action-select
         // response; the action validates against these bounds and falls

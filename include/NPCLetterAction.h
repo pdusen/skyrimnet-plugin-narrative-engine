@@ -29,6 +29,7 @@ namespace NarrativeEngine
                                                     double                secondsSinceStart) override;
         bool           DetectCompletion(const ActionContext& ctx,
                                         double                secondsSinceStart) override;
+        double         RemainingCooldownGameHours() const override;
     };
 
     namespace NPCLetterAction_Init
@@ -67,6 +68,48 @@ namespace NarrativeEngine
         // Shutdown() does but synchronously. Safe on an already-stopped
         // quest (Stop and Reset are idempotent).
         void ShutdownSlotQuestSync(std::size_t slotIndex);
+
+        // Delete the LetterRef alias's spawned REFR for the given slot.
+        // The letter REFR is created by the alias's "Create Reference in
+        // Sender" rule and then moves through containers (courier
+        // inventory → WICourierContainerRef → player inventory → merchant
+        // chest / world drop), but the alias tracks it wherever it lives.
+        // A single Disable+SetDelete on the aliased REFR removes the
+        // letter from the world entirely, regardless of which container
+        // currently holds it — no per-container sweep needed.
+        //
+        // MUST be called BEFORE ShutdownSlotQuestSync or before any
+        // Papyrus SetStage that routes to the quest's Shutdown fragment
+        // on the same slot: quest.Reset() clears alias fills, after which
+        // the LetterRef alias no longer points at anything and this
+        // helper silently no-ops.
+        //
+        // Safe to call for slots with no per-slot quest, an unfilled
+        // alias, or an out-of-range index (all no-op).
+        void DeleteLetterRef(std::size_t slotIndex);
+
+        // Ask vanilla WICourier to release its tracking of the given
+        // slot's letter REFR. Fires
+        // WICourierScript.removeRefFromContainer(letterRef, false) via
+        // VM dispatch on the vanilla WICourier quest handle. That
+        // function removes the letter from the courier's staging
+        // container if it's still there AND decrements the
+        // WICourierItemCount global that gates the courier's
+        // change-location event quest — skipping it leaves the vanilla
+        // courier system holding a stale item count.
+        //
+        // Mirrors the Papyrus-side cleanup in
+        // _ne_PooledLetterQuest.Shutdown() so the discard-path (which
+        // routes through Shutdown()) and the C++ forced-recycle path
+        // (which bypasses Shutdown() via native Stop+Reset) both apply
+        // the same WICourier cleanup.
+        //
+        // MUST be called BEFORE ShutdownSlotQuestSync — the VM call
+        // needs the LetterRef alias filled to produce the REFR
+        // argument. Silently no-ops if the alias is unfilled, the per-
+        // slot quest is unresolved, or the WICourier quest didn't
+        // resolve at kDataLoaded.
+        void ReleaseLetterFromCourier(std::size_t slotIndex);
     }
 
     namespace NPCLetterAction_Cooldowns

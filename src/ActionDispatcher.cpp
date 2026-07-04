@@ -506,6 +506,11 @@ namespace NarrativeEngine::ActionDispatcher
                 g_actionInFlight  = chosenAction;
                 g_actionStartedAt = NowUnixSeconds();
             }
+            // Stamp the last-dispatched clock the dashboard renders.
+            // Same call site for the normal path and force-dispatch
+            // — both route through here — so the "23m ago" column
+            // stays uniform.
+            ActionRegistry::MarkDispatched(chosenAction);
             logger::info("ActionDispatcher: action '{}' started ({})",
                          chosenAction, result.detail);
 
@@ -781,6 +786,187 @@ namespace NarrativeEngine::ActionDispatcher
         if (!queued) {
             logger::warn(
                 "ActionDispatcher: SendCustomPromptToLLM returned false; treating as failure");
+            FinalizeWithFailure(
+                std::move(recBackup),
+                "SendCustomPromptToLLM returned false (queue full?)",
+                std::move(finalizedBackup));
+        }
+    }
+
+    void ForceDispatchAction(std::string_view actionName)
+    {
+        // Refuse cleanly if another action is already in flight — the
+        // dispatcher's single-flight lock is the one gate we never
+        // bypass. The dashboard's Dispatch button is disabled in this
+        // case too, but we defend in depth in case the JS side races
+        // the state push.
+        {
+            std::scoped_lock lock(g_mutex);
+            if (!g_actionInFlight.empty()) {
+                logger::warn(
+                    "ActionDispatcher: force-dispatch refused ('{}' is in flight, requested='{}')",
+                    g_actionInFlight, std::string{actionName});
+                return;
+            }
+        }
+
+        IAction* action = ActionRegistry::Find(actionName);
+        if (!action) {
+            logger::warn(
+                "ActionDispatcher: force-dispatch refused (unknown action '{}')",
+                std::string{actionName});
+            return;
+        }
+
+        logger::info(
+            "ActionDispatcher: force-dispatch entry for '{}'",
+            std::string{actionName});
+
+        // Snapshot + record scaffolding — mirrors what BeginEvaluation
+        // would do in the normal path, minus the LLM tension scoring
+        // (we synthesize a neutral record).
+        Snapshot snapshot = EvaluationPipeline::BuildSnapshot();
+
+        const auto currentPhaseOpt = PhaseTracker::PhaseFromName(snapshot.currentPhase);
+        const auto currentPhase = currentPhaseOpt.value_or(PhaseTracker::Phase::Exposition);
+        const auto direction = PhaseTracker::OutgoingDirection(currentPhase);
+
+        DecisionLog::DecisionRecord rec;
+        rec.realTimeSec              = NowUnixSeconds();
+        rec.gameDaysPassed           = snapshot.player.gameTimeSeconds > 0.0
+                                           ? static_cast<float>(snapshot.player.gameTimeSeconds / 86400.0)
+                                           : 0.0f;
+        rec.tensionScore             = DecisionLog::LatestTensionScore().value_or(0);
+        rec.currentPhase             = currentPhase;
+        rec.alphaCanonActiveSignals  = 0;
+        rec.narrativeNote            = "forced dispatch via debug UI";
+        // actionSelected + actionParametersJSON get populated by
+        // FinalizeWithLLMResponse once the LLM comes back.
+
+        const int tensionDelta = ComputeTensionDelta(currentPhase, rec.tensionScore);
+
+        // Bypassed: global cooldown, phase-dwell, anti-repetition,
+        // action's own IsAvailable, and letter min-sender-candidates
+        // gate. Respected: global preconditions (combat / dialogue /
+        // interior — same as normal path; won't fire an ambush inside
+        // a scripted scene even for debug).
+        const ActionContext ctx =
+            BuildActionContextFromSnapshot(snapshot, direction, tensionDelta);
+        if (const char* blockedBy = CheckGlobalActionPreconditions(ctx)) {
+            logger::warn(
+                "ActionDispatcher: force-dispatch refused ('{}' blocked by global precondition: {})",
+                std::string{actionName}, blockedBy);
+            return;
+        }
+
+        // Build a one-element candidate list. For npc_letter, still
+        // collect sender candidates — the compose prompt needs them
+        // and we don't want the force-dispatch to fail with an empty
+        // sender pool. If the pool is empty the composer's Start
+        // still runs; it'll just fail with a clean detail message.
+        std::vector<IAction*> candidates{ action };
+        std::vector<LetterComposer::SenderCandidate> letterSenderCandidates;
+        if (action->Name() == "npc_letter") {
+            letterSenderCandidates = LetterComposer::CollectSenderCandidates();
+        }
+
+        const char* dirName = (direction == PhaseTracker::Direction::Raise) ? "raise" : "lower";
+        logger::info(
+            "ActionDispatcher: firing force-dispatch action-select (action='{}', direction={}, tension_delta={}, letter_sender_candidates={})",
+            std::string{actionName}, dirName, tensionDelta,
+            letterSenderCandidates.size());
+
+        const std::string promptCtx =
+            BuildActionPromptContext(snapshot, candidates, direction, tensionDelta,
+                                     letterSenderCandidates);
+        if (Settings::Get().debugMode) {
+            logger::debug("ActionDispatcher: force-dispatch prompt context: {}", promptCtx);
+        }
+
+        std::vector<std::string> candidateNames{ action->Name() };
+
+        // Empty finalizer — no per-tick guard to release. The
+        // EvaluationPipeline g_inFlight flag is untouched; force-
+        // dispatch runs outside the normal evaluation loop.
+        FinalizedCallback onFinalized;
+
+        DecisionLog::DecisionRecord recBackup       = rec;
+        FinalizedCallback           finalizedBackup = onFinalized;
+
+        const bool queued = SkyrimNetAPI::SendCustomPromptToLLM(
+            "narrative_engine_action_select", "narrative_engine_director", promptCtx,
+            [snapshot       = std::move(snapshot),
+             rec            = std::move(rec),
+             candidateNames = std::move(candidateNames),
+             onFinalized    = std::move(onFinalized),
+             direction,
+             tensionDelta]
+            (std::string response, bool success) mutable
+            {
+                if (!success) {
+                    AsyncDispatch::MarshalToMainThread(
+                        [rec = std::move(rec), onFinalized = std::move(onFinalized),
+                         response = std::move(response)]() mutable {
+                            FinalizeWithFailure(
+                                std::move(rec),
+                                std::string("LLM error: ") + response,
+                                std::move(onFinalized));
+                        });
+                    return;
+                }
+
+                const std::string body = EvaluationPipeline::StripMarkdownFences(response);
+                auto parsed = nlohmann::json::parse(body, nullptr, false);
+                if (parsed.is_discarded() || !parsed.is_object()) {
+                    AsyncDispatch::MarshalToMainThread(
+                        [rec = std::move(rec), onFinalized = std::move(onFinalized),
+                         response = std::move(response)]() mutable {
+                            FinalizeWithFailure(
+                                std::move(rec),
+                                std::string("LLM response was not a JSON object: ") + response,
+                                std::move(onFinalized));
+                        });
+                    return;
+                }
+
+                std::string chosenAction;
+                if (auto it = parsed.find("action"); it != parsed.end() && it->is_string()) {
+                    chosenAction = it->get<std::string>();
+                }
+                nlohmann::json parameters = nlohmann::json::object();
+                if (auto it = parsed.find("parameters"); it != parsed.end() && it->is_object()) {
+                    parameters = *it;
+                }
+                std::string narrativeNote;
+                if (auto it = parsed.find("narrative_note"); it != parsed.end() && it->is_string()) {
+                    narrativeNote = LLMTextSanitizer::Sanitize(it->get<std::string>());
+                    if (narrativeNote.size() > 200) {
+                        narrativeNote.resize(200);
+                    }
+                }
+
+                AsyncDispatch::MarshalToMainThread(
+                    [snapshot       = std::move(snapshot),
+                     rec            = std::move(rec),
+                     candidateNames = std::move(candidateNames),
+                     chosenAction   = std::move(chosenAction),
+                     parameters     = std::move(parameters),
+                     narrativeNote  = std::move(narrativeNote),
+                     direction,
+                     tensionDelta,
+                     onFinalized    = std::move(onFinalized)]() mutable {
+                        FinalizeWithLLMResponse(
+                            std::move(snapshot), std::move(rec),
+                            std::move(candidateNames), std::move(chosenAction),
+                            std::move(parameters), std::move(narrativeNote),
+                            direction, tensionDelta,
+                            std::move(onFinalized));
+                    });
+            });
+
+        if (!queued) {
+            logger::warn(
+                "ActionDispatcher: force-dispatch SendCustomPromptToLLM returned false; treating as failure");
             FinalizeWithFailure(
                 std::move(recBackup),
                 "SendCustomPromptToLLM returned false (queue full?)",

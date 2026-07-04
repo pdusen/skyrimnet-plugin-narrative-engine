@@ -418,3 +418,129 @@ body {
     text-align: right;
     color: #6a6e76;
 }
+
+/* ---------- Dispatch tab -------------------------------------------------- */
+
+.dispatch-controls,
+.action-dispatch {
+    grid-column: 1 / -1;
+}
+
+.dispatch-controls .tick-toggle {
+    /* The Dispatch-tab tick toggle isn't jammed into a banner corner
+       anymore; give it normal inline flow. */
+    margin-left: 0;
+}
+
+.action-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.action-table thead th {
+    text-align: left;
+    color: #6a6e76;
+    font-weight: normal;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 4px 8px;
+    border-bottom: 1px solid #2a2e36;
+    font-size: 11px;
+}
+
+.action-table tbody td {
+    padding: 6px 8px;
+    border-bottom: 1px solid #1d2026;
+    color: #c9d5e6;
+    vertical-align: middle;
+}
+
+.action-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.action-table .col-name {
+    color: #c9d5e6;
+    font-family: 'Consolas', 'Courier New', monospace;
+}
+
+.action-table .col-enabled {
+    width: 80px;
+    text-align: center;
+}
+
+.action-table .col-enabled input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    cursor: pointer;
+}
+
+.action-table .col-last {
+    width: 150px;
+    color: #a8b0bd;
+}
+
+.action-table .col-cooldown {
+    width: 90px;
+    color: #a8b0bd;
+    text-align: right;
+}
+
+.action-table .col-fire {
+    width: 110px;
+    text-align: right;
+}
+
+.dispatch-button {
+    padding: 4px 12px;
+    border: 1px solid #3a3e46;
+    border-radius: 3px;
+    background: #1a1f28;
+    color: #c9d5e6;
+    font-family: inherit;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+}
+
+.dispatch-button:hover:not(:disabled) {
+    background: #2a3040;
+    border-color: #4a5058;
+}
+
+.dispatch-button:disabled {
+    color: #5a5e66;
+    background: #14171c;
+    border-color: #2a2e36;
+    cursor: not-allowed;
+}
+
+.bulk-buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #2a2e36;
+}
+
+.bulk-button {
+    padding: 4px 14px;
+    border: 1px solid #3a3e46;
+    border-radius: 3px;
+    background: #1a1f28;
+    color: #a8b0bd;
+    font-family: inherit;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+}
+
+.bulk-button:hover {
+    background: #2a3040;
+    color: #c9d5e6;
+    border-color: #4a5058;
+}

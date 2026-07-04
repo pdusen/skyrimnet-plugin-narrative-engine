@@ -57,17 +57,11 @@ namespace NarrativeEngine::Tick
                 std::chrono::duration<double>(now - g_lastSampleTime).count();
             g_lastSampleTime = now;
 
-            // Killswitch — when the dashboard's debug toggle is off, we
-            // consume the elapsed sample above (so re-enabling doesn't
-            // credit paused time) but skip all downstream ticking.
-            if (!g_enabled.load(std::memory_order_acquire)) {
-                (void)elapsedSec;
-                return;
-            }
-
             // The same pause predicate the rest of the engine uses for
             // "real time should not advance right now" (menus, console,
-            // dialogue). Don't credit the accumulator with paused time.
+            // dialogue). Every poll below depends on real time
+            // advancing, so bail early when paused. Don't credit the
+            // accumulator with paused time either.
             const bool paused = []() {
                 auto* ui = RE::UI::GetSingleton();
                 return ui && ui->GameIsPaused();
@@ -75,19 +69,29 @@ namespace NarrativeEngine::Tick
             if (paused) {
                 return;
             }
-            g_unpausedSecondsSinceLastTick += elapsedSec;
 
-            // Drive CombatEventLog's main-thread poll: detects player
-            // combat-state flips (combat_start / combat_end) and bleedout
-            // recoveries (regain_footing). Cheap — bool compare plus a
-            // small map walk.
+            // Housekeeping polls run regardless of the killswitch. Both
+            // observe engine state that changes even when the Director
+            // isn't allowed to make autonomous decisions:
+            //   - CombatEventLog watches player combat-state edges so
+            //     the event log stays truthful across a disabled span.
+            //   - ActionDispatcher::OnTick is the ONLY completion path
+            //     for actions started via the Dispatch tab's force-
+            //     dispatch button (which the user can invoke with the
+            //     killswitch engaged). Gating it here would leak the
+            //     in-flight lock forever after the letter delivered.
             CombatEventLog::Poll();
-
-            // Drive ActionDispatcher's main-thread tick: currently just
-            // the stale-lock check (auto-clear an in-flight action whose
-            // completion ModEvent never arrived). Cheap — bool compare
-            // plus a time delta.
             ActionDispatcher::OnTick();
+
+            // Killswitch — when the dashboard's debug toggle is off, we
+            // consume the elapsed sample above (so re-enabling doesn't
+            // credit disabled time) but skip the Director evaluation
+            // cadence below.
+            if (!g_enabled.load(std::memory_order_acquire)) {
+                (void)elapsedSec;
+                return;
+            }
+            g_unpausedSecondsSinceLastTick += elapsedSec;
 
             const double intervalSec =
                 static_cast<double>(std::max(1, Settings::Get().tickIntervalSeconds));

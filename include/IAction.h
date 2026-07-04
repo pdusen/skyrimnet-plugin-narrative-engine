@@ -146,5 +146,14 @@ namespace NarrativeEngine
             (void)secondsSinceStart;
             return false;
         }
+
+        // In-game hours remaining before the action's own cooldown
+        // expires. Zero means "no cooldown active" / "can fire now".
+        // Actions with no per-action cooldown inherit the default
+        // zero. Read-only, main thread, side-effect free — the
+        // dashboard queries this every state push, and the
+        // action-select pipeline never touches it (cooldowns are
+        // already enforced inside IsAvailable).
+        virtual double RemainingCooldownGameHours() const { return 0.0; }
     };
 }

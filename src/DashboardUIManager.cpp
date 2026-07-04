@@ -1,6 +1,7 @@
 #include <DashboardUIManager.h>
 
 #include <ActionDispatcher.h>
+#include <ActionRegistry.h>
 #include <AlphaCanon.h>
 #include <AsyncDispatch.h>
 #include <CombatEventLog.h>
@@ -113,17 +114,108 @@ namespace NarrativeEngine::DashboardUIManager
         // path and let PrismaUI handle resolution.
         constexpr const char* kHtmlPath = "NarrativeEngine/dashboard/index.html";
 
+        // Every input-listener handler below ends its marshaled main-
+        // thread lambda with a call to PushFullState so the dashboard
+        // reflects the state change within a frame — no more "the
+        // checkbox lied until you reopened the dashboard" surprises.
+        // The push is inside the marshal, not around it, so the state
+        // is guaranteed to reflect the mutation the listener just
+        // applied.
+
+        // Parse `"true"` / `"1"` / everything else. Consistent with
+        // the tick-toggle argument shape SkyrimNet's JS bridge sends.
+        bool ParseBoolArg(const char* argument)
+        {
+            const std::string arg = argument ? argument : "";
+            return arg == "true" || arg == "1";
+        }
+
         // JS -> C++ listener for the dashboard debug tick killswitch.
         // Fires on PrismaUI's worker thread when the dashboard checkbox
         // is toggled; marshal to the main thread before touching engine
         // state. Payload is `"true"` or `"false"` (JSON booleans stringified).
         void OnSetTickEnabled(const char* argument)
         {
-            const std::string arg = argument ? argument : "";
-            const bool enabled = (arg == "true" || arg == "1");
-            logger::info("DashboardUIManager: ne_setTickEnabled({}) received", arg);
+            const bool enabled = ParseBoolArg(argument);
+            logger::info("DashboardUIManager: ne_setTickEnabled({}) received",
+                         enabled ? "true" : "false");
             AsyncDispatch::MarshalToMainThread([enabled] {
                 Tick::SetEnabled(enabled);
+                PushFullState();
+            });
+        }
+
+        // JS -> C++ listener for per-action enabled toggles on the
+        // Dispatch tab. Payload is a JSON object
+        // `{"name":"npc_letter","enabled":true}`.
+        void OnSetActionEnabled(const char* argument)
+        {
+            const std::string arg = argument ? argument : "";
+            auto parsed = nlohmann::json::parse(arg, nullptr, false);
+            if (parsed.is_discarded() || !parsed.is_object()) {
+                logger::warn(
+                    "DashboardUIManager: ne_setActionEnabled: malformed payload '{}'",
+                    arg);
+                return;
+            }
+            std::string name;
+            bool enabled = false;
+            if (auto it = parsed.find("name"); it != parsed.end() && it->is_string()) {
+                name = it->get<std::string>();
+            }
+            if (auto it = parsed.find("enabled"); it != parsed.end() && it->is_boolean()) {
+                enabled = it->get<bool>();
+            }
+            if (name.empty()) {
+                logger::warn(
+                    "DashboardUIManager: ne_setActionEnabled: missing/empty name in '{}'",
+                    arg);
+                return;
+            }
+            logger::info(
+                "DashboardUIManager: ne_setActionEnabled(name='{}', enabled={}) received",
+                name, enabled);
+            AsyncDispatch::MarshalToMainThread(
+                [name = std::move(name), enabled]() mutable {
+                    ActionRegistry::SetEnabled(name, enabled);
+                    PushFullState();
+                });
+        }
+
+        // Backs the "Enable All" / "Disable All" bulk buttons under
+        // the actions table. Payload is `"true"` or `"false"`.
+        void OnSetAllActionsEnabled(const char* argument)
+        {
+            const bool enabled = ParseBoolArg(argument);
+            logger::info(
+                "DashboardUIManager: ne_setAllActionsEnabled({}) received",
+                enabled ? "true" : "false");
+            AsyncDispatch::MarshalToMainThread([enabled] {
+                for (const auto& entry : ActionRegistry::All()) {
+                    ActionRegistry::SetEnabled(entry.name, enabled);
+                }
+                PushFullState();
+            });
+        }
+
+        // Backs the per-row "Dispatch" button. Payload is the bare
+        // action name (no JSON wrapping — one field).
+        void OnDispatchAction(const char* argument)
+        {
+            const std::string name = argument ? argument : "";
+            if (name.empty()) {
+                logger::warn("DashboardUIManager: ne_dispatchAction: empty name");
+                return;
+            }
+            logger::info(
+                "DashboardUIManager: ne_dispatchAction('{}') received", name);
+            AsyncDispatch::MarshalToMainThread([name]() mutable {
+                ActionDispatcher::ForceDispatchAction(name);
+                // Push once now so the dashboard reflects the "in-
+                // flight" state within a frame. The completion path
+                // pushes again from FinalizeWithLLMResponse ->
+                // ApplyDecision like any normal dispatch.
+                PushFullState();
             });
         }
     }
@@ -146,10 +238,13 @@ namespace NarrativeEngine::DashboardUIManager
         PrismaUI_API::Hide(g_view);
         g_visible = false;
 
-        // JS -> C++ listener for the debug tick killswitch checkbox.
-        // Registered before the view goes live so the first Show()/user
-        // interaction can immediately route into the handler.
-        PrismaUI_API::RegisterJSListener(g_view, "ne_setTickEnabled", &OnSetTickEnabled);
+        // JS -> C++ listeners for dashboard input controls. Registered
+        // before the view goes live so the first Show()/user
+        // interaction can immediately route into the handlers.
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setTickEnabled",       &OnSetTickEnabled);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setActionEnabled",     &OnSetActionEnabled);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setAllActionsEnabled", &OnSetAllActionsEnabled);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_dispatchAction",       &OnDispatchAction);
 
         // Hook input events for the hotkey.
         if (auto* inputManager = RE::BSInputDeviceManager::GetSingleton()) {
@@ -335,6 +430,25 @@ namespace NarrativeEngine::DashboardUIManager
                         ? nlohmann::json(mostRecentIdx)
                         : nlohmann::json(nullptr)},
             };
+        }
+
+        // actions — for the Dispatch tab. Every registered action, in
+        // registration order, with its runtime toggle state, the wall-
+        // clock of its most recent successful dispatch (session only),
+        // and any in-game-hours cooldown remaining. Consumed by
+        // ActionDispatchTable on the dashboard.
+        {
+            nlohmann::json actions = nlohmann::json::array();
+            for (const auto& entry : ActionRegistry::All()) {
+                if (!entry.action) continue;
+                actions.push_back({
+                    {"name",                     entry.name},
+                    {"enabled",                  entry.enabled},
+                    {"last_dispatched_at",       entry.lastDispatchedRealTime},
+                    {"remaining_cooldown_hours", entry.action->RemainingCooldownGameHours()},
+                });
+            }
+            j["actions"] = std::move(actions);
         }
 
         return j.dump();
