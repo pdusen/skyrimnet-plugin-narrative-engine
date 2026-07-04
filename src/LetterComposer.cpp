@@ -983,6 +983,34 @@ namespace NarrativeEngine::LetterComposer
                     return;
                 }
 
+                // Parse the optional-ish `tags` array. Soft-fail: a
+                // missing or malformed value logs a warning and yields
+                // an empty vector; the letter itself is still usable
+                // without facet tags (topic_tag alone remains the
+                // primary subject). Each surviving entry passes
+                // through the same sanitizer as every other free-form
+                // LLM string in this project; empty-after-sanitize
+                // entries are dropped silently.
+                std::vector<std::string> tags;
+                if (auto tagsIt = parsed.find("tags"); tagsIt != parsed.end()) {
+                    if (!tagsIt->is_array()) {
+                        logger::warn(
+                            "LetterComposer: `tags` present but not a JSON array; "
+                            "treating as empty");
+                    } else {
+                        tags.reserve(tagsIt->size());
+                        for (const auto& t : *tagsIt) {
+                            if (!t.is_string()) continue;
+                            auto s = LLMTextSanitizer::Sanitize(t.get<std::string>());
+                            if (!s.empty()) tags.push_back(std::move(s));
+                        }
+                    }
+                } else {
+                    logger::warn(
+                        "LetterComposer: response has no `tags` key; "
+                        "memory writes will fall back to topic_tag alone");
+                }
+
                 // Mood must be one of the known set.
                 if (!ValidMoods().contains(mood)) {
                     logger::warn("LetterComposer: invalid mood '{}'", mood);
@@ -1020,12 +1048,14 @@ namespace NarrativeEngine::LetterComposer
                 comp.body            = std::move(bodyText);
                 comp.mood            = std::move(mood);
                 comp.topicTag        = std::move(topic);
+                comp.tags            = std::move(tags);
 
                 logger::info(
                     "LetterComposer: composed letter (sender=0x{:X} '{}', "
-                    "label='{}', body={} words, mood='{}', topic='{}')",
+                    "label='{}', body={} words, mood='{}', topic='{}', tags={})",
                     comp.senderNpcFormID, senderName,
-                    comp.senderLabel, wc, comp.mood, comp.topicTag);
+                    comp.senderLabel, wc, comp.mood, comp.topicTag,
+                    comp.tags.size());
                 callback(std::move(comp));
             });
 

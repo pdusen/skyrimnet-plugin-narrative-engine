@@ -206,12 +206,22 @@ namespace NarrativeEngine::SkyrimNetAPI
                   float              importance,
                   const std::string& memoryType,
                   const std::string& emotion,
-                  const std::string& location)
+                  const std::string& location,
+                  const std::string& tagsJson,
+                  const std::string& relatedActorsJson)
     {
         if (!::PublicAddMemory) return -1;
         if (!::PublicIsMemorySystemReady || !::PublicIsMemorySystemReady()) {
             return -1;
         }
+        // SkyrimNet documents nullptr as "no tags / no related actors".
+        // An empty C-string routes through its JSON-parse branch and
+        // is either rejected outright or (worse) treated as parse
+        // failure that silently drops the write. Mirror the
+        // nullptr-on-empty convention used by every other query in
+        // this file.
+        const char* tagsPtr    = tagsJson.empty()          ? nullptr : tagsJson.c_str();
+        const char* relatedPtr = relatedActorsJson.empty() ? nullptr : relatedActorsJson.c_str();
         try {
             return ::PublicAddMemory(
                 formId,
@@ -220,8 +230,8 @@ namespace NarrativeEngine::SkyrimNetAPI
                 memoryType.c_str(),
                 emotion.c_str(),
                 location.c_str(),
-                /*tagsJSON=*/nullptr,
-                /*relatedActorsJSON=*/nullptr);
+                tagsPtr,
+                relatedPtr);
         } catch (...) {
             logger::warn("SkyrimNetAPI::AddMemory: exception across DLL boundary");
             return -1;

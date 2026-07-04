@@ -1484,13 +1484,17 @@ namespace NarrativeEngine
                         // Populate the slot with the generated content.
                         // The hooks now substitute the body when the
                         // engine reads it; SetFullName updates the
-                        // inventory title.
+                        // inventory title. mood/tags are stashed on
+                        // the slot for the Step 16 memory writes at
+                        // delivery/read time.
                         LetterPool::PopulateSlot(
                             slotForLambda,
                             comp->senderLabel,
                             comp->body,
                             comp->senderNpcFormID,
-                            comp->topicTag);
+                            comp->topicTag,
+                            comp->mood,
+                            comp->tags);
 
                         // Drive the slot's per-slot delivery quest via
                         // the async chain (Phase A: ForceFillSender +

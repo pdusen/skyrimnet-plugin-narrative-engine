@@ -32,11 +32,12 @@ namespace NarrativeEngine::LetterComposer
 {
     struct LetterComposition
     {
-        RE::FormID  senderNpcFormID = 0;
-        std::string senderLabel;
-        std::string body;
-        std::string mood;
-        std::string topicTag;
+        RE::FormID               senderNpcFormID = 0;
+        std::string              senderLabel;
+        std::string              body;
+        std::string              mood;
+        std::string              topicTag;
+        std::vector<std::string> tags;
     };
 
     enum class UrgencyHint : std::uint8_t

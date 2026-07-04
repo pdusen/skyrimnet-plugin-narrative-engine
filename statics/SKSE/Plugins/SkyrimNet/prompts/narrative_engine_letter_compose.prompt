@@ -29,7 +29,7 @@ has passed.
 {{ render_character_profile("speech_style", npc.UUID) }}
 
 ## Output Format
-Return a JSON object with exactly these four keys. No markdown fences. No
+Return a JSON object with exactly these five keys. No markdown fences. No
 prose before or after the object.
 
 - `sender_label` — string, **≤ 24 characters** including spaces and
@@ -44,15 +44,24 @@ prose before or after the object.
   Sign off with your name on its own line at the end.
 - `mood` — string. One of: `warm`, `neutral`, `urgent`, `menacing`,
   `mournful`, `businesslike`.
-- `topic_tag` — string. 2-5 words naming the subject (e.g. `"debt
-  repayment"`, `"market gossip"`, `"asking for help"`). Used for memory
-  attribution; keep concrete and short.
+- `topic_tag` — string. 2-5 words naming the letter's single primary
+  subject (e.g. `"debt repayment"`, `"market gossip"`, `"asking for
+  help"`). Used for memory attribution; keep concrete and short.
+- `tags` — array of 2–6 short strings. Additional retrieval tags for
+  the memory record — concrete nouns and situations the letter's
+  content touches (e.g. `["debt", "smithing contract", "Whiterun
+  market"]`). Lowercase, 1–3 words each. Complementary to `topic_tag`
+  (which names the single primary subject); `tags` captures the
+  surrounding facets that would make a later dialogue query resurface
+  this memory. Empty array is allowed for genuinely topic-diffuse
+  letters, but prefer to name at least one or two concrete facets.
 
 ## Hard Constraints
 - Output strict JSON. No markdown code fences. No prose before or after
   the JSON object.
 - `sender_label` MUST be ≤ 24 characters.
 - `body` MUST be within the word bounds.
+- `tags` MUST be a JSON array of strings (empty array allowed).
 
 ## Direction
 The Director wants to **{{ desired_direction }}** narrative tension by

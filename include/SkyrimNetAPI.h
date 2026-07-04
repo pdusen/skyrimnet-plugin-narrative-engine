@@ -120,10 +120,21 @@ namespace NarrativeEngine::SkyrimNetAPI
     // SkyrimNet's enums ("EXPERIENCE", "OBSERVATION", ...); emotion is
     // a free-form short tag; location is a player-visible cell / loc
     // name (empty for "unknown").
+    //
+    // tagsJson and relatedActorsJson forward directly to the
+    // underlying PublicAddMemory call. Both accept an empty string
+    // (interpreted as "no tags" / "no related actors") — the wrapper
+    // translates empty → nullptr so SkyrimNet takes its documented
+    // null path rather than trying to parse "" as JSON. When non-
+    // empty, both MUST be valid JSON: tagsJson a string array
+    // (e.g. `["debt","market"]`), relatedActorsJson a number array of
+    // FormIDs (e.g. `[20]` for the player).
     int AddMemory(std::uint32_t      formId,
                   const std::string& contentText,
                   float              importance,
                   const std::string& memoryType,
                   const std::string& emotion,
-                  const std::string& location);
+                  const std::string& location,
+                  const std::string& tagsJson          = {},
+                  const std::string& relatedActorsJson = {});
 }

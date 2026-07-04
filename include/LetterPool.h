@@ -6,6 +6,7 @@
 #include <expected>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <RE/Skyrim.h>
 
@@ -100,17 +101,21 @@ namespace NarrativeEngine::LetterPool
     // Populate an allocated slot with LLM-supplied content. Mutates the
     // Book form's FULL field via SetFullName so the inventory shows the
     // generated title; caches the body in the in-memory map the hooks
-    // (Step 6) will read from.
+    // (Step 6) will read from. `mood` and `tags` are stored on the slot
+    // so the later MarkDelivered / MarkRead memory-write hooks (Step 16)
+    // can produce symmetric memories without re-invoking the composer.
     //
     // Caller must have just received `slotIndex` from a successful
     // Allocate. Transitions the slot to PendingDelivery and stamps the
     // current real-time onto deliveredAt (initial value; overwritten by
     // MarkDelivered in Step 8 when the courier actually hands off).
-    void PopulateSlot(std::size_t        slotIndex,
-                      std::string        senderLabel,
-                      std::string        body,
-                      RE::FormID         senderNpcFormID,
-                      std::string        topicTag);
+    void PopulateSlot(std::size_t              slotIndex,
+                      std::string              senderLabel,
+                      std::string              body,
+                      RE::FormID               senderNpcFormID,
+                      std::string              topicTag,
+                      std::string              mood,
+                      std::vector<std::string> tags);
 
     // Manual release back to Free. Step 4 testing entry point — Steps 8
     // (discard sinks), 9 (eviction inside Allocate), and 13 (action

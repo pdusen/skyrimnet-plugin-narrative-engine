@@ -2,7 +2,10 @@
 
 #include <NPCLetterAction.h>
 #include <Settings.h>
+#include <SkyrimNetAPI.h>
 #include <logger.h>
+
+#include <nlohmann/json.hpp>
 
 #include <AsyncDispatch.h>
 
@@ -39,14 +42,16 @@ namespace NarrativeEngine::LetterPool
 
         struct Slot
         {
-            RE::FormID  bookFormID      = 0;  // 0 means "EditorID failed to resolve"
-            State       state           = State::Free;
-            std::string body;
-            std::string senderLabel;
-            RE::FormID  senderNpcFormID = 0;
-            std::string topicTag;
-            double      deliveredAt     = 0.0;  // Unix-epoch seconds
-            double      readAt          = 0.0;  // Unix-epoch seconds; 0 if unread
+            RE::FormID               bookFormID      = 0;  // 0 means "EditorID failed to resolve"
+            State                    state           = State::Free;
+            std::string              body;
+            std::string              senderLabel;
+            RE::FormID               senderNpcFormID = 0;
+            std::string              topicTag;
+            std::string              mood;             // one of the compose-prompt mood enum values
+            std::vector<std::string> tags;             // compose-prompt facet tags (does not include topicTag)
+            double                   deliveredAt     = 0.0;  // Unix-epoch seconds
+            double                   readAt          = 0.0;  // Unix-epoch seconds; 0 if unread
         };
 
         // -----------------------------------------------------------------
@@ -141,6 +146,195 @@ namespace NarrativeEngine::LetterPool
                 case State::Discarded:       return "Discarded";
             }
             return "<unknown>";
+        }
+
+        // ---------------------------------------------------------------
+        // Memory-write helper (Step 16)
+        // ---------------------------------------------------------------
+        //
+        // Both the sender-side (delivery) and player-side (read) writes
+        // go through here so the mood→importance map, tag union,
+        // location resolution, and diagnostic logging live in exactly
+        // one place. The two call sites differ only in:
+        //   - which formId to write against
+        //   - the content template ("I wrote and sent…" vs
+        //     "I received and read…")
+        //   - which counterpart FormID goes into relatedActorsJson
+        //   - which actor's current location to record
+        //
+        // Failure to write does not fail the lifecycle — the letter is
+        // still usable and the state transition already committed. We
+        // log and move on.
+
+        // Mood → importance map. Matches the SkyrimNet memory
+        // integration spec in the phase plan:
+        //   urgent/menacing/mournful → ~0.7
+        //   warm                     → ~0.5
+        //   neutral/businesslike     → ~0.3
+        // Unknown moods fall to 0.3 (the neutral bucket) so a
+        // future compose-schema addition doesn't silently produce
+        // low-importance memories.
+        float MoodImportance(const std::string& mood)
+        {
+            if (mood == "urgent" || mood == "menacing" || mood == "mournful") return 0.7f;
+            if (mood == "warm") return 0.5f;
+            return 0.3f;
+        }
+
+        // Build the tagsJSON payload: de-duplicated union of a
+        // hardcoded "letter" tag, topic_tag, and the composer-supplied
+        // facet tags. "letter" is always the first entry — surfacing
+        // "the letter about X" in a later query for "letter" is the
+        // baseline behavior we want regardless of what the composer
+        // returned. Case-insensitive de-duplication; final entries
+        // keep their original casing.
+        //
+        // Returns an empty string only if the hardcoded "letter" tag
+        // is unexpectedly cleared out (currently impossible).
+        std::string BuildTagsJson(const std::string&              topicTag,
+                                  const std::vector<std::string>& facetTags)
+        {
+            auto toLower = [](std::string s) {
+                for (auto& c : s) c = static_cast<char>(
+                    std::tolower(static_cast<unsigned char>(c)));
+                return s;
+            };
+
+            std::vector<std::string> combined;
+            std::vector<std::string> combinedLower;
+            const auto pushIfUnique = [&](const std::string& s) {
+                if (s.empty()) return;
+                auto lower = toLower(s);
+                for (const auto& existing : combinedLower) {
+                    if (existing == lower) return;
+                }
+                combinedLower.push_back(std::move(lower));
+                combined.push_back(s);
+            };
+
+            pushIfUnique(std::string{"letter"});
+            pushIfUnique(topicTag);
+            for (const auto& t : facetTags) pushIfUnique(t);
+
+            if (combined.empty()) return {};
+            auto arr = nlohmann::json::array();
+            for (auto& t : combined) arr.push_back(std::move(t));
+            return arr.dump();
+        }
+
+        // Build the relatedActorsJson payload from a single counterpart
+        // FormID. SkyrimNet parses this as a JSON number array of
+        // FormIDs — sender-side writes get `[0x14]` (player), player-
+        // side writes get `[senderFormID]`. Never empty in the
+        // normal flow; if the counterpart FormID is 0 the caller
+        // has bigger problems than the memory write.
+        std::string BuildRelatedActorsJson(RE::FormID counterpartFormId)
+        {
+            if (counterpartFormId == 0) return {};
+            auto arr = nlohmann::json::array();
+            arr.push_back(static_cast<std::uint32_t>(counterpartFormId));
+            return arr.dump();
+        }
+
+        // Resolve an actor's current-location display name for the
+        // memory record. Returns empty when the actor / location
+        // don't resolve so the caller can fall back.
+        std::string ResolveActorLocationName(RE::FormID actorFormId)
+        {
+            if (actorFormId == 0) return {};
+            auto* form = RE::TESForm::LookupByID(actorFormId);
+            auto* actor = form ? form->As<RE::Actor>() : nullptr;
+            if (!actor) return {};
+            auto* loc = actor->GetCurrentLocation();
+            if (!loc) return {};
+            const char* name = loc->GetFullName();
+            return name ? std::string{name} : std::string{};
+        }
+
+        // The one place both memory writes happen. Called by
+        // MarkDelivered (sender side) and MarkRead (player side).
+        void FireMemoryWrite(const char*        side,          // "sender" / "player"
+                             RE::FormID         subjectFormId, // who is remembering
+                             RE::FormID         counterpartFormId,
+                             const std::string& contentText,
+                             const std::string& mood,
+                             const std::string& location,
+                             const std::string& topicTag,
+                             const std::vector<std::string>& tags)
+        {
+            if (subjectFormId == 0 || contentText.empty()) {
+                logger::warn(
+                    "LetterPool::FireMemoryWrite[{}]: skipping — subjectFormId=0 "
+                    "or empty content",
+                    side);
+                return;
+            }
+            if (!SkyrimNetAPI::IsAvailable() ||
+                !SkyrimNetAPI::IsMemorySystemReady()) {
+                logger::warn(
+                    "LetterPool::FireMemoryWrite[{}]: SkyrimNet or memory system "
+                    "unavailable at write time; skipping",
+                    side);
+                return;
+            }
+
+            const auto tagsJson    = BuildTagsJson(topicTag, tags);
+            const auto relatedJson = BuildRelatedActorsJson(counterpartFormId);
+            const float importance = MoodImportance(mood);
+
+            // Diagnostic: SkyrimNet has been observed to maintain
+            // divergent UUIDs for the same FormID for the player
+            // (0x14) — PublicFormIDToUUID returns the canonical
+            // save-load UUID while PublicAddMemory's internal
+            // resolver picks an early-boot AudioManager shadow
+            // UUID. No known workaround from the plugin side:
+            // PublicAddMemory reads only the low 32 bits of its
+            // first argument, so passing a full 64-bit UUID
+            // degenerates to a bogus FormID lookup that fails
+            // outright ("Could not resolve FormID … to UUID").
+            // Logging the resolver's view for both actors so the
+            // shadow-vs-canonical mismatch stays visible if
+            // SkyrimNet fixes the bug upstream.
+            const auto subjUUID    = SkyrimNetAPI::FormIDToUUID(
+                static_cast<std::uint32_t>(subjectFormId));
+            const auto counterUUID = SkyrimNetAPI::FormIDToUUID(
+                static_cast<std::uint32_t>(counterpartFormId));
+            logger::info(
+                "LetterPool::FireMemoryWrite[{}]: pre-write UUID snapshot "
+                "(subject 0x{:08X} -> UUID 0x{:016X}, counterpart 0x{:08X} "
+                "-> UUID 0x{:016X})",
+                side, subjectFormId, subjUUID,
+                counterpartFormId, counterUUID);
+
+            const int id = SkyrimNetAPI::AddMemory(
+                static_cast<std::uint32_t>(subjectFormId),
+                contentText,
+                importance,
+                /*memoryType=*/"EXPERIENCE",
+                /*emotion=*/mood,
+                location,
+                tagsJson,
+                relatedJson);
+
+            // SkyrimNet's PublicAddMemory contract: memory ID > 0
+            // on success, 0 on error. Treat both id < 0 (our
+            // wrapper's DLL-unavailable sentinel) and id == 0
+            // (SkyrimNet's own error return) as failure.
+            if (id <= 0) {
+                logger::warn(
+                    "LetterPool::FireMemoryWrite[{}]: AddMemory returned {} "
+                    "(subject=0x{:08X}, subjUUID=0x{:016X}, importance={:.2f}, "
+                    "tagsJSON={}, relatedActorsJSON={})",
+                    side, id, subjectFormId, subjUUID, importance,
+                    tagsJson, relatedJson);
+                return;
+            }
+            logger::info(
+                "LetterPool::FireMemoryWrite[{}]: memory written "
+                "(subject=0x{:08X}, subjUUID=0x{:016X}, id={}, "
+                "importance={:.2f}, tagsJSON={}, relatedActorsJSON={})",
+                side, subjectFormId, subjUUID, id,
+                importance, tagsJson, relatedJson);
         }
     }
 
@@ -291,11 +485,13 @@ namespace NarrativeEngine::LetterPool
         return AllocatedSlot{ .slotIndex = chosen, .bookFormID = chosenFormID };
     }
 
-    void PopulateSlot(std::size_t  slotIndex,
-                      std::string  senderLabel,
-                      std::string  body,
-                      RE::FormID   senderNpcFormID,
-                      std::string  topicTag)
+    void PopulateSlot(std::size_t              slotIndex,
+                      std::string              senderLabel,
+                      std::string              body,
+                      RE::FormID               senderNpcFormID,
+                      std::string              topicTag,
+                      std::string              mood,
+                      std::vector<std::string> tags)
     {
         if (slotIndex >= kPoolSize) {
             logger::error("LetterPool::PopulateSlot: slotIndex {} out of range", slotIndex);
@@ -316,6 +512,8 @@ namespace NarrativeEngine::LetterPool
             slot.body            = std::move(body);
             slot.senderNpcFormID = senderNpcFormID;
             slot.topicTag        = std::move(topicTag);
+            slot.mood            = std::move(mood);
+            slot.tags            = std::move(tags);
             slot.deliveredAt     = NowUnixSeconds();  // queued-with-courier
                                                       // time; overwritten by
                                                       // MarkDelivered (Step 8).
@@ -382,6 +580,8 @@ namespace NarrativeEngine::LetterPool
         slot.senderLabel.clear();
         slot.senderNpcFormID = 0;
         slot.topicTag.clear();
+        slot.mood.clear();
+        slot.tags.clear();
         slot.deliveredAt     = 0.0;
         slot.readAt          = 0.0;
 
@@ -403,6 +603,8 @@ namespace NarrativeEngine::LetterPool
         slot.senderLabel.clear();
         slot.senderNpcFormID = 0;
         slot.topicTag.clear();
+        slot.mood.clear();
+        slot.tags.clear();
         slot.deliveredAt     = 0.0;
         slot.readAt          = 0.0;
         logger::info(
@@ -631,20 +833,59 @@ namespace NarrativeEngine::LetterPool
             logger::error("LetterPool::MarkRead: slotIndex {} out of range", slotIndex);
             return;
         }
-        std::scoped_lock lock(g_mutex);
-        auto& slot = g_slots[slotIndex];
-        // Only InInventory → Read is the canonical transition. Other
-        // states (Free / PendingDelivery / already-Read) can fire here
-        // if the player opens the same letter twice in quick succession
-        // or opens a letter before delivery completes — neither is a
-        // useful event, so we no-op rather than re-stamp readAt.
-        if (slot.state != State::InInventory) {
-            return;
+        // Snapshot the slot's memory-write inputs while the lock is
+        // held, then release the lock before running the write (the
+        // SkyrimNet call is defensive but can touch its own locks; we
+        // avoid nesting our mutex under any external lock).
+        std::string body, senderLabel, mood, topicTag;
+        std::vector<std::string> tags;
+        RE::FormID senderFormID = 0;
+        bool       fireWrite    = false;
+        {
+            std::scoped_lock lock(g_mutex);
+            auto& slot = g_slots[slotIndex];
+            // Only InInventory → Read is the canonical transition. Other
+            // states (Free / PendingDelivery / already-Read) can fire here
+            // if the player opens the same letter twice in quick succession
+            // or opens a letter before delivery completes — neither is a
+            // useful event, so we no-op rather than re-stamp readAt.
+            if (slot.state != State::InInventory) {
+                return;
+            }
+            slot.state  = State::Read;
+            slot.readAt = NowUnixSeconds();
+            body         = slot.body;
+            senderLabel  = slot.senderLabel;
+            mood         = slot.mood;
+            topicTag     = slot.topicTag;
+            tags         = slot.tags;
+            senderFormID = slot.senderNpcFormID;
+            fireWrite    = !body.empty() && senderFormID != 0;
+            logger::info("LetterPool: slot {} marked Read", slotIndex);
         }
-        slot.state  = State::Read;
-        slot.readAt = NowUnixSeconds();
-        logger::info("LetterPool: slot {} marked Read", slotIndex);
-        // Step 14 layers the player-side SkyrimNet memory write here.
+
+        // Player-side SkyrimNet memory write. Subject is the player
+        // (FormID 0x14), counterpart is the sender NPC. Content
+        // embeds the full letter body verbatim.
+        constexpr RE::FormID kPlayerFormID = 0x14;
+        if (fireWrite) {
+            const auto contentText =
+                std::string{"I received and read a letter from "} +
+                (senderLabel.empty() ? std::string{"an unknown sender"} : senderLabel) +
+                ". The contents were as follows:\n\n" + body;
+            // Location is the player's current location at read time.
+            const auto location = ResolveActorLocationName(kPlayerFormID);
+            FireMemoryWrite(
+                "player",
+                kPlayerFormID,
+                senderFormID,
+                contentText,
+                mood,
+                location,
+                topicTag,
+                tags);
+        }
+
         // Advance the per-slot delivery quest to Stage 40 ("read by
         // player"). The quest stays running until disposal (Stage 50)
         // or allocator eviction (Stage 60).
@@ -800,6 +1041,8 @@ namespace NarrativeEngine::LetterPool
             slot.senderLabel.clear();
             slot.senderNpcFormID = 0;
             slot.topicTag.clear();
+            slot.mood.clear();
+            slot.tags.clear();
             slot.deliveredAt     = 0.0;
             slot.readAt          = 0.0;
             if (Settings::Get().letterPoolEvictionLogVerbosity >= 1) {
@@ -816,15 +1059,19 @@ namespace NarrativeEngine::LetterPool
             logger::error("LetterPool::MarkDelivered: slotIndex {} out of range", slotIndex);
             return;
         }
+        // Snapshot everything the memory write needs while the lock is
+        // held; release before running the write.
+        std::string body, mood, topicTag;
+        std::vector<std::string> tags;
         RE::FormID senderFormID = 0;
+        bool       fireWrite    = false;
         {
             std::scoped_lock lock(g_mutex);
             auto& slot = g_slots[slotIndex];
             if (slot.state != State::PendingDelivery) {
                 // Defensive — duplicate container events or moves on a
                 // slot that already advanced shouldn't re-trigger
-                // delivery memory writes (Step 14 hangs the sender-
-                // side memory off this transition).
+                // delivery memory writes.
                 return;
             }
             slot.state       = State::InInventory;
@@ -832,11 +1079,50 @@ namespace NarrativeEngine::LetterPool
                                                   // with-courier timestamp
                                                   // set by PopulateSlot.
             senderFormID     = slot.senderNpcFormID;
+            body             = slot.body;
+            mood             = slot.mood;
+            topicTag         = slot.topicTag;
+            tags             = slot.tags;
+            fireWrite        = !body.empty() && senderFormID != 0;
             logger::info("LetterPool: slot {} marked Delivered (InInventory)", slotIndex);
+        }
+        // Sender-side SkyrimNet memory write. Subject is the sender
+        // NPC, counterpart is the player. Content embeds the full
+        // letter body verbatim.
+        constexpr RE::FormID kPlayerFormID = 0x14;
+        if (fireWrite) {
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            const char* playerNameC = player ? player->GetDisplayFullName() : nullptr;
+            // Fall back to a plain descriptor if the display name isn't
+            // resolvable — never an epithet like "the Dragonborn".
+            // The actor's actual character name is what belongs in
+            // every generated string across this project.
+            const std::string playerName =
+                (playerNameC && *playerNameC != '\0')
+                    ? std::string{playerNameC}
+                    : std::string{"the recipient"};
+            const auto contentText =
+                std::string{"I wrote and sent a letter to "} + playerName +
+                ". The contents were as follows:\n\n" + body;
+            // Sender's known location, falling back to the player's
+            // location if the sender's location doesn't resolve (e.g.
+            // sender is in an unloaded cell with no assigned location).
+            auto location = ResolveActorLocationName(senderFormID);
+            if (location.empty()) {
+                location = ResolveActorLocationName(kPlayerFormID);
+            }
+            FireMemoryWrite(
+                "sender",
+                senderFormID,
+                kPlayerFormID,
+                contentText,
+                mood,
+                location,
+                topicTag,
+                tags);
         }
         // Fire the per-sender cooldown stamp outside our mutex to avoid
         // any risk of lock inversion with NPCLetterAction's own mutex.
-        // Step 14 layers the sender-side SkyrimNet memory write here.
         NPCLetterAction_Cooldowns::OnLetterDelivered(senderFormID);
         NPCLetterAction_QuestControl::AdvanceSlotStage(slotIndex, 30);
     }
@@ -1017,7 +1303,10 @@ namespace NarrativeEngine::LetterPool
 
     namespace
     {
-        constexpr std::uint32_t kRecordVersion = 1;
+        // v1 payload: state/bookFormID/senderNpcFormID/deliveredAt/readAt
+        //             + body/senderLabel/topicTag (three strings)
+        // v2 payload: v1 + mood (string) + tags (u16 count then N strings)
+        constexpr std::uint32_t kRecordVersion = 2;
 
         void WriteString(SKSE::SerializationInterface* intfc, const std::string& s)
         {
@@ -1049,6 +1338,8 @@ namespace NarrativeEngine::LetterPool
             slot.senderLabel.clear();
             slot.senderNpcFormID = 0;
             slot.topicTag.clear();
+            slot.mood.clear();
+            slot.tags.clear();
             slot.deliveredAt     = 0.0;
             slot.readAt          = 0.0;
             logger::warn(
@@ -1085,6 +1376,15 @@ namespace NarrativeEngine::LetterPool
             WriteString(intfc, slot.body);
             WriteString(intfc, slot.senderLabel);
             WriteString(intfc, slot.topicTag);
+            // v2 additions — mood + tags. Both are needed by the
+            // Step 16 memory-write helpers, which fire on the
+            // MarkDelivered/MarkRead transitions and would produce
+            // low-fidelity writes (importance defaulted, tags absent)
+            // if we didn't persist them.
+            WriteString(intfc, slot.mood);
+            const auto tagCount = static_cast<std::uint16_t>(slot.tags.size());
+            intfc->WriteRecordData(tagCount);
+            for (const auto& t : slot.tags) WriteString(intfc, t);
         }
     }
 
@@ -1093,7 +1393,12 @@ namespace NarrativeEngine::LetterPool
                 std::uint32_t                 length)
     {
         if (!intfc) return;
-        if (version != kRecordVersion) {
+        // Accept the current version and the immediately-prior v1 layout
+        // (v1 payloads lack mood + tags; those fields default to empty
+        // and the Step 16 memory writes fall back to importance=0.3 /
+        // topicTag-only tags for anything mid-flight across a v1→v2
+        // upgrade — degraded but not broken). Anything else clears.
+        if (version != kRecordVersion && version != 1) {
             logger::warn(
                 "LetterPool::OnLoad: unknown version {} (length={}); clearing pool",
                 version, length);
@@ -1137,6 +1442,32 @@ namespace NarrativeEngine::LetterPool
                 logger::error("LetterPool::OnLoad: short read on slot {} strings", i);
                 OnRevert();
                 return;
+            }
+
+            if (version >= 2) {
+                if (!ReadString(intfc, s.mood)) {
+                    logger::error("LetterPool::OnLoad: short read on slot {} mood", i);
+                    OnRevert();
+                    return;
+                }
+                std::uint16_t tagCount = 0;
+                if (intfc->ReadRecordData(tagCount) != sizeof(tagCount)) {
+                    logger::error("LetterPool::OnLoad: short read on slot {} tag count", i);
+                    OnRevert();
+                    return;
+                }
+                s.tags.clear();
+                s.tags.reserve(tagCount);
+                for (std::uint16_t t = 0; t < tagCount; ++t) {
+                    std::string tag;
+                    if (!ReadString(intfc, tag)) {
+                        logger::error(
+                            "LetterPool::OnLoad: short read on slot {} tag {}", i, t);
+                        OnRevert();
+                        return;
+                    }
+                    s.tags.push_back(std::move(tag));
+                }
             }
 
             // Resolve persisted FormIDs through SKSE's mapping table so
@@ -1239,6 +1570,8 @@ namespace NarrativeEngine::LetterPool
             slot.senderLabel.clear();
             slot.senderNpcFormID = 0;
             slot.topicTag.clear();
+            slot.mood.clear();
+            slot.tags.clear();
             slot.deliveredAt     = 0.0;
             slot.readAt          = 0.0;
         }

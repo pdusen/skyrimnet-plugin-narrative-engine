@@ -550,8 +550,11 @@ cognitively engaged with the letter:
                        neutral/businesslike → ~0.3)
    memoryType        = "EXPERIENCE"
    emotion           = mood
-   location          = sender NPC's known location (via SkyrimNet's GetNPCLocation if
-                       exposed; fall back to player's location)
+   location          = sender NPC's current location display name (resolved
+                       natively via RE::TESObjectREFR::GetCurrentLocation() →
+                       BGSLocation::GetFullName). Falls back to the player's
+                       current location when the sender is in an unloaded cell
+                       with no assigned location.
    relatedActorsJson = "[<player_form_id_hex>]" — single-element JSON array of the
                        player FormID (0x14), so SkyrimNet cross-links this memory
                        to the player for later recall
@@ -2529,7 +2532,21 @@ cleanup path is broken — fix before proceeding to Step 19.
 
 ### Step 16 — SkyrimNet memory writes (sender at delivery, player at read)
 
-- [ ] Complete
+- [x] Complete
+
+**Known upstream issue:** SkyrimNet's `PublicAddMemory` internally routes
+FormID `0x14` (the player) to an early-boot "shadow" UUID created by
+`AudioManager`, distinct from the canonical save-load UUID that
+`PublicFormIDToUUID(0x14)` returns and every other memory of the player
+lives under. The sender-side write is correct; the player-side write
+lands in the shadow entry and isn't visible to the LLM's normal
+per-actor memory retrieval. No client-side workaround exists —
+`PublicAddMemory` reads only the low 32 bits of its first argument, so
+passing the canonical UUID degenerates to a bogus FormID lookup that
+SkyrimNet's own log reports as `Could not resolve FormID … to UUID`.
+Filed with the SkyrimNet devs; revisit once upstream ships a fix. The
+pre-write UUID snapshot log line in `LetterPool::FireMemoryWrite` will
+surface any resolver-side change immediately.
 
 **[CLAUDE]**
 
@@ -2584,8 +2601,10 @@ is purely about the LetterPool's lifecycle hooks for memory integration.
     where `<player_name>` is resolved from the player actor's live display
     name at write time and `<full_letter_text>` is the composed letter body
     verbatim, importance per mood, emotion = mood,
-    location = sender's known location via `SkyrimNetAPI::GetNPCLocation` if
-    available, falling back to player's location, **`relatedActorsJson` = a
+    location = sender NPC's current location display name via native
+    `RE::TESObjectREFR::GetCurrentLocation()->GetFullName()`, falling back to
+    the player's current location when the sender's cell has no assigned
+    location, **`relatedActorsJson` = a
     single-element JSON array containing the player's FormID (0x14)** so
     SkyrimNet's cross-actor recall links this memory to the player).
   - `MarkRead` (stubbed in Step 7) now fires the **player-side**
