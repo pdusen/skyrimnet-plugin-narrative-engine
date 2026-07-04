@@ -2730,7 +2730,7 @@ is purely about the LetterPool's lifecycle hooks for memory integration.
 
 ### Step 17 — Dashboard: tab bar + Letters tab (pool + recent-dispatch detail)
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
