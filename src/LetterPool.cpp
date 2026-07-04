@@ -43,6 +43,13 @@ namespace NarrativeEngine::LetterPool
         struct Slot
         {
             RE::FormID               bookFormID      = 0;  // 0 means "EditorID failed to resolve"
+            // Per-slot delivery quest. Nullptr means the quest didn't
+            // resolve at kDataLoaded (e.g. the ESP has fewer per-slot
+            // quests authored than the pool has Book forms) and the
+            // slot is undispatchable. Owned by the engine; we hold
+            // it as a raw observer pointer bound via SetPerSlotQuests.
+            // Not persisted (re-bound every session).
+            RE::TESQuest*            quest           = nullptr;
             State                    state           = State::Free;
             std::string              body;
             std::string              senderLabel;
@@ -342,6 +349,28 @@ namespace NarrativeEngine::LetterPool
     // Public API
     // -----------------------------------------------------------------
 
+    void SetPerSlotQuests(const std::array<RE::TESQuest*, kPoolSize>& quests)
+    {
+        std::size_t on = 0;
+        {
+            std::scoped_lock lock(g_mutex);
+            for (std::size_t i = 0; i < kPoolSize; ++i) {
+                g_slots[i].quest = quests[i];
+                if (quests[i]) ++on;
+            }
+        }
+        logger::info(
+            "LetterPool: per-slot quests bound ({} of {} slots dispatchable)",
+            on, kPoolSize);
+    }
+
+    RE::TESQuest* GetPerSlotQuest(std::size_t slotIndex)
+    {
+        if (slotIndex >= kPoolSize) return nullptr;
+        std::scoped_lock lock(g_mutex);
+        return g_slots[slotIndex].quest;
+    }
+
     void Initialize()
     {
         std::scoped_lock lock(g_mutex);
@@ -410,10 +439,17 @@ namespace NarrativeEngine::LetterPool
                 return std::unexpected(AllocationFailure::PoolNotResolved);
             }
 
+            // Undispatchable slots (per-slot quest didn't resolve at
+            // kDataLoaded, so slot.quest is nullptr) are skipped
+            // everywhere. Book resolved but no dispatch mechanism
+            // means the slot can never actually deliver a letter, so
+            // the allocator treats it as if the Book itself were
+            // missing.
+
             // 1. Free slot.
             for (std::size_t i = 0; i < kPoolSize; ++i) {
                 auto& slot = g_slots[i];
-                if (slot.state == State::Free && slot.bookFormID != 0) {
+                if (slot.state == State::Free && slot.bookFormID != 0 && slot.quest != nullptr) {
                     chosen       = i;
                     chosenFormID = slot.bookFormID;
                     needsEvict   = false;
@@ -426,7 +462,7 @@ namespace NarrativeEngine::LetterPool
                 double oldest = 0.0;
                 for (std::size_t i = 0; i < kPoolSize; ++i) {
                     const auto& slot = g_slots[i];
-                    if (slot.state != State::Read || slot.bookFormID == 0) continue;
+                    if (slot.state != State::Read || slot.bookFormID == 0 || slot.quest == nullptr) continue;
                     if (chosen == kPoolSize || slot.readAt < oldest) {
                         chosen = i;
                         oldest = slot.readAt;
@@ -443,7 +479,7 @@ namespace NarrativeEngine::LetterPool
                 double oldest = 0.0;
                 for (std::size_t i = 0; i < kPoolSize; ++i) {
                     const auto& slot = g_slots[i];
-                    if (slot.state != State::InInventory || slot.bookFormID == 0) continue;
+                    if (slot.state != State::InInventory || slot.bookFormID == 0 || slot.quest == nullptr) continue;
                     if (chosen == kPoolSize || slot.deliveredAt < oldest) {
                         chosen = i;
                         oldest = slot.deliveredAt;

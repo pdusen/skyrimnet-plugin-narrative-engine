@@ -232,7 +232,12 @@ namespace NarrativeEngine
         // is authored, so only slot 0 should resolve. Step 16
         // duplicates the rest.
 
-        std::array<RE::TESQuest *, LetterPool::kPoolSize> g_perSlotQuests{};
+        // The quests themselves are owned by LetterPool (bound via
+        // SetPerSlotQuests below). Lookups here go through
+        // LetterPool::GetPerSlotQuest so there's exactly one source
+        // of truth for per-slot quest identity. The aliases stay in
+        // NPCLetterAction because they're only consumed by the
+        // dispatch chain — LetterPool doesn't need to know about them.
         std::array<RE::BGSRefAlias *, LetterPool::kPoolSize> g_perSlotSenderAlias{};
         std::array<RE::BGSRefAlias *, LetterPool::kPoolSize> g_perSlotLetterRefAlias{};
         std::atomic<bool> g_perSlotResolved = false;
@@ -324,6 +329,7 @@ namespace NarrativeEngine
             std::size_t resolved = 0;
             std::vector<std::string> missing;
             std::vector<std::string> missingAliases;
+            std::array<RE::TESQuest *, LetterPool::kPoolSize> quests{};
             for (std::size_t i = 0; i < LetterPool::kPoolSize; ++i)
             {
                 char editorId[64];
@@ -331,7 +337,7 @@ namespace NarrativeEngine
                               "_ne_PooledLetterQuest%02zu", i + 1);
                 auto *form = RE::TESForm::LookupByEditorID(editorId);
                 auto *quest = form ? form->As<RE::TESQuest>() : nullptr;
-                g_perSlotQuests[i] = quest;
+                quests[i] = quest;
                 if (!quest)
                 {
                     missing.emplace_back(editorId);
@@ -383,13 +389,20 @@ namespace NarrativeEngine
                     "NPCLetterAction: per-slot quest has missing alias(es): {}",
                     detail);
             }
+
+            // Hand LetterPool the resolved quest pointers so it owns
+            // the per-slot dispatch identity (and gates Allocate on
+            // slot.quest != nullptr).
+            LetterPool::SetPerSlotQuests(quests);
         }
 
+        // Thin re-export: LetterPool is the single source of truth for
+        // per-slot quest identity now. Kept as a local wrapper so the
+        // dispatch chain below doesn't have to sprout `LetterPool::`
+        // prefixes on every call site.
         RE::TESQuest *GetPerSlotQuest(std::size_t slotIndex)
         {
-            if (slotIndex >= g_perSlotQuests.size())
-                return nullptr;
-            return g_perSlotQuests[slotIndex];
+            return LetterPool::GetPerSlotQuest(slotIndex);
         }
 
         // --- VM dispatch helpers ------------------------------------

@@ -87,7 +87,30 @@ namespace NarrativeEngine::LetterPool
     //
     // Logs `LetterPool: pool resolved (N forms; M failed)` at the end so
     // ESP wiring issues surface in the SKSE log.
+    //
+    // A Book form on its own is not sufficient to allocate a slot —
+    // the caller must ALSO hand the pool the per-slot delivery quest
+    // pointers via SetPerSlotQuests. Until that happens, every slot
+    // is undispatchable and Allocate refuses everything. In practice
+    // NPCLetterAction's own Initialize resolves the quests and hands
+    // them off within the same kDataLoaded tick.
     void Initialize();
+
+    // Hand the pool the resolved per-slot delivery quests. `quests[i]`
+    // is either the quest for slot i, or nullptr if that slot's quest
+    // didn't resolve. The pool stores these pointers and uses them
+    // for both the dispatchability check inside Allocate and the
+    // Stop+Reset sequence during eviction. Idempotent; state derived
+    // from ESP wiring at kDataLoaded and re-derived every session
+    // (not persisted).
+    void SetPerSlotQuests(const std::array<RE::TESQuest*, kPoolSize>& quests);
+
+    // Look up a slot's per-slot delivery quest, or nullptr if the
+    // slot is undispatchable / out of range. Available to any caller
+    // that needs to advance stages, start the quest, poll aliases,
+    // etc. — LetterPool is now the single source of truth for the
+    // per-slot quest identity.
+    RE::TESQuest* GetPerSlotQuest(std::size_t slotIndex);
 
     // Allocate the next Free slot. Step 4 implementation is strictly
     // "first slot in state Free with a resolved FormID"; the
