@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 
-import { DecisionList } from './components/DecisionList';
-import { EventList } from './components/EventList';
-import { LastEvaluation } from './components/LastEvaluation';
-import { PhasePanel } from './components/PhasePanel';
 import { StatusBanner } from './components/StatusBanner';
+import { TabBar, type TabId } from './components/TabBar';
+import { DirectorTab } from './components/tabs/DirectorTab';
+import { LettersTab } from './components/tabs/LettersTab';
 import { stateStore, type Snapshot } from './stateStore';
 
 export function App() {
     const [snap, setSnap] = useState<Snapshot>(() => stateStore.getSnapshot());
+    const [activeTab, setActiveTab] = useState<TabId>('director');
 
     useEffect(() => {
         // Re-sync once on mount in case set() fired between initial render
@@ -25,17 +25,18 @@ export function App() {
     }
 
     const s = snap.state;
+    // Client-wall-clock "now" for relative timestamps. Snapshots don't
+    // carry a serverNow field, so this is best-effort — good enough for
+    // "2m ago" precision on a dashboard the player looks at manually.
+    const nowSeconds = Date.now() / 1000;
+
     return (
         <div className="dashboard">
             <StatusBanner status={s.status} />
-            <PhasePanel
-                phase={s.current_phase}
-                timeInPhaseSeconds={s.time_in_phase_seconds}
-                actionInFlight={s.action_in_flight}
-            />
-            <LastEvaluation evaluation={s.last_evaluation} />
-            <DecisionList items={s.recent_decisions} />
-            <EventList items={s.recent_events} />
+            <TabBar active={activeTab} onChange={setActiveTab} />
+            {activeTab === 'director'
+                ? <DirectorTab state={s} />
+                : <LettersTab pool={s.letter_pool} nowSeconds={nowSeconds} />}
         </div>
     );
 }

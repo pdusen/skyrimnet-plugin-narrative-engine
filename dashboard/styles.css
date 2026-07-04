@@ -28,8 +28,8 @@ body {
 }
 
 .dashboard {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    display: flex;
+    flex-direction: column;
     gap: 12px;
     width: 900px;
     max-width: 90vw;
@@ -44,10 +44,15 @@ body {
 
 .dashboard.placeholder,
 .dashboard.error {
-    grid-template-columns: 1fr;
     padding: 32px 24px;
     text-align: center;
     font-style: italic;
+}
+
+.tab-content {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
 }
 
 .dashboard.placeholder {
@@ -59,7 +64,6 @@ body {
 }
 
 .status-banner {
-    grid-column: 1 / -1;
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
@@ -179,7 +183,9 @@ body {
 }
 
 .decision-list,
-.event-list {
+.event-list,
+.recent-dispatch,
+.letter-pool-overview {
     grid-column: 1 / -1;
 }
 
@@ -234,4 +240,181 @@ body {
 .placeholder-inline {
     color: #5a5e66;
     font-style: italic;
+}
+
+/* ---------- Tab bar ------------------------------------------------------ */
+
+.tab-bar {
+    display: flex;
+    gap: 6px;
+    padding: 6px;
+    background: #0f1217;
+    border: 1px solid #2a2e36;
+    border-radius: 4px;
+}
+
+.tab-button {
+    padding: 4px 12px;
+    border: 1px solid #2a2e36;
+    border-radius: 3px;
+    background: transparent;
+    color: #8a8e96;
+    font-family: inherit;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+}
+
+.tab-button:hover {
+    color: #c9d5e6;
+    border-color: #3a3e46;
+}
+
+.tab-button.active {
+    background: #1a1f28;
+    color: #c9d5e6;
+    border-color: #3a3e46;
+}
+
+/* ---------- Letter state badges (shared between detail + table) ---------- */
+
+.state-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border: 1px solid transparent;
+}
+
+.state-badge.state-free {
+    color: #6a6e76;
+    background: #1a1d23;
+    border-color: #2a2e36;
+}
+
+.state-badge.state-pending_delivery {
+    color: #e3c99b;
+    background: #2a2318;
+    border-color: #3a3220;
+}
+
+.state-badge.state-in_inventory {
+    color: #9bc3e3;
+    background: #182530;
+    border-color: #223448;
+}
+
+.state-badge.state-read {
+    color: #9be3c9;
+    background: #182b25;
+    border-color: #223e35;
+}
+
+/* ---------- Recent dispatch detail --------------------------------------- */
+
+.recent-dispatch .dispatch-header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.recent-dispatch .sender-label {
+    font-size: 15px;
+    color: #c9d5e6;
+}
+
+.recent-dispatch .dispatch-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    font-size: 11px;
+    color: #8a8e96;
+    margin-bottom: 8px;
+}
+
+.recent-dispatch .topic-tag {
+    color: #a8b0bd;
+}
+
+.recent-dispatch .mood-tag {
+    color: #a8b0bd;
+    font-style: italic;
+}
+
+.recent-dispatch .timestamp {
+    color: #6a6e76;
+}
+
+.recent-dispatch .body-preview {
+    color: #a8b0bd;
+    background: #14171c;
+    border-left: 2px solid #2a2e36;
+    padding: 6px 10px;
+    font-size: 12px;
+    white-space: pre-wrap;
+}
+
+/* ---------- Letter pool overview ----------------------------------------- */
+
+.letter-pool-overview .pool-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    font-size: 11px;
+    color: #a8b0bd;
+    margin-bottom: 8px;
+}
+
+.pool-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+
+.pool-table thead th {
+    text-align: left;
+    color: #6a6e76;
+    font-weight: normal;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 2px 6px;
+    border-bottom: 1px solid #2a2e36;
+}
+
+.pool-table tbody td {
+    padding: 2px 6px;
+    border-bottom: 1px solid #1d2026;
+    color: #c9d5e6;
+}
+
+.pool-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.pool-table .col-idx {
+    width: 30px;
+    text-align: right;
+    color: #6a6e76;
+}
+
+.pool-table .col-state {
+    width: 90px;
+}
+
+.pool-table .col-sender {
+    width: 170px;
+}
+
+.pool-table .col-topic {
+    color: #a8b0bd;
+}
+
+.pool-table .col-age {
+    width: 70px;
+    text-align: right;
+    color: #6a6e76;
 }

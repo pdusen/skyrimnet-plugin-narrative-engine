@@ -631,6 +631,25 @@ namespace NarrativeEngine::LetterPool
         return s;
     }
 
+    std::array<SlotSnapshot, kPoolSize> GetSlotSnapshots()
+    {
+        std::array<SlotSnapshot, kPoolSize> out{};
+        std::scoped_lock lock(g_mutex);
+        for (std::size_t i = 0; i < kPoolSize; ++i) {
+            const auto& slot = g_slots[i];
+            auto& o = out[i];
+            o.index       = i;
+            o.state       = slot.state;
+            o.senderLabel = slot.senderLabel;
+            o.topicTag    = slot.topicTag;
+            o.mood        = slot.mood;
+            o.body        = slot.body;
+            o.deliveredAt = slot.deliveredAt;
+            o.readAt      = slot.readAt;
+        }
+        return out;
+    }
+
     // -----------------------------------------------------------------
     // Hook integration
     // -----------------------------------------------------------------
@@ -864,27 +883,36 @@ namespace NarrativeEngine::LetterPool
             logger::info("LetterPool: slot {} marked Read", slotIndex);
         }
 
-        // Player-side SkyrimNet memory write. Subject is the player
-        // (FormID 0x14), counterpart is the sender NPC. Content
-        // embeds the full letter body verbatim.
-        constexpr RE::FormID kPlayerFormID = 0x14;
-        if (fireWrite) {
-            const auto contentText =
-                std::string{"I received and read a letter from "} +
-                (senderLabel.empty() ? std::string{"an unknown sender"} : senderLabel) +
-                ". The contents were as follows:\n\n" + body;
-            // Location is the player's current location at read time.
-            const auto location = ResolveActorLocationName(kPlayerFormID);
-            FireMemoryWrite(
-                "player",
-                kPlayerFormID,
-                senderFormID,
-                contentText,
-                mood,
-                location,
-                topicTag,
-                tags);
-        }
+        // Player-side SkyrimNet memory write — DISABLED pending an
+        // upstream SkyrimNet fix. PublicAddMemory's internal
+        // FormID→UUID resolver routes FormID 0x14 to an early-boot
+        // AudioManager "shadow" UUID that no other SkyrimNet
+        // subsystem sees, so the write lands in an orphan actor
+        // entry the LLM's memory retrieval never consults. See
+        // Step 16's "Known upstream issue" note in the phase doc.
+        // Re-enable once upstream ships a fix; the surrounding
+        // snapshot code above is intentionally kept live so
+        // reactivation is a matter of restoring this block alone.
+        //
+        // constexpr RE::FormID kPlayerFormID = 0x14;
+        // if (fireWrite) {
+        //     const auto contentText =
+        //         std::string{"I received and read a letter from "} +
+        //         (senderLabel.empty() ? std::string{"an unknown sender"} : senderLabel) +
+        //         ". The contents were as follows:\n\n" + body;
+        //     const auto location = ResolveActorLocationName(kPlayerFormID);
+        //     FireMemoryWrite(
+        //         "player",
+        //         kPlayerFormID,
+        //         senderFormID,
+        //         contentText,
+        //         mood,
+        //         location,
+        //         topicTag,
+        //         tags);
+        // }
+        (void)body; (void)senderLabel; (void)mood; (void)topicTag; (void)tags;
+        (void)senderFormID; (void)fireWrite;
 
         // Advance the per-slot delivery quest to Stage 40 ("read by
         // player"). The quest stays running until disposal (Stage 50)

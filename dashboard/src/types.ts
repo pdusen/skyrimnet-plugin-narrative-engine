@@ -43,6 +43,31 @@ export interface DirectorState {
     } | null;
     recent_decisions: DecisionEntry[];
     recent_events: EventEntry[];
+    letter_pool: LetterPoolState;
+}
+
+export type LetterSlotState =
+    | 'free'
+    | 'pending_delivery'
+    | 'in_inventory'
+    | 'read';
+
+export interface LetterSlot {
+    index: number;                  // 0..19
+    state: LetterSlotState;
+    letter_label: string;           // empty for free
+    topic_tag: string;              // empty for free
+    mood: string;                   // empty for free
+    body_preview: string;           // empty for free; first ~200 chars
+    delivered_at: number;           // 0 for free; Unix-epoch seconds
+    read_at: number;                // 0 for free / pending / inventory
+}
+
+export interface LetterPoolState {
+    slots: LetterSlot[];
+    // Index of the slot to feature in the recent-dispatch detail, or
+    // null when every slot is free.
+    most_recent_dispatch_slot: number | null;
 }
 
 export interface DecisionEntry {

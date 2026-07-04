@@ -410,7 +410,7 @@ action-select LLM call that picked it. Two reasons for the second call:
 
 1. **Different output shape.** Action-select returns
    `{ action, parameters, narrative_note }`. Letter composition needs
-   `{ sender_npc_form_id, sender_label, body, mood, topic_tag }`. Cramming the latter into
+   `{ sender_npc_form_id, letter_label, body, mood, topic_tag }`. Cramming the latter into
    the action-select prompt's `parameters` field would force every other action's
    selection prompt to also reason about letter shape.
 2. **Different prompt cost profile.** Letter composition needs the recent SkyrimNet
@@ -460,11 +460,11 @@ Output: a JSON object with five keys.
 
 - `sender_npc_form_id` — string (hex FormID). MUST match one of the `sender_candidates`
   FormIDs. Validated; mismatch → fail the action with `bad_sender` detail.
-- `sender_label` — the FULL field for the book ("Letter from Ysolda", "A note from a
+- `letter_label` — the FULL field for the book ("Letter from Ysolda", "A note from a
   stablehand"). **Hard cap: 24 characters.** The engine's Book FULL field is a fixed
   24-byte buffer; longer strings get silently truncated at runtime, which produces
   ugly mid-word cuts in the player's inventory list. The prompt MUST instruct the
-  LLM to keep `sender_label` ≤ 24 chars (count carefully — include spaces and
+  LLM to keep `letter_label` ≤ 24 chars (count carefully — include spaces and
   punctuation). If the LLM violates the cap anyway, our side falls back to a
   generated label using the **Sender-label fallback** algorithm below rather than
   trusting the over-long value or failing the action. Substituted into the Book
@@ -486,13 +486,13 @@ concrete topic list becomes an attractor and collapses the output distribution.
 ### Sender-label fallback
 
 The Book form's FULL field is hard-capped at 24 bytes by the engine. The prompt
-instructs the LLM to respect that cap on `sender_label`, but the LLM does not
+instructs the LLM to respect that cap on `letter_label`, but the LLM does not
 always comply — past prompt-following experience says we should plan for it
 ignoring the constraint at least some of the time. Rather than fail the action
 or accept a silently-truncated label, the validator falls back to a
 deterministic name we synthesize ourselves.
 
-Trigger: validated `sender_label.length() > 24` (UTF-8 byte length, not glyph
+Trigger: validated `letter_label.length() > 24` (UTF-8 byte length, not glyph
 count — the engine's buffer is byte-bounded). On trigger, drop the LLM's label
 and replace it with `"Note from " + senderName`, where `senderName` is picked
 from this preference list and the **first** candidate whose resulting full
@@ -526,7 +526,7 @@ The fallback runs in `LetterComposer`'s validation step (Step 10) — the
 validator returns either the LLM's label (if ≤ 24 bytes) or the
 fallback-generated label, and `Start` substitutes whichever it received into
 `SetFullName` without further checks. A log line names which candidate fired
-(`LetterComposer: sender_label fell back to candidate #N ("...")`), so prompt
+(`LetterComposer: letter_label fell back to candidate #N ("...")`), so prompt
 drift can be tracked over time and the prompt tightened if cap violations
 become frequent.
 
@@ -1184,7 +1184,7 @@ letter_pool: {
     slots: Array<{
         index: number;                      // 0-19
         state: 'free' | 'pending_delivery' | 'in_inventory' | 'read';
-        sender_label: string;               // empty for free
+        letter_label: string;               // empty for free
         topic_tag: string;                  // empty for free
         mood: string;                       // empty for free
         body_preview: string;               // empty for free; first ~200 chars
@@ -1712,12 +1712,12 @@ yet — this step verifies the prompt round-trips and the response parses.
 - Validation rejects responses missing any required key, with body length outside
   bounds, or with `sender_npc_form_id` not in the candidate set. Failures pass
   `std::nullopt` to the callback.
-- **`sender_label` cap enforcement** (per **Sender-label fallback** in Core
+- **`letter_label` cap enforcement** (per **Sender-label fallback** in Core
   concepts). The prompt itself must include an explicit instruction that
-  `sender_label` is hard-capped at 24 characters — count spaces and
+  `letter_label` is hard-capped at 24 characters — count spaces and
   punctuation, no exceptions, name only (no quote marks, no trailing
   punctuation) — and the LetterComposer validator measures
-  `sender_label.size()` (UTF-8 bytes, not glyphs) against the cap on the way
+  `letter_label.size()` (UTF-8 bytes, not glyphs) against the cap on the way
   back. If the LLM violates the cap, the validator does NOT reject the
   response; it drops the LLM's label and substitutes the deterministic
   `"Note from <SENDER_NAME>"` fallback per the algorithm in that section. The
@@ -2561,7 +2561,7 @@ is purely about the LetterPool's lifecycle hooks for memory integration.
 
 - `statics/SKSE/Plugins/SkyrimNet/prompts/narrative_engine_letter_compose.prompt`:
   Extend the `## Output Format` block to add a fifth key, `tags`, alongside
-  `sender_label` / `body` / `mood` / `topic_tag`. Spec text (adapt to fit the
+  `letter_label` / `body` / `mood` / `topic_tag`. Spec text (adapt to fit the
   surrounding formatting):
 
   > `tags` — array of 2–6 short strings. Additional retrieval tags for the
@@ -2652,7 +2652,7 @@ is purely about the LetterPool's lifecycle hooks for memory integration.
   - `tags` missing/empty but `topic_tag` non-empty: single-element
     `[topic_tag]`.
   - Both empty: pass `nullptr` for `tagsJSON`. Do NOT fabricate a
-    placeholder tag from `mood`, `sender_label`, or any other field.
+    placeholder tag from `mood`, `letter_label`, or any other field.
     Tags are only meaningful when they carry the composer's own subject
     signal; a synthesized tag is worse than none.
 

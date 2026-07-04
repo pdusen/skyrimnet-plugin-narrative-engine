@@ -974,14 +974,21 @@ namespace NarrativeEngine::LetterComposer
                 };
 
                 std::string label, bodyText, mood, topic;
-                if (!getStr("sender_label", label) ||
-                    !getStr("body",         bodyText) ||
-                    !getStr("mood",         mood) ||
-                    !getStr("topic_tag",    topic)) {
+                if (!getStr("body",      bodyText) ||
+                    !getStr("mood",      mood) ||
+                    !getStr("topic_tag", topic)) {
                     logger::warn("LetterComposer: response missing one of the required keys");
                     callback(std::nullopt);
                     return;
                 }
+                // `letter_label` is soft-required. Missing / empty
+                // / oversize responses fall back to the deterministic
+                // label helper rather than failing the whole compose.
+                // The LLM's version, when honored, gives more
+                // characterful inventory titles ("Ysolda's note", "A
+                // sealed letter") than the fallback's
+                // `"Note from <name>"` template can produce.
+                (void)getStr("letter_label", label);
 
                 // Parse the optional-ish `tags` array. Soft-fail: a
                 // missing or malformed value logs a warning and yields
@@ -1028,18 +1035,25 @@ namespace NarrativeEngine::LetterComposer
                     return;
                 }
 
-                // sender_label cap (per docs/LLM_RESPONSE_HANDLING.md
-                // and the phase plan's "Sender-label fallback").
+                // Engine FULL field is 24 bytes hard. Fall back to
+                // the deterministic label helper when the LLM's
+                // `letter_label` is missing, empty, or too long.
                 // Sanitization above is bytes-in / bytes-out — measure
-                // the post-sanitize size. Engine FULL field is 24
-                // bytes hard.
-                if (label.size() > 24) {
+                // the post-sanitize size.
+                if (label.empty() || label.size() > 24) {
                     const std::string original = label;
                     label = SynthesizeFallbackLabel(senderName);
-                    logger::info(
-                        "LetterComposer: sender_label '{}' exceeded 24-byte cap "
-                        "(was {} bytes); fell back to '{}'",
-                        original, original.size(), label);
+                    if (original.empty()) {
+                        logger::info(
+                            "LetterComposer: letter_label missing/empty; "
+                            "fell back to '{}'",
+                            label);
+                    } else {
+                        logger::info(
+                            "LetterComposer: letter_label '{}' exceeded 24-byte cap "
+                            "(was {} bytes); fell back to '{}'",
+                            original, original.size(), label);
+                    }
                 }
 
                 LetterComposition comp;

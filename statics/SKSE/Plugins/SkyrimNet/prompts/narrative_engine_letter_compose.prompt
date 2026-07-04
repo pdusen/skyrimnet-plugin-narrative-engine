@@ -32,10 +32,13 @@ has passed.
 Return a JSON object with exactly these five keys. No markdown fences. No
 prose before or after the object.
 
-- `sender_label` — string, **≤ 24 characters** including spaces and
-  punctuation. The book's display name as {{ player_name }} sees it in
-  their inventory (e.g. `"Letter from Ysolda"`, `"A note from Lydia"`).
-  Use your name — no quotation marks, no trailing punctuation. The
+- `letter_label` — string, **≤ 24 characters** including spaces and
+  punctuation. This is the display name of the physical letter as an
+  inventory item — what {{ player_name }} will read on the entry
+  header when they pull it out of their pack. It is NOT your name.
+  Prefer forms that make clear this is a piece of correspondence, such
+  as `"Letter from Ysolda"`, `"A note from Lydia"`, or `"Sealed
+  message"`. No quotation marks, no trailing punctuation. The
   24-character cap is a hard engine limit; longer strings get silently
   truncated to garbled mid-word cuts. Count carefully.
 - `body` — string. The letter text. Between {{ min_words }} and
@@ -59,7 +62,7 @@ prose before or after the object.
 ## Hard Constraints
 - Output strict JSON. No markdown code fences. No prose before or after
   the JSON object.
-- `sender_label` MUST be ≤ 24 characters.
+- `letter_label` MUST be ≤ 24 characters.
 - `body` MUST be within the word bounds.
 - `tags` MUST be a JSON array of strings (empty array allowed).
 

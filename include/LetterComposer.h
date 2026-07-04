@@ -33,6 +33,11 @@ namespace NarrativeEngine::LetterComposer
     struct LetterComposition
     {
         RE::FormID               senderNpcFormID = 0;
+        // Book display label — the letter's inventory-header name
+        // (e.g. "Letter from Ysolda"). Sourced from the compose
+        // LLM's `letter_label` field; the deterministic
+        // SynthesizeFallbackLabel is used when the LLM's return
+        // is missing, empty, or exceeds the 24-byte engine cap.
         std::string              senderLabel;
         std::string              body;
         std::string              mood;
@@ -100,7 +105,8 @@ namespace NarrativeEngine::LetterComposer
     // Sender-label fallback (exposed for testing)
     // -----------------------------------------------------------------
     //
-    // Picked when the LLM returns a sender_label > 24 bytes. See the
+    // Picked when the LLM's `letter_label` is missing, empty, or
+    // exceeds the 24-byte engine cap. See the
     // "Sender-label fallback" section of the phase plan for the
     // algorithm. Returns a label ≤ 24 bytes, never empty.
     //

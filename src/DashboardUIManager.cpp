@@ -5,6 +5,7 @@
 #include <AsyncDispatch.h>
 #include <CombatEventLog.h>
 #include <DecisionLog.h>
+#include <LetterPool.h>
 #include <PhaseTracker.h>
 #include <PrismaUI.h>
 #include <Settings.h>
@@ -264,6 +265,77 @@ namespace NarrativeEngine::DashboardUIManager
             std::move(skyrimSide),
             CombatEventLog::GetRenderedTail(currentGameTimeSeconds),
             currentGameTimeSeconds);
+
+        // letter_pool — full per-slot snapshot for the Letters tab, plus
+        // the most-recent-dispatch index so the client doesn't have to
+        // scan for it. `most_recent_dispatch_slot` is the slot with the
+        // largest deliveredAt among non-Free slots, or null when every
+        // slot is Free.
+        {
+            const auto snapshots = LetterPool::GetSlotSnapshots();
+            nlohmann::json slots = nlohmann::json::array();
+            int    mostRecentIdx = -1;
+            double mostRecentTs  = 0.0;
+            for (const auto& s : snapshots) {
+                const bool isFree = (s.state == LetterPool::State::Free);
+                const char* stateStr = "free";
+                switch (s.state) {
+                    case LetterPool::State::Free:            stateStr = "free"; break;
+                    case LetterPool::State::PendingDelivery: stateStr = "pending_delivery"; break;
+                    case LetterPool::State::InInventory:     stateStr = "in_inventory"; break;
+                    case LetterPool::State::Read:            stateStr = "read"; break;
+                    case LetterPool::State::Discarded:       stateStr = "free"; break;
+                }
+                // Body preview: strip any <font …>…</font> wrappers the ESP
+                // rendering path might add later, then truncate to ~200
+                // chars. Done here so the payload stays small even when
+                // the LLM wrote a long letter.
+                std::string preview;
+                if (!isFree && !s.body.empty()) {
+                    preview = s.body;
+                    // Strip any <font ...>...</font> wrapper anywhere in the
+                    // preview by removing every <font …> open tag and every
+                    // closing </font> tag. Cheap, defensive, tolerant of
+                    // nested or truncated tags.
+                    for (;;) {
+                        const auto open = preview.find("<font");
+                        if (open == std::string::npos) break;
+                        const auto close = preview.find('>', open);
+                        if (close == std::string::npos) break;
+                        preview.erase(open, close - open + 1);
+                    }
+                    for (;;) {
+                        const auto pos = preview.find("</font>");
+                        if (pos == std::string::npos) break;
+                        preview.erase(pos, std::string_view{"</font>"}.size());
+                    }
+                    if (preview.size() > 200) {
+                        preview.resize(200);
+                    }
+                }
+                slots.push_back({
+                    {"index",        s.index},
+                    {"state",        stateStr},
+                    {"letter_label", isFree ? std::string{} : s.senderLabel},
+                    {"topic_tag",    isFree ? std::string{} : s.topicTag},
+                    {"mood",         isFree ? std::string{} : s.mood},
+                    {"body_preview", preview},
+                    {"delivered_at", isFree ? 0.0 : s.deliveredAt},
+                    {"read_at",      s.readAt},
+                });
+                if (!isFree && s.deliveredAt > mostRecentTs) {
+                    mostRecentTs  = s.deliveredAt;
+                    mostRecentIdx = static_cast<int>(s.index);
+                }
+            }
+            j["letter_pool"] = {
+                {"slots", std::move(slots)},
+                {"most_recent_dispatch_slot",
+                    mostRecentIdx >= 0
+                        ? nlohmann::json(mostRecentIdx)
+                        : nlohmann::json(nullptr)},
+            };
+        }
 
         return j.dump();
     }

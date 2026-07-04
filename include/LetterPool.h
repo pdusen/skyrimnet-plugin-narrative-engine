@@ -135,6 +135,31 @@ namespace NarrativeEngine::LetterPool
     // Aggregate counts for the dashboard / log diagnostics.
     PoolStats GetStats();
 
+    // Per-slot snapshot shape for the Letters dashboard tab.
+    // A trimmed projection of the internal Slot record — only the
+    // fields the dashboard actually renders, so the internal type
+    // (which carries FormIDs and other implementation state) stays
+    // private to the .cpp.
+    struct SlotSnapshot
+    {
+        std::size_t index          = 0;
+        State       state          = State::Free;
+        std::string senderLabel;
+        std::string topicTag;
+        std::string mood;
+        std::string body;          // full cached body; the dashboard trims to
+                                   // a preview client-side or in the JSON
+                                   // encoder.
+        double      deliveredAt    = 0.0;  // Unix-epoch seconds
+        double      readAt         = 0.0;  // Unix-epoch seconds
+    };
+
+    // Returns a snapshot of every slot (Free slots included, sender/topic
+    // fields empty) for the Letters dashboard tab. Taken under the pool
+    // mutex, then released before returning — the caller sees a consistent
+    // point-in-time view.
+    std::array<SlotSnapshot, kPoolSize> GetSlotSnapshots();
+
     // -----------------------------------------------------------------
     // Hook integration (Step 6)
     // -----------------------------------------------------------------

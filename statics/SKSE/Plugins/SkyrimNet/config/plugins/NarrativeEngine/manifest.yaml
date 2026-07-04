@@ -41,108 +41,52 @@ variants:
 
 schema:
   fields:
-    # ── Director LLM Overrides ────────────────────────────────────────────
-    # Leave all of these empty / 0 to use SkyrimNet's base config. Anything
-    # non-empty / non-zero overrides the corresponding base field when the
-    # `narrative_engine_director` variant is invoked.
-
+    # ── LLM Overrides for narrative_engine_director variant ──
+    # All fields are optional. Empty / 0 = inherit from base OpenRouter config.
     - name: "API Endpoint"
       path: "llm.endpoint"
       type: "string"
-      description: "Custom API endpoint URL (e.g., http://localhost:5000/v1, or a different OpenAI-compatible provider). Leave empty to use SkyrimNet's base endpoint."
+      description: "Custom API endpoint URL for background prompts (e.g., http://localhost:5000/v1 for a local model). Leave empty to use the base OpenRouter endpoint."
       defaultValue: ""
-      category: "Director LLM Overrides"
+      category: "LLM Overrides"
 
     - name: "API Key"
       path: "llm.api_key"
       type: "string"
-      description: "API key for the custom endpoint. Leave empty to use SkyrimNet's base API key."
+      description: "API key for the custom endpoint above. Leave empty to use the base OpenRouter API key."
       defaultValue: ""
-      category: "Director LLM Overrides"
+      category: "LLM Overrides"
 
-    - name: "Model Override"
+    - name: "Model Name"
       path: "llm.model_name"
       type: "string"
-      description: "Override model name for the Director. The Director's task is structured-JSON classification, not creative writing — a small, cheap, fast model is usually the right pick. Leave empty to use the same model as SkyrimNet dialogue."
-      defaultValue: "deepseek/deepseek-v4-flash"
-      category: "Director LLM Overrides"
+      description: "Override model for background prompts (e.g., 'meta-llama/llama-3.3-70b-instruct' or any OpenRouter model id). Leave empty to use the same model as dialogue. Background prompts run periodically and don't need a top-tier model."
+      defaultValue: ""
+      category: "LLM Overrides"
 
-    - name: "Temperature Override"
+    - name: "Temperature"
       path: "llm.temperature"
       type: "float"
-      description: "Override sampling temperature. Low values (0.1-0.3) give more consistent tension scoring across ticks; higher values let the read drift more. Set to 0 to use the base config value."
+      description: "Override sampling temperature for background prompts. Set to 0 to inherit the base config value."
       defaultValue: 0
       min: 0.0
       max: 2.0
-      category: "Director LLM Overrides"
+      category: "LLM Overrides"
 
-    - name: "Max Tokens Override"
+    - name: "Max Tokens"
       path: "llm.max_tokens"
       type: "int"
-      description: "Override max response tokens. The Director's response is one small JSON object — 256 is comfortably enough. Set to 0 to use the base config value."
+      description: "Override max response tokens for background prompts. Set to 0 to inherit the base config value."
       defaultValue: 0
       min: 0
       max: 4096
-      category: "Director LLM Overrides"
+      category: "LLM Overrides"
 
-    - name: "Timeout Override"
+    - name: "Request Timeout (seconds)"
       path: "llm.timeout"
       type: "int"
-      description: "Override request timeout in seconds. The Director tolerates slow responses (the worst case is just dropping a tick), so this can be generous. Set to 0 to use the base config value."
+      description: "Override request timeout in seconds for background prompts. Set to 0 to inherit the base config value."
       defaultValue: 0
       min: 0
       max: 120
-      category: "Director LLM Overrides"
-
-    # ── Composer LLM Overrides ────────────────────────────────────────────
-    # Leave all of these empty / 0 to use SkyrimNet's base config. Anything
-    # non-empty / non-zero overrides the corresponding base field when the
-    # `narrative_engine_composer` variant is invoked.
-
-    - name: "API Endpoint"
-      path: "composer_llm.endpoint"
-      type: "string"
-      description: "Custom API endpoint URL for creative-writing prompts. Leave empty to use SkyrimNet's base endpoint."
-      defaultValue: ""
-      category: "Composer LLM Overrides"
-
-    - name: "API Key"
-      path: "composer_llm.api_key"
-      type: "string"
-      description: "API key for the custom composer endpoint. Leave empty to use SkyrimNet's base API key."
-      defaultValue: ""
-      category: "Composer LLM Overrides"
-
-    - name: "Model Override"
-      path: "composer_llm.model_name"
-      type: "string"
-      description: "Override model name for the Composer. The Composer's task is creative writing in a specific NPC's voice — a larger, better-prose model helps here, at the cost of latency. Leave empty to use the same model as SkyrimNet dialogue."
-      defaultValue: ""
-      category: "Composer LLM Overrides"
-
-    - name: "Temperature Override"
-      path: "composer_llm.temperature"
-      type: "float"
-      description: "Override sampling temperature. Higher values (0.7-1.0) give more expressive, distinctive letter voices; lower values are more predictable. Set to 0 to use the base config value."
-      defaultValue: 0
-      min: 0.0
-      max: 2.0
-      category: "Composer LLM Overrides"
-
-    - name: "Max Tokens Override"
-      path: "composer_llm.max_tokens"
-      type: "int"
-      description: "Override max response tokens. A composed letter is at most a few hundred words plus the JSON envelope — 2048 is generous. Set to 0 to use the base config value."
-      defaultValue: 0
-      min: 0
-      max: 4096
-      category: "Composer LLM Overrides"
-
-    - name: "Timeout Override"
-      path: "composer_llm.timeout"
-      type: "int"
-      description: "Override request timeout in seconds. Letter composition can be slower than dialogue turns; a generous timeout avoids dropped compositions. Set to 0 to use the base config value."
-      defaultValue: 0
-      min: 0
-      max: 120
-      category: "Composer LLM Overrides"
+      category: "LLM Overrides"
