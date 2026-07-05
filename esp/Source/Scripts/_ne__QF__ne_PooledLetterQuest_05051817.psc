@@ -12,34 +12,6 @@ ReferenceAlias Property Alias_Sender Auto
 ReferenceAlias Property Alias_LetterRef Auto
 ;END ALIAS PROPERTY
 
-;BEGIN FRAGMENT Fragment_0
-Function Fragment_0()
-;BEGIN CODE
-; Quest is starting up
-SetStage(10)
-;END CODE
-EndFunction
-;END FRAGMENT
-
-;BEGIN FRAGMENT Fragment_14
-Function Fragment_14()
-;BEGIN CODE
-; Letter disposed by player
-SetStage(200)
-;END CODE
-EndFunction
-;END FRAGMENT
-
-;BEGIN FRAGMENT Fragment_16
-Function Fragment_16()
-;BEGIN CODE
-; Letter recycled by allocator
-
-SetStage(200)
-;END CODE
-EndFunction
-;END FRAGMENT
-
 ;BEGIN FRAGMENT Fragment_4
 Function Fragment_4()
 ;BEGIN AUTOCAST TYPE _ne_PooledLetterQuest
@@ -47,8 +19,19 @@ Quest __temp = self as Quest
 _ne_PooledLetterQuest kmyQuest = __temp as _ne_PooledLetterQuest
 ;END AUTOCAST
 ;BEGIN CODE
+; 200
 ; Quest shutdown
 kmyQuest.Shutdown()
+;END CODE
+EndFunction
+;END FRAGMENT
+
+;BEGIN FRAGMENT Fragment_14
+Function Fragment_14()
+;BEGIN CODE
+; 50
+; Letter disposed by player
+SetStage(200)
 ;END CODE
 EndFunction
 ;END FRAGMENT
@@ -60,6 +43,7 @@ Quest __temp = self as Quest
 _ne_PooledLetterQuest kmyQuest = __temp as _ne_PooledLetterQuest
 ;END AUTOCAST
 ;BEGIN CODE
+; 10
 ; Queue letter for courier
 kmyQuest.DispatchLetterToCourier()
 ;END CODE
@@ -69,6 +53,7 @@ EndFunction
 ;BEGIN FRAGMENT Fragment_8
 Function Fragment_8()
 ;BEGIN CODE
+; 30
 ; Letter delivered to player inventory
 ;END CODE
 EndFunction
@@ -77,6 +62,7 @@ EndFunction
 ;BEGIN FRAGMENT Fragment_6
 Function Fragment_6()
 ;BEGIN CODE
+; 20
 ; Letter in courier container
 ;END CODE
 EndFunction
@@ -85,7 +71,29 @@ EndFunction
 ;BEGIN FRAGMENT Fragment_12
 Function Fragment_12()
 ;BEGIN CODE
+; 40
 ; Letter read by player
+;END CODE
+EndFunction
+;END FRAGMENT
+
+;BEGIN FRAGMENT Fragment_16
+Function Fragment_16()
+;BEGIN CODE
+; 60
+; Letter recycled by allocator
+
+SetStage(200)
+;END CODE
+EndFunction
+;END FRAGMENT
+
+;BEGIN FRAGMENT Fragment_0
+Function Fragment_0()
+;BEGIN CODE
+; 0
+; Quest is starting up
+SetStage(10)
 ;END CODE
 EndFunction
 ;END FRAGMENT

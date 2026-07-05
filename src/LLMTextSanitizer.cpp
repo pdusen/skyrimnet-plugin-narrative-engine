@@ -99,13 +99,14 @@ namespace NarrativeEngine::LLMTextSanitizer
                     return std::string_view{"-"};
 
                 // -------- em-dash --------
-                // Per house style: render as ';' for grammatical clause
-                // separation (the em-dash's typical use). U+2015 HORIZONTAL
-                // BAR is handled in the drop group above — it appears as a
-                // very long line rather than a clause separator, so the
-                // semicolon substitution doesn't suit it.
+                // Per house style: render as '--' since that reads as an
+                // em-dash to a Skyrim-era ASCII reader without shifting
+                // grammar the way a semicolon would. U+2015 HORIZONTAL
+                // BAR is handled in the drop group above — it appears as
+                // a very long line rather than a clause separator, so
+                // the '--' substitution doesn't suit it.
                 case 0x2014:
-                    return std::string_view{";"};
+                    return std::string_view{"--"};
 
                 // -------- ellipsis --------
                 case 0x2026:

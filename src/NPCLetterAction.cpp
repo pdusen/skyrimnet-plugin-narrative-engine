@@ -334,7 +334,7 @@ namespace NarrativeEngine
             {
                 char editorId[64];
                 std::snprintf(editorId, sizeof(editorId),
-                              "_ne_PooledLetterQuest%02zu", i + 1);
+                              "_ne_PooledLetterQuest%02zu", i);
                 auto *form = RE::TESForm::LookupByEditorID(editorId);
                 auto *quest = form ? form->As<RE::TESQuest>() : nullptr;
                 quests[i] = quest;

@@ -127,7 +127,7 @@ namespace NarrativeEngine::LetterPool
         const char* SlotEditorID(std::size_t i)
         {
             static thread_local char buf[32];
-            std::snprintf(buf, sizeof(buf), "_ne_PooledLetter%02zu", i + 1);
+            std::snprintf(buf, sizeof(buf), "_ne_PooledLetter%02zu", i);
             return buf;
         }
 

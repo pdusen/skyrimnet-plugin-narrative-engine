@@ -41,7 +41,7 @@ artifacts; we don't romanize the text.
 | Horizontal bar `U+2015` `―` | Drop (long line glyph that has no good ASCII clause-separator substitute) |
 | Non-breaking and exotic spaces (`U+00A0`, `U+2002..A`, `U+202F`, `U+205F`, `U+3000`) | Replace with ASCII `' '` |
 | Short dashes (hyphen `U+2010`, non-breaking hyphen `U+2011`, figure dash `U+2012`, en-dash `U+2013`, math minus `U+2212`) | Replace with `'-'` |
-| Em-dash `U+2014` `—` | Replace with `';'` (per house style — em-dashes consistently render badly in inventory tooltips and dialogue; semicolon preserves clause separation grammatically) |
+| Em-dash `U+2014` `—` | Replace with `'--'` (per house style — em-dashes consistently render badly in inventory tooltips and dialogue; the doubled-hyphen convention reads as an em-dash to an ASCII-era reader without shifting the sentence's grammar) |
 | Ellipsis `U+2026` `…` | Replace with literal `"..."` |
 | Smart double quotes (`U+201C..F`) | Replace with `'"'` |
 | Smart apostrophes (`U+2018..B`, `U+2032` prime) | Replace with `'\''` |
@@ -55,22 +55,23 @@ case to `ReplaceCodepoint` in `src/LLMTextSanitizer.cpp` and a row above.
 The default case (`std::nullopt`) handles passthrough; no plumbing change
 needed.
 
-## Why em-dash → semicolon
+## Why em-dash → `--`
 
 Em-dash is rejected harder than other Unicode punctuation because (a) the
 glyph itself is absent from many of Skyrim's bundled fonts, so the
 rendered character is often the empty-box tofu rather than a fallback
 hyphen, and (b) when the LLM uses it as a clause separator (the common
-case in flowery prose), replacing it with a hyphen produces ungrammatical
-output (`"I went to market - the stall was closed"`). Semicolon is the
-closest ASCII punctuation that serves the same clause-separating function:
-`"I went to market; the stall was closed"` reads correctly. We tolerate
-the small stylistic shift in exchange for not shipping tofu.
+case in flowery prose), replacing it with a single hyphen produces
+ambiguous output (`"I went to market - the stall was closed"` reads as
+a list item rather than an em-dash clause break). The doubled-hyphen
+`--` is the standard ASCII-era convention for an em-dash — it preserves
+the clause-separator visual and doesn't reshape the sentence's grammar
+the way substituting a semicolon would.
 
 `U+2015` HORIZONTAL BAR doesn't get the same treatment because it isn't
 the same character class — it's a long horizontal rule used for quotation
 attribution in some languages, not a sentence-internal clause separator.
-Substituting `;` would be grammatically wrong; substituting `-` would be
+Substituting `--` would be grammatically wrong; substituting `-` would be
 visually wrong (it's much longer than a hyphen). Dropping it altogether
 is the least-bad option.
 
@@ -98,7 +99,7 @@ everything outside ASCII.
 decomposing accented characters into base + combining marks. We don't
 want that decomposition (per the previous section). None of those
 libraries also implement our opinionated substitutions — em-dash →
-semicolon, ellipsis → three ASCII dots, smart-quote variants → straight
+`--`, ellipsis → three ASCII dots, smart-quote variants → straight
 ASCII — so we'd end up with custom post-processing on top of any
 library, doubling the code paths. Hand-rolling the whole pass keeps
 everything in one switch statement and stays dependency-free.
