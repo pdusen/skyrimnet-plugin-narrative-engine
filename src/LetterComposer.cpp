@@ -3,6 +3,7 @@
 #include <EvaluationPipeline.h>
 #include <LLMTextSanitizer.h>
 #include <NPCLetterAction.h>
+#include <SenderCandidatePool.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <logger.h>
@@ -28,13 +29,14 @@ namespace NarrativeEngine::LetterComposer
         // than IntelEngine-style "all relevant NPCs" lists; bounded so
         // the prompt stays cheap.
         //
-        // Fetch cap is intentionally larger than render cap so that
-        // client-side filtering (dead / disabled / cooldown / no
-        // memories left after threshold) still leaves us with a full
-        // render tail. Multiplier matches the memory fetch's
-        // headroom for the same reason.
+        // Post-Step-4 (Phase 05): the pool-side over-fetch multiplier
+        // and engagement-window constants moved into SenderCandidatePool
+        // (Step 4 extraction). LetterComposer's `CollectSenderCandidates`
+        // now delegates the engagement walk to SenderCandidatePool::Build
+        // and only keeps the caps used by its compose-time memory-fetch
+        // path (FetchSenderMemories, called after the sender is
+        // pre-chosen and needs a fresh tail with diaries enabled).
         constexpr int kCandidateRenderCap    = 12;
-        constexpr int kCandidateFetchCap     = kCandidateRenderCap * 3;
         constexpr int kPerCandidateMemoryCap = 6;
 
         // How many memories to actually request from SkyrimNet per
@@ -59,12 +61,6 @@ namespace NarrativeEngine::LetterComposer
         // filtered out downstream, so the cap acts as an upper bound,
         // not a target.
         constexpr int kRecentDialogueCap = 25;
-
-        // SkyrimNet engagement-window defaults. Short = 1 game-day,
-        // medium = 7 game-days. Plays well with the
-        // recent-vs-historical scoring SkyrimNet does internally.
-        constexpr double kShortWindowSeconds  = 86400.0;
-        constexpr double kMediumWindowSeconds = 604800.0;
 
         // Valid mood set. The LLM must return one of these; otherwise
         // we treat the response as a validation failure.
@@ -499,129 +495,54 @@ namespace NarrativeEngine::LetterComposer
 
     std::vector<SenderCandidate> CollectSenderCandidates()
     {
+        // Delegate the engagement fetch + universal viability walk +
+        // memory fetch to SenderCandidatePool, passing letter-specific
+        // options (importance threshold, diary-exclude) and the letter-
+        // specific extra viability rules (currently-loaded / walking-
+        // distance / sender-cooldown).
+        SenderCandidatePool::BuildOptions opts;
+        opts.maxCandidates              = kCandidateRenderCap;
+        opts.maxMemoriesPerCandidate    = kPerCandidateMemoryCap;
+        opts.memoryImportanceThreshold  =
+            static_cast<double>(Settings::Get().letterMemoryImportanceThreshold);
+        opts.excludeDiaryEntries        = true;   // action-select tail
+        opts.memoryFetchMultiplier      = kMemoryFetchMultiplier;
+        opts.shuffleResult              = true;
+        opts.requireMemories            = true;
+        opts.extraViabilityFilter =
+            [](RE::Actor* actor, std::string* skipReasonOut) -> bool {
+                if (!actor) {
+                    if (skipReasonOut) *skipReasonOut = "missing-actor";
+                    return false;
+                }
+                if (actor->Is3DLoaded()) {
+                    if (skipReasonOut) *skipReasonOut = "currently-loaded";
+                    return false;
+                }
+                if (IsWithinWalkingDistanceOfPlayer(actor)) {
+                    if (skipReasonOut) *skipReasonOut = "walking-distance";
+                    return false;
+                }
+                if (NPCLetterAction_Cooldowns::IsSenderOnCooldown(
+                        actor->GetFormID())) {
+                    if (skipReasonOut) *skipReasonOut = "sender-cooldown";
+                    return false;
+                }
+                return true;
+            };
+
+        auto raw = SenderCandidatePool::Build(opts);
+
         std::vector<SenderCandidate> out;
-
-        if (!SkyrimNetAPI::IsAvailable() || !SkyrimNetAPI::IsMemorySystemReady()) {
-            return out;
-        }
-
-        const std::string playerName = GetPlayerDisplayName();
-
-        const auto enrolledJson = SkyrimNetAPI::GetActorEngagement(
-            kCandidateFetchCap, /*excludePlayer=*/true,
-            /*playerEventsOnly=*/false,
-            kShortWindowSeconds, kMediumWindowSeconds);
-        auto enrolled = nlohmann::json::parse(enrolledJson, nullptr, false);
-        if (enrolled.is_discarded() || !enrolled.is_array()) {
-            logger::warn(
-                "LetterComposer: GetActorEngagement returned non-array; "
-                "raw='{}'", enrolledJson);
-            return out;
-        }
-
-        int skippedDead          = 0;
-        int skippedDisabled      = 0;
-        int skippedMissing       = 0;
-        int skippedCooldown      = 0;
-        int skippedLoaded        = 0;
-        int skippedWalkingDist   = 0;
-        int skippedNoMemories    = 0;
-        for (auto& entry : enrolled) {
-            if (!entry.is_object()) continue;
-            if (static_cast<int>(out.size()) >= kCandidateRenderCap) {
-                // Filled the render tail — no reason to look up the
-                // remaining engagement entries or pay for their memory
-                // fetches. Engagement is returned in descending
-                // relevance, so the tail is what we'd drop anyway.
-                break;
-            }
-
-            SenderCandidate c;
-            if (auto it = entry.find("formId"); it != entry.end() && it->is_number_unsigned()) {
-                c.formId = it->get<std::uint32_t>();
-            }
-            if (c.formId == 0) continue;
-
-            // Viability gate. A letter sender must be a live, enabled
-            // actor in the world right now — the per-slot delivery
-            // quest's `LetterRef` alias uses "Create Reference to
-            // Object" with Create-In = Sender, and the engine can only
-            // spawn a REFR into an instantiated, enabled, non-corpse
-            // inventory. Dead or disabled candidates pass selection but
-            // then silently fail the alias-fill, leaving `LetterRef`
-            // empty and stranding the dispatch. Filter them out here.
-            //
-            // Also drops candidates whose 3D is currently loaded:
-            // they're near enough to the player to just walk up and
-            // speak instead of writing. Sending a letter from someone
-            // the player could see across the room breaks the fiction.
-            //
-            // Also enforces the per-sender in-game-hours cooldown
-            // (stamped by NPCLetterAction_Cooldowns::OnLetterDelivered).
-            switch (CheckSenderViability(c.formId)) {
-                case SenderViability::Viable:                                     break;
-                case SenderViability::MissingActor:    ++skippedMissing;      continue;
-                case SenderViability::Dead:            ++skippedDead;         continue;
-                case SenderViability::Disabled:        ++skippedDisabled;     continue;
-                case SenderViability::SenderCooldown:  ++skippedCooldown;     continue;
-                case SenderViability::CurrentlyLoaded: ++skippedLoaded;       continue;
-                case SenderViability::WalkingDistance: ++skippedWalkingDist;  continue;
-            }
-
-            if (auto it = entry.find("name"); it != entry.end() && it->is_string()) {
-                // SkyrimNet-returned text — sanitize before we cache or
-                // forward to the prompt.
-                c.name = LLMTextSanitizer::Sanitize(it->get<std::string>());
-            }
-            if (c.name.empty()) continue;
-            if (auto it = entry.find("totalMemoryImportance"); it != entry.end() && it->is_number()) {
-                c.engagementScore = it->get<double>();
-            }
-            if (auto it = entry.find("lastEventTime"); it != entry.end() && it->is_number()) {
-                c.lastInteractedAt = it->get<double>();
-            }
-
-            // Memory-tail filter. A candidate whose memories all fall
-            // below the importance threshold has nothing concrete for
-            // the LLM to draw on — the compose prompt would be forced
-            // to invent context, and the action-select prompt would
-            // just see a name with no reason to pick them over the
-            // others. Drop them entirely rather than render a
-            // memory-less entry that biases the LLM toward "there's
-            // nothing to say" letters.
-            c.memories = FetchSenderMemories(
-                c.formId, playerName, /*includeDiaries=*/false);
-            if (!c.memories.is_array() || c.memories.empty()) {
-                ++skippedNoMemories;
-                continue;
-            }
-
-            out.push_back(std::move(c));
-        }
-
-        if (skippedMissing || skippedDead || skippedDisabled ||
-            skippedCooldown || skippedLoaded || skippedWalkingDist ||
-            skippedNoMemories) {
-            logger::info(
-                "LetterComposer: filtered candidates (kept={}, "
-                "skipped: missing-actor={}, dead={}, disabled={}, "
-                "sender-cooldown={}, currently-loaded={}, "
-                "walking-distance={}, no-significant-memories={})",
-                out.size(), skippedMissing, skippedDead, skippedDisabled,
-                skippedCooldown, skippedLoaded, skippedWalkingDist,
-                skippedNoMemories);
-        }
-
-        // Shuffle before returning. SkyrimNet emits engagement in
-        // descending-relevance order, which biases the LLM toward the
-        // top few candidates just from prompt position — the same
-        // "most engaged NPC" ends up picked run after run. A random
-        // presentation order breaks that anchor and lets tonal /
-        // memory-content fit drive the pick instead.
-        {
-            std::random_device rd;
-            std::mt19937 rng(rd());
-            std::shuffle(out.begin(), out.end(), rng);
+        out.reserve(raw.size());
+        for (auto& c : raw) {
+            SenderCandidate s;
+            s.formId           = c.formId;
+            s.name             = std::move(c.name);
+            s.engagementScore  = c.engagementScore;
+            s.lastInteractedAt = c.lastInteractedAt;
+            s.memories         = std::move(c.memories);
+            out.push_back(std::move(s));
         }
         return out;
     }

@@ -22,3 +22,7 @@ dashboard/dist/
 # Generated Papyrus project file (substituted from NarrativeEngine.ppj.in by
 # CMake configure with machine-specific absolute paths).
 /NarrativeEngine.ppj
+
+# Junctions to third-party mod-folder Papyrus sources (SkyrimNetApi.psc etc.),
+# created by setup-mod-folder.ps1. Machine-specific; never tracked.
+/external/

@@ -87,6 +87,61 @@ else {
     Write-Host "Created junction: $junctionPath -> $repoSource" -ForegroundColor Green
 }
 
+# --- create SkyrimNetApi.psc file symlink ------------------------------------
+#
+# Symlinks <repo>/external/SkyrimNet/Source/Scripts/SkyrimNetApi.psc to the
+# real file inside the SkyrimNet mod folder, so the Papyrus compiler
+# (invoked directly by CMake, not through MO2's VFS) can resolve
+# `SkyrimNetApi` as an import. VS Code's Papyrus extension picks it up
+# through the same directory via the generated .ppj file.
+#
+# We link a single file rather than junctioning the whole folder so we only
+# expose the API surface we actually depend on. File symlinks (unlike
+# directory junctions) require either administrator privileges or Windows
+# Developer Mode; if neither is available, New-Item -SymbolicLink fails and
+# the script reports it clearly.
+#
+# Location resolution matches CMakeLists.txt: honor $env:SKYRIMNET_DIR if
+# set, otherwise fall back to <mods-folder>/SkyrimNet.
+
+$skyrimNetRoot = $env:SKYRIMNET_DIR
+if (-not $skyrimNetRoot) {
+    $skyrimNetRoot = Join-Path $modsRoot 'SkyrimNet'
+}
+
+$skyrimNetApiSource = Join-Path $skyrimNetRoot 'Source/Scripts/SkyrimNetApi.psc'
+if (-not (Test-Path $skyrimNetApiSource -PathType Leaf)) {
+    Write-Warning "SkyrimNetApi.psc not found at '$skyrimNetApiSource'. Install SkyrimNet or set SKYRIMNET_DIR, then re-run this script to create the import symlink."
+}
+else {
+    # The containing dir must exist as a real (empty-ish) directory — this is
+    # what CMake passes to PapyrusCompiler as an -i= import path.
+    $skyrimNetLinkDir = Join-Path $PSScriptRoot 'external/SkyrimNet/Source/Scripts'
+    if (-not (Test-Path $skyrimNetLinkDir)) {
+        New-Item -ItemType Directory -Path $skyrimNetLinkDir -Force | Out-Null
+    }
+
+    $skyrimNetApiLink = Join-Path $skyrimNetLinkDir 'SkyrimNetApi.psc'
+    if (Test-Path $skyrimNetApiLink) {
+        $item = Get-Item $skyrimNetApiLink -Force
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            Write-Host "SkyrimNetApi.psc symlink already exists: $skyrimNetApiLink" -ForegroundColor DarkGray
+        }
+        else {
+            throw "$skyrimNetApiLink exists as a regular file, not a symlink. Delete it and re-run this script."
+        }
+    }
+    else {
+        try {
+            New-Item -ItemType SymbolicLink -Path $skyrimNetApiLink -Target $skyrimNetApiSource -ErrorAction Stop | Out-Null
+            Write-Host "Created SkyrimNetApi.psc symlink: $skyrimNetApiLink -> $skyrimNetApiSource" -ForegroundColor Green
+        }
+        catch {
+            throw "Failed to create file symlink '$skyrimNetApiLink' -> '$skyrimNetApiSource': $($_.Exception.Message). File symlinks on Windows require either running this script from an elevated (admin) PowerShell, or enabling Developer Mode (Settings -> System -> For developers -> Developer Mode). Enable one of those and re-run."
+        }
+    }
+}
+
 # --- install git pre-commit hook --------------------------------------------
 #
 # Runs sync-esp.ps1 before every commit. If the sync updates

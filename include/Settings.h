@@ -143,6 +143,73 @@ namespace NarrativeEngine::Settings
         // [LetterPool]
         // 0 = silent, 1 = log evictions, 2 = log every state transition.
         int letterPoolEvictionLogVerbosity       = 1;
+
+        // --- Phase 05 (NPCVisitAction) ---
+
+        // [Director]
+        // NPCVisitAction precondition: minimum number of viable sender
+        // candidates required for IsAvailable to return true. Below this the
+        // action declines and the dispatcher considers other picks.
+        int visitMinSenderCandidates             = 3;
+
+        // [Actions] — dispatch / composition
+        int visitBriefingMinWords                = 40;
+        int visitBriefingMaxWords                = 120;
+        int visitMarkerMinDistanceUnits          = 800;   // closest spawn marker may be
+        int visitMarkerMaxDistanceUnits          = 2500;  // farthest spawn marker may be
+
+        // [Actions] — state machine timing
+        // Salutation timeout: seconds after Start before rollback if the sender
+        // hasn't closed distance to speak the opening line.
+        int visitApproachTimeoutSeconds          = 45;
+        // Distance at which the Salutation opening line fires and the machine
+        // advances to Discuss.
+        int visitSalutationApproachDistanceUnits = 300;
+        // Distance for the ReEngage resumption line to fire (slightly larger
+        // than Salutation to give the sender room to catch up).
+        int visitReEngageApproachDistanceUnits   = 400;
+        // Wall-clock cadence (seconds) at which C++ evaluates the three
+        // cheap-signal gates that decide whether to fire the natural-conclusion
+        // LLM poll during Discuss.
+        int visitPollGateTickSeconds             = 1;
+        // Speech turns observed since the last poll before a poll fires
+        // (rough proxy for ~30 real sec of active exchange).
+        int visitPollTurnCountThreshold          = 4;
+        // In-game minutes of silence since the last speech turn before a poll
+        // fires. Doubles as the "silence exceeded -> ContinueConversation"
+        // threshold. ~30 real sec at Skyrim's default timescale 20.
+        int visitPollSilenceGameMinutes          = 10;
+        // In-game minutes since the last poll before a poll fires as a safety
+        // ceiling. Guarantees the LLM verdict refreshes even during a
+        // productive back-and-forth that never trips the other gates.
+        int visitPollMaxIntervalGameMinutes      = 10;
+        // Consecutive poll failures (parse errors, LLM timeouts) before
+        // hard-abort.
+        int visitConclusionPollMaxConsecutiveFailures = 6;
+        // Consecutive ContinueConversation fires without a poll ever returning
+        // "concluded" in between; on this cap, force Valediction with an
+        // elevated nudge_count so the closing line reads as a frustrated exit.
+        int visitMaxIgnoreNudges                 = 3;
+        // How long OnHold may persist while combat is the trigger before
+        // hard-abort.
+        int visitOnHoldCombatMaxSeconds          = 60;
+        // Wall-clock seconds between Valediction closing line and the
+        // ReturnHome transition (dwell for the closing line to play out).
+        int visitValedictionDwellSeconds         = 5;
+        // Sender-to-player distance during ReturnHome that triggers the final
+        // teleport + shutdown.
+        int visitReturnHomeExitDistanceUnits     = 1500;
+        // Outer wall-clock cap on ReturnHome — if the sender is still walking
+        // after this many seconds, teleport anyway.
+        int visitReturnHomeTimeoutSeconds        = 120;
+        // Outer wall-clock timeout on the entire visit lifecycle (dispatch ->
+        // return teleport); hard-abort past this.
+        int visitHardTimeoutSeconds              = 900;
+
+        // Enable toggle for the visit action; seeded into the ActionRegistry
+        // the same way ambush / letter enables are. Runtime dashboard toggles
+        // don't write back to INI.
+        bool enableNpcVisit                      = true;
     };
 
     // Read both INIs (plugin then MCM override) and populate the singleton.

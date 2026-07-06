@@ -59,6 +59,19 @@ namespace NarrativeEngine::LocationKeywords
             return cache;
         }
 
+        const std::array<RE::BGSKeyword*, kVisitHostileExtras.size()>&
+            ResolvedVisitHostileExtras()
+        {
+            static const auto cache = []() {
+                std::array<RE::BGSKeyword*, kVisitHostileExtras.size()> out{};
+                for (std::size_t i = 0; i < kVisitHostileExtras.size(); ++i) {
+                    out[i] = LookupKeyword(kVisitHostileExtras[i]);
+                }
+                return out;
+            }();
+            return cache;
+        }
+
         // Best-effort human-readable label for a Location: prefer the
         // display name (FULL record), fall back to EditorID (requires
         // powerofthree's Tweaks for runtime retention), then a FormID hex
@@ -130,5 +143,14 @@ namespace NarrativeEngine::LocationKeywords
     bool IsDangerous(RE::BGSLocation* loc)
     {
         return LocationOrAncestorHasAny(loc, ResolvedDangerous(), "Dangerous");
+    }
+
+    bool IsVisitHostile(RE::BGSLocation* loc)
+    {
+        if (LocationOrAncestorHasAny(loc, ResolvedDangerous(), "VisitHostile(dangerous)")) {
+            return true;
+        }
+        return LocationOrAncestorHasAny(loc, ResolvedVisitHostileExtras(),
+                                        "VisitHostile(extras)");
     }
 }

@@ -10,11 +10,13 @@
 #include <Decorators.h>
 #include <LetterPool.h>
 #include <NPCLetterAction.h>
+#include <NPCVisitAction.h>
 #include <PhaseTracker.h>
 #include <PrismaUI.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <Tick.h>
+#include <VisitState.h>
 #include <logger.h>
 
 #include <algorithm>
@@ -61,6 +63,11 @@ namespace NarrativeEngine
                     // before any action can fire.
                     ActionRegistry::Register(std::make_unique<AmbushAction>());
                     ActionRegistry::Register(std::make_unique<NPCLetterAction>());
+                    if (Settings::Get().enableNpcVisit) {
+                        ActionRegistry::Register(std::make_unique<NPCVisitAction>());
+                    } else {
+                        logger::info("Plugin: NPCVisitAction disabled via bEnableNpcVisit=false");
+                    }
                     // Resolve the 20 _ne_PooledLetterNN EditorIDs to Book
                     // FormIDs. Must run AFTER kDataLoaded fires the rest
                     // of the registry chain because TESForm lookups by
@@ -92,6 +99,7 @@ namespace NarrativeEngine
                     ActionDispatcher::OnRevert();
                     AmbushAction_Persistence::OnRevert();
                     NPCLetterAction_Persistence::OnRevert();
+                    VisitState::OnRevert();
                     PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
                     Tick::Start();
                     break;
@@ -114,6 +122,7 @@ namespace NarrativeEngine
                     ActionDispatcher::OnRevert();
                     AmbushAction_Persistence::OnRevert();
                     NPCLetterAction_Persistence::OnRevert();
+                    VisitState::OnRevert();
                     PhaseTracker::Reset();
                     break;
                 case SKSE::MessagingInterface::kPostLoadGame:
@@ -139,6 +148,7 @@ namespace NarrativeEngine
             AmbushAction_Persistence::OnSave(intfc);
             NPCLetterAction_Persistence::OnSave(intfc);
             LetterPool::OnSave(intfc);
+            VisitState::OnSave(intfc);
             // Future subsystems append their OnSave calls here.
         }
 
@@ -175,6 +185,9 @@ namespace NarrativeEngine
                     case LetterPool::kRecordTypeId:
                         LetterPool::OnLoad(intfc, version, length);
                         break;
+                    case VisitState::kRecordTypeId:
+                        VisitState::OnLoad(intfc, version, length);
+                        break;
                     default:
                         // Unknown record — likely from a newer build or a
                         // removed subsystem. GetNextRecordInfo's next call
@@ -197,6 +210,7 @@ namespace NarrativeEngine
             AmbushAction_Persistence::OnRevert();
             NPCLetterAction_Persistence::OnRevert();
             LetterPool::OnRevert();
+            VisitState::OnRevert();
             // Future subsystems append their OnRevert calls here.
         }
     }

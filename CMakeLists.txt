@@ -372,8 +372,12 @@ if(DEFINED OUTPUT_FOLDER)
         # substituting the absolute machine-specific paths. The generated
         # .ppj is gitignored; VS Code's Papyrus extension picks it up from
         # the repo root automatically.
-        set(NE_PAPYRUS_SOURCE_DIR  "${CMAKE_SOURCE_DIR}/esp/Source/Scripts")
-        set(NE_PAPYRUS_OUTPUT_DIR  "${OUTPUT_FOLDER}/Scripts")
+        set(NE_PAPYRUS_SOURCE_DIR    "${CMAKE_SOURCE_DIR}/esp/Source/Scripts")
+        set(NE_PAPYRUS_OUTPUT_DIR    "${OUTPUT_FOLDER}/Scripts")
+        # SkyrimNet Papyrus API (SkyrimNetApi.psc etc.) is exposed via a
+        # junction created by setup-mod-folder.ps1 that points at the
+        # SkyrimNet mod folder's Source/Scripts directory.
+        set(NE_PAPYRUS_IMPORT_SKYRIMNET "${CMAKE_SOURCE_DIR}/external/SkyrimNet/Source/Scripts")
         configure_file(
             "${CMAKE_SOURCE_DIR}/NarrativeEngine.ppj.in"
             "${CMAKE_SOURCE_DIR}/NarrativeEngine.ppj"
@@ -393,7 +397,7 @@ if(DEFINED OUTPUT_FOLDER)
                 "${NE_PAPYRUS_SOURCE_DIR}"
                 -all
                 "-f=TESV_Papyrus_Flags.flg"
-                "-i=${NE_PAPYRUS_SOURCE_DIR};${NE_PAPYRUS_IMPORT_SKYRIM};${NE_PAPYRUS_IMPORT_SKSE}"
+                "-i=${NE_PAPYRUS_SOURCE_DIR};${NE_PAPYRUS_IMPORT_SKYRIMNET};${NE_PAPYRUS_IMPORT_SKYRIM};${NE_PAPYRUS_IMPORT_SKSE}"
                 "-o=${NE_PAPYRUS_OUTPUT_DIR}"
                 -op
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"

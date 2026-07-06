@@ -157,6 +157,71 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("LetterPool", "iLetterPoolEvictionLogVerbosity",
                                  g_config.letterPoolEvictionLogVerbosity));
 
+            // --- Phase 05 (NPCVisitAction) ---
+
+            g_config.visitMinSenderCandidates = static_cast<int>(
+                ini.GetLongValue("Director", "iVisitMinSenderCandidates",
+                                 g_config.visitMinSenderCandidates));
+
+            g_config.enableNpcVisit = ini.GetBoolValue(
+                "Actions", "bEnableNpcVisit", g_config.enableNpcVisit);
+
+            g_config.visitBriefingMinWords = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitBriefingMinWords",
+                                 g_config.visitBriefingMinWords));
+            g_config.visitBriefingMaxWords = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitBriefingMaxWords",
+                                 g_config.visitBriefingMaxWords));
+            g_config.visitMarkerMinDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitMarkerMinDistanceUnits",
+                                 g_config.visitMarkerMinDistanceUnits));
+            g_config.visitMarkerMaxDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitMarkerMaxDistanceUnits",
+                                 g_config.visitMarkerMaxDistanceUnits));
+
+            g_config.visitApproachTimeoutSeconds = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitApproachTimeoutSeconds",
+                                 g_config.visitApproachTimeoutSeconds));
+            g_config.visitSalutationApproachDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitSalutationApproachDistanceUnits",
+                                 g_config.visitSalutationApproachDistanceUnits));
+            g_config.visitReEngageApproachDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitReEngageApproachDistanceUnits",
+                                 g_config.visitReEngageApproachDistanceUnits));
+            g_config.visitPollGateTickSeconds = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitPollGateTickSeconds",
+                                 g_config.visitPollGateTickSeconds));
+            g_config.visitPollTurnCountThreshold = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitPollTurnCountThreshold",
+                                 g_config.visitPollTurnCountThreshold));
+            g_config.visitPollSilenceGameMinutes = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitPollSilenceGameMinutes",
+                                 g_config.visitPollSilenceGameMinutes));
+            g_config.visitPollMaxIntervalGameMinutes = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitPollMaxIntervalGameMinutes",
+                                 g_config.visitPollMaxIntervalGameMinutes));
+            g_config.visitConclusionPollMaxConsecutiveFailures = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitConclusionPollMaxConsecutiveFailures",
+                                 g_config.visitConclusionPollMaxConsecutiveFailures));
+            g_config.visitMaxIgnoreNudges = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitMaxIgnoreNudges",
+                                 g_config.visitMaxIgnoreNudges));
+            g_config.visitOnHoldCombatMaxSeconds = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitOnHoldCombatMaxSeconds",
+                                 g_config.visitOnHoldCombatMaxSeconds));
+            g_config.visitValedictionDwellSeconds = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitValedictionDwellSeconds",
+                                 g_config.visitValedictionDwellSeconds));
+            g_config.visitReturnHomeExitDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitReturnHomeExitDistanceUnits",
+                                 g_config.visitReturnHomeExitDistanceUnits));
+            g_config.visitReturnHomeTimeoutSeconds = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitReturnHomeTimeoutSeconds",
+                                 g_config.visitReturnHomeTimeoutSeconds));
+            g_config.visitHardTimeoutSeconds = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitHardTimeoutSeconds",
+                                 g_config.visitHardTimeoutSeconds));
+
             return true;
         }
 

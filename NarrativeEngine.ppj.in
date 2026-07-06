@@ -28,6 +28,7 @@
                 Final="true"
                 Anonymize="false">
     <Imports>
+        <Import>@NE_PAPYRUS_IMPORT_SKYRIMNET@</Import>
         <Import>@NE_PAPYRUS_IMPORT_SKYRIM@</Import>
         <Import>@NE_PAPYRUS_IMPORT_SKSE@</Import>
     </Imports>
