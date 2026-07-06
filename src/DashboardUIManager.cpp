@@ -13,6 +13,8 @@
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
 #include <Tick.h>
+#include <VisitConclusionPoll.h>
+#include <VisitState.h>
 #include <logger.h>
 
 #include <nlohmann/json.hpp>
@@ -449,6 +451,83 @@ namespace NarrativeEngine::DashboardUIManager
                 });
             }
             j["actions"] = std::move(actions);
+        }
+
+        // visit — Phase 05 Step 16. The Visit tab renders three
+        // sections: the current conversation (when a visit is in
+        // flight), recent poll verdicts (up to 5), and recent
+        // dispatch history (up to 10). All state is per-process
+        // except the snapshot fields, which co-save-persist so the
+        // dashboard survives save/load.
+        {
+            const auto snap    = VisitState::GetSnapshot();
+            const auto mode    = VisitState::DerivePhase();
+            const auto history = VisitState::GetHistory();
+            const auto verdicts = VisitConclusionPoll::GetRecentVerdicts();
+
+            const auto modeStr = [](VisitState::Mode m) -> const char* {
+                switch (m) {
+                    case VisitState::Mode::Idle:        return "idle";
+                    case VisitState::Mode::Composing:   return "composing";
+                    case VisitState::Mode::Salutation:  return "salutation";
+                    case VisitState::Mode::Discuss:     return "discuss";
+                    case VisitState::Mode::OnHold:      return "on_hold";
+                    case VisitState::Mode::ReEngage:    return "reengage";
+                    case VisitState::Mode::Valediction: return "valediction";
+                    case VisitState::Mode::ReturnHome:  return "return_home";
+                }
+                return "idle";
+            };
+            const auto outcomeStr = [](VisitState::Outcome o) -> const char* {
+                switch (o) {
+                    case VisitState::Outcome::Completed:   return "completed";
+                    case VisitState::Outcome::Unsatisfied: return "unsatisfied";
+                    case VisitState::Outcome::RolledBack:  return "rolled_back";
+                    case VisitState::Outcome::Aborted:     return "aborted";
+                }
+                return "completed";
+            };
+
+            nlohmann::json current = nullptr;
+            if (mode != VisitState::Mode::Idle) {
+                std::string briefingPreview = snap.briefingText;
+                if (briefingPreview.size() > 200) briefingPreview.resize(200);
+                current = {
+                    {"mode",              modeStr(mode)},
+                    {"sender_form_id",    snap.senderFormID},
+                    {"topic_tag",         snap.topicTag},
+                    {"mood",              snap.mood},
+                    {"briefing_preview",  briefingPreview},
+                    {"dispatched_at",     snap.dispatchedAtRealSeconds},
+                    {"ignore_nudge_count", snap.ignoreNudgeCount},
+                };
+            }
+
+            nlohmann::json verdictsJson = nlohmann::json::array();
+            for (const auto& v : verdicts) {
+                verdictsJson.push_back({
+                    {"fired_at",        v.firedAtRealSeconds},
+                    {"should_conclude", v.shouldConclude},
+                    {"rationale",       v.rationale},
+                });
+            }
+
+            nlohmann::json historyJson = nlohmann::json::array();
+            for (const auto& h : history) {
+                historyJson.push_back({
+                    {"dispatched_at",     h.dispatchedAt},
+                    {"sender_name",       h.senderName},
+                    {"topic_tag",         h.topicTag},
+                    {"outcome",           outcomeStr(h.outcome)},
+                    {"duration_seconds",  h.durationSeconds},
+                });
+            }
+
+            j["visit"] = {
+                {"current",         current},
+                {"recent_verdicts", std::move(verdictsJson)},
+                {"history",         std::move(historyJson)},
+            };
         }
 
         return j.dump();

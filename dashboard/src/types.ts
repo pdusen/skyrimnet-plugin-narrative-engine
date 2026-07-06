@@ -45,6 +45,56 @@ export interface DirectorState {
     recent_events: EventEntry[];
     letter_pool: LetterPoolState;
     actions: ActionInfo[];
+    visit: VisitTabState;
+}
+
+// Visit tab payload — populated by the C++ DashboardUIManager per
+// Phase 05 Step 16. `current` is null when no visit is in flight;
+// `recent_verdicts` and `history` are per-process rings.
+export type VisitMode =
+    | 'idle'
+    | 'composing'
+    | 'salutation'
+    | 'discuss'
+    | 'on_hold'
+    | 'reengage'
+    | 'valediction'
+    | 'return_home';
+
+export type VisitOutcome =
+    | 'completed'
+    | 'unsatisfied'
+    | 'rolled_back'
+    | 'aborted';
+
+export interface VisitCurrent {
+    mode: VisitMode;
+    sender_form_id: number;
+    topic_tag: string;
+    mood: string;
+    briefing_preview: string;
+    dispatched_at: number;
+    ignore_nudge_count: number;
+}
+
+export interface VisitVerdict {
+    fired_at: number;
+    should_conclude: boolean;
+    rationale: string;
+}
+
+export interface VisitHistoryEntry {
+    dispatched_at: number;
+    sender_name: string;
+    topic_tag: string;
+    outcome: VisitOutcome;
+    duration_seconds: number;
+}
+
+export interface VisitTabState {
+    current: VisitCurrent | null;
+    recent_verdicts: VisitVerdict[];
+    history: VisitHistoryEntry[];
 }
 
 // One entry per action registered with ActionRegistry. The C++ side

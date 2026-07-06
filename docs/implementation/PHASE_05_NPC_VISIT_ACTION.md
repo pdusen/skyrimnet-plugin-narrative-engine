@@ -1784,7 +1784,7 @@ ESP-load errors and no script-binding warnings on
 
 ### Step 8 — `Start`'s dispatch chain + Salutation-timeout rollback
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1915,7 +1915,7 @@ back`.
 
 ### Step 9 — `Salutation → Discuss` transition + opening line
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1984,7 +1984,7 @@ hits. That's expected for this step.
 
 ### Step 10 — Discuss-phase poll gate + poll fire + verdict logging
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2096,7 +2096,7 @@ outer hard-timeout eventually. That's expected.
 
 ### Step 11 — Three-branch poll response handling + nudge escalation
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2169,7 +2169,7 @@ run:
 
 ### Step 12 — Valediction → ReturnHome (closing line + package swap)
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2237,7 +2237,7 @@ visit. Expected.
 
 ### Step 13 — ReturnHome watchdog + final teleport + shutdown
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2340,7 +2340,7 @@ exit condition trips and the teleport fires anyway.
 
 ### Step 14 — OnHold / ReEngage detours
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2435,7 +2435,7 @@ with trigger `player_combat`. Exit combat, ReEngage fires.
 
 ### Step 15 — Hard-abort escape hatches
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2512,7 +2512,7 @@ reach Discuss.
 
 ### Step 16 — Dashboard: Visit tab + panels + payload
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 

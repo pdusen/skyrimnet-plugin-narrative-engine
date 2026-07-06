@@ -65,6 +65,12 @@ namespace NarrativeEngine
                     ActionRegistry::Register(std::make_unique<NPCLetterAction>());
                     if (Settings::Get().enableNpcVisit) {
                         ActionRegistry::Register(std::make_unique<NPCVisitAction>());
+                        // Resolve the Phase 05 CK content (quest,
+                        // faction, aliases) so Start's dispatch chain
+                        // has warm handles. Must run after the action
+                        // has been registered so any registration-time
+                        // gating sees the resolved state.
+                        NPCVisitAction_Init::Initialize();
                     } else {
                         logger::info("Plugin: NPCVisitAction disabled via bEnableNpcVisit=false");
                     }

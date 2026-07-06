@@ -544,3 +544,148 @@ body {
     color: #c9d5e6;
     border-color: #4a5058;
 }
+
+/* ---- Visit tab (Phase 05 Step 16) ------------------------------- */
+
+.visit-tab {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.visit-current {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.visit-current-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.phase-badge {
+    padding: 2px 10px;
+    border-radius: 3px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #c9d5e6;
+    background: #2a3040;
+    border: 1px solid #3a3e46;
+}
+
+.phase-badge.phase-composing   { background: #3a3040; border-color: #504060; }
+.phase-badge.phase-salutation  { background: #2f4a2f; border-color: #4a6a4a; }
+.phase-badge.phase-discuss     { background: #2a3a55; border-color: #4a5a75; }
+.phase-badge.phase-on_hold     { background: #4a3a2a; border-color: #6a5a4a; }
+.phase-badge.phase-reengage    { background: #2a4a55; border-color: #4a6a75; }
+.phase-badge.phase-valediction { background: #4a2f4a; border-color: #6a4a6a; }
+.phase-badge.phase-return_home { background: #3a3a3a; border-color: #5a5a5a; }
+
+.visit-elapsed, .nudge-count {
+    color: #7a838f;
+    font-size: 11px;
+}
+
+.topic-tag {
+    color: #c9d5e6;
+    font-weight: 500;
+}
+
+.mood-tag {
+    color: #a8b0bd;
+    font-style: italic;
+    font-size: 11px;
+}
+
+.briefing-preview {
+    color: #a8b0bd;
+    font-size: 12px;
+    line-height: 1.4;
+    margin: 4px 0 0;
+    font-style: italic;
+    border-left: 2px solid #3a3e46;
+    padding-left: 8px;
+}
+
+.verdict-list,
+.visit-history {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.verdict-row,
+.visit-history-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 0;
+    border-bottom: 1px solid #1a1f28;
+}
+
+.verdict-badge {
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.verdict-badge.conclude { background: #2f4a2f; color: #b8d4b8; border: 1px solid #4a6a4a; }
+.verdict-badge.continue { background: #3a3a4a; color: #a8b0c8; border: 1px solid #5a5a6a; }
+
+.verdict-time,
+.visit-history-time,
+.visit-history-duration {
+    color: #7a838f;
+    font-size: 11px;
+    min-width: 60px;
+}
+
+.verdict-rationale {
+    color: #a8b0bd;
+    font-size: 12px;
+    flex: 1;
+}
+
+.outcome-pill {
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    min-width: 90px;
+    text-align: center;
+}
+
+.outcome-pill.outcome-completed   { background: #2f4a2f; color: #b8d4b8; border: 1px solid #4a6a4a; }
+.outcome-pill.outcome-unsatisfied { background: #4a3a2a; color: #d4c0a0; border: 1px solid #6a5a4a; }
+.outcome-pill.outcome-rolled_back { background: #3a3a3a; color: #a8b0bd; border: 1px solid #5a5a5a; }
+.outcome-pill.outcome-aborted     { background: #4a2a2a; color: #d4a8a8; border: 1px solid #6a4a4a; }
+
+.visit-history-sender {
+    color: #c9d5e6;
+    font-weight: 500;
+    min-width: 120px;
+}
+
+.visit-history-topic {
+    color: #a8b0bd;
+    font-style: italic;
+    font-size: 12px;
+    flex: 1;
+}
+
+.empty-state {
+    color: #7a838f;
+    font-style: italic;
+    font-size: 12px;
+    margin: 4px 0 0;
+}

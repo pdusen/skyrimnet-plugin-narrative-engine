@@ -1,0 +1,96 @@
+{# narrative_engine_visit_conclusion_poll.prompt — decides whether
+   an ongoing NPC visit has reached a natural conclusion.
+
+   Receives:
+     sender_name, player_name, sender_goal, topic_tag, mood,
+     desired_direction, recent_lines [ { speaker, text } ],
+     elapsed_seconds, nudge_count
+
+   Returns:
+     { should_conclude: bool, rationale: string }
+#}
+[ system ]
+## Task
+You are helping direct a game of Skyrim as a story guide. An NPC has
+walked up to the player and is holding a face-to-face conversation
+with them. Your job is to look at how the conversation is going and
+decide: has the beat landed? Should the conversation now wrap up
+naturally, with a closing line from the sender and their departure?
+
+You are NOT deciding whether the topic should stay unresolved
+forever — only whether *this exchange* has reached its natural
+finish. A follow-up letter or another visit later is fine and even
+desirable if the beat calls for it.
+
+## The visit's setup
+- **Sender:** {{ sender_name }}
+- **Player:** {{ player_name }}
+- **Topic:** {{ topic_tag }}
+- **Sender's frame:** *{{ sender_goal }}*
+- **Sender's mood:** {{ mood }}
+- **Elapsed conversation time:** {{ elapsed_seconds }} seconds
+- **Nudges the plugin has already fired** (times the sender was
+  prompted to reengage because the player went quiet):
+  {{ nudge_count }}
+- The Director wants narrative tension to **{{ desired_direction }}**
+  overall — visits toward the raising direction (menacing, urgent)
+  tend to conclude with tension unresolved; visits toward the
+  lowering direction (contrite, warm, mournful) tend to conclude
+  when the emotional beat is acknowledged.
+
+## Recent lines
+Chronological. `speaker` is either `{{ sender_name }}` or
+`{{ player_name }}`. May be empty if the exchange hasn't produced
+sampled lines yet (very early Discuss).
+
+{% if length(recent_lines) == 0 %}
+*(no lines sampled yet)*
+{% else %}
+{% for line in recent_lines %}- **{{ line.speaker }}:** {{ line.text }}
+{% endfor %}
+{% endif %}
+
+## Output format
+Return a JSON object with exactly these two keys. No markdown fences.
+No prose before or after the JSON object.
+
+- `should_conclude` — boolean. `true` iff the beat has landed and
+  the sender should now speak a closing line and leave. `false` if
+  the exchange is still mid-development.
+- `rationale` — string. One sentence, 15 words or fewer, naming
+  the specific signal(s) that drove the decision (e.g.
+  `"apology explicitly acknowledged; sender has nothing left to press"`,
+  or `"player just changed subject; sender's core point hasn't landed"`).
+
+## What "concluded" looks like
+Signals that the beat has landed and the visit should conclude:
+- The sender has said the thing they came to say and the player
+  has responded to it (agreement, refusal, deflection — the
+  response itself doesn't matter, but there IS one).
+- Nothing new is being introduced; the last two turns are
+  reiteration or wrap-up phrasing.
+- The player has explicitly disengaged (changed the subject
+  hard, said goodbye, walked away in the fiction).
+- The player has ignored the sender's core point across several
+  turns (nudge_count >= 2 is a strong signal here). The sender
+  should give up and leave rather than keep pressing.
+
+## What "not concluded" looks like
+Signals the beat is still developing:
+- The sender has just delivered their opening; the player hasn't
+  yet given a substantive response.
+- New information is being exchanged; the conversation is opening
+  new threads related to the topic.
+- Emotional weight is still building — voices raising, offers
+  being made, the beat is ramping.
+
+## Hard constraints
+- Output strict JSON. No markdown code fences. No prose before or
+  after the JSON object.
+- `should_conclude` MUST be a JSON boolean.
+- `rationale` MUST be a non-empty string and no more than 25 words.
+[ end system ]
+
+[ user ]
+Judge the conversation and return the JSON object exactly.
+[ end user ]

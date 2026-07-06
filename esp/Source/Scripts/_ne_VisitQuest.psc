@@ -60,14 +60,14 @@ EndFunction
 ; Isolating the ExecuteAction call in Papyrus keeps the SkyrimNet API
 ; surface fully typed by its author. If SkyrimNet's action design
 ; changes, this function is the only place that has to change.
-; Function RunSenderAction(String actionName, String argsJson)
-;     Actor senderActor = Sender.GetActorReference()
-;     if senderActor == None
-;         Debug.Trace("[_ne_VisitQuest] RunSenderAction: Sender empty")
-;         return
-;     endIf
-;     SkyrimNetApi.ExecuteAction(actionName, senderActor, argsJson)
-; EndFunction
+Function RunSenderAction(String actionName, String argsJson)
+    Actor senderActor = Sender.GetActorReference()
+    if senderActor == None
+        Debug.Trace("[_ne_VisitQuest] RunSenderAction: Sender empty")
+        return
+    endIf
+    SkyrimNetApi.ExecuteAction(actionName, senderActor, argsJson)
+EndFunction
 
 ; -----------------------------------------------------------------
 ; Shutdown — terminal teardown
