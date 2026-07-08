@@ -27,7 +27,7 @@ The Director will feed this brief straight to the dialogue system so the
 NPC's opening line lands on-topic.
 
 ## Output Format
-Return a JSON object with exactly these five keys. No markdown fences. No
+Return a JSON object with exactly these six keys. No markdown fences. No
 prose before or after the object.
 
 - `sender_npc_form_id` — string. Hex form ID (e.g. `"0xA733F"`) of your
@@ -46,6 +46,19 @@ prose before or after the object.
   for two days. My brother is dead. He wanted her to have his silver,
   but the Jarl's steward is trying to seize the estate. I need her
   help before the funeral, or the silver goes to the crown."*
+- `narration` — string. **One or two sentences**, ~15-40 words total.
+  Third-person scene narration describing the sender arriving at
+  {{ player_name }}: what motivated them to travel, what they mean to
+  discuss, and the emotional weight they're carrying. This is fed
+  straight to the dialogue system as scene context — it primes the
+  downstream LLM to have the sender speak in character about the
+  topic. Reference the sender by name (their `name` field from the
+  candidates list) and {{ player_name }} by name. Plain text only —
+  no markdown, no leading quotes. Example: *"Anxious about the
+  upcoming battle at Labyrinthian, Brelyna Maryon has left
+  Winterhold to seek out {{ player_name }} and hash out a plan —
+  she can't shake the feeling that he's walking into a trap he's
+  too confident to see."*
 - `topic_tag` — string. 2–5 words naming the visit's single primary
   subject (e.g. `"brother's estate"`, `"warning about necromancer"`,
   `"apology for the market"`). Concrete and short.
@@ -66,6 +79,7 @@ prose before or after the object.
   list.
 - `briefing` MUST be within the word bounds and written in first person
   from the sender's frame.
+- `narration` MUST be third-person, name both actors, and stay under 60 words.
 - `tags` MUST be a JSON array of strings (empty array allowed).
 
 ## Direction

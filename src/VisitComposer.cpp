@@ -295,9 +295,10 @@ namespace NarrativeEngine::VisitComposer
                     return true;
                 };
 
-                std::string senderIdStr, briefing, mood, topic;
+                std::string senderIdStr, briefing, narration, mood, topic;
                 if (!getStr("sender_npc_form_id", senderIdStr) ||
                     !getStr("briefing",           briefing)    ||
+                    !getStr("narration",          narration)   ||
                     !getStr("mood",               mood)        ||
                     !getStr("topic_tag",          topic)) {
                     logger::warn(
@@ -331,6 +332,19 @@ namespace NarrativeEngine::VisitComposer
                     return;
                 }
 
+                // Loose narration length guard — the prompt targets
+                // ~15-40 words; anything WAY over that (>80) is
+                // probably a prompt misfire that flowed into the
+                // narration field.
+                const auto narrationWc = static_cast<int>(WordCount(narration));
+                if (narrationWc < 5 || narrationWc > 80) {
+                    logger::warn(
+                        "VisitComposer: narration word count {} outside [5..80]",
+                        narrationWc);
+                    callback(std::nullopt);
+                    return;
+                }
+
                 std::vector<std::string> tags;
                 if (auto tagsIt = parsed.find("tags");
                     tagsIt != parsed.end()) {
@@ -355,15 +369,17 @@ namespace NarrativeEngine::VisitComposer
                 VisitBriefing briefingOut;
                 briefingOut.senderNpcFormID = senderFormID;
                 briefingOut.briefing        = std::move(briefing);
+                briefingOut.narration       = std::move(narration);
                 briefingOut.mood            = std::move(mood);
                 briefingOut.topicTag        = std::move(topic);
                 briefingOut.tags            = std::move(tags);
 
                 logger::info(
                     "VisitComposer: parsed briefing (sender=0x{:X}, "
-                    "briefing={} words, mood='{}', topic='{}', tags={})",
-                    briefingOut.senderNpcFormID, wc, briefingOut.mood,
-                    briefingOut.topicTag, briefingOut.tags.size());
+                    "briefing={} words, narration={} words, mood='{}', topic='{}', tags={})",
+                    briefingOut.senderNpcFormID, wc, narrationWc,
+                    briefingOut.mood, briefingOut.topicTag,
+                    briefingOut.tags.size());
                 callback(std::move(briefingOut));
             });
 

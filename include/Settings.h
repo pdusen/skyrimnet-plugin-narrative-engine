@@ -163,11 +163,14 @@ namespace NarrativeEngine::Settings
         // hasn't closed distance to speak the opening line.
         int visitApproachTimeoutSeconds          = 45;
         // Distance at which the Salutation opening line fires and the machine
-        // advances to Discuss.
-        int visitSalutationApproachDistanceUnits = 300;
+        // advances to Discuss. Kept generous (~900u) so the LLM + TTS pipeline
+        // has time to generate the opening line while the sender is still
+        // closing the last stretch — otherwise the sender arrives at the
+        // player and stands there silently while the response streams in.
+        int visitSalutationApproachDistanceUnits = 900;
         // Distance for the ReEngage resumption line to fire (slightly larger
         // than Salutation to give the sender room to catch up).
-        int visitReEngageApproachDistanceUnits   = 400;
+        int visitReEngageApproachDistanceUnits   = 1000;
         // Wall-clock cadence (seconds) at which C++ evaluates the three
         // cheap-signal gates that decide whether to fire the natural-conclusion
         // LLM poll during Discuss.
@@ -195,13 +198,14 @@ namespace NarrativeEngine::Settings
         int visitOnHoldCombatMaxSeconds          = 60;
         // Wall-clock seconds between Valediction closing line and the
         // ReturnHome transition (dwell for the closing line to play out).
-        int visitValedictionDwellSeconds         = 5;
+        int visitValedictionDwellSeconds         = 10;
         // Sender-to-player distance during ReturnHome that triggers the final
-        // teleport + shutdown.
-        int visitReturnHomeExitDistanceUnits     = 1500;
+        // teleport + shutdown. Also triggered by line-of-sight loss or cell
+        // unload — whichever comes first.
+        int visitReturnHomeExitDistanceUnits     = 4000;
         // Outer wall-clock cap on ReturnHome — if the sender is still walking
         // after this many seconds, teleport anyway.
-        int visitReturnHomeTimeoutSeconds        = 120;
+        int visitReturnHomeTimeoutSeconds        = 300;
         // Outer wall-clock timeout on the entire visit lifecycle (dispatch ->
         // return teleport); hard-abort past this.
         int visitHardTimeoutSeconds              = 900;

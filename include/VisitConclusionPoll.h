@@ -76,6 +76,14 @@ namespace NarrativeEngine::VisitConclusionPoll
     // nudge on a `should_conclude=false` verdict.
     double SilenceGameSeconds();
 
+    // Game-time seconds at which Discuss was armed. Consumers use
+    // this to filter out pre-Salutation dialogue from event
+    // samplers — otherwise old lines from earlier player-NPC
+    // interactions poison the poll's `recent_lines` and make the
+    // LLM believe the visit is a continuation of an old
+    // conversation. Returns 0 if the poll is disarmed.
+    double DiscussStartedAtGameSeconds();
+
     // Per-process ring of the last N poll verdicts. Consumed by
     // the dashboard's Visit tab. Wall-clock timestamp is
     // steady_clock seconds (same time base the dashboard uses).

@@ -121,6 +121,55 @@ namespace NarrativeEngine::VisitConclusionPoll
             return {};
         }
 
+        // Extract the spoken text from a SkyrimNet event object.
+        // SkyrimNet's various event surfaces use different field
+        // names for the actual content — the C API's PublicGetRecentEvents
+        // returns `text`, but the internal registration path stores
+        // dialogue under `data.dialogue`, and direct_narration events
+        // sometimes have `data.content` instead. Try the whole
+        // sequence and return the first non-empty match.
+        std::string ExtractEventText(const nlohmann::json& entry)
+        {
+            auto tryField = [&](const nlohmann::json& obj, const char* key) -> std::string {
+                auto it = obj.find(key);
+                if (it == obj.end() || !it->is_string()) return {};
+                return LLMTextSanitizer::Sanitize(it->get<std::string>());
+            };
+
+            std::string text = tryField(entry, "text");
+            if (!text.empty()) return text;
+
+            auto dataIt = entry.find("data");
+            if (dataIt == entry.end() || !dataIt->is_object()) return {};
+            text = tryField(*dataIt, "dialogue");
+            if (!text.empty()) return text;
+            text = tryField(*dataIt, "content");
+            if (!text.empty()) return text;
+            text = tryField(*dataIt, "narration");
+            return text;
+        }
+
+        // Extract the speaker name from a SkyrimNet event object.
+        // Fallback order: originatingActorName → speaker → data.speaker.
+        std::string ExtractEventSpeaker(const nlohmann::json& entry)
+        {
+            auto tryField = [&](const nlohmann::json& obj, const char* key) -> std::string {
+                auto it = obj.find(key);
+                if (it == obj.end() || !it->is_string()) return {};
+                return LLMTextSanitizer::Sanitize(it->get<std::string>());
+            };
+
+            std::string speaker = tryField(entry, "originatingActorName");
+            if (!speaker.empty()) return speaker;
+            speaker = tryField(entry, "speaker");
+            if (!speaker.empty()) return speaker;
+            auto dataIt = entry.find("data");
+            if (dataIt != entry.end() && dataIt->is_object()) {
+                speaker = tryField(*dataIt, "speaker");
+            }
+            return speaker;
+        }
+
         // Sample the last N speech / dialogue events involving the
         // sender or the player from SkyrimNet's event history.
         // Returns a JSON array of `{ speaker, text }` objects.
@@ -131,44 +180,84 @@ namespace NarrativeEngine::VisitConclusionPoll
             auto arr = nlohmann::json::array();
             if (!SkyrimNetAPI::IsAvailable()) return arr;
 
-            // Ask SkyrimNet for a bounded recent-events window. We
-            // don't filter server-side by participant because the
-            // API's participant-filter surface isn't stable; we
-            // filter client-side by scanning the returned array.
+            // Ask SkyrimNet for a bounded recent-events window.
             //
-            // Empty event-type filter accepts every event kind; the
-            // scan below rejects anything without a `text` string.
+            // Filter includes both `dialogue` (normal SkyrimNet
+            // dialogue events) AND `direct_narration` (events fired
+            // via SkyrimNetApi.DirectNarration — which is exactly
+            // how we trigger the sender's opening/reengage/closing
+            // lines). SkyrimNet's C API accepts a comma-separated
+            // list here.
             const auto raw = SkyrimNetAPI::GetRecentEvents(
-                senderFormID, kRecentLinesSampleCount * 4, "dialogue");
+                senderFormID, kRecentLinesSampleCount * 4,
+                "dialogue,direct_narration,dialogue_npc,dialogue_player");
             auto parsed = nlohmann::json::parse(raw, nullptr, false);
             if (parsed.is_discarded() || !parsed.is_array()) {
+                logger::warn(
+                    "VisitConclusionPoll::SampleRecentLines: could not parse raw "
+                    "event stream as JSON array (raw.len={})",
+                    raw.size());
                 return arr;
             }
 
             const auto senderName = SenderDisplayName(senderFormID);
             const auto playerName = PlayerDisplayName();
+            // Filter events by gameTime >= discussStartedAt so
+            // pre-Salutation dialogue from earlier conversations
+            // doesn't poison the poll's `recent_lines` context.
+            // Read outside the mutex-guarded g_armed check because
+            // we're already inside FirePoll (which is armed).
+            double discussStartedAt = 0.0;
+            {
+                std::scoped_lock lock(g_mutex);
+                discussStartedAt = g_armedAtGameSeconds;
+            }
+
+            // Debug: dump the raw event stream on first call per
+            // Discuss watchdog. Kept at debug so it doesn't blow up
+            // the log on every gate tick.
+            logger::debug(
+                "VisitConclusionPoll::SampleRecentLines: fetched {} raw event(s) "
+                "(sender='{}', player='{}', discussStartedAt={:.1f})",
+                parsed.size(), senderName, playerName, discussStartedAt);
+
+            std::size_t skippedEmptyText = 0;
+            std::size_t skippedBystander = 0;
+            std::size_t skippedPreDiscuss = 0;
 
             for (const auto& entry : parsed) {
                 if (!entry.is_object()) continue;
 
-                std::string text;
-                if (auto it = entry.find("text");
-                    it != entry.end() && it->is_string()) {
-                    text = LLMTextSanitizer::Sanitize(it->get<std::string>());
-                }
-                if (text.empty()) continue;
-
-                std::string speaker;
-                if (auto it = entry.find("originatingActorName");
-                    it != entry.end() && it->is_string()) {
-                    speaker = LLMTextSanitizer::Sanitize(it->get<std::string>());
-                }
-                if (speaker.empty()) {
-                    if (auto it = entry.find("speaker");
-                        it != entry.end() && it->is_string()) {
-                        speaker = LLMTextSanitizer::Sanitize(it->get<std::string>());
+                // Filter out anything that predates the Discuss arm
+                // — old exchanges from previous player-NPC
+                // encounters would otherwise convince the LLM that
+                // the current visit is a continuation of a stale
+                // conversation.
+                if (discussStartedAt > 0.0) {
+                    auto gtIt = entry.find("gameTime");
+                    if (gtIt != entry.end() && gtIt->is_number()) {
+                        const double eventGameTime = gtIt->get<double>();
+                        if (eventGameTime < discussStartedAt) {
+                            ++skippedPreDiscuss;
+                            continue;
+                        }
                     }
                 }
+
+                const std::string text = ExtractEventText(entry);
+                if (text.empty()) {
+                    ++skippedEmptyText;
+                    // Emit the offending entry once at debug so we
+                    // can figure out what field carries the text.
+                    if (skippedEmptyText <= 2) {
+                        logger::debug(
+                            "VisitConclusionPoll::SampleRecentLines: skipped "
+                            "empty-text entry: {}", entry.dump());
+                    }
+                    continue;
+                }
+
+                const std::string speaker = ExtractEventSpeaker(entry);
 
                 // Accept only lines from the sender or the player;
                 // skip bystander chatter.
@@ -176,6 +265,7 @@ namespace NarrativeEngine::VisitConclusionPoll
                     !senderName.empty() &&
                     !playerName.empty() &&
                     speaker != senderName && speaker != playerName) {
+                    ++skippedBystander;
                     continue;
                 }
 
@@ -185,6 +275,12 @@ namespace NarrativeEngine::VisitConclusionPoll
                 arr.push_back(std::move(line));
                 if (static_cast<int>(arr.size()) >= kRecentLinesSampleCount) break;
             }
+
+            logger::info(
+                "VisitConclusionPoll::SampleRecentLines: kept {} line(s) for "
+                "poll context (skipped_empty_text={}, skipped_bystander={}, "
+                "skipped_pre_discuss={})",
+                arr.size(), skippedEmptyText, skippedBystander, skippedPreDiscuss);
             return arr;
         }
 
@@ -403,6 +499,13 @@ namespace NarrativeEngine::VisitConclusionPoll
         if (g_lastSpeechTurnGameSeconds <= 0.0) return 0.0;
         const double now = GameSecondsNow();
         return std::max(0.0, now - g_lastSpeechTurnGameSeconds);
+    }
+
+    double DiscussStartedAtGameSeconds()
+    {
+        std::scoped_lock lock(g_mutex);
+        if (!g_armed) return 0.0;
+        return g_armedAtGameSeconds;
     }
 
     std::vector<HistoryEntry> GetRecentVerdicts()

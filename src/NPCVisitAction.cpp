@@ -145,21 +145,39 @@ namespace NarrativeEngine
                                std::string_view methodName,
                                Args...          args)
         {
-            if (!quest) return false;
+            if (!quest) {
+                logger::warn("VMDispatchOnQuest[{}::{}]: quest is null",
+                             scriptName, methodName);
+                return false;
+            }
             auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-            if (!vm) return false;
+            if (!vm) {
+                logger::warn("VMDispatchOnQuest[{}::{}]: VM singleton null",
+                             scriptName, methodName);
+                return false;
+            }
             auto* policy = vm->GetObjectHandlePolicy();
-            if (!policy) return false;
+            if (!policy) {
+                logger::warn("VMDispatchOnQuest[{}::{}]: handle policy null",
+                             scriptName, methodName);
+                return false;
+            }
             const auto handle =
                 policy->GetHandleForObject(RE::TESQuest::FORMTYPE, quest);
             auto* fnArgs = RE::MakeFunctionArguments(std::move(args)...);
             RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
-            return vm->DispatchMethodCall(
+            const bool ok = vm->DispatchMethodCall(
                 handle,
                 RE::BSFixedString(scriptName.data()),
                 RE::BSFixedString(methodName.data()),
                 fnArgs,
                 callback);
+            logger::info(
+                "VMDispatchOnQuest[{}::{}]: DispatchMethodCall returned {} "
+                "(quest=0x{:08X}, handle=0x{:016X})",
+                scriptName, methodName, ok ? "true" : "false",
+                quest->GetFormID(), static_cast<std::uint64_t>(handle));
+            return ok;
         }
 
         bool VMDispatchQuestSetStage(RE::TESQuest* quest, std::uint32_t stage)
@@ -186,6 +204,23 @@ namespace NarrativeEngine
                 quest, "_ne_VisitQuest"sv, "RunSenderAction"sv,
                 RE::BSFixedString(actionName.c_str()),
                 RE::BSFixedString(argsJson.c_str()));
+        }
+
+        // VM-dispatches the RunSenderNarration trampoline on
+        // `_ne_VisitQuest` with `content` — third-person scene
+        // narration fed to SkyrimNet's DirectNarration API. The
+        // downstream dialogue LLM reads it and produces the sender's
+        // spoken line.
+        //
+        // Used for Salutation / ReEngage / Valediction turns.
+        // ContinueConversation nudges still route through
+        // VMDispatchRunSenderAction (ExecuteAction path).
+        bool VMDispatchRunSenderNarration(RE::TESQuest*      quest,
+                                           const std::string& content)
+        {
+            return VMDispatchOnQuest(
+                quest, "_ne_VisitQuest"sv, "RunSenderNarration"sv,
+                RE::BSFixedString(content.c_str()));
         }
 
         // ---- Async poll helper -------------------------------------
@@ -371,7 +406,51 @@ namespace NarrativeEngine
                                        std::uint8_t     nudgeCount)
         {
             const auto snap = VisitState::GetSnapshot();
+
+            // SkyrimNet's built-in StartConversation / ContinueConversation
+            // actions require `speaker` and `target` — they identify
+            // the dialogue participants for scene / TTS / event routing.
+            //
+            // SkyrimNet's action handler (GameMasterActions.cpp) looks
+            // up the values via `SkyrimNet::Skyrim::FindActorByName` —
+            // **actor display names as plain strings**, NOT SkyrimNet
+            // UUIDs and NOT Skyrim FormIDs. The gamemaster prompt
+            // template makes this explicit:
+            //   "Speaker/target names MUST match exactly from the
+            //    Available Characters list below."
+            // and the available-characters list is populated with
+            // `decnpc(npc.UUID).name` (i.e. the actor's display name).
+            //
+            // A previous attempt sent UUID decimal strings; SkyrimNet
+            // logged
+            //   "'7721022111582155498' not found nearby or in virtual NPCs"
+            // — treating the UUID literally as a name and failing the
+            // FindActorByName lookup.
+
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            std::string playerName;
+            if (player) {
+                if (const auto* n = player->GetName()) playerName = n;
+            }
+
+            std::string senderName;
+            if (auto* form = RE::TESForm::LookupByID(snap.senderFormID)) {
+                if (auto* actor = form->As<RE::Actor>()) {
+                    if (const auto* n = actor->GetName()) senderName = n;
+                }
+            }
+
             nlohmann::json j;
+            // SkyrimNet's conversation-action schema (display-name
+            // strings; must match Available Characters exactly).
+            j["speaker"]     = senderName;
+            j["target"]      = playerName;
+            j["topic"]       = snap.topicTag;  // brief direction, 2–6 words
+
+            // NarrativeEngine-specific context — SkyrimNet's stock
+            // action handlers ignore extra fields, so these ride along
+            // for a future plugin-owned action variant that wants the
+            // richer briefing context.
             j["turn_kind"]   = turnKind;
             j["topic_tag"]   = snap.topicTag;
             j["mood"]        = snap.mood;
@@ -382,7 +461,13 @@ namespace NarrativeEngine
             // treat briefing/goal as one input for now.
             j["goal"]        = snap.briefingText;
             j["nudge_count"] = nudgeCount;
-            return j.dump();
+
+            const auto out = j.dump();
+            logger::info(
+                "NPCVisitAction: BuildTurnArgsJson (turn_kind={}, speaker='{}', "
+                "target='{}', topic='{}', argsJson.len={})",
+                turnKind, senderName, playerName, snap.topicTag, out.size());
+            return out;
         }
 
         // ---- Shared cross-block atomics ----------------------------
@@ -441,13 +526,32 @@ namespace NarrativeEngine
             const int approachDistance =
                 std::max(1, Settings::Get().visitSalutationApproachDistanceUnits);
 
+            logger::info(
+                "NPCVisitAction[SALUTATION]: watchdog registered — poll=250ms, "
+                "approach<={:d}u, timeout={:d}s",
+                approachDistance, timeoutSeconds);
+
             PollUntilOrTimeout(
-                // predicate — runs on main thread
+                // predicate — runs on main thread.
+                //
+                // Only returns true on a real success (stage IS 10 AND
+                // sender is within approach distance). Every other case
+                // returns false so the watchdog keeps polling until it
+                // either succeeds or hits the 45s maxDuration.
+                //
+                // The earlier version returned true on "stage != 10"
+                // meaning "we're done", but that fired on the very
+                // first tick before Papyrus's Startup-Stage 0
+                // fragment had run its SetStage(10) on a VM tick —
+                // predicate returned true, onSuccess re-checked stage
+                // != 10 and silently returned, and the watchdog died
+                // without ever firing the Salutation → Discuss
+                // transition. That's the primary Phase 05 startup bug.
                 [approachDistance]() -> bool {
-                    if (!g_visitQuest) return true;  // giving up
+                    if (!g_visitQuest) return false;
                     if (g_visitQuest->GetCurrentStageID() !=
                         static_cast<std::uint16_t>(kStageSalutation)) {
-                        return true;  // stage changed under us
+                        return false;  // not (yet, or anymore) at Salutation — keep polling
                     }
                     auto* senderRef = g_senderAlias
                         ? g_senderAlias->GetReference() : nullptr;
@@ -482,15 +586,18 @@ namespace NarrativeEngine
                         "reached — firing opening line and advancing to Discuss",
                         dist);
 
-                    const auto argsJson = BuildTurnArgsJson("salutation", 0);
-                    VMDispatchRunSenderAction(
-                        g_visitQuest, kSkyrimNetPluginTurnAction, argsJson);
+                    const auto snapForNarration = VisitState::GetSnapshot();
+                    logger::info(
+                        "NPCVisitAction[SALUTATION]: dispatching narration "
+                        "({} chars)",
+                        snapForNarration.narrationText.size());
+                    VMDispatchRunSenderNarration(
+                        g_visitQuest, snapForNarration.narrationText);
                     VMDispatchQuestSetStage(g_visitQuest, kStageDiscuss);
 
                     logger::info(
-                        "NPCVisitAction: Salutation -> Discuss (executeAction "
-                        "turn_kind=salutation, action='{}')",
-                        kSkyrimNetPluginTurnAction);
+                        "NPCVisitAction: Salutation -> Discuss (DirectNarration "
+                        "turn_kind=salutation)");
 
                     // Arm the natural-conclusion poll and register
                     // the Discuss gate-tick watchdog. Snapshot is
@@ -568,21 +675,50 @@ namespace NarrativeEngine
             const int hardTimeout =
                 std::max(60, Settings::Get().visitHardTimeoutSeconds);
 
+            logger::info(
+                "NPCVisitAction[ONHOLD]: watchdog registered — poll=500ms, "
+                "combatMax={:d}s, hardTimeout={:d}s",
+                combatMax, hardTimeout);
+
+            // Seen-Stage-25 latch — see RegisterDiscussWatchdog for
+            // the rationale. Without it, the first tick fires before
+            // SetStage(25) has landed and the watchdog dies early.
+            auto seenOnHold = std::make_shared<bool>(false);
+
             PollUntilOrTimeout(
                 // predicate — main thread
-                [combatMax]() -> bool {
-                    if (!g_visitQuest) return true;
-                    if (CheckHardAbortConditions()) return true;
-                    if (g_visitQuest->GetCurrentStageID() !=
-                        static_cast<std::uint16_t>(kStageOnHold)) {
+                [combatMax, seenOnHold]() -> bool {
+                    if (!g_visitQuest) {
+                        logger::debug("NPCVisitAction[ONHOLD]: quest handle null — exiting");
                         return true;
+                    }
+                    if (CheckHardAbortConditions()) {
+                        logger::debug("NPCVisitAction[ONHOLD]: hard-abort detected — exiting");
+                        return true;
+                    }
+                    const auto stage = g_visitQuest->GetCurrentStageID();
+                    if (stage == static_cast<std::uint16_t>(kStageOnHold)) {
+                        if (!*seenOnHold) {
+                            logger::info(
+                                "NPCVisitAction[ONHOLD]: latch flipped — stage now OnHold");
+                        }
+                        *seenOnHold = true;
+                    } else if (*seenOnHold) {
+                        logger::info(
+                            "NPCVisitAction[ONHOLD]: stage transitioned away (now {}) — "
+                            "watchdog exiting",
+                            stage);
+                        return true;
+                    } else {
+                        return false;
                     }
                     const bool inDialogue = ObservePlayerInDialogue();
                     const bool inCombat   = ObserveAnyCombat();
                     if (!inDialogue && !inCombat) {
                         logger::info(
-                            "NPCVisitAction: OnHold triggers cleared, transitioning "
-                            "to ReEngage");
+                            "NPCVisitAction[ONHOLD]: triggers cleared (inDialogue={}, "
+                            "inCombat={}) — dispatching SetStage(ReEngage)",
+                            inDialogue, inCombat);
                         VMDispatchQuestSetStage(g_visitQuest, kStageReEngage);
                         RegisterReEngageWatchdog();
                         return true;
@@ -594,6 +730,10 @@ namespace NarrativeEngine
                     if (inCombat && combatStart > 0.0) {
                         const auto elapsed = RealSecondsNow() - combatStart;
                         if (elapsed >= static_cast<double>(combatMax)) {
+                            logger::warn(
+                                "NPCVisitAction[ONHOLD]: combat_stuck — elapsed {:.1f}s "
+                                ">= {:d}s",
+                                elapsed, combatMax);
                             HardAbortVisit("combat_stuck");
                             return true;
                         }
@@ -601,14 +741,15 @@ namespace NarrativeEngine
                     return false;
                 },
                 []() {
+                    logger::info("NPCVisitAction[ONHOLD]: watchdog onSuccess");
                     g_inDetour.store(false);
                     g_onHoldCombatStartedAtRealSeconds.store(0.0);
                 },
                 []() {
+                    logger::warn(
+                        "NPCVisitAction[ONHOLD]: watchdog outer timeout (safety net)");
                     g_inDetour.store(false);
                     g_onHoldCombatStartedAtRealSeconds.store(0.0);
-                    logger::warn(
-                        "NPCVisitAction: OnHold watchdog outer timeout (safety net)");
                 },
                 std::chrono::milliseconds(500),
                 std::chrono::seconds(hardTimeout),
@@ -622,13 +763,40 @@ namespace NarrativeEngine
             const int hardTimeout =
                 std::max(60, Settings::Get().visitHardTimeoutSeconds);
 
+            logger::info(
+                "NPCVisitAction[REENGAGE]: watchdog registered — poll=250ms, "
+                "approach<={:d}u, hardTimeout={:d}s",
+                approachDist, hardTimeout);
+
+            // Seen-Stage-27 latch — see RegisterDiscussWatchdog.
+            auto seenReEngage = std::make_shared<bool>(false);
+            auto lastLog = std::make_shared<double>(0.0);
+
             PollUntilOrTimeout(
-                [approachDist]() -> bool {
-                    if (!g_visitQuest) return true;
-                    if (CheckHardAbortConditions()) return true;
-                    const auto stage = g_visitQuest->GetCurrentStageID();
-                    if (stage != static_cast<std::uint16_t>(kStageReEngage)) {
+                [approachDist, seenReEngage, lastLog]() -> bool {
+                    if (!g_visitQuest) {
+                        logger::debug("NPCVisitAction[REENGAGE]: quest handle null — exiting");
                         return true;
+                    }
+                    if (CheckHardAbortConditions()) {
+                        logger::debug("NPCVisitAction[REENGAGE]: hard-abort detected — exiting");
+                        return true;
+                    }
+                    const auto stage = g_visitQuest->GetCurrentStageID();
+                    if (stage == static_cast<std::uint16_t>(kStageReEngage)) {
+                        if (!*seenReEngage) {
+                            logger::info(
+                                "NPCVisitAction[REENGAGE]: latch flipped — stage now ReEngage");
+                        }
+                        *seenReEngage = true;
+                    } else if (*seenReEngage) {
+                        logger::info(
+                            "NPCVisitAction[REENGAGE]: stage transitioned away (now {}) — "
+                            "watchdog exiting",
+                            stage);
+                        return true;
+                    } else {
+                        return false;
                     }
 
                     // Re-check OnHold triggers — if they re-trip
@@ -637,9 +805,9 @@ namespace NarrativeEngine
                     const bool inCombat   = ObserveAnyCombat();
                     if (inDialogue || inCombat) {
                         logger::info(
-                            "NPCVisitAction: ReEngage aborted — OnHold trigger "
-                            "re-tripped ({}); returning to OnHold",
-                            inDialogue ? "dialogue" : "combat");
+                            "NPCVisitAction[REENGAGE]: aborted — OnHold trigger re-tripped "
+                            "(dialogue={}, combat={}); returning to OnHold",
+                            inDialogue, inCombat);
                         VMDispatchQuestSetStage(g_visitQuest, kStageOnHold);
                         RegisterOnHoldWatchdog(
                             inDialogue ? "player_dialogue" : "combat");
@@ -653,16 +821,28 @@ namespace NarrativeEngine
 
                     const auto dist =
                         senderRef->GetPosition().GetDistance(player->GetPosition());
+                    // Throttled distance log every 5s.
+                    const auto now = RealSecondsNow();
+                    if (now - *lastLog >= 5.0) {
+                        *lastLog = now;
+                        logger::info(
+                            "NPCVisitAction[REENGAGE]: sender-to-player distance={:.0f}u "
+                            "(threshold {}u)",
+                            dist, approachDist);
+                    }
                     if (dist <= static_cast<float>(approachDist)) {
                         logger::info(
-                            "NPCVisitAction: ReEngage watchdog tripped ({:.0f}u <= "
-                            "{}u), dispatching resumption line",
+                            "NPCVisitAction[REENGAGE]: watchdog tripped ({:.0f}u <= {}u) — "
+                            "dispatching resumption narration + SetStage(Discuss)",
                             dist, approachDist);
                         const auto snap = VisitState::GetSnapshot();
-                        const auto argsJson = BuildTurnArgsJson(
-                            "reengage", snap.ignoreNudgeCount);
-                        VMDispatchRunSenderAction(
-                            g_visitQuest, kSkyrimNetPluginTurnAction, argsJson);
+                        // Reuse the composer's narration text — the
+                        // scene motivation still applies, and the
+                        // downstream dialogue LLM will shape a
+                        // resumption-flavored line from the ongoing
+                        // scene context.
+                        VMDispatchRunSenderNarration(
+                            g_visitQuest, snap.narrationText);
                         VMDispatchQuestSetStage(g_visitQuest, kStageDiscuss);
                         // Re-arm the poll for the resumed Discuss.
                         VisitConclusionPoll::Arm(snap);
@@ -674,12 +854,13 @@ namespace NarrativeEngine
                     return false;
                 },
                 []() {
+                    logger::info("NPCVisitAction[REENGAGE]: watchdog onSuccess");
                     g_inDetour.store(false);
                 },
                 []() {
-                    g_inDetour.store(false);
                     logger::warn(
-                        "NPCVisitAction: ReEngage watchdog outer timeout (safety net)");
+                        "NPCVisitAction[REENGAGE]: watchdog outer timeout (safety net)");
+                    g_inDetour.store(false);
                 },
                 std::chrono::milliseconds(250),
                 std::chrono::seconds(hardTimeout),
@@ -704,10 +885,17 @@ namespace NarrativeEngine
                     return RE::BSEventNotifyControl::kContinue;
                 }
                 if (!g_visitQuest) return RE::BSEventNotifyControl::kContinue;
-                if (g_visitQuest->GetCurrentStageID() !=
-                    static_cast<std::uint16_t>(kStageDiscuss)) {
+                const auto stage = g_visitQuest->GetCurrentStageID();
+                if (stage != static_cast<std::uint16_t>(kStageDiscuss)) {
+                    logger::debug(
+                        "NPCVisitAction[SINK]: DialogueMenu opened but stage={} "
+                        "(not Discuss) — ignoring",
+                        stage);
                     return RE::BSEventNotifyControl::kContinue;
                 }
+                logger::info(
+                    "NPCVisitAction[SINK]: DialogueMenu opened during Discuss — "
+                    "dispatching SetStage(OnHold)");
                 VMDispatchQuestSetStage(g_visitQuest, kStageOnHold);
                 RegisterOnHoldWatchdog("player_dialogue");
                 return RE::BSEventNotifyControl::kContinue;
@@ -722,8 +910,10 @@ namespace NarrativeEngine
             {
                 if (!a_event) return RE::BSEventNotifyControl::kContinue;
                 if (!g_visitQuest) return RE::BSEventNotifyControl::kContinue;
-                if (g_visitQuest->GetCurrentStageID() !=
-                    static_cast<std::uint16_t>(kStageDiscuss)) {
+                const auto stage = g_visitQuest->GetCurrentStageID();
+                if (stage != static_cast<std::uint16_t>(kStageDiscuss)) {
+                    // Silent — combat events fire constantly. Debug
+                    // would spam. Only log the accepted transitions.
                     return RE::BSEventNotifyControl::kContinue;
                 }
                 // Only care about combat-entering transitions.
@@ -750,6 +940,10 @@ namespace NarrativeEngine
 
                 const char* who = (actor == player) ? "player_combat"
                                                      : "sender_combat";
+                logger::info(
+                    "NPCVisitAction[SINK]: {} entered combat during Discuss — "
+                    "dispatching SetStage(OnHold)",
+                    who);
                 g_onHoldCombatStartedAtRealSeconds.store(RealSecondsNow());
                 VMDispatchQuestSetStage(g_visitQuest, kStageOnHold);
                 RegisterOnHoldWatchdog(who);
@@ -801,8 +995,19 @@ namespace NarrativeEngine
 
         void HardAbortVisit(const char* reason)
         {
-            if (g_hardAbortFired.exchange(true)) return;
-            if (!g_visitQuest) return;
+            if (g_hardAbortFired.exchange(true)) {
+                logger::debug(
+                    "NPCVisitAction[HARD-ABORT]: already fired for this visit "
+                    "(second trigger reason='{}' ignored)",
+                    reason);
+                return;
+            }
+            if (!g_visitQuest) {
+                logger::warn(
+                    "NPCVisitAction[HARD-ABORT]: quest handle null (reason='{}')",
+                    reason);
+                return;
+            }
 
             const auto stage = g_visitQuest->GetCurrentStageID();
             logger::warn(
@@ -891,8 +1096,16 @@ namespace NarrativeEngine
                     ? g_senderAlias->GetReference() : nullptr;
 
                 if (player && dyingRefPtr == player) {
+                    logger::warn(
+                        "NPCVisitAction[SINK]: player death observed during "
+                        "visit (stage={}) — triggering hard-abort",
+                        stage);
                     HardAbortVisit("player_death");
                 } else if (senderRef && dyingRefPtr == senderRef) {
+                    logger::warn(
+                        "NPCVisitAction[SINK]: sender death observed during "
+                        "visit (stage={}, sender=0x{:08X}) — triggering hard-abort",
+                        stage, dyingRefPtr->GetFormID());
                     HardAbortVisit("sender_death");
                 }
                 return RE::BSEventNotifyControl::kContinue;
@@ -938,6 +1151,10 @@ namespace NarrativeEngine
                 const auto limit =
                     static_cast<double>(std::max(60, cfg.visitHardTimeoutSeconds));
                 if (elapsed >= limit) {
+                    logger::warn(
+                        "NPCVisitAction[HARD-ABORT-CHECK]: outer_timeout — elapsed "
+                        "{:.1f}s >= {:.0f}s",
+                        elapsed, limit);
                     HardAbortVisit("outer_timeout");
                     return true;
                 }
@@ -948,6 +1165,10 @@ namespace NarrativeEngine
             const auto cap = static_cast<std::uint32_t>(
                 std::max(1, cfg.visitConclusionPollMaxConsecutiveFailures));
             if (failures >= cap) {
+                logger::warn(
+                    "NPCVisitAction[HARD-ABORT-CHECK]: poll_broken — "
+                    "consecutivePollFailures={} >= cap={}",
+                    failures, cap);
                 HardAbortVisit("poll_broken");
                 return true;
             }
@@ -1057,13 +1278,37 @@ namespace NarrativeEngine
             const int exitDist =
                 std::max(1, Settings::Get().visitReturnHomeExitDistanceUnits);
 
+            logger::info(
+                "NPCVisitAction[RETURNHOME]: watchdog registered — poll=500ms, "
+                "exitDist>={:d}u, timeout={:d}s",
+                exitDist, timeoutSec);
+
+            // Seen-Stage-50 latch — see RegisterDiscussWatchdog.
+            auto seenReturnHome = std::make_shared<bool>(false);
+            auto lastLog = std::make_shared<double>(0.0);
+
             PollUntilOrTimeout(
                 // predicate — main thread
-                [exitDist, timeoutSec]() -> bool {
-                    if (!g_visitQuest) return true;
-                    if (g_visitQuest->GetCurrentStageID() !=
-                        static_cast<std::uint16_t>(kStageReturnHome)) {
+                [exitDist, timeoutSec, seenReturnHome, lastLog]() -> bool {
+                    if (!g_visitQuest) {
+                        logger::debug("NPCVisitAction[RETURNHOME]: quest handle null — exiting");
                         return true;
+                    }
+                    const auto stage = g_visitQuest->GetCurrentStageID();
+                    if (stage == static_cast<std::uint16_t>(kStageReturnHome)) {
+                        if (!*seenReturnHome) {
+                            logger::info(
+                                "NPCVisitAction[RETURNHOME]: latch flipped — stage now ReturnHome");
+                        }
+                        *seenReturnHome = true;
+                    } else if (*seenReturnHome) {
+                        logger::info(
+                            "NPCVisitAction[RETURNHOME]: stage transitioned away (now {}) — "
+                            "watchdog exiting",
+                            stage);
+                        return true;
+                    } else {
+                        return false;
                     }
                     auto* senderRef = g_senderAlias
                         ? g_senderAlias->GetReference() : nullptr;
@@ -1072,21 +1317,57 @@ namespace NarrativeEngine
 
                     const auto dist =
                         senderRef->GetPosition().GetDistance(player->GetPosition());
+                    const bool attached =
+                        senderRef->GetParentCell()
+                            ? senderRef->GetParentCell()->IsAttached()
+                            : true;
+                    const auto elapsed =
+                        RealSecondsNow() -
+                        g_returnHomeStartedAtRealSeconds.load();
+
+                    // Line-of-sight check — treat "player can no
+                    // longer see the sender" as a valid exit signal
+                    // so the sender doesn't vanish in plain view.
+                    // Actor::HasLineOfSight populates the bool out-
+                    // arg with an implementation detail we don't
+                    // need; pass a dummy. Fail-open (assume LOS) if
+                    // the engine doesn't answer.
+                    bool losIgnored = false;
+                    const bool losToSender =
+                        player->HasLineOfSight(senderRef, losIgnored);
+
+                    // Throttled progress log every 5s.
+                    const auto now = RealSecondsNow();
+                    if (now - *lastLog >= 5.0) {
+                        *lastLog = now;
+                        logger::info(
+                            "NPCVisitAction[RETURNHOME]: dist={:.0f}u (exit>={}), "
+                            "cell_attached={}, los={}, elapsed={:.1f}s (timeout={}s)",
+                            dist, exitDist, attached, losToSender, elapsed, timeoutSec);
+                    }
+
                     if (dist >= static_cast<float>(exitDist)) {
                         RunReturnHomeShutdown("distance");
                         return true;
                     }
 
-                    if (auto* cell = senderRef->GetParentCell()) {
-                        if (!cell->IsAttached()) {
-                            RunReturnHomeShutdown("cell-unloaded");
-                            return true;
-                        }
+                    if (!attached) {
+                        RunReturnHomeShutdown("cell-unloaded");
+                        return true;
                     }
 
-                    const auto elapsed =
-                        RealSecondsNow() -
-                        g_returnHomeStartedAtRealSeconds.load();
+                    // LOS gate — only trip once the sender has put
+                    // enough space between themselves and the
+                    // player that they wouldn't reasonably still be
+                    // in-frame. Below ~2000u the player is likely
+                    // watching them walk away and a teleport would
+                    // read as a pop; only fire LOS-based exit past
+                    // that distance.
+                    if (!losToSender && dist >= 2000.0f) {
+                        RunReturnHomeShutdown("los-lost");
+                        return true;
+                    }
+
                     if (elapsed >= static_cast<double>(timeoutSec)) {
                         RunReturnHomeShutdown("timeout");
                         return true;
@@ -1151,26 +1432,54 @@ namespace NarrativeEngine
                 "NPCVisitAction: Valediction entry (nudge_count={})",
                 snap.ignoreNudgeCount);
 
-            const auto argsJson = BuildTurnArgsJson("valediction", snap.ignoreNudgeCount);
-            VMDispatchRunSenderAction(
-                g_visitQuest, kSkyrimNetPluginTurnAction, argsJson);
+            // Closing-line narration. The composer's `narrationText`
+            // is scene-entry framed; here we tack on a closing beat
+            // so the downstream dialogue LLM has cue to wrap up.
+            // When the nudge counter is elevated the framing shifts
+            // to "frustrated departure" instead of a satisfied
+            // wrap-up.
+            const int nudgeCap =
+                std::max(1, Settings::Get().visitMaxIgnoreNudges);
+            const bool ignored = snap.ignoreNudgeCount >= nudgeCap;
+            const std::string closingSuffix = ignored
+                ? " Now, having failed to hold the conversation, the sender "
+                  "prepares to leave, frustrated by being ignored."
+                : " Having said what needed saying, the sender prepares "
+                  "to take their leave.";
+            const std::string closingNarration = snap.narrationText + closingSuffix;
             logger::info(
-                "NPCVisitAction[VALEDICTION]: RunSenderAction closing turn dispatched");
+                "NPCVisitAction[VALEDICTION]: dispatching closing narration "
+                "({} chars, ignored={})",
+                closingNarration.size(), ignored);
+            VMDispatchRunSenderNarration(g_visitQuest, closingNarration);
+            logger::info(
+                "NPCVisitAction[VALEDICTION]: RunSenderNarration closing turn dispatched");
 
             const int dwellSeconds =
                 std::max(1, Settings::Get().visitValedictionDwellSeconds);
+
+            logger::info(
+                "NPCVisitAction[VALEDICTION]: dwell timer armed ({}s)", dwellSeconds);
 
             // One-shot delay via AsyncDispatch: worker sleeps
             // dwellSeconds, then marshals SetStage(50) back to main.
             AsyncDispatch::EnqueueWork([dwellSeconds]() {
                 std::this_thread::sleep_for(std::chrono::seconds(dwellSeconds));
                 AsyncDispatch::MarshalToMainThread([]() {
-                    if (!g_visitQuest) return;
-                    if (g_visitQuest->GetCurrentStageID() !=
-                        static_cast<std::uint16_t>(kStageValediction)) {
+                    if (!g_visitQuest) {
+                        logger::warn(
+                            "NPCVisitAction[VALEDICTION]: dwell fired but quest handle null");
+                        return;
+                    }
+                    const auto stage = g_visitQuest->GetCurrentStageID();
+                    if (stage != static_cast<std::uint16_t>(kStageValediction)) {
                         // Stage moved out from under us (rollback,
                         // hard-abort). Nothing to do — the exit
                         // path already advanced past 30.
+                        logger::info(
+                            "NPCVisitAction[VALEDICTION]: dwell fired but stage={} "
+                            "(not Valediction) — the exit path already advanced",
+                            stage);
                         return;
                     }
                     logger::info(
@@ -1297,7 +1606,8 @@ namespace NarrativeEngine
             if (!SkyrimNetAPI::IsAvailable()) return false;
 
             const auto raw = SkyrimNetAPI::GetRecentEvents(
-                senderFormID, kDiscussSpeechSamplePerTick, "dialogue");
+                senderFormID, kDiscussSpeechSamplePerTick,
+                "dialogue,direct_narration,dialogue_npc,dialogue_player");
             auto parsed = nlohmann::json::parse(raw, nullptr, false);
             if (parsed.is_discarded() || !parsed.is_array()) return false;
 
@@ -1376,9 +1686,22 @@ namespace NarrativeEngine
 
         void RegisterDiscussWatchdog(RE::FormID senderFormID)
         {
-            g_lastSampledEventGameTime.store(0.0);
+            // Initialize the event-time cursor to NOW so the first
+            // sampler tick doesn't count pre-Salutation dialogue
+            // (which would immediately trip the turn-count gate and
+            // fire an evaluation before the actual conversation
+            // even has any content to sample from).
+            const auto* cal = RE::Calendar::GetSingleton();
+            const double nowGameSeconds = cal
+                ? static_cast<double>(cal->GetHoursPassed()) * 3600.0
+                : 0.0;
+            g_lastSampledEventGameTime.store(nowGameSeconds);
             const int gateTickSeconds =
                 std::max(1, Settings::Get().visitPollGateTickSeconds);
+            logger::info(
+                "NPCVisitAction[DISCUSS]: watchdog registered — poll={:d}s, "
+                "sender=0x{:08X}, initial_sampler_cursor={:.1f}",
+                gateTickSeconds, senderFormID, nowGameSeconds);
             // Discuss has no built-in real-time limit — only the
             // outer hard-timeout (Step 15) bounds it. Use a large
             // maxDuration so PollUntilOrTimeout's fallback is a
@@ -1387,18 +1710,53 @@ namespace NarrativeEngine
             const auto maxDuration =
                 std::chrono::seconds(std::max(60, Settings::Get().visitHardTimeoutSeconds));
 
+            // "Have we ever seen Stage 20 (Discuss) as the current
+            // stage during this watchdog's lifetime" — needed so the
+            // predicate can distinguish:
+            //   * initial ticks before the SetStage(20) VM dispatch
+            //     lands (stage still 10) → keep polling
+            //   * post-Discuss transitions (stage moved to 25 / 30 /
+            //     50 / 60 / 200) → exit
+            // Without this latch, the very first tick after the
+            // watchdog is registered fires with stage=10, the
+            // "stage != Discuss" branch treats it as "we're done",
+            // and Discuss dies within ~1s.
+            auto seenDiscuss = std::make_shared<bool>(false);
+
             PollUntilOrTimeout(
                 // predicate — runs main thread. Returns true when
-                // Discuss ends (any stage change out of 20).
-                [senderFormID]() -> bool {
-                    if (!g_visitQuest) return true;
+                // Discuss ends (any stage change out of 20 AFTER
+                // we've already been observed there).
+                [senderFormID, seenDiscuss]() -> bool {
+                    if (!g_visitQuest) {
+                        logger::debug("NPCVisitAction[DISCUSS]: quest handle null — exiting");
+                        return true;
+                    }
                     // Hard-abort check first — an outer-timeout or
                     // poll-broken trigger routes to Stage 200 and
                     // this predicate should exit.
-                    if (CheckHardAbortConditions()) return true;
-                    const auto stage = g_visitQuest->GetCurrentStageID();
-                    if (stage != static_cast<std::uint16_t>(kStageDiscuss)) {
+                    if (CheckHardAbortConditions()) {
+                        logger::debug(
+                            "NPCVisitAction[DISCUSS]: hard-abort detected — exiting");
                         return true;
+                    }
+                    const auto stage = g_visitQuest->GetCurrentStageID();
+                    if (stage == static_cast<std::uint16_t>(kStageDiscuss)) {
+                        if (!*seenDiscuss) {
+                            logger::info(
+                                "NPCVisitAction[DISCUSS]: latch flipped — stage now Discuss");
+                        }
+                        *seenDiscuss = true;
+                    } else if (*seenDiscuss) {
+                        // Was in Discuss, no longer — exit cleanly.
+                        logger::info(
+                            "NPCVisitAction[DISCUSS]: stage transitioned away (now {}) — "
+                            "watchdog exiting",
+                            stage);
+                        return true;
+                    } else {
+                        // Waiting for the SetStage(20) to land. Keep polling.
+                        return false;
                     }
                     // Cheap-signal side effects during Discuss:
                     // sample new speech turns; if a player turn
@@ -1407,6 +1765,8 @@ namespace NarrativeEngine
                         ResetIgnoreNudgeCounter();
                     }
                     if (VisitConclusionPoll::GateTick()) {
+                        logger::info(
+                            "NPCVisitAction[DISCUSS]: gate tripped — firing conclusion poll");
                         VisitConclusionPoll::FirePoll(
                             [](std::optional<VisitConclusionPoll::PollVerdict> verdict) {
                                 AsyncDispatch::MarshalToMainThread(
@@ -1419,15 +1779,16 @@ namespace NarrativeEngine
                 },
                 // onSuccess — Discuss ended. Disarm the poll cleanly.
                 []() {
+                    logger::info(
+                        "NPCVisitAction[DISCUSS]: watchdog onSuccess — disarming poll");
                     VisitConclusionPoll::Disarm();
-                    logger::debug(
-                        "NPCVisitAction[DISCUSS]: watchdog exiting (stage changed)");
                 },
                 // onTimeout — outer hard-timeout as a safety net.
                 []() {
+                    logger::warn(
+                        "NPCVisitAction[DISCUSS]: watchdog outer hard-timeout — "
+                        "disarming poll");
                     VisitConclusionPoll::Disarm();
-                    logger::debug(
-                        "NPCVisitAction[DISCUSS]: watchdog exiting (max duration)");
                 },
                 std::chrono::seconds(gateTickSeconds),
                 maxDuration,
@@ -1483,6 +1844,7 @@ namespace NarrativeEngine
                 snap.returnCellFormID = parentCell->GetFormID();
             }
             snap.briefingText            = briefing->briefing;
+            snap.narrationText           = briefing->narration;
             snap.topicTag                = briefing->topicTag;
             snap.mood                    = briefing->mood;
             snap.tags                    = briefing->tags;
@@ -1549,11 +1911,30 @@ namespace NarrativeEngine
                 "SpawnMarker=0x{:08X}, ReturnAnchor=0x{:08X}",
                 senderAliasFilledID, spawnMarkerFilledID, returnAnchorFilledID);
 
+            // Defensive alias-fill sanity check. `engineResult=true` is
+            // NOT sufficient — we've observed EnsureQuestStarted return
+            // true even when a required alias failed to fill (Sender
+            // FMR missing an unloaded actor, ReturnAnchor's
+            // At: Sender resolving against an empty alias). Without
+            // this check, Stage 10's MoveTo fragment fires on an empty
+            // Sender alias and the whole visit runs orphaned.
+            if (senderAliasFilledID == 0 || returnAnchorFilledID == 0) {
+                logger::warn(
+                    "NPCVisitAction: EnsureQuestStarted reported success but a "
+                    "required alias is unfilled (Sender=0x{:08X}, ReturnAnchor="
+                    "0x{:08X}) — treating as failed start and rolling back",
+                    senderAliasFilledID, returnAnchorFilledID);
+                DemoteSenderToCandidate(sender);
+                VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
+                finishWithFailure(
+                    "EnsureQuestStarted returned true with unfilled alias");
+                return;
+            }
+
             // Sanity: warn if Sender fill picked someone other than
             // our designated target. Should never happen if the
             // pre-dispatch sweep worked.
-            if (senderAliasFilledID != 0 &&
-                senderAliasFilledID != sender->GetFormID()) {
+            if (senderAliasFilledID != sender->GetFormID()) {
                 logger::warn(
                     "NPCVisitAction: Sender alias fill picked 0x{:08X} but we "
                     "designated 0x{:08X} — stale rank-{}+ member survived the "
@@ -1762,10 +2143,14 @@ namespace NarrativeEngine
     StartResult NPCVisitAction::Start(const ActionContext&  ctx,
                                        const nlohmann::json& parameters)
     {
+        logger::info("NPCVisitAction::Start: entry");
+
         // Re-validate — the dispatcher's ~250ms gap between candidate
         // manifest and Start can invalidate IsAvailable (player
         // entered a jail, sender pool shrank below floor, etc.).
         if (!IsAvailable(ctx)) {
+            logger::warn(
+                "NPCVisitAction::Start: refused — preconditions failed at start time");
             return {false, "preconditions failed at start time"};
         }
 
@@ -1774,12 +2159,20 @@ namespace NarrativeEngine
         // means someone else's Start callback is still running or the
         // quest is mid-lifecycle.
         if (VisitState::DerivePhase() != VisitState::Mode::Idle) {
+            logger::warn(
+                "NPCVisitAction::Start: refused — already in flight (DerivePhase != Idle)");
             return {false, "already in flight"};
         }
         if (g_startInProgress.load()) {
+            logger::warn(
+                "NPCVisitAction::Start: refused — start callback still pending");
             return {false, "already in flight (start callback pending)"};
         }
         if (g_visitQuest && g_visitQuest->GetCurrentStageID() > 0) {
+            logger::warn(
+                "NPCVisitAction::Start: refused — quest still at stage {} from "
+                "a prior dispatch",
+                g_visitQuest->GetCurrentStageID());
             return {false, "quest still cleaning up from a prior dispatch"};
         }
 
@@ -1804,6 +2197,13 @@ namespace NarrativeEngine
         g_lastSalutationLogRealSeconds.store(0.0);
         g_valedictionFired.store(false);
         g_hardAbortFired.store(false);
+        // Reset the terminal-cleanup latch that may still be set
+        // from a prior visit's rollback / hard-abort / normal exit.
+        // Without this, DetectCompletion fires immediately on the
+        // next tick (sees old latch + quest still at stage 0),
+        // dispatcher prematurely clears in-flight, and the new
+        // visit runs orphaned — no rollback poll, no throttled logs.
+        g_terminalCleanupDone.store(false);
 
         logger::info("NPCVisitAction: composing briefing (urgency={})",
                      urgency == VisitComposer::UrgencyHint::High   ? "high"
@@ -1826,15 +2226,29 @@ namespace NarrativeEngine
         const ActionContext& /*ctx*/, double /*secondsSinceStart*/)
     {
         // No cached quest / no in-flight state — nothing to check.
-        if (!g_visitQuest) return false;
+        if (!g_visitQuest) {
+            logger::debug(
+                "NPCVisitAction::DetectAndRollbackFailedStart: visit quest handle null");
+            return false;
+        }
 
         // Compose still in flight, or the start callback is mid-
         // execution: both are the "committed to running" phase from
         // the dispatcher's perspective, but we haven't yet reached
         // Stage 10 so there's nothing to time out. HandleComposeResult
         // owns its own failure paths.
-        if (VisitState::GetComposingSender()) return false;
-        if (g_startInProgress.load()) return false;
+        if (VisitState::GetComposingSender()) {
+            logger::debug(
+                "NPCVisitAction::DetectAndRollbackFailedStart: composing flag "
+                "set — waiting for compose callback");
+            return false;
+        }
+        if (g_startInProgress.load()) {
+            logger::debug(
+                "NPCVisitAction::DetectAndRollbackFailedStart: start-in-progress "
+                "flag set — waiting for callback to finish");
+            return false;
+        }
 
         // Only Salutation (Stage 10) gets the timeout rollback here.
         // Post-Salutation stages (Discuss / OnHold / ReEngage /
@@ -1954,7 +2368,12 @@ namespace NarrativeEngine
         // by RunReturnHomeShutdown (success) or the Salutation
         // rollback path (failure).
         if (!g_terminalCleanupDone.load()) return false;
-        if (!g_visitQuest) return false;
+        if (!g_visitQuest) {
+            logger::debug(
+                "NPCVisitAction::DetectCompletion: cleanup_done=true but visit "
+                "quest handle null — cannot verify stage");
+            return false;
+        }
 
         // Wait for the Papyrus Shutdown fragment to actually run
         // and drop the stage back to 0. Without this check we'd
@@ -1962,7 +2381,16 @@ namespace NarrativeEngine
         // and the dispatcher could try a fresh Start before Reset()
         // clears the alias fills.
         const auto stage = g_visitQuest->GetCurrentStageID();
-        if (stage != 0) return false;
+        if (stage != 0) {
+            // Throttle this at the caller side is impractical; this
+            // fires ~2x/second while Papyrus Shutdown() catches up.
+            // Log at debug to keep the info stream calm.
+            logger::debug(
+                "NPCVisitAction::DetectCompletion: cleanup_done=true but stage={}"
+                " (waiting for Papyrus Shutdown fragment to drop stage to 0)",
+                stage);
+            return false;
+        }
 
         // All clear — clear the flag so the next dispatch starts
         // from a clean state and signal completion.

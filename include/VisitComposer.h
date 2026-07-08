@@ -28,11 +28,15 @@ namespace NarrativeEngine::VisitComposer
     {
         RE::FormID               senderNpcFormID = 0;
         // First-person, from the sender's frame — the thought they're
-        // carrying as they walk up to the player. Passed as argsJson to
-        // SkyrimNet's ExecuteAction on every sender turn (Salutation,
-        // ReEngage, Valediction) and used as the natural-conclusion
-        // poll's sender_goal input.
+        // carrying as they walk up to the player. Used as the
+        // natural-conclusion poll's sender_goal input.
         std::string              briefing;
+        // Third-person scene narration describing the sender's arrival
+        // and their motivation for the visit. Passed straight to
+        // SkyrimNet's DirectNarration as scene context; the downstream
+        // dialogue LLM uses it to have the sender say something in
+        // character about the topic.
+        std::string              narration;
         std::string              topicTag;
         std::string              mood;
         std::vector<std::string> tags;

@@ -67,6 +67,7 @@ namespace NarrativeEngine::VisitState
         RE::FormID              returnAnchorFormID    = 0;
 
         std::string             briefingText;
+        std::string             narrationText;
         std::string             topicTag;
         std::string             mood;
         std::vector<std::string> tags;

@@ -23,7 +23,11 @@ namespace NarrativeEngine::VisitState
 
         // Co-save record version. v1 payload matches the Snapshot fields
         // per the design's Persistence section.
-        constexpr std::uint32_t kRecordVersion = 1;
+        // v2 adds the `narrationText` string after `briefingText`.
+        // v1 saves are read-compatible via the version branch in
+        // OnLoad; narrationText loads as empty and the visit
+        // continues without narration for the pre-migration save.
+        constexpr std::uint32_t kRecordVersion = 2;
 
         std::mutex                              g_mutex;
         Snapshot                                g_snapshot;
@@ -177,6 +181,7 @@ namespace NarrativeEngine::VisitState
         intfc->WriteRecordData(snap.consecutivePollFailures);
 
         WriteString(intfc, snap.briefingText);
+        WriteString(intfc, snap.narrationText);   // v2+
         WriteString(intfc, snap.topicTag);
         WriteString(intfc, snap.mood);
 
@@ -190,7 +195,8 @@ namespace NarrativeEngine::VisitState
                 std::uint32_t                 length)
     {
         if (!intfc) return;
-        if (version != kRecordVersion) {
+        // Accept v1 (no narrationText) and v2 (with narrationText).
+        if (version != 1 && version != kRecordVersion) {
             logger::warn(
                 "VisitState::OnLoad: unknown version {} (length={}); clearing snapshot",
                 version, length);
@@ -219,8 +225,18 @@ namespace NarrativeEngine::VisitState
             return;
         }
 
-        if (!ReadString(intfc, loaded.briefingText) ||
-            !ReadString(intfc, loaded.topicTag) ||
+        if (!ReadString(intfc, loaded.briefingText)) {
+            shortRead("Snapshot briefingText");
+            return;
+        }
+        // v2 added narrationText between briefingText and topicTag.
+        if (version >= 2) {
+            if (!ReadString(intfc, loaded.narrationText)) {
+                shortRead("Snapshot narrationText");
+                return;
+            }
+        }
+        if (!ReadString(intfc, loaded.topicTag) ||
             !ReadString(intfc, loaded.mood)) {
             shortRead("Snapshot strings");
             return;

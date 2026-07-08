@@ -61,12 +61,38 @@ EndFunction
 ; surface fully typed by its author. If SkyrimNet's action design
 ; changes, this function is the only place that has to change.
 Function RunSenderAction(String actionName, String argsJson)
+    Debug.Trace("[_ne_VisitQuest] RunSenderAction: entered (action='" + actionName + "', argsJson.len=" + StringUtil.GetLength(argsJson) + ")")
     Actor senderActor = Sender.GetActorReference()
     if senderActor == None
         Debug.Trace("[_ne_VisitQuest] RunSenderAction: Sender empty")
         return
     endIf
-    SkyrimNetApi.ExecuteAction(actionName, senderActor, argsJson)
+    Debug.Trace("[_ne_VisitQuest] RunSenderAction: calling SkyrimNetApi.ExecuteAction on sender " + senderActor)
+    int result = SkyrimNetApi.ExecuteAction(actionName, senderActor, argsJson)
+    Debug.Trace("[_ne_VisitQuest] RunSenderAction: ExecuteAction returned " + result)
+EndFunction
+
+; -----------------------------------------------------------------
+; Sender-narration trampoline
+; -----------------------------------------------------------------
+;
+; Third-person scene narration used to trigger a sender turn. Fires
+; SkyrimNet's DirectNarration API which feeds `content` to the
+; downstream dialogue LLM as scene context; the LLM then produces a
+; spoken line in the sender's voice, addressed to the player.
+;
+; Used for Salutation / ReEngage / Valediction turns — SkyrimNet's
+; built-in ContinueConversation action stays on the RunSenderAction
+; path (which uses ExecuteAction) for the ignore-irritation nudges.
+Function RunSenderNarration(String content)
+    Debug.Trace("[_ne_VisitQuest] RunSenderNarration: entered (content.len=" + StringUtil.GetLength(content) + ")")
+    Actor senderActor = Sender.GetActorReference()
+    if senderActor == None
+        Debug.Trace("[_ne_VisitQuest] RunSenderNarration: Sender empty")
+        return
+    endIf
+    int result = SkyrimNetApi.DirectNarration(content, senderActor, Game.GetPlayer())
+    Debug.Trace("[_ne_VisitQuest] RunSenderNarration: DirectNarration returned " + result)
 EndFunction
 
 ; -----------------------------------------------------------------
