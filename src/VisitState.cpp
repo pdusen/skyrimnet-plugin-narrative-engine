@@ -21,13 +21,14 @@ namespace NarrativeEngine::VisitState
         // Idle in that case.
         constexpr const char* kVisitQuestEditorID = "_ne_VisitQuest";
 
-        // Co-save record version. v1 payload matches the Snapshot fields
-        // per the design's Persistence section.
-        // v2 adds the `narrationText` string after `briefingText`.
-        // v1 saves are read-compatible via the version branch in
-        // OnLoad; narrationText loads as empty and the visit
-        // continues without narration for the pre-migration save.
-        constexpr std::uint32_t kRecordVersion = 2;
+        // Co-save record version.
+        //   v1 — original payload (briefingText, topicTag, mood, tags array).
+        //   v2 — added `narrationText` between briefingText and topicTag.
+        //   v3 — dropped the tags array (unused downstream). Old saves are
+        //        read-compatible via the version branch in OnLoad: v1/v2
+        //        streams still carry a tag count + tag strings, which we
+        //        consume-and-discard so subsequent co-save records line up.
+        constexpr std::uint32_t kRecordVersion = 3;
 
         std::mutex                              g_mutex;
         Snapshot                                g_snapshot;
@@ -184,10 +185,7 @@ namespace NarrativeEngine::VisitState
         WriteString(intfc, snap.narrationText);   // v2+
         WriteString(intfc, snap.topicTag);
         WriteString(intfc, snap.mood);
-
-        const auto tagCount = static_cast<std::uint16_t>(snap.tags.size());
-        intfc->WriteRecordData(tagCount);
-        for (const auto& t : snap.tags) WriteString(intfc, t);
+        // v3 dropped the tags array — nothing more to write.
     }
 
     void OnLoad(SKSE::SerializationInterface* intfc,
@@ -195,8 +193,9 @@ namespace NarrativeEngine::VisitState
                 std::uint32_t                 length)
     {
         if (!intfc) return;
-        // Accept v1 (no narrationText) and v2 (with narrationText).
-        if (version != 1 && version != kRecordVersion) {
+        // Accept v1 (no narrationText, had tags), v2 (added
+        // narrationText, still had tags), and v3 (dropped tags).
+        if (version != 1 && version != 2 && version != kRecordVersion) {
             logger::warn(
                 "VisitState::OnLoad: unknown version {} (length={}); clearing snapshot",
                 version, length);
@@ -242,20 +241,22 @@ namespace NarrativeEngine::VisitState
             return;
         }
 
-        std::uint16_t tagCount = 0;
-        if (intfc->ReadRecordData(tagCount) != sizeof(tagCount)) {
-            shortRead("Snapshot tag count");
-            return;
-        }
-        loaded.tags.clear();
-        loaded.tags.reserve(tagCount);
-        for (std::uint16_t i = 0; i < tagCount; ++i) {
-            std::string tag;
-            if (!ReadString(intfc, tag)) {
-                shortRead("Snapshot tag");
+        // v1/v2 saves still carry the tags array. Consume-and-discard
+        // so the stream cursor advances past them; v3 payloads simply
+        // have nothing more to read here.
+        if (version < 3) {
+            std::uint16_t tagCount = 0;
+            if (intfc->ReadRecordData(tagCount) != sizeof(tagCount)) {
+                shortRead("Snapshot tag count");
                 return;
             }
-            loaded.tags.push_back(std::move(tag));
+            for (std::uint16_t i = 0; i < tagCount; ++i) {
+                std::string discardedTag;
+                if (!ReadString(intfc, discardedTag)) {
+                    shortRead("Snapshot tag");
+                    return;
+                }
+            }
         }
 
         // Resolve persisted FormIDs through SKSE's mapping table so a
@@ -286,9 +287,9 @@ namespace NarrativeEngine::VisitState
 
         logger::info(
             "VisitState::OnLoad: restored snapshot (sender=0x{:08X}, returnCell=0x{:08X}, "
-            "briefing={} chars, tags={})",
+            "briefing={} chars, narration={} chars)",
             g_snapshot.senderFormID, g_snapshot.returnCellFormID,
-            g_snapshot.briefingText.size(), g_snapshot.tags.size());
+            g_snapshot.briefingText.size(), g_snapshot.narrationText.size());
     }
 
     void OnRevert()

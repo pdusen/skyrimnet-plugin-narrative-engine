@@ -96,6 +96,31 @@ Function RunSenderNarration(String content)
 EndFunction
 
 ; -----------------------------------------------------------------
+; Silent sender-scene trampoline
+; -----------------------------------------------------------------
+;
+; Same third-person scene narration as RunSenderNarration, but fires
+; SkyrimNet's RegisterPersistentEvent API instead of DirectNarration.
+; The event still lands in SkyrimNet's memory / event history the
+; same way — it just does NOT prompt the sender to speak a response.
+;
+; Used at Valediction time when the LLM observed that the sender
+; already said their closing/goodbye during the natural exchange, so
+; a fresh spoken closing line would double up. The scene beat is
+; still recorded so the memory-formation and event-log downstream
+; systems know the visit ended.
+Function RunSenderSilentSceneEvent(String content)
+    Debug.Trace("[_ne_VisitQuest] RunSenderSilentSceneEvent: entered (content.len=" + StringUtil.GetLength(content) + ")")
+    Actor senderActor = Sender.GetActorReference()
+    if senderActor == None
+        Debug.Trace("[_ne_VisitQuest] RunSenderSilentSceneEvent: Sender empty")
+        return
+    endIf
+    int result = SkyrimNetApi.RegisterPersistentEvent(content, senderActor, Game.GetPlayer())
+    Debug.Trace("[_ne_VisitQuest] RunSenderSilentSceneEvent: RegisterPersistentEvent returned " + result)
+EndFunction
+
+; -----------------------------------------------------------------
 ; Shutdown — terminal teardown
 ; -----------------------------------------------------------------
 ;

@@ -10,6 +10,7 @@
 #include <LLMTextSanitizer.h>
 #include <LetterComposer.h>
 #include <PhaseTracker.h>
+#include <VisitComposer.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
@@ -299,29 +300,36 @@ namespace NarrativeEngine::ActionDispatcher
             const std::vector<IAction*>&                       candidates,
             PhaseTracker::Direction                            direction,
             int                                                tensionDelta,
-            const std::vector<LetterComposer::SenderCandidate>& letterSenderCandidates)
+            const std::vector<LetterComposer::SenderCandidate>& letterSenderCandidates,
+            const std::vector<VisitComposer::SenderCandidate>&  visitSenderCandidates)
         {
             nlohmann::json ctx;
             ctx["desired_direction"] =
                 (direction == PhaseTracker::Direction::Raise) ? "raise" : "lower";
             ctx["tension_delta"] = tensionDelta;
 
-            // candidates. Sender candidates for npc_letter are attached
-            // inline on that candidate's own entry so the prompt can
-            // render them under the same "## Available actions" block
-            // as its description. Keeping the list co-located with the
-            // action keeps the LLM's attention distributed evenly
-            // across choices — a top-level "letter sender candidates"
-            // block would bias selection toward npc_letter just by
-            // its visual footprint.
-            const auto serializedSenderCandidates =
+            // candidates. Sender candidates for npc_letter / npc_visit
+            // are attached inline on the respective candidate's entry
+            // so the prompt can render them under the same "##
+            // Available actions" block as its description. Keeping
+            // the lists co-located with the action keeps the LLM's
+            // attention distributed evenly across choices — a
+            // top-level "sender candidates" block would bias
+            // selection toward the action carrying it just by its
+            // visual footprint.
+            const auto serializedLetterCandidates =
                 letterSenderCandidates.empty()
                     ? nlohmann::json::array()
                     : LetterComposer::SerializeSenderCandidates(letterSenderCandidates);
-            // Every candidate carries a (possibly-empty)
-            // letter_sender_candidates array so the template can render
-            // it with a plain `length(...) > 0` check without needing
-            // an existsIn-style guard.
+            const auto serializedVisitCandidates =
+                visitSenderCandidates.empty()
+                    ? nlohmann::json::array()
+                    : VisitComposer::SerializeSenderCandidates(visitSenderCandidates);
+            // Every candidate carries (possibly-empty)
+            // letter_sender_candidates / visit_sender_candidates
+            // arrays so the template can render them with a plain
+            // `length(...) > 0` check without needing an
+            // existsIn-style guard.
             nlohmann::json candArr = nlohmann::json::array();
             for (auto* a : candidates) {
                 if (!a) continue;
@@ -330,7 +338,11 @@ namespace NarrativeEngine::ActionDispatcher
                     {"description", a->Description()},
                     {"letter_sender_candidates",
                         (a->Name() == "npc_letter")
-                            ? serializedSenderCandidates
+                            ? serializedLetterCandidates
+                            : nlohmann::json::array()},
+                    {"visit_sender_candidates",
+                        (a->Name() == "npc_visit")
+                            ? serializedVisitCandidates
                             : nlohmann::json::array()},
                 };
                 candArr.push_back(std::move(cj));
@@ -634,18 +646,25 @@ namespace NarrativeEngine::ActionDispatcher
             return;
         }
 
-        // Gate 7: if npc_letter is among the candidates, collect its
-        // sender candidate list up-front so the action-select LLM can
-        // pick a sender at the same time it picks the action. If the
-        // filtered pool falls under the min-candidate threshold, drop
-        // npc_letter from the candidate list rather than exposing the
-        // LLM to a starved (or empty) sender pool.
+        // Gate 7: for actions that need per-sender inputs at
+        // action-select time (npc_letter, npc_visit), collect their
+        // sender candidate lists up-front so the LLM can pick both
+        // the action and the sender in one round-trip. If either
+        // pool falls under its min-candidate threshold, drop that
+        // action from the candidate list rather than exposing the
+        // LLM to a starved sender pool.
         std::vector<LetterComposer::SenderCandidate> letterSenderCandidates;
+        std::vector<VisitComposer::SenderCandidate>  visitSenderCandidates;
         const auto isLetterAction = [](IAction* a) {
             return a && a->Name() == "npc_letter";
         };
+        const auto isVisitAction = [](IAction* a) {
+            return a && a->Name() == "npc_visit";
+        };
         const bool npcLetterPresent =
             std::any_of(candidates.begin(), candidates.end(), isLetterAction);
+        const bool npcVisitPresent =
+            std::any_of(candidates.begin(), candidates.end(), isVisitAction);
         if (npcLetterPresent) {
             letterSenderCandidates = LetterComposer::CollectSenderCandidates();
             const int minSenders = Settings::Get().letterMinSenderCandidates;
@@ -665,17 +684,39 @@ namespace NarrativeEngine::ActionDispatcher
                 }
             }
         }
+        if (npcVisitPresent) {
+            visitSenderCandidates = VisitComposer::CollectSenderCandidates();
+            const int minSenders = Settings::Get().visitMinSenderCandidates;
+            if (static_cast<int>(visitSenderCandidates.size()) < minSenders) {
+                if (debug) {
+                    logger::debug(
+                        "ActionDispatcher: dropping npc_visit from candidates ({} viable senders < min {})",
+                        visitSenderCandidates.size(), minSenders);
+                }
+                candidates.erase(
+                    std::remove_if(candidates.begin(), candidates.end(), isVisitAction),
+                    candidates.end());
+                visitSenderCandidates.clear();
+                if (candidates.empty()) {
+                    FinalizeWithoutAction(std::move(rec), std::move(onFinalized));
+                    return;
+                }
+            }
+        }
 
         // All gates passed — fire the action-select LLM call.
         const char* dirName = (direction == PhaseTracker::Direction::Raise) ? "raise" : "lower";
         logger::info(
-            "ActionDispatcher: firing action-select (direction={}, tension_delta={}, candidates={}, letter_sender_candidates={}, dwell={:.1f}/{}s)",
-            dirName, tensionDelta, candidates.size(), letterSenderCandidates.size(),
+            "ActionDispatcher: firing action-select (direction={}, tension_delta={}, "
+            "candidates={}, letter_sender_candidates={}, visit_sender_candidates={}, "
+            "dwell={:.1f}/{}s)",
+            dirName, tensionDelta, candidates.size(),
+            letterSenderCandidates.size(), visitSenderCandidates.size(),
             snapshot.timeInPhaseSeconds, ideal);
 
         const std::string promptCtx =
             BuildActionPromptContext(snapshot, candidates, direction, tensionDelta,
-                                     letterSenderCandidates);
+                                     letterSenderCandidates, visitSenderCandidates);
         if (debug) {
             logger::debug("ActionDispatcher: action-select prompt context: {}", promptCtx);
         }
@@ -859,26 +900,33 @@ namespace NarrativeEngine::ActionDispatcher
             return;
         }
 
-        // Build a one-element candidate list. For npc_letter, still
-        // collect sender candidates — the compose prompt needs them
-        // and we don't want the force-dispatch to fail with an empty
-        // sender pool. If the pool is empty the composer's Start
-        // still runs; it'll just fail with a clean detail message.
+        // Build a one-element candidate list. For actions with
+        // per-sender inputs at action-select time (npc_letter,
+        // npc_visit), still collect sender candidates — the LLM's
+        // selection needs them and we don't want the force-dispatch
+        // to fail with an empty pool. If the pool is empty the
+        // action's Start still runs; it'll just fail with a clean
+        // detail message.
         std::vector<IAction*> candidates{ action };
         std::vector<LetterComposer::SenderCandidate> letterSenderCandidates;
+        std::vector<VisitComposer::SenderCandidate>  visitSenderCandidates;
         if (action->Name() == "npc_letter") {
             letterSenderCandidates = LetterComposer::CollectSenderCandidates();
+        } else if (action->Name() == "npc_visit") {
+            visitSenderCandidates = VisitComposer::CollectSenderCandidates();
         }
 
         const char* dirName = (direction == PhaseTracker::Direction::Raise) ? "raise" : "lower";
         logger::info(
-            "ActionDispatcher: firing force-dispatch action-select (action='{}', direction={}, tension_delta={}, letter_sender_candidates={})",
+            "ActionDispatcher: firing force-dispatch action-select (action='{}', "
+            "direction={}, tension_delta={}, letter_sender_candidates={}, "
+            "visit_sender_candidates={})",
             std::string{actionName}, dirName, tensionDelta,
-            letterSenderCandidates.size());
+            letterSenderCandidates.size(), visitSenderCandidates.size());
 
         const std::string promptCtx =
             BuildActionPromptContext(snapshot, candidates, direction, tensionDelta,
-                                     letterSenderCandidates);
+                                     letterSenderCandidates, visitSenderCandidates);
         if (Settings::Get().debugMode) {
             logger::debug("ActionDispatcher: force-dispatch prompt context: {}", promptCtx);
         }

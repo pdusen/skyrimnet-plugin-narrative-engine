@@ -178,6 +178,9 @@ namespace NarrativeEngine::Settings
             g_config.visitMarkerMaxDistanceUnits = static_cast<int>(
                 ini.GetLongValue("Actions", "iVisitMarkerMaxDistanceUnits",
                                  g_config.visitMarkerMaxDistanceUnits));
+            g_config.visitSenderCooldownGameHours = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitSenderCooldownGameHours",
+                                 g_config.visitSenderCooldownGameHours));
 
             g_config.visitApproachTimeoutSeconds = static_cast<int>(
                 ini.GetLongValue("Actions", "iVisitApproachTimeoutSeconds",

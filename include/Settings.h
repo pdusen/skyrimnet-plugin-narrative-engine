@@ -158,10 +158,19 @@ namespace NarrativeEngine::Settings
         int visitMarkerMinDistanceUnits          = 800;   // closest spawn marker may be
         int visitMarkerMaxDistanceUnits          = 2500;  // farthest spawn marker may be
 
+        // Per-sender cooldown in *in-game hours* applied once a visit's
+        // Salutation → Discuss transition fires (i.e., the sender actually
+        // showed up and spoke to the player). Prevents the same NPC from
+        // being picked as a visit sender again for this many in-game
+        // hours, avoiding the "Ancano visits three times in one session"
+        // pathology. 0 disables the filter. Persists per-sender-FormID
+        // in the action's own co-save record.
+        int visitSenderCooldownGameHours         = 72;
+
         // [Actions] — state machine timing
         // Salutation timeout: seconds after Start before rollback if the sender
         // hasn't closed distance to speak the opening line.
-        int visitApproachTimeoutSeconds          = 45;
+        int visitApproachTimeoutSeconds          = 60;
         // Distance at which the Salutation opening line fires and the machine
         // advances to Discuss. Kept generous (~900u) so the LLM + TTS pipeline
         // has time to generate the opening line while the sender is still

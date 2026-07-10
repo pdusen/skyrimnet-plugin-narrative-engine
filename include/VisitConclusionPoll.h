@@ -32,6 +32,14 @@ namespace NarrativeEngine::VisitConclusionPoll
     {
         bool        shouldConclude = false;
         std::string rationale;
+        // True iff the LLM observed that the sender has ALREADY
+        // said their closing/goodbye line as part of the natural
+        // exchange. When true and `shouldConclude` is also true,
+        // Valediction dispatches its closing narration via
+        // SkyrimNet's RegisterPersistentEvent (silent scene beat)
+        // instead of DirectNarration (which would prompt a second
+        // spoken goodbye). Ignored when `shouldConclude` is false.
+        bool        closingAlreadySpoken = false;
     };
 
     // Reset internal counters / timers to a fresh Discuss entry.

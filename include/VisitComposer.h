@@ -8,38 +8,45 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include <RE/Skyrim.h>
 
-// VisitComposer — the LLM round-trip that (a) picks a sender NPC from a
-// candidate pool and (b) generates a scene brief for an in-person visit
-// to the player.
+// VisitComposer — the LLM round-trip that authors the narrative
+// content for an in-person NPC visit to the player.
 //
-// Runs on top of SenderCandidatePool (candidate build) and
-// SkyrimNetAPI::SendCustomPromptToLLM (the prompt).
+// Runs on top of SkyrimNetAPI::SendCustomPromptToLLM. The sender is
+// **pre-chosen** by the action-select LLM from the candidate list
+// exposed on the npc_visit entry — the compose call embodies them,
+// mirroring how LetterComposer takes a pre-picked sender from
+// action-select and only writes the content.
 //
-// The composer differs from LetterComposer in shape: letters pre-choose
-// the sender at action-select time and only ask the LLM to write the
-// content; visits let the LLM choose the sender AND author the brief in
-// one round-trip. The sender is validated against the candidate pool
-// after the response arrives.
+// Callers (NPCVisitAction and ActionDispatcher) drive the two-stage
+// flow:
+//   1. ActionDispatcher builds `visit_sender_candidates` via
+//      `CollectSenderCandidates()` when npc_visit is on the shortlist,
+//      attaches them to the action-select prompt.
+//   2. Action-select LLM returns `sender_npc_form_id` in the
+//      npc_visit parameters block.
+//   3. NPCVisitAction::Start reads that FormID and passes it to
+//      `Compose()`, which produces the briefing / narration / mood /
+//      topic / tags for that sender.
 namespace NarrativeEngine::VisitComposer
 {
     struct VisitBriefing
     {
-        RE::FormID               senderNpcFormID = 0;
         // First-person, from the sender's frame — the thought they're
         // carrying as they walk up to the player. Used as the
         // natural-conclusion poll's sender_goal input.
-        std::string              briefing;
+        std::string briefing;
         // Third-person scene narration describing the sender's arrival
         // and their motivation for the visit. Passed straight to
         // SkyrimNet's DirectNarration as scene context; the downstream
         // dialogue LLM uses it to have the sender say something in
         // character about the topic.
-        std::string              narration;
-        std::string              topicTag;
-        std::string              mood;
-        std::vector<std::string> tags;
+        std::string narration;
+        std::string topicTag;
+        std::string mood;
     };
 
     // Mirrors LetterComposer's shape so the two composers feel parallel.
@@ -50,15 +57,55 @@ namespace NarrativeEngine::VisitComposer
         High   = 2,
     };
 
-    // Async. Main-thread entry; the callback fires on a SkyrimNet worker
-    // thread — marshal back to main before touching anything engine-side.
+    // A single viable visit sender, resolved on the main thread by
+    // CollectSenderCandidates. Passed to the action-select stage so
+    // the LLM sees who's available and can pick one; the picked
+    // FormID then flows into Compose (which fresh-fetches the
+    // sender's memories on the main thread before composing).
+    struct SenderCandidate
+    {
+        RE::FormID     formId           = 0;
+        std::string    name;
+        double         engagementScore  = 0.0;
+        double         lastInteractedAt = 0.0;
+        nlohmann::json memories         = nlohmann::json::array();
+    };
+
+    // Main-thread only. Ranks recent engagement through
+    // SenderCandidatePool with visit-specific viability rules
+    // (unique / not in combat / not follower / has resolvable
+    // location) and returns the surviving candidates with their
+    // memory tails attached. Bounded output size (12 by default).
+    // Empty when SkyrimNet is unavailable or no viable candidates
+    // exist.
+    //
+    // Called by ActionDispatcher when npc_visit is among the
+    // action-select candidates.
+    std::vector<SenderCandidate> CollectSenderCandidates();
+
+    // Serialize a candidate list into the JSON shape the action-select
+    // prompt consumes: [{form_id (hex str), name, engagement_score,
+    // last_interacted_at, memories}]. Mirrors
+    // LetterComposer::SerializeSenderCandidates.
+    nlohmann::json SerializeSenderCandidates(
+        const std::vector<SenderCandidate>& candidates);
+
+    // Async. Composes a visit briefing FROM a pre-chosen sender —
+    // the action-select LLM picks the sender, this call embodies
+    // them. Fresh-fetches the sender's current memories on the
+    // main thread (so events between action-select and compose
+    // surface here), then fires the compose prompt.
+    //
+    // The callback fires on a SkyrimNet worker thread — marshal
+    // back to main before touching engine state.
     //
     // The callback receives nullopt on any failure path (SkyrimNet
-    // unavailable, no viable candidates, LLM error, parse failure,
-    // validation failure, sender mismatch). Reasons are logged.
+    // unavailable, sender no longer viable, LLM error, parse
+    // failure, validation failure). Failure reasons are logged.
     void Compose(
         const ActionContext& ctx,
         UrgencyHint          urgencyHint,
+        RE::FormID           senderNpcFormID,
         std::function<void(std::optional<VisitBriefing>)> callback);
 
     // The set of moods the composer will accept. Exposed for testing.

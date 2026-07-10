@@ -70,7 +70,6 @@ namespace NarrativeEngine::VisitState
         std::string             narrationText;
         std::string             topicTag;
         std::string             mood;
-        std::vector<std::string> tags;
 
         // Wall-clock start time of the whole visit lifecycle (drives the
         // outer hard-timeout guard).

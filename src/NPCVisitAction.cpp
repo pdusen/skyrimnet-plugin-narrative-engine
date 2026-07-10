@@ -40,10 +40,13 @@
 #include <functional>
 #include <future>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace NarrativeEngine
 {
@@ -220,6 +223,20 @@ namespace NarrativeEngine
         {
             return VMDispatchOnQuest(
                 quest, "_ne_VisitQuest"sv, "RunSenderNarration"sv,
+                RE::BSFixedString(content.c_str()));
+        }
+
+        // Silent variant used when the LLM tells us the sender has
+        // already said their closing line during the natural
+        // exchange. Fires SkyrimNet's RegisterPersistentEvent
+        // (records the scene beat without prompting a spoken
+        // response), avoiding a double goodbye.
+        bool VMDispatchRunSenderSilentSceneEvent(
+            RE::TESQuest*      quest,
+            const std::string& content)
+        {
+            return VMDispatchOnQuest(
+                quest, "_ne_VisitQuest"sv, "RunSenderSilentSceneEvent"sv,
                 RE::BSFixedString(content.c_str()));
         }
 
@@ -503,6 +520,24 @@ namespace NarrativeEngine
         // through ReEngage completion.
         std::atomic<bool> g_inDetour = false;
 
+        // ---- Per-sender cooldowns (in-game-hours stamps) -----------
+        //
+        // Mirrors NPCLetterAction's cooldown machinery: a FormID →
+        // game-hours map guarded by g_cooldownMutex. Stamped by
+        // NPCVisitAction_Cooldowns::OnVisitCompleted when Salutation
+        // → Discuss fires; read by IsSenderOnCooldown() during visit
+        // candidate viability filtering. Persists via the
+        // NPCVisitAction_Persistence co-save record.
+        std::mutex                              g_cooldownMutex;
+        std::unordered_map<RE::FormID, double>  g_senderLastVisitGameHours;
+
+        double VisitCurrentGameHours()
+        {
+            auto* calendar = RE::Calendar::GetSingleton();
+            if (!calendar) return 0.0;
+            return static_cast<double>(calendar->GetHoursPassed());
+        }
+
         // ---- Forward declarations for cross-block calls -------------
         void RegisterDiscussWatchdog(RE::FormID senderFormID);
         void RegisterReturnHomeWatchdog();
@@ -606,6 +641,12 @@ namespace NarrativeEngine
                     const auto snap = VisitState::GetSnapshot();
                     VisitConclusionPoll::Arm(snap);
                     RegisterDiscussWatchdog(snap.senderFormID);
+
+                    // Stamp the per-sender cooldown NOW that the
+                    // sender has actually arrived and spoken. Rolled-
+                    // back Salutations (never reached this branch)
+                    // don't count — the sender was never seen.
+                    NPCVisitAction_Cooldowns::OnVisitCompleted(snap.senderFormID);
                 },
                 // onTimeout — do nothing; DetectAndRollbackFailedStart
                 // owns the Salutation-timeout rollback branch.
@@ -1411,7 +1452,7 @@ namespace NarrativeEngine
         // impossible in practice, but defensive) does not re-fire
         // the closing line.
 
-        void FireValediction()
+        void FireValediction(bool closingAlreadySpoken = false)
         {
             if (g_valedictionFired.exchange(true)) {
                 logger::debug(
@@ -1429,8 +1470,8 @@ namespace NarrativeEngine
 
             const auto snap = VisitState::GetSnapshot();
             logger::info(
-                "NPCVisitAction: Valediction entry (nudge_count={})",
-                snap.ignoreNudgeCount);
+                "NPCVisitAction: Valediction entry (nudge_count={}, closing_already_spoken={})",
+                snap.ignoreNudgeCount, closingAlreadySpoken);
 
             // Closing-line narration. The composer's `narrationText`
             // is scene-entry framed; here we tack on a closing beat
@@ -1447,13 +1488,34 @@ namespace NarrativeEngine
                 : " Having said what needed saying, the sender prepares "
                   "to take their leave.";
             const std::string closingNarration = snap.narrationText + closingSuffix;
-            logger::info(
-                "NPCVisitAction[VALEDICTION]: dispatching closing narration "
-                "({} chars, ignored={})",
-                closingNarration.size(), ignored);
-            VMDispatchRunSenderNarration(g_visitQuest, closingNarration);
-            logger::info(
-                "NPCVisitAction[VALEDICTION]: RunSenderNarration closing turn dispatched");
+
+            // Route the closing beat via one of two SkyrimNet paths:
+            // - `RegisterPersistentEvent` (silent) — records the scene
+            //   without prompting a spoken response. Used when the LLM
+            //   observed the sender already said their goodbye during
+            //   the natural exchange, so a `DirectNarration` would
+            //   double up.
+            // - `DirectNarration` (default) — records AND prompts the
+            //   sender to speak a closing line. The usual path.
+            if (closingAlreadySpoken) {
+                logger::info(
+                    "NPCVisitAction[VALEDICTION]: dispatching SILENT closing scene "
+                    "event ({} chars, ignored={}) — LLM reported closing already "
+                    "spoken during conversation",
+                    closingNarration.size(), ignored);
+                VMDispatchRunSenderSilentSceneEvent(g_visitQuest, closingNarration);
+                logger::info(
+                    "NPCVisitAction[VALEDICTION]: RunSenderSilentSceneEvent closing "
+                    "turn dispatched");
+            } else {
+                logger::info(
+                    "NPCVisitAction[VALEDICTION]: dispatching closing narration "
+                    "({} chars, ignored={})",
+                    closingNarration.size(), ignored);
+                VMDispatchRunSenderNarration(g_visitQuest, closingNarration);
+                logger::info(
+                    "NPCVisitAction[VALEDICTION]: RunSenderNarration closing turn dispatched");
+            }
 
             const int dwellSeconds =
                 std::max(1, Settings::Get().visitValedictionDwellSeconds);
@@ -1510,9 +1572,11 @@ namespace NarrativeEngine
                 return;
             }
             logger::info(
-                "VisitPoll: fired (verdict={}, rationale=\"{}\")",
+                "VisitPoll: fired (verdict={}, rationale=\"{}\", "
+                "closing_already_spoken={})",
                 verdict->shouldConclude ? "true" : "false",
-                verdict->rationale);
+                verdict->rationale,
+                verdict->closingAlreadySpoken);
 
             // Guard: if we've already left Discuss for any reason
             // (rollback, hard-abort, someone else advancing), ignore
@@ -1532,7 +1596,7 @@ namespace NarrativeEngine
                     "NPCVisitAction[DISCUSS]: verdict=concluded — advancing to Valediction");
                 VMDispatchQuestSetStage(g_visitQuest, kStageValediction);
                 VisitConclusionPoll::Disarm();
-                FireValediction();
+                FireValediction(verdict->closingAlreadySpoken);
                 return;
             }
 
@@ -1804,7 +1868,9 @@ namespace NarrativeEngine
         // promote the sender, and EnsureQuestStarted — the Papyrus
         // Stage 0 fragment then routes to Stage 10, which does the
         // MoveTo + EvaluatePackage.
-        void HandleComposeResult(std::optional<VisitComposer::VisitBriefing> briefing)
+        void HandleComposeResult(
+            RE::FormID                                          senderNpcFormID,
+            std::optional<VisitComposer::VisitBriefing>          briefing)
         {
             auto finishWithFailure = [](const char* reason) {
                 logger::warn("NPCVisitAction: Start failure — {}", reason);
@@ -1822,8 +1888,12 @@ namespace NarrativeEngine
 
             // Sender must still resolve at callback time — the actor
             // could have been disabled / deleted between compose
-            // start and callback in rare cases.
-            auto* senderForm = RE::TESForm::LookupByID(briefing->senderNpcFormID);
+            // start and callback in rare cases. Sender FormID was
+            // picked by action-select and carried through the
+            // compose round-trip; VisitComposer already did a
+            // preliminary check but we re-check here defensively
+            // because the compose LLM window is still non-zero.
+            auto* senderForm = RE::TESForm::LookupByID(senderNpcFormID);
             auto* sender = senderForm ? senderForm->As<RE::Actor>() : nullptr;
             if (!sender) {
                 finishWithFailure("sender FormID no longer resolves to an Actor");
@@ -1847,7 +1917,6 @@ namespace NarrativeEngine
             snap.narrationText           = briefing->narration;
             snap.topicTag                = briefing->topicTag;
             snap.mood                    = briefing->mood;
-            snap.tags                    = briefing->tags;
             snap.dispatchedAtRealSeconds = RealSecondsNow();
             snap.ignoreNudgeCount        = 0;
             snap.consecutivePollFailures = 0;
@@ -2176,15 +2245,51 @@ namespace NarrativeEngine
             return {false, "quest still cleaning up from a prior dispatch"};
         }
 
+        // Parse sender_npc_form_id — required. The action-select LLM
+        // picked the sender from the visit_sender_candidates list;
+        // if the field is missing or malformed we fail Start cleanly
+        // (matches NPCLetterAction::Start's shape). Callers should
+        // treat this as an LLM validation failure, not a bug.
+        if (!parameters.is_object()) {
+            logger::warn(
+                "NPCVisitAction::Start: refused — parameters is not a JSON object");
+            return {false, "parameters is not a JSON object"};
+        }
+        RE::FormID senderNpcFormID = 0;
+        {
+            auto it = parameters.find("sender_npc_form_id");
+            if (it == parameters.end() || !it->is_string()) {
+                logger::warn(
+                    "NPCVisitAction::Start: refused — parameters.sender_npc_form_id "
+                    "missing or not a string");
+                return {false,
+                        "parameters.sender_npc_form_id missing or not a string"};
+            }
+            const auto idStr = it->get<std::string>();
+            try {
+                senderNpcFormID = static_cast<RE::FormID>(
+                    std::stoul(idStr, nullptr, /*base=*/0));
+            } catch (...) {
+                logger::warn(
+                    "NPCVisitAction::Start: refused — sender_npc_form_id "
+                    "unparseable: '{}'", idStr);
+                return {false,
+                        "parameters.sender_npc_form_id unparseable: '" + idStr + "'"};
+            }
+            if (senderNpcFormID == 0) {
+                logger::warn(
+                    "NPCVisitAction::Start: refused — sender_npc_form_id resolved to 0");
+                return {false, "parameters.sender_npc_form_id resolved to 0"};
+            }
+        }
+
         // Decode urgency_hint (low / medium / high; default medium).
         VisitComposer::UrgencyHint urgency = VisitComposer::UrgencyHint::Medium;
-        if (parameters.is_object()) {
-            if (auto it = parameters.find("urgency_hint");
-                it != parameters.end() && it->is_string()) {
-                const auto v = it->get<std::string>();
-                if      (v == "low")  urgency = VisitComposer::UrgencyHint::Low;
-                else if (v == "high") urgency = VisitComposer::UrgencyHint::High;
-            }
+        if (auto it = parameters.find("urgency_hint");
+            it != parameters.end() && it->is_string()) {
+            const auto v = it->get<std::string>();
+            if      (v == "low")  urgency = VisitComposer::UrgencyHint::Low;
+            else if (v == "high") urgency = VisitComposer::UrgencyHint::High;
         }
 
         // Enter Composing pseudo-state — DerivePhase will report
@@ -2205,17 +2310,20 @@ namespace NarrativeEngine
         // visit runs orphaned — no rollback poll, no throttled logs.
         g_terminalCleanupDone.store(false);
 
-        logger::info("NPCVisitAction: composing briefing (urgency={})",
-                     urgency == VisitComposer::UrgencyHint::High   ? "high"
-                     : urgency == VisitComposer::UrgencyHint::Low  ? "low"
-                                                                    : "medium");
+        logger::info(
+            "NPCVisitAction: composing briefing (sender=0x{:08X}, urgency={})",
+            senderNpcFormID,
+            urgency == VisitComposer::UrgencyHint::High   ? "high"
+            : urgency == VisitComposer::UrgencyHint::Low  ? "low"
+                                                           : "medium");
 
         VisitComposer::Compose(
-            ctx, urgency,
-            [](std::optional<VisitComposer::VisitBriefing> briefing) {
+            ctx, urgency, senderNpcFormID,
+            [senderNpcFormID]
+            (std::optional<VisitComposer::VisitBriefing> briefing) {
                 AsyncDispatch::MarshalToMainThread(
-                    [briefing = std::move(briefing)]() mutable {
-                        HandleComposeResult(std::move(briefing));
+                    [senderNpcFormID, briefing = std::move(briefing)]() mutable {
+                        HandleComposeResult(senderNpcFormID, std::move(briefing));
                     });
             });
 
@@ -2397,5 +2505,127 @@ namespace NarrativeEngine
         g_terminalCleanupDone.store(false);
         logger::info("NPCVisitAction: DetectCompletion — visit fully unwound");
         return true;
+    }
+
+    namespace NPCVisitAction_Cooldowns
+    {
+        void OnVisitCompleted(RE::FormID senderNpcFormID)
+        {
+            if (senderNpcFormID == 0) return;
+            const double nowHours = VisitCurrentGameHours();
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                g_senderLastVisitGameHours[senderNpcFormID] = nowHours;
+            }
+            logger::info(
+                "NPCVisitAction: per-sender cooldown stamp set for 0x{:08X} at "
+                "gameHours={:.2f}",
+                senderNpcFormID, nowHours);
+        }
+
+        bool IsSenderOnCooldown(RE::FormID senderNpcFormID)
+        {
+            const int cooldownHours = Settings::Get().visitSenderCooldownGameHours;
+            if (cooldownHours <= 0 || senderNpcFormID == 0) return false;
+            double stamp = 0.0;
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                auto it = g_senderLastVisitGameHours.find(senderNpcFormID);
+                if (it == g_senderLastVisitGameHours.end()) return false;
+                stamp = it->second;
+            }
+            if (stamp <= 0.0) return false;
+            const double elapsed = VisitCurrentGameHours() - stamp;
+            return elapsed < static_cast<double>(cooldownHours);
+        }
+    }
+
+    namespace NPCVisitAction_Persistence
+    {
+        constexpr std::uint32_t kRecordVersion = 1;
+
+        void OnSave(SKSE::SerializationInterface* intfc)
+        {
+            if (!intfc) return;
+            if (!intfc->OpenRecord(kRecordTypeId, kRecordVersion)) {
+                logger::error("NPCVisitAction::OnSave: OpenRecord failed");
+                return;
+            }
+
+            // Snapshot under lock, then write outside the lock.
+            std::vector<std::pair<RE::FormID, double>> senderStamps;
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                senderStamps.reserve(g_senderLastVisitGameHours.size());
+                for (const auto& kv : g_senderLastVisitGameHours) {
+                    senderStamps.emplace_back(kv.first, kv.second);
+                }
+            }
+
+            const std::uint32_t count = static_cast<std::uint32_t>(senderStamps.size());
+            intfc->WriteRecordData(count);
+            for (const auto& kv : senderStamps) {
+                intfc->WriteRecordData(kv.first);
+                intfc->WriteRecordData(kv.second);
+            }
+        }
+
+        void OnLoad(SKSE::SerializationInterface* intfc,
+                    std::uint32_t                 version,
+                    std::uint32_t                 length)
+        {
+            if (!intfc) return;
+            if (version != kRecordVersion) {
+                logger::warn(
+                    "NPCVisitAction::OnLoad: unknown version {} (length={}); "
+                    "clearing cooldown state",
+                    version, length);
+                OnRevert();
+                return;
+            }
+
+            std::uint32_t count = 0;
+            if (intfc->ReadRecordData(count) != sizeof(count)) {
+                logger::error(
+                    "NPCVisitAction::OnLoad: short read on sender-count; clearing");
+                OnRevert();
+                return;
+            }
+
+            std::unordered_map<RE::FormID, double> loaded;
+            loaded.reserve(count);
+            for (std::uint32_t i = 0; i < count; ++i) {
+                RE::FormID fid = 0;
+                double     h   = 0.0;
+                if (intfc->ReadRecordData(fid) != sizeof(fid) ||
+                    intfc->ReadRecordData(h)   != sizeof(h)) {
+                    logger::error(
+                        "NPCVisitAction::OnLoad: short read on sender entry {}; "
+                        "clearing everything and bailing", i);
+                    OnRevert();
+                    return;
+                }
+                // ResolveFormID converts saved formIDs across load-order
+                // changes. If the sender's mod is no longer loaded, skip
+                // the entry rather than resurrecting a stale FormID.
+                RE::FormID resolved = 0;
+                if (intfc->ResolveFormID(fid, resolved) && resolved != 0) {
+                    loaded[resolved] = h;
+                }
+            }
+
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                g_senderLastVisitGameHours = std::move(loaded);
+            }
+            logger::info(
+                "NPCVisitAction::OnLoad: restored senderCount={}", count);
+        }
+
+        void OnRevert()
+        {
+            std::scoped_lock lock(g_cooldownMutex);
+            g_senderLastVisitGameHours.clear();
+        }
     }
 }

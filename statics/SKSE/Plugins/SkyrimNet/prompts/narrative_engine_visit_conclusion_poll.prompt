@@ -7,7 +7,8 @@
      elapsed_seconds, nudge_count
 
    Returns:
-     { should_conclude: bool, rationale: string }
+     { should_conclude: bool, rationale: string,
+       closing_already_spoken: bool (optional) }
 #}
 [ system ]
 ## Task
@@ -51,16 +52,27 @@ sampled lines yet (very early Discuss).
 {% endif %}
 
 ## Output format
-Return a JSON object with exactly these two keys. No markdown fences.
-No prose before or after the JSON object.
+Return a JSON object. No markdown fences. No prose before or after
+the JSON object.
 
 - `should_conclude` — boolean. `true` iff the beat has landed and
-  the sender should now speak a closing line and leave. `false` if
-  the exchange is still mid-development.
+  the sender should now leave. `false` if the exchange is still
+  mid-development.
 - `rationale` — string. One sentence, 15 words or fewer, naming
   the specific signal(s) that drove the decision (e.g.
   `"apology explicitly acknowledged; sender has nothing left to press"`,
   or `"player just changed subject; sender's core point hasn't landed"`).
+- `closing_already_spoken` — boolean, **optional**. Set to `true`
+  when `should_conclude` is `true` AND {{ sender_name }} has already
+  said something that functions as their closing/goodbye line
+  during the recent exchange — e.g., they've explicitly wished
+  {{ player_name }} well, said "I should be going", spoken a
+  farewell phrase, or otherwise wrapped up their own speaking
+  turn. When true, the plugin will still write the closing scene
+  beat into the event log but will NOT prompt {{ sender_name }} to
+  say goodbye a second time. When omitted or `false`, the plugin
+  fires a fresh closing spoken line as usual. Ignored when
+  `should_conclude` is `false`.
 
 ## What "concluded" looks like
 Signals that the beat has landed and the visit should conclude:

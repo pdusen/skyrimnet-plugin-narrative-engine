@@ -105,6 +105,7 @@ namespace NarrativeEngine
                     ActionDispatcher::OnRevert();
                     AmbushAction_Persistence::OnRevert();
                     NPCLetterAction_Persistence::OnRevert();
+                    NPCVisitAction_Persistence::OnRevert();
                     VisitState::OnRevert();
                     PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
                     Tick::Start();
@@ -128,6 +129,7 @@ namespace NarrativeEngine
                     ActionDispatcher::OnRevert();
                     AmbushAction_Persistence::OnRevert();
                     NPCLetterAction_Persistence::OnRevert();
+                    NPCVisitAction_Persistence::OnRevert();
                     VisitState::OnRevert();
                     PhaseTracker::Reset();
                     break;
@@ -153,6 +155,7 @@ namespace NarrativeEngine
             ActionDispatcher::OnSave(intfc);
             AmbushAction_Persistence::OnSave(intfc);
             NPCLetterAction_Persistence::OnSave(intfc);
+            NPCVisitAction_Persistence::OnSave(intfc);
             LetterPool::OnSave(intfc);
             VisitState::OnSave(intfc);
             // Future subsystems append their OnSave calls here.
@@ -188,6 +191,9 @@ namespace NarrativeEngine
                     case NPCLetterAction_Persistence::kRecordTypeId:
                         NPCLetterAction_Persistence::OnLoad(intfc, version, length);
                         break;
+                    case NPCVisitAction_Persistence::kRecordTypeId:
+                        NPCVisitAction_Persistence::OnLoad(intfc, version, length);
+                        break;
                     case LetterPool::kRecordTypeId:
                         LetterPool::OnLoad(intfc, version, length);
                         break;
@@ -215,6 +221,7 @@ namespace NarrativeEngine
             ActionDispatcher::OnRevert();
             AmbushAction_Persistence::OnRevert();
             NPCLetterAction_Persistence::OnRevert();
+            NPCVisitAction_Persistence::OnRevert();
             LetterPool::OnRevert();
             VisitState::OnRevert();
             // Future subsystems append their OnRevert calls here.

@@ -465,6 +465,13 @@ namespace NarrativeEngine::VisitConclusionPoll
                     ratIt != parsed.end() && ratIt->is_string()) {
                     v.rationale = LLMTextSanitizer::Sanitize(ratIt->get<std::string>());
                 }
+                // `closing_already_spoken` is optional — missing
+                // defaults to false, which preserves the pre-
+                // existing DirectNarration path.
+                if (auto casIt = parsed.find("closing_already_spoken");
+                    casIt != parsed.end() && casIt->is_boolean()) {
+                    v.closingAlreadySpoken = casIt->get<bool>();
+                }
 
                 g_consecutivePollFailures.store(0);
                 PushVerdict(v.shouldConclude, v.rationale);

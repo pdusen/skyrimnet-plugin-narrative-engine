@@ -84,6 +84,24 @@ support the tone the moment needs.
             {%- endfor %}
         {% endfor -%}
     {% endif %}
+    {%- if length(cand.visit_sender_candidates) > 0 %}
+#### Available visit senders
+
+If you pick this action, choose ONE of the NPCs below to be the visitor
+and include their `form_id` as `sender_npc_form_id` inside `parameters`.
+Prefer candidates whose recent memories most naturally motivate an
+in-person visit right now — an unresolved beat, an emotional weight
+that can't survive being written down, or urgent information that
+needs to land face-to-face.
+
+        {%- for s in cand.visit_sender_candidates %}
+##### {{ s.name }} (form_id: {{ s.form_id }})
+
+            {%- for mem in s.memories %}
+- [{{ mem.type }}, {{ mem.age_hours }}h ago{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
+            {%- endfor %}
+        {% endfor -%}
+    {% endif %}
 {% endfor -%}
 [ end system ]
 
