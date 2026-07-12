@@ -1571,7 +1571,7 @@ here.
 
 ### Step 10 — Reshape and rename NPC Letter → `NPCLetterBeat`
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 

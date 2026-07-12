@@ -2,7 +2,7 @@
 
 #include <EvaluationPipeline.h>
 #include <LLMTextSanitizer.h>
-#include <NPCLetterAction.h>
+#include <NPCLetterBeat.h>
 #include <SenderCandidatePool.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -168,7 +168,7 @@ namespace NarrativeEngine::LetterComposer
             if (actor->IsDisabled())                                 return SenderViability::Disabled;
             if (actor->Is3DLoaded())                                 return SenderViability::CurrentlyLoaded;
             if (IsWithinWalkingDistanceOfPlayer(actor))              return SenderViability::WalkingDistance;
-            if (NPCLetterAction_Cooldowns::IsSenderOnCooldown(formId)) return SenderViability::SenderCooldown;
+            if (NPCLetterBeat_Cooldowns::IsSenderOnCooldown(formId)) return SenderViability::SenderCooldown;
             return SenderViability::Viable;
         }
 
@@ -571,7 +571,7 @@ namespace NarrativeEngine::LetterComposer
                     if (skipReasonOut) *skipReasonOut = "walking-distance";
                     return false;
                 }
-                if (NPCLetterAction_Cooldowns::IsSenderOnCooldown(
+                if (NPCLetterBeat_Cooldowns::IsSenderOnCooldown(
                         actor->GetFormID())) {
                     if (skipReasonOut) *skipReasonOut = "sender-cooldown";
                     return false;
@@ -621,7 +621,7 @@ namespace NarrativeEngine::LetterComposer
         // chosen sender. Fresh memories are supplied by the caller so we
         // don't re-fetch after already validating on the main thread.
         nlohmann::json BuildComposePromptContext(
-            const ActionContext&  ctx,
+            const BeatContext&  ctx,
             UrgencyHint           urgencyHint,
             const std::string&    playerName,
             const std::string&    senderName,
@@ -801,7 +801,7 @@ namespace NarrativeEngine::LetterComposer
         return out;
     }
 
-    void Compose(const ActionContext& ctx,
+    void Compose(const BeatContext& ctx,
                  UrgencyHint          urgencyHint,
                  RE::FormID           senderNpcFormID,
                  std::function<void(std::optional<LetterComposition>)> callback)

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <IAction.h>
+#include <IBeat.h>
 
 #include <nlohmann/json.hpp>
 
@@ -96,7 +96,7 @@ namespace NarrativeEngine::LetterComposer
     // validation failure). Failure reasons are logged so the call site
     // doesn't need to forward error details.
     void Compose(
-        const ActionContext& ctx,
+        const BeatContext& ctx,
         UrgencyHint          urgencyHint,
         RE::FormID           senderNpcFormID,
         std::function<void(std::optional<LetterComposition>)> callback);

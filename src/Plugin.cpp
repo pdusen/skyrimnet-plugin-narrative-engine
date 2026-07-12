@@ -11,7 +11,7 @@
 #include <DecisionLog.h>
 #include <Decorators.h>
 #include <LetterPool.h>
-#include <NPCLetterAction.h>
+#include <NPCLetterBeat.h>
 #include <NPCVisitAction.h>
 #include <PhaseTracker.h>
 #include <PrismaUI.h>
@@ -74,7 +74,7 @@ namespace NarrativeEngine
                     // AmbushBeat lands here (Step 8); NPCLetterBeat and
                     // NPCVisitBeat land in Steps 9 and 10.
                     BeatRegistry::Register(std::make_unique<AmbushBeat>());
-                    // ActionRegistry::Register(std::make_unique<NPCLetterAction>());
+                    BeatRegistry::Register(std::make_unique<NPCLetterBeat>());
                     // if (Settings::Get().enableNpcVisit) {
                     //     ActionRegistry::Register(std::make_unique<NPCVisitAction>());
                     //     NPCVisitAction_Init::Initialize();
@@ -98,11 +98,11 @@ namespace NarrativeEngine
                     // (courier → player) and the discard / drop recycle
                     // paths.
                     LetterPool::RegisterContainerEventSink();
-                    // PHASE-06: NPCLetterAction_Init temporarily disabled
-                    // while the Narrative Beat System is stood up.
-                    // Restored in Phase 06 Step 10 (as part of
-                    // NPCLetterBeat's own init).
-                    // NPCLetterAction_Init::Initialize();
+                    // Resolve WICourier, per-slot delivery quests, and
+                    // the sender-marker faction. Must run AFTER
+                    // LetterPool::Initialize (the per-slot quest cache
+                    // is keyed against LetterPool slot indices).
+                    NPCLetterBeat_Init::Initialize();
                     break;
                 case SKSE::MessagingInterface::kNewGame:
                     logger::info("OnMessage: kNewGame");
@@ -111,7 +111,7 @@ namespace NarrativeEngine
                     ActionDispatcher::OnRevert();
                     BeatSystem::OnRevert();
                     AmbushBeat_Persistence::OnRevert();
-                    NPCLetterAction_Persistence::OnRevert();
+                    NPCLetterBeat_Persistence::OnRevert();
                     NPCVisitAction_Persistence::OnRevert();
                     VisitState::OnRevert();
                     PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
@@ -136,7 +136,7 @@ namespace NarrativeEngine
                     ActionDispatcher::OnRevert();
                     BeatSystem::OnRevert();
                     AmbushBeat_Persistence::OnRevert();
-                    NPCLetterAction_Persistence::OnRevert();
+                    NPCLetterBeat_Persistence::OnRevert();
                     NPCVisitAction_Persistence::OnRevert();
                     VisitState::OnRevert();
                     PhaseTracker::Reset();
@@ -163,7 +163,7 @@ namespace NarrativeEngine
             ActionDispatcher::OnSave(intfc);
             BeatSystem::OnSave(intfc);
             AmbushBeat_Persistence::OnSave(intfc);
-            NPCLetterAction_Persistence::OnSave(intfc);
+            NPCLetterBeat_Persistence::OnSave(intfc);
             NPCVisitAction_Persistence::OnSave(intfc);
             LetterPool::OnSave(intfc);
             VisitState::OnSave(intfc);
@@ -200,8 +200,8 @@ namespace NarrativeEngine
                     case AmbushBeat_Persistence::kRecordTypeId:
                         AmbushBeat_Persistence::OnLoad(intfc, version, length);
                         break;
-                    case NPCLetterAction_Persistence::kRecordTypeId:
-                        NPCLetterAction_Persistence::OnLoad(intfc, version, length);
+                    case NPCLetterBeat_Persistence::kRecordTypeId:
+                        NPCLetterBeat_Persistence::OnLoad(intfc, version, length);
                         break;
                     case NPCVisitAction_Persistence::kRecordTypeId:
                         NPCVisitAction_Persistence::OnLoad(intfc, version, length);
@@ -233,7 +233,7 @@ namespace NarrativeEngine
             ActionDispatcher::OnRevert();
             BeatSystem::OnRevert();
             AmbushBeat_Persistence::OnRevert();
-            NPCLetterAction_Persistence::OnRevert();
+            NPCLetterBeat_Persistence::OnRevert();
             NPCVisitAction_Persistence::OnRevert();
             LetterPool::OnRevert();
             VisitState::OnRevert();

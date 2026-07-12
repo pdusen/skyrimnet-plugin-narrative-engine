@@ -1,6 +1,6 @@
 #include <LetterPool.h>
 
-#include <NPCLetterAction.h>
+#include <NPCLetterBeat.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <logger.h>
@@ -508,7 +508,7 @@ namespace NarrativeEngine::LetterPool
             // deliberately bypasses for same-frame timing). Must fire
             // while LetterRef is still filled — the VM call captures
             // the REFR argument by-value up-front.
-            NPCLetterAction_QuestControl::ReleaseLetterFromCourier(chosen);
+            NPCLetterBeat_QuestControl::ReleaseLetterFromCourier(chosen);
             // Then delete the letter REFR via the LetterRef alias
             // BEFORE resetting the quest — quest.Reset() clears alias
             // fills, and after that the REFR is unreachable through
@@ -516,7 +516,7 @@ namespace NarrativeEngine::LetterPool
             // lives (player inventory, merchant chest, world drop),
             // so a single Disable+SetDelete catches world-drop cases
             // the sweep in EvictSlot might miss.
-            NPCLetterAction_QuestControl::DeleteLetterRef(chosen);
+            NPCLetterBeat_QuestControl::DeleteLetterRef(chosen);
             // Then synchronously Stop() + Reset() the per-slot
             // delivery quest. Allocate is followed immediately (same
             // frame) by PopulateSlot + PromoteSender +
@@ -526,7 +526,7 @@ namespace NarrativeEngine::LetterPool
             // pass. The native Stop+Reset is idempotent on an
             // already-stopped quest, so the Free-slot case is fine
             // too.
-            NPCLetterAction_QuestControl::ShutdownSlotQuestSync(chosen);
+            NPCLetterBeat_QuestControl::ShutdownSlotQuestSync(chosen);
             EvictSlot(chosen);
             // Re-check FormID under the lock — defensive against the
             // (very unlikely) case where the slot's form unloaded
@@ -973,7 +973,7 @@ namespace NarrativeEngine::LetterPool
         // Advance the per-slot delivery quest to Stage 40 ("read by
         // player"). The quest stays running until disposal (Stage 50)
         // or allocator eviction (Stage 60).
-        NPCLetterAction_QuestControl::AdvanceSlotStage(slotIndex, 40);
+        NPCLetterBeat_QuestControl::AdvanceSlotStage(slotIndex, 40);
     }
 
     namespace
@@ -1041,7 +1041,7 @@ namespace NarrativeEngine::LetterPool
         //
         // The sweeps below match by BASE form, not by specific REFR.
         // The caller is expected to have already called
-        // `NPCLetterAction_QuestControl::DeleteLetterRef(slotIndex)`
+        // `NPCLetterBeat_QuestControl::DeleteLetterRef(slotIndex)`
         // BEFORE the quest was reset — that path Disable+SetDeletes
         // the specific persistent REFR via the LetterRef alias, which
         // catches world-drop and other exotic-container cases the
@@ -1216,8 +1216,8 @@ namespace NarrativeEngine::LetterPool
         }
         // Fire the per-sender cooldown stamp outside our mutex to avoid
         // any risk of lock inversion with NPCLetterAction's own mutex.
-        NPCLetterAction_Cooldowns::OnLetterDelivered(senderFormID);
-        NPCLetterAction_QuestControl::AdvanceSlotStage(slotIndex, 30);
+        NPCLetterBeat_Cooldowns::OnLetterDelivered(senderFormID);
+        NPCLetterBeat_QuestControl::AdvanceSlotStage(slotIndex, 30);
     }
 
     void MarkDiscardedToContainer(std::size_t slotIndex, RE::TESObjectREFR* destination)
@@ -1244,7 +1244,7 @@ namespace NarrativeEngine::LetterPool
         //     actors (via ProcessLists) and the player's current
         //     cell, which misses container REFRs like merchant
         //     chests — the exact path a sold letter takes.
-        NPCLetterAction_QuestControl::DeleteLetterRef(slotIndex);
+        NPCLetterBeat_QuestControl::DeleteLetterRef(slotIndex);
         RE::FormID bookFormID = 0;
         {
             std::scoped_lock lock(g_mutex);
@@ -1267,7 +1267,7 @@ namespace NarrativeEngine::LetterPool
         // wipes state so the quest advances against a still-populated
         // slot; the terminal shutdown races EvictSlot but the two are
         // independent (quest lifecycle vs. slot lifecycle).
-        NPCLetterAction_QuestControl::AdvanceSlotStage(slotIndex, 50);
+        NPCLetterBeat_QuestControl::AdvanceSlotStage(slotIndex, 50);
         EvictSlot(slotIndex);
     }
 
@@ -1284,8 +1284,8 @@ namespace NarrativeEngine::LetterPool
             slotIndex,
             worldRef ? worldRef->GetFormID() : 0u);
         // Delete the letter REFR via the alias (see MarkDiscardedToContainer).
-        NPCLetterAction_QuestControl::DeleteLetterRef(slotIndex);
-        NPCLetterAction_QuestControl::AdvanceSlotStage(slotIndex, 50);
+        NPCLetterBeat_QuestControl::DeleteLetterRef(slotIndex);
+        NPCLetterBeat_QuestControl::AdvanceSlotStage(slotIndex, 50);
         EvictSlot(slotIndex);
     }
 
