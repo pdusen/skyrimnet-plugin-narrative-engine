@@ -5,6 +5,7 @@
 #include <BeatRegistry.h>
 #include <CombatEventLog.h>
 #include <DecisionLog.h>
+#include <EngineUtils.h>
 #include <EvaluationPipeline.h>
 #include <LLMTextSanitizer.h>
 #include <LetterComposer.h>
@@ -70,33 +71,18 @@ namespace NarrativeEngine::BeatSystem
         // iterations. At 250ms cadence, 40 ticks = ~10s.
         constexpr int kHeartbeatEveryNTicks = 40;
 
-        // ----- Gate reads (safe-off-thread bool reads on stable
-        //       singleton pointers; see PHASE_06 doc) -------------------
-
-        bool ReadGamePaused()
-        {
-            auto* ui = RE::UI::GetSingleton();
-            return ui != nullptr && ui->GameIsPaused();
-        }
-
-        bool ReadPlayerInCombat()
-        {
-            auto* pc = RE::PlayerCharacter::GetSingleton();
-            return pc != nullptr && pc->IsInCombat();
-        }
-
-        bool ReadPlayerInDialogue()
-        {
-            auto* ui = RE::UI::GetSingleton();
-            if (!ui) return false;
-            return ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME);
-        }
-
+        // Gate-derived TickMode. The three underlying reads live in
+        // EngineUtils so other subsystems (e.g. beats' own Tick logic
+        // that wants a paused-check without going through BeatSystem)
+        // can share the same "safe off-thread bool read on a stable
+        // singleton pointer" guarantee. Precedence: Paused > Combat
+        // > Dialogue > Normal — a paused game is never also reported
+        // as Combat or Dialogue.
         TickMode ComputeTickMode()
         {
-            const bool paused   = ReadGamePaused();
-            const bool combat   = ReadPlayerInCombat();
-            const bool dialogue = ReadPlayerInDialogue();
+            const bool paused   = EngineUtils::IsGamePaused();
+            const bool combat   = EngineUtils::IsPlayerInCombat();
+            const bool dialogue = EngineUtils::IsPlayerInDialogue();
             if (paused)   return TickMode::Paused;
             if (combat)   return TickMode::Combat;
             if (dialogue) return TickMode::Dialogue;
@@ -251,9 +237,9 @@ namespace NarrativeEngine::BeatSystem
                         const TickMode mode = ComputeTickMode();
                         if (topState == TopLevelState::NO_BEAT_RUNNING) {
                             logger::debug(
-                                "BeatSystem: heartbeat state={} mode={} cooldown={}ms",
+                                "BeatSystem: heartbeat state={} mode={} cooldown={:.1f}s",
                                 TopLevelStateName(topState),
-                                TickModeName(mode), cooldown);
+                                TickModeName(mode), cooldown / 1000.0);
                         } else {
                             logger::debug(
                                 "BeatSystem: heartbeat state={} mode={} "
@@ -466,9 +452,9 @@ namespace NarrativeEngine::BeatSystem
         }
         logger::info(
             "BeatSystem::OnLoad: restored state={} beat='{}' "
-            "cooldown={}ms beat_state={}",
+            "cooldown={:.1f}s beat_state={}",
             TopLevelStateName(topStateLoaded),
-            g_runningBeatName, cooldownLoaded,
+            g_runningBeatName, cooldownLoaded / 1000.0,
             static_cast<int>(beatStateLoaded));
     }
 
@@ -1031,8 +1017,9 @@ namespace NarrativeEngine::BeatSystem
                     cooldownThresholdMs - cooldownMs;
                 logger::debug(
                     "BeatSystem::ConsiderBeat: gate cooldown blocked: "
-                    "{}ms of {}ms accumulated ({}ms remaining)",
-                    cooldownMs, cooldownThresholdMs, remaining);
+                    "{:.1f}s of {:.1f}s accumulated ({:.1f}s remaining)",
+                    cooldownMs / 1000.0, cooldownThresholdMs / 1000.0,
+                    remaining / 1000.0);
             }
             FinalizeWithoutBeat(std::move(rec), std::move(onFinalized));
             return;
