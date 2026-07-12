@@ -758,6 +758,7 @@ one faction, one quest, and two AI packages.
     | 50 | ReturnHome entry | `Sender.GetActorReference().EvaluatePackage()` (swaps Follow → Travel) |
     | 60 | Rollback | `SetStage(200)` |
     | 200 | Terminal (Complete Quest ON) | `Shutdown()` |
+
 - **`_ne_VisitFollow`** — First AI package on the Sender alias.
   Package type: **Follow**. Target Actor: `PlayerRef`. Follow
   Distance: `iVisitSalutationApproachDistanceUnits` (~300u
@@ -1417,6 +1418,7 @@ must keep working.
 **Sub-tasks:**
 
 1. Design the helper's public API:
+
    ```cpp
    namespace NarrativeEngine::SenderCandidatePool
    {
@@ -1441,6 +1443,7 @@ must keep working.
                                 const std::function<bool(RE::Actor*)>& extraFilter);
    }
    ```
+
 2. Move the top-N-by-engagement + per-candidate memory-fetch code
    from `LetterComposer::BuildContext` into
    `SenderCandidatePool::Build`. The letter-specific viability
@@ -1501,6 +1504,7 @@ hook.
    **Sender-selection LLM call** section (briefing 40–120 words,
    mood enum, tags array of 2–6).
 2. Public API:
+
    ```cpp
    struct VisitBriefing
    {
@@ -1515,6 +1519,7 @@ hook.
                 int                  urgencyHint,  // 0=low, 1=med, 2=high
                 std::function<void(std::optional<VisitBriefing>)> callback);
    ```
+
 3. Implementation:
    - Build the candidate pool via `SenderCandidatePool::Build`
      with the Visit-specific viability filter (unique / alive /
@@ -1766,6 +1771,7 @@ step of the phase, but the pieces are mostly mechanical.
   binds the Follow package to the sender.
 
 **Verify:** Open xEdit on `NarrativeEngine.esp`. Confirm:
+
 - One FACT record `_ne_VisitSenderFaction`.
 - Two PACK records `_ne_VisitFollow` and
   `_ne_VisitReturnTravel`, each with the correct type,
@@ -2011,6 +2017,7 @@ wires in at Step 11.
    nudge_count), output
    `{ should_conclude: bool, rationale: string }`.
 2. Public API:
+
    ```cpp
    struct PollVerdict
    {
@@ -2023,6 +2030,7 @@ wires in at Step 11.
    bool GateTick(); // returns true if any gate tripped this tick
    void FirePoll(std::function<void(std::optional<PollVerdict>)> callback);
    ```
+
 3. Internal state (all in the module's file scope, guarded by
    mutex):
    - `int turnsSinceLastPoll`.
@@ -2582,6 +2590,7 @@ the panel shows an empty state and just the (possibly empty)
 history list.
 
 Trigger a visit dispatch:
+
 - Panel appears in Salutation with the aux line showing
   distance-to-approach.
 - After the sender approaches, panel flips to Discuss; the
@@ -2599,7 +2608,7 @@ history entry with `aborted` outcome appears.
 
 ### Step 17 — End-to-end integration verification
 
-- [ ] Complete
+- [x] Complete
 
 **[USER]**
 
