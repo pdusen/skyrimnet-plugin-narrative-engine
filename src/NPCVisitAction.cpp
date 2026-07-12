@@ -256,10 +256,21 @@ namespace NarrativeEngine
         // returns true or `maxDuration` elapses.
         //
         // The worker thread runs the poll loop; each predicate
-        // evaluation marshals to main and blocks on a promise so
-        // engine access stays main-thread-only. The 5s safety timeout
-        // on the future avoids hanging the worker if the main thread
-        // wedges.
+        // evaluation marshals to main and blocks on a shared promise
+        // so engine access stays main-thread-only.
+        //
+        // Wedge tolerance: the main thread can be arbitrarily busy
+        // (loading screens, save/load, heavy menu transitions) and
+        // may take many seconds to service a marshaled predicate. An
+        // earlier version of this helper treated any main-thread
+        // stall of >5s as a fatal timeout and fired `onTimeout`,
+        // which caused visit pollers to silently disarm during a
+        // loading screen mid-conversation. `onTimeout` is now fired
+        // ONLY when the wall-clock elapsed since `start` genuinely
+        // reaches `maxDuration`; a slow main thread just means we
+        // wait longer on the current predicate. We poll the future
+        // in short chunks so we can still notice the maxDuration
+        // deadline while a stall is in progress.
         void PollUntilOrTimeout(
             std::function<bool()>     predicate,
             std::function<void()>     onSuccess,
@@ -275,6 +286,15 @@ namespace NarrativeEngine
                  interval, maxDuration,
                  diagLabel    = std::move(diagLabel)]() mutable {
                     const auto start = std::chrono::steady_clock::now();
+                    // Chunk size for future.wait_for while we're
+                    // waiting on the marshaled predicate. Kept short
+                    // so the maxDuration check has fine-grained
+                    // resolution even during a long stall.
+                    constexpr auto kWaitChunk = std::chrono::milliseconds(250);
+                    // How often to log a "still waiting on main
+                    // thread" heartbeat when the predicate takes
+                    // unusually long to run (loading screen, etc.).
+                    constexpr auto kStallHeartbeat = std::chrono::seconds(10);
                     while (true) {
                         auto promise = std::make_shared<std::promise<bool>>();
                         auto future  = promise->get_future();
@@ -285,16 +305,36 @@ namespace NarrativeEngine
                                 promise->set_value(ok);
                             });
 
-                        const auto status =
-                            future.wait_for(std::chrono::seconds(5));
-                        if (status != std::future_status::ready) {
-                            logger::warn(
-                                "NPCVisitAction::PollUntilOrTimeout[{}]: predicate "
-                                "did not run within 5s; treating as timeout",
-                                diagLabel);
-                            AsyncDispatch::MarshalToMainThread(std::move(onTimeout));
-                            return;
+                        const auto marshalStart = std::chrono::steady_clock::now();
+                        auto       nextHeartbeat = marshalStart + kStallHeartbeat;
+                        std::future_status status = std::future_status::timeout;
+                        while (true) {
+                            status = future.wait_for(kWaitChunk);
+                            if (status == std::future_status::ready) break;
+                            const auto now = std::chrono::steady_clock::now();
+                            // maxDuration guard even during a stall.
+                            if (now - start >= maxDuration) {
+                                logger::warn(
+                                    "NPCVisitAction::PollUntilOrTimeout[{}]: "
+                                    "maxDuration reached while waiting on stalled "
+                                    "main thread (waited {:.1f}s on current "
+                                    "predicate); firing onTimeout",
+                                    diagLabel,
+                                    std::chrono::duration<double>(now - marshalStart).count());
+                                AsyncDispatch::MarshalToMainThread(std::move(onTimeout));
+                                return;
+                            }
+                            if (now >= nextHeartbeat) {
+                                logger::debug(
+                                    "NPCVisitAction::PollUntilOrTimeout[{}]: main "
+                                    "thread has not run predicate for {:.1f}s "
+                                    "(likely load/menu); still waiting",
+                                    diagLabel,
+                                    std::chrono::duration<double>(now - marshalStart).count());
+                                nextHeartbeat = now + kStallHeartbeat;
+                            }
                         }
+
                         if (future.get()) {
                             AsyncDispatch::MarshalToMainThread(std::move(onSuccess));
                             return;
