@@ -816,7 +816,8 @@ Preserved unchanged:
 
 Sequential. Each step is **entirely Claude's work (C++ /
 INI / build)** or **entirely the user's work (Creation Kit
-+ Papyrus)**. Every step has a self-contained verification
+
+- Papyrus)**. Every step has a self-contained verification
 and builds on the previous ones. After every step the
 plugin builds cleanly and boots; steps that reshape a beat
 also require an in-game force-dispatch pass.

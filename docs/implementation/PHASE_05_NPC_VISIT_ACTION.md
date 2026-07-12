@@ -947,7 +947,7 @@ recoverable from the quest / aliases / SkyrimNet.
 New co-save record `'NEVS'` (NarrativeEngine Visit), version 1.
 Payload:
 
-```
+```text
 uint32  senderFormID                      ; via WriteRecordData; ResolveFormID on load.
                                           ; Redundant with the Sender alias's engine-persisted fill,
                                           ; but keeping it lets the reload path validate that the alias

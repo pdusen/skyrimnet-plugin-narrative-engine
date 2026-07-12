@@ -19,9 +19,7 @@ namespace NarrativeEngine::AlphaCanon
                 return {};
             }
             const auto last = std::find_if(sv.rbegin(), sv.rend(), notSpace).base();
-            return sv.substr(
-                static_cast<std::size_t>(first - sv.begin()),
-                static_cast<std::size_t>(last - first));
+            return sv.substr(static_cast<std::size_t>(first - sv.begin()), static_cast<std::size_t>(last - first));
         }
 
         // True if `needle` appears as one of the comma-separated tokens in
@@ -34,7 +32,7 @@ namespace NarrativeEngine::AlphaCanon
             std::size_t pos = 0;
             while (pos <= csv.size()) {
                 const auto comma = csv.find(',', pos);
-                const auto end   = (comma == std::string_view::npos) ? csv.size() : comma;
+                const auto end = (comma == std::string_view::npos) ? csv.size() : comma;
                 if (Trim(csv.substr(pos, end - pos)) == needle) {
                     return true;
                 }
@@ -45,7 +43,7 @@ namespace NarrativeEngine::AlphaCanon
             }
             return false;
         }
-    }
+    } // namespace
 
     bool IsInActiveCombat()
     {
@@ -100,20 +98,28 @@ namespace NarrativeEngine::AlphaCanon
     Signal EvaluateAll()
     {
         Signal mask = Signal::None;
-        if (IsInActiveCombat())     mask |= Signal::InActiveCombat;
-        if (IsInScriptedScene())    mask |= Signal::InScriptedScene;
-        if (IsInDialogue())         mask |= Signal::InDialogue;
-        if (IsInDoNotDisturbCell()) mask |= Signal::InDoNotDisturbCell;
+        if (IsInActiveCombat())
+            mask |= Signal::InActiveCombat;
+        if (IsInScriptedScene())
+            mask |= Signal::InScriptedScene;
+        if (IsInDialogue())
+            mask |= Signal::InDialogue;
+        if (IsInDoNotDisturbCell())
+            mask |= Signal::InDoNotDisturbCell;
         return mask;
     }
 
     std::vector<std::string> Names(Signal mask)
     {
         std::vector<std::string> names;
-        if (HasFlag(mask, Signal::InActiveCombat))     names.emplace_back("InActiveCombat");
-        if (HasFlag(mask, Signal::InScriptedScene))    names.emplace_back("InScriptedScene");
-        if (HasFlag(mask, Signal::InDialogue))         names.emplace_back("InDialogue");
-        if (HasFlag(mask, Signal::InDoNotDisturbCell)) names.emplace_back("InDoNotDisturbCell");
+        if (HasFlag(mask, Signal::InActiveCombat))
+            names.emplace_back("InActiveCombat");
+        if (HasFlag(mask, Signal::InScriptedScene))
+            names.emplace_back("InScriptedScene");
+        if (HasFlag(mask, Signal::InDialogue))
+            names.emplace_back("InDialogue");
+        if (HasFlag(mask, Signal::InDoNotDisturbCell))
+            names.emplace_back("InDoNotDisturbCell");
         return names;
     }
-}
+} // namespace NarrativeEngine::AlphaCanon

@@ -75,4 +75,4 @@ namespace NarrativeEngine::PrismaUI_API
     // the view's JavaScript context route into `callback`. No-op when
     // PrismaUI is unavailable or the handle is invalid.
     void RegisterJSListener(ViewHandle view, const std::string& functionName, JSListenerCallback callback);
-}
+} // namespace NarrativeEngine::PrismaUI_API

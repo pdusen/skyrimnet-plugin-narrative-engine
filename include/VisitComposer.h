@@ -60,11 +60,11 @@ namespace NarrativeEngine::VisitComposer
     // sender's memories on the main thread before composing).
     struct SenderCandidate
     {
-        RE::FormID     formId           = 0;
-        std::string    name;
-        double         engagementScore  = 0.0;
-        double         lastInteractedAt = 0.0;
-        nlohmann::json memories         = nlohmann::json::array();
+        RE::FormID formId = 0;
+        std::string name;
+        double engagementScore = 0.0;
+        double lastInteractedAt = 0.0;
+        nlohmann::json memories = nlohmann::json::array();
     };
 
     // Main-thread only. Ranks recent engagement through
@@ -83,8 +83,7 @@ namespace NarrativeEngine::VisitComposer
     // prompt consumes: [{form_id (hex str), name, engagement_score,
     // last_interacted_at, memories}]. Mirrors
     // LetterComposer::SerializeSenderCandidates.
-    nlohmann::json SerializeSenderCandidates(
-        const std::vector<SenderCandidate>& candidates);
+    nlohmann::json SerializeSenderCandidates(const std::vector<SenderCandidate>& candidates);
 
     // Async. Composes a visit briefing FROM a pre-chosen sender —
     // the action-select LLM picks the sender, this call embodies
@@ -112,15 +111,14 @@ namespace NarrativeEngine::VisitComposer
     // reaches compose. Empty string means beat-select didn't supply
     // one; the prompt handles the empty case by inventing motivation
     // from the sender's memory tail.
-    void Compose(
-        const BeatContext& ctx,
-        UrgencyHint          urgencyHint,
-        RE::FormID           senderNpcFormID,
-        std::string          parameterJustification,
-        std::function<void(std::optional<VisitBriefing>)> callback);
+    void Compose(const BeatContext& ctx,
+                 UrgencyHint urgencyHint,
+                 RE::FormID senderNpcFormID,
+                 std::string parameterJustification,
+                 std::function<void(std::optional<VisitBriefing>)> callback);
 
     // The set of moods the composer will accept. Exposed for testing.
     // Visits add `contrite` on top of the letter's mood set — an
     // apology beat that fits Falling Action / Resolution.
     bool IsValidMood(const std::string& mood);
-}
+} // namespace NarrativeEngine::VisitComposer

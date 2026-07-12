@@ -3,7 +3,10 @@
 #include <array>
 #include <string_view>
 
-namespace RE { class BGSLocation; }
+namespace RE
+{
+    class BGSLocation;
+}
 
 // Curated lists of vanilla BGSLocation keywords, grouped by the
 // authorial meaning each set conveys, plus helpers that check a Location
@@ -122,4 +125,4 @@ namespace NarrativeEngine::LocationKeywords
     // would be jarring — dungeons, bandit camps (via IsDangerous), plus
     // jails, arenas, and barracks (via the extras table).
     bool IsVisitHostile(RE::BGSLocation* loc);
-}
+} // namespace NarrativeEngine::LocationKeywords

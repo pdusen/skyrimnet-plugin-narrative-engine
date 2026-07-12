@@ -24,15 +24,15 @@ namespace NarrativeEngine::DecisionLog
 {
     struct DecisionRecord
     {
-        double                              realTimeSec        = 0.0;
-        float                               gameDaysPassed     = 0.0f;
-        std::uint32_t                       tensionScore       = 0;  // 0..100
-        PhaseTracker::Phase                 currentPhase       = PhaseTracker::Phase::Exposition;
-        std::optional<PhaseTracker::Phase>  advancedToPhase;          // nullopt = no advancement this tick
-        std::string                         beatSelected;             // empty = no beat selected
-        std::string                         beatParametersJSON;
-        std::string                         narrativeNote;            // LLM-supplied rationale
-        std::uint32_t                       alphaCanonActiveSignals = 0;  // bitmask snapshot at evaluation time
+        double realTimeSec = 0.0;
+        float gameDaysPassed = 0.0f;
+        std::uint32_t tensionScore = 0; // 0..100
+        PhaseTracker::Phase currentPhase = PhaseTracker::Phase::Exposition;
+        std::optional<PhaseTracker::Phase> advancedToPhase; // nullopt = no advancement this tick
+        std::string beatSelected;                           // empty = no beat selected
+        std::string beatParametersJSON;
+        std::string narrativeNote;                 // LLM-supplied rationale
+        std::uint32_t alphaCanonActiveSignals = 0; // bitmask snapshot at evaluation time
     };
 
     // SKSE co-save record type ID for the decision log. Frozen.
@@ -63,4 +63,4 @@ namespace NarrativeEngine::DecisionLog
     void OnSave(SKSE::SerializationInterface* intfc);
     void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);
     void OnRevert();
-}
+} // namespace NarrativeEngine::DecisionLog

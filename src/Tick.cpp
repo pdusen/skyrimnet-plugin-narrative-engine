@@ -3,9 +3,9 @@
 #include <AsyncDispatch.h>
 #include <CombatEventLog.h>
 #include <EvaluationPipeline.h>
+#include <logger.h>
 #include <PhaseTracker.h>
 #include <Settings.h>
-#include <logger.h>
 
 #include <algorithm>
 #include <atomic>
@@ -19,19 +19,19 @@ namespace NarrativeEngine::Tick
     namespace
     {
         // Driver-thread synchronization.
-        std::mutex              g_mutex;
+        std::mutex g_mutex;
         std::condition_variable g_cv;
-        std::thread             g_thread;
-        bool                    g_running    = false;
-        bool                    g_shouldStop = false;
+        std::thread g_thread;
+        bool g_running = false;
+        bool g_shouldStop = false;
 
         // Main-thread accumulator state. Read and written only on the main
         // thread (via SKSE's task interface), so no synchronization needed
         // beyond the marshaling. Reset in Start() before the worker thread
         // begins polling.
         std::chrono::steady_clock::time_point g_lastSampleTime;
-        double                                g_unpausedSecondsSinceLastTick = 0.0;
-        int                                   g_tickCount                    = 0;
+        double g_unpausedSecondsSinceLastTick = 0.0;
+        int g_tickCount = 0;
 
         // How often to sample the pause state. 500ms is a comfortable
         // tradeoff: brisk enough that resuming after a long pause kicks the
@@ -52,8 +52,7 @@ namespace NarrativeEngine::Tick
         void PollOnMainThread()
         {
             const auto now = std::chrono::steady_clock::now();
-            const double elapsedSec =
-                std::chrono::duration<double>(now - g_lastSampleTime).count();
+            const double elapsedSec = std::chrono::duration<double>(now - g_lastSampleTime).count();
             g_lastSampleTime = now;
 
             // The same pause predicate the rest of the engine uses for
@@ -86,8 +85,7 @@ namespace NarrativeEngine::Tick
             }
             g_unpausedSecondsSinceLastTick += elapsedSec;
 
-            const double intervalSec =
-                static_cast<double>(std::max(1, Settings::Get().tickIntervalSeconds));
+            const double intervalSec = static_cast<double>(std::max(1, Settings::Get().tickIntervalSeconds));
             if (g_unpausedSecondsSinceLastTick < intervalSec) {
                 return;
             }
@@ -123,7 +121,7 @@ namespace NarrativeEngine::Tick
                 AsyncDispatch::MarshalToMainThread([] { PollOnMainThread(); });
             }
         }
-    }
+    } // namespace
 
     void Start()
     {
@@ -134,15 +132,14 @@ namespace NarrativeEngine::Tick
         // Reset the accumulator so a fresh interval starts from "now."
         // These are main-thread-only globals; Start() is called from the
         // main thread (kPostLoadGame / kNewGame), so writing here is safe.
-        g_lastSampleTime               = std::chrono::steady_clock::now();
+        g_lastSampleTime = std::chrono::steady_clock::now();
         g_unpausedSecondsSinceLastTick = 0.0;
-        g_tickCount                    = 0;
+        g_tickCount = 0;
 
         g_shouldStop = false;
-        g_running    = true;
-        g_thread     = std::thread(DriverLoop);
-        logger::info("Tick: driver thread started (interval={}s, paused-aware)",
-                     Settings::Get().tickIntervalSeconds);
+        g_running = true;
+        g_thread = std::thread(DriverLoop);
+        logger::info("Tick: driver thread started (interval={}s, paused-aware)", Settings::Get().tickIntervalSeconds);
     }
 
     void SetEnabled(bool enabled)
@@ -175,4 +172,4 @@ namespace NarrativeEngine::Tick
         g_running = false;
         logger::info("Tick: driver thread stopped");
     }
-}
+} // namespace NarrativeEngine::Tick

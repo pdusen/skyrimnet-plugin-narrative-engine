@@ -1,7 +1,7 @@
 #include <BeatRegistry.h>
 
-#include <Settings.h>
 #include <logger.h>
+#include <Settings.h>
 
 #include <atomic>
 #include <chrono>
@@ -19,11 +19,11 @@ namespace NarrativeEngine::BeatRegistry
         struct Entry
         {
             std::unique_ptr<IBeat> beat;
-            std::atomic<bool>      enabled{true};
-            std::atomic<double>    lastDispatchedRealTime{0.0};
+            std::atomic<bool> enabled{true};
+            std::atomic<double> lastDispatchedRealTime{0.0};
         };
 
-        std::mutex                          g_mutex;
+        std::mutex g_mutex;
         std::vector<std::unique_ptr<Entry>> g_entries;
 
         // Seed enabled state from Settings by beat name. Runtime toggles
@@ -31,9 +31,12 @@ namespace NarrativeEngine::BeatRegistry
         bool InitialEnabledFromSettings(const std::string& name)
         {
             const auto& cfg = Settings::Get();
-            if (name == "ambush")     return cfg.enableAmbush;
-            if (name == "npc_letter") return cfg.enableNpcLetter;
-            if (name == "npc_visit")  return cfg.enableNpcVisit;
+            if (name == "ambush")
+                return cfg.enableAmbush;
+            if (name == "npc_letter")
+                return cfg.enableNpcLetter;
+            if (name == "npc_visit")
+                return cfg.enableNpcVisit;
             // Unknown beat — default enabled. Any new beat added to the
             // registry gets a matching bEnableXxx INI key + Settings
             // wiring; until then, "true" is the safe default.
@@ -54,10 +57,9 @@ namespace NarrativeEngine::BeatRegistry
 
         double NowUnixSeconds()
         {
-            return std::chrono::duration<double>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
+            return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
         }
-    }
+    } // namespace
 
     void Initialize()
     {
@@ -88,9 +90,7 @@ namespace NarrativeEngine::BeatRegistry
         entry->beat = std::move(beat);
         entry->enabled.store(initialEnabled, std::memory_order_release);
         g_entries.push_back(std::move(entry));
-        logger::info(
-            "BeatRegistry: registered '{}' (initial enabled={})",
-            name, initialEnabled);
+        logger::info("BeatRegistry: registered '{}' (initial enabled={})", name, initialEnabled);
     }
 
     std::vector<EntryView> All()
@@ -99,7 +99,8 @@ namespace NarrativeEngine::BeatRegistry
         std::scoped_lock lock(g_mutex);
         out.reserve(g_entries.size());
         for (const auto& e : g_entries) {
-            if (!e || !e->beat) continue;
+            if (!e || !e->beat)
+                continue;
             out.push_back({
                 e->beat.get(),
                 e->beat->Name(),
@@ -122,16 +123,12 @@ namespace NarrativeEngine::BeatRegistry
         std::scoped_lock lock(g_mutex);
         auto* e = FindEntryLocked(name);
         if (!e) {
-            logger::warn(
-                "BeatRegistry::SetEnabled: unknown beat '{}'",
-                std::string{name});
+            logger::warn("BeatRegistry::SetEnabled: unknown beat '{}'", std::string{name});
             return;
         }
         const bool prev = e->enabled.exchange(enabled, std::memory_order_acq_rel);
         if (prev != enabled) {
-            logger::info(
-                "BeatRegistry: '{}' enabled -> {}",
-                std::string{name}, enabled);
+            logger::info("BeatRegistry: '{}' enabled -> {}", std::string{name}, enabled);
         }
     }
 
@@ -139,7 +136,8 @@ namespace NarrativeEngine::BeatRegistry
     {
         std::scoped_lock lock(g_mutex);
         auto* e = FindEntryLocked(name);
-        if (!e) return false;
+        if (!e)
+            return false;
         return e->enabled.load(std::memory_order_acquire);
     }
 
@@ -147,7 +145,8 @@ namespace NarrativeEngine::BeatRegistry
     {
         std::scoped_lock lock(g_mutex);
         auto* e = FindEntryLocked(name);
-        if (!e) return;
+        if (!e)
+            return;
         e->lastDispatchedRealTime.store(NowUnixSeconds(), std::memory_order_release);
     }
 
@@ -155,26 +154,29 @@ namespace NarrativeEngine::BeatRegistry
     {
         std::scoped_lock lock(g_mutex);
         auto* e = FindEntryLocked(name);
-        if (!e) return 0.0;
+        if (!e)
+            return 0.0;
         return e->lastDispatchedRealTime.load(std::memory_order_acquire);
     }
 
-    std::vector<IBeat*> AvailableMatching(const BeatContext& ctx,
-                                          BeatPolarity        desired)
+    std::vector<IBeat*> AvailableMatching(const BeatContext& ctx, BeatPolarity desired)
     {
         std::vector<IBeat*> out;
         std::scoped_lock lock(g_mutex);
         out.reserve(g_entries.size());
         for (const auto& e : g_entries) {
-            if (!e || !e->beat) continue;
-            if (!e->enabled.load(std::memory_order_acquire)) continue;
+            if (!e || !e->beat)
+                continue;
+            if (!e->enabled.load(std::memory_order_acquire))
+                continue;
             const auto pol = e->beat->Polarity();
-            const bool polarityFits =
-                (pol == BeatPolarity::Either) || (pol == desired);
-            if (!polarityFits) continue;
-            if (!e->beat->IsAvailable(ctx)) continue;
+            const bool polarityFits = (pol == BeatPolarity::Either) || (pol == desired);
+            if (!polarityFits)
+                continue;
+            if (!e->beat->IsAvailable(ctx))
+                continue;
             out.push_back(e->beat.get());
         }
         return out;
     }
-}
+} // namespace NarrativeEngine::BeatRegistry

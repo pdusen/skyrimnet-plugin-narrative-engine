@@ -29,7 +29,8 @@ namespace NarrativeEngine::LocationKeywords
             if (!kw) {
                 logger::warn(
                     "LocationKeywords: EditorID '{}' resolved to a non-keyword form (type=0x{:02X}); filter degraded",
-                    edid, static_cast<unsigned>(form->GetFormType()));
+                    edid,
+                    static_cast<unsigned>(form->GetFormType()));
                 return nullptr;
             }
             return kw;
@@ -59,8 +60,7 @@ namespace NarrativeEngine::LocationKeywords
             return cache;
         }
 
-        const std::array<RE::BGSKeyword*, kVisitHostileExtras.size()>&
-            ResolvedVisitHostileExtras()
+        const std::array<RE::BGSKeyword*, kVisitHostileExtras.size()>& ResolvedVisitHostileExtras()
         {
             static const auto cache = []() {
                 std::array<RE::BGSKeyword*, kVisitHostileExtras.size()> out{};
@@ -98,16 +98,17 @@ namespace NarrativeEngine::LocationKeywords
         {
             std::string out;
             for (auto* l : chain) {
-                if (!out.empty()) out += " -> ";
+                if (!out.empty())
+                    out += " -> ";
                 out += LocationLabel(l);
             }
             return out;
         }
 
         template <std::size_t N>
-        bool LocationOrAncestorHasAny(RE::BGSLocation*                              loc,
-                                      const std::array<RE::BGSKeyword*, N>&         keywords,
-                                      std::string_view                              setLabel)
+        bool LocationOrAncestorHasAny(RE::BGSLocation* loc,
+                                      const std::array<RE::BGSKeyword*, N>& keywords,
+                                      std::string_view setLabel)
         {
             if (!loc) {
                 return false;
@@ -120,12 +121,11 @@ namespace NarrativeEngine::LocationKeywords
                 for (auto* kw : keywords) {
                     if (kw && loc->HasKeyword(kw)) {
                         const char* kwEdid = kw->GetFormEditorID();
-                        logger::debug(
-                            "LocationKeywords: {} is {} because keyword {} is on {}",
-                            LocationLabel(startLoc),
-                            setLabel,
-                            (kwEdid && *kwEdid) ? kwEdid : "(unknown)",
-                            FormatChain(chain));
+                        logger::debug("LocationKeywords: {} is {} because keyword {} is on {}",
+                                      LocationLabel(startLoc),
+                                      setLabel,
+                                      (kwEdid && *kwEdid) ? kwEdid : "(unknown)",
+                                      FormatChain(chain));
                         return true;
                     }
                 }
@@ -133,7 +133,7 @@ namespace NarrativeEngine::LocationKeywords
             }
             return false;
         }
-    }
+    } // namespace
 
     bool IsSafe(RE::BGSLocation* loc)
     {
@@ -150,7 +150,6 @@ namespace NarrativeEngine::LocationKeywords
         if (LocationOrAncestorHasAny(loc, ResolvedDangerous(), "VisitHostile(dangerous)")) {
             return true;
         }
-        return LocationOrAncestorHasAny(loc, ResolvedVisitHostileExtras(),
-                                        "VisitHostile(extras)");
+        return LocationOrAncestorHasAny(loc, ResolvedVisitHostileExtras(), "VisitHostile(extras)");
     }
-}
+} // namespace NarrativeEngine::LocationKeywords

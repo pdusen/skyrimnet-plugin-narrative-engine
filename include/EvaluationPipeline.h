@@ -40,8 +40,7 @@ namespace NarrativeEngine::EvaluationPipeline
     // Phase D parser — worker thread. Reads the LLM's JSON response and
     // pre-fills snapshot-derived defaults so even a parse failure produces
     // a usable record. Stubbed for Step 9.
-    DecisionLog::DecisionRecord ParseDecision(const std::string& jsonResponse,
-                                              const Snapshot& snapshot);
+    DecisionLog::DecisionRecord ParseDecision(const std::string& jsonResponse, const Snapshot& snapshot);
 
     // Phase D applier — main thread. Appends to DecisionLog and applies any
     // phase advance. Stubbed for Step 9.
@@ -53,4 +52,4 @@ namespace NarrativeEngine::EvaluationPipeline
     // best-effort tolerance so a fenced response still parses. Exposed for
     // BeatSystem and any other LLM consumer.
     std::string StripMarkdownFences(const std::string& input);
-}
+} // namespace NarrativeEngine::EvaluationPipeline

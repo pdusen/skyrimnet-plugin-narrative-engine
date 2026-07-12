@@ -42,30 +42,25 @@ namespace NarrativeEngine::SkyrimNetAPI
     //
     // Returns false if the underlying function pointer is null or the task
     // failed to queue.
-    bool SendCustomPromptToLLM(
-        const std::string& promptName,
-        const std::string& variant,
-        const std::string& contextJson,
-        std::function<void(std::string response, bool success)> callback);
+    bool SendCustomPromptToLLM(const std::string& promptName,
+                               const std::string& variant,
+                               const std::string& contextJson,
+                               std::function<void(std::string response, bool success)> callback);
 
     // Returns SkyrimNet's recent-events JSON (an array of event objects with
     // fields: type, text, gameTime, originatingActorName, targetActorName).
     // formId=0 returns the global event stream; an empty filter accepts every
     // event type. Returns "[]" if SkyrimNet is unavailable.
-    std::string GetRecentEvents(
-        std::uint32_t formId,
-        int maxCount,
-        const std::string& eventTypeFilter);
+    std::string GetRecentEvents(std::uint32_t formId, int maxCount, const std::string& eventTypeFilter);
 
     // Registers a custom Inja-template / eligibility-rule decorator with
     // SkyrimNet. The callback must be thread-safe — SkyrimNet calls it from
     // its prompt-rendering thread, which may not be the main thread.
     // Returns false if SkyrimNet is unavailable or registration fails (e.g.
     // name collision with a built-in).
-    bool RegisterDecorator(
-        const std::string& name,
-        const std::string& description,
-        std::function<std::string(RE::Actor*)> callback);
+    bool RegisterDecorator(const std::string& name,
+                           const std::string& description,
+                           std::function<std::string(RE::Actor*)> callback);
 
     // True if a decorator by this name is already registered (built-in or
     // from another plugin). Use before RegisterDecorator if you want to log
@@ -92,9 +87,9 @@ namespace NarrativeEngine::SkyrimNetAPI
     // maxCount=0 returns every actor with any activity.
     // shortWindow / mediumWindow are in *game* seconds (86400=1 day,
     // 604800=7 days are sensible defaults).
-    std::string GetActorEngagement(int    maxCount,
-                                   bool   excludePlayer,
-                                   bool   playerEventsOnly,
+    std::string GetActorEngagement(int maxCount,
+                                   bool excludePlayer,
+                                   bool playerEventsOnly,
                                    double shortWindowSeconds,
                                    double mediumWindowSeconds);
 
@@ -103,9 +98,7 @@ namespace NarrativeEngine::SkyrimNetAPI
     // SkyrimNet's vector search. Empty contextQuery falls back to
     // recency. Returns "[]" if SkyrimNet or its memory system isn't
     // ready.
-    std::string GetMemoriesForActor(std::uint32_t      formId,
-                                    int                maxCount,
-                                    const std::string& contextQuery);
+    std::string GetMemoriesForActor(std::uint32_t formId, int maxCount, const std::string& contextQuery);
 
     // Returns a JSON array of the most recent dialogue exchanges
     // between the player and the given NPC (chronological, oldest
@@ -129,12 +122,12 @@ namespace NarrativeEngine::SkyrimNetAPI
     // empty, both MUST be valid JSON: tagsJson a string array
     // (e.g. `["debt","market"]`), relatedActorsJson a number array of
     // FormIDs (e.g. `[20]` for the player).
-    int AddMemory(std::uint32_t      formId,
+    int AddMemory(std::uint32_t formId,
                   const std::string& contentText,
-                  float              importance,
+                  float importance,
                   const std::string& memoryType,
                   const std::string& emotion,
                   const std::string& location,
-                  const std::string& tagsJson          = {},
+                  const std::string& tagsJson = {},
                   const std::string& relatedActorsJson = {});
-}
+} // namespace NarrativeEngine::SkyrimNetAPI

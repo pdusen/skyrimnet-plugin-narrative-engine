@@ -1,8 +1,8 @@
 #include <CombatEventLog.h>
 
+#include <logger.h>
 #include <Settings.h>
 #include <SkyrimNetEvents.h>
-#include <logger.h>
 
 #include <nlohmann/json.hpp>
 
@@ -30,38 +30,43 @@ namespace NarrativeEngine::CombatEventLog
 
         enum class Kind : std::uint8_t
         {
-            CombatStart    = 0,
-            CombatEnd      = 1,
-            Hit            = 2,
-            Collapse       = 3,
-            RegainFooting  = 4,
+            CombatStart = 0,
+            CombatEnd = 1,
+            Hit = 2,
+            Collapse = 3,
+            RegainFooting = 4,
         };
 
         const char* KindName(Kind k)
         {
             switch (k) {
-                case Kind::CombatStart:   return "combat_start";
-                case Kind::CombatEnd:     return "combat_end";
-                case Kind::Hit:           return "hit";
-                case Kind::Collapse:      return "collapse";
-                case Kind::RegainFooting: return "regain_footing";
+            case Kind::CombatStart:
+                return "combat_start";
+            case Kind::CombatEnd:
+                return "combat_end";
+            case Kind::Hit:
+                return "hit";
+            case Kind::Collapse:
+                return "collapse";
+            case Kind::RegainFooting:
+                return "regain_footing";
             }
             return "unknown";
         }
 
         struct InternalEvent
         {
-            Kind        kind              = Kind::Hit;
-            double      localTime         = 0.0;   // Unix-epoch seconds
-            double      gameTime          = 0.0;   // SkyrimNet-compatible time-of-day seconds
-            std::string actorName;                 // for Hit: damage-source label (may be empty for bare fallback)
-            std::string targetName;                // unused for combat_start/end, collapse, regain_footing
-            bool        actorIsNamedActor = true;  // false for environmental hits (poison, traps, ...)
+            Kind kind = Kind::Hit;
+            double localTime = 0.0;        // Unix-epoch seconds
+            double gameTime = 0.0;         // SkyrimNet-compatible time-of-day seconds
+            std::string actorName;         // for Hit: damage-source label (may be empty for bare fallback)
+            std::string targetName;        // unused for combat_start/end, collapse, regain_footing
+            bool actorIsNamedActor = true; // false for environmental hits (poison, traps, ...)
         };
 
-        std::mutex                                g_mutex;
-        std::vector<InternalEvent>                g_events;
-        double                                    g_currentEncounterStartRealTime = 0.0;
+        std::mutex g_mutex;
+        std::vector<InternalEvent> g_events;
+        double g_currentEncounterStartRealTime = 0.0;
         std::unordered_map<RE::FormID, std::string> g_bleedingOut;
 
         // Tracks the player's IsInCombat as observed on the last Poll() call.
@@ -75,21 +80,22 @@ namespace NarrativeEngine::CombatEventLog
         std::size_t MaxStored()
         {
             const int v = Settings::Get().combatEventsMaxStored;
-            if (v <= 0) return kDefaultMaxStored;
+            if (v <= 0)
+                return kDefaultMaxStored;
             return static_cast<std::size_t>(v);
         }
 
         float HitRadiusUnits()
         {
             const int v = Settings::Get().combatEventsHitRadiusUnits;
-            if (v <= 0) return kDefaultHitRadiusUnits;
+            if (v <= 0)
+                return kDefaultHitRadiusUnits;
             return static_cast<float>(v);
         }
 
         double NowUnixSeconds()
         {
-            return std::chrono::duration<double>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
+            return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
         }
 
         double NowGameTimeOfDaySeconds()
@@ -136,15 +142,18 @@ namespace NarrativeEngine::CombatEventLog
         // bare "X took damage" form (for environmental damage labels).
         std::string ActorDisplayName(RE::Actor* actor)
         {
-            if (!actor) return {};
+            if (!actor)
+                return {};
             const char* n = actor->GetDisplayFullName();
-            if (!n || !*n) return {};
+            if (!n || !*n)
+                return {};
             return std::string(n);
         }
 
         std::string ActorDisplayName(RE::TESObjectREFR* ref)
         {
-            if (!ref) return {};
+            if (!ref)
+                return {};
             return ActorDisplayName(ref->As<RE::Actor>());
         }
 
@@ -160,11 +169,13 @@ namespace NarrativeEngine::CombatEventLog
 
         bool ContainsIgnoreCase(std::string_view haystack, std::string_view needle)
         {
-            if (needle.empty()) return true;
+            if (needle.empty())
+                return true;
             const auto tolower = [](char c) -> char {
                 return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
             };
-            if (needle.size() > haystack.size()) return false;
+            if (needle.size() > haystack.size())
+                return false;
             for (std::size_t i = 0; i + needle.size() <= haystack.size(); ++i) {
                 bool match = true;
                 for (std::size_t j = 0; j < needle.size(); ++j) {
@@ -173,7 +184,8 @@ namespace NarrativeEngine::CombatEventLog
                         break;
                     }
                 }
-                if (match) return true;
+                if (match)
+                    return true;
             }
             return false;
         }
@@ -181,7 +193,8 @@ namespace NarrativeEngine::CombatEventLog
         std::string ToLower(std::string s)
         {
             for (auto& c : s) {
-                if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+                if (c >= 'A' && c <= 'Z')
+                    c = static_cast<char>(c - 'A' + 'a');
             }
             return s;
         }
@@ -191,7 +204,8 @@ namespace NarrativeEngine::CombatEventLog
         // about fidelity to the underlying spell name; "poison" is enough.
         bool MagicItemLooksLikePoison(RE::MagicItem* magic)
         {
-            if (!magic) return false;
+            if (!magic)
+                return false;
             if (const char* n = magic->GetFullName(); n && *n) {
                 std::string_view name(n);
                 if (ContainsIgnoreCase(name, "poison") || ContainsIgnoreCase(name, "venom")) {
@@ -202,7 +216,8 @@ namespace NarrativeEngine::CombatEventLog
             // "Frostbite Venom" or "Bandit Poison" but their effects are
             // canonically Damage Health w/ delivery=ingested.
             for (auto* effect : magic->effects) {
-                if (!effect || !effect->baseEffect) continue;
+                if (!effect || !effect->baseEffect)
+                    continue;
                 if (const char* en = effect->baseEffect->GetFullName(); en && *en) {
                     std::string_view name(en);
                     if (ContainsIgnoreCase(name, "poison") || ContainsIgnoreCase(name, "venom")) {
@@ -219,7 +234,8 @@ namespace NarrativeEngine::CombatEventLog
         // sometimes get "Falling Rocks Trap" verbatim, which is fine.
         std::string LowercaseActivatorLabel(const std::string& raw)
         {
-            if (raw.empty()) return raw;
+            if (raw.empty())
+                return raw;
             return ToLower(raw);
         }
 
@@ -229,7 +245,7 @@ namespace NarrativeEngine::CombatEventLog
         struct SourceLabel
         {
             std::string label;
-            bool        isNamedActor = false;
+            bool isNamedActor = false;
         };
 
         SourceLabel ResolveHitSource(const RE::TESHitEvent& evt)
@@ -287,10 +303,10 @@ namespace NarrativeEngine::CombatEventLog
         void EmitRegainFootingLocked(const std::string& name)
         {
             InternalEvent e;
-            e.kind              = Kind::RegainFooting;
-            e.localTime         = NowUnixSeconds();
-            e.gameTime          = NowGameTimeOfDaySeconds();
-            e.actorName         = name;
+            e.kind = Kind::RegainFooting;
+            e.localTime = NowUnixSeconds();
+            e.gameTime = NowGameTimeOfDaySeconds();
+            e.actorName = name;
             e.actorIsNamedActor = true;
             PushLocked(std::move(e));
         }
@@ -301,33 +317,31 @@ namespace NarrativeEngine::CombatEventLog
         {
             std::string body;
             switch (e.kind) {
-                case Kind::CombatStart:
-                    body = e.actorName + " enters combat";
-                    break;
-                case Kind::CombatEnd:
-                    body = e.actorName + " leaves combat";
-                    break;
-                case Kind::Hit:
-                    if (e.actorIsNamedActor) {
-                        body = e.actorName + " strikes " + e.targetName;
-                    } else if (!e.actorName.empty()) {
-                        body = e.targetName + " took damage from " + e.actorName;
-                    } else {
-                        body = e.targetName + " took damage";
-                    }
-                    break;
-                case Kind::Collapse:
-                    body = e.actorName + " collapses";
-                    break;
-                case Kind::RegainFooting:
-                    body = e.actorName + " regains their footing";
-                    break;
+            case Kind::CombatStart:
+                body = e.actorName + " enters combat";
+                break;
+            case Kind::CombatEnd:
+                body = e.actorName + " leaves combat";
+                break;
+            case Kind::Hit:
+                if (e.actorIsNamedActor) {
+                    body = e.actorName + " strikes " + e.targetName;
+                } else if (!e.actorName.empty()) {
+                    body = e.targetName + " took damage from " + e.actorName;
+                } else {
+                    body = e.targetName + " took damage";
+                }
+                break;
+            case Kind::Collapse:
+                body = e.actorName + " collapses";
+                break;
+            case Kind::RegainFooting:
+                body = e.actorName + " regains their footing";
+                break;
             }
 
             const double delta = currentGameTimeSeconds - e.gameTime;
-            return "[" +
-                   SkyrimNetEvents::FormatRelativeGameTime(delta < 0.0 ? 0.0 : delta) +
-                   "] " + body;
+            return "[" + SkyrimNetEvents::FormatRelativeGameTime(delta < 0.0 ? 0.0 : delta) + "] " + body;
         }
 
         // ----------- sinks ----------------------------------------------
@@ -341,9 +355,8 @@ namespace NarrativeEngine::CombatEventLog
 
         struct HitSink : public RE::BSTEventSink<RE::TESHitEvent>
         {
-            RE::BSEventNotifyControl ProcessEvent(
-                const RE::TESHitEvent*                    a_event,
-                RE::BSTEventSource<RE::TESHitEvent>* /*src*/) override
+            RE::BSEventNotifyControl ProcessEvent(const RE::TESHitEvent* a_event,
+                                                  RE::BSTEventSource<RE::TESHitEvent>* /*src*/) override
             {
                 if (!a_event || !a_event->target) {
                     return RE::BSEventNotifyControl::kContinue;
@@ -365,7 +378,7 @@ namespace NarrativeEngine::CombatEventLog
                 }
 
                 const float radius = HitRadiusUnits();
-                const bool  targetInRange = WithinRadius(targetActor->GetPosition(), radius);
+                const bool targetInRange = WithinRadius(targetActor->GetPosition(), radius);
 
                 bool causeIsActor = false;
                 bool causeInRange = false;
@@ -388,11 +401,11 @@ namespace NarrativeEngine::CombatEventLog
                 const SourceLabel src = ResolveHitSource(*a_event);
 
                 InternalEvent e;
-                e.kind              = Kind::Hit;
-                e.localTime         = NowUnixSeconds();
-                e.gameTime          = NowGameTimeOfDaySeconds();
-                e.actorName         = src.label;       // may be empty (bare fallback)
-                e.targetName        = std::move(targetName);
+                e.kind = Kind::Hit;
+                e.localTime = NowUnixSeconds();
+                e.gameTime = NowGameTimeOfDaySeconds();
+                e.actorName = src.label; // may be empty (bare fallback)
+                e.targetName = std::move(targetName);
                 e.actorIsNamedActor = src.isNamedActor;
 
                 {
@@ -405,9 +418,8 @@ namespace NarrativeEngine::CombatEventLog
 
         struct BleedoutSink : public RE::BSTEventSink<RE::TESEnterBleedoutEvent>
         {
-            RE::BSEventNotifyControl ProcessEvent(
-                const RE::TESEnterBleedoutEvent*                    a_event,
-                RE::BSTEventSource<RE::TESEnterBleedoutEvent>* /*src*/) override
+            RE::BSEventNotifyControl ProcessEvent(const RE::TESEnterBleedoutEvent* a_event,
+                                                  RE::BSTEventSource<RE::TESEnterBleedoutEvent>* /*src*/) override
             {
                 if (!a_event || !a_event->actor) {
                     return RE::BSEventNotifyControl::kContinue;
@@ -425,10 +437,10 @@ namespace NarrativeEngine::CombatEventLog
                 }
 
                 InternalEvent e;
-                e.kind              = Kind::Collapse;
-                e.localTime         = NowUnixSeconds();
-                e.gameTime          = NowGameTimeOfDaySeconds();
-                e.actorName         = name;
+                e.kind = Kind::Collapse;
+                e.localTime = NowUnixSeconds();
+                e.gameTime = NowGameTimeOfDaySeconds();
+                e.actorName = name;
                 e.actorIsNamedActor = true;
 
                 {
@@ -440,8 +452,16 @@ namespace NarrativeEngine::CombatEventLog
             }
         };
 
-        HitSink*      GetHitSink()      { static HitSink s;      return &s; }
-        BleedoutSink* GetBleedoutSink() { static BleedoutSink s; return &s; }
+        HitSink* GetHitSink()
+        {
+            static HitSink s;
+            return &s;
+        }
+        BleedoutSink* GetBleedoutSink()
+        {
+            static BleedoutSink s;
+            return &s;
+        }
 
         // Player combat-state poll. Runs on the main thread under our mutex
         // already held by the caller. Detects IsInCombat() flips and pushes
@@ -450,16 +470,19 @@ namespace NarrativeEngine::CombatEventLog
         void PollPlayerCombatLocked()
         {
             auto* player = GetPlayer();
-            if (!player) return;
+            if (!player)
+                return;
             const bool nowInCombat = player->IsInCombat();
-            if (nowInCombat == g_playerInCombatLast) return;
+            if (nowInCombat == g_playerInCombatLast)
+                return;
 
             InternalEvent e;
-            e.kind              = nowInCombat ? Kind::CombatStart : Kind::CombatEnd;
-            e.localTime         = NowUnixSeconds();
-            e.gameTime          = NowGameTimeOfDaySeconds();
-            e.actorName         = ActorDisplayName(player);
-            if (e.actorName.empty()) e.actorName = "Player";
+            e.kind = nowInCombat ? Kind::CombatStart : Kind::CombatEnd;
+            e.localTime = NowUnixSeconds();
+            e.gameTime = NowGameTimeOfDaySeconds();
+            e.actorName = ActorDisplayName(player);
+            if (e.actorName.empty())
+                e.actorName = "Player";
             e.actorIsNamedActor = true;
 
             if (nowInCombat) {
@@ -470,11 +493,12 @@ namespace NarrativeEngine::CombatEventLog
             PushLocked(std::move(e));
             g_playerInCombatLast = nowInCombat;
         }
-    }
+    } // namespace
 
     void Initialize()
     {
-        if (g_sinksRegistered) return;
+        if (g_sinksRegistered)
+            return;
         auto* src = RE::ScriptEventSourceHolder::GetSingleton();
         if (!src) {
             logger::error("CombatEventLog: ScriptEventSourceHolder unavailable; sinks not registered");
@@ -488,7 +512,8 @@ namespace NarrativeEngine::CombatEventLog
 
     void Shutdown()
     {
-        if (!g_sinksRegistered) return;
+        if (!g_sinksRegistered)
+            return;
         if (auto* src = RE::ScriptEventSourceHolder::GetSingleton()) {
             src->RemoveEventSink<RE::TESHitEvent>(GetHitSink());
             src->RemoveEventSink<RE::TESEnterBleedoutEvent>(GetBleedoutSink());
@@ -501,9 +526,7 @@ namespace NarrativeEngine::CombatEventLog
         std::scoped_lock lock(g_mutex);
         if (g_currentEncounterStartRealTime > 0.0) {
             const double cutoff = g_currentEncounterStartRealTime;
-            std::erase_if(g_events, [cutoff](const InternalEvent& e) {
-                return e.localTime < cutoff;
-            });
+            std::erase_if(g_events, [cutoff](const InternalEvent& e) { return e.localTime < cutoff; });
         } else {
             g_events.clear();
         }
@@ -556,10 +579,9 @@ namespace NarrativeEngine::CombatEventLog
             std::scoped_lock lock(g_mutex);
             snapshot = g_events;
         }
-        std::sort(snapshot.begin(), snapshot.end(),
-                  [](const InternalEvent& a, const InternalEvent& b) {
-                      return a.localTime < b.localTime;
-                  });
+        std::sort(snapshot.begin(), snapshot.end(), [](const InternalEvent& a, const InternalEvent& b) {
+            return a.localTime < b.localTime;
+        });
 
         nlohmann::json arr = nlohmann::json::array();
         for (const auto& e : snapshot) {
@@ -568,14 +590,14 @@ namespace NarrativeEngine::CombatEventLog
             // and the dashboard / LLM don't need a finer-grained label.
             // `ne_kind` retains the specific kind for the merge step and
             // any future renderer that wants to branch.
-            j["type"]                 = "combat_event";
-            j["ne_kind"]              = KindName(e.kind);
-            j["localTime"]            = e.localTime;
-            j["gameTime"]             = e.gameTime;
+            j["type"] = "combat_event";
+            j["ne_kind"] = KindName(e.kind);
+            j["localTime"] = e.localTime;
+            j["gameTime"] = e.gameTime;
             j["originatingActorName"] = e.actorName;
-            j["targetActorName"]      = e.targetName;
-            j["ne_actor_is_named"]    = e.actorIsNamedActor;
-            j["text"]                 = RenderText(e, currentGameTimeSeconds);
+            j["targetActorName"] = e.targetName;
+            j["ne_actor_is_named"] = e.actorIsNamedActor;
+            j["text"] = RenderText(e, currentGameTimeSeconds);
             arr.push_back(std::move(j));
         }
         return arr;
@@ -592,8 +614,10 @@ namespace NarrativeEngine::CombatEventLog
         if (pl) {
             const float radius = HitRadiusUnits();
             pl->ForEachHighActor([&](RE::Actor* actor) {
-                if (!actor) return RE::BSContainer::ForEachResult::kContinue;
-                if (actor->IsDead()) return RE::BSContainer::ForEachResult::kContinue;
+                if (!actor)
+                    return RE::BSContainer::ForEachResult::kContinue;
+                if (actor->IsDead())
+                    return RE::BSContainer::ForEachResult::kContinue;
                 if (!actor->AsActorState()->IsBleedingOut()) {
                     return RE::BSContainer::ForEachResult::kContinue;
                 }
@@ -604,7 +628,8 @@ namespace NarrativeEngine::CombatEventLog
                     return RE::BSContainer::ForEachResult::kContinue;
                 }
                 std::string name = ActorDisplayName(actor);
-                if (name.empty()) return RE::BSContainer::ForEachResult::kContinue;
+                if (name.empty())
+                    return RE::BSContainer::ForEachResult::kContinue;
                 seeded[actor->GetFormID()] = std::move(name);
                 return RE::BSContainer::ForEachResult::kContinue;
             });
@@ -614,11 +639,13 @@ namespace NarrativeEngine::CombatEventLog
         // bogus combat_start for a player that was already in combat at
         // the save. (If they were in combat then, the encounter-start
         // anchor on disk should already cover it.)
-        const bool playerInCombatNow =
-            [] { auto* pc = GetPlayer(); return pc && pc->IsInCombat(); }();
+        const bool playerInCombatNow = [] {
+            auto* pc = GetPlayer();
+            return pc && pc->IsInCombat();
+        }();
 
         std::scoped_lock lock(g_mutex);
-        g_bleedingOut        = std::move(seeded);
+        g_bleedingOut = std::move(seeded);
         g_playerInCombatLast = playerInCombatNow;
     }
 
@@ -630,22 +657,26 @@ namespace NarrativeEngine::CombatEventLog
         {
             const auto len = static_cast<std::uint32_t>(s.size());
             intfc->WriteRecordData(len);
-            if (len > 0) intfc->WriteRecordData(s.data(), len);
+            if (len > 0)
+                intfc->WriteRecordData(s.data(), len);
         }
 
         bool ReadString(SKSE::SerializationInterface* intfc, std::string& out)
         {
             std::uint32_t len = 0;
-            if (intfc->ReadRecordData(len) != sizeof(len)) return false;
+            if (intfc->ReadRecordData(len) != sizeof(len))
+                return false;
             out.resize(len);
-            if (len > 0 && intfc->ReadRecordData(out.data(), len) != len) return false;
+            if (len > 0 && intfc->ReadRecordData(out.data(), len) != len)
+                return false;
             return true;
         }
-    }
+    } // namespace
 
     void OnSave(SKSE::SerializationInterface* intfc)
     {
-        if (!intfc) return;
+        if (!intfc)
+            return;
 
         // Prune before snapshotting so on-disk == in-memory rules. Same
         // logic as OnPhaseAdvanced — never persist events from a previous
@@ -653,12 +684,12 @@ namespace NarrativeEngine::CombatEventLog
         OnPhaseAdvanced();
 
         std::vector<InternalEvent> snapshot;
-        double                     encounterStart = 0.0;
+        double encounterStart = 0.0;
         {
             std::scoped_lock lock(g_mutex);
-            snapshot       = g_events;
+            snapshot = g_events;
             encounterStart = g_currentEncounterStartRealTime;
-            (void)encounterStart;  // currently recoverable from events; reserved for future schema
+            (void)encounterStart; // currently recoverable from events; reserved for future schema
         }
 
         if (!intfc->OpenRecord(kRecordTypeId, kRecordVersion)) {
@@ -681,7 +712,8 @@ namespace NarrativeEngine::CombatEventLog
 
     void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length)
     {
-        if (!intfc) return;
+        if (!intfc)
+            return;
         if (version != kRecordVersion) {
             logger::warn("CombatEventLog::OnLoad: unknown version {} (length={}); clearing", version, length);
             OnRevert();
@@ -698,11 +730,11 @@ namespace NarrativeEngine::CombatEventLog
         loaded.reserve(count);
         for (std::uint32_t i = 0; i < count; ++i) {
             InternalEvent e;
-            std::uint8_t kindByte  = 0;
+            std::uint8_t kindByte = 0;
             std::uint8_t namedByte = 0;
-            if (intfc->ReadRecordData(kindByte)  != sizeof(kindByte) ||
-                intfc->ReadRecordData(e.localTime) != sizeof(e.localTime) ||
-                intfc->ReadRecordData(e.gameTime)  != sizeof(e.gameTime)) {
+            if (intfc->ReadRecordData(kindByte) != sizeof(kindByte)
+                || intfc->ReadRecordData(e.localTime) != sizeof(e.localTime)
+                || intfc->ReadRecordData(e.gameTime) != sizeof(e.gameTime)) {
                 logger::error("CombatEventLog::OnLoad: short read on record {}/{}", i, count);
                 OnRevert();
                 return;
@@ -721,7 +753,7 @@ namespace NarrativeEngine::CombatEventLog
                 logger::warn("CombatEventLog::OnLoad: record {} invalid kind {}, skipping", i, kindByte);
                 continue;
             }
-            e.kind              = static_cast<Kind>(kindByte);
+            e.kind = static_cast<Kind>(kindByte);
             e.actorIsNamedActor = (namedByte != 0);
             loaded.push_back(std::move(e));
         }
@@ -732,7 +764,7 @@ namespace NarrativeEngine::CombatEventLog
         double encounterStart = 0.0;
         for (auto it = loaded.rbegin(); it != loaded.rend(); ++it) {
             if (it->kind == Kind::CombatEnd) {
-                break;  // newest event is a combat_end → no in-progress encounter
+                break; // newest event is a combat_end → no in-progress encounter
             }
             if (it->kind == Kind::CombatStart) {
                 encounterStart = it->localTime;
@@ -742,13 +774,12 @@ namespace NarrativeEngine::CombatEventLog
 
         {
             std::scoped_lock lock(g_mutex);
-            g_events                        = std::move(loaded);
+            g_events = std::move(loaded);
             g_currentEncounterStartRealTime = encounterStart;
             // g_bleedingOut is rebuilt in OnPostLoadGame (called separately
             // via the SKSE messaging interface), not here.
         }
-        logger::info("CombatEventLog::OnLoad: restored {} record(s), encounterStart={:.1f}",
-                     count, encounterStart);
+        logger::info("CombatEventLog::OnLoad: restored {} record(s), encounterStart={:.1f}", count, encounterStart);
     }
 
     void OnRevert()
@@ -759,4 +790,4 @@ namespace NarrativeEngine::CombatEventLog
         g_bleedingOut.clear();
         g_playerInCombatLast = false;
     }
-}
+} // namespace NarrativeEngine::CombatEventLog

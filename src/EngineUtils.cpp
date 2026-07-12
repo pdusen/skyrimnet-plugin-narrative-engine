@@ -25,7 +25,8 @@ namespace NarrativeEngine::EngineUtils
     bool IsPlayerInDialogue()
     {
         auto* ui = RE::UI::GetSingleton();
-        if (!ui) return false;
+        if (!ui)
+            return false;
         return ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME);
     }
-}
+} // namespace NarrativeEngine::EngineUtils

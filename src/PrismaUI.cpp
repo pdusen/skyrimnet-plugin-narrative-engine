@@ -4,7 +4,7 @@
 // CMakeLists.txt). It declares the PRISMA_UI_API namespace plus the inline
 // RequestPluginAPI() helper that does the GetModuleHandle / GetProcAddress
 // dance against PrismaUI.dll. Only this TU includes it.
-#include <PrismaUI_API.h>  // upstream — distinct from our own <PrismaUI.h>
+#include <PrismaUI_API.h> // upstream — distinct from our own <PrismaUI.h>
 
 #include <logger.h>
 
@@ -14,7 +14,7 @@ namespace NarrativeEngine::PrismaUI_API
     {
         bool g_initialized = false;
         PRISMA_UI_API::IVPrismaUI1* g_api = nullptr;
-    }
+    } // namespace
 
     bool Initialize()
     {
@@ -143,8 +143,6 @@ namespace NarrativeEngine::PrismaUI_API
             return;
         }
         g_api->RegisterJSListener(
-            view,
-            functionName.c_str(),
-            reinterpret_cast<PRISMA_UI_API::JSListenerCallback>(callback));
+            view, functionName.c_str(), reinterpret_cast<PRISMA_UI_API::JSListenerCallback>(callback));
     }
-}
+} // namespace NarrativeEngine::PrismaUI_API

@@ -11,4 +11,4 @@ namespace NarrativeEngine
     // Plugin entry point. Called once from the root plugin.cpp's SKSEPluginLoad
     // shim. Returns true on success; returning false aborts plugin load.
     bool Startup(const SKSE::LoadInterface* skse);
-}
+} // namespace NarrativeEngine

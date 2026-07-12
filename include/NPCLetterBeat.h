@@ -31,14 +31,13 @@ namespace NarrativeEngine
     class NPCLetterBeat : public IBeat
     {
     public:
-        std::string  Name()        const override;
-        std::string  Description() const override;
-        BeatPolarity Polarity()    const override;
-        bool         IsAvailable(const BeatContext& ctx) const override;
-        void         OnStart(const BeatContext& ctx,
-                             const nlohmann::json& parameters) override;
-        TickResult   Tick(TickMode mode, BeatState state) override;
-        double       RemainingCooldownGameHours() const override;
+        std::string Name() const override;
+        std::string Description() const override;
+        BeatPolarity Polarity() const override;
+        bool IsAvailable(const BeatContext& ctx) const override;
+        void OnStart(const BeatContext& ctx, const nlohmann::json& parameters) override;
+        TickResult Tick(TickMode mode, BeatState state) override;
+        double RemainingCooldownGameHours() const override;
     };
 
     namespace NPCLetterBeat_Init
@@ -54,7 +53,7 @@ namespace NarrativeEngine
         //
         // Idempotent — second call rewires nothing and is cheap.
         void Initialize();
-    }
+    } // namespace NPCLetterBeat_Init
 
     namespace NPCLetterBeat_QuestControl
     {
@@ -93,7 +92,7 @@ namespace NarrativeEngine
         // MUST be called BEFORE ShutdownSlotQuestSync — the VM call
         // needs the LetterRef alias filled to produce the REFR argument.
         void ReleaseLetterFromCourier(std::size_t slotIndex);
-    }
+    } // namespace NPCLetterBeat_QuestControl
 
     namespace NPCLetterBeat_Cooldowns
     {
@@ -107,7 +106,7 @@ namespace NarrativeEngine
         // within their per-sender cooldown window. Called by
         // LetterComposer during candidate filtering.
         bool IsSenderOnCooldown(RE::FormID senderNpcFormID);
-    }
+    } // namespace NPCLetterBeat_Cooldowns
 
     namespace NPCLetterBeat_Persistence
     {
@@ -115,8 +114,7 @@ namespace NarrativeEngine
         inline constexpr std::uint32_t kRecordTypeId = 'NBLP';
 
         void OnSave(SKSE::SerializationInterface* intfc);
-        void OnLoad(SKSE::SerializationInterface* intfc,
-                    std::uint32_t version, std::uint32_t length);
+        void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);
         void OnRevert();
-    }
-}
+    } // namespace NPCLetterBeat_Persistence
+} // namespace NarrativeEngine

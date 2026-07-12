@@ -7,11 +7,11 @@
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
 #include <LLMTextSanitizer.h>
+#include <logger.h>
 #include <PhaseTracker.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
-#include <logger.h>
 
 #include <nlohmann/json.hpp>
 
@@ -34,15 +34,13 @@ namespace NarrativeEngine::EvaluationPipeline
         // session bury a fresh decision whose anchor was just initialized.)
         double NowUnixSeconds()
         {
-            return std::chrono::duration<double>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
+            return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
         }
 
-        std::string JoinCSV(const std::vector<std::string> &parts)
+        std::string JoinCSV(const std::vector<std::string>& parts)
         {
             std::string out;
-            for (const auto &s : parts)
-            {
+            for (const auto& s : parts) {
                 if (!out.empty())
                     out += ',';
                 out += s;
@@ -52,22 +50,29 @@ namespace NarrativeEngine::EvaluationPipeline
 
         // Single multi-line debug dump of a snapshot. Gated on debugMode by
         // the caller.
-        void LogSnapshot(const Snapshot &s)
+        void LogSnapshot(const Snapshot& s)
         {
             logger::debug("Snapshot: realTimeSec={:.2f} phase={} timeInPhase={:.2f}s",
-                          s.realTimeSec, s.currentPhase, s.timeInPhaseSeconds);
-            logger::debug(
-                "Snapshot: player formID=0x{:08X} location='{}' (0x{:08X}) cell='{}' (0x{:08X}) interior={} "
-                "gameDays={:.3f} hour={:.2f}",
-                s.player.formID, s.player.locationName, s.player.locationFormID,
-                s.player.cellName, s.player.cellFormID, s.player.cellIsInterior,
-                s.player.gameDaysPassed, s.player.timeOfDayHours);
-            logger::debug(
-                "Snapshot: alphaCanon mask=0x{:08X} signals=[{}] decisionTail={} eventsJSON.size={}B",
-                s.alphaCanonSignalBitmask, JoinCSV(s.alphaCanonSignals),
-                s.decisionLogTail.size(), s.skyrimNetEventsJSON.size());
+                          s.realTimeSec,
+                          s.currentPhase,
+                          s.timeInPhaseSeconds);
+            logger::debug("Snapshot: player formID=0x{:08X} location='{}' (0x{:08X}) cell='{}' (0x{:08X}) interior={} "
+                          "gameDays={:.3f} hour={:.2f}",
+                          s.player.formID,
+                          s.player.locationName,
+                          s.player.locationFormID,
+                          s.player.cellName,
+                          s.player.cellFormID,
+                          s.player.cellIsInterior,
+                          s.player.gameDaysPassed,
+                          s.player.timeOfDayHours);
+            logger::debug("Snapshot: alphaCanon mask=0x{:08X} signals=[{}] decisionTail={} eventsJSON.size={}B",
+                          s.alphaCanonSignalBitmask,
+                          JoinCSV(s.alphaCanonSignals),
+                          s.decisionLogTail.size(),
+                          s.skyrimNetEventsJSON.size());
         }
-    }
+    } // namespace
 
     bool IsEvaluationInFlight()
     {
@@ -79,13 +84,13 @@ namespace NarrativeEngine::EvaluationPipeline
         // Trim leading/trailing whitespace. If the result begins with ```
         // (optionally followed by a language tag and newline), skip past
         // that opening fence and strip the closing fence too.
-        auto isSpace = [](char c) {
-            return c == ' ' || c == '\t' || c == '\r' || c == '\n';
-        };
+        auto isSpace = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
         std::size_t start = 0;
-        std::size_t end   = input.size();
-        while (start < end && isSpace(input[start])) ++start;
-        while (end > start && isSpace(input[end - 1])) --end;
+        std::size_t end = input.size();
+        while (start < end && isSpace(input[start]))
+            ++start;
+        while (end > start && isSpace(input[end - 1]))
+            --end;
         if (start == end) {
             return {};
         }
@@ -107,7 +112,8 @@ namespace NarrativeEngine::EvaluationPipeline
         }
 
         std::size_t bodyEnd = body.size();
-        while (bodyEnd > 0 && isSpace(body[bodyEnd - 1])) --bodyEnd;
+        while (bodyEnd > 0 && isSpace(body[bodyEnd - 1]))
+            --bodyEnd;
         body.resize(bodyEnd);
         return body;
     }
@@ -121,8 +127,8 @@ namespace NarrativeEngine::EvaluationPipeline
         Snapshot s;
         s.realTimeSec = NowUnixSeconds();
 
-        s.currentPhase           = PhaseTracker::PhaseName(PhaseTracker::Get());
-        s.timeInPhaseSeconds     = PhaseTracker::TimeInPhaseSeconds();
+        s.currentPhase = PhaseTracker::PhaseName(PhaseTracker::Get());
+        s.timeInPhaseSeconds = PhaseTracker::TimeInPhaseSeconds();
         s.phaseEnteredAtRealTime = PhaseTracker::PhaseEnteredAtRealTime();
         if (debug)
             logger::debug("BuildSnapshot: phase OK");
@@ -137,29 +143,24 @@ namespace NarrativeEngine::EvaluationPipeline
         if (debug)
             logger::debug("BuildSnapshot: decisionTail OK");
 
-        if (auto *pc = RE::PlayerCharacter::GetSingleton())
-        {
+        if (auto* pc = RE::PlayerCharacter::GetSingleton()) {
             s.player.formID = pc->GetFormID();
             if (debug)
                 logger::debug("BuildSnapshot: pc OK");
 
-            if (auto *loc = pc->GetCurrentLocation())
-            {
+            if (auto* loc = pc->GetCurrentLocation()) {
                 s.player.locationFormID = loc->GetFormID();
-                if (const char *name = loc->GetFullName(); name && *name)
-                {
+                if (const char* name = loc->GetFullName(); name && *name) {
                     s.player.locationName = name;
                 }
             }
             if (debug)
                 logger::debug("BuildSnapshot: location OK");
 
-            if (auto *cell = pc->GetParentCell())
-            {
+            if (auto* cell = pc->GetParentCell()) {
                 s.player.cellFormID = cell->GetFormID();
                 s.player.cellIsInterior = cell->IsInteriorCell();
-                if (const char *name = cell->GetFullName(); name && *name)
-                {
+                if (const char* name = cell->GetFullName(); name && *name) {
                     s.player.cellName = name;
                 }
             }
@@ -167,8 +168,7 @@ namespace NarrativeEngine::EvaluationPipeline
                 logger::debug("BuildSnapshot: cell OK");
         }
 
-        if (auto *cal = RE::Calendar::GetSingleton())
-        {
+        if (auto* cal = RE::Calendar::GetSingleton()) {
             s.player.gameDaysPassed = cal->GetDaysPassed();
             s.player.timeOfDayHours = cal->GetHour();
             // Convert days-since-epoch → seconds-since-epoch to match
@@ -188,7 +188,7 @@ namespace NarrativeEngine::EvaluationPipeline
         return s;
     }
 
-    std::string BuildPromptContext(const Snapshot &snapshot)
+    std::string BuildPromptContext(const Snapshot& snapshot)
     {
         nlohmann::json ctx;
         ctx["current_phase"] = snapshot.currentPhase;
@@ -205,11 +205,10 @@ namespace NarrativeEngine::EvaluationPipeline
         // typically attend more. On parse failure or non-array, fall back to
         // an empty array and warn.
         {
-            auto parsed = nlohmann::json::parse(
-                snapshot.skyrimNetEventsJSON, /*cb=*/nullptr,
-                /*allow_exceptions=*/false);
-            if (parsed.is_array())
-            {
+            auto parsed = nlohmann::json::parse(snapshot.skyrimNetEventsJSON,
+                                                /*cb=*/nullptr,
+                                                /*allow_exceptions=*/false);
+            if (parsed.is_array()) {
                 // Filter to events that occurred during the current phase.
                 // Events from prior phases have already been "consumed" by
                 // whichever past decision drove the previous advance — if
@@ -228,8 +227,9 @@ namespace NarrativeEngine::EvaluationPipeline
                 const double cutoff = snapshot.phaseEnteredAtRealTime;
                 if (cutoff > 0.0) {
                     nlohmann::json filtered = nlohmann::json::array();
-                    for (auto &evt : parsed) {
-                        if (!evt.is_object()) continue;
+                    for (auto& evt : parsed) {
+                        if (!evt.is_object())
+                            continue;
                         const double et = evt.value("localTime", 0.0);
                         if (et >= cutoff) {
                             filtered.push_back(std::move(evt));
@@ -260,16 +260,14 @@ namespace NarrativeEngine::EvaluationPipeline
                     static constexpr std::string_view kNoData = "(no data)";
                     nlohmann::json kept = nlohmann::json::array();
                     for (auto& evt : parsed) {
-                        if (!evt.is_object()) continue;
+                        if (!evt.is_object())
+                            continue;
                         auto it = evt.find("text");
                         if (it != evt.end() && it->is_string()) {
                             const auto& s = it->get_ref<const std::string&>();
-                            if (s.size() >= kNoData.size() &&
-                                s.compare(s.size() - kNoData.size(),
-                                          kNoData.size(), kNoData) == 0) {
-                                logger::warn(
-                                    "BuildPromptContext: dropping event with no usable text: {}",
-                                    evt.dump());
+                            if (s.size() >= kNoData.size()
+                                && s.compare(s.size() - kNoData.size(), kNoData.size(), kNoData) == 0) {
+                                logger::warn("BuildPromptContext: dropping event with no usable text: {}", evt.dump());
                                 continue;
                             }
                         }
@@ -286,15 +284,10 @@ namespace NarrativeEngine::EvaluationPipeline
                     std::move(parsed),
                     CombatEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
                     snapshot.player.gameTimeSeconds);
-            }
-            else
-            {
-                if (parsed.is_discarded() && !snapshot.skyrimNetEventsJSON.empty())
-                {
+            } else {
+                if (parsed.is_discarded() && !snapshot.skyrimNetEventsJSON.empty()) {
                     logger::warn("BuildPromptContext: recent_events JSON failed to parse; using combat-only tail");
-                }
-                else if (!parsed.is_discarded())
-                {
+                } else if (!parsed.is_discarded()) {
                     logger::warn("BuildPromptContext: recent_events JSON wasn't an array; using combat-only tail");
                 }
                 // Even with no SkyrimNet events, we still want our internal
@@ -309,8 +302,7 @@ namespace NarrativeEngine::EvaluationPipeline
         // decision_log_tail: oldest-first per Tail() semantics.
         {
             nlohmann::json tail = nlohmann::json::array();
-            for (const auto &r : snapshot.decisionLogTail)
-            {
+            for (const auto& r : snapshot.decisionLogTail) {
                 nlohmann::json entry = {
                     {"t", r.realTimeSec},
                     {"tension_score", r.tensionScore},
@@ -318,8 +310,7 @@ namespace NarrativeEngine::EvaluationPipeline
                     {"action", r.beatSelected},
                     {"narrative_note", r.narrativeNote},
                 };
-                if (r.advancedToPhase)
-                {
+                if (r.advancedToPhase) {
                     entry["advanced_to"] = PhaseTracker::PhaseName(*r.advancedToPhase);
                 }
                 tail.push_back(std::move(entry));
@@ -334,9 +325,9 @@ namespace NarrativeEngine::EvaluationPipeline
             char formIdHex[16];
             std::snprintf(formIdHex, sizeof(formIdHex), "0x%08X", snapshot.player.formID);
             ctx["player_context"] = {
-                {"player_form_id",   std::string(formIdHex)},
-                {"location_name",    snapshot.player.locationName},
-                {"cell_name",        snapshot.player.cellName},
+                {"player_form_id", std::string(formIdHex)},
+                {"location_name", snapshot.player.locationName},
+                {"cell_name", snapshot.player.cellName},
                 {"cell_is_interior", snapshot.player.cellIsInterior},
                 // No game-time field — the prompt template renders the
                 // current time via SkyrimNet's built-in `{{ gameTime }}`
@@ -350,24 +341,23 @@ namespace NarrativeEngine::EvaluationPipeline
         return ctx.dump();
     }
 
-    DecisionLog::DecisionRecord ParseDecision(const std::string &jsonResponse,
-                                              const Snapshot &snapshot)
+    DecisionLog::DecisionRecord ParseDecision(const std::string& jsonResponse, const Snapshot& snapshot)
     {
         // Pre-seed the record from the snapshot so even a total parse
         // failure produces a valid, dashboard-displayable record (we still
         // know the time, phase, and alpha-canon snapshot regardless of
         // what the LLM said).
         DecisionLog::DecisionRecord r;
-        r.realTimeSec             = snapshot.realTimeSec;
-        r.gameDaysPassed          = snapshot.player.gameDaysPassed;
-        r.currentPhase            = PhaseTracker::PhaseFromName(snapshot.currentPhase)
-                                        .value_or(PhaseTracker::Phase::Exposition);
+        r.realTimeSec = snapshot.realTimeSec;
+        r.gameDaysPassed = snapshot.player.gameDaysPassed;
+        r.currentPhase = PhaseTracker::PhaseFromName(snapshot.currentPhase).value_or(PhaseTracker::Phase::Exposition);
         r.alphaCanonActiveSignals = snapshot.alphaCanonSignalBitmask;
         // beatSelected stays empty at this point — the Director's
         // beat-select LLM callback populates it later in ConsiderBeat.
 
         const std::string body = StripMarkdownFences(jsonResponse);
-        const auto parsed = nlohmann::json::parse(body, /*cb=*/nullptr,
+        const auto parsed = nlohmann::json::parse(body,
+                                                  /*cb=*/nullptr,
                                                   /*allow_exceptions=*/false);
         if (parsed.is_discarded()) {
             r.narrativeNote = "parse_failure: invalid JSON";
@@ -409,7 +399,7 @@ namespace NarrativeEngine::EvaluationPipeline
         return r;
     }
 
-    void ApplyDecision(const DecisionLog::DecisionRecord &record)
+    void ApplyDecision(const DecisionLog::DecisionRecord& record)
     {
         // Append first so the next tick's snapshot sees this decision in
         // its `decisionLogTail`. The `ne_narrative_tension` decorator
@@ -431,13 +421,10 @@ namespace NarrativeEngine::EvaluationPipeline
         DashboardUIManager::PushFullState();
 
         if (Settings::Get().debugMode) {
-            logger::debug(
-                "ApplyDecision: tension={} advance={} note=\"{}\"",
-                record.tensionScore,
-                record.advancedToPhase
-                    ? PhaseTracker::PhaseName(*record.advancedToPhase)
-                    : "(no)",
-                record.narrativeNote);
+            logger::debug("ApplyDecision: tension={} advance={} note=\"{}\"",
+                          record.tensionScore,
+                          record.advancedToPhase ? PhaseTracker::PhaseName(*record.advancedToPhase) : "(no)",
+                          record.narrativeNote);
         }
     }
 
@@ -450,26 +437,22 @@ namespace NarrativeEngine::EvaluationPipeline
         // failure path) runs on the main thread, so two ticks can't see
         // overlapping in-flight state.
         bool expected = false;
-        if (!g_inFlight.compare_exchange_strong(expected, true))
-        {
-            if (Settings::Get().debugMode)
-            {
+        if (!g_inFlight.compare_exchange_strong(expected, true)) {
+            if (Settings::Get().debugMode) {
                 logger::debug("EvaluationPipeline: evaluation already in flight; skipping tick");
             }
             return;
         }
 
         Snapshot snapshot = BuildSnapshot();
-        if (Settings::Get().debugMode)
-        {
+        if (Settings::Get().debugMode) {
             LogSnapshot(snapshot);
         }
 
         // Phase B + C run on the worker thread. The snapshot is moved in
         // so the worker carries it forward into the LLM callback (Phase D
         // needs it for ParseDecision's pre-fill).
-        AsyncDispatch::EnqueueWork([snapshot = std::move(snapshot)]() mutable
-                                   {
+        AsyncDispatch::EnqueueWork([snapshot = std::move(snapshot)]() mutable {
             const std::string ctx = BuildPromptContext(snapshot);
             if (Settings::Get().debugMode) {
                 logger::debug("BuildPromptContext: produced {}B", ctx.size());
@@ -485,7 +468,9 @@ namespace NarrativeEngine::EvaluationPipeline
                 // NarrativeEngine/manifest.yaml. Without a variant the call
                 // falls back to SkyrimNet's default Dialogue LLM, which is
                 // tuned for creative writing, not per-tick classification.
-                "narrative_engine_story_eval", "narrative_engine_director", ctx,
+                "narrative_engine_story_eval",
+                "narrative_engine_director",
+                ctx,
                 [snapshot = std::move(snapshot)](std::string response, bool success) mutable {
                     if (Settings::Get().debugMode) {
                         logger::debug("LLM callback: success={} body={}B", success, response.size());
@@ -499,9 +484,7 @@ namespace NarrativeEngine::EvaluationPipeline
                         // `response`. Log + release inFlight on the main
                         // thread so the next tick can run.
                         logger::warn("EvaluationPipeline: LLM call failed: {}", response);
-                        AsyncDispatch::MarshalToMainThread([] {
-                            g_inFlight.store(false);
-                        });
+                        AsyncDispatch::MarshalToMainThread([] { g_inFlight.store(false); });
                         return;
                     }
 
@@ -512,20 +495,16 @@ namespace NarrativeEngine::EvaluationPipeline
                     // ApplyDecision (possibly after a deferred LLM round-
                     // trip) and the finalizer exactly once.
                     DecisionLog::DecisionRecord rec = ParseDecision(response, snapshot);
-                    AsyncDispatch::MarshalToMainThread(
-                        [snapshot = std::move(snapshot), rec = std::move(rec)]() mutable {
-                            BeatSystem::ConsiderBeat(
-                                std::move(snapshot), std::move(rec),
-                                [] { g_inFlight.store(false); });
-                        });
+                    AsyncDispatch::MarshalToMainThread([snapshot = std::move(snapshot),
+                                                        rec = std::move(rec)]() mutable {
+                        BeatSystem::ConsiderBeat(std::move(snapshot), std::move(rec), [] { g_inFlight.store(false); });
+                    });
                 });
 
             if (!queued) {
-                logger::warn(
-                    "EvaluationPipeline: SendCustomPromptToLLM returned false; dropping tick's evaluation");
-                AsyncDispatch::MarshalToMainThread([] {
-                    g_inFlight.store(false);
-                });
-            } });
+                logger::warn("EvaluationPipeline: SendCustomPromptToLLM returned false; dropping tick's evaluation");
+                AsyncDispatch::MarshalToMainThread([] { g_inFlight.store(false); });
+            }
+        });
     }
-}
+} // namespace NarrativeEngine::EvaluationPipeline

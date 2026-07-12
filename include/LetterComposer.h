@@ -33,16 +33,16 @@ namespace NarrativeEngine::LetterComposer
 {
     struct LetterComposition
     {
-        RE::FormID               senderNpcFormID = 0;
+        RE::FormID senderNpcFormID = 0;
         // Book display label — the letter's inventory-header name
         // (e.g. "Letter from Ysolda"). Sourced from the compose
         // LLM's `letter_label` field; the deterministic
         // SynthesizeFallbackLabel is used when the LLM's return
         // is missing, empty, or exceeds the 24-byte engine cap.
-        std::string              senderLabel;
-        std::string              body;
-        std::string              mood;
-        std::string              topicTag;
+        std::string senderLabel;
+        std::string body;
+        std::string mood;
+        std::string topicTag;
         std::vector<std::string> tags;
     };
 
@@ -57,11 +57,11 @@ namespace NarrativeEngine::LetterComposer
     // prompt has the full context without re-fetching.
     struct SenderCandidate
     {
-        RE::FormID     formId           = 0;
-        std::string    name;
-        double         engagementScore  = 0.0;
-        double         lastInteractedAt = 0.0;
-        nlohmann::json memories         = nlohmann::json::array();
+        RE::FormID formId = 0;
+        std::string name;
+        double engagementScore = 0.0;
+        double lastInteractedAt = 0.0;
+        nlohmann::json memories = nlohmann::json::array();
     };
 
     // Main-thread only. Ranks recent engagement, filters out dead /
@@ -77,8 +77,7 @@ namespace NarrativeEngine::LetterComposer
     // Serialize a candidate list into the JSON shape the beat-select
     // and letter-compose prompts consume: [{form_id (hex str), name,
     // engagement_score, last_interacted_at, memories}].
-    nlohmann::json SerializeSenderCandidates(
-        const std::vector<SenderCandidate>& candidates);
+    nlohmann::json SerializeSenderCandidates(const std::vector<SenderCandidate>& candidates);
 
     // Async. Composes a letter FROM a pre-chosen sender — the beat-
     // select LLM picks the sender, this call embodies them. Fresh-
@@ -93,11 +92,10 @@ namespace NarrativeEngine::LetterComposer
     // unavailable, sender no longer viable, LLM error, parse failure,
     // validation failure). Failure reasons are logged so the call site
     // doesn't need to forward error details.
-    void Compose(
-        const BeatContext& ctx,
-        UrgencyHint          urgencyHint,
-        RE::FormID           senderNpcFormID,
-        std::function<void(std::optional<LetterComposition>)> callback);
+    void Compose(const BeatContext& ctx,
+                 UrgencyHint urgencyHint,
+                 RE::FormID senderNpcFormID,
+                 std::function<void(std::optional<LetterComposition>)> callback);
 
     // -----------------------------------------------------------------
     // Sender-label fallback (exposed for testing)
@@ -113,4 +111,4 @@ namespace NarrativeEngine::LetterComposer
     // full name is captured up-front when LetterComposer assembles its
     // candidate context on the main thread.
     std::string SynthesizeFallbackLabel(const std::string& senderFullName);
-}
+} // namespace NarrativeEngine::LetterComposer

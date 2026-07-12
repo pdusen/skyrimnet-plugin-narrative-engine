@@ -31,4 +31,4 @@ namespace NarrativeEngine::Decorators
     //
     // Call once from kDataLoaded, after SkyrimNetAPI::Initialize().
     void Register();
-}
+} // namespace NarrativeEngine::Decorators

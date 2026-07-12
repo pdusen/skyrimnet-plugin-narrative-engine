@@ -2,10 +2,10 @@
 
 #include <EvaluationPipeline.h>
 #include <LLMTextSanitizer.h>
+#include <logger.h>
 #include <PhaseTracker.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
-#include <logger.h>
 
 #include <nlohmann/json.hpp>
 
@@ -17,8 +17,8 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cstdio>
 #include <chrono>
+#include <cstdio>
 #include <deque>
 #include <mutex>
 #include <optional>
@@ -32,20 +32,20 @@ namespace NarrativeEngine::VisitConclusionPoll
     {
         // Prompt template ID + variant. Matches the file under
         // statics/SKSE/Plugins/SkyrimNet/prompts/.
-        constexpr const char* kPromptName    = "narrative_engine_visit_conclusion_poll";
+        constexpr const char* kPromptName = "narrative_engine_visit_conclusion_poll";
         constexpr const char* kPromptVariant = "narrative_engine_director";
 
         // Recent-lines sample size passed to the poll prompt. Small
         // enough to keep tokens cheap but large enough that a poll
         // near threshold sees the full recent exchange.
-        constexpr int         kRecentLinesSampleCount = 8;
+        constexpr int kRecentLinesSampleCount = 8;
 
         // ---- State (main-thread mutation; poll callback marshals
         // back to main before touching). --------------------------
 
-        std::mutex                  g_mutex;
+        std::mutex g_mutex;
 
-        bool                        g_armed                       = false;
+        bool g_armed = false;
 
         // Game-time seconds (RE::Calendar::GetHoursPassed() * 3600)
         // stamped whenever the corresponding threshold reset should
@@ -56,8 +56,8 @@ namespace NarrativeEngine::VisitConclusionPoll
         // safety ceiling and the discuss-armed-at cutoff for pre-
         // Salutation event filtering, which are naturally in game-time
         // terms.
-        double                      g_lastPollGameSeconds         = 0.0;
-        double                      g_armedAtGameSeconds          = 0.0;
+        double g_lastPollGameSeconds = 0.0;
+        double g_armedAtGameSeconds = 0.0;
 
         // Accumulated real (wall-clock) seconds since the last
         // observed speech turn, EXCLUDING intervals during which
@@ -70,32 +70,32 @@ namespace NarrativeEngine::VisitConclusionPoll
         // straight-subtract form counts real time spent in pause
         // menus / load screens, which is exactly what the user does
         // NOT want to count as "the player is ignoring the NPC".
-        double                      g_silenceRealSeconds          = 0.0;
+        double g_silenceRealSeconds = 0.0;
 
         // Real (steady-clock) seconds captured on the previous
         // GateTick, so we can compute a tick-delta and add it to
         // g_silenceRealSeconds when the game wasn't paused. 0 means
         // "no prior tick this arm" — the first tick after Arm
         // establishes the baseline without adding anything.
-        double                      g_lastGateTickRealSeconds     = 0.0;
+        double g_lastGateTickRealSeconds = 0.0;
 
-        std::uint32_t               g_turnsSinceLastPoll          = 0;
-        std::atomic<std::uint32_t>  g_consecutivePollFailures     = 0;
+        std::uint32_t g_turnsSinceLastPoll = 0;
+        std::atomic<std::uint32_t> g_consecutivePollFailures = 0;
 
         // Cached snapshot fields captured at Arm-time so the poll
         // doesn't have to re-read them each fire.
-        VisitState::Snapshot        g_snapshotAtArm{};
+        VisitState::Snapshot g_snapshotAtArm{};
 
         // Recent-verdict ring for the dashboard's Visit tab.
         // Per-process; not persisted.
-        std::deque<HistoryEntry>    g_recentVerdicts;
+        std::deque<HistoryEntry> g_recentVerdicts;
 
         double RealSecondsNow()
         {
-            return static_cast<double>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now().time_since_epoch()).count())
-                / 1000.0;
+            return static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::steady_clock::now().time_since_epoch())
+                                           .count())
+                   / 1000.0;
         }
 
         void PushVerdict(bool shouldConclude, const std::string& rationale)
@@ -103,8 +103,8 @@ namespace NarrativeEngine::VisitConclusionPoll
             std::scoped_lock lock(g_mutex);
             HistoryEntry e;
             e.firedAtRealSeconds = RealSecondsNow();
-            e.shouldConclude     = shouldConclude;
-            e.rationale          = rationale;
+            e.shouldConclude = shouldConclude;
+            e.rationale = rationale;
             g_recentVerdicts.push_back(std::move(e));
             while (g_recentVerdicts.size() > kVerdictRingSize) {
                 g_recentVerdicts.pop_front();
@@ -116,7 +116,8 @@ namespace NarrativeEngine::VisitConclusionPoll
         double GameSecondsNow()
         {
             auto* cal = RE::Calendar::GetSingleton();
-            if (!cal) return 0.0;
+            if (!cal)
+                return 0.0;
             return static_cast<double>(cal->GetHoursPassed()) * 3600.0;
         }
 
@@ -125,9 +126,11 @@ namespace NarrativeEngine::VisitConclusionPoll
         // mid-visit).
         std::string SenderDisplayName(RE::FormID senderFormID)
         {
-            if (senderFormID == 0) return {};
+            if (senderFormID == 0)
+                return {};
             auto* form = RE::TESForm::LookupByID(senderFormID);
-            if (!form) return {};
+            if (!form)
+                return {};
             if (auto* actor = form->As<RE::Actor>()) {
                 if (auto* name = actor->GetName()) {
                     return std::string{name};
@@ -139,7 +142,8 @@ namespace NarrativeEngine::VisitConclusionPoll
         std::string PlayerDisplayName()
         {
             auto* player = RE::PlayerCharacter::GetSingleton();
-            if (!player) return {};
+            if (!player)
+                return {};
             if (auto* name = player->GetName()) {
                 return std::string{name};
             }
@@ -164,20 +168,19 @@ namespace NarrativeEngine::VisitConclusionPoll
         nlohmann::json SampleRecentLines(RE::FormID senderFormID)
         {
             auto arr = nlohmann::json::array();
-            if (!SkyrimNetAPI::IsAvailable()) return arr;
+            if (!SkyrimNetAPI::IsAvailable())
+                return arr;
 
             // Overfetch — we need to cap the LLM prompt to
             // kRecentLinesSampleCount lines but want headroom to
             // filter out pre-Discuss chatter first.
             const int fetchCap = std::max(kRecentLinesSampleCount * 4, 16);
-            const auto raw = SkyrimNetAPI::GetRecentDialogue(
-                senderFormID, fetchCap);
+            const auto raw = SkyrimNetAPI::GetRecentDialogue(senderFormID, fetchCap);
             auto parsed = nlohmann::json::parse(raw, nullptr, false);
             if (parsed.is_discarded() || !parsed.is_array()) {
-                logger::warn(
-                    "VisitConclusionPoll::SampleRecentLines: could not parse "
-                    "recent-dialogue payload as JSON array (raw.len={})",
-                    raw.size());
+                logger::warn("VisitConclusionPoll::SampleRecentLines: could not parse "
+                             "recent-dialogue payload as JSON array (raw.len={})",
+                             raw.size());
                 return arr;
             }
 
@@ -193,14 +196,16 @@ namespace NarrativeEngine::VisitConclusionPoll
                 discussStartedAt = g_armedAtGameSeconds;
             }
 
-            logger::debug(
-                "VisitConclusionPoll::SampleRecentLines: fetched {} raw "
-                "dialogue turn(s) (sender='{}', player='{}', "
-                "discussStartedAt={:.1f})",
-                parsed.size(), senderName, playerName, discussStartedAt);
+            logger::debug("VisitConclusionPoll::SampleRecentLines: fetched {} raw "
+                          "dialogue turn(s) (sender='{}', player='{}', "
+                          "discussStartedAt={:.1f})",
+                          parsed.size(),
+                          senderName,
+                          playerName,
+                          discussStartedAt);
 
-            std::size_t skippedEmptyText  = 0;
-            std::size_t skippedBystander  = 0;
+            std::size_t skippedEmptyText = 0;
+            std::size_t skippedBystander = 0;
             std::size_t skippedPreDiscuss = 0;
 
             // Chronological (oldest-first) is SkyrimNet's guarantee
@@ -210,7 +215,8 @@ namespace NarrativeEngine::VisitConclusionPoll
             // long backlog.
             nlohmann::json filtered = nlohmann::json::array();
             for (const auto& entry : parsed) {
-                if (!entry.is_object()) continue;
+                if (!entry.is_object())
+                    continue;
 
                 if (discussStartedAt > 0.0) {
                     auto gtIt = entry.find("gameTime");
@@ -231,22 +237,20 @@ namespace NarrativeEngine::VisitConclusionPoll
                 // to check, they cover other shapes we've seen on
                 // related SkyrimNet APIs.
                 std::string text;
-                for (const char* candidate :
-                        { "data", "text", "content", "utterance" }) {
+                for (const char* candidate : {"data", "text", "content", "utterance"}) {
                     auto it = entry.find(candidate);
                     if (it != entry.end() && it->is_string()) {
-                        text = LLMTextSanitizer::Sanitize(
-                            it->get<std::string>());
-                        if (!text.empty()) break;
+                        text = LLMTextSanitizer::Sanitize(it->get<std::string>());
+                        if (!text.empty())
+                            break;
                     }
                 }
                 if (text.empty()) {
                     ++skippedEmptyText;
                     if (skippedEmptyText <= 2) {
-                        logger::debug(
-                            "VisitConclusionPoll::SampleRecentLines: entry "
-                            "has no text under known field names — raw JSON: {}",
-                            entry.dump());
+                        logger::debug("VisitConclusionPoll::SampleRecentLines: entry "
+                                      "has no text under known field names — raw JSON: {}",
+                                      entry.dump());
                     }
                     continue;
                 }
@@ -258,23 +262,19 @@ namespace NarrativeEngine::VisitConclusionPoll
                 // human-readable name so downstream bystander
                 // filtering and prompt rendering both work.
                 std::string speakerRaw;
-                if (auto it = entry.find("speaker");
-                    it != entry.end() && it->is_string()) {
+                if (auto it = entry.find("speaker"); it != entry.end() && it->is_string()) {
                     speakerRaw = it->get<std::string>();
                 }
                 std::string npcNameField;
-                if (auto it = entry.find("npcName");
-                    it != entry.end() && it->is_string()) {
-                    npcNameField =
-                        LLMTextSanitizer::Sanitize(it->get<std::string>());
+                if (auto it = entry.find("npcName"); it != entry.end() && it->is_string()) {
+                    npcNameField = LLMTextSanitizer::Sanitize(it->get<std::string>());
                 }
 
                 std::string speaker;
                 if (speakerRaw == "player") {
                     speaker = playerName;
                 } else if (speakerRaw == "npc") {
-                    speaker = !npcNameField.empty() ? npcNameField
-                                                    : senderName;
+                    speaker = !npcNameField.empty() ? npcNameField : senderName;
                 } else {
                     // Older / alternate payloads that carry a real
                     // name in `speaker` — trust it as-is.
@@ -284,83 +284,82 @@ namespace NarrativeEngine::VisitConclusionPoll
                 // Bystander skip — reject anything that resolves to
                 // a name other than the sender or the player. Empty
                 // speaker still gets kept (better to over-include).
-                if (!speaker.empty() &&
-                    !senderName.empty() &&
-                    !playerName.empty() &&
-                    speaker != senderName && speaker != playerName) {
+                if (!speaker.empty() && !senderName.empty() && !playerName.empty() && speaker != senderName
+                    && speaker != playerName) {
                     ++skippedBystander;
                     continue;
                 }
 
                 nlohmann::json line;
                 line["speaker"] = speaker.empty() ? std::string{"?"} : speaker;
-                line["text"]    = text;
+                line["text"] = text;
                 filtered.push_back(std::move(line));
             }
 
             // Take the last kRecentLinesSampleCount entries so the
             // prompt sees the newest exchange, preserving oldest-
             // first order within the slice.
-            const std::size_t keep = static_cast<std::size_t>(
-                std::max(1, kRecentLinesSampleCount));
-            const std::size_t start = filtered.size() > keep
-                                          ? filtered.size() - keep
-                                          : 0;
+            const std::size_t keep = static_cast<std::size_t>(std::max(1, kRecentLinesSampleCount));
+            const std::size_t start = filtered.size() > keep ? filtered.size() - keep : 0;
             for (std::size_t i = start; i < filtered.size(); ++i) {
                 arr.push_back(std::move(filtered[i]));
             }
 
-            logger::info(
-                "VisitConclusionPoll::SampleRecentLines: kept {} line(s) for "
-                "poll context (skipped_empty_text={}, skipped_bystander={}, "
-                "skipped_pre_discuss={})",
-                arr.size(), skippedEmptyText, skippedBystander,
-                skippedPreDiscuss);
+            logger::info("VisitConclusionPoll::SampleRecentLines: kept {} line(s) for "
+                         "poll context (skipped_empty_text={}, skipped_bystander={}, "
+                         "skipped_pre_discuss={})",
+                         arr.size(),
+                         skippedEmptyText,
+                         skippedBystander,
+                         skippedPreDiscuss);
             return arr;
         }
 
-        nlohmann::json BuildPromptContext(RE::FormID          senderFormID,
-                                           const std::string&  senderName,
-                                           const std::string&  playerName,
-                                           double              elapsedSeconds,
-                                           std::uint32_t       nudgeCount,
-                                           const VisitState::Snapshot& snap)
+        nlohmann::json BuildPromptContext(RE::FormID senderFormID,
+                                          const std::string& senderName,
+                                          const std::string& playerName,
+                                          double elapsedSeconds,
+                                          std::uint32_t nudgeCount,
+                                          const VisitState::Snapshot& snap)
         {
             nlohmann::json root = nlohmann::json::object();
-            root["sender_name"]  = senderName;
-            root["player_name"]  = playerName;
-            root["sender_goal"]  = snap.briefingText;
-            root["topic_tag"]    = snap.topicTag;
-            root["mood"]         = snap.mood;
-            root["desired_direction"] = "raise";  // baseline; poll doesn't yet consume the live PhaseTracker direction — inputs come from the visit's own composed brief
-            root["elapsed_seconds"]   = static_cast<int>(elapsedSeconds);
-            root["nudge_count"]  = nudgeCount;
+            root["sender_name"] = senderName;
+            root["player_name"] = playerName;
+            root["sender_goal"] = snap.briefingText;
+            root["topic_tag"] = snap.topicTag;
+            root["mood"] = snap.mood;
+            root["desired_direction"] = "raise"; // baseline; poll doesn't yet consume the live PhaseTracker direction —
+                                                 // inputs come from the visit's own composed brief
+            root["elapsed_seconds"] = static_cast<int>(elapsedSeconds);
+            root["nudge_count"] = nudgeCount;
             root["recent_lines"] = SampleRecentLines(senderFormID);
             return root;
         }
-    }
+    } // namespace
 
     void Arm(const VisitState::Snapshot& snapshot)
     {
         std::scoped_lock lock(g_mutex);
-        g_armed                     = true;
-        g_snapshotAtArm             = snapshot;
-        const auto now              = GameSecondsNow();
-        g_armedAtGameSeconds        = now;
-        g_lastPollGameSeconds       = now;
-        g_silenceRealSeconds        = 0.0;
-        g_lastGateTickRealSeconds   = 0.0;
-        g_turnsSinceLastPoll        = 0;
+        g_armed = true;
+        g_snapshotAtArm = snapshot;
+        const auto now = GameSecondsNow();
+        g_armedAtGameSeconds = now;
+        g_lastPollGameSeconds = now;
+        g_silenceRealSeconds = 0.0;
+        g_lastGateTickRealSeconds = 0.0;
+        g_turnsSinceLastPoll = 0;
         g_consecutivePollFailures.store(0);
-        logger::info(
-            "VisitConclusionPoll: armed (sender=0x{:08X}, topic='{}', mood='{}')",
-            snapshot.senderFormID, snapshot.topicTag, snapshot.mood);
+        logger::info("VisitConclusionPoll: armed (sender=0x{:08X}, topic='{}', mood='{}')",
+                     snapshot.senderFormID,
+                     snapshot.topicTag,
+                     snapshot.mood);
     }
 
     void Disarm()
     {
         std::scoped_lock lock(g_mutex);
-        if (!g_armed) return;
+        if (!g_armed)
+            return;
         g_armed = false;
         g_snapshotAtArm = VisitState::Snapshot{};
         g_lastPollGameSeconds = 0.0;
@@ -380,7 +379,8 @@ namespace NarrativeEngine::VisitConclusionPoll
     bool GateTick()
     {
         std::scoped_lock lock(g_mutex);
-        if (!g_armed) return false;
+        if (!g_armed)
+            return false;
 
         const auto& cfg = Settings::Get();
         const double nowGame = GameSecondsNow();
@@ -412,29 +412,26 @@ namespace NarrativeEngine::VisitConclusionPoll
         }
         g_lastGateTickRealSeconds = nowReal;
 
-        const double silenceLimit =
-            static_cast<double>(std::max(0, cfg.visitPollSilenceRealSeconds));
-        const double maxInterval =
-            static_cast<double>(std::max(0, cfg.visitPollMaxIntervalGameMinutes)) * 60.0;
-        const std::uint32_t turnLimit =
-            static_cast<std::uint32_t>(std::max(0, cfg.visitPollTurnCountThreshold));
+        const double silenceLimit = static_cast<double>(std::max(0, cfg.visitPollSilenceRealSeconds));
+        const double maxInterval = static_cast<double>(std::max(0, cfg.visitPollMaxIntervalGameMinutes)) * 60.0;
+        const std::uint32_t turnLimit = static_cast<std::uint32_t>(std::max(0, cfg.visitPollTurnCountThreshold));
 
-        const bool turnsHit   = (turnLimit > 0) &&
-                                (g_turnsSinceLastPoll >= turnLimit);
-        const bool silenceHit = (silenceLimit > 0.0) &&
-                                (g_silenceRealSeconds >= silenceLimit);
-        const bool intervalHit = (maxInterval > 0.0) &&
-                                 (g_lastPollGameSeconds > 0.0) &&
-                                 (nowGame - g_lastPollGameSeconds >= maxInterval);
+        const bool turnsHit = (turnLimit > 0) && (g_turnsSinceLastPoll >= turnLimit);
+        const bool silenceHit = (silenceLimit > 0.0) && (g_silenceRealSeconds >= silenceLimit);
+        const bool intervalHit =
+            (maxInterval > 0.0) && (g_lastPollGameSeconds > 0.0) && (nowGame - g_lastPollGameSeconds >= maxInterval);
 
         if (turnsHit || silenceHit || intervalHit) {
-            logger::debug(
-                "VisitConclusionPoll: gate tripped (turns={} limit={}, "
-                "silenceRealSec={:.1f} limit={:.1f} paused_this_tick={}, "
-                "intervalGameSec={:.1f} limit={:.1f})",
-                g_turnsSinceLastPoll, turnLimit,
-                g_silenceRealSeconds, silenceLimit, paused,
-                nowGame - g_lastPollGameSeconds, maxInterval);
+            logger::debug("VisitConclusionPoll: gate tripped (turns={} limit={}, "
+                          "silenceRealSec={:.1f} limit={:.1f} paused_this_tick={}, "
+                          "intervalGameSec={:.1f} limit={:.1f})",
+                          g_turnsSinceLastPoll,
+                          turnLimit,
+                          g_silenceRealSeconds,
+                          silenceLimit,
+                          paused,
+                          nowGame - g_lastPollGameSeconds,
+                          maxInterval);
             return true;
         }
 
@@ -443,17 +440,20 @@ namespace NarrativeEngine::VisitConclusionPoll
         // Only log when we actually added silence — every-tick chatter
         // when the game is paused isn't useful and would flood the log.
         if (addedSilence > 0.0 && Settings::Get().debugMode) {
-            logger::debug(
-                "VisitConclusionPoll: gate tick — silenceRealSec={:.1f}/{:.1f} "
-                "(+{:.2f} this tick, paused={})",
-                g_silenceRealSeconds, silenceLimit, addedSilence, paused);
+            logger::debug("VisitConclusionPoll: gate tick — silenceRealSec={:.1f}/{:.1f} "
+                          "(+{:.2f} this tick, paused={})",
+                          g_silenceRealSeconds,
+                          silenceLimit,
+                          addedSilence,
+                          paused);
         }
         return false;
     }
 
     void FirePoll(std::function<void(std::optional<PollVerdict>)> callback)
     {
-        if (!callback) return;
+        if (!callback)
+            return;
 
         VisitState::Snapshot snap;
         double armedAt = 0.0;
@@ -486,13 +486,11 @@ namespace NarrativeEngine::VisitConclusionPoll
         const double now = GameSecondsNow();
         const double elapsed = std::max(0.0, now - armedAt);
 
-        const auto promptCtx = BuildPromptContext(
-            snap.senderFormID, senderName, playerName, elapsed, nudge, snap);
+        const auto promptCtx = BuildPromptContext(snap.senderFormID, senderName, playerName, elapsed, nudge, snap);
         const auto promptCtxStr = promptCtx.dump();
 
         if (Settings::Get().debugMode) {
-            logger::debug("VisitConclusionPoll::FirePoll: prompt context: {}",
-                          promptCtxStr);
+            logger::debug("VisitConclusionPoll::FirePoll: prompt context: {}", promptCtxStr);
         }
 
         // Clone the callback for the !queued fallback so we always
@@ -514,12 +512,10 @@ namespace NarrativeEngine::VisitConclusionPoll
                     logger::debug("VisitConclusionPoll: raw response: {}", response);
                 }
 
-                const auto body =
-                    EvaluationPipeline::StripMarkdownFences(response);
+                const auto body = EvaluationPipeline::StripMarkdownFences(response);
                 auto parsed = nlohmann::json::parse(body, nullptr, false);
                 if (parsed.is_discarded() || !parsed.is_object()) {
-                    logger::warn("VisitConclusionPoll: response not a JSON object: {}",
-                                 body);
+                    logger::warn("VisitConclusionPoll: response not a JSON object: {}", body);
                     g_consecutivePollFailures.fetch_add(1);
                     callback(std::nullopt);
                     return;
@@ -527,8 +523,7 @@ namespace NarrativeEngine::VisitConclusionPoll
 
                 auto shouldIt = parsed.find("should_conclude");
                 if (shouldIt == parsed.end() || !shouldIt->is_boolean()) {
-                    logger::warn(
-                        "VisitConclusionPoll: response missing / bad should_conclude");
+                    logger::warn("VisitConclusionPoll: response missing / bad should_conclude");
                     g_consecutivePollFailures.fetch_add(1);
                     callback(std::nullopt);
                     return;
@@ -536,15 +531,13 @@ namespace NarrativeEngine::VisitConclusionPoll
 
                 PollVerdict v;
                 v.shouldConclude = shouldIt->get<bool>();
-                if (auto ratIt = parsed.find("rationale");
-                    ratIt != parsed.end() && ratIt->is_string()) {
+                if (auto ratIt = parsed.find("rationale"); ratIt != parsed.end() && ratIt->is_string()) {
                     v.rationale = LLMTextSanitizer::Sanitize(ratIt->get<std::string>());
                 }
                 // `closing_already_spoken` is optional — missing
                 // defaults to false, which preserves the pre-
                 // existing DirectNarration path.
-                if (auto casIt = parsed.find("closing_already_spoken");
-                    casIt != parsed.end() && casIt->is_boolean()) {
+                if (auto casIt = parsed.find("closing_already_spoken"); casIt != parsed.end() && casIt->is_boolean()) {
                     v.closingAlreadySpoken = casIt->get<bool>();
                 }
 
@@ -554,8 +547,7 @@ namespace NarrativeEngine::VisitConclusionPoll
             });
 
         if (!queued) {
-            logger::warn(
-                "VisitConclusionPoll::FirePoll: SendCustomPromptToLLM returned false");
+            logger::warn("VisitConclusionPoll::FirePoll: SendCustomPromptToLLM returned false");
             g_consecutivePollFailures.fetch_add(1);
             callbackBackup(std::nullopt);
         }
@@ -564,7 +556,8 @@ namespace NarrativeEngine::VisitConclusionPoll
     void RegisterSpeechTurn()
     {
         std::scoped_lock lock(g_mutex);
-        if (!g_armed) return;
+        if (!g_armed)
+            return;
         g_turnsSinceLastPoll += 1;
         // A fresh speech turn resets the unpaused-real-seconds silence
         // accumulator. `g_lastGateTickRealSeconds` deliberately isn't
@@ -581,20 +574,22 @@ namespace NarrativeEngine::VisitConclusionPoll
     double SilenceRealSeconds()
     {
         std::scoped_lock lock(g_mutex);
-        if (!g_armed) return 0.0;
+        if (!g_armed)
+            return 0.0;
         return std::max(0.0, g_silenceRealSeconds);
     }
 
     double DiscussStartedAtGameSeconds()
     {
         std::scoped_lock lock(g_mutex);
-        if (!g_armed) return 0.0;
+        if (!g_armed)
+            return 0.0;
         return g_armedAtGameSeconds;
     }
 
     std::vector<HistoryEntry> GetRecentVerdicts()
     {
         std::scoped_lock lock(g_mutex);
-        return { g_recentVerdicts.begin(), g_recentVerdicts.end() };
+        return {g_recentVerdicts.begin(), g_recentVerdicts.end()};
     }
-}
+} // namespace NarrativeEngine::VisitConclusionPoll

@@ -38,13 +38,12 @@ namespace NarrativeEngine
     class NPCVisitBeat : public IBeat
     {
     public:
-        std::string  Name()        const override;
-        std::string  Description() const override;
-        BeatPolarity Polarity()    const override;
-        bool         IsAvailable(const BeatContext& ctx) const override;
-        void         OnStart(const BeatContext& ctx,
-                             const nlohmann::json& parameters) override;
-        TickResult   Tick(TickMode mode, BeatState state) override;
+        std::string Name() const override;
+        std::string Description() const override;
+        BeatPolarity Polarity() const override;
+        bool IsAvailable(const BeatContext& ctx) const override;
+        void OnStart(const BeatContext& ctx, const nlohmann::json& parameters) override;
+        TickResult Tick(TickMode mode, BeatState state) override;
     };
 
     namespace NPCVisitBeat_Init
@@ -54,7 +53,7 @@ namespace NarrativeEngine
         // wire the DialogueMenu / combat / death sinks. Called at
         // kDataLoaded after Settings::Load.
         void Initialize();
-    }
+    } // namespace NPCVisitBeat_Init
 
     namespace NPCVisitBeat_Cooldowns
     {
@@ -69,7 +68,7 @@ namespace NarrativeEngine
         // within their per-sender cooldown window. Called by
         // VisitComposer during candidate viability filtering.
         bool IsSenderOnCooldown(RE::FormID senderNpcFormID);
-    }
+    } // namespace NPCVisitBeat_Cooldowns
 
     namespace NPCVisitBeat_Persistence
     {
@@ -78,9 +77,7 @@ namespace NarrativeEngine
         inline constexpr std::uint32_t kRecordTypeId = 'NBVS';
 
         void OnSave(SKSE::SerializationInterface* intfc);
-        void OnLoad(SKSE::SerializationInterface* intfc,
-                    std::uint32_t                 version,
-                    std::uint32_t                 length);
+        void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);
         void OnRevert();
-    }
-}
+    } // namespace NPCVisitBeat_Persistence
+} // namespace NarrativeEngine

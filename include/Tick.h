@@ -28,4 +28,4 @@ namespace NarrativeEngine::Tick
     // isolation. Defaults to true. Thread-safe.
     void SetEnabled(bool enabled);
     bool IsEnabled();
-}
+} // namespace NarrativeEngine::Tick

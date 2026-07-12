@@ -15,18 +15,34 @@ namespace NarrativeEngine::AlphaCanon
 {
     enum class Signal : std::uint32_t
     {
-        None               = 0,
-        InActiveCombat     = 1u << 0,
-        InScriptedScene    = 1u << 1,
-        InDialogue         = 1u << 2,
+        None = 0,
+        InActiveCombat = 1u << 0,
+        InScriptedScene = 1u << 1,
+        InDialogue = 1u << 2,
         InDoNotDisturbCell = 1u << 3,
     };
 
-    constexpr Signal  operator| (Signal a, Signal b)  { return Signal(std::uint32_t(a) | std::uint32_t(b)); }
-    constexpr Signal  operator& (Signal a, Signal b)  { return Signal(std::uint32_t(a) & std::uint32_t(b)); }
-    constexpr Signal& operator|=(Signal& a, Signal b) { a = a | b; return a; }
-    constexpr bool    HasAny (Signal mask)              { return std::uint32_t(mask) != 0; }
-    constexpr bool    HasFlag(Signal mask, Signal flag) { return (std::uint32_t(mask) & std::uint32_t(flag)) != 0; }
+    constexpr Signal operator|(Signal a, Signal b)
+    {
+        return Signal(std::uint32_t(a) | std::uint32_t(b));
+    }
+    constexpr Signal operator&(Signal a, Signal b)
+    {
+        return Signal(std::uint32_t(a) & std::uint32_t(b));
+    }
+    constexpr Signal& operator|=(Signal& a, Signal b)
+    {
+        a = a | b;
+        return a;
+    }
+    constexpr bool HasAny(Signal mask)
+    {
+        return std::uint32_t(mask) != 0;
+    }
+    constexpr bool HasFlag(Signal mask, Signal flag)
+    {
+        return (std::uint32_t(mask) & std::uint32_t(flag)) != 0;
+    }
 
     // Individual predicates. Cheap to call.
     bool IsInActiveCombat();
@@ -42,4 +58,4 @@ namespace NarrativeEngine::AlphaCanon
     // prompt-context rendering (the Snapshot's `alphaCanonSignals` field)
     // and for human-readable log output.
     std::vector<std::string> Names(Signal mask);
-}
+} // namespace NarrativeEngine::AlphaCanon

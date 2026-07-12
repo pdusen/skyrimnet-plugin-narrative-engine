@@ -10,7 +10,10 @@
 
 #include <RE/Skyrim.h>
 
-namespace SKSE { class SerializationInterface; }
+namespace SKSE
+{
+    class SerializationInterface;
+}
 
 // LetterPool — a fixed pool of 20 pre-authored Book records whose runtime
 // content (FULL field, body text) is mutated at allocation time and read
@@ -43,40 +46,40 @@ namespace NarrativeEngine::LetterPool
     // for the full state-machine description.
     enum class State : std::uint8_t
     {
-        Free,             // slot unused; available for allocation
-        PendingDelivery,  // populated; courier has not yet handed off
-        InInventory,      // courier delivered; player has not yet read
-        Read,             // player closed BookMenu after opening
-        Discarded,        // player removed via sell/drop/transfer (transient;
-                          // recycle scan returns to Free synchronously)
+        Free,            // slot unused; available for allocation
+        PendingDelivery, // populated; courier has not yet handed off
+        InInventory,     // courier delivered; player has not yet read
+        Read,            // player closed BookMenu after opening
+        Discarded,       // player removed via sell/drop/transfer (transient;
+                         // recycle scan returns to Free synchronously)
     };
 
     // What the allocator returns on success.
     struct AllocatedSlot
     {
-        std::size_t slotIndex   = 0;
-        RE::FormID  bookFormID  = 0;
+        std::size_t slotIndex = 0;
+        RE::FormID bookFormID = 0;
     };
 
     // Why the allocator returned no slot.
     enum class AllocationFailure : std::uint8_t
     {
-        PoolNotResolved,  // Initialize never ran, or no Book forms resolved
-        EvictionFailed,   // pool exhausted (everything in flight pre-delivery)
+        PoolNotResolved, // Initialize never ran, or no Book forms resolved
+        EvictionFailed,  // pool exhausted (everything in flight pre-delivery)
     };
 
     // Dashboard-facing aggregate counts.
     struct PoolStats
     {
-        std::size_t free            = 0;
+        std::size_t free = 0;
         std::size_t pendingDelivery = 0;
-        std::size_t inInventory     = 0;
-        std::size_t read            = 0;
+        std::size_t inInventory = 0;
+        std::size_t read = 0;
         // Discarded is transient (recycled synchronously) — no stat.
 
         // How many of the 20 slots resolved to a real Book form at
         // Initialize. If < kPoolSize, the missing forms can't allocate.
-        std::size_t resolved        = 0;
+        std::size_t resolved = 0;
     };
 
     // Resolve the 20 `_ne_PooledLetterNN` EditorIDs to Book FormIDs and
@@ -131,12 +134,12 @@ namespace NarrativeEngine::LetterPool
     // Allocate. Transitions the slot to PendingDelivery and stamps the
     // current real-time onto deliveredAt (initial value; overwritten by
     // MarkDelivered in Step 8 when the courier actually hands off).
-    void PopulateSlot(std::size_t              slotIndex,
-                      std::string              senderLabel,
-                      std::string              body,
-                      RE::FormID               senderNpcFormID,
-                      std::string              topicTag,
-                      std::string              mood,
+    void PopulateSlot(std::size_t slotIndex,
+                      std::string senderLabel,
+                      std::string body,
+                      RE::FormID senderNpcFormID,
+                      std::string topicTag,
+                      std::string mood,
                       std::vector<std::string> tags);
 
     // Manual release back to Free. Step 4 testing entry point — Steps 8
@@ -164,16 +167,16 @@ namespace NarrativeEngine::LetterPool
     // private to the .cpp.
     struct SlotSnapshot
     {
-        std::size_t index          = 0;
-        State       state          = State::Free;
+        std::size_t index = 0;
+        State state = State::Free;
         std::string senderLabel;
         std::string topicTag;
         std::string mood;
-        std::string body;          // full cached body; the dashboard trims to
-                                   // a preview client-side or in the JSON
-                                   // encoder.
-        double      deliveredAt    = 0.0;  // Unix-epoch seconds
-        double      readAt         = 0.0;  // Unix-epoch seconds
+        std::string body;         // full cached body; the dashboard trims to
+                                  // a preview client-side or in the JSON
+                                  // encoder.
+        double deliveredAt = 0.0; // Unix-epoch seconds
+        double readAt = 0.0;      // Unix-epoch seconds
     };
 
     // Returns a snapshot of every slot (Free slots included, sender/topic
@@ -265,14 +268,12 @@ namespace NarrativeEngine::LetterPool
     // The destination container is consumed inside the function for the
     // cleanup scan and not stored. After cleanup the slot returns to
     // Free and is available for reallocation.
-    void MarkDiscardedToContainer(std::size_t slotIndex,
-                                  RE::TESObjectREFR* destination);
+    void MarkDiscardedToContainer(std::size_t slotIndex, RE::TESObjectREFR* destination);
 
     // Player dropped the letter into the world. The world ref the
     // engine instantiated is consumed for cleanup and not stored.
     // Slot returns to Free.
-    void MarkDroppedToCell(std::size_t slotIndex,
-                           RE::TESObjectREFR* worldRef);
+    void MarkDroppedToCell(std::size_t slotIndex, RE::TESObjectREFR* worldRef);
 
     // -----------------------------------------------------------------
     // Co-save persistence ('NELP' record, version 1)
@@ -291,8 +292,6 @@ namespace NarrativeEngine::LetterPool
     // once Step 9 introduces EvictSlot).
 
     void OnSave(SKSE::SerializationInterface* intfc);
-    void OnLoad(SKSE::SerializationInterface* intfc,
-                std::uint32_t                 version,
-                std::uint32_t                 length);
+    void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);
     void OnRevert();
-}
+} // namespace NarrativeEngine::LetterPool

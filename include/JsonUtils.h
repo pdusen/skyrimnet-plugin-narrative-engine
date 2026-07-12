@@ -13,9 +13,5 @@ namespace NarrativeEngine::JsonUtils
     // object); if present and numeric, clamp to [lo, hi]. If missing,
     // non-numeric, or `parameters` isn't an object, return `def`
     // (also clamped to [lo, hi]).
-    int ClampParameterInt(const nlohmann::json& parameters,
-                          std::string_view      key,
-                          int                   def,
-                          int                   lo,
-                          int                   hi);
-}
+    int ClampParameterInt(const nlohmann::json& parameters, std::string_view key, int def, int lo, int hi);
+} // namespace NarrativeEngine::JsonUtils

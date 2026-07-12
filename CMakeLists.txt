@@ -53,8 +53,14 @@ find_path(SIMPLEINI_INCLUDE_DIRS "SimpleIni.h" REQUIRED)
 add_commonlibsse_plugin(${PROJECT_NAME} SOURCES ${source_files} plugin.cpp)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23) # <--- use C++23 standard
 target_precompile_headers(${PROJECT_NAME} PRIVATE PCH.h) # <--- PCH.h is required!
-target_include_directories(${PROJECT_NAME} PRIVATE include "${SIMPLEINI_INCLUDE_DIRS}")
-target_link_libraries(${PROJECT_NAME} PRIVATE nlohmann_json::nlohmann_json minhook::minhook)
+target_include_directories(
+    ${PROJECT_NAME}
+    PRIVATE include "${SIMPLEINI_INCLUDE_DIRS}"
+)
+target_link_libraries(
+    ${PROJECT_NAME}
+    PRIVATE nlohmann_json::nlohmann_json minhook::minhook
+)
 
 # ---------------------------------------------------------------------------
 # SkyrimNet integration
@@ -75,15 +81,20 @@ target_link_libraries(${PROJECT_NAME} PRIVATE nlohmann_json::nlohmann_json minho
 #   - `SKYRIM_MODS_FOLDER` env var (assumes the standard "SkyrimNet" subdir).
 if(DEFINED ENV{SKYRIMNET_DIR} AND IS_DIRECTORY "$ENV{SKYRIMNET_DIR}/CppAPI")
     set(SKYRIMNET_DIR "$ENV{SKYRIMNET_DIR}")
-elseif(DEFINED ENV{SKYRIM_MODS_FOLDER} AND IS_DIRECTORY "$ENV{SKYRIM_MODS_FOLDER}/SkyrimNet/CppAPI")
+elseif(
+    DEFINED ENV{SKYRIM_MODS_FOLDER}
+    AND IS_DIRECTORY "$ENV{SKYRIM_MODS_FOLDER}/SkyrimNet/CppAPI"
+)
     set(SKYRIMNET_DIR "$ENV{SKYRIM_MODS_FOLDER}/SkyrimNet")
 endif()
 
 if(NOT DEFINED SKYRIMNET_DIR)
-    message(FATAL_ERROR
+    message(
+        FATAL_ERROR
         "Could not locate SkyrimNet. Set the SKYRIMNET_DIR environment variable to "
         "the SkyrimNet mod folder (containing CppAPI/PublicAPI.h), or set "
-        "SKYRIM_MODS_FOLDER so SkyrimNet is found at \${SKYRIM_MODS_FOLDER}/SkyrimNet.")
+        "SKYRIM_MODS_FOLDER so SkyrimNet is found at \${SKYRIM_MODS_FOLDER}/SkyrimNet."
+    )
 endif()
 
 message(STATUS "SkyrimNet found at: ${SKYRIMNET_DIR}")
@@ -104,14 +115,19 @@ target_include_directories(${PROJECT_NAME} PRIVATE "${SKYRIMNET_DIR}/CppAPI")
 # header alongside the DLL, so the header lives in a separate location.
 #
 # Point `PRISMA_UI_INCLUDE` at the directory containing `PrismaUI_API.h`.
-if(DEFINED ENV{PRISMA_UI_INCLUDE} AND EXISTS "$ENV{PRISMA_UI_INCLUDE}/PrismaUI_API.h")
+if(
+    DEFINED ENV{PRISMA_UI_INCLUDE}
+    AND EXISTS "$ENV{PRISMA_UI_INCLUDE}/PrismaUI_API.h"
+)
     set(PRISMA_UI_INCLUDE "$ENV{PRISMA_UI_INCLUDE}")
 endif()
 
 if(NOT DEFINED PRISMA_UI_INCLUDE)
-    message(FATAL_ERROR
+    message(
+        FATAL_ERROR
         "Could not locate the PrismaUI API header. Set the PRISMA_UI_INCLUDE "
-        "environment variable to the directory containing PrismaUI_API.h.")
+        "environment variable to the directory containing PrismaUI_API.h."
+    )
 endif()
 
 message(STATUS "PrismaUI API header found at: ${PRISMA_UI_INCLUDE}")
@@ -135,7 +151,10 @@ if(DEFINED OUTPUT_FOLDER)
         TARGET "${PROJECT_NAME}"
         POST_BUILD
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${DLL_FOLDER}"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:${PROJECT_NAME}>" "${DLL_FOLDER}/$<TARGET_FILE_NAME:${PROJECT_NAME}>"
+        COMMAND
+            "${CMAKE_COMMAND}" -E copy_if_different
+            "$<TARGET_FILE:${PROJECT_NAME}>"
+            "${DLL_FOLDER}/$<TARGET_FILE_NAME:${PROJECT_NAME}>"
         VERBATIM
     )
 
@@ -144,7 +163,10 @@ if(DEFINED OUTPUT_FOLDER)
         add_custom_command(
             TARGET "${PROJECT_NAME}"
             POST_BUILD
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_PDB_FILE:${PROJECT_NAME}>" "${DLL_FOLDER}/$<TARGET_PDB_FILE_NAME:${PROJECT_NAME}>"
+            COMMAND
+                "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_PDB_FILE:${PROJECT_NAME}>"
+                "${DLL_FOLDER}/$<TARGET_PDB_FILE_NAME:${PROJECT_NAME}>"
             VERBATIM
         )
     endif()
@@ -173,11 +195,17 @@ if(DEFINED OUTPUT_FOLDER)
     # subdir cause no issues. `copy_if_different` skips no-op writes.
     set(STATICS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/statics")
     if(IS_DIRECTORY "${STATICS_SOURCE_DIR}")
-        file(GLOB_RECURSE STATICS_FILES CONFIGURE_DEPENDS
+        file(
+            GLOB_RECURSE STATICS_FILES
+            CONFIGURE_DEPENDS
             RELATIVE "${STATICS_SOURCE_DIR}"
-            "${STATICS_SOURCE_DIR}/*")
+            "${STATICS_SOURCE_DIR}/*"
+        )
         if(STATICS_FILES)
-            message(STATUS "Statics deploy: ${STATICS_SOURCE_DIR} -> ${OUTPUT_FOLDER}")
+            message(
+                STATUS
+                "Statics deploy: ${STATICS_SOURCE_DIR} -> ${OUTPUT_FOLDER}"
+            )
             set(STATICS_DEPLOY_OUTPUTS "")
             foreach(rel IN LISTS STATICS_FILES)
                 set(src "${STATICS_SOURCE_DIR}/${rel}")
@@ -187,12 +215,18 @@ if(DEFINED OUTPUT_FOLDER)
                     OUTPUT "${dst}"
                     DEPENDS "${src}"
                     COMMAND "${CMAKE_COMMAND}" -E make_directory "${dst_dir}"
-                    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${src}" "${dst}"
+                    COMMAND
+                        "${CMAKE_COMMAND}" -E copy_if_different "${src}"
+                        "${dst}"
                     VERBATIM
                 )
                 list(APPEND STATICS_DEPLOY_OUTPUTS "${dst}")
             endforeach()
-            add_custom_target(deploy_statics ALL DEPENDS ${STATICS_DEPLOY_OUTPUTS})
+            add_custom_target(
+                deploy_statics
+                ALL
+                DEPENDS ${STATICS_DEPLOY_OUTPUTS}
+            )
         endif()
     endif()
 
@@ -213,22 +247,29 @@ if(DEFINED OUTPUT_FOLDER)
     # dashboard is part of the build, not an optional add-on.
     find_program(NPM_EXECUTABLE npm REQUIRED)
 
-    set(DASHBOARD_DIR        "${CMAKE_SOURCE_DIR}/dashboard")
-    set(DASHBOARD_DIST_DIR   "${DASHBOARD_DIR}/dist")
-    set(DASHBOARD_INSTALL_STAMP "${DASHBOARD_DIR}/node_modules/.cmake-install-stamp")
-    set(DASHBOARD_DEPLOY_DIR "${OUTPUT_FOLDER}/PrismaUI/views/NarrativeEngine/dashboard")
+    set(DASHBOARD_DIR "${CMAKE_SOURCE_DIR}/dashboard")
+    set(DASHBOARD_DIST_DIR "${DASHBOARD_DIR}/dist")
+    set(DASHBOARD_INSTALL_STAMP
+        "${DASHBOARD_DIR}/node_modules/.cmake-install-stamp"
+    )
+    set(DASHBOARD_DEPLOY_DIR
+        "${OUTPUT_FOLDER}/PrismaUI/views/NarrativeEngine/dashboard"
+    )
 
     # 1. `npm install` — gated on package*.json so the slow install only
     # runs when dependencies actually change. The stamp file is what Ninja
     # tracks; `cmake -E touch` writes it after a successful install.
-    file(GLOB DASHBOARD_NPM_MANIFEST CONFIGURE_DEPENDS
+    file(
+        GLOB DASHBOARD_NPM_MANIFEST
+        CONFIGURE_DEPENDS
         "${DASHBOARD_DIR}/package.json"
         "${DASHBOARD_DIR}/package-lock.json"
     )
     add_custom_command(
         OUTPUT "${DASHBOARD_INSTALL_STAMP}"
         DEPENDS ${DASHBOARD_NPM_MANIFEST}
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${DASHBOARD_DIR}/node_modules"
+        COMMAND
+            "${CMAKE_COMMAND}" -E make_directory "${DASHBOARD_DIR}/node_modules"
         COMMAND "${NPM_EXECUTABLE}" install --no-audit --no-fund --silent
         COMMAND "${CMAKE_COMMAND}" -E touch "${DASHBOARD_INSTALL_STAMP}"
         WORKING_DIRECTORY "${DASHBOARD_DIR}"
@@ -238,7 +279,9 @@ if(DEFINED OUTPUT_FOLDER)
 
     # 2. Rollup bundle build — depends on every .ts/.tsx source plus the
     # static shell, the configs, and the install stamp.
-    file(GLOB_RECURSE DASHBOARD_SOURCES CONFIGURE_DEPENDS
+    file(
+        GLOB_RECURSE DASHBOARD_SOURCES
+        CONFIGURE_DEPENDS
         "${DASHBOARD_DIR}/src/*.ts"
         "${DASHBOARD_DIR}/src/*.tsx"
     )
@@ -272,8 +315,11 @@ if(DEFINED OUTPUT_FOLDER)
         add_custom_command(
             OUTPUT "${deployed}"
             DEPENDS "${distFile}"
-            COMMAND "${CMAKE_COMMAND}" -E make_directory "${DASHBOARD_DEPLOY_DIR}"
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${distFile}" "${deployed}"
+            COMMAND
+                "${CMAKE_COMMAND}" -E make_directory "${DASHBOARD_DEPLOY_DIR}"
+            COMMAND
+                "${CMAKE_COMMAND}" -E copy_if_different "${distFile}"
+                "${deployed}"
             VERBATIM
         )
         list(APPEND DASHBOARD_DEPLOY_OUTPUTS "${deployed}")
@@ -282,7 +328,10 @@ if(DEFINED OUTPUT_FOLDER)
     # 4. ALL-target aggregator so a default `cmake --build` builds the
     # dashboard alongside the C++ DLL.
     add_custom_target(deploy_dashboard ALL DEPENDS ${DASHBOARD_DEPLOY_OUTPUTS})
-    message(STATUS "Dashboard deploy: ${DASHBOARD_DIST_DIR} -> ${DASHBOARD_DEPLOY_DIR}")
+    message(
+        STATUS
+        "Dashboard deploy: ${DASHBOARD_DIST_DIR} -> ${DASHBOARD_DEPLOY_DIR}"
+    )
 
     # -------------------------------------------------------------------
     # ESP sync (bidirectional, via sync-esp.ps1)
@@ -307,10 +356,15 @@ if(DEFINED OUTPUT_FOLDER)
         if(NOT DEFINED NE_PWSH_EXECUTABLE)
             find_program(NE_PWSH_EXECUTABLE pwsh REQUIRED)
         endif()
-        add_custom_target(sync_esp ALL
-            COMMAND "${NE_PWSH_EXECUTABLE}" -NoProfile -File "${CMAKE_SOURCE_DIR}/sync-esp.ps1"
+        add_custom_target(
+            sync_esp
+            ALL
+            COMMAND
+                "${NE_PWSH_EXECUTABLE}" -NoProfile -File
+                "${CMAKE_SOURCE_DIR}/sync-esp.ps1"
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-            COMMENT "Syncing NarrativeEngine.esp from mod folder to repo (if newer)"
+            COMMENT
+                "Syncing NarrativeEngine.esp from mod folder to repo (if newer)"
             VERBATIM
         )
         add_dependencies("${PROJECT_NAME}" sync_esp)
@@ -328,20 +382,28 @@ if(DEFINED OUTPUT_FOLDER)
     # CONFIGURE_DEPENDS picks it up on the next build, this block activates,
     # and Bethesda's PapyrusCompiler.exe is invoked against the project's
     # generated .ppj file (configured below from NarrativeEngine.ppj.in).
-    file(GLOB PAPYRUS_SOURCES CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/esp/Source/Scripts/*.psc")
+    file(
+        GLOB PAPYRUS_SOURCES
+        CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/esp/Source/Scripts/*.psc"
+    )
     if(PAPYRUS_SOURCES)
         # Detect PapyrusCompiler.exe. Required once .psc files exist.
         if(NOT DEFINED NE_PAPYRUS_COMPILER)
-            if(DEFINED ENV{PAPYRUS_COMPILER} AND EXISTS "$ENV{PAPYRUS_COMPILER}")
+            if(
+                DEFINED ENV{PAPYRUS_COMPILER}
+                AND EXISTS "$ENV{PAPYRUS_COMPILER}"
+            )
                 set(NE_PAPYRUS_COMPILER "$ENV{PAPYRUS_COMPILER}")
             endif()
         endif()
         if(NOT NE_PAPYRUS_COMPILER)
-            message(FATAL_ERROR
+            message(
+                FATAL_ERROR
                 "Papyrus sources found under esp/Source/Scripts/ but PAPYRUS_COMPILER "
                 "is not set. Point the PAPYRUS_COMPILER environment variable at your "
-                "PapyrusCompiler.exe (typically <CK_DIR>/Papyrus Compiler/PapyrusCompiler.exe).")
+                "PapyrusCompiler.exe (typically <CK_DIR>/Papyrus Compiler/PapyrusCompiler.exe)."
+            )
         endif()
 
         # Default vanilla / SKSE Papyrus source import paths. Override either
@@ -351,8 +413,13 @@ if(DEFINED OUTPUT_FOLDER)
         if(NOT DEFINED NE_PAPYRUS_IMPORT_SKYRIM)
             if(DEFINED ENV{NE_PAPYRUS_IMPORT_SKYRIM})
                 set(NE_PAPYRUS_IMPORT_SKYRIM "$ENV{NE_PAPYRUS_IMPORT_SKYRIM}")
-            elseif(DEFINED ENV{SKYRIM_FOLDER} AND IS_DIRECTORY "$ENV{SKYRIM_FOLDER}/Data/Source/Scripts")
-                set(NE_PAPYRUS_IMPORT_SKYRIM "$ENV{SKYRIM_FOLDER}/Data/Source/Scripts")
+            elseif(
+                DEFINED ENV{SKYRIM_FOLDER}
+                AND IS_DIRECTORY "$ENV{SKYRIM_FOLDER}/Data/Source/Scripts"
+            )
+                set(NE_PAPYRUS_IMPORT_SKYRIM
+                    "$ENV{SKYRIM_FOLDER}/Data/Source/Scripts"
+                )
             endif()
         endif()
         if(NOT DEFINED NE_PAPYRUS_IMPORT_SKSE)
@@ -361,23 +428,27 @@ if(DEFINED OUTPUT_FOLDER)
             endif()
         endif()
         if(NOT NE_PAPYRUS_IMPORT_SKYRIM OR NOT NE_PAPYRUS_IMPORT_SKSE)
-            message(FATAL_ERROR
+            message(
+                FATAL_ERROR
                 "Papyrus sources found but vanilla / SKSE import paths aren't set. "
                 "Set NE_PAPYRUS_IMPORT_SKYRIM and NE_PAPYRUS_IMPORT_SKSE env vars "
                 "(or define them as CMake cache vars). Vanilla is typically "
-                "<SkyrimSE>/Data/Source/Scripts; SKSE source ships in the SKSE archive.")
+                "<SkyrimSE>/Data/Source/Scripts; SKSE source ships in the SKSE archive."
+            )
         endif()
 
         # Generate NarrativeEngine.ppj at the repo root from the template,
         # substituting the absolute machine-specific paths. The generated
         # .ppj is gitignored; VS Code's Papyrus extension picks it up from
         # the repo root automatically.
-        set(NE_PAPYRUS_SOURCE_DIR    "${CMAKE_SOURCE_DIR}/esp/Source/Scripts")
-        set(NE_PAPYRUS_OUTPUT_DIR    "${OUTPUT_FOLDER}/Scripts")
+        set(NE_PAPYRUS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/esp/Source/Scripts")
+        set(NE_PAPYRUS_OUTPUT_DIR "${OUTPUT_FOLDER}/Scripts")
         # SkyrimNet Papyrus API (SkyrimNetApi.psc etc.) is exposed via a
         # junction created by setup-mod-folder.ps1 that points at the
         # SkyrimNet mod folder's Source/Scripts directory.
-        set(NE_PAPYRUS_IMPORT_SKYRIMNET "${CMAKE_SOURCE_DIR}/external/SkyrimNet/Source/Scripts")
+        set(NE_PAPYRUS_IMPORT_SKYRIMNET
+            "${CMAKE_SOURCE_DIR}/external/SkyrimNet/Source/Scripts"
+        )
         configure_file(
             "${CMAKE_SOURCE_DIR}/NarrativeEngine.ppj.in"
             "${CMAKE_SOURCE_DIR}/NarrativeEngine.ppj"
@@ -392,20 +463,23 @@ if(DEFINED OUTPUT_FOLDER)
         # the same variables that get baked into the .ppj for IDE use.
         # Imports list the project's own source folder first so cross-script
         # references resolve before any vanilla / SKSE fallbacks.
-        add_custom_target(compile_papyrus ALL
-            COMMAND "${NE_PAPYRUS_COMPILER}"
-                "${NE_PAPYRUS_SOURCE_DIR}"
-                -all
+        add_custom_target(
+            compile_papyrus
+            ALL
+            COMMAND
+                "${NE_PAPYRUS_COMPILER}" "${NE_PAPYRUS_SOURCE_DIR}" -all
                 "-f=TESV_Papyrus_Flags.flg"
                 "-i=${NE_PAPYRUS_SOURCE_DIR};${NE_PAPYRUS_IMPORT_SKYRIMNET};${NE_PAPYRUS_IMPORT_SKYRIM};${NE_PAPYRUS_IMPORT_SKSE}"
-                "-o=${NE_PAPYRUS_OUTPUT_DIR}"
-                -op
+                "-o=${NE_PAPYRUS_OUTPUT_DIR}" -op
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             DEPENDS ${PAPYRUS_SOURCES}
             COMMENT "Compiling Papyrus scripts to ${NE_PAPYRUS_OUTPUT_DIR}"
             VERBATIM
         )
-        message(STATUS "Papyrus compile: ${NE_PAPYRUS_SOURCE_DIR} -> ${NE_PAPYRUS_OUTPUT_DIR}")
+        message(
+            STATUS
+            "Papyrus compile: ${NE_PAPYRUS_SOURCE_DIR} -> ${NE_PAPYRUS_OUTPUT_DIR}"
+        )
     else()
         message(STATUS "Papyrus compile: no .psc files yet; step dormant")
     endif()

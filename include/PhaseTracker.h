@@ -26,7 +26,7 @@ namespace NarrativeEngine::PhaseTracker
         Climax,
         FallingAction,
         Resolution,
-        Count,  // sentinel for bounds-checking; not a real phase
+        Count, // sentinel for bounds-checking; not a real phase
     };
 
     // Which way tension needs to move to leave a given phase. Used by
@@ -34,7 +34,11 @@ namespace NarrativeEngine::PhaseTracker
     // whose polarity matches the current phase's outgoing direction.
     //   Exposition / RisingAction / Resolution → Raise
     //   Climax / FallingAction                 → Lower
-    enum class Direction : std::uint8_t { Raise, Lower };
+    enum class Direction : std::uint8_t
+    {
+        Raise,
+        Lower
+    };
 
     // SKSE co-save record type ID for the phase tracker. Frozen — changing it
     // would orphan every previously-saved PhaseTracker payload.
@@ -108,4 +112,4 @@ namespace NarrativeEngine::PhaseTracker
     void OnSave(SKSE::SerializationInterface* intfc);
     void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);
     void OnRevert();
-}
+} // namespace NarrativeEngine::PhaseTracker

@@ -41,4 +41,4 @@ namespace NarrativeEngine::DashboardUIManager
     // call from the main thread (it reads RE::Calendar for relative-time
     // computation in the events list).
     std::string ComposeFullStateJSON();
-}
+} // namespace NarrativeEngine::DashboardUIManager

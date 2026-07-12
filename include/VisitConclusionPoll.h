@@ -30,7 +30,7 @@ namespace NarrativeEngine::VisitConclusionPoll
 {
     struct PollVerdict
     {
-        bool        shouldConclude = false;
+        bool shouldConclude = false;
         std::string rationale;
         // True iff the LLM observed that the sender has ALREADY
         // said their closing/goodbye line as part of the natural
@@ -39,7 +39,7 @@ namespace NarrativeEngine::VisitConclusionPoll
         // SkyrimNet's RegisterPersistentEvent (silent scene beat)
         // instead of DirectNarration (which would prompt a second
         // spoken goodbye). Ignored when `shouldConclude` is false.
-        bool        closingAlreadySpoken = false;
+        bool closingAlreadySpoken = false;
     };
 
     // Reset internal counters / timers to a fresh Discuss entry.
@@ -111,10 +111,10 @@ namespace NarrativeEngine::VisitConclusionPoll
     // steady_clock seconds (same time base the dashboard uses).
     struct HistoryEntry
     {
-        double      firedAtRealSeconds = 0.0;
-        bool        shouldConclude     = false;
+        double firedAtRealSeconds = 0.0;
+        bool shouldConclude = false;
         std::string rationale;
     };
     inline constexpr std::size_t kVerdictRingSize = 5;
     std::vector<HistoryEntry> GetRecentVerdicts();
-}
+} // namespace NarrativeEngine::VisitConclusionPoll

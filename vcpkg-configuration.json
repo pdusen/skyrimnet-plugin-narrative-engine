@@ -1,17 +1,15 @@
 {
-    "default-registry": {
-        "kind": "git",
-        "repository": "https://github.com/microsoft/vcpkg.git",
-        "baseline": "f7805f1a46ba696714b74479ac358305cb087fd4"
-    },
-    "registries": [
-        {
-            "kind": "git",
-            "repository": "https://github.com/Monitor221hz/modding-vcpkg-ports",
-            "baseline": "190a7e0768c63893a354b6f6dfabbebb6f8166de",
-            "packages": [
-                "commonlibsse-ng-fork"
-            ]
-        }
-    ]
+  "default-registry": {
+    "kind": "git",
+    "repository": "https://github.com/microsoft/vcpkg.git",
+    "baseline": "f7805f1a46ba696714b74479ac358305cb087fd4"
+  },
+  "registries": [
+    {
+      "kind": "git",
+      "repository": "https://github.com/Monitor221hz/modding-vcpkg-ports",
+      "baseline": "190a7e0768c63893a354b6f6dfabbebb6f8166de",
+      "packages": ["commonlibsse-ng-fork"]
+    }
+  ]
 }

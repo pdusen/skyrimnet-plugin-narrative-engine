@@ -41,5 +41,5 @@ namespace NarrativeEngine::SkyrimNetEvents
     // the dashboard can style it if it wants; the LLM reads only `text`.
     nlohmann::json BuildMergedTimeline(nlohmann::json skyrimNetEvents,
                                        nlohmann::json combatEvents,
-                                       double         currentGameTimeSeconds);
-}
+                                       double currentGameTimeSeconds);
+} // namespace NarrativeEngine::SkyrimNetEvents

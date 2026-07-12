@@ -5,8 +5,8 @@
 #include <EngineUtils.h>
 #include <JsonUtils.h>
 #include <LocationKeywords.h>
-#include <Settings.h>
 #include <logger.h>
+#include <Settings.h>
 
 #include <RE/Skyrim.h>
 
@@ -34,7 +34,7 @@ namespace NarrativeEngine
         // -------------------------------------------------------------
 
         std::mutex g_mutex;
-        double     g_lastCompletionGameHours = 0.0;
+        double g_lastCompletionGameHours = 0.0;
 
         // -------------------------------------------------------------
         // Session-only state (not persisted; reset by OnStart /
@@ -47,17 +47,17 @@ namespace NarrativeEngine
         std::atomic<bool> g_composeOutcomeReady{false};
         std::atomic<bool> g_composeSucceeded{false};
 
-        int               g_ticksSinceLastCompletionCheck = 0;
+        int g_ticksSinceLastCompletionCheck = 0;
         std::atomic<bool> g_completionTaskInFlight{false};
         std::atomic<bool> g_completionOutcomeReady{false};
         std::atomic<bool> g_completionDetected{false};
 
         BeatUtils::CleanupLatch g_cleanupLatch;
 
-        std::mutex        g_sessionMutex;
-        std::string       g_failureReason;
-        int               g_resolvedBanditCount   = 0;
-        int               g_resolvedSpawnDistance = 0;
+        std::mutex g_sessionMutex;
+        std::string g_failureReason;
+        int g_resolvedBanditCount = 0;
+        int g_resolvedSpawnDistance = 0;
 
         // -------------------------------------------------------------
         // Helpers
@@ -94,9 +94,7 @@ namespace NarrativeEngine
         {
             auto* quest = LookupAmbushQuest();
             if (!quest) {
-                logger::warn(
-                    "AmbushBeat: quest '{}' not found by EditorID",
-                    kQuestEditorID);
+                logger::warn("AmbushBeat: quest '{}' not found by EditorID", kQuestEditorID);
                 {
                     std::scoped_lock lock(g_sessionMutex);
                     g_failureReason = "quest_not_found";
@@ -106,25 +104,24 @@ namespace NarrativeEngine
                 return;
             }
 
-            int banditCount   = 0;
+            int banditCount = 0;
             int spawnDistance = 0;
             {
                 std::scoped_lock lock(g_sessionMutex);
-                banditCount   = g_resolvedBanditCount;
+                banditCount = g_resolvedBanditCount;
                 spawnDistance = g_resolvedSpawnDistance;
             }
 
-            logger::info(
-                "AmbushBeat: starting '{}' (banditCount={} spawnDistance={})",
-                kQuestEditorID, banditCount, spawnDistance);
+            logger::info("AmbushBeat: starting '{}' (banditCount={} spawnDistance={})",
+                         kQuestEditorID,
+                         banditCount,
+                         spawnDistance);
 
-            bool       engineResult = false;
-            const bool callOk       = quest->EnsureQuestStarted(engineResult, true);
-            const bool ok           = callOk && engineResult;
+            bool engineResult = false;
+            const bool callOk = quest->EnsureQuestStarted(engineResult, true);
+            const bool ok = callOk && engineResult;
             if (!ok) {
-                logger::warn(
-                    "AmbushBeat: EnsureQuestStarted failed (callOk={} engineResult={})",
-                    callOk, engineResult);
+                logger::warn("AmbushBeat: EnsureQuestStarted failed (callOk={} engineResult={})", callOk, engineResult);
                 std::scoped_lock lock(g_sessionMutex);
                 g_failureReason = "ensure_quest_started_failed";
             }
@@ -140,9 +137,7 @@ namespace NarrativeEngine
                 // proceed to cleanup rather than spin.
                 g_completionDetected.store(true, std::memory_order_release);
             } else {
-                g_completionDetected.store(
-                    quest->IsCompleted(),
-                    std::memory_order_release);
+                g_completionDetected.store(quest->IsCompleted(), std::memory_order_release);
             }
             g_completionOutcomeReady.store(true, std::memory_order_release);
             g_completionTaskInFlight.store(false, std::memory_order_release);
@@ -152,9 +147,7 @@ namespace NarrativeEngine
         {
             auto* quest = LookupAmbushQuest();
             if (quest) {
-                logger::info(
-                    "AmbushBeat: cleanup — Stop/Reset/SetEnabled(false) on '{}'",
-                    kQuestEditorID);
+                logger::info("AmbushBeat: cleanup — Stop/Reset/SetEnabled(false) on '{}'", kQuestEditorID);
                 quest->Stop();
                 quest->Reset();
                 quest->SetEnabled(false);
@@ -169,31 +162,34 @@ namespace NarrativeEngine
                     std::scoped_lock lock(g_mutex);
                     g_lastCompletionGameHours = now;
                 }
-                logger::info(
-                    "AmbushBeat: per-beat cooldown stamped at gameHours={:.2f}",
-                    now);
+                logger::info("AmbushBeat: per-beat cooldown stamped at gameHours={:.2f}", now);
             }
             g_cleanupLatch.MarkComplete();
         }
-    }
+    } // namespace
 
-    std::string AmbushBeat::Name() const { return "ambush"; }
+    std::string AmbushBeat::Name() const
+    {
+        return "ambush";
+    }
 
     std::string AmbushBeat::Description() const
     {
-        return
-            "A small group of leveled bandits (up to six) materializes at nearby "
-            "world markers, jogs toward the player ignoring intervening NPCs, and "
-            "engages in vanilla combat at close range. Best fit when the player is "
-            "wandering open wilderness or a road with no obvious threat and the "
-            "story has gone quiet — the ambush is high-visibility, clearly an "
-            "intervention, and resolves in a single fight rather than escalating "
-            "an existing situation. Not appropriate when the player is already in "
-            "combat, in a settled area, or anywhere a fresh bandit attack would "
-            "read as nonsensical (e.g. inside a city or inn).";
+        return "A small group of leveled bandits (up to six) materializes at nearby "
+               "world markers, jogs toward the player ignoring intervening NPCs, and "
+               "engages in vanilla combat at close range. Best fit when the player is "
+               "wandering open wilderness or a road with no obvious threat and the "
+               "story has gone quiet — the ambush is high-visibility, clearly an "
+               "intervention, and resolves in a single fight rather than escalating "
+               "an existing situation. Not appropriate when the player is already in "
+               "combat, in a settled area, or anywhere a fresh bandit attack would "
+               "read as nonsensical (e.g. inside a city or inn).";
     }
 
-    BeatPolarity AmbushBeat::Polarity() const { return BeatPolarity::Raise; }
+    BeatPolarity AmbushBeat::Polarity() const
+    {
+        return BeatPolarity::Raise;
+    }
 
     bool AmbushBeat::IsAvailable(const BeatContext& ctx) const
     {
@@ -205,7 +201,8 @@ namespace NarrativeEngine
             return false;
         };
 
-        if (ctx.playerInInterior) return blocked("playerInInterior");
+        if (ctx.playerInInterior)
+            return blocked("playerInInterior");
 
         if (ctx.player) {
             if (LocationKeywords::IsSafe(ctx.player->GetCurrentLocation())) {
@@ -214,9 +211,12 @@ namespace NarrativeEngine
         }
 
         auto* quest = LookupAmbushQuest();
-        if (!quest)                          return blocked("quest not found by EditorID");
-        if (quest->IsCompleted())            return blocked("quest IsCompleted");
-        if (quest->GetCurrentStageID() > 0)  return blocked("quest stage > 0 (in flight)");
+        if (!quest)
+            return blocked("quest not found by EditorID");
+        if (quest->IsCompleted())
+            return blocked("quest IsCompleted");
+        if (quest->GetCurrentStageID() > 0)
+            return blocked("quest stage > 0 (in flight)");
 
         const int cooldownHours = Settings::Get().ambushPerBeatCooldownGameHours;
         if (cooldownHours > 0) {
@@ -229,10 +229,10 @@ namespace NarrativeEngine
                 const double elapsed = EngineUtils::GetCurrentGameHours() - lastCompletion;
                 if (elapsed < static_cast<double>(cooldownHours)) {
                     if (debug) {
-                        logger::debug(
-                            "AmbushBeat::IsAvailable: blocked (per-beat cooldown: "
-                            "elapsed={:.2f}h < cooldown={}h)",
-                            elapsed, cooldownHours);
+                        logger::debug("AmbushBeat::IsAvailable: blocked (per-beat cooldown: "
+                                      "elapsed={:.2f}h < cooldown={}h)",
+                                      elapsed,
+                                      cooldownHours);
                     }
                     return false;
                 }
@@ -245,108 +245,104 @@ namespace NarrativeEngine
     double AmbushBeat::RemainingCooldownGameHours() const
     {
         const int cooldownHours = Settings::Get().ambushPerBeatCooldownGameHours;
-        if (cooldownHours <= 0) return 0.0;
+        if (cooldownHours <= 0)
+            return 0.0;
         double lastCompletion = 0.0;
         {
             std::scoped_lock lock(g_mutex);
             lastCompletion = g_lastCompletionGameHours;
         }
-        if (lastCompletion <= 0.0) return 0.0;
-        const double elapsed   = EngineUtils::GetCurrentGameHours() - lastCompletion;
+        if (lastCompletion <= 0.0)
+            return 0.0;
+        const double elapsed = EngineUtils::GetCurrentGameHours() - lastCompletion;
         const double remaining = static_cast<double>(cooldownHours) - elapsed;
         return remaining > 0.0 ? remaining : 0.0;
     }
 
-    void AmbushBeat::OnStart(const BeatContext& /*ctx*/,
-                             const nlohmann::json& parameters)
+    void AmbushBeat::OnStart(const BeatContext& /*ctx*/, const nlohmann::json& parameters)
     {
         const auto& cfg = Settings::Get();
-        const int banditCount = JsonUtils::ClampParameterInt(
-            parameters, "bandit_count",
-            cfg.ambushDefaultBanditCount,
-            cfg.ambushMinBanditCount, cfg.ambushMaxBanditCount);
-        const int spawnDistance = JsonUtils::ClampParameterInt(
-            parameters, "spawn_distance_units",
-            cfg.ambushDefaultSpawnDistanceUnits,
-            cfg.ambushMinSpawnDistanceUnits, cfg.ambushMaxSpawnDistanceUnits);
+        const int banditCount = JsonUtils::ClampParameterInt(parameters,
+                                                             "bandit_count",
+                                                             cfg.ambushDefaultBanditCount,
+                                                             cfg.ambushMinBanditCount,
+                                                             cfg.ambushMaxBanditCount);
+        const int spawnDistance = JsonUtils::ClampParameterInt(parameters,
+                                                               "spawn_distance_units",
+                                                               cfg.ambushDefaultSpawnDistanceUnits,
+                                                               cfg.ambushMinSpawnDistanceUnits,
+                                                               cfg.ambushMaxSpawnDistanceUnits);
 
         ResetSessionState();
         {
             std::scoped_lock lock(g_sessionMutex);
-            g_resolvedBanditCount   = banditCount;
+            g_resolvedBanditCount = banditCount;
             g_resolvedSpawnDistance = spawnDistance;
         }
-        logger::info(
-            "AmbushBeat::OnStart: resolved banditCount={} spawnDistance={}",
-            banditCount, spawnDistance);
+        logger::info("AmbushBeat::OnStart: resolved banditCount={} spawnDistance={}", banditCount, spawnDistance);
     }
 
     TickResult AmbushBeat::Tick(TickMode mode, BeatState state)
     {
         // Freeze under any non-Normal gate.
-        if (mode != TickMode::Normal) return {};
+        if (mode != TickMode::Normal)
+            return {};
 
         switch (state) {
-            case BeatState::COMPOSE: {
-                if (g_composeOutcomeReady.load(std::memory_order_acquire)) {
-                    const bool ok = g_composeSucceeded.load(std::memory_order_acquire);
-                    if (ok) {
-                        logger::info(
-                            "AmbushBeat: COMPOSE succeeded; advancing to RUNNING");
-                        g_ticksSinceLastCompletionCheck = 0;
-                        return {BeatState::RUNNING};
-                    } else {
-                        std::string reason;
-                        {
-                            std::scoped_lock lock(g_sessionMutex);
-                            reason = g_failureReason;
-                        }
-                        logger::warn(
-                            "AmbushBeat: COMPOSE failed ({}); advancing to CLEANUP",
-                            reason);
-                        return {BeatState::CLEANUP};
-                    }
-                }
-                if (!g_composeTaskFired.exchange(true, std::memory_order_acq_rel)) {
-                    AsyncDispatch::MarshalToMainThread(&MainThreadStartQuest);
-                }
-                return {};
-            }
-
-            case BeatState::RUNNING: {
-                if (g_completionOutcomeReady.load(std::memory_order_acquire)) {
-                    // Consume the outcome regardless — next check will
-                    // fire a new task if this one said not-yet.
-                    const bool done =
-                        g_completionDetected.load(std::memory_order_acquire);
-                    g_completionOutcomeReady.store(false, std::memory_order_release);
-                    if (done) {
-                        logger::info(
-                            "AmbushBeat: RUNNING detected completion; advancing to CLEANUP");
-                        return {BeatState::CLEANUP};
-                    }
-                }
-                if (++g_ticksSinceLastCompletionCheck >= kCompletionCheckEveryNTicks) {
+        case BeatState::COMPOSE: {
+            if (g_composeOutcomeReady.load(std::memory_order_acquire)) {
+                const bool ok = g_composeSucceeded.load(std::memory_order_acquire);
+                if (ok) {
+                    logger::info("AmbushBeat: COMPOSE succeeded; advancing to RUNNING");
                     g_ticksSinceLastCompletionCheck = 0;
-                    if (!g_completionTaskInFlight.exchange(true, std::memory_order_acq_rel)) {
-                        AsyncDispatch::MarshalToMainThread(&MainThreadCheckCompletion);
+                    return {BeatState::RUNNING};
+                } else {
+                    std::string reason;
+                    {
+                        std::scoped_lock lock(g_sessionMutex);
+                        reason = g_failureReason;
                     }
+                    logger::warn("AmbushBeat: COMPOSE failed ({}); advancing to CLEANUP", reason);
+                    return {BeatState::CLEANUP};
                 }
-                return {};
             }
+            if (!g_composeTaskFired.exchange(true, std::memory_order_acq_rel)) {
+                AsyncDispatch::MarshalToMainThread(&MainThreadStartQuest);
+            }
+            return {};
+        }
 
-            case BeatState::CLEANUP: {
-                if (g_cleanupLatch.Poll(&MainThreadCleanup)) {
-                    logger::info(
-                        "AmbushBeat: CLEANUP done; returning to NOT_RUNNING");
-                    return {BeatState::NOT_RUNNING};
+        case BeatState::RUNNING: {
+            if (g_completionOutcomeReady.load(std::memory_order_acquire)) {
+                // Consume the outcome regardless — next check will
+                // fire a new task if this one said not-yet.
+                const bool done = g_completionDetected.load(std::memory_order_acquire);
+                g_completionOutcomeReady.store(false, std::memory_order_release);
+                if (done) {
+                    logger::info("AmbushBeat: RUNNING detected completion; advancing to CLEANUP");
+                    return {BeatState::CLEANUP};
                 }
-                return {};
             }
+            if (++g_ticksSinceLastCompletionCheck >= kCompletionCheckEveryNTicks) {
+                g_ticksSinceLastCompletionCheck = 0;
+                if (!g_completionTaskInFlight.exchange(true, std::memory_order_acq_rel)) {
+                    AsyncDispatch::MarshalToMainThread(&MainThreadCheckCompletion);
+                }
+            }
+            return {};
+        }
 
-            case BeatState::NOT_RUNNING:
-            default:
-                return {};
+        case BeatState::CLEANUP: {
+            if (g_cleanupLatch.Poll(&MainThreadCleanup)) {
+                logger::info("AmbushBeat: CLEANUP done; returning to NOT_RUNNING");
+                return {BeatState::NOT_RUNNING};
+            }
+            return {};
+        }
+
+        case BeatState::NOT_RUNNING:
+        default:
+            return {};
         }
     }
 
@@ -359,7 +355,8 @@ namespace NarrativeEngine
     {
         void OnSave(SKSE::SerializationInterface* intfc)
         {
-            if (!intfc) return;
+            if (!intfc)
+                return;
             if (!intfc->OpenRecord(kRecordTypeId, kRecordVersion)) {
                 logger::error("AmbushBeat::OnSave: OpenRecord failed");
                 return;
@@ -372,14 +369,12 @@ namespace NarrativeEngine
             intfc->WriteRecordData(stampCopy);
         }
 
-        void OnLoad(SKSE::SerializationInterface* intfc,
-                    std::uint32_t version, std::uint32_t length)
+        void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length)
         {
-            if (!intfc) return;
+            if (!intfc)
+                return;
             if (version != kRecordVersion) {
-                logger::warn(
-                    "AmbushBeat::OnLoad: unknown version {} (length={}); clearing",
-                    version, length);
+                logger::warn("AmbushBeat::OnLoad: unknown version {} (length={}); clearing", version, length);
                 OnRevert();
                 return;
             }
@@ -393,9 +388,7 @@ namespace NarrativeEngine
                 std::scoped_lock lock(g_mutex);
                 g_lastCompletionGameHours = stampLoaded;
             }
-            logger::info(
-                "AmbushBeat::OnLoad: restored lastCompletionGameHours={:.2f}",
-                stampLoaded);
+            logger::info("AmbushBeat::OnLoad: restored lastCompletionGameHours={:.2f}", stampLoaded);
         }
 
         void OnRevert()
@@ -403,5 +396,5 @@ namespace NarrativeEngine
             std::scoped_lock lock(g_mutex);
             g_lastCompletionGameHours = 0.0;
         }
-    }
-}
+    } // namespace AmbushBeat_Persistence
+} // namespace NarrativeEngine

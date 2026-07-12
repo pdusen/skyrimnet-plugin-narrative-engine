@@ -58,4 +58,4 @@ namespace NarrativeEngine::CameraVisibility
     // caller's other checks (distance floor, timeout backstop)
     // ensure the visit still resolves.
     bool IsAnyPartVisibleFromCamera(RE::TESObjectREFR* target);
-}
+} // namespace NarrativeEngine::CameraVisibility

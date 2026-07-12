@@ -8,7 +8,10 @@
 
 #include <RE/Skyrim.h>
 
-namespace SKSE { class SerializationInterface; }
+namespace SKSE
+{
+    class SerializationInterface;
+}
 
 // VisitState — single-slot data module for the in-flight NPCVisitBeat.
 //
@@ -37,22 +40,22 @@ namespace NarrativeEngine::VisitState
     enum class Mode : std::uint8_t
     {
         Idle,
-        Composing,     // compose LLM call is in flight; quest not yet started
-        Salutation,    // quest stage 10
-        Discuss,       // quest stage 20
-        OnHold,        // quest stage 25
-        ReEngage,      // quest stage 27
-        Valediction,   // quest stage 30
-        ReturnHome,    // quest stage 50
+        Composing,   // compose LLM call is in flight; quest not yet started
+        Salutation,  // quest stage 10
+        Discuss,     // quest stage 20
+        OnHold,      // quest stage 25
+        ReEngage,    // quest stage 27
+        Valediction, // quest stage 30
+        ReturnHome,  // quest stage 50
     };
 
     // Reason a terminal history entry was recorded, for the dashboard.
     enum class Outcome : std::uint8_t
     {
-        Completed,     // Discuss reached a natural conclusion via the poll
-        Unsatisfied,   // sender left because the player ignored them
-        RolledBack,    // Salutation timeout; beat never really started
-        Aborted,       // hard-abort branch fired (death, combat-stuck, or poll-broken)
+        Completed,   // Discuss reached a natural conclusion via the poll
+        Unsatisfied, // sender left because the player ignored them
+        RolledBack,  // Salutation timeout; beat never really started
+        Aborted,     // hard-abort branch fired (death, combat-stuck, or poll-broken)
     };
 
     // The persisted data — cached briefing, return-teleport bookkeeping,
@@ -60,42 +63,42 @@ namespace NarrativeEngine::VisitState
     // Reset().
     struct Snapshot
     {
-        RE::FormID              senderFormID          = 0;
-        RE::FormID              returnCellFormID      = 0;
-        RE::NiPoint3            returnPosition        {};
-        float                   returnAngleZ          = 0.0f;
-        RE::FormID              returnAnchorFormID    = 0;
+        RE::FormID senderFormID = 0;
+        RE::FormID returnCellFormID = 0;
+        RE::NiPoint3 returnPosition{};
+        float returnAngleZ = 0.0f;
+        RE::FormID returnAnchorFormID = 0;
 
-        std::string             briefingText;
-        std::string             narrationText;
-        std::string             topicTag;
-        std::string             mood;
+        std::string briefingText;
+        std::string narrationText;
+        std::string topicTag;
+        std::string mood;
 
         // Wall-clock start time of the whole visit lifecycle. Used for
         // history-entry duration and for the dashboard's "visit started
         // at" display; no longer feeds any abort clock.
-        double                  dispatchedAtRealSeconds = 0.0;
+        double dispatchedAtRealSeconds = 0.0;
 
         // Consecutive `ContinueConversation` fires without a poll ever
         // returning `should_conclude: true` in between. Resets whenever a
         // fresh player speech turn lands.
-        std::uint8_t            ignoreNudgeCount      = 0;
+        std::uint8_t ignoreNudgeCount = 0;
 
         // Consecutive natural-conclusion-poll failures (parse errors, LLM
         // timeouts). Hits `iVisitConclusionPollMaxConsecutiveFailures` →
         // hard-abort.
-        std::uint8_t            consecutivePollFailures = 0;
+        std::uint8_t consecutivePollFailures = 0;
     };
 
     // Dashboard's recent-history ring buffer entry. Per-process; not
     // persisted (dashboard-only convenience).
     struct HistoryEntry
     {
-        double      dispatchedAt   = 0.0;
+        double dispatchedAt = 0.0;
         std::string senderName;
         std::string topicTag;
-        Outcome     outcome        = Outcome::Completed;
-        double      durationSeconds = 0.0;
+        Outcome outcome = Outcome::Completed;
+        double durationSeconds = 0.0;
     };
 
     // Fixed size for the history ring — same order of magnitude as
@@ -112,13 +115,13 @@ namespace NarrativeEngine::VisitState
     bool GetComposingSender();
 
     // Snapshot accessors — thread-safe, copy in / copy out.
-    Snapshot  GetSnapshot();
-    void      SetSnapshot(const Snapshot& snapshot);
-    void      Reset();
+    Snapshot GetSnapshot();
+    void SetSnapshot(const Snapshot& snapshot);
+    void Reset();
 
     // Recent-history ring for the dashboard.
-    void                       PushHistory(HistoryEntry entry);
-    std::vector<HistoryEntry>  GetHistory();
+    void PushHistory(HistoryEntry entry);
+    std::vector<HistoryEntry> GetHistory();
 
     // Derive the current mode from live state — reads the composing flag
     // and the current stage of `_ne_VisitQuest` (looked up lazily by
@@ -129,4 +132,4 @@ namespace NarrativeEngine::VisitState
     void OnSave(SKSE::SerializationInterface*);
     void OnLoad(SKSE::SerializationInterface*, std::uint32_t version, std::uint32_t length);
     void OnRevert();
-}
+} // namespace NarrativeEngine::VisitState

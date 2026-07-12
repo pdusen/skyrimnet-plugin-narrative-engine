@@ -59,7 +59,5 @@ namespace NarrativeEngine::AliasWalkFilter
     // The `debug` flag toggles the per-alias trace log lines — set to
     // true when Settings::Get().debugMode is on so we can watch the
     // walk decide, false otherwise to keep normal logs clean.
-    bool IsActorStoryActive(RE::Actor*   actor,
-                            std::string* reasonOut = nullptr,
-                            bool         debug     = false);
-}
+    bool IsActorStoryActive(RE::Actor* actor, std::string* reasonOut = nullptr, bool debug = false);
+} // namespace NarrativeEngine::AliasWalkFilter

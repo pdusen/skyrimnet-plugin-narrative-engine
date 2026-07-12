@@ -1,12 +1,12 @@
 #include <CameraVisibility.h>
 
-#include <Settings.h>
 #include <logger.h>
+#include <Settings.h>
 
 #include <RE/A/Actor.h>
-#include <RE/B/BSFixedString.h>
 #include <RE/B/bhkPickData.h>
 #include <RE/B/bhkWorld.h>
+#include <RE/B/BSFixedString.h>
 #include <RE/N/NiAVObject.h>
 #include <RE/N/NiBound.h>
 #include <RE/N/NiPoint3.h>
@@ -41,11 +41,11 @@ namespace NarrativeEngine::CameraVisibility
         // per second, so we're comfortably cheap.
         constexpr const char* kSkeletonNodeNames[] = {
             "NPC Head [Head]",
-            "NPC Spine1 [Spn1]",       // chest / upper torso
-            "NPC L Clavicle [LClv]",   // left shoulder
-            "NPC R Clavicle [RClv]",   // right shoulder
-            "NPC L Hand [LHnd]",       // left hand extreme
-            "NPC R Hand [RHnd]",       // right hand extreme
+            "NPC Spine1 [Spn1]",     // chest / upper torso
+            "NPC L Clavicle [LClv]", // left shoulder
+            "NPC R Clavicle [RClv]", // right shoulder
+            "NPC L Hand [LHnd]",     // left hand extreme
+            "NPC R Hand [RHnd]",     // right hand extreme
         };
 
         // Fraction-of-ray-length that a hit must be past to count as
@@ -64,8 +64,10 @@ namespace NarrativeEngine::CameraVisibility
         bool GetCameraWorldPos(RE::NiPoint3& out)
         {
             auto* cam = RE::PlayerCamera::GetSingleton();
-            if (!cam)              return false;
-            if (!cam->cameraRoot)  return false;
+            if (!cam)
+                return false;
+            if (!cam->cameraRoot)
+                return false;
             out = cam->cameraRoot->world.translate;
             return true;
         }
@@ -82,17 +84,17 @@ namespace NarrativeEngine::CameraVisibility
         // volume the mesh occupies"; sampling top/bottom/side/side
         // captures the sticking-out-of-cover cases skeletal nodes
         // alone might miss (weapon on back, extended cloak, etc.).
-        std::size_t GatherSamplePoints(
-            RE::TESObjectREFR*                  target,
-            std::array<RE::NiPoint3, 12>&       out)
+        std::size_t GatherSamplePoints(RE::TESObjectREFR* target, std::array<RE::NiPoint3, 12>& out)
         {
             std::size_t n = 0;
 
             if (auto* root = target->Get3D()) {
                 for (const char* nodeName : kSkeletonNodeNames) {
-                    if (n >= out.size()) break;
+                    if (n >= out.size())
+                        break;
                     auto* node = root->GetObjectByName(nodeName);
-                    if (!node) continue;
+                    if (!node)
+                        continue;
                     out[n++] = node->world.translate;
                 }
 
@@ -107,12 +109,12 @@ namespace NarrativeEngine::CameraVisibility
                     const auto& c = bound.center;
                     const float r = bound.radius;
                     // Vertical extremes (top of head / feet).
-                    out[n++] = { c.x,     c.y,     c.z + r };
-                    out[n++] = { c.x,     c.y,     c.z - r };
+                    out[n++] = {c.x, c.y, c.z + r};
+                    out[n++] = {c.x, c.y, c.z - r};
                     // Lateral extremes (widest silhouette from
                     // most camera angles).
-                    out[n++] = { c.x + r, c.y,     c.z     };
-                    out[n++] = { c.x - r, c.y,     c.z     };
+                    out[n++] = {c.x + r, c.y, c.z};
+                    out[n++] = {c.x - r, c.y, c.z};
                 }
             }
 
@@ -141,11 +143,11 @@ namespace NarrativeEngine::CameraVisibility
         // either nothing was hit or the hit was at/very-near the
         // endpoint — both of which mean the sample point is
         // reachable in an obstruction sense.
-        bool RaycastReachedEndpoint(const RE::NiPoint3& from,
-                                     const RE::NiPoint3& to)
+        bool RaycastReachedEndpoint(const RE::NiPoint3& from, const RE::NiPoint3& to)
         {
             auto* tes = RE::TES::GetSingleton();
-            if (!tes) return false;
+            if (!tes)
+                return false;
 
             // Skyrim's Havok world uses a different unit scale than
             // the game-space coords we've been carrying around.
@@ -154,10 +156,8 @@ namespace NarrativeEngine::CameraVisibility
             const float scale = RE::bhkWorld::GetWorldScale();
 
             RE::bhkPickData pd;
-            pd.rayInput.from = RE::hkVector4(
-                from.x * scale, from.y * scale, from.z * scale, 0.0f);
-            pd.rayInput.to = RE::hkVector4(
-                to.x * scale, to.y * scale, to.z * scale, 0.0f);
+            pd.rayInput.from = RE::hkVector4(from.x * scale, from.y * scale, from.z * scale, 0.0f);
+            pd.rayInput.to = RE::hkVector4(to.x * scale, to.y * scale, to.z * scale, 0.0f);
             // Default rayOutput fields are initialized to "no hit"
             // (rootCollidable=nullptr, hitFraction=1.0). We rely on
             // that: a no-hit result correctly reads as "reached."
@@ -167,17 +167,19 @@ namespace NarrativeEngine::CameraVisibility
 
             return pd.rayOutput.hitFraction >= kReachedFractionThreshold;
         }
-    }
+    } // namespace
 
     bool IsAnyPartVisibleFromCamera(RE::TESObjectREFR* target)
     {
-        if (!target) return false;
+        if (!target)
+            return false;
 
         // Gate 1 — no 3D means the target isn't rendered anywhere,
         // full stop. Common for far / unloaded actors and the exact
         // "safe to teleport home" case the caller wants.
         auto* root = target->Get3D();
-        if (!root) return false;
+        if (!root)
+            return false;
 
         RE::NiPoint3 cameraPos;
         if (!GetCameraWorldPos(cameraPos)) {
@@ -191,7 +193,7 @@ namespace NarrativeEngine::CameraVisibility
         const float dx = targetPos.x - cameraPos.x;
         const float dy = targetPos.y - cameraPos.y;
         const float dz = targetPos.z - cameraPos.z;
-        const float distSq = dx*dx + dy*dy + dz*dz;
+        const float distSq = dx * dx + dy * dy + dz * dz;
 
         // Gate 2 — close-range visibility. Below the floor, we're
         // inside the region where raycasts behave badly. Treat as
@@ -215,7 +217,8 @@ namespace NarrativeEngine::CameraVisibility
         // Gate 4 — fan of raycasts to sampled points on the target.
         std::array<RE::NiPoint3, 12> samples;
         const std::size_t nSamples = GatherSamplePoints(target, samples);
-        if (nSamples == 0) return false;
+        if (nSamples == 0)
+            return false;
 
         const bool debug = Settings::Get().debugMode;
         std::size_t reachedCount = 0;
@@ -234,16 +237,21 @@ namespace NarrativeEngine::CameraVisibility
         }
 
         if (debug) {
-            logger::debug(
-                "CameraVisibility: target=0x{:X} samples={} reached={} "
-                "(cam=({:.0f},{:.0f},{:.0f}) target=({:.0f},{:.0f},{:.0f}) "
-                "dist={:.0f})",
-                target->GetFormID(), nSamples, reachedCount,
-                cameraPos.x, cameraPos.y, cameraPos.z,
-                targetPos.x, targetPos.y, targetPos.z,
-                std::sqrt(distSq));
+            logger::debug("CameraVisibility: target=0x{:X} samples={} reached={} "
+                          "(cam=({:.0f},{:.0f},{:.0f}) target=({:.0f},{:.0f},{:.0f}) "
+                          "dist={:.0f})",
+                          target->GetFormID(),
+                          nSamples,
+                          reachedCount,
+                          cameraPos.x,
+                          cameraPos.y,
+                          cameraPos.z,
+                          targetPos.x,
+                          targetPos.y,
+                          targetPos.z,
+                          std::sqrt(distSq));
         }
 
         return reachedCount > 0;
     }
-}
+} // namespace NarrativeEngine::CameraVisibility

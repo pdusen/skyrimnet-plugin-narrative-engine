@@ -8,7 +8,10 @@
 
 #include <nlohmann/json_fwd.hpp>
 
-namespace RE { class Actor; }
+namespace RE
+{
+    class Actor;
+}
 
 // IBeat — the interface every Narrative Beat implements.
 //
@@ -33,10 +36,10 @@ namespace NarrativeEngine
     // Tick only when state != NOT_RUNNING.
     enum class BeatState : std::uint8_t
     {
-        NOT_RUNNING,   // baseline — beat is not in flight
-        COMPOSE,       // pre-quest work (LLM compose, alias promote, etc.)
-        RUNNING,       // beat's quest is live; stage advances drive Tick
-        CLEANUP,       // post-quest teardown before returning to NOT_RUNNING
+        NOT_RUNNING, // baseline — beat is not in flight
+        COMPOSE,     // pre-quest work (LLM compose, alias promote, etc.)
+        RUNNING,     // beat's quest is live; stage advances drive Tick
+        CLEANUP,     // post-quest teardown before returning to NOT_RUNNING
     };
 
     // World-state mode passed to Tick each cycle. Only one applies per
@@ -64,12 +67,12 @@ namespace NarrativeEngine
     // AsyncDispatch::MarshalToMainThread.
     struct BeatContext
     {
-        RE::Actor*  player           = nullptr;
-        bool        playerInCombat   = false;
-        bool        playerInDialogue = false;
-        bool        playerInInterior = false;
-        std::string locationName;   // current Location's display name, may be empty
-        std::string cellName;       // current Cell's display name, may be empty
+        RE::Actor* player = nullptr;
+        bool playerInCombat = false;
+        bool playerInDialogue = false;
+        bool playerInInterior = false;
+        std::string locationName; // current Location's display name, may be empty
+        std::string cellName;     // current Cell's display name, may be empty
 
         // Which way the Director wants tension to move on this tick. Beats
         // whose Polarity is Either consume this to shape their behavior;
@@ -77,7 +80,7 @@ namespace NarrativeEngine
         // both fields from the same values it already computed for the
         // beat-select prompt.
         PhaseTracker::Direction desiredDirection = PhaseTracker::Direction::Raise;
-        int                     tensionDelta     = 0;
+        int tensionDelta = 0;
     };
 
     // Result of a single Tick call. `transitionTo`, when populated,
@@ -120,8 +123,7 @@ namespace NarrativeEngine
         // parameters it needs on its own cosave record; typical beats
         // do minimal work here (validate + clamp params, seed the
         // per-beat state to COMPOSE). Main thread.
-        virtual void OnStart(const BeatContext&    ctx,
-                             const nlohmann::json& parameters) = 0;
+        virtual void OnStart(const BeatContext& ctx, const nlohmann::json& parameters) = 0;
 
         // The beat's whole per-poll lifecycle. Called by BeatSystem's
         // master poll every N ms (default 250) while this beat is the
@@ -136,8 +138,7 @@ namespace NarrativeEngine
         // Implementations should exit early under Paused / Dialogue
         // (and typically Combat) unless the beat specifically wants to
         // do something under that mode.
-        virtual TickResult Tick(TickMode  mode,
-                                BeatState state) = 0;
+        virtual TickResult Tick(TickMode mode, BeatState state) = 0;
 
         // In-game hours remaining before this beat's own per-beat
         // cooldown expires. Zero means "no cooldown active" / "can fire
@@ -146,6 +147,9 @@ namespace NarrativeEngine
         // dashboard queries this every state push, and the beat-select
         // pipeline never touches it (cooldowns are already enforced
         // inside IsAvailable).
-        virtual double RemainingCooldownGameHours() const { return 0.0; }
+        virtual double RemainingCooldownGameHours() const
+        {
+            return 0.0;
+        }
     };
-}
+} // namespace NarrativeEngine

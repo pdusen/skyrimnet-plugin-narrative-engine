@@ -22,4 +22,4 @@ namespace NarrativeEngine::ConsoleCommand
     // dispatched; false if the engine refused to create the script form
     // (rare — usually only at shutdown).
     bool Run(std::string_view command);
-}
+} // namespace NarrativeEngine::ConsoleCommand

@@ -20,7 +20,7 @@
   Papyrus extension expects to find .ppj files at the workspace root.
 -->
 <PapyrusProject xmlns="PapyrusProject.xsd"
-                Game="sse" 
+                Game="sse"
                 Flags="TESV_Papyrus_Flags.flg"
                 Output="@NE_PAPYRUS_OUTPUT_DIR@"
                 Optimize="true"

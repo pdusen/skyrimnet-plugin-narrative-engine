@@ -26,4 +26,4 @@ namespace NarrativeEngine::EngineUtils
     bool IsGamePaused();
     bool IsPlayerInCombat();
     bool IsPlayerInDialogue();
-}
+} // namespace NarrativeEngine::EngineUtils

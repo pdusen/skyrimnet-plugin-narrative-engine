@@ -1,0 +1,44 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+max_line_length = 120
+
+[*.{c,cc,cxx,cpp,h,hh,hxx,hpp,inl,ipp}]
+indent_style = space
+indent_size = 4
+
+[*.{cmake,txt}]
+indent_style = space
+indent_size = 2
+
+[CMakeLists.txt]
+indent_style = space
+indent_size = 2
+
+[*.{yml,yaml,json,toml}]
+indent_style = space
+indent_size = 2
+
+[*.{md,markdown}]
+trim_trailing_whitespace = false
+indent_size = 2
+
+[*.{ps1,psm1,psd1}]
+indent_style = space
+indent_size = 4
+end_of_line = crlf
+
+[*.{bat,cmd}]
+end_of_line = crlf
+
+[*.psc]
+indent_style = tab
+
+[Makefile]
+indent_style = tab

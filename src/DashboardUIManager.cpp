@@ -7,6 +7,7 @@
 #include <CombatEventLog.h>
 #include <DecisionLog.h>
 #include <LetterPool.h>
+#include <logger.h>
 #include <PhaseTracker.h>
 #include <PrismaUI.h>
 #include <Settings.h>
@@ -15,7 +16,6 @@
 #include <Tick.h>
 #include <VisitConclusionPoll.h>
 #include <VisitState.h>
-#include <logger.h>
 
 #include <nlohmann/json.hpp>
 
@@ -29,7 +29,7 @@ namespace NarrativeEngine::DashboardUIManager
     namespace
     {
         PrismaUI_API::ViewHandle g_view = PrismaUI_API::kInvalidView;
-        std::atomic<bool>        g_visible = false;
+        std::atomic<bool> g_visible = false;
 
         // -- Hotkey input sink --------------------------------------------
         //
@@ -41,9 +41,8 @@ namespace NarrativeEngine::DashboardUIManager
 
         struct HotkeySink : public RE::BSTEventSink<RE::InputEvent*>
         {
-            RE::BSEventNotifyControl ProcessEvent(
-                RE::InputEvent* const* a_event,
-                RE::BSTEventSource<RE::InputEvent*>* /*a_source*/) override
+            RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* a_event,
+                                                  RE::BSTEventSource<RE::InputEvent*>* /*a_source*/) override
             {
                 if (!a_event || !*a_event) {
                     return RE::BSEventNotifyControl::kContinue;
@@ -51,16 +50,19 @@ namespace NarrativeEngine::DashboardUIManager
 
                 bool fire = false;
                 for (auto* e = *a_event; e; e = e->next) {
-                    if (e->GetEventType() != RE::INPUT_EVENT_TYPE::kButton) continue;
+                    if (e->GetEventType() != RE::INPUT_EVENT_TYPE::kButton)
+                        continue;
                     auto* btn = e->AsButtonEvent();
-                    if (!btn || !btn->IsDown()) continue;
+                    if (!btn || !btn->IsDown())
+                        continue;
 
                     const std::uint32_t scanCode = btn->GetIDCode();
                     // SKSE input events use DirectInput scan codes; the user
                     // configures the hotkey as a Windows VK code. Translate
                     // via MapVirtualKeyW so the comparison is in VK space.
                     const std::uint32_t vk = ::MapVirtualKeyW(scanCode, MAPVK_VSC_TO_VK);
-                    if (vk == 0) continue;
+                    if (vk == 0)
+                        continue;
 
                     // ESC closes the dashboard when it's open and no
                     // modifier keys are held. Doesn't open it when closed
@@ -70,34 +72,38 @@ namespace NarrativeEngine::DashboardUIManager
                     // combo ESC bindings are left alone so the player can
                     // still use them for other mods.
                     if (vk == VK_ESCAPE) {
-                        if (!g_visible.load()) continue;
-                        const bool anyMod =
-                            (::GetAsyncKeyState(VK_CONTROL) & 0x8000) ||
-                            (::GetAsyncKeyState(VK_SHIFT)   & 0x8000) ||
-                            (::GetAsyncKeyState(VK_MENU)    & 0x8000);
-                        if (anyMod) continue;
+                        if (!g_visible.load())
+                            continue;
+                        const bool anyMod = (::GetAsyncKeyState(VK_CONTROL) & 0x8000)
+                                            || (::GetAsyncKeyState(VK_SHIFT) & 0x8000)
+                                            || (::GetAsyncKeyState(VK_MENU) & 0x8000);
+                        if (anyMod)
+                            continue;
                         fire = true;
                         break;
                     }
 
-                    if (static_cast<int>(vk) != Settings::Get().dashboardHotkeyVK) continue;
+                    if (static_cast<int>(vk) != Settings::Get().dashboardHotkeyVK)
+                        continue;
 
                     // Modifier match is exact, not a superset. (F7+Shift is
                     // a different binding than plain F7.)
                     std::uint8_t actualMods = 0;
-                    if (::GetAsyncKeyState(VK_CONTROL) & 0x8000) actualMods |= Settings::kModCtrl;
-                    if (::GetAsyncKeyState(VK_SHIFT)   & 0x8000) actualMods |= Settings::kModShift;
-                    if (::GetAsyncKeyState(VK_MENU)    & 0x8000) actualMods |= Settings::kModAlt;
-                    if (actualMods != Settings::Get().dashboardHotkeyModifiers) continue;
+                    if (::GetAsyncKeyState(VK_CONTROL) & 0x8000)
+                        actualMods |= Settings::kModCtrl;
+                    if (::GetAsyncKeyState(VK_SHIFT) & 0x8000)
+                        actualMods |= Settings::kModShift;
+                    if (::GetAsyncKeyState(VK_MENU) & 0x8000)
+                        actualMods |= Settings::kModAlt;
+                    if (actualMods != Settings::Get().dashboardHotkeyModifiers)
+                        continue;
 
                     fire = true;
                     break;
                 }
 
                 if (fire) {
-                    AsyncDispatch::MarshalToMainThread([] {
-                        ToggleVisibility();
-                    });
+                    AsyncDispatch::MarshalToMainThread([] { ToggleVisibility(); });
                 }
                 return RE::BSEventNotifyControl::kContinue;
             }
@@ -139,8 +145,7 @@ namespace NarrativeEngine::DashboardUIManager
         void OnSetTickEnabled(const char* argument)
         {
             const bool enabled = ParseBoolArg(argument);
-            logger::info("DashboardUIManager: ne_setTickEnabled({}) received",
-                         enabled ? "true" : "false");
+            logger::info("DashboardUIManager: ne_setTickEnabled({}) received", enabled ? "true" : "false");
             AsyncDispatch::MarshalToMainThread([enabled] {
                 Tick::SetEnabled(enabled);
                 PushFullState();
@@ -155,9 +160,7 @@ namespace NarrativeEngine::DashboardUIManager
             const std::string arg = argument ? argument : "";
             auto parsed = nlohmann::json::parse(arg, nullptr, false);
             if (parsed.is_discarded() || !parsed.is_object()) {
-                logger::warn(
-                    "DashboardUIManager: ne_setActionEnabled: malformed payload '{}'",
-                    arg);
+                logger::warn("DashboardUIManager: ne_setActionEnabled: malformed payload '{}'", arg);
                 return;
             }
             std::string name;
@@ -169,19 +172,14 @@ namespace NarrativeEngine::DashboardUIManager
                 enabled = it->get<bool>();
             }
             if (name.empty()) {
-                logger::warn(
-                    "DashboardUIManager: ne_setActionEnabled: missing/empty name in '{}'",
-                    arg);
+                logger::warn("DashboardUIManager: ne_setActionEnabled: missing/empty name in '{}'", arg);
                 return;
             }
-            logger::info(
-                "DashboardUIManager: ne_setActionEnabled(name='{}', enabled={}) received",
-                name, enabled);
-            AsyncDispatch::MarshalToMainThread(
-                [name = std::move(name), enabled]() mutable {
-                    BeatRegistry::SetEnabled(name, enabled);
-                    PushFullState();
-                });
+            logger::info("DashboardUIManager: ne_setActionEnabled(name='{}', enabled={}) received", name, enabled);
+            AsyncDispatch::MarshalToMainThread([name = std::move(name), enabled]() mutable {
+                BeatRegistry::SetEnabled(name, enabled);
+                PushFullState();
+            });
         }
 
         // Backs the "Enable All" / "Disable All" bulk buttons under
@@ -189,9 +187,7 @@ namespace NarrativeEngine::DashboardUIManager
         void OnSetAllActionsEnabled(const char* argument)
         {
             const bool enabled = ParseBoolArg(argument);
-            logger::info(
-                "DashboardUIManager: ne_setAllActionsEnabled({}) received",
-                enabled ? "true" : "false");
+            logger::info("DashboardUIManager: ne_setAllActionsEnabled({}) received", enabled ? "true" : "false");
             AsyncDispatch::MarshalToMainThread([enabled] {
                 for (const auto& entry : BeatRegistry::All()) {
                     BeatRegistry::SetEnabled(entry.name, enabled);
@@ -213,8 +209,7 @@ namespace NarrativeEngine::DashboardUIManager
                 logger::warn("DashboardUIManager: ne_dispatchAction: empty name");
                 return;
             }
-            logger::info(
-                "DashboardUIManager: ne_dispatchAction('{}') received", name);
+            logger::info("DashboardUIManager: ne_dispatchAction('{}') received", name);
             AsyncDispatch::MarshalToMainThread([name]() mutable {
                 BeatSystem::ForceDispatchBeat(name);
                 // Push once now so the dashboard reflects the "in-
@@ -222,7 +217,7 @@ namespace NarrativeEngine::DashboardUIManager
                 PushFullState();
             });
         }
-    }
+    } // namespace
 
     void Initialize()
     {
@@ -245,10 +240,10 @@ namespace NarrativeEngine::DashboardUIManager
         // JS -> C++ listeners for dashboard input controls. Registered
         // before the view goes live so the first Show()/user
         // interaction can immediately route into the handlers.
-        PrismaUI_API::RegisterJSListener(g_view, "ne_setTickEnabled",       &OnSetTickEnabled);
-        PrismaUI_API::RegisterJSListener(g_view, "ne_setActionEnabled",     &OnSetActionEnabled);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setTickEnabled", &OnSetTickEnabled);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setActionEnabled", &OnSetActionEnabled);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setAllActionsEnabled", &OnSetAllActionsEnabled);
-        PrismaUI_API::RegisterJSListener(g_view, "ne_dispatchAction",       &OnDispatchAction);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_dispatchAction", &OnDispatchAction);
 
         // Hook input events for the hotkey.
         if (auto* inputManager = RE::BSInputDeviceManager::GetSingleton()) {
@@ -259,7 +254,8 @@ namespace NarrativeEngine::DashboardUIManager
 
         const auto& cfg = Settings::Get();
         logger::info("DashboardUIManager: initialized (view created, hotkey VK={} mods={})",
-                     cfg.dashboardHotkeyVK, static_cast<int>(cfg.dashboardHotkeyModifiers));
+                     cfg.dashboardHotkeyVK,
+                     static_cast<int>(cfg.dashboardHotkeyModifiers));
     }
 
     void Shutdown()
@@ -278,19 +274,19 @@ namespace NarrativeEngine::DashboardUIManager
         // status
         j["status"] = {
             {"skyrim_net_available", SkyrimNetAPI::IsAvailable()},
-            {"skyrim_net_version",   SkyrimNetAPI::GetVersion()},
+            {"skyrim_net_version", SkyrimNetAPI::GetVersion()},
             // MVP has no enable/disable toggle. Future settings could expose
             // one; for now the Director is unconditionally on whenever the
             // plugin loaded.
-            {"director_enabled",     true},
-            {"prisma_ui_available",  PrismaUI_API::IsAvailable()},
+            {"director_enabled", true},
+            {"prisma_ui_available", PrismaUI_API::IsAvailable()},
             // Runtime debug killswitch. The dashboard renders a checkbox
             // bound to this and calls back via `window.ne_setTickEnabled`.
-            {"tick_enabled",         Tick::IsEnabled()},
+            {"tick_enabled", Tick::IsEnabled()},
         };
 
         // phase
-        j["current_phase"]         = PhaseTracker::PhaseName(PhaseTracker::Get());
+        j["current_phase"] = PhaseTracker::PhaseName(PhaseTracker::Get());
         j["time_in_phase_seconds"] = PhaseTracker::TimeInPhaseSeconds();
 
         // recent_decisions + last_evaluation (the latter is just the newest
@@ -301,12 +297,10 @@ namespace NarrativeEngine::DashboardUIManager
         nlohmann::json decisions = nlohmann::json::array();
         for (const auto& r : tail) {
             decisions.push_back({
-                {"timestamp",      r.realTimeSec},
-                {"tension_score",  r.tensionScore},
-                {"phase",          PhaseTracker::PhaseName(r.currentPhase)},
-                {"action",         r.beatSelected.empty()
-                                       ? nlohmann::json(nullptr)
-                                       : nlohmann::json(r.beatSelected)},
+                {"timestamp", r.realTimeSec},
+                {"tension_score", r.tensionScore},
+                {"phase", PhaseTracker::PhaseName(r.currentPhase)},
+                {"action", r.beatSelected.empty() ? nlohmann::json(nullptr) : nlohmann::json(r.beatSelected)},
                 {"narrative_note", r.narrativeNote},
             });
         }
@@ -316,16 +310,14 @@ namespace NarrativeEngine::DashboardUIManager
             const auto& latest = tail.back();
             const auto mask = static_cast<AlphaCanon::Signal>(latest.alphaCanonActiveSignals);
             j["last_evaluation"] = {
-                {"timestamp",           latest.realTimeSec},
-                {"tension_score",       latest.tensionScore},
-                {"narrative_note",      latest.narrativeNote},
-                {"advanced_to",         latest.advancedToPhase
-                                            ? nlohmann::json(PhaseTracker::PhaseName(*latest.advancedToPhase))
-                                            : nlohmann::json(nullptr)},
+                {"timestamp", latest.realTimeSec},
+                {"tension_score", latest.tensionScore},
+                {"narrative_note", latest.narrativeNote},
+                {"advanced_to",
+                 latest.advancedToPhase ? nlohmann::json(PhaseTracker::PhaseName(*latest.advancedToPhase))
+                                        : nlohmann::json(nullptr)},
                 {"alpha_canon_signals", AlphaCanon::Names(mask)},
-                {"action",              latest.beatSelected.empty()
-                                            ? nlohmann::json(nullptr)
-                                            : nlohmann::json(latest.beatSelected)},
+                {"action", latest.beatSelected.empty() ? nlohmann::json(nullptr) : nlohmann::json(latest.beatSelected)},
             };
         } else {
             j["last_evaluation"] = nullptr;
@@ -338,9 +330,9 @@ namespace NarrativeEngine::DashboardUIManager
         // is a follow-up.)
         if (auto info = BeatSystem::GetInFlightInfo()) {
             j["action_in_flight"] = {
-                {"name",       info->name},
+                {"name", info->name},
                 {"started_at", info->startedAtRealSeconds},
-                {"state",      static_cast<int>(info->state)},
+                {"state", static_cast<int>(info->state)},
             };
         } else {
             j["action_in_flight"] = nullptr;
@@ -364,9 +356,7 @@ namespace NarrativeEngine::DashboardUIManager
             skyrimSide = std::move(parsed);
         }
         j["recent_events"] = SkyrimNetEvents::BuildMergedTimeline(
-            std::move(skyrimSide),
-            CombatEventLog::GetRenderedTail(currentGameTimeSeconds),
-            currentGameTimeSeconds);
+            std::move(skyrimSide), CombatEventLog::GetRenderedTail(currentGameTimeSeconds), currentGameTimeSeconds);
 
         // letter_pool — full per-slot snapshot for the Letters tab, plus
         // the most-recent-dispatch index so the client doesn't have to
@@ -376,17 +366,27 @@ namespace NarrativeEngine::DashboardUIManager
         {
             const auto snapshots = LetterPool::GetSlotSnapshots();
             nlohmann::json slots = nlohmann::json::array();
-            int    mostRecentIdx = -1;
-            double mostRecentTs  = 0.0;
+            int mostRecentIdx = -1;
+            double mostRecentTs = 0.0;
             for (const auto& s : snapshots) {
                 const bool isFree = (s.state == LetterPool::State::Free);
                 const char* stateStr = "free";
                 switch (s.state) {
-                    case LetterPool::State::Free:            stateStr = "free"; break;
-                    case LetterPool::State::PendingDelivery: stateStr = "pending_delivery"; break;
-                    case LetterPool::State::InInventory:     stateStr = "in_inventory"; break;
-                    case LetterPool::State::Read:            stateStr = "read"; break;
-                    case LetterPool::State::Discarded:       stateStr = "free"; break;
+                case LetterPool::State::Free:
+                    stateStr = "free";
+                    break;
+                case LetterPool::State::PendingDelivery:
+                    stateStr = "pending_delivery";
+                    break;
+                case LetterPool::State::InInventory:
+                    stateStr = "in_inventory";
+                    break;
+                case LetterPool::State::Read:
+                    stateStr = "read";
+                    break;
+                case LetterPool::State::Discarded:
+                    stateStr = "free";
+                    break;
                 }
                 // Body preview: strip any <font …>…</font> wrappers the ESP
                 // rendering path might add later, then truncate to ~200
@@ -401,14 +401,17 @@ namespace NarrativeEngine::DashboardUIManager
                     // nested or truncated tags.
                     for (;;) {
                         const auto open = preview.find("<font");
-                        if (open == std::string::npos) break;
+                        if (open == std::string::npos)
+                            break;
                         const auto close = preview.find('>', open);
-                        if (close == std::string::npos) break;
+                        if (close == std::string::npos)
+                            break;
                         preview.erase(open, close - open + 1);
                     }
                     for (;;) {
                         const auto pos = preview.find("</font>");
-                        if (pos == std::string::npos) break;
+                        if (pos == std::string::npos)
+                            break;
                         preview.erase(pos, std::string_view{"</font>"}.size());
                     }
                     if (preview.size() > 200) {
@@ -416,26 +419,24 @@ namespace NarrativeEngine::DashboardUIManager
                     }
                 }
                 slots.push_back({
-                    {"index",        s.index},
-                    {"state",        stateStr},
+                    {"index", s.index},
+                    {"state", stateStr},
                     {"letter_label", isFree ? std::string{} : s.senderLabel},
-                    {"topic_tag",    isFree ? std::string{} : s.topicTag},
-                    {"mood",         isFree ? std::string{} : s.mood},
+                    {"topic_tag", isFree ? std::string{} : s.topicTag},
+                    {"mood", isFree ? std::string{} : s.mood},
                     {"body_preview", preview},
                     {"delivered_at", isFree ? 0.0 : s.deliveredAt},
-                    {"read_at",      s.readAt},
+                    {"read_at", s.readAt},
                 });
                 if (!isFree && s.deliveredAt > mostRecentTs) {
-                    mostRecentTs  = s.deliveredAt;
+                    mostRecentTs = s.deliveredAt;
                     mostRecentIdx = static_cast<int>(s.index);
                 }
             }
             j["letter_pool"] = {
                 {"slots", std::move(slots)},
                 {"most_recent_dispatch_slot",
-                    mostRecentIdx >= 0
-                        ? nlohmann::json(mostRecentIdx)
-                        : nlohmann::json(nullptr)},
+                 mostRecentIdx >= 0 ? nlohmann::json(mostRecentIdx) : nlohmann::json(nullptr)},
             };
         }
 
@@ -447,11 +448,12 @@ namespace NarrativeEngine::DashboardUIManager
         {
             nlohmann::json actions = nlohmann::json::array();
             for (const auto& entry : BeatRegistry::All()) {
-                if (!entry.beat) continue;
+                if (!entry.beat)
+                    continue;
                 actions.push_back({
-                    {"name",                     entry.name},
-                    {"enabled",                  entry.enabled},
-                    {"last_dispatched_at",       entry.lastDispatchedRealTime},
+                    {"name", entry.name},
+                    {"enabled", entry.enabled},
+                    {"last_dispatched_at", entry.lastDispatchedRealTime},
                     {"remaining_cooldown_hours", entry.beat->RemainingCooldownGameHours()},
                 });
             }
@@ -465,30 +467,42 @@ namespace NarrativeEngine::DashboardUIManager
         // except the snapshot fields, which co-save-persist so the
         // dashboard survives save/load.
         {
-            const auto snap    = VisitState::GetSnapshot();
-            const auto mode    = VisitState::DerivePhase();
+            const auto snap = VisitState::GetSnapshot();
+            const auto mode = VisitState::DerivePhase();
             const auto history = VisitState::GetHistory();
             const auto verdicts = VisitConclusionPoll::GetRecentVerdicts();
 
             const auto modeStr = [](VisitState::Mode m) -> const char* {
                 switch (m) {
-                    case VisitState::Mode::Idle:        return "idle";
-                    case VisitState::Mode::Composing:   return "composing";
-                    case VisitState::Mode::Salutation:  return "salutation";
-                    case VisitState::Mode::Discuss:     return "discuss";
-                    case VisitState::Mode::OnHold:      return "on_hold";
-                    case VisitState::Mode::ReEngage:    return "reengage";
-                    case VisitState::Mode::Valediction: return "valediction";
-                    case VisitState::Mode::ReturnHome:  return "return_home";
+                case VisitState::Mode::Idle:
+                    return "idle";
+                case VisitState::Mode::Composing:
+                    return "composing";
+                case VisitState::Mode::Salutation:
+                    return "salutation";
+                case VisitState::Mode::Discuss:
+                    return "discuss";
+                case VisitState::Mode::OnHold:
+                    return "on_hold";
+                case VisitState::Mode::ReEngage:
+                    return "reengage";
+                case VisitState::Mode::Valediction:
+                    return "valediction";
+                case VisitState::Mode::ReturnHome:
+                    return "return_home";
                 }
                 return "idle";
             };
             const auto outcomeStr = [](VisitState::Outcome o) -> const char* {
                 switch (o) {
-                    case VisitState::Outcome::Completed:   return "completed";
-                    case VisitState::Outcome::Unsatisfied: return "unsatisfied";
-                    case VisitState::Outcome::RolledBack:  return "rolled_back";
-                    case VisitState::Outcome::Aborted:     return "aborted";
+                case VisitState::Outcome::Completed:
+                    return "completed";
+                case VisitState::Outcome::Unsatisfied:
+                    return "unsatisfied";
+                case VisitState::Outcome::RolledBack:
+                    return "rolled_back";
+                case VisitState::Outcome::Aborted:
+                    return "aborted";
                 }
                 return "completed";
             };
@@ -496,14 +510,15 @@ namespace NarrativeEngine::DashboardUIManager
             nlohmann::json current = nullptr;
             if (mode != VisitState::Mode::Idle) {
                 std::string briefingPreview = snap.briefingText;
-                if (briefingPreview.size() > 200) briefingPreview.resize(200);
+                if (briefingPreview.size() > 200)
+                    briefingPreview.resize(200);
                 current = {
-                    {"mode",              modeStr(mode)},
-                    {"sender_form_id",    snap.senderFormID},
-                    {"topic_tag",         snap.topicTag},
-                    {"mood",              snap.mood},
-                    {"briefing_preview",  briefingPreview},
-                    {"dispatched_at",     snap.dispatchedAtRealSeconds},
+                    {"mode", modeStr(mode)},
+                    {"sender_form_id", snap.senderFormID},
+                    {"topic_tag", snap.topicTag},
+                    {"mood", snap.mood},
+                    {"briefing_preview", briefingPreview},
+                    {"dispatched_at", snap.dispatchedAtRealSeconds},
                     {"ignore_nudge_count", snap.ignoreNudgeCount},
                 };
             }
@@ -511,27 +526,27 @@ namespace NarrativeEngine::DashboardUIManager
             nlohmann::json verdictsJson = nlohmann::json::array();
             for (const auto& v : verdicts) {
                 verdictsJson.push_back({
-                    {"fired_at",        v.firedAtRealSeconds},
+                    {"fired_at", v.firedAtRealSeconds},
                     {"should_conclude", v.shouldConclude},
-                    {"rationale",       v.rationale},
+                    {"rationale", v.rationale},
                 });
             }
 
             nlohmann::json historyJson = nlohmann::json::array();
             for (const auto& h : history) {
                 historyJson.push_back({
-                    {"dispatched_at",     h.dispatchedAt},
-                    {"sender_name",       h.senderName},
-                    {"topic_tag",         h.topicTag},
-                    {"outcome",           outcomeStr(h.outcome)},
-                    {"duration_seconds",  h.durationSeconds},
+                    {"dispatched_at", h.dispatchedAt},
+                    {"sender_name", h.senderName},
+                    {"topic_tag", h.topicTag},
+                    {"outcome", outcomeStr(h.outcome)},
+                    {"duration_seconds", h.durationSeconds},
                 });
             }
 
             j["visit"] = {
-                {"current",         current},
+                {"current", current},
                 {"recent_verdicts", std::move(verdictsJson)},
-                {"history",         std::move(historyJson)},
+                {"history", std::move(historyJson)},
             };
         }
 
@@ -574,4 +589,4 @@ namespace NarrativeEngine::DashboardUIManager
             logger::debug("DashboardUIManager: shown");
         }
     }
-}
+} // namespace NarrativeEngine::DashboardUIManager

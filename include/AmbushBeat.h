@@ -28,14 +28,13 @@ namespace NarrativeEngine
     class AmbushBeat : public IBeat
     {
     public:
-        std::string  Name()        const override;
-        std::string  Description() const override;
-        BeatPolarity Polarity()    const override;
-        bool         IsAvailable(const BeatContext& ctx) const override;
-        void         OnStart(const BeatContext& ctx,
-                             const nlohmann::json& parameters) override;
-        TickResult   Tick(TickMode mode, BeatState state) override;
-        double       RemainingCooldownGameHours() const override;
+        std::string Name() const override;
+        std::string Description() const override;
+        BeatPolarity Polarity() const override;
+        bool IsAvailable(const BeatContext& ctx) const override;
+        void OnStart(const BeatContext& ctx, const nlohmann::json& parameters) override;
+        TickResult Tick(TickMode mode, BeatState state) override;
+        double RemainingCooldownGameHours() const override;
     };
 
     namespace AmbushBeat_Persistence
@@ -44,8 +43,7 @@ namespace NarrativeEngine
         inline constexpr std::uint32_t kRecordTypeId = 'NBAM';
 
         void OnSave(SKSE::SerializationInterface* intfc);
-        void OnLoad(SKSE::SerializationInterface* intfc,
-                    std::uint32_t version, std::uint32_t length);
+        void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);
         void OnRevert();
-    }
-}
+    } // namespace AmbushBeat_Persistence
+} // namespace NarrativeEngine

@@ -6,4 +6,4 @@ namespace NarrativeEngine
     {
         return Startup(skse);
     }
-}
+} // namespace NarrativeEngine

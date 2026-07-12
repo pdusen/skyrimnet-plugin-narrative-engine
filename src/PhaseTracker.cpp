@@ -1,7 +1,7 @@
 #include <PhaseTracker.h>
 
-#include <Settings.h>
 #include <logger.h>
+#include <Settings.h>
 
 #include <array>
 #include <chrono>
@@ -38,10 +38,10 @@ namespace NarrativeEngine::PhaseTracker
 
         using SteadyClock = std::chrono::steady_clock;
 
-        std::mutex            g_mutex;
-        Phase                 g_phase              = Phase::Exposition;
-        float                 g_baseSeconds        = 0.0f;
-        SteadyClock::time_point g_lastSampleTime   = SteadyClock::now();
+        std::mutex g_mutex;
+        Phase g_phase = Phase::Exposition;
+        float g_baseSeconds = 0.0f;
+        SteadyClock::time_point g_lastSampleTime = SteadyClock::now();
         // Unix-epoch real-wall-clock seconds when the current phase was
         // entered. Updated by AdvanceTo / Reset; persisted across saves.
         // Compared against SkyrimNet event `localTime` field — both are
@@ -50,15 +50,14 @@ namespace NarrativeEngine::PhaseTracker
         // (it's time-of-day, not cumulative, and the engine's calendar
         // value can be stale at kNewGame before the world finishes
         // initializing).
-        double                g_phaseEnteredAtRealTime = 0.0;
+        double g_phaseEnteredAtRealTime = 0.0;
 
         // Helper: capture the current Unix-epoch real-time in seconds.
         // Matches SkyrimNet's per-event `localTime` field so the filter
         // can use direct numeric comparison.
         double CurrentRealTimeSecondsLocked()
         {
-            return std::chrono::duration<double>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
+            return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
         }
 
         // Roll the elapsed wall-clock time since the last sample into the
@@ -78,7 +77,7 @@ namespace NarrativeEngine::PhaseTracker
             }
             g_baseSeconds += dt;
         }
-    }
+    } // namespace
 
     const char* PhaseName(Phase p)
     {
@@ -115,23 +114,28 @@ namespace NarrativeEngine::PhaseTracker
         const auto& cfg = Settings::Get();
         const int score = static_cast<int>(tensionScore);
         switch (current) {
-            case Phase::Exposition:
-                if (score >= cfg.advanceThresholdExposition)    return Phase::RisingAction;
-                return std::nullopt;
-            case Phase::RisingAction:
-                if (score >= cfg.advanceThresholdRisingAction)  return Phase::Climax;
-                return std::nullopt;
-            case Phase::Climax:
-                if (score <= cfg.advanceThresholdClimax)        return Phase::FallingAction;
-                return std::nullopt;
-            case Phase::FallingAction:
-                if (score <= cfg.advanceThresholdFallingAction) return Phase::Resolution;
-                return std::nullopt;
-            case Phase::Resolution:
-                if (score >= cfg.advanceThresholdResolution)    return Phase::Exposition;
-                return std::nullopt;
-            default:
-                return std::nullopt;
+        case Phase::Exposition:
+            if (score >= cfg.advanceThresholdExposition)
+                return Phase::RisingAction;
+            return std::nullopt;
+        case Phase::RisingAction:
+            if (score >= cfg.advanceThresholdRisingAction)
+                return Phase::Climax;
+            return std::nullopt;
+        case Phase::Climax:
+            if (score <= cfg.advanceThresholdClimax)
+                return Phase::FallingAction;
+            return std::nullopt;
+        case Phase::FallingAction:
+            if (score <= cfg.advanceThresholdFallingAction)
+                return Phase::Resolution;
+            return std::nullopt;
+        case Phase::Resolution:
+            if (score >= cfg.advanceThresholdResolution)
+                return Phase::Exposition;
+            return std::nullopt;
+        default:
+            return std::nullopt;
         }
     }
 
@@ -142,14 +146,14 @@ namespace NarrativeEngine::PhaseTracker
         // FallingAction. Out-of-range inputs default to Raise (the most
         // common direction across the cycle).
         switch (p) {
-            case Phase::Climax:
-            case Phase::FallingAction:
-                return Direction::Lower;
-            case Phase::Exposition:
-            case Phase::RisingAction:
-            case Phase::Resolution:
-            default:
-                return Direction::Raise;
+        case Phase::Climax:
+        case Phase::FallingAction:
+            return Direction::Lower;
+        case Phase::Exposition:
+        case Phase::RisingAction:
+        case Phase::Resolution:
+        default:
+            return Direction::Raise;
         }
     }
 
@@ -174,34 +178,36 @@ namespace NarrativeEngine::PhaseTracker
 
     void AdvanceTo(Phase newPhase)
     {
-        Phase  previous;
+        Phase previous;
         double newRealTime;
         {
             std::scoped_lock lock(g_mutex);
-            previous                 = g_phase;
-            g_phase                  = newPhase;
-            g_baseSeconds            = 0.0f;
-            g_lastSampleTime         = SteadyClock::now();
+            previous = g_phase;
+            g_phase = newPhase;
+            g_baseSeconds = 0.0f;
+            g_lastSampleTime = SteadyClock::now();
             // Mark the real-time moment this phase started so the
             // evaluation pipeline can filter SkyrimNet events to
             // "since this advance."
             g_phaseEnteredAtRealTime = CurrentRealTimeSecondsLocked();
-            newRealTime              = g_phaseEnteredAtRealTime;
+            newRealTime = g_phaseEnteredAtRealTime;
         }
         // Notify CombatEventLog outside our mutex — it takes its own lock,
         // and we don't want to hold two at once.
         CombatEventLog::OnPhaseAdvanced();
         logger::info("PhaseTracker: advanced {} -> {} (at realTime={:.1f})",
-                     PhaseName(previous), PhaseName(newPhase), newRealTime);
+                     PhaseName(previous),
+                     PhaseName(newPhase),
+                     newRealTime);
     }
 
     void Reset(Phase initial)
     {
         {
             std::scoped_lock lock(g_mutex);
-            g_phase              = initial;
-            g_baseSeconds        = 0.0f;
-            g_lastSampleTime     = SteadyClock::now();
+            g_phase = initial;
+            g_baseSeconds = 0.0f;
+            g_lastSampleTime = SteadyClock::now();
             // Anchor "phase started" to *now* so a fresh new-game state
             // filters events to "since now" (i.e. nothing yet). For
             // kPreLoadGame, this value gets immediately overwritten by
@@ -232,15 +238,15 @@ namespace NarrativeEngine::PhaseTracker
         }
 
         std::uint8_t phaseByte;
-        float        timeSnapshot;
-        double       phaseEnteredAtSnapshot;
+        float timeSnapshot;
+        double phaseEnteredAtSnapshot;
         {
             std::scoped_lock lock(g_mutex);
             // Sample first so the on-disk value reflects time-in-phase as
             // of the moment of OnSave, not as of the last Tick.
             SampleLocked();
-            phaseByte              = static_cast<std::uint8_t>(g_phase);
-            timeSnapshot           = g_baseSeconds;
+            phaseByte = static_cast<std::uint8_t>(g_phase);
+            timeSnapshot = g_baseSeconds;
             phaseEnteredAtSnapshot = g_phaseEnteredAtRealTime;
         }
         intfc->WriteRecordData(phaseByte);
@@ -254,16 +260,16 @@ namespace NarrativeEngine::PhaseTracker
             return;
         }
         if (version != 1 && version != 2 && version != 3) {
-            logger::warn("PhaseTracker::OnLoad: unrecognized record version {} (length={}); using defaults",
-                         version, length);
+            logger::warn(
+                "PhaseTracker::OnLoad: unrecognized record version {} (length={}); using defaults", version, length);
             Reset();
             return;
         }
 
         std::uint8_t phaseByte = 0;
-        float        timeSeconds = 0.0f;
-        if (intfc->ReadRecordData(phaseByte) != sizeof(phaseByte) ||
-            intfc->ReadRecordData(timeSeconds) != sizeof(timeSeconds)) {
+        float timeSeconds = 0.0f;
+        if (intfc->ReadRecordData(phaseByte) != sizeof(phaseByte)
+            || intfc->ReadRecordData(timeSeconds) != sizeof(timeSeconds)) {
             logger::error("PhaseTracker::OnLoad: short read; using defaults");
             Reset();
             return;
@@ -295,8 +301,8 @@ namespace NarrativeEngine::PhaseTracker
 
         {
             std::scoped_lock lock(g_mutex);
-            g_phase                  = static_cast<Phase>(phaseByte);
-            g_baseSeconds            = timeSeconds;
+            g_phase = static_cast<Phase>(phaseByte);
+            g_baseSeconds = timeSeconds;
             g_phaseEnteredAtRealTime = phaseEnteredAtRealTime;
             // Re-anchor the sample clock to "now" so subsequent Tick /
             // OnSave / TimeInPhaseSeconds calls add real time on top of the
@@ -305,11 +311,13 @@ namespace NarrativeEngine::PhaseTracker
             g_lastSampleTime = SteadyClock::now();
         }
         logger::info("PhaseTracker::OnLoad: restored phase={} timeInPhase={}s phaseEnteredAtRealTime={:.1f}",
-                     PhaseName(static_cast<Phase>(phaseByte)), timeSeconds, phaseEnteredAtRealTime);
+                     PhaseName(static_cast<Phase>(phaseByte)),
+                     timeSeconds,
+                     phaseEnteredAtRealTime);
     }
 
     void OnRevert()
     {
         Reset();
     }
-}
+} // namespace NarrativeEngine::PhaseTracker

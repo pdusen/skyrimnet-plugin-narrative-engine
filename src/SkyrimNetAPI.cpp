@@ -15,7 +15,7 @@ namespace NarrativeEngine::SkyrimNetAPI
     {
         bool g_initialized = false;
         bool g_available = false;
-    }
+    } // namespace
 
     bool Initialize()
     {
@@ -29,9 +29,8 @@ namespace NarrativeEngine::SkyrimNetAPI
             const int version = ::PublicGetVersion ? ::PublicGetVersion() : -1;
             logger::info("SkyrimNetAPI: initialized (version={})", version);
         } else {
-            logger::error(
-                "SkyrimNetAPI: SkyrimNet.dll not found (or PublicGetVersion missing). "
-                "Director loop will run but evaluations will be skipped.");
+            logger::error("SkyrimNetAPI: SkyrimNet.dll not found (or PublicGetVersion missing). "
+                          "Director loop will run but evaluations will be skipped.");
         }
         return g_available;
     }
@@ -49,11 +48,10 @@ namespace NarrativeEngine::SkyrimNetAPI
         return ::PublicGetVersion();
     }
 
-    bool SendCustomPromptToLLM(
-        const std::string& promptName,
-        const std::string& variant,
-        const std::string& contextJson,
-        std::function<void(std::string response, bool success)> callback)
+    bool SendCustomPromptToLLM(const std::string& promptName,
+                               const std::string& variant,
+                               const std::string& contextJson,
+                               std::function<void(std::string response, bool success)> callback)
     {
         if (!::PublicSendCustomPromptToLLM) {
             return false;
@@ -69,16 +67,10 @@ namespace NarrativeEngine::SkyrimNetAPI
         };
 
         return ::PublicSendCustomPromptToLLM(
-            promptName.c_str(),
-            variant.c_str(),
-            contextJson.c_str(),
-            std::move(adapted));
+            promptName.c_str(), variant.c_str(), contextJson.c_str(), std::move(adapted));
     }
 
-    std::string GetRecentEvents(
-        std::uint32_t formId,
-        int maxCount,
-        const std::string& eventTypeFilter)
+    std::string GetRecentEvents(std::uint32_t formId, int maxCount, const std::string& eventTypeFilter)
     {
         if (!::PublicGetRecentEvents) {
             return "[]";
@@ -107,10 +99,9 @@ namespace NarrativeEngine::SkyrimNetAPI
         }
     }
 
-    bool RegisterDecorator(
-        const std::string& name,
-        const std::string& description,
-        std::function<std::string(RE::Actor*)> callback)
+    bool RegisterDecorator(const std::string& name,
+                           const std::string& description,
+                           std::function<std::string(RE::Actor*)> callback)
     {
         if (!::PublicRegisterDecorator) {
             return false;
@@ -128,7 +119,8 @@ namespace NarrativeEngine::SkyrimNetAPI
 
     bool IsMemorySystemReady()
     {
-        if (!::PublicIsMemorySystemReady) return false;
+        if (!::PublicIsMemorySystemReady)
+            return false;
         try {
             return ::PublicIsMemorySystemReady();
         } catch (...) {
@@ -138,7 +130,8 @@ namespace NarrativeEngine::SkyrimNetAPI
 
     std::uint64_t FormIDToUUID(std::uint32_t formId)
     {
-        if (!::PublicFormIDToUUID) return 0;
+        if (!::PublicFormIDToUUID)
+            return 0;
         try {
             return ::PublicFormIDToUUID(formId);
         } catch (...) {
@@ -147,31 +140,30 @@ namespace NarrativeEngine::SkyrimNetAPI
         }
     }
 
-    std::string GetActorEngagement(int    maxCount,
-                                   bool   excludePlayer,
-                                   bool   playerEventsOnly,
+    std::string GetActorEngagement(int maxCount,
+                                   bool excludePlayer,
+                                   bool playerEventsOnly,
                                    double shortWindowSeconds,
                                    double mediumWindowSeconds)
     {
-        if (!::PublicGetActorEngagement) return "[]";
+        if (!::PublicGetActorEngagement)
+            return "[]";
         if (!::PublicIsMemorySystemReady || !::PublicIsMemorySystemReady()) {
             return "[]";
         }
         try {
             return ::PublicGetActorEngagement(
-                maxCount, excludePlayer, playerEventsOnly,
-                shortWindowSeconds, mediumWindowSeconds);
+                maxCount, excludePlayer, playerEventsOnly, shortWindowSeconds, mediumWindowSeconds);
         } catch (...) {
             logger::warn("SkyrimNetAPI::GetActorEngagement: exception across DLL boundary");
             return "[]";
         }
     }
 
-    std::string GetMemoriesForActor(std::uint32_t      formId,
-                                    int                maxCount,
-                                    const std::string& contextQuery)
+    std::string GetMemoriesForActor(std::uint32_t formId, int maxCount, const std::string& contextQuery)
     {
-        if (!::PublicGetMemoriesForActor) return "[]";
+        if (!::PublicGetMemoriesForActor)
+            return "[]";
         if (!::PublicIsMemorySystemReady || !::PublicIsMemorySystemReady()) {
             return "[]";
         }
@@ -189,7 +181,8 @@ namespace NarrativeEngine::SkyrimNetAPI
 
     std::string GetRecentDialogue(std::uint32_t formId, int maxExchanges)
     {
-        if (!::PublicGetRecentDialogue) return "[]";
+        if (!::PublicGetRecentDialogue)
+            return "[]";
         if (!::PublicIsMemorySystemReady || !::PublicIsMemorySystemReady()) {
             return "[]";
         }
@@ -201,16 +194,17 @@ namespace NarrativeEngine::SkyrimNetAPI
         }
     }
 
-    int AddMemory(std::uint32_t      formId,
+    int AddMemory(std::uint32_t formId,
                   const std::string& contentText,
-                  float              importance,
+                  float importance,
                   const std::string& memoryType,
                   const std::string& emotion,
                   const std::string& location,
                   const std::string& tagsJson,
                   const std::string& relatedActorsJson)
     {
-        if (!::PublicAddMemory) return -1;
+        if (!::PublicAddMemory)
+            return -1;
         if (!::PublicIsMemorySystemReady || !::PublicIsMemorySystemReady()) {
             return -1;
         }
@@ -220,21 +214,20 @@ namespace NarrativeEngine::SkyrimNetAPI
         // failure that silently drops the write. Mirror the
         // nullptr-on-empty convention used by every other query in
         // this file.
-        const char* tagsPtr    = tagsJson.empty()          ? nullptr : tagsJson.c_str();
+        const char* tagsPtr = tagsJson.empty() ? nullptr : tagsJson.c_str();
         const char* relatedPtr = relatedActorsJson.empty() ? nullptr : relatedActorsJson.c_str();
         try {
-            return ::PublicAddMemory(
-                formId,
-                contentText.c_str(),
-                importance,
-                memoryType.c_str(),
-                emotion.c_str(),
-                location.c_str(),
-                tagsPtr,
-                relatedPtr);
+            return ::PublicAddMemory(formId,
+                                     contentText.c_str(),
+                                     importance,
+                                     memoryType.c_str(),
+                                     emotion.c_str(),
+                                     location.c_str(),
+                                     tagsPtr,
+                                     relatedPtr);
         } catch (...) {
             logger::warn("SkyrimNetAPI::AddMemory: exception across DLL boundary");
             return -1;
         }
     }
-}
+} // namespace NarrativeEngine::SkyrimNetAPI

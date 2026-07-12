@@ -13,9 +13,9 @@ namespace NarrativeEngine::DecisionLog
     {
         constexpr std::uint32_t kRecordVersion = 1;
 
-        std::shared_mutex          g_mutex;
+        std::shared_mutex g_mutex;
         std::deque<DecisionRecord> g_records;
-        std::size_t                g_maxEntries = 200;  // matches Settings default; SetMaxEntries overrides
+        std::size_t g_maxEntries = 200; // matches Settings default; SetMaxEntries overrides
 
         void TrimLocked()
         {
@@ -48,7 +48,7 @@ namespace NarrativeEngine::DecisionLog
             }
             return true;
         }
-    }
+    } // namespace
 
     void Append(DecisionRecord record)
     {
@@ -122,8 +122,8 @@ namespace NarrativeEngine::DecisionLog
             // the wire format is fixed-width per record header.
             const auto hasAdvanced = static_cast<std::uint8_t>(r.advancedToPhase.has_value() ? 1 : 0);
             intfc->WriteRecordData(hasAdvanced);
-            const auto advancedByte = static_cast<std::uint8_t>(
-                r.advancedToPhase.value_or(PhaseTracker::Phase::Exposition));
+            const auto advancedByte =
+                static_cast<std::uint8_t>(r.advancedToPhase.value_or(PhaseTracker::Phase::Exposition));
             intfc->WriteRecordData(advancedByte);
 
             WriteString(intfc, r.beatSelected);
@@ -140,8 +140,8 @@ namespace NarrativeEngine::DecisionLog
             return;
         }
         if (version != kRecordVersion) {
-            logger::warn("DecisionLog::OnLoad: unrecognized version {} (length={}); discarding payload",
-                         version, length);
+            logger::warn(
+                "DecisionLog::OnLoad: unrecognized version {} (length={}); discarding payload", version, length);
             Clear();
             return;
         }
@@ -157,30 +157,27 @@ namespace NarrativeEngine::DecisionLog
         for (std::uint32_t i = 0; i < count; ++i) {
             DecisionRecord r;
             std::uint8_t currentPhaseByte = 0;
-            std::uint8_t hasAdvanced      = 0;
-            std::uint8_t advancedByte     = 0;
+            std::uint8_t hasAdvanced = 0;
+            std::uint8_t advancedByte = 0;
 
-            if (intfc->ReadRecordData(r.realTimeSec)    != sizeof(r.realTimeSec)    ||
-                intfc->ReadRecordData(r.gameDaysPassed) != sizeof(r.gameDaysPassed) ||
-                intfc->ReadRecordData(r.tensionScore)   != sizeof(r.tensionScore)   ||
-                intfc->ReadRecordData(currentPhaseByte) != sizeof(currentPhaseByte) ||
-                intfc->ReadRecordData(hasAdvanced)      != sizeof(hasAdvanced)      ||
-                intfc->ReadRecordData(advancedByte)     != sizeof(advancedByte)) {
+            if (intfc->ReadRecordData(r.realTimeSec) != sizeof(r.realTimeSec)
+                || intfc->ReadRecordData(r.gameDaysPassed) != sizeof(r.gameDaysPassed)
+                || intfc->ReadRecordData(r.tensionScore) != sizeof(r.tensionScore)
+                || intfc->ReadRecordData(currentPhaseByte) != sizeof(currentPhaseByte)
+                || intfc->ReadRecordData(hasAdvanced) != sizeof(hasAdvanced)
+                || intfc->ReadRecordData(advancedByte) != sizeof(advancedByte)) {
                 logger::error("DecisionLog::OnLoad: short read on record {}/{}; discarding payload", i, count);
                 Clear();
                 return;
             }
-            if (!ReadString(intfc, r.beatSelected) ||
-                !ReadString(intfc, r.beatParametersJSON) ||
-                !ReadString(intfc, r.narrativeNote)) {
-                logger::error("DecisionLog::OnLoad: string read failure on record {}/{}; discarding payload",
-                              i, count);
+            if (!ReadString(intfc, r.beatSelected) || !ReadString(intfc, r.beatParametersJSON)
+                || !ReadString(intfc, r.narrativeNote)) {
+                logger::error("DecisionLog::OnLoad: string read failure on record {}/{}; discarding payload", i, count);
                 Clear();
                 return;
             }
             if (intfc->ReadRecordData(r.alphaCanonActiveSignals) != sizeof(r.alphaCanonActiveSignals)) {
-                logger::error("DecisionLog::OnLoad: failed to read alphaCanonActiveSignals on record {}/{}",
-                              i, count);
+                logger::error("DecisionLog::OnLoad: failed to read alphaCanonActiveSignals on record {}/{}", i, count);
                 Clear();
                 return;
             }
@@ -188,15 +185,16 @@ namespace NarrativeEngine::DecisionLog
             // Validate phase bytes — clamp to Exposition (and drop bad
             // advancement values) so a corrupt save doesn't poison live state.
             if (currentPhaseByte >= static_cast<std::uint8_t>(PhaseTracker::Phase::Count)) {
-                logger::warn("DecisionLog::OnLoad: record {} has invalid currentPhase byte {}; clamping",
-                             i, currentPhaseByte);
+                logger::warn(
+                    "DecisionLog::OnLoad: record {} has invalid currentPhase byte {}; clamping", i, currentPhaseByte);
                 currentPhaseByte = 0;
             }
             r.currentPhase = static_cast<PhaseTracker::Phase>(currentPhaseByte);
             if (hasAdvanced) {
                 if (advancedByte >= static_cast<std::uint8_t>(PhaseTracker::Phase::Count)) {
                     logger::warn("DecisionLog::OnLoad: record {} has invalid advancedToPhase byte {}; clearing",
-                                 i, advancedByte);
+                                 i,
+                                 advancedByte);
                 } else {
                     r.advancedToPhase = static_cast<PhaseTracker::Phase>(advancedByte);
                 }
@@ -217,4 +215,4 @@ namespace NarrativeEngine::DecisionLog
     {
         Clear();
     }
-}
+} // namespace NarrativeEngine::DecisionLog

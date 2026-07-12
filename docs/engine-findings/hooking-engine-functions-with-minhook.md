@@ -85,7 +85,7 @@ calling it later jumps into non-executable memory and crashes the game
 with an access violation at exactly the garbage address.
 
 This is the crash signature: **EXCEPTION_ACCESS_VIOLATION on
-"Tried to execute memory at 0x<random>"**, where `0x<random>` is whatever
+`Tried to execute memory at 0x<random>`**, where `0x<random>` is whatever
 the prologue bytes happened to encode as a rel32 offset. If the address
 in the crash matches the trampoline pointer you logged at install time,
 you've fallen into this trap.

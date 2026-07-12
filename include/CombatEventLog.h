@@ -72,4 +72,4 @@ namespace NarrativeEngine::CombatEventLog
     void OnSave(SKSE::SerializationInterface* intfc);
     void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);
     void OnRevert();
-}
+} // namespace NarrativeEngine::CombatEventLog

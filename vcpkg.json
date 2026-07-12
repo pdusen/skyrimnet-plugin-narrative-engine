@@ -1,12 +1,12 @@
 {
-    "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
-    "name": "narrative-engine",
-    "version-string": "0.0.1",
-    "dependencies": [
-        "commonlibsse-ng-fork",
-        "directxtk",
-        "simpleini",
-        "nlohmann-json",
-        "minhook"
-    ]
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "narrative-engine",
+  "version-string": "0.0.1",
+  "dependencies": [
+    "commonlibsse-ng-fork",
+    "directxtk",
+    "simpleini",
+    "nlohmann-json",
+    "minhook"
+  ]
 }

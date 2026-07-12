@@ -51,10 +51,10 @@ namespace NarrativeEngine::BeatUtils
         // to NOT_RUNNING). Otherwise, if the task hasn't been fired
         // yet, marshals it to the main thread; the task MUST call
         // MarkComplete() at its end.
-        template <typename Task>
-        bool Poll(Task&& task)
+        template <typename Task> bool Poll(Task&& task)
         {
-            if (complete_.load(std::memory_order_acquire)) return true;
+            if (complete_.load(std::memory_order_acquire))
+                return true;
             if (!fired_.exchange(true, std::memory_order_acq_rel)) {
                 AsyncDispatch::MarshalToMainThread(std::forward<Task>(task));
             }
@@ -91,12 +91,10 @@ namespace NarrativeEngine::BeatUtils
     // Fail(failedPhase, reason) is a convenience that combines the
     // phase transition and the reason write in one lock scope, which
     // is what every failure site actually wants.
-    template <typename E>
-    class ComposeSubPhaseMachine
+    template <typename E> class ComposeSubPhaseMachine
     {
     public:
-        explicit ComposeSubPhaseMachine(E initial) noexcept
-            : initial_(initial), phase_(initial) {}
+        explicit ComposeSubPhaseMachine(E initial) noexcept : initial_(initial), phase_(initial) {}
 
         ComposeSubPhaseMachine(const ComposeSubPhaseMachine&) = delete;
         ComposeSubPhaseMachine& operator=(const ComposeSubPhaseMachine&) = delete;
@@ -119,7 +117,7 @@ namespace NarrativeEngine::BeatUtils
         void Fail(E failedPhase, std::string reason)
         {
             std::scoped_lock lock(mutex_);
-            phase_         = failedPhase;
+            phase_ = failedPhase;
             failureReason_ = std::move(reason);
         }
 
@@ -140,8 +138,8 @@ namespace NarrativeEngine::BeatUtils
 
     private:
         mutable std::mutex mutex_;
-        E                  initial_;
-        E                  phase_;
-        std::string        failureReason_;
+        E initial_;
+        E phase_;
+        std::string failureReason_;
     };
-}
+} // namespace NarrativeEngine::BeatUtils

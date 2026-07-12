@@ -2,11 +2,11 @@
 
 #include <EvaluationPipeline.h>
 #include <LLMTextSanitizer.h>
+#include <logger.h>
 #include <NPCLetterBeat.h>
 #include <SenderCandidatePool.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
-#include <logger.h>
 
 #include <nlohmann/json.hpp>
 
@@ -36,7 +36,7 @@ namespace NarrativeEngine::LetterComposer
         // and only keeps the caps used by its compose-time memory-fetch
         // path (FetchSenderMemories, called after the sender is
         // pre-chosen and needs a fresh tail with diaries enabled).
-        constexpr int kCandidateRenderCap    = 12;
+        constexpr int kCandidateRenderCap = 12;
         constexpr int kPerCandidateMemoryCap = 6;
 
         // How many memories to actually request from SkyrimNet per
@@ -50,8 +50,7 @@ namespace NarrativeEngine::LetterComposer
         // threshold is loose. If someone raises the threshold hard
         // via INI, they may see shorter tails — that's expected.
         constexpr int kMemoryFetchMultiplier = 4;
-        constexpr int kMemoryFetchCap        =
-            kPerCandidateMemoryCap * kMemoryFetchMultiplier;
+        constexpr int kMemoryFetchCap = kPerCandidateMemoryCap * kMemoryFetchMultiplier;
 
         // How many recent player↔sender dialogue exchanges to include
         // in the compose prompt. SkyrimNet returns them oldest-first
@@ -67,8 +66,7 @@ namespace NarrativeEngine::LetterComposer
         const std::set<std::string>& ValidMoods()
         {
             static const std::set<std::string> kSet{
-                "warm", "neutral", "urgent", "menacing", "mournful", "businesslike"
-            };
+                "warm", "neutral", "urgent", "menacing", "mournful", "businesslike"};
             return kSet;
         }
 
@@ -116,13 +114,16 @@ namespace NarrativeEngine::LetterComposer
         // on a null-location case we can't reason about.
         bool IsWithinWalkingDistanceOfPlayer(const RE::Actor* actor)
         {
-            if (!actor) return false;
+            if (!actor)
+                return false;
             auto* player = RE::PlayerCharacter::GetSingleton();
-            if (!player) return false;
+            if (!player)
+                return false;
 
             const auto* playerLoc = player->GetCurrentLocation();
-            const auto* actorLoc  = actor->GetCurrentLocation();
-            if (!playerLoc || !actorLoc) return false;
+            const auto* actorLoc = actor->GetCurrentLocation();
+            if (!playerLoc || !actorLoc)
+                return false;
 
             constexpr int kMaxDepth = 1;
             std::set<const RE::BGSLocation*> playerAncestry;
@@ -135,7 +136,8 @@ namespace NarrativeEngine::LetterComposer
             }
             const auto* a = actorLoc;
             for (int i = 0; i <= kMaxDepth && a; ++i) {
-                if (playerAncestry.contains(a)) return true;
+                if (playerAncestry.contains(a))
+                    return true;
                 a = a->parentLoc;
             }
             return false;
@@ -161,27 +163,40 @@ namespace NarrativeEngine::LetterComposer
         // the log when both apply.
         SenderViability CheckSenderViability(RE::FormID formId)
         {
-            auto* form  = RE::TESForm::LookupByID(formId);
+            auto* form = RE::TESForm::LookupByID(formId);
             auto* actor = form ? form->As<RE::Actor>() : nullptr;
-            if (!actor)                                              return SenderViability::MissingActor;
-            if (actor->IsDead())                                     return SenderViability::Dead;
-            if (actor->IsDisabled())                                 return SenderViability::Disabled;
-            if (actor->Is3DLoaded())                                 return SenderViability::CurrentlyLoaded;
-            if (IsWithinWalkingDistanceOfPlayer(actor))              return SenderViability::WalkingDistance;
-            if (NPCLetterBeat_Cooldowns::IsSenderOnCooldown(formId)) return SenderViability::SenderCooldown;
+            if (!actor)
+                return SenderViability::MissingActor;
+            if (actor->IsDead())
+                return SenderViability::Dead;
+            if (actor->IsDisabled())
+                return SenderViability::Disabled;
+            if (actor->Is3DLoaded())
+                return SenderViability::CurrentlyLoaded;
+            if (IsWithinWalkingDistanceOfPlayer(actor))
+                return SenderViability::WalkingDistance;
+            if (NPCLetterBeat_Cooldowns::IsSenderOnCooldown(formId))
+                return SenderViability::SenderCooldown;
             return SenderViability::Viable;
         }
 
         const char* SenderViabilityName(SenderViability v)
         {
             switch (v) {
-                case SenderViability::Viable:          return "viable";
-                case SenderViability::MissingActor:    return "missing-actor";
-                case SenderViability::Dead:            return "dead";
-                case SenderViability::Disabled:        return "disabled";
-                case SenderViability::SenderCooldown:  return "sender-cooldown";
-                case SenderViability::CurrentlyLoaded: return "currently-loaded";
-                case SenderViability::WalkingDistance: return "walking-distance";
+            case SenderViability::Viable:
+                return "viable";
+            case SenderViability::MissingActor:
+                return "missing-actor";
+            case SenderViability::Dead:
+                return "dead";
+            case SenderViability::Disabled:
+                return "disabled";
+            case SenderViability::SenderCooldown:
+                return "sender-cooldown";
+            case SenderViability::CurrentlyLoaded:
+                return "currently-loaded";
+            case SenderViability::WalkingDistance:
+                return "walking-distance";
             }
             return "unknown";
         }
@@ -235,8 +250,7 @@ namespace NarrativeEngine::LetterComposer
         // on file.
         nlohmann::json FetchRecentDialogue(RE::FormID formId)
         {
-            const auto raw = SkyrimNetAPI::GetRecentDialogue(
-                formId, kRecentDialogueCap);
+            const auto raw = SkyrimNetAPI::GetRecentDialogue(formId, kRecentDialogueCap);
             auto parsed = nlohmann::json::parse(raw, nullptr, false);
             if (!parsed.is_array()) {
                 return nlohmann::json::array();
@@ -248,62 +262,59 @@ namespace NarrativeEngine::LetterComposer
             // compose prompt can render directly.
             std::string playerName;
             if (auto* p = RE::PlayerCharacter::GetSingleton()) {
-                if (auto* n = p->GetName()) playerName = n;
+                if (auto* n = p->GetName())
+                    playerName = n;
             }
             std::string senderName;
             if (auto* form = RE::TESForm::LookupByID(formId)) {
                 if (auto* a = form->As<RE::Actor>()) {
-                    if (auto* n = a->GetName()) senderName = n;
+                    if (auto* n = a->GetName())
+                        senderName = n;
                 }
             }
 
             auto trimmed = nlohmann::json::array();
             for (auto& e : parsed) {
-                if (!e.is_object()) continue;
+                if (!e.is_object())
+                    continue;
                 nlohmann::json out = nlohmann::json::object();
 
                 // Speaker — role literal → display name mapping.
                 // Falls through to the raw string if the value is
                 // something other than the known role literals (older
                 // SkyrimNet builds carried a display name here).
-                if (auto it = e.find("speaker");
-                    it != e.end() && it->is_string()) {
+                if (auto it = e.find("speaker"); it != e.end() && it->is_string()) {
                     const auto raw = it->get<std::string>();
                     std::string mapped;
                     if (raw == "player") {
                         mapped = playerName;
                     } else if (raw == "npc") {
                         std::string npcNameField;
-                        if (auto nit = e.find("npcName");
-                            nit != e.end() && nit->is_string()) {
-                            npcNameField = LLMTextSanitizer::Sanitize(
-                                nit->get<std::string>());
+                        if (auto nit = e.find("npcName"); nit != e.end() && nit->is_string()) {
+                            npcNameField = LLMTextSanitizer::Sanitize(nit->get<std::string>());
                         }
-                        mapped = !npcNameField.empty() ? npcNameField
-                                                       : senderName;
+                        mapped = !npcNameField.empty() ? npcNameField : senderName;
                     } else {
                         mapped = LLMTextSanitizer::Sanitize(raw);
                     }
-                    if (!mapped.empty()) out["speaker"] = std::move(mapped);
+                    if (!mapped.empty())
+                        out["speaker"] = std::move(mapped);
                 }
 
                 // Text — try `data` first (current SkyrimNet shape),
                 // then `text` / `content` / `utterance` for
                 // version-shift resilience.
-                for (const char* candidate :
-                        { "data", "text", "content", "utterance" }) {
+                for (const char* candidate : {"data", "text", "content", "utterance"}) {
                     auto it = e.find(candidate);
                     if (it != e.end() && it->is_string()) {
-                        auto s = LLMTextSanitizer::Sanitize(
-                            it->get<std::string>());
+                        auto s = LLMTextSanitizer::Sanitize(it->get<std::string>());
                         if (!s.empty()) {
                             out["text"] = std::move(s);
                             break;
                         }
                     }
                 }
-                if (auto it = e.find("gameTime");
-                    it != e.end() && it->is_number()) {
+                if (auto it = e.find("gameTime"); it != e.end() && it->is_number()) {
                     out["gameTime"] = it->get<double>();
                 }
                 if (!out.contains("speaker") || !out.contains("text")) {
@@ -329,34 +340,35 @@ namespace NarrativeEngine::LetterComposer
         // Preserves `gameTime` on surviving entries; a follow-up call
         // to AnnotateDialogueAges converts it into a rendered age
         // label before the prompt goes out.
-        void FilterDialogueByMemoryAge(nlohmann::json&       dialogue,
-                                       const nlohmann::json& memories)
+        void FilterDialogueByMemoryAge(nlohmann::json& dialogue, const nlohmann::json& memories)
         {
-            if (!dialogue.is_array() || dialogue.empty()) return;
+            if (!dialogue.is_array() || dialogue.empty())
+                return;
 
             double oldestMemoryAgeHours = 0.0;
             if (memories.is_array()) {
                 for (const auto& m : memories) {
                     const double h = m.value("age_hours", 0.0);
-                    if (h > oldestMemoryAgeHours) oldestMemoryAgeHours = h;
+                    if (h > oldestMemoryAgeHours)
+                        oldestMemoryAgeHours = h;
                 }
             }
-            if (oldestMemoryAgeHours <= 0.0) return;
+            if (oldestMemoryAgeHours <= 0.0)
+                return;
 
             auto* calendar = RE::Calendar::GetSingleton();
-            if (!calendar) return;
-            const double nowGameSeconds =
-                static_cast<double>(calendar->GetHoursPassed()) * 3600.0;
-            const double cutoffGameSeconds =
-                nowGameSeconds - oldestMemoryAgeHours * 3600.0;
+            if (!calendar)
+                return;
+            const double nowGameSeconds = static_cast<double>(calendar->GetHoursPassed()) * 3600.0;
+            const double cutoffGameSeconds = nowGameSeconds - oldestMemoryAgeHours * 3600.0;
 
             auto& arr = dialogue.get_ref<nlohmann::json::array_t&>();
-            arr.erase(
-                std::remove_if(arr.begin(), arr.end(),
-                    [cutoffGameSeconds](const nlohmann::json& e) {
-                        return e.value("gameTime", 0.0) < cutoffGameSeconds;
-                    }),
-                arr.end());
+            arr.erase(std::remove_if(arr.begin(),
+                                     arr.end(),
+                                     [cutoffGameSeconds](const nlohmann::json& e) {
+                                         return e.value("gameTime", 0.0) < cutoffGameSeconds;
+                                     }),
+                      arr.end());
         }
 
         // Human-friendly age label. Used as the `[…]` prefix on each
@@ -366,14 +378,17 @@ namespace NarrativeEngine::LetterComposer
         // hour and multi-day ranges so the label reads naturally.
         std::string FormatDialogueAgeLabel(double ageHours)
         {
-            if (ageHours < 0.5) return "just now";
-            if (ageHours < 1.5) return "1 hour ago";
+            if (ageHours < 0.5)
+                return "just now";
+            if (ageHours < 1.5)
+                return "1 hour ago";
             if (ageHours < 24.0) {
                 const long long h = static_cast<long long>(std::round(ageHours));
                 return std::to_string(h) + " hours ago";
             }
             const double days = ageHours / 24.0;
-            if (days < 1.5) return "1 day ago";
+            if (days < 1.5)
+                return "1 day ago";
             const long long d = static_cast<long long>(std::round(days));
             return std::to_string(d) + " days ago";
         }
@@ -384,14 +399,13 @@ namespace NarrativeEngine::LetterComposer
         // prompt will actually see.
         void AnnotateDialogueAges(nlohmann::json& dialogue)
         {
-            if (!dialogue.is_array() || dialogue.empty()) return;
+            if (!dialogue.is_array() || dialogue.empty())
+                return;
             auto* calendar = RE::Calendar::GetSingleton();
-            const double nowGameSeconds =
-                calendar
-                    ? static_cast<double>(calendar->GetHoursPassed()) * 3600.0
-                    : 0.0;
+            const double nowGameSeconds = calendar ? static_cast<double>(calendar->GetHoursPassed()) * 3600.0 : 0.0;
             for (auto& e : dialogue) {
-                if (!e.is_object()) continue;
+                if (!e.is_object())
+                    continue;
                 const double gt = e.value("gameTime", 0.0);
                 if (nowGameSeconds > 0.0 && gt > 0.0) {
                     const double ageHours = (nowGameSeconds - gt) / 3600.0;
@@ -403,23 +417,19 @@ namespace NarrativeEngine::LetterComposer
             }
         }
 
-        nlohmann::json FetchSenderMemories(RE::FormID formId,
-                                           const std::string& playerName,
-                                           bool               includeDiaries)
+        nlohmann::json FetchSenderMemories(RE::FormID formId, const std::string& playerName, bool includeDiaries)
         {
             // Over-fetch so client-side importance filtering leaves us
             // with roughly kPerCandidateMemoryCap survivors even when
             // the tail of the semantic-search result set has a few
             // low-importance entries. See kMemoryFetchMultiplier above.
-            const auto memoriesJson = SkyrimNetAPI::GetMemoriesForActor(
-                formId, kMemoryFetchCap, playerName);
+            const auto memoriesJson = SkyrimNetAPI::GetMemoriesForActor(formId, kMemoryFetchCap, playerName);
             auto raw = nlohmann::json::parse(memoriesJson, nullptr, false);
             if (!raw.is_array()) {
                 return nlohmann::json::array();
             }
 
-            const double threshold = static_cast<double>(
-                Settings::Get().letterMemoryImportanceThreshold);
+            const double threshold = static_cast<double>(Settings::Get().letterMemoryImportanceThreshold);
 
             // Collect ALL above-threshold survivors first; do not
             // short-circuit at the render cap here. We select the
@@ -430,9 +440,10 @@ namespace NarrativeEngine::LetterComposer
             // sort those, which is the opposite of the intent.
             auto trimmed = nlohmann::json::array();
             int droppedBelowThreshold = 0;
-            int droppedDiary          = 0;
+            int droppedDiary = 0;
             for (auto& m : raw) {
-                if (!m.is_object()) continue;
+                if (!m.is_object())
+                    continue;
 
                 // Diary-entry filter, applied only when
                 // `includeDiaries` is false. SkyrimNet's memory store
@@ -446,8 +457,7 @@ namespace NarrativeEngine::LetterComposer
                 // opt in; callers whose consumers just need summary
                 // memory shape (action selection) opt out.
                 if (!includeDiaries) {
-                    if (auto it = m.find("content");
-                        it != m.end() && it->is_string()) {
+                    if (auto it = m.find("content"); it != m.end() && it->is_string()) {
                         const auto& contentRef = it->get_ref<const std::string&>();
                         if (contentRef.rfind("Diary Entry:", 0) == 0) {
                             ++droppedDiary;
@@ -457,8 +467,7 @@ namespace NarrativeEngine::LetterComposer
                 }
 
                 double importance = 0.0;
-                if (auto it = m.find("importance_score");
-                    it != m.end() && it->is_number()) {
+                if (auto it = m.find("importance_score"); it != m.end() && it->is_number()) {
                     importance = it->get<double>();
                 }
                 if (importance < threshold) {
@@ -481,14 +490,12 @@ namespace NarrativeEngine::LetterComposer
                 // materialize as (possibly-empty) strings so the
                 // prompt template's `length(...) > 0` guard is safe.
                 std::string emotion;
-                if (auto it = m.find("emotion");
-                    it != m.end() && it->is_string()) {
+                if (auto it = m.find("emotion"); it != m.end() && it->is_string()) {
                     emotion = LLMTextSanitizer::Sanitize(it->get<std::string>());
                 }
                 out["emotion"] = std::move(emotion);
                 std::string location;
-                if (auto it = m.find("location");
-                    it != m.end() && it->is_string()) {
+                if (auto it = m.find("location"); it != m.end() && it->is_string()) {
                     location = LLMTextSanitizer::Sanitize(it->get<std::string>());
                 }
                 out["location"] = std::move(location);
@@ -505,12 +512,11 @@ namespace NarrativeEngine::LetterComposer
             // Sort ascending on age_hours (newest first) so the
             // truncate step below keeps the most recent survivors,
             // then reverse for oldest-to-newest presentation.
-            std::sort(trimmed.begin(), trimmed.end(),
-                [](const nlohmann::json& a, const nlohmann::json& b) {
-                    const double aAge = a.value("age_hours", 0.0);
-                    const double bAge = b.value("age_hours", 0.0);
-                    return aAge < bAge;
-                });
+            std::sort(trimmed.begin(), trimmed.end(), [](const nlohmann::json& a, const nlohmann::json& b) {
+                const double aAge = a.value("age_hours", 0.0);
+                const double bAge = b.value("age_hours", 0.0);
+                return aAge < bAge;
+            });
 
             // Truncate to the render cap. AFTER the sort so we're
             // keeping the most-recent N above-threshold memories, not
@@ -518,28 +524,28 @@ namespace NarrativeEngine::LetterComposer
             // collection loop would have given the wrong semantics.
             int droppedBeyondCap = 0;
             if (static_cast<int>(trimmed.size()) > kPerCandidateMemoryCap) {
-                droppedBeyondCap =
-                    static_cast<int>(trimmed.size()) - kPerCandidateMemoryCap;
-                trimmed.erase(
-                    trimmed.begin() + kPerCandidateMemoryCap, trimmed.end());
+                droppedBeyondCap = static_cast<int>(trimmed.size()) - kPerCandidateMemoryCap;
+                trimmed.erase(trimmed.begin() + kPerCandidateMemoryCap, trimmed.end());
             }
 
             // Reverse to oldest-first for the LLM's chronological read.
             std::reverse(trimmed.begin(), trimmed.end());
 
-            if ((droppedBelowThreshold > 0 || droppedBeyondCap > 0 ||
-                 droppedDiary > 0) && Settings::Get().debugMode) {
-                logger::debug(
-                    "LetterComposer: sender 0x{:X} — memories kept={}, "
-                    "dropped diary={}, dropped below threshold {:.2f}={}, "
-                    "dropped as older than the most-recent {}={}",
-                    formId, trimmed.size(), droppedDiary,
-                    threshold, droppedBelowThreshold,
-                    kPerCandidateMemoryCap, droppedBeyondCap);
+            if ((droppedBelowThreshold > 0 || droppedBeyondCap > 0 || droppedDiary > 0) && Settings::Get().debugMode) {
+                logger::debug("LetterComposer: sender 0x{:X} — memories kept={}, "
+                              "dropped diary={}, dropped below threshold {:.2f}={}, "
+                              "dropped as older than the most-recent {}={}",
+                              formId,
+                              trimmed.size(),
+                              droppedDiary,
+                              threshold,
+                              droppedBelowThreshold,
+                              kPerCandidateMemoryCap,
+                              droppedBeyondCap);
             }
             return trimmed;
         }
-    }
+    } // namespace
 
     std::vector<SenderCandidate> CollectSenderCandidates()
     {
@@ -549,35 +555,36 @@ namespace NarrativeEngine::LetterComposer
         // specific extra viability rules (currently-loaded / walking-
         // distance / sender-cooldown).
         SenderCandidatePool::BuildOptions opts;
-        opts.maxCandidates              = kCandidateRenderCap;
-        opts.maxMemoriesPerCandidate    = kPerCandidateMemoryCap;
-        opts.memoryImportanceThreshold  =
-            static_cast<double>(Settings::Get().letterMemoryImportanceThreshold);
-        opts.excludeDiaryEntries        = true;   // action-select tail
-        opts.memoryFetchMultiplier      = kMemoryFetchMultiplier;
-        opts.shuffleResult              = true;
-        opts.requireMemories            = true;
-        opts.extraViabilityFilter =
-            [](RE::Actor* actor, std::string* skipReasonOut) -> bool {
-                if (!actor) {
-                    if (skipReasonOut) *skipReasonOut = "missing-actor";
-                    return false;
-                }
-                if (actor->Is3DLoaded()) {
-                    if (skipReasonOut) *skipReasonOut = "currently-loaded";
-                    return false;
-                }
-                if (IsWithinWalkingDistanceOfPlayer(actor)) {
-                    if (skipReasonOut) *skipReasonOut = "walking-distance";
-                    return false;
-                }
-                if (NPCLetterBeat_Cooldowns::IsSenderOnCooldown(
-                        actor->GetFormID())) {
-                    if (skipReasonOut) *skipReasonOut = "sender-cooldown";
-                    return false;
-                }
-                return true;
-            };
+        opts.maxCandidates = kCandidateRenderCap;
+        opts.maxMemoriesPerCandidate = kPerCandidateMemoryCap;
+        opts.memoryImportanceThreshold = static_cast<double>(Settings::Get().letterMemoryImportanceThreshold);
+        opts.excludeDiaryEntries = true; // action-select tail
+        opts.memoryFetchMultiplier = kMemoryFetchMultiplier;
+        opts.shuffleResult = true;
+        opts.requireMemories = true;
+        opts.extraViabilityFilter = [](RE::Actor* actor, std::string* skipReasonOut) -> bool {
+            if (!actor) {
+                if (skipReasonOut)
+                    *skipReasonOut = "missing-actor";
+                return false;
+            }
+            if (actor->Is3DLoaded()) {
+                if (skipReasonOut)
+                    *skipReasonOut = "currently-loaded";
+                return false;
+            }
+            if (IsWithinWalkingDistanceOfPlayer(actor)) {
+                if (skipReasonOut)
+                    *skipReasonOut = "walking-distance";
+                return false;
+            }
+            if (NPCLetterBeat_Cooldowns::IsSenderOnCooldown(actor->GetFormID())) {
+                if (skipReasonOut)
+                    *skipReasonOut = "sender-cooldown";
+                return false;
+            }
+            return true;
+        };
 
         auto raw = SenderCandidatePool::Build(opts);
 
@@ -585,18 +592,17 @@ namespace NarrativeEngine::LetterComposer
         out.reserve(raw.size());
         for (auto& c : raw) {
             SenderCandidate s;
-            s.formId           = c.formId;
-            s.name             = std::move(c.name);
-            s.engagementScore  = c.engagementScore;
+            s.formId = c.formId;
+            s.name = std::move(c.name);
+            s.engagementScore = c.engagementScore;
             s.lastInteractedAt = c.lastInteractedAt;
-            s.memories         = std::move(c.memories);
+            s.memories = std::move(c.memories);
             out.push_back(std::move(s));
         }
         return out;
     }
 
-    nlohmann::json SerializeSenderCandidates(
-        const std::vector<SenderCandidate>& candidates)
+    nlohmann::json SerializeSenderCandidates(const std::vector<SenderCandidate>& candidates)
     {
         auto out = nlohmann::json::array();
         for (const auto& c : candidates) {
@@ -605,11 +611,11 @@ namespace NarrativeEngine::LetterComposer
             // format (matches IntelEngine convention).
             char idBuf[16];
             std::snprintf(idBuf, sizeof(idBuf), "0x%X", c.formId);
-            cj["form_id"]            = idBuf;
-            cj["name"]               = c.name;
-            cj["engagement_score"]   = c.engagementScore;
+            cj["form_id"] = idBuf;
+            cj["name"] = c.name;
+            cj["engagement_score"] = c.engagementScore;
             cj["last_interacted_at"] = c.lastInteractedAt;
-            cj["memories"]           = c.memories;
+            cj["memories"] = c.memories;
             out.push_back(std::move(cj));
         }
         return out;
@@ -620,26 +626,22 @@ namespace NarrativeEngine::LetterComposer
         // Build the letter-compose prompt context for a single, already-
         // chosen sender. Fresh memories are supplied by the caller so we
         // don't re-fetch after already validating on the main thread.
-        nlohmann::json BuildComposePromptContext(
-            const BeatContext&  ctx,
-            UrgencyHint           urgencyHint,
-            const std::string&    playerName,
-            const std::string&    senderName,
-            RE::FormID            senderFormID,
-            const nlohmann::json& senderMemories,
-            const nlohmann::json& recentDialogue)
+        nlohmann::json BuildComposePromptContext(const BeatContext& ctx,
+                                                 UrgencyHint urgencyHint,
+                                                 const std::string& playerName,
+                                                 const std::string& senderName,
+                                                 RE::FormID senderFormID,
+                                                 const nlohmann::json& senderMemories,
+                                                 const nlohmann::json& recentDialogue)
         {
             const auto& cfg = Settings::Get();
 
             nlohmann::json root = nlohmann::json::object();
-            root["desired_direction"] =
-                (ctx.desiredDirection == PhaseTracker::Direction::Raise)
-                    ? "raise" : "lower";
+            root["desired_direction"] = (ctx.desiredDirection == PhaseTracker::Direction::Raise) ? "raise" : "lower";
             root["tension_delta"] = ctx.tensionDelta;
-            root["urgency_hint"]  =
-                (urgencyHint == UrgencyHint::High)   ? "high"
-              : (urgencyHint == UrgencyHint::Low)    ? "low"
-                                                     : "medium";
+            root["urgency_hint"] = (urgencyHint == UrgencyHint::High)  ? "high"
+                                   : (urgencyHint == UrgencyHint::Low) ? "low"
+                                                                       : "medium";
             root["min_words"] = cfg.letterContentMinWords;
             root["max_words"] = cfg.letterContentMaxWords;
 
@@ -648,11 +650,11 @@ namespace NarrativeEngine::LetterComposer
             char idBuf[16];
             std::snprintf(idBuf, sizeof(idBuf), "0x%X", senderFormID);
             nlohmann::json sender = nlohmann::json::object();
-            sender["form_id"]         = idBuf;
-            sender["name"]            = senderName;
-            sender["memories"]        = senderMemories;
+            sender["form_id"] = idBuf;
+            sender["name"] = senderName;
+            sender["memories"] = senderMemories;
             sender["recent_dialogue"] = recentDialogue;
-            root["sender"]            = std::move(sender);
+            root["sender"] = std::move(sender);
 
             // SkyrimNet's system_head / character_profile submodules
             // read the sender from the `npc.UUID` context key — that's
@@ -662,13 +664,11 @@ namespace NarrativeEngine::LetterComposer
             // in our prompt resolves against the actual letter sender
             // instead of failing silently or falling back to whoever
             // the ambient dialogue context points at.
-            const std::uint64_t senderUUID =
-                SkyrimNetAPI::FormIDToUUID(senderFormID);
+            const std::uint64_t senderUUID = SkyrimNetAPI::FormIDToUUID(senderFormID);
             if (senderUUID == 0) {
-                logger::warn(
-                    "LetterComposer: FormIDToUUID(0x{:X}) returned 0; "
-                    "system_head submodules will render against a null NPC",
-                    senderFormID);
+                logger::warn("LetterComposer: FormIDToUUID(0x{:X}) returned 0; "
+                             "system_head submodules will render against a null NPC",
+                             senderFormID);
             }
             nlohmann::json npc = nlohmann::json::object();
             npc["UUID"] = senderUUID;
@@ -684,8 +684,12 @@ namespace NarrativeEngine::LetterComposer
             bool inWord = false;
             for (char c : s) {
                 const bool ws = (c == ' ' || c == '\t' || c == '\n' || c == '\r');
-                if (!ws && !inWord) { ++n; inWord = true; }
-                else if (ws)        { inWord = false; }
+                if (!ws && !inWord) {
+                    ++n;
+                    inWord = true;
+                } else if (ws) {
+                    inWord = false;
+                }
             }
             return n;
         }
@@ -695,18 +699,20 @@ namespace NarrativeEngine::LetterComposer
         // string begins with `prefix`+whitespace, else 0.
         std::size_t PrefixSkip(const std::string& s, std::string_view prefix)
         {
-            if (s.size() <= prefix.size()) return 0;
+            if (s.size() <= prefix.size())
+                return 0;
             for (std::size_t i = 0; i < prefix.size(); ++i) {
-                const char a = static_cast<char>(
-                    std::tolower(static_cast<unsigned char>(s[i])));
-                const char b = static_cast<char>(
-                    std::tolower(static_cast<unsigned char>(prefix[i])));
-                if (a != b) return 0;
+                const char a = static_cast<char>(std::tolower(static_cast<unsigned char>(s[i])));
+                const char b = static_cast<char>(std::tolower(static_cast<unsigned char>(prefix[i])));
+                if (a != b)
+                    return 0;
             }
             const char nextCh = s[prefix.size()];
-            if (nextCh != ' ' && nextCh != '\t') return 0;
+            if (nextCh != ' ' && nextCh != '\t')
+                return 0;
             std::size_t i = prefix.size();
-            while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) ++i;
+            while (i < s.size() && (s[i] == ' ' || s[i] == '\t'))
+                ++i;
             return i;
         }
 
@@ -718,16 +724,18 @@ namespace NarrativeEngine::LetterComposer
             // and everything after.
             const std::string lower = [&] {
                 std::string l = name;
-                for (auto& c : l) c = static_cast<char>(
-                    std::tolower(static_cast<unsigned char>(c)));
+                for (auto& c : l)
+                    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
                 return l;
             }();
             const auto pos = lower.rfind(" the ");
-            if (pos == std::string::npos) return name;
+            if (pos == std::string::npos)
+                return name;
             // Make sure there's a word after " the " — otherwise the
             // " the " is mid-name (like "Wuuthrad of the Ysmir") and
             // we shouldn't strip.
-            if (pos + 5 >= name.size()) return name;
+            if (pos + 5 >= name.size())
+                return name;
             return name.substr(0, pos);
         }
 
@@ -736,18 +744,29 @@ namespace NarrativeEngine::LetterComposer
         std::string StripPrefixTitle(const std::string& name)
         {
             static constexpr std::array<std::string_view, 14> kPrefixes{
-                "Jarl",      "Thane",     "Master",    "Mistress",
-                "Captain",   "Commander", "Housecarl", "Lord",
-                "Lady",      "Sir",       "Brother",   "Sister",
-                "Mother",    "Father",
+                "Jarl",
+                "Thane",
+                "Master",
+                "Mistress",
+                "Captain",
+                "Commander",
+                "Housecarl",
+                "Lord",
+                "Lady",
+                "Sir",
+                "Brother",
+                "Sister",
+                "Mother",
+                "Father",
             };
             for (auto p : kPrefixes) {
                 const auto skip = PrefixSkip(name, p);
-                if (skip > 0) return name.substr(skip);
+                if (skip > 0)
+                    return name.substr(skip);
             }
             return name;
         }
-    }
+    } // namespace
 
     std::string SynthesizeFallbackLabel(const std::string& senderFullName)
     {
@@ -757,10 +776,11 @@ namespace NarrativeEngine::LetterComposer
         // upstream.
         static constexpr std::string_view kPrefix = "Note from ";
         constexpr std::size_t kBudget = 24;
-        constexpr std::size_t kNameRoom = kBudget - kPrefix.size();  // = 14
+        constexpr std::size_t kNameRoom = kBudget - kPrefix.size(); // = 14
 
         auto tryName = [&](const std::string& name) -> std::optional<std::string> {
-            if (name.empty()) return std::nullopt;
+            if (name.empty())
+                return std::nullopt;
             if (name.size() <= kNameRoom) {
                 std::string out;
                 out.reserve(kPrefix.size() + name.size());
@@ -772,7 +792,8 @@ namespace NarrativeEngine::LetterComposer
         };
 
         // Candidate 1: full name as-is.
-        if (auto r = tryName(senderFullName)) return *r;
+        if (auto r = tryName(senderFullName))
+            return *r;
 
         // Candidate 2: SkyrimNet "ShortName" — not currently exposed
         // through PublicAPI.h in a way callable from a worker-thread
@@ -782,13 +803,15 @@ namespace NarrativeEngine::LetterComposer
         // Candidate 3: strip trailing " the X" title.
         const auto suffixStripped = StripSuffixTitle(senderFullName);
         if (suffixStripped != senderFullName) {
-            if (auto r = tryName(suffixStripped)) return *r;
+            if (auto r = tryName(suffixStripped))
+                return *r;
         }
 
         // Candidate 4: also strip leading title prefix.
         const auto bothStripped = StripPrefixTitle(suffixStripped);
         if (bothStripped != suffixStripped) {
-            if (auto r = tryName(bothStripped)) return *r;
+            if (auto r = tryName(bothStripped))
+                return *r;
         }
 
         // Candidate 5: build "Note from <bothStripped>" and right-
@@ -797,16 +820,18 @@ namespace NarrativeEngine::LetterComposer
         out.reserve(kBudget);
         out.append(kPrefix);
         out.append(bothStripped.empty() ? senderFullName : bothStripped);
-        if (out.size() > kBudget) out.resize(kBudget);
+        if (out.size() > kBudget)
+            out.resize(kBudget);
         return out;
     }
 
     void Compose(const BeatContext& ctx,
-                 UrgencyHint          urgencyHint,
-                 RE::FormID           senderNpcFormID,
+                 UrgencyHint urgencyHint,
+                 RE::FormID senderNpcFormID,
                  std::function<void(std::optional<LetterComposition>)> callback)
     {
-        if (!callback) return;
+        if (!callback)
+            return;
 
         if (senderNpcFormID == 0) {
             logger::warn("LetterComposer: Compose called with sender formID=0");
@@ -825,10 +850,10 @@ namespace NarrativeEngine::LetterComposer
         // been disabled, or hit their cooldown in the interim.
         const auto viab = CheckSenderViability(senderNpcFormID);
         if (viab != SenderViability::Viable) {
-            logger::warn(
-                "LetterComposer: chosen sender 0x{:X} no longer viable ({}); "
-                "declining to compose",
-                senderNpcFormID, SenderViabilityName(viab));
+            logger::warn("LetterComposer: chosen sender 0x{:X} no longer viable ({}); "
+                         "declining to compose",
+                         senderNpcFormID,
+                         SenderViabilityName(viab));
             callback(std::nullopt);
             return;
         }
@@ -846,9 +871,7 @@ namespace NarrativeEngine::LetterComposer
             }
         }
         if (senderName.empty()) {
-            logger::warn(
-                "LetterComposer: chosen sender 0x{:X} has no resolvable display name",
-                senderNpcFormID);
+            logger::warn("LetterComposer: chosen sender 0x{:X} has no resolvable display name", senderNpcFormID);
             callback(std::nullopt);
             return;
         }
@@ -858,8 +881,7 @@ namespace NarrativeEngine::LetterComposer
         // Fresh memories at compose time — captures any SkyrimNet
         // events generated between action-select and compose (the
         // round-trip is seconds, not zero).
-        const auto memories = FetchSenderMemories(
-            senderNpcFormID, playerName, /*includeDiaries=*/true);
+        const auto memories = FetchSenderMemories(senderNpcFormID, playerName, /*includeDiaries=*/true);
 
         // Most-recent player↔sender dialogue history. Gives the LLM a
         // running-continuity read on how the two of them talk to each
@@ -876,16 +898,15 @@ namespace NarrativeEngine::LetterComposer
         AnnotateDialogueAges(recentDialogue);
 
         const auto promptCtx = BuildComposePromptContext(
-            ctx, urgencyHint, playerName, senderName,
-            senderNpcFormID, memories, recentDialogue);
+            ctx, urgencyHint, playerName, senderName, senderNpcFormID, memories, recentDialogue);
         const auto promptCtxStr = promptCtx.dump();
         if (Settings::Get().debugMode) {
             logger::debug("LetterComposer: prompt context: {}", promptCtxStr);
         }
 
         const auto& cfg = Settings::Get();
-        const int   minWords = cfg.letterContentMinWords;
-        const int   maxWords = cfg.letterContentMaxWords;
+        const int minWords = cfg.letterContentMinWords;
+        const int maxWords = cfg.letterContentMaxWords;
 
         // Clone the callback before move so the !queued failure path
         // below can still notify the caller. SkyrimNet's
@@ -909,12 +930,8 @@ namespace NarrativeEngine::LetterComposer
             "narrative_engine_letter_compose",
             "narrative_engine_composer",
             promptCtxStr,
-            [callback = std::move(callback),
-             senderNpcFormID,
-             senderName = std::move(senderName),
-             minWords, maxWords]
-            (std::string response, bool success) mutable
-            {
+            [callback = std::move(callback), senderNpcFormID, senderName = std::move(senderName), minWords, maxWords](
+                std::string response, bool success) mutable {
                 if (!success) {
                     logger::warn("LetterComposer: LLM call failed: {}", response);
                     callback(std::nullopt);
@@ -937,15 +954,14 @@ namespace NarrativeEngine::LetterComposer
                 // action-select stage and is captured above.
                 auto getStr = [&](const char* key, std::string& out) -> bool {
                     auto it = parsed.find(key);
-                    if (it == parsed.end() || !it->is_string()) return false;
+                    if (it == parsed.end() || !it->is_string())
+                        return false;
                     out = LLMTextSanitizer::Sanitize(it->get<std::string>());
                     return true;
                 };
 
                 std::string label, bodyText, mood, topic;
-                if (!getStr("body",      bodyText) ||
-                    !getStr("mood",      mood) ||
-                    !getStr("topic_tag", topic)) {
+                if (!getStr("body", bodyText) || !getStr("mood", mood) || !getStr("topic_tag", topic)) {
                     logger::warn("LetterComposer: response missing one of the required keys");
                     callback(std::nullopt);
                     return;
@@ -970,21 +986,21 @@ namespace NarrativeEngine::LetterComposer
                 std::vector<std::string> tags;
                 if (auto tagsIt = parsed.find("tags"); tagsIt != parsed.end()) {
                     if (!tagsIt->is_array()) {
-                        logger::warn(
-                            "LetterComposer: `tags` present but not a JSON array; "
-                            "treating as empty");
+                        logger::warn("LetterComposer: `tags` present but not a JSON array; "
+                                     "treating as empty");
                     } else {
                         tags.reserve(tagsIt->size());
                         for (const auto& t : *tagsIt) {
-                            if (!t.is_string()) continue;
+                            if (!t.is_string())
+                                continue;
                             auto s = LLMTextSanitizer::Sanitize(t.get<std::string>());
-                            if (!s.empty()) tags.push_back(std::move(s));
+                            if (!s.empty())
+                                tags.push_back(std::move(s));
                         }
                     }
                 } else {
-                    logger::warn(
-                        "LetterComposer: response has no `tags` key; "
-                        "memory writes will fall back to topic_tag alone");
+                    logger::warn("LetterComposer: response has no `tags` key; "
+                                 "memory writes will fall back to topic_tag alone");
                 }
 
                 // Mood must be one of the known set.
@@ -997,9 +1013,7 @@ namespace NarrativeEngine::LetterComposer
                 // Body word count in bounds.
                 const auto wc = static_cast<int>(WordCount(bodyText));
                 if (wc < minWords || wc > maxWords) {
-                    logger::warn(
-                        "LetterComposer: body word count {} outside [{}..{}]",
-                        wc, minWords, maxWords);
+                    logger::warn("LetterComposer: body word count {} outside [{}..{}]", wc, minWords, maxWords);
                     callback(std::nullopt);
                     return;
                 }
@@ -1013,40 +1027,43 @@ namespace NarrativeEngine::LetterComposer
                     const std::string original = label;
                     label = SynthesizeFallbackLabel(senderName);
                     if (original.empty()) {
-                        logger::info(
-                            "LetterComposer: letter_label missing/empty; "
-                            "fell back to '{}'",
-                            label);
+                        logger::info("LetterComposer: letter_label missing/empty; "
+                                     "fell back to '{}'",
+                                     label);
                     } else {
-                        logger::info(
-                            "LetterComposer: letter_label '{}' exceeded 24-byte cap "
-                            "(was {} bytes); fell back to '{}'",
-                            original, original.size(), label);
+                        logger::info("LetterComposer: letter_label '{}' exceeded 24-byte cap "
+                                     "(was {} bytes); fell back to '{}'",
+                                     original,
+                                     original.size(),
+                                     label);
                     }
                 }
 
                 LetterComposition comp;
                 comp.senderNpcFormID = senderNpcFormID;
-                comp.senderLabel     = std::move(label);
-                comp.body            = std::move(bodyText);
-                comp.mood            = std::move(mood);
-                comp.topicTag        = std::move(topic);
-                comp.tags            = std::move(tags);
+                comp.senderLabel = std::move(label);
+                comp.body = std::move(bodyText);
+                comp.mood = std::move(mood);
+                comp.topicTag = std::move(topic);
+                comp.tags = std::move(tags);
 
-                logger::info(
-                    "LetterComposer: composed letter (sender=0x{:X} '{}', "
-                    "label='{}', body={} words, mood='{}', topic='{}', tags={})",
-                    comp.senderNpcFormID, senderName,
-                    comp.senderLabel, wc, comp.mood, comp.topicTag,
-                    comp.tags.size());
+                logger::info("LetterComposer: composed letter (sender=0x{:X} '{}', "
+                             "label='{}', body={} words, mood='{}', topic='{}', tags={})",
+                             comp.senderNpcFormID,
+                             senderName,
+                             comp.senderLabel,
+                             wc,
+                             comp.mood,
+                             comp.topicTag,
+                             comp.tags.size());
                 callback(std::move(comp));
             });
 
         if (!queued) {
-            logger::warn(
-                "LetterComposer: SendCustomPromptToLLM returned false; "
-                "treating as failure");
-            if (callbackBackup) callbackBackup(std::nullopt);
+            logger::warn("LetterComposer: SendCustomPromptToLLM returned false; "
+                         "treating as failure");
+            if (callbackBackup)
+                callbackBackup(std::nullopt);
         }
     }
-}
+} // namespace NarrativeEngine::LetterComposer

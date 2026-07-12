@@ -2,9 +2,9 @@
 
 #include <AliasWalkFilter.h>
 #include <LLMTextSanitizer.h>
+#include <logger.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
-#include <logger.h>
 
 #include <nlohmann/json.hpp>
 
@@ -30,7 +30,7 @@ namespace NarrativeEngine::SenderCandidatePool
         //   Medium = 7 game-days = 604800s
         // Pass-through into GetActorEngagement; SkyrimNet uses these to
         // weight recent-vs-historical engagement scoring.
-        constexpr double kShortWindowSeconds  = 86400.0;
+        constexpr double kShortWindowSeconds = 86400.0;
         constexpr double kMediumWindowSeconds = 604800.0;
 
         // Trim a raw memory tail per the caller's importance / diary
@@ -43,8 +43,7 @@ namespace NarrativeEngine::SenderCandidatePool
         // ascending age_hours (newest first), truncate to
         // maxMemoriesPerCandidate, then reverse for
         // oldest-to-newest presentation.
-        nlohmann::json FilterAndShapeMemories(nlohmann::json      raw,
-                                              const BuildOptions& opts)
+        nlohmann::json FilterAndShapeMemories(nlohmann::json raw, const BuildOptions& opts)
         {
             if (!raw.is_array()) {
                 return nlohmann::json::array();
@@ -52,7 +51,8 @@ namespace NarrativeEngine::SenderCandidatePool
 
             auto trimmed = nlohmann::json::array();
             for (auto& m : raw) {
-                if (!m.is_object()) continue;
+                if (!m.is_object())
+                    continue;
 
                 // Diary-entry filter. SkyrimNet folds diary entries into
                 // the same table PublicGetMemoriesForActor queries, tagged
@@ -60,8 +60,7 @@ namespace NarrativeEngine::SenderCandidatePool
                 // with `Diary Entry:`. There's no server-side flag; the
                 // content prefix is the only discriminator we have.
                 if (opts.excludeDiaryEntries) {
-                    if (auto it = m.find("content");
-                        it != m.end() && it->is_string()) {
+                    if (auto it = m.find("content"); it != m.end() && it->is_string()) {
                         const auto& contentRef = it->get_ref<const std::string&>();
                         if (contentRef.rfind("Diary Entry:", 0) == 0) {
                             continue;
@@ -70,8 +69,7 @@ namespace NarrativeEngine::SenderCandidatePool
                 }
 
                 double importance = 0.0;
-                if (auto it = m.find("importance_score");
-                    it != m.end() && it->is_number()) {
+                if (auto it = m.find("importance_score"); it != m.end() && it->is_number()) {
                     importance = it->get<double>();
                 }
                 if (importance < opts.memoryImportanceThreshold) {
@@ -89,14 +87,12 @@ namespace NarrativeEngine::SenderCandidatePool
                     out["age_hours"] = it->get<double>();
                 }
                 std::string emotion;
-                if (auto it = m.find("emotion");
-                    it != m.end() && it->is_string()) {
+                if (auto it = m.find("emotion"); it != m.end() && it->is_string()) {
                     emotion = LLMTextSanitizer::Sanitize(it->get<std::string>());
                 }
                 out["emotion"] = std::move(emotion);
                 std::string location;
-                if (auto it = m.find("location");
-                    it != m.end() && it->is_string()) {
+                if (auto it = m.find("location"); it != m.end() && it->is_string()) {
                     location = LLMTextSanitizer::Sanitize(it->get<std::string>());
                 }
                 out["location"] = std::move(location);
@@ -106,10 +102,9 @@ namespace NarrativeEngine::SenderCandidatePool
             // Sort ascending on age_hours (newest first) so truncation
             // keeps the most recent survivors, then reverse for
             // oldest-to-newest presentation.
-            std::sort(trimmed.begin(), trimmed.end(),
-                [](const nlohmann::json& a, const nlohmann::json& b) {
-                    return a.value("age_hours", 0.0) < b.value("age_hours", 0.0);
-                });
+            std::sort(trimmed.begin(), trimmed.end(), [](const nlohmann::json& a, const nlohmann::json& b) {
+                return a.value("age_hours", 0.0) < b.value("age_hours", 0.0);
+            });
 
             const int cap = std::max(0, opts.maxMemoriesPerCandidate);
             if (static_cast<int>(trimmed.size()) > cap) {
@@ -122,16 +117,11 @@ namespace NarrativeEngine::SenderCandidatePool
         // Fetch a candidate's memory tail from SkyrimNet, then run it
         // through FilterAndShapeMemories. Returns an empty array on any
         // failure or when SkyrimNet reports nothing for this actor.
-        nlohmann::json FetchAndShapeMemories(RE::FormID          formId,
-                                              const std::string&  playerName,
-                                              const BuildOptions& opts)
+        nlohmann::json FetchAndShapeMemories(RE::FormID formId, const std::string& playerName, const BuildOptions& opts)
         {
-            const int fetchCap =
-                std::max(1, opts.maxMemoriesPerCandidate *
-                            std::max(1, opts.memoryFetchMultiplier));
+            const int fetchCap = std::max(1, opts.maxMemoriesPerCandidate * std::max(1, opts.memoryFetchMultiplier));
 
-            const auto raw = SkyrimNetAPI::GetMemoriesForActor(
-                formId, fetchCap, playerName);
+            const auto raw = SkyrimNetAPI::GetMemoriesForActor(formId, fetchCap, playerName);
             auto parsed = nlohmann::json::parse(raw, nullptr, false);
             if (parsed.is_discarded() || !parsed.is_array()) {
                 return nlohmann::json::array();
@@ -145,22 +135,19 @@ namespace NarrativeEngine::SenderCandidatePool
         // entryJson)` for each survivor. Stops when `stopWhen` returns
         // true after a survivor (allows early-exit for CountViable).
         template <typename OnViable, typename StopWhen>
-        void WalkEngagement(int                    fetchCap,
-                             const ViabilityFilter& extraFilter,
-                             OnViable&&             onViable,
-                             StopWhen&&             stopWhen)
+        void WalkEngagement(int fetchCap, const ViabilityFilter& extraFilter, OnViable&& onViable, StopWhen&& stopWhen)
         {
-            const auto enrolledJson = SkyrimNetAPI::GetActorEngagement(
-                fetchCap, /*excludePlayer=*/true,
-                /*playerEventsOnly=*/false,
-                kShortWindowSeconds, kMediumWindowSeconds);
+            const auto enrolledJson = SkyrimNetAPI::GetActorEngagement(fetchCap,
+                                                                       /*excludePlayer=*/true,
+                                                                       /*playerEventsOnly=*/false,
+                                                                       kShortWindowSeconds,
+                                                                       kMediumWindowSeconds);
 
             auto enrolled = nlohmann::json::parse(enrolledJson, nullptr, false);
             if (enrolled.is_discarded() || !enrolled.is_array()) {
-                logger::warn(
-                    "SenderCandidatePool: GetActorEngagement returned non-array; "
-                    "raw='{}'",
-                    enrolledJson);
+                logger::warn("SenderCandidatePool: GetActorEngagement returned non-array; "
+                             "raw='{}'",
+                             enrolledJson);
                 return;
             }
 
@@ -169,38 +156,50 @@ namespace NarrativeEngine::SenderCandidatePool
             // Per-walk skip-reason tally. Aggregated summary is
             // logged at end of walk so we can see WHY the pool
             // shrank without one line per candidate spamming the log.
-            int skippedNoActor       = 0;
-            int skippedDead          = 0;
-            int skippedDisabled      = 0;
-            int skippedNoName        = 0;
-            int skippedStoryActive   = 0;
-            int skippedExtraFilter   = 0;
+            int skippedNoActor = 0;
+            int skippedDead = 0;
+            int skippedDisabled = 0;
+            int skippedNoName = 0;
+            int skippedStoryActive = 0;
+            int skippedExtraFilter = 0;
             std::string firstStoryActiveReason;
             std::string firstExtraFilterReason;
 
             for (auto& entry : enrolled) {
-                if (!entry.is_object()) continue;
+                if (!entry.is_object())
+                    continue;
 
                 RE::FormID formId = 0;
-                if (auto it = entry.find("formId");
-                    it != entry.end() && it->is_number_unsigned()) {
+                if (auto it = entry.find("formId"); it != entry.end() && it->is_number_unsigned()) {
                     formId = it->get<std::uint32_t>();
                 }
-                if (formId == 0) continue;
+                if (formId == 0)
+                    continue;
 
-                auto* form  = RE::TESForm::LookupByID(formId);
+                auto* form = RE::TESForm::LookupByID(formId);
                 auto* actor = form ? form->As<RE::Actor>() : nullptr;
-                if (!actor)             { ++skippedNoActor;   continue; }
-                if (actor->IsDead())    { ++skippedDead;      continue; }
-                if (actor->IsDisabled()) { ++skippedDisabled; continue; }
+                if (!actor) {
+                    ++skippedNoActor;
+                    continue;
+                }
+                if (actor->IsDead()) {
+                    ++skippedDead;
+                    continue;
+                }
+                if (actor->IsDisabled()) {
+                    ++skippedDisabled;
+                    continue;
+                }
 
                 // Name is required for the LLM to identify the candidate.
                 std::string name;
-                if (auto it = entry.find("name");
-                    it != entry.end() && it->is_string()) {
+                if (auto it = entry.find("name"); it != entry.end() && it->is_string()) {
                     name = LLMTextSanitizer::Sanitize(it->get<std::string>());
                 }
-                if (name.empty())       { ++skippedNoName;    continue; }
+                if (name.empty()) {
+                    ++skippedNoName;
+                    continue;
+                }
 
                 // Story-active gate — reject NPCs currently being
                 // puppeteered by another quest's alias-supplied AI
@@ -208,21 +207,19 @@ namespace NarrativeEngine::SenderCandidatePool
                 // debug mode so the walk trace is inspectable.
                 {
                     std::string storyReason;
-                    if (AliasWalkFilter::IsActorStoryActive(
-                            actor, &storyReason, debug)) {
+                    if (AliasWalkFilter::IsActorStoryActive(actor, &storyReason, debug)) {
                         ++skippedStoryActive;
                         if (firstStoryActiveReason.empty()) {
                             char idBuf[16];
-                            std::snprintf(idBuf, sizeof(idBuf), "0x%X",
-                                          formId);
-                            firstStoryActiveReason =
-                                name + "(" + idBuf + ")=" + storyReason;
+                            std::snprintf(idBuf, sizeof(idBuf), "0x%X", formId);
+                            firstStoryActiveReason = name + "(" + idBuf + ")=" + storyReason;
                         }
                         if (debug) {
-                            logger::debug(
-                                "SenderCandidatePool: skipping '{}' (0x{:X}) — "
-                                "story-active: {}",
-                                name, formId, storyReason);
+                            logger::debug("SenderCandidatePool: skipping '{}' (0x{:X}) — "
+                                          "story-active: {}",
+                                          name,
+                                          formId,
+                                          storyReason);
                         }
                         continue;
                     }
@@ -233,8 +230,7 @@ namespace NarrativeEngine::SenderCandidatePool
                     if (!extraFilter(actor, &skipReason)) {
                         ++skippedExtraFilter;
                         if (firstExtraFilterReason.empty() && !skipReason.empty()) {
-                            firstExtraFilterReason =
-                                name + "=" + skipReason;
+                            firstExtraFilterReason = name + "=" + skipReason;
                         }
                         continue;
                     }
@@ -243,13 +239,15 @@ namespace NarrativeEngine::SenderCandidatePool
                 onViable(actor, entry, std::move(name));
                 if (stopWhen()) {
                     if (debug) {
-                        logger::debug(
-                            "SenderCandidatePool: walk early-exit (cap reached) "
-                            "— skips: story-active={}, extra-filter={}, no-actor={}, "
-                            "dead={}, disabled={}, no-name={}",
-                            skippedStoryActive, skippedExtraFilter,
-                            skippedNoActor, skippedDead, skippedDisabled,
-                            skippedNoName);
+                        logger::debug("SenderCandidatePool: walk early-exit (cap reached) "
+                                      "— skips: story-active={}, extra-filter={}, no-actor={}, "
+                                      "dead={}, disabled={}, no-name={}",
+                                      skippedStoryActive,
+                                      skippedExtraFilter,
+                                      skippedNoActor,
+                                      skippedDead,
+                                      skippedDisabled,
+                                      skippedNoName);
                     }
                     return;
                 }
@@ -257,24 +255,23 @@ namespace NarrativeEngine::SenderCandidatePool
 
             if (debug) {
                 const std::string storyExample =
-                    firstStoryActiveReason.empty()
-                        ? std::string{}
-                        : " (e.g. " + firstStoryActiveReason + ")";
+                    firstStoryActiveReason.empty() ? std::string{} : " (e.g. " + firstStoryActiveReason + ")";
                 const std::string extraExample =
-                    firstExtraFilterReason.empty()
-                        ? std::string{}
-                        : " (e.g. " + firstExtraFilterReason + ")";
-                logger::debug(
-                    "SenderCandidatePool: walk complete — skips: "
-                    "story-active={}{}, extra-filter={}{}, no-actor={}, "
-                    "dead={}, disabled={}, no-name={}",
-                    skippedStoryActive, storyExample,
-                    skippedExtraFilter, extraExample,
-                    skippedNoActor, skippedDead, skippedDisabled,
-                    skippedNoName);
+                    firstExtraFilterReason.empty() ? std::string{} : " (e.g. " + firstExtraFilterReason + ")";
+                logger::debug("SenderCandidatePool: walk complete — skips: "
+                              "story-active={}{}, extra-filter={}{}, no-actor={}, "
+                              "dead={}, disabled={}, no-name={}",
+                              skippedStoryActive,
+                              storyExample,
+                              skippedExtraFilter,
+                              extraExample,
+                              skippedNoActor,
+                              skippedDead,
+                              skippedDisabled,
+                              skippedNoName);
             }
         }
-    }
+    } // namespace
 
     std::string GetPlayerDisplayName()
     {
@@ -295,26 +292,26 @@ namespace NarrativeEngine::SenderCandidatePool
         }
 
         const int renderCap = std::max(1, opts.maxCandidates);
-        const int fetchCap  = renderCap * kEngagementFetchMultiplier;
+        const int fetchCap = renderCap * kEngagementFetchMultiplier;
 
         const std::string playerName = GetPlayerDisplayName();
 
         int skippedNoMemories = 0;
 
         WalkEngagement(
-            fetchCap, opts.extraViabilityFilter,
+            fetchCap,
+            opts.extraViabilityFilter,
             [&](RE::Actor* actor, const nlohmann::json& entry, std::string name) {
-                if (static_cast<int>(out.size()) >= renderCap) return;
+                if (static_cast<int>(out.size()) >= renderCap)
+                    return;
 
                 Candidate c;
                 c.formId = actor->GetFormID();
-                c.name   = std::move(name);
-                if (auto it = entry.find("totalMemoryImportance");
-                    it != entry.end() && it->is_number()) {
+                c.name = std::move(name);
+                if (auto it = entry.find("totalMemoryImportance"); it != entry.end() && it->is_number()) {
                     c.engagementScore = it->get<double>();
                 }
-                if (auto it = entry.find("lastEventTime");
-                    it != entry.end() && it->is_number()) {
+                if (auto it = entry.find("lastEventTime"); it != entry.end() && it->is_number()) {
                     c.lastInteractedAt = it->get<double>();
                 }
 
@@ -332,36 +329,31 @@ namespace NarrativeEngine::SenderCandidatePool
 
         if (skippedNoMemories > 0) {
             logger::info(
-                "SenderCandidatePool: kept={}, dropped-no-significant-memories={}",
-                out.size(), skippedNoMemories);
+                "SenderCandidatePool: kept={}, dropped-no-significant-memories={}", out.size(), skippedNoMemories);
         }
 
         if (opts.shuffleResult && out.size() > 1) {
             std::random_device rd;
-            std::mt19937       rng(rd());
+            std::mt19937 rng(rd());
             std::shuffle(out.begin(), out.end(), rng);
         }
         return out;
     }
 
-    std::size_t CountViable(const ViabilityFilter& extraFilter,
-                             std::size_t            min)
+    std::size_t CountViable(const ViabilityFilter& extraFilter, std::size_t min)
     {
         if (!SkyrimNetAPI::IsAvailable() || !SkyrimNetAPI::IsMemorySystemReady()) {
             return 0;
         }
 
-        const int fetchCap = std::max<int>(
-            static_cast<int>(min), 1) * kEngagementFetchMultiplier;
+        const int fetchCap = std::max<int>(static_cast<int>(min), 1) * kEngagementFetchMultiplier;
 
         std::size_t count = 0;
         WalkEngagement(
-            fetchCap, extraFilter,
-            [&](RE::Actor* /*actor*/, const nlohmann::json& /*entry*/,
-                std::string /*name*/) {
-                ++count;
-            },
+            fetchCap,
+            extraFilter,
+            [&](RE::Actor* /*actor*/, const nlohmann::json& /*entry*/, std::string /*name*/) { ++count; },
             [&]() { return count >= min; });
         return count;
     }
-}
+} // namespace NarrativeEngine::SenderCandidatePool

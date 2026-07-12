@@ -58,7 +58,7 @@ namespace NarrativeEngine::BeatSystem
     // return snapshots; the underlying state may have changed by the
     // time the caller uses the value.
     TopLevelState GetTopLevelState();
-    std::string   GetRunningBeatName();
+    std::string GetRunningBeatName();
     std::uint32_t GetGlobalCooldownMs();
 
     // In-flight query for the dashboard: name, wall-clock start time,
@@ -67,8 +67,8 @@ namespace NarrativeEngine::BeatSystem
     struct InFlightInfo
     {
         std::string name;
-        double      startedAtRealSeconds = 0.0;
-        BeatState   state                = BeatState::NOT_RUNNING;
+        double startedAtRealSeconds = 0.0;
+        BeatState state = BeatState::NOT_RUNNING;
     };
     // Returns std::nullopt when no beat is in flight.
     std::optional<InFlightInfo> GetInFlightInfo();
@@ -84,9 +84,7 @@ namespace NarrativeEngine::BeatSystem
     // the main thread. When no candidates survive filtering, skips
     // cleanly with ApplyDecision + onFinalized.
     using FinalizedCallback = std::function<void()>;
-    void ConsiderBeat(Snapshot                    snapshot,
-                      DecisionLog::DecisionRecord rec,
-                      FinalizedCallback           onFinalized);
+    void ConsiderBeat(Snapshot snapshot, DecisionLog::DecisionRecord rec, FinalizedCallback onFinalized);
 
     // Public entry point for handing dispatch control to a specific
     // registered beat. Main thread. Sets the top-level state to
@@ -98,8 +96,7 @@ namespace NarrativeEngine::BeatSystem
     //
     // No-op when a beat is already running or when `name` isn't in the
     // registry. Logs and returns cleanly in both cases.
-    void StartBeat(const std::string&    name,
-                   const nlohmann::json& parameters);
+    void StartBeat(const std::string& name, const nlohmann::json& parameters);
 
     // Debug / dashboard entry point for force-dispatching a specific
     // beat. Bypasses every ConsiderBeat gate except the single-flight
@@ -116,4 +113,4 @@ namespace NarrativeEngine::BeatSystem
     void OnSave(SKSE::SerializationInterface* intfc);
     void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);
     void OnRevert();
-}
+} // namespace NarrativeEngine::BeatSystem

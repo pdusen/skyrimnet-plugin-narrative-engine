@@ -1,14 +1,14 @@
-Scriptname _ne_BanditAmbushQuest extends Quest  
+Scriptname _ne_BanditAmbushQuest extends Quest
 
-ReferenceAlias Property Bandit01Ref  Auto  
+ReferenceAlias Property Bandit01Ref  Auto
 
-ReferenceAlias Property Bandit02Ref  Auto  
+ReferenceAlias Property Bandit02Ref  Auto
 
-ReferenceAlias Property Bandit03Ref  Auto  
+ReferenceAlias Property Bandit03Ref  Auto
 
-ReferenceAlias Property Bandit04Ref  Auto  
+ReferenceAlias Property Bandit04Ref  Auto
 
-ReferenceAlias Property Bandit05Ref  Auto  
+ReferenceAlias Property Bandit05Ref  Auto
 
 ReferenceAlias Property Bandit06Ref  Auto
 

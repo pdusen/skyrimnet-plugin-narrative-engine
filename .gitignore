@@ -26,3 +26,5 @@ dashboard/dist/
 # Junctions to third-party mod-folder Papyrus sources (SkyrimNetApi.psc etc.),
 # created by setup-mod-folder.ps1. Machine-specific; never tracked.
 /external/
+
+node_modules/

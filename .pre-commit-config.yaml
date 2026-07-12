@@ -1,0 +1,90 @@
+# Formatting + lint runner for NarrativeEngine.
+#
+# IMPORTANT: do NOT run `pre-commit install`. Our git pre-commit hook is
+# hand-managed by setup-mod-folder.ps1 so it can run sync-esp.ps1 (bidirectional
+# ESP sync) alongside the formatters. That hook invokes `pre-commit run` for us.
+#
+# On-demand entry point: `pwsh -File format.ps1` at the repo root.
+# See README's "Linting and autoformatting" section for install instructions.
+
+exclude: |
+  (?x)^(
+    esp/NarrativeEngine\.esp|
+    build/.*|
+    dashboard/node_modules/.*|
+    external/.*|
+    docs/prior-art/.*
+  )$
+
+default_language_version:
+  python: python3
+
+repos:
+  # -------- general text hygiene --------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+        # .psc files are Creation Kit-authored — don't rewrite them.
+        exclude: \.psc$
+      - id: end-of-file-fixer
+        exclude: \.(esp|pex|psc)$
+      - id: mixed-line-ending
+        args: [--fix=lf]
+        # .ps1/.bat/.cmd stay CRLF per .editorconfig; .psc is CK-authored CRLF.
+        exclude: \.(ps1|psm1|psd1|bat|cmd|psc)$
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-yaml
+      - id: check-json
+        # .vscode/*.json is JSONC (comments allowed); the stock check-json
+        # can't parse it.
+        exclude: ^\.vscode/
+      - id: check-merge-conflict
+
+  # -------- C++ (clang-format) --------
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v19.1.6
+    hooks:
+      - id: clang-format
+        types_or: [c++, c]
+
+  # -------- Markdown (markdownlint --fix) --------
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.44.0
+    hooks:
+      - id: markdownlint
+        args: [--fix, --config, .markdownlint.json]
+
+  # -------- CMake (gersemi) --------
+  - repo: https://github.com/BlankSpruce/gersemi
+    rev: 0.19.3
+    hooks:
+      - id: gersemi
+
+  # -------- YAML / JSON (prettier) --------
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v4.0.0-alpha.8
+    hooks:
+      - id: prettier
+        types_or: [yaml, json]
+        exclude: (package-lock\.json|CMakeUserPresets\.json)$
+
+  # -------- PowerShell (PSScriptAnalyzer / Invoke-Formatter, local) --------
+  # No upstream pre-commit hook exists; shell out to our own runner. Requires
+  # the PSScriptAnalyzer module (Install-Module PSScriptAnalyzer -Scope CurrentUser).
+  - repo: local
+    hooks:
+      - id: powershell-format
+        name: PowerShell format + lint
+        entry: pwsh -NoProfile -File scripts/lint-powershell.ps1
+        language: system
+        types: [powershell]
+        pass_filenames: true
+
+  # -------- Papyrus (.psc): no formatter exists --------
+  # There is no maintained autoformatter for Papyrus. The PapyrusCompiler run
+  # during `pwsh -File build.ps1 build` acts as the closest thing to a linter
+  # (syntax + type errors surface at compile time). If/when a formatter appears,
+  # add its hook here.

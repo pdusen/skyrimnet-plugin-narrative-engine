@@ -1,36 +1,36 @@
 {
-    "version": 3,
-    "configurePresets": [
-        {
-            "name": "base",
-            "hidden": true,
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build/${presetName}",
-            "installDir": "${sourceDir}/install/${presetName}",
-            "architecture": { "value": "x64", "strategy": "external" },
-            "cacheVariables": {
-                "CMAKE_CXX_COMPILER": "cl.exe",
-                "CMAKE_CXX_FLAGS": "/permissive- /Zc:preprocessor /EHsc /MP /W4 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -DUNICODE -D_UNICODE",
-                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-                "//VCPKG_TARGET_TRIPLET-rationale": "x64-windows-static-md: static-link our deps (no third-party DLL deps at runtime) but use the DYNAMIC MSVC CRT (/MD). SkyrimNet's PublicAPI.h documents an ABI requirement: 'Both DLLs must use the same MSVC version and CRT linkage (dynamic /MD).' Using the static CRT (x64-windows-static + MultiThreaded) lets short SBO strings round-trip but corrupts the heap on longer returns, because each /MT DLL owns a private heap.",
-                "VCPKG_TARGET_TRIPLET": "x64-windows-static-md",
-                "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake",
-                "//CMAKE_MSVC_RUNTIME_LIBRARY-rationale": "Match the triplet above — /MD in release, /MDd in debug. Pairs with VCPKG_TARGET_TRIPLET=x64-windows-static-md so every TU in our DLL plus every dep links against the dynamic CRT and shares one heap with SkyrimNet.",
-                "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-            }
-        },
-        {
-            "name": "debug",
-            "inherits": ["base"],
-            "displayName": "Debug",
-            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
-        },
-        {
-            "name": "release",
-            "inherits": ["base"],
-            "displayName": "Release",
-            "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
-        }
-    ]
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "installDir": "${sourceDir}/install/${presetName}",
+      "architecture": { "value": "x64", "strategy": "external" },
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "cl.exe",
+        "CMAKE_CXX_FLAGS": "/permissive- /Zc:preprocessor /EHsc /MP /W4 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -DUNICODE -D_UNICODE",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "//VCPKG_TARGET_TRIPLET-rationale": "x64-windows-static-md: static-link our deps (no third-party DLL deps at runtime) but use the DYNAMIC MSVC CRT (/MD). SkyrimNet's PublicAPI.h documents an ABI requirement: 'Both DLLs must use the same MSVC version and CRT linkage (dynamic /MD).' Using the static CRT (x64-windows-static + MultiThreaded) lets short SBO strings round-trip but corrupts the heap on longer returns, because each /MT DLL owns a private heap.",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake",
+        "//CMAKE_MSVC_RUNTIME_LIBRARY-rationale": "Match the triplet above — /MD in release, /MDd in debug. Pairs with VCPKG_TARGET_TRIPLET=x64-windows-static-md so every TU in our DLL plus every dep links against the dynamic CRT and shares one heap with SkyrimNet.",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "debug",
+      "inherits": ["base"],
+      "displayName": "Debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "release",
+      "inherits": ["base"],
+      "displayName": "Release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    }
+  ]
 }

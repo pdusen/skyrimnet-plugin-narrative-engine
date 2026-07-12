@@ -24,4 +24,4 @@ namespace NarrativeEngine::AsyncDispatch
     // Schedule `work` to run on Skyrim's main thread via SKSE's task
     // interface. Returns immediately. Safe from any thread.
     void MarshalToMainThread(std::function<void()> work);
-}
+} // namespace NarrativeEngine::AsyncDispatch

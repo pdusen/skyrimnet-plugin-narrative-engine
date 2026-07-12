@@ -14,21 +14,21 @@ namespace NarrativeEngine
 {
     struct PlayerContext
     {
-        std::uint32_t formID          = 0;  // player.GetFormID()
-        std::uint32_t locationFormID  = 0;  // 0 if wilderness / no current location
-        std::string   locationName;
-        std::uint32_t cellFormID      = 0;
-        std::string   cellName;
-        bool          cellIsInterior  = false;
-        float         gameDaysPassed  = 0.0f;  // Calendar::GetDaysPassed()
-        float         timeOfDayHours  = 0.0f;  // Calendar::GetHour() — [0,24)
+        std::uint32_t formID = 0;         // player.GetFormID()
+        std::uint32_t locationFormID = 0; // 0 if wilderness / no current location
+        std::string locationName;
+        std::uint32_t cellFormID = 0;
+        std::string cellName;
+        bool cellIsInterior = false;
+        float gameDaysPassed = 0.0f; // Calendar::GetDaysPassed()
+        float timeOfDayHours = 0.0f; // Calendar::GetHour() — [0,24)
         // Cumulative game-seconds since session epoch — same units as
         // SkyrimNet's per-event `gameTime` field, so we can compute
         // "N minutes/hours/days ago" relative timestamps for events. Not
         // sent to the prompt template; used C++-side only by FormatEventsText.
         // (The prompt's absolute "current game time" line is rendered by
         // SkyrimNet's built-in `{{ gameTime }}` decorator, not by us.)
-        double        gameTimeSeconds = 0.0;
+        double gameTimeSeconds = 0.0;
     };
 
     struct Snapshot
@@ -38,8 +38,8 @@ namespace NarrativeEngine
         double realTimeSec = 0.0;
 
         // PhaseTracker state at snapshot time.
-        std::string currentPhase;          // PhaseName(PhaseTracker::Get())
-        float       timeInPhaseSeconds = 0.0f;
+        std::string currentPhase; // PhaseName(PhaseTracker::Get())
+        float timeInPhaseSeconds = 0.0f;
         // Unix-epoch real-wall-clock seconds at which the current phase was
         // entered. Used in BuildPromptContext to filter recent_events to
         // only those that occurred during the current phase — events from
@@ -50,7 +50,7 @@ namespace NarrativeEngine
         // against a cumulative-since-epoch cutoff once a session crosses
         // a day boundary. SkyrimNet's `localTime` is monotonic Unix-epoch
         // seconds — matches what we capture here via `system_clock::now()`.
-        double      phaseEnteredAtRealTime = 0.0;
+        double phaseEnteredAtRealTime = 0.0;
 
         // Raw JSON string from SkyrimNetAPI::GetRecentEvents(0, N, "").
         // Passed through to the prompt context verbatim — no client-side
@@ -67,6 +67,6 @@ namespace NarrativeEngine
         // (cast from AlphaCanon::Signal). Names are deduplicated +
         // declaration-order; the bitmask is what DecisionRecord stores.
         std::vector<std::string> alphaCanonSignals;
-        std::uint32_t            alphaCanonSignalBitmask = 0;
+        std::uint32_t alphaCanonSignalBitmask = 0;
     };
-}
+} // namespace NarrativeEngine

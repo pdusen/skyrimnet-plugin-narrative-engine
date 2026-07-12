@@ -13,12 +13,12 @@ namespace NarrativeEngine::AsyncDispatch
 {
     namespace
     {
-        std::mutex                        g_mutex;
-        std::condition_variable           g_cv;
+        std::mutex g_mutex;
+        std::condition_variable g_cv;
         std::deque<std::function<void()>> g_queue;
-        std::thread                       g_worker;
-        bool                              g_running    = false;
-        bool                              g_shouldStop = false;
+        std::thread g_worker;
+        bool g_running = false;
+        bool g_shouldStop = false;
 
         void WorkerLoop()
         {
@@ -43,7 +43,7 @@ namespace NarrativeEngine::AsyncDispatch
                 }
             }
         }
-    }
+    } // namespace
 
     void Start()
     {
@@ -52,8 +52,8 @@ namespace NarrativeEngine::AsyncDispatch
             return;
         }
         g_shouldStop = false;
-        g_running    = true;
-        g_worker     = std::thread(WorkerLoop);
+        g_running = true;
+        g_worker = std::thread(WorkerLoop);
         logger::info("AsyncDispatch: worker thread started");
     }
 
@@ -103,4 +103,4 @@ namespace NarrativeEngine::AsyncDispatch
         }
         taskInterface->AddTask(std::move(work));
     }
-}
+} // namespace NarrativeEngine::AsyncDispatch

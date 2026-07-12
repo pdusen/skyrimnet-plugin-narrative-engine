@@ -33,15 +33,16 @@ namespace NarrativeEngine::AliasWalkFilter
         // EditorID (visit / letter / any future actions).
         bool IsOwnQuest(const RE::TESQuest* quest)
         {
-            if (!quest) return false;
+            if (!quest)
+                return false;
             const auto* file = quest->GetFile(0);
-            if (!file) return false;
+            if (!file)
+                return false;
             // TESFile::fileName is a fixed-size char array; direct
             // stricmp is safe. Length-cap defensively at
             // sizeof(fileName) in case the array isn't null-terminated
             // for some absurd reason.
-            return _strnicmp(file->fileName, kOwnPluginFile,
-                             sizeof(file->fileName)) == 0;
+            return _strnicmp(file->fileName, kOwnPluginFile, sizeof(file->fileName)) == 0;
         }
 
         // "Running-enough" test for a quest referenced by an alias
@@ -55,21 +56,23 @@ namespace NarrativeEngine::AliasWalkFilter
         // linger past a Reset(), and we want to reject those.
         bool IsForeignQuestRunning(const RE::TESQuest* quest)
         {
-            if (!quest)                       return false;
-            if (quest->IsStopped())           return false;
-            if (quest->IsCompleted())         return false;
+            if (!quest)
+                return false;
+            if (quest->IsStopped())
+                return false;
+            if (quest->IsCompleted())
+                return false;
             // Belt-and-braces: still require IsRunning. Combined with
             // the two negative checks above this converges to "quest
             // is genuinely active".
             return quest->IsRunning();
         }
-    }
+    } // namespace
 
-    bool IsActorStoryActive(RE::Actor*   actor,
-                             std::string* reasonOut,
-                             bool         debug)
+    bool IsActorStoryActive(RE::Actor* actor, std::string* reasonOut, bool debug)
     {
-        if (!actor) return false;
+        if (!actor)
+            return false;
 
         const auto formId = actor->GetFormID();
 
@@ -80,26 +83,25 @@ namespace NarrativeEngine::AliasWalkFilter
             const auto* sceneQuest = scene->parentQuest;
             if (!IsOwnQuest(sceneQuest)) {
                 if (debug) {
-                    logger::debug(
-                        "AliasWalkFilter: actor 0x{:X} is in scene 0x{:X} "
-                        "owned by quest '{}' (0x{:X}) — story-active",
-                        formId, scene->GetFormID(),
-                        sceneQuest ? sceneQuest->GetFormEditorID() : "?",
-                        sceneQuest ? sceneQuest->GetFormID() : 0u);
+                    logger::debug("AliasWalkFilter: actor 0x{:X} is in scene 0x{:X} "
+                                  "owned by quest '{}' (0x{:X}) — story-active",
+                                  formId,
+                                  scene->GetFormID(),
+                                  sceneQuest ? sceneQuest->GetFormEditorID() : "?",
+                                  sceneQuest ? sceneQuest->GetFormID() : 0u);
                 }
                 if (reasonOut) {
                     char buf[96];
-                    std::snprintf(buf, sizeof(buf), "scene:0x%X",
-                                  scene->GetFormID());
+                    std::snprintf(buf, sizeof(buf), "scene:0x%X", scene->GetFormID());
                     *reasonOut = buf;
                 }
                 return true;
             }
             if (debug) {
-                logger::debug(
-                    "AliasWalkFilter: actor 0x{:X} in scene 0x{:X} but "
-                    "owning quest is our own ESP — self-exclude, keep walking",
-                    formId, scene->GetFormID());
+                logger::debug("AliasWalkFilter: actor 0x{:X} in scene 0x{:X} but "
+                              "owning quest is our own ESP — self-exclude, keep walking",
+                              formId,
+                              scene->GetFormID());
             }
         }
 
@@ -107,14 +109,12 @@ namespace NarrativeEngine::AliasWalkFilter
         // ExtraAliasInstanceArray listing every (quest, alias) pair
         // the ref is currently plugged into, plus (for BGSRefAlias)
         // the array of AI packages that alias contributes.
-        auto* aliasArray =
-            actor->extraList.GetByType<RE::ExtraAliasInstanceArray>();
+        auto* aliasArray = actor->extraList.GetByType<RE::ExtraAliasInstanceArray>();
         if (!aliasArray) {
             if (debug) {
-                logger::debug(
-                    "AliasWalkFilter: actor 0x{:X} has no "
-                    "ExtraAliasInstanceArray — not story-active",
-                    formId);
+                logger::debug("AliasWalkFilter: actor 0x{:X} has no "
+                              "ExtraAliasInstanceArray — not story-active",
+                              formId);
             }
             return false;
         }
@@ -126,14 +126,12 @@ namespace NarrativeEngine::AliasWalkFilter
         // summary line per actor. Independent of the story-active
         // decision; useful for post-mortem debugging of alias-fill
         // failures downstream.
-        int foreignRunningReservedCount   = 0;
+        int foreignRunningReservedCount = 0;
         int foreignRunningQuestObjectCount = 0;
-        int foreignRunningTotal            = 0;
+        int foreignRunningTotal = 0;
         std::string firstReserverTag;
         if (debug) {
-            logger::debug(
-                "AliasWalkFilter: actor 0x{:X} — walking {} alias entries",
-                formId, n);
+            logger::debug("AliasWalkFilter: actor 0x{:X} — walking {} alias entries", formId, n);
         }
 
         // Decode helper for BGSBaseAlias::FLAGS bits we care about
@@ -143,62 +141,77 @@ namespace NarrativeEngine::AliasWalkFilter
         auto decodeFlags = [](const RE::BGSBaseAlias* alias) -> std::string {
             using F = RE::BGSBaseAlias::FLAGS;
             std::string out;
-            if (!alias) return out;
+            if (!alias)
+                return out;
             const auto& fl = alias->flags;
             auto add = [&](const char* tag) {
-                if (!out.empty()) out.push_back('|');
+                if (!out.empty())
+                    out.push_back('|');
                 out.append(tag);
             };
-            if (fl.any(F::kReserves))       add("RESERVES");
-            if (fl.any(F::kAllowReserved))  add("allowReserved");
-            if (fl.any(F::kQuestObject))    add("QUESTOBJ");
-            if (fl.any(F::kOptional))       add("optional");
-            if (fl.any(F::kEssential))      add("essential");
-            if (fl.any(F::kProtected))      add("protected");
-            if (fl.any(F::kAllowDead))      add("allowDead");
-            if (fl.any(F::kAllowDisabled))  add("allowDisabled");
-            if (fl.any(F::kLoadedOnly))     add("loadedOnly");
+            if (fl.any(F::kReserves))
+                add("RESERVES");
+            if (fl.any(F::kAllowReserved))
+                add("allowReserved");
+            if (fl.any(F::kQuestObject))
+                add("QUESTOBJ");
+            if (fl.any(F::kOptional))
+                add("optional");
+            if (fl.any(F::kEssential))
+                add("essential");
+            if (fl.any(F::kProtected))
+                add("protected");
+            if (fl.any(F::kAllowDead))
+                add("allowDead");
+            if (fl.any(F::kAllowDisabled))
+                add("allowDisabled");
+            if (fl.any(F::kLoadedOnly))
+                add("loadedOnly");
             return out;
         };
 
         for (std::size_t i = 0; i < n; ++i) {
             const auto* entry = aliasArray->aliases[i];
-            if (!entry) continue;
+            if (!entry)
+                continue;
 
             const auto* quest = entry->quest;
             const auto* alias = entry->alias;
 
-            const char* qEid  = (quest && quest->GetFormEditorID())
-                                    ? quest->GetFormEditorID()
-                                    : "?";
-            const std::uint32_t qId    = quest ? quest->GetFormID() : 0u;
-            const char*         aName  = (alias && !alias->aliasName.empty())
-                                             ? alias->aliasName.c_str()
-                                             : "?";
-            const std::uint32_t aId    = alias ? alias->aliasID : 0u;
-            const std::size_t   pkgN   = (entry->instancedPackages)
-                                             ? entry->instancedPackages->size()
-                                             : 0u;
-            const std::uint32_t rawFlags =
-                alias ? alias->flags.underlying() : 0u;
-            const std::string   decoded  = decodeFlags(alias);
+            const char* qEid = (quest && quest->GetFormEditorID()) ? quest->GetFormEditorID() : "?";
+            const std::uint32_t qId = quest ? quest->GetFormID() : 0u;
+            const char* aName = (alias && !alias->aliasName.empty()) ? alias->aliasName.c_str() : "?";
+            const std::uint32_t aId = alias ? alias->aliasID : 0u;
+            const std::size_t pkgN = (entry->instancedPackages) ? entry->instancedPackages->size() : 0u;
+            const std::uint32_t rawFlags = alias ? alias->flags.underlying() : 0u;
+            const std::string decoded = decodeFlags(alias);
 
             if (IsOwnQuest(quest)) {
                 if (debug) {
-                    logger::debug(
-                        "AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
-                        "(id={}) flags=0x{:X}[{}] — SELF (our ESP), skip",
-                        i, qEid, qId, aName, aId, rawFlags, decoded);
+                    logger::debug("AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
+                                  "(id={}) flags=0x{:X}[{}] — SELF (our ESP), skip",
+                                  i,
+                                  qEid,
+                                  qId,
+                                  aName,
+                                  aId,
+                                  rawFlags,
+                                  decoded);
                 }
                 continue;
             }
 
             if (!IsForeignQuestRunning(quest)) {
                 if (debug) {
-                    logger::debug(
-                        "AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
-                        "(id={}) flags=0x{:X}[{}] — quest not running, skip",
-                        i, qEid, qId, aName, aId, rawFlags, decoded);
+                    logger::debug("AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
+                                  "(id={}) flags=0x{:X}[{}] — quest not running, skip",
+                                  i,
+                                  qEid,
+                                  qId,
+                                  aName,
+                                  aId,
+                                  rawFlags,
+                                  decoded);
                 }
                 continue;
             }
@@ -207,20 +220,18 @@ namespace NarrativeEngine::AliasWalkFilter
             // entry — needed for the summary regardless of whether
             // this specific entry ends up returning story-active.
             ++foreignRunningTotal;
-            const bool aliasReserves =
-                alias && alias->flags.any(RE::BGSBaseAlias::FLAGS::kReserves);
-            const bool aliasQuestObj =
-                alias && alias->flags.any(RE::BGSBaseAlias::FLAGS::kQuestObject);
+            const bool aliasReserves = alias && alias->flags.any(RE::BGSBaseAlias::FLAGS::kReserves);
+            const bool aliasQuestObj = alias && alias->flags.any(RE::BGSBaseAlias::FLAGS::kQuestObject);
             if (aliasReserves) {
                 ++foreignRunningReservedCount;
                 if (firstReserverTag.empty()) {
                     char buf[128];
-                    std::snprintf(buf, sizeof(buf), "%s(0x%X)/%s(id=%u)",
-                                  qEid, qId, aName, aId);
+                    std::snprintf(buf, sizeof(buf), "%s(0x%X)/%s(id=%u)", qEid, qId, aName, aId);
                     firstReserverTag = buf;
                 }
             }
-            if (aliasQuestObj) ++foreignRunningQuestObjectCount;
+            if (aliasQuestObj)
+                ++foreignRunningQuestObjectCount;
 
             // Reservation gate. A foreign quest holding this ref
             // with the kReserves flag will cause Skyrim's alias-fill
@@ -239,17 +250,20 @@ namespace NarrativeEngine::AliasWalkFilter
             // package-dispensing one.
             if (aliasReserves) {
                 if (debug) {
-                    logger::debug(
-                        "AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
-                        "(id={}) flags=0x{:X}[{}] — RESERVED (kReserves), skip "
-                        "candidate",
-                        i, qEid, qId, aName, aId, rawFlags, decoded);
+                    logger::debug("AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
+                                  "(id={}) flags=0x{:X}[{}] — RESERVED (kReserves), skip "
+                                  "candidate",
+                                  i,
+                                  qEid,
+                                  qId,
+                                  aName,
+                                  aId,
+                                  rawFlags,
+                                  decoded);
                 }
                 if (reasonOut) {
                     char buf[160];
-                    std::snprintf(buf, sizeof(buf),
-                                  "reserved-by:%s(0x%X)/%s(id=%u)",
-                                  qEid, qId, aName, aId);
+                    std::snprintf(buf, sizeof(buf), "reserved-by:%s(0x%X)/%s(id=%u)", qEid, qId, aName, aId);
                     *reasonOut = buf;
                 }
                 return true;
@@ -263,11 +277,16 @@ namespace NarrativeEngine::AliasWalkFilter
                 // without giving them any behavior. Not a story-active
                 // signal on its own.
                 if (debug) {
-                    logger::debug(
-                        "AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
-                        "(id={}) flags=0x{:X}[{}] — running, no instanced "
-                        "packages, skip",
-                        i, qEid, qId, aName, aId, rawFlags, decoded);
+                    logger::debug("AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
+                                  "(id={}) flags=0x{:X}[{}] — running, no instanced "
+                                  "packages, skip",
+                                  i,
+                                  qEid,
+                                  qId,
+                                  aName,
+                                  aId,
+                                  rawFlags,
+                                  decoded);
                 }
                 continue;
             }
@@ -276,16 +295,20 @@ namespace NarrativeEngine::AliasWalkFilter
             // this actor. That's a scripted-behavior fill — leave the
             // actor alone.
             if (debug) {
-                logger::debug(
-                    "AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
-                    "(id={}) flags=0x{:X}[{}] pkgs={} — STORY-ACTIVE",
-                    i, qEid, qId, aName, aId, rawFlags, decoded, pkgN);
+                logger::debug("AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
+                              "(id={}) flags=0x{:X}[{}] pkgs={} — STORY-ACTIVE",
+                              i,
+                              qEid,
+                              qId,
+                              aName,
+                              aId,
+                              rawFlags,
+                              decoded,
+                              pkgN);
             }
             if (reasonOut) {
                 char buf[160];
-                std::snprintf(buf, sizeof(buf),
-                              "story-alias:%s(0x%X)/%s(id=%u)/pkgs=%zu",
-                              qEid, qId, aName, aId, pkgN);
+                std::snprintf(buf, sizeof(buf), "story-alias:%s(0x%X)/%s(id=%u)/pkgs=%zu", qEid, qId, aName, aId, pkgN);
                 *reasonOut = buf;
             }
             return true;
@@ -297,17 +320,16 @@ namespace NarrativeEngine::AliasWalkFilter
         // returned false.
         if (debug) {
             const std::string reserverExample =
-                firstReserverTag.empty()
-                    ? std::string{}
-                    : " (first: " + firstReserverTag + ")";
-            logger::debug(
-                "AliasWalkFilter: actor 0x{:X} — walk complete, foreign_running={}"
-                ", reserved_entries={}{}, questObject_entries={}",
-                formId, foreignRunningTotal,
-                foreignRunningReservedCount, reserverExample,
-                foreignRunningQuestObjectCount);
+                firstReserverTag.empty() ? std::string{} : " (first: " + firstReserverTag + ")";
+            logger::debug("AliasWalkFilter: actor 0x{:X} — walk complete, foreign_running={}"
+                          ", reserved_entries={}{}, questObject_entries={}",
+                          formId,
+                          foreignRunningTotal,
+                          foreignRunningReservedCount,
+                          reserverExample,
+                          foreignRunningQuestObjectCount);
         }
 
         return false;
     }
-}
+} // namespace NarrativeEngine::AliasWalkFilter

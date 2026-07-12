@@ -6,7 +6,10 @@
 
 #include <RE/T/TESForm.h>
 
-namespace SKSE { class SerializationInterface; }
+namespace SKSE
+{
+    class SerializationInterface;
+}
 
 namespace NarrativeEngine
 {
@@ -61,7 +64,7 @@ namespace NarrativeEngine
         bool Deserialize(SKSE::SerializationInterface* intfc);
 
     private:
-        mutable std::mutex                     mutex_;
+        mutable std::mutex mutex_;
         std::unordered_map<RE::FormID, double> stamps_;
     };
-}
+} // namespace NarrativeEngine

@@ -36,4 +36,4 @@ namespace NarrativeEngine::LLMTextSanitizer
     // The function never throws. Invalid UTF-8 sequences are dropped at
     // the offending byte (one byte consumed, no output emitted).
     std::string Sanitize(std::string_view input);
-}
+} // namespace NarrativeEngine::LLMTextSanitizer

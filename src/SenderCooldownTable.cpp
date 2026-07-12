@@ -12,24 +12,27 @@ namespace NarrativeEngine
 {
     void SenderCooldownTable::Stamp(RE::FormID senderFormID)
     {
-        if (senderFormID == 0) return;
+        if (senderFormID == 0)
+            return;
         const double nowHours = EngineUtils::GetCurrentGameHours();
         std::scoped_lock lock(mutex_);
         stamps_[senderFormID] = nowHours;
     }
 
-    bool SenderCooldownTable::IsOnCooldown(RE::FormID senderFormID,
-                                           int        cooldownHours) const
+    bool SenderCooldownTable::IsOnCooldown(RE::FormID senderFormID, int cooldownHours) const
     {
-        if (cooldownHours <= 0 || senderFormID == 0) return false;
+        if (cooldownHours <= 0 || senderFormID == 0)
+            return false;
         double stamp = 0.0;
         {
             std::scoped_lock lock(mutex_);
             auto it = stamps_.find(senderFormID);
-            if (it == stamps_.end()) return false;
+            if (it == stamps_.end())
+                return false;
             stamp = it->second;
         }
-        if (stamp <= 0.0) return false;
+        if (stamp <= 0.0)
+            return false;
         const double elapsed = EngineUtils::GetCurrentGameHours() - stamp;
         return elapsed < static_cast<double>(cooldownHours);
     }
@@ -40,10 +43,10 @@ namespace NarrativeEngine
         stamps_.clear();
     }
 
-    void SenderCooldownTable::Serialize(
-        SKSE::SerializationInterface* intfc) const
+    void SenderCooldownTable::Serialize(SKSE::SerializationInterface* intfc) const
     {
-        if (!intfc) return;
+        if (!intfc)
+            return;
         std::vector<std::pair<RE::FormID, double>> snapshot;
         {
             std::scoped_lock lock(mutex_);
@@ -60,10 +63,10 @@ namespace NarrativeEngine
         }
     }
 
-    bool SenderCooldownTable::Deserialize(
-        SKSE::SerializationInterface* intfc)
+    bool SenderCooldownTable::Deserialize(SKSE::SerializationInterface* intfc)
     {
-        if (!intfc) return false;
+        if (!intfc)
+            return false;
         std::uint32_t count = 0;
         if (intfc->ReadRecordData(count) != sizeof(count)) {
             Clear();
@@ -73,10 +76,8 @@ namespace NarrativeEngine
         loaded.reserve(count);
         for (std::uint32_t i = 0; i < count; ++i) {
             RE::FormID fid = 0;
-            double     h   = 0.0;
-            if (intfc->ReadRecordData(fid) != sizeof(fid) ||
-                intfc->ReadRecordData(h)   != sizeof(h))
-            {
+            double h = 0.0;
+            if (intfc->ReadRecordData(fid) != sizeof(fid) || intfc->ReadRecordData(h) != sizeof(h)) {
                 Clear();
                 return false;
             }
@@ -91,4 +92,4 @@ namespace NarrativeEngine
         }
         return true;
     }
-}
+} // namespace NarrativeEngine

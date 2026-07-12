@@ -2,11 +2,11 @@
 
 #include <EvaluationPipeline.h>
 #include <LLMTextSanitizer.h>
+#include <logger.h>
 #include <NPCVisitBeat.h>
 #include <SenderCandidatePool.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
-#include <logger.h>
 
 #include <nlohmann/json.hpp>
 
@@ -52,7 +52,8 @@ namespace NarrativeEngine::VisitComposer
         bool VisitViabilityFilter(RE::Actor* actor, std::string* skipReasonOut)
         {
             if (!actor) {
-                if (skipReasonOut) *skipReasonOut = "missing-actor";
+                if (skipReasonOut)
+                    *skipReasonOut = "missing-actor";
                 return false;
             }
 
@@ -61,28 +62,32 @@ namespace NarrativeEngine::VisitComposer
             // strange "the same Whiterun Guard visited three times" beat.
             if (auto* base = actor->GetActorBase()) {
                 if (!base->IsUnique()) {
-                    if (skipReasonOut) *skipReasonOut = "not-unique";
+                    if (skipReasonOut)
+                        *skipReasonOut = "not-unique";
                     return false;
                 }
             }
 
             // Not currently in combat.
             if (actor->IsInCombat()) {
-                if (skipReasonOut) *skipReasonOut = "in-combat";
+                if (skipReasonOut)
+                    *skipReasonOut = "in-combat";
                 return false;
             }
 
             // Not the player's active follower — a follower can't
             // "arrive to talk"; they're already there.
             if (actor->IsPlayerTeammate()) {
-                if (skipReasonOut) *skipReasonOut = "player-follower";
+                if (skipReasonOut)
+                    *skipReasonOut = "player-follower";
                 return false;
             }
 
             // Has a current location — sanity signal that the actor isn't
             // in engine-limbo. Nulls degrade to skip.
             if (!actor->GetCurrentLocation()) {
-                if (skipReasonOut) *skipReasonOut = "no-current-location";
+                if (skipReasonOut)
+                    *skipReasonOut = "no-current-location";
                 return false;
             }
 
@@ -90,7 +95,8 @@ namespace NarrativeEngine::VisitComposer
             // still within their in-game-hours cooldown window. Filters
             // out the "Ancano visits three times in a row" pathology.
             if (NPCVisitBeat_Cooldowns::IsSenderOnCooldown(actor->GetFormID())) {
-                if (skipReasonOut) *skipReasonOut = "sender-cooldown";
+                if (skipReasonOut)
+                    *skipReasonOut = "sender-cooldown";
                 return false;
             }
 
@@ -104,10 +110,13 @@ namespace NarrativeEngine::VisitComposer
             std::size_t n = 0;
             bool inWord = false;
             for (char c : s) {
-                const bool ws = (c == ' ' || c == '\t' ||
-                                 c == '\n' || c == '\r');
-                if (!ws && !inWord) { ++n; inWord = true; }
-                else if (ws)        { inWord = false; }
+                const bool ws = (c == ' ' || c == '\t' || c == '\n' || c == '\r');
+                if (!ws && !inWord) {
+                    ++n;
+                    inWord = true;
+                } else if (ws) {
+                    inWord = false;
+                }
             }
             return n;
         }
@@ -131,8 +140,7 @@ namespace NarrativeEngine::VisitComposer
         // failure — the prompt template handles the empty case.
         nlohmann::json FetchRecentDialogue(RE::FormID formId)
         {
-            const auto raw = SkyrimNetAPI::GetRecentDialogue(
-                formId, kRecentDialogueCap);
+            const auto raw = SkyrimNetAPI::GetRecentDialogue(formId, kRecentDialogueCap);
             auto parsed = nlohmann::json::parse(raw, nullptr, false);
             if (!parsed.is_array()) {
                 return nlohmann::json::array();
@@ -140,18 +148,16 @@ namespace NarrativeEngine::VisitComposer
 
             auto trimmed = nlohmann::json::array();
             for (auto& e : parsed) {
-                if (!e.is_object()) continue;
+                if (!e.is_object())
+                    continue;
                 nlohmann::json out = nlohmann::json::object();
-                if (auto it = e.find("speaker");
-                    it != e.end() && it->is_string()) {
+                if (auto it = e.find("speaker"); it != e.end() && it->is_string()) {
                     out["speaker"] = LLMTextSanitizer::Sanitize(it->get<std::string>());
                 }
-                if (auto it = e.find("text");
-                    it != e.end() && it->is_string()) {
+                if (auto it = e.find("text"); it != e.end() && it->is_string()) {
                     out["text"] = LLMTextSanitizer::Sanitize(it->get<std::string>());
                 }
-                if (auto it = e.find("gameTime");
-                    it != e.end() && it->is_number()) {
+                if (auto it = e.find("gameTime"); it != e.end() && it->is_number()) {
                     out["gameTime"] = it->get<double>();
                 }
                 if (!out.contains("speaker") || !out.contains("text")) {
@@ -171,34 +177,35 @@ namespace NarrativeEngine::VisitComposer
         // no filter is applied — better to show the LLM the full
         // dialogue window than to silently blank it on a missing
         // field.
-        void FilterDialogueByMemoryAge(nlohmann::json&       dialogue,
-                                       const nlohmann::json& memories)
+        void FilterDialogueByMemoryAge(nlohmann::json& dialogue, const nlohmann::json& memories)
         {
-            if (!dialogue.is_array() || dialogue.empty()) return;
+            if (!dialogue.is_array() || dialogue.empty())
+                return;
 
             double oldestMemoryAgeHours = 0.0;
             if (memories.is_array()) {
                 for (const auto& m : memories) {
                     const double h = m.value("age_hours", 0.0);
-                    if (h > oldestMemoryAgeHours) oldestMemoryAgeHours = h;
+                    if (h > oldestMemoryAgeHours)
+                        oldestMemoryAgeHours = h;
                 }
             }
-            if (oldestMemoryAgeHours <= 0.0) return;
+            if (oldestMemoryAgeHours <= 0.0)
+                return;
 
             auto* calendar = RE::Calendar::GetSingleton();
-            if (!calendar) return;
-            const double nowGameSeconds =
-                static_cast<double>(calendar->GetHoursPassed()) * 3600.0;
-            const double cutoffGameSeconds =
-                nowGameSeconds - oldestMemoryAgeHours * 3600.0;
+            if (!calendar)
+                return;
+            const double nowGameSeconds = static_cast<double>(calendar->GetHoursPassed()) * 3600.0;
+            const double cutoffGameSeconds = nowGameSeconds - oldestMemoryAgeHours * 3600.0;
 
             auto& arr = dialogue.get_ref<nlohmann::json::array_t&>();
-            arr.erase(
-                std::remove_if(arr.begin(), arr.end(),
-                    [cutoffGameSeconds](const nlohmann::json& e) {
-                        return e.value("gameTime", 0.0) < cutoffGameSeconds;
-                    }),
-                arr.end());
+            arr.erase(std::remove_if(arr.begin(),
+                                     arr.end(),
+                                     [cutoffGameSeconds](const nlohmann::json& e) {
+                                         return e.value("gameTime", 0.0) < cutoffGameSeconds;
+                                     }),
+                      arr.end());
         }
 
         // Human-friendly age label (same shape the letter composer
@@ -207,14 +214,17 @@ namespace NarrativeEngine::VisitComposer
         // raw game-seconds.
         std::string FormatDialogueAgeLabel(double ageHours)
         {
-            if (ageHours < 0.5) return "just now";
-            if (ageHours < 1.5) return "1 hour ago";
+            if (ageHours < 0.5)
+                return "just now";
+            if (ageHours < 1.5)
+                return "1 hour ago";
             if (ageHours < 24.0) {
                 const long long h = static_cast<long long>(std::round(ageHours));
                 return std::to_string(h) + " hours ago";
             }
             const double days = ageHours / 24.0;
-            if (days < 1.5) return "1 day ago";
+            if (days < 1.5)
+                return "1 day ago";
             const long long d = static_cast<long long>(std::round(days));
             return std::to_string(d) + " days ago";
         }
@@ -224,14 +234,13 @@ namespace NarrativeEngine::VisitComposer
         // formatting cost on entries the prompt actually renders.
         void AnnotateDialogueAges(nlohmann::json& dialogue)
         {
-            if (!dialogue.is_array() || dialogue.empty()) return;
+            if (!dialogue.is_array() || dialogue.empty())
+                return;
             auto* calendar = RE::Calendar::GetSingleton();
-            const double nowGameSeconds =
-                calendar
-                    ? static_cast<double>(calendar->GetHoursPassed()) * 3600.0
-                    : 0.0;
+            const double nowGameSeconds = calendar ? static_cast<double>(calendar->GetHoursPassed()) * 3600.0 : 0.0;
             for (auto& e : dialogue) {
-                if (!e.is_object()) continue;
+                if (!e.is_object())
+                    continue;
                 const double gt = e.value("gameTime", 0.0);
                 if (nowGameSeconds > 0.0 && gt > 0.0) {
                     const double ageHours = (nowGameSeconds - gt) / 3600.0;
@@ -258,48 +267,47 @@ namespace NarrativeEngine::VisitComposer
                 return nlohmann::json::array();
             }
             SenderCandidatePool::BuildOptions opts;
-            opts.maxCandidates              = 1;
-            opts.maxMemoriesPerCandidate    = 6;
-            opts.memoryImportanceThreshold  =
-                static_cast<double>(
-                    Settings::Get().letterMemoryImportanceThreshold);
-            opts.excludeDiaryEntries        = false;
-            opts.memoryFetchMultiplier      = 4;
-            opts.shuffleResult              = false;
-            opts.requireMemories            = false;
-            opts.extraViabilityFilter =
-                [formId](RE::Actor* actor, std::string* skipReasonOut) -> bool {
-                    if (!actor) {
-                        if (skipReasonOut) *skipReasonOut = "missing-actor";
-                        return false;
-                    }
-                    if (actor->GetFormID() != formId) {
-                        if (skipReasonOut) *skipReasonOut = "not-target-sender";
-                        return false;
-                    }
-                    // Skip the full visit-viability re-check here.
-                    // The sender was already vetted at beat-select
-                    // time; NPCVisitBeat's compose result handler
-                    // catches any final "sender no longer valid"
-                    // case (death mid-round-trip, etc.) via its own
-                    // resolution guards.
-                    return true;
-                };
+            opts.maxCandidates = 1;
+            opts.maxMemoriesPerCandidate = 6;
+            opts.memoryImportanceThreshold = static_cast<double>(Settings::Get().letterMemoryImportanceThreshold);
+            opts.excludeDiaryEntries = false;
+            opts.memoryFetchMultiplier = 4;
+            opts.shuffleResult = false;
+            opts.requireMemories = false;
+            opts.extraViabilityFilter = [formId](RE::Actor* actor, std::string* skipReasonOut) -> bool {
+                if (!actor) {
+                    if (skipReasonOut)
+                        *skipReasonOut = "missing-actor";
+                    return false;
+                }
+                if (actor->GetFormID() != formId) {
+                    if (skipReasonOut)
+                        *skipReasonOut = "not-target-sender";
+                    return false;
+                }
+                // Skip the full visit-viability re-check here.
+                // The sender was already vetted at beat-select
+                // time; NPCVisitBeat's compose result handler
+                // catches any final "sender no longer valid"
+                // case (death mid-round-trip, etc.) via its own
+                // resolution guards.
+                return true;
+            };
 
             auto results = SenderCandidatePool::Build(opts);
-            if (results.empty()) return nlohmann::json::array();
+            if (results.empty())
+                return nlohmann::json::array();
             return std::move(results.front().memories);
         }
 
-        nlohmann::json BuildComposePromptContext(
-            const BeatContext&  ctx,
-            UrgencyHint           urgencyHint,
-            const std::string&    playerName,
-            const std::string&    senderName,
-            RE::FormID            senderFormID,
-            const nlohmann::json& senderMemories,
-            const nlohmann::json& senderRecentDialogue,
-            const std::string&    parameterJustification)
+        nlohmann::json BuildComposePromptContext(const BeatContext& ctx,
+                                                 UrgencyHint urgencyHint,
+                                                 const std::string& playerName,
+                                                 const std::string& senderName,
+                                                 RE::FormID senderFormID,
+                                                 const nlohmann::json& senderMemories,
+                                                 const nlohmann::json& senderRecentDialogue,
+                                                 const std::string& parameterJustification)
         {
             const auto& cfg = Settings::Get();
 
@@ -307,25 +315,22 @@ namespace NarrativeEngine::VisitComposer
             std::snprintf(idBuf, sizeof(idBuf), "0x%X", senderFormID);
 
             nlohmann::json root = nlohmann::json::object();
-            root["desired_direction"] =
-                (ctx.desiredDirection == PhaseTracker::Direction::Raise)
-                    ? "raise" : "lower";
+            root["desired_direction"] = (ctx.desiredDirection == PhaseTracker::Direction::Raise) ? "raise" : "lower";
             root["tension_delta"] = ctx.tensionDelta;
-            root["urgency_hint"]  =
-                (urgencyHint == UrgencyHint::High)   ? "high"
-              : (urgencyHint == UrgencyHint::Low)    ? "low"
-                                                     : "medium";
-            root["min_words"]      = cfg.visitBriefingMinWords;
-            root["max_words"]      = cfg.visitBriefingMaxWords;
-            root["player_name"]    = playerName;
-            root["sender_name"]    = senderName;
+            root["urgency_hint"] = (urgencyHint == UrgencyHint::High)  ? "high"
+                                   : (urgencyHint == UrgencyHint::Low) ? "low"
+                                                                       : "medium";
+            root["min_words"] = cfg.visitBriefingMinWords;
+            root["max_words"] = cfg.visitBriefingMaxWords;
+            root["player_name"] = playerName;
+            root["sender_name"] = senderName;
             root["sender_form_id"] = idBuf;
             root["sender_memories"] = senderMemories;
             root["sender_recent_dialogue"] = senderRecentDialogue;
             root["parameter_justification"] = parameterJustification;
             return root;
         }
-    }
+    } // namespace
 
     bool IsValidMood(const std::string& mood)
     {
@@ -340,21 +345,20 @@ namespace NarrativeEngine::VisitComposer
         const auto& cfg = Settings::Get();
 
         SenderCandidatePool::BuildOptions opts;
-        opts.maxCandidates              = 12;
-        opts.maxMemoriesPerCandidate    = 6;
+        opts.maxCandidates = 12;
+        opts.maxMemoriesPerCandidate = 6;
         // Reuse the letter's importance floor for memory quality —
         // separate visit-specific floor isn't worth wiring up.
-        opts.memoryImportanceThreshold  =
-            static_cast<double>(cfg.letterMemoryImportanceThreshold);
-        opts.excludeDiaryEntries        = false;  // brief benefits from diary-style memories
-        opts.memoryFetchMultiplier      = 4;
-        opts.shuffleResult              = true;
+        opts.memoryImportanceThreshold = static_cast<double>(cfg.letterMemoryImportanceThreshold);
+        opts.excludeDiaryEntries = false; // brief benefits from diary-style memories
+        opts.memoryFetchMultiplier = 4;
+        opts.shuffleResult = true;
         // Visits keep senders whose memory tail is thin — live
         // actor context and the composer's briefing carry the
         // narrative weight, unlike letters where the letter body
         // depends on concrete memory anchors.
-        opts.requireMemories            = false;
-        opts.extraViabilityFilter       = &VisitViabilityFilter;
+        opts.requireMemories = false;
+        opts.extraViabilityFilter = &VisitViabilityFilter;
 
         auto raw = SenderCandidatePool::Build(opts);
 
@@ -362,42 +366,41 @@ namespace NarrativeEngine::VisitComposer
         out.reserve(raw.size());
         for (auto& c : raw) {
             SenderCandidate s;
-            s.formId           = c.formId;
-            s.name             = std::move(c.name);
-            s.engagementScore  = c.engagementScore;
+            s.formId = c.formId;
+            s.name = std::move(c.name);
+            s.engagementScore = c.engagementScore;
             s.lastInteractedAt = c.lastInteractedAt;
-            s.memories         = std::move(c.memories);
+            s.memories = std::move(c.memories);
             out.push_back(std::move(s));
         }
         return out;
     }
 
-    nlohmann::json SerializeSenderCandidates(
-        const std::vector<SenderCandidate>& candidates)
+    nlohmann::json SerializeSenderCandidates(const std::vector<SenderCandidate>& candidates)
     {
         auto out = nlohmann::json::array();
         for (const auto& c : candidates) {
             nlohmann::json cj = nlohmann::json::object();
             char idBuf[16];
             std::snprintf(idBuf, sizeof(idBuf), "0x%X", c.formId);
-            cj["form_id"]            = idBuf;
-            cj["name"]               = c.name;
-            cj["engagement_score"]   = c.engagementScore;
+            cj["form_id"] = idBuf;
+            cj["name"] = c.name;
+            cj["engagement_score"] = c.engagementScore;
             cj["last_interacted_at"] = c.lastInteractedAt;
-            cj["memories"]           = c.memories;
+            cj["memories"] = c.memories;
             out.push_back(std::move(cj));
         }
         return out;
     }
 
-    void Compose(
-        const BeatContext& ctx,
-        UrgencyHint          urgencyHint,
-        RE::FormID           senderNpcFormID,
-        std::string          parameterJustification,
-        std::function<void(std::optional<VisitBriefing>)> callback)
+    void Compose(const BeatContext& ctx,
+                 UrgencyHint urgencyHint,
+                 RE::FormID senderNpcFormID,
+                 std::string parameterJustification,
+                 std::function<void(std::optional<VisitBriefing>)> callback)
     {
-        if (!callback) return;
+        if (!callback)
+            return;
 
         if (senderNpcFormID == 0) {
             logger::warn("VisitComposer: Compose called with sender formID=0");
@@ -419,17 +422,14 @@ namespace NarrativeEngine::VisitComposer
         auto* form = RE::TESForm::LookupByID(senderNpcFormID);
         auto* actor = form ? form->As<RE::Actor>() : nullptr;
         if (!actor) {
-            logger::warn(
-                "VisitComposer: sender 0x{:X} no longer resolves to an Actor — "
-                "declining to compose",
-                senderNpcFormID);
+            logger::warn("VisitComposer: sender 0x{:X} no longer resolves to an Actor — "
+                         "declining to compose",
+                         senderNpcFormID);
             callback(std::nullopt);
             return;
         }
         if (actor->IsDead()) {
-            logger::warn(
-                "VisitComposer: sender 0x{:X} is dead — declining to compose",
-                senderNpcFormID);
+            logger::warn("VisitComposer: sender 0x{:X} is dead — declining to compose", senderNpcFormID);
             callback(std::nullopt);
             return;
         }
@@ -439,18 +439,16 @@ namespace NarrativeEngine::VisitComposer
             senderName = LLMTextSanitizer::Sanitize(dn);
         }
         if (senderName.empty()) {
-            logger::warn(
-                "VisitComposer: sender 0x{:X} has no resolvable display name — "
-                "declining to compose",
-                senderNpcFormID);
+            logger::warn("VisitComposer: sender 0x{:X} has no resolvable display name — "
+                         "declining to compose",
+                         senderNpcFormID);
             callback(std::nullopt);
             return;
         }
 
         const std::string playerName = GetPlayerName();
         if (playerName.empty()) {
-            logger::warn(
-                "VisitComposer: player has no resolvable display name — declining to compose");
+            logger::warn("VisitComposer: player has no resolvable display name — declining to compose");
             callback(std::nullopt);
             return;
         }
@@ -469,9 +467,14 @@ namespace NarrativeEngine::VisitComposer
         FilterDialogueByMemoryAge(recentDialogue, memories);
         AnnotateDialogueAges(recentDialogue);
 
-        const auto promptCtx = BuildComposePromptContext(
-            ctx, urgencyHint, playerName, senderName, senderNpcFormID,
-            memories, recentDialogue, parameterJustification);
+        const auto promptCtx = BuildComposePromptContext(ctx,
+                                                         urgencyHint,
+                                                         playerName,
+                                                         senderName,
+                                                         senderNpcFormID,
+                                                         memories,
+                                                         recentDialogue,
+                                                         parameterJustification);
         const auto promptCtxStr = promptCtx.dump();
         if (Settings::Get().debugMode) {
             logger::debug("VisitComposer: prompt context: {}", promptCtxStr);
@@ -489,10 +492,7 @@ namespace NarrativeEngine::VisitComposer
             "narrative_engine_visit_compose",
             "narrative_engine_composer",
             promptCtxStr,
-            [callback = std::move(callback),
-             minWords, maxWords]
-            (std::string response, bool success) mutable
-            {
+            [callback = std::move(callback), minWords, maxWords](std::string response, bool success) mutable {
                 if (!success) {
                     logger::warn("VisitComposer: LLM call failed: {}", response);
                     callback(std::nullopt);
@@ -502,30 +502,26 @@ namespace NarrativeEngine::VisitComposer
                     logger::debug("VisitComposer: raw response: {}", response);
                 }
 
-                const auto body =
-                    EvaluationPipeline::StripMarkdownFences(response);
+                const auto body = EvaluationPipeline::StripMarkdownFences(response);
                 auto parsed = nlohmann::json::parse(body, nullptr, false);
                 if (parsed.is_discarded() || !parsed.is_object()) {
-                    logger::warn(
-                        "VisitComposer: response not a JSON object: {}", body);
+                    logger::warn("VisitComposer: response not a JSON object: {}", body);
                     callback(std::nullopt);
                     return;
                 }
 
                 auto getStr = [&](const char* key, std::string& out) -> bool {
                     auto it = parsed.find(key);
-                    if (it == parsed.end() || !it->is_string()) return false;
+                    if (it == parsed.end() || !it->is_string())
+                        return false;
                     out = LLMTextSanitizer::Sanitize(it->get<std::string>());
                     return true;
                 };
 
                 std::string briefing, narration, mood, topic;
-                if (!getStr("briefing",  briefing)  ||
-                    !getStr("narration", narration) ||
-                    !getStr("mood",      mood)      ||
-                    !getStr("topic_tag", topic)) {
-                    logger::warn(
-                        "VisitComposer: response missing one of the required keys");
+                if (!getStr("briefing", briefing) || !getStr("narration", narration) || !getStr("mood", mood)
+                    || !getStr("topic_tag", topic)) {
+                    logger::warn("VisitComposer: response missing one of the required keys");
                     callback(std::nullopt);
                     return;
                 }
@@ -538,9 +534,7 @@ namespace NarrativeEngine::VisitComposer
 
                 const auto wc = static_cast<int>(WordCount(briefing));
                 if (wc < minWords || wc > maxWords) {
-                    logger::warn(
-                        "VisitComposer: briefing word count {} outside [{}..{}]",
-                        wc, minWords, maxWords);
+                    logger::warn("VisitComposer: briefing word count {} outside [{}..{}]", wc, minWords, maxWords);
                     callback(std::nullopt);
                     return;
                 }
@@ -553,31 +547,30 @@ namespace NarrativeEngine::VisitComposer
                 // (>250) as a probable prompt misfire.
                 const auto narrationWc = static_cast<int>(WordCount(narration));
                 if (narrationWc < 20 || narrationWc > 250) {
-                    logger::warn(
-                        "VisitComposer: narration word count {} outside [20..250]",
-                        narrationWc);
+                    logger::warn("VisitComposer: narration word count {} outside [20..250]", narrationWc);
                     callback(std::nullopt);
                     return;
                 }
 
                 VisitBriefing briefingOut;
-                briefingOut.briefing        = std::move(briefing);
-                briefingOut.narration       = std::move(narration);
-                briefingOut.mood            = std::move(mood);
-                briefingOut.topicTag        = std::move(topic);
+                briefingOut.briefing = std::move(briefing);
+                briefingOut.narration = std::move(narration);
+                briefingOut.mood = std::move(mood);
+                briefingOut.topicTag = std::move(topic);
 
-                logger::info(
-                    "VisitComposer: parsed briefing (briefing={} words, "
-                    "narration={} words, mood='{}', topic='{}')",
-                    wc, narrationWc, briefingOut.mood, briefingOut.topicTag);
+                logger::info("VisitComposer: parsed briefing (briefing={} words, "
+                             "narration={} words, mood='{}', topic='{}')",
+                             wc,
+                             narrationWc,
+                             briefingOut.mood,
+                             briefingOut.topicTag);
                 callback(std::move(briefingOut));
             });
 
         if (!queued) {
-            logger::warn(
-                "VisitComposer: SendCustomPromptToLLM returned false; "
-                "callback will not fire — notifying caller with nullopt");
+            logger::warn("VisitComposer: SendCustomPromptToLLM returned false; "
+                         "callback will not fire — notifying caller with nullopt");
             callbackBackup(std::nullopt);
         }
     }
-}
+} // namespace NarrativeEngine::VisitComposer

@@ -9,11 +9,11 @@
 #include <LetterComposer.h>
 #include <LetterPool.h>
 #include <LocationKeywords.h>
+#include <logger.h>
 #include <QuestUtils.h>
 #include <SenderCooldownTable.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
-#include <logger.h>
 
 #include <nlohmann/json.hpp>
 
@@ -46,15 +46,16 @@ namespace NarrativeEngine
         std::atomic<bool> g_perSlotResolved = false;
 
         constexpr std::uint32_t kStageInCourierContainer = 20;
-        constexpr std::uint32_t kStageDeliveredToPlayer  = 30;
-        constexpr std::uint32_t kStageReadByPlayer       = 40;
-        constexpr std::uint32_t kStageDisposedByPlayer   = 50;
-        constexpr std::uint32_t kStageRecycledByCpp      = 60;
-        constexpr std::uint32_t kStageTerminalShutdown   = 200;
+        constexpr std::uint32_t kStageDeliveredToPlayer = 30;
+        constexpr std::uint32_t kStageReadByPlayer = 40;
+        constexpr std::uint32_t kStageDisposedByPlayer = 50;
+        constexpr std::uint32_t kStageRecycledByCpp = 60;
+        constexpr std::uint32_t kStageTerminalShutdown = 200;
 
         void ResolvePerSlotQuests()
         {
-            if (g_perSlotResolved.exchange(true)) return;
+            if (g_perSlotResolved.exchange(true))
+                return;
 
             std::size_t resolved = 0;
             std::vector<std::string> missing;
@@ -62,8 +63,7 @@ namespace NarrativeEngine
             std::array<RE::TESQuest*, LetterPool::kPoolSize> quests{};
             for (std::size_t i = 0; i < LetterPool::kPoolSize; ++i) {
                 char editorId[64];
-                std::snprintf(editorId, sizeof(editorId),
-                              "_ne_PooledLetterQuest%02zu", i);
+                std::snprintf(editorId, sizeof(editorId), "_ne_PooledLetterQuest%02zu", i);
                 auto* form = RE::TESForm::LookupByEditorID(editorId);
                 auto* quest = form ? form->As<RE::TESQuest>() : nullptr;
                 quests[i] = quest;
@@ -73,7 +73,8 @@ namespace NarrativeEngine
                 }
                 ++resolved;
                 for (auto* a : quest->aliases) {
-                    if (!a) continue;
+                    if (!a)
+                        continue;
                     if (a->aliasName == "Sender") {
                         g_perSlotSenderAlias[i] = skyrim_cast<RE::BGSRefAlias*>(a);
                     } else if (a->aliasName == "LetterRef") {
@@ -82,7 +83,8 @@ namespace NarrativeEngine
                 }
                 if (!g_perSlotSenderAlias[i] || !g_perSlotLetterRefAlias[i]) {
                     char detail[128];
-                    std::snprintf(detail, sizeof(detail),
+                    std::snprintf(detail,
+                                  sizeof(detail),
                                   "%s (Sender=%s LetterRef=%s)",
                                   editorId,
                                   g_perSlotSenderAlias[i] ? "ok" : "MISSING",
@@ -91,17 +93,12 @@ namespace NarrativeEngine
                 }
             }
             logger::info(
-                "NPCLetterBeat: resolved per-slot delivery quests ({} of {})",
-                resolved, LetterPool::kPoolSize);
+                "NPCLetterBeat: resolved per-slot delivery quests ({} of {})", resolved, LetterPool::kPoolSize);
             for (const auto& name : missing) {
-                logger::warn(
-                    "NPCLetterBeat: per-slot quest '{}' unresolved; slot disabled",
-                    name);
+                logger::warn("NPCLetterBeat: per-slot quest '{}' unresolved; slot disabled", name);
             }
             for (const auto& detail : missingAliases) {
-                logger::warn(
-                    "NPCLetterBeat: per-slot quest has missing alias(es): {}",
-                    detail);
+                logger::warn("NPCLetterBeat: per-slot quest has missing alias(es): {}", detail);
             }
             LetterPool::SetPerSlotQuests(quests);
         }
@@ -116,11 +113,11 @@ namespace NarrativeEngine
         // -----------------------------------------------------------------
 
         constexpr const char* kSenderFactionEditorID = "_ne_LetterSenderFaction";
-        constexpr std::int8_t kSenderRankCandidate   = 0;
-        constexpr std::int8_t kSenderRankDesignated  = 4;
+        constexpr std::int8_t kSenderRankCandidate = 0;
+        constexpr std::int8_t kSenderRankDesignated = 4;
 
         std::atomic<bool> g_senderFactionResolved = false;
-        RE::TESFaction*   g_senderFaction = nullptr;
+        RE::TESFaction* g_senderFaction = nullptr;
 
         RE::TESFaction* ResolveSenderFaction()
         {
@@ -130,14 +127,11 @@ namespace NarrativeEngine
             auto* form = RE::TESForm::LookupByEditorID(kSenderFactionEditorID);
             auto* fact = form ? form->As<RE::TESFaction>() : nullptr;
             if (!fact) {
-                logger::error(
-                    "NPCLetterBeat: sender faction '{}' did not resolve; "
-                    "faction-mediated Sender alias fill is disabled",
-                    kSenderFactionEditorID);
+                logger::error("NPCLetterBeat: sender faction '{}' did not resolve; "
+                              "faction-mediated Sender alias fill is disabled",
+                              kSenderFactionEditorID);
             } else {
-                logger::info(
-                    "NPCLetterBeat: sender faction resolved (formID=0x{:08X})",
-                    fact->GetFormID());
+                logger::info("NPCLetterBeat: sender faction resolved (formID=0x{:08X})", fact->GetFormID());
             }
             g_senderFaction = fact;
             g_senderFactionResolved.store(true, std::memory_order_release);
@@ -147,16 +141,13 @@ namespace NarrativeEngine
         void PromoteSenderToDesignated(RE::Actor* sender)
         {
             FactionDesignationUtils::PromoteToDesignated(
-                ResolveSenderFaction(), sender,
-                kSenderRankDesignated, kSenderRankCandidate,
-                "NPCLetterBeat");
+                ResolveSenderFaction(), sender, kSenderRankDesignated, kSenderRankCandidate, "NPCLetterBeat");
         }
 
         void DemoteSenderToCandidate(RE::Actor* sender)
         {
             FactionDesignationUtils::DemoteToCandidate(
-                ResolveSenderFaction(), sender,
-                kSenderRankCandidate, "NPCLetterBeat");
+                ResolveSenderFaction(), sender, kSenderRankCandidate, "NPCLetterBeat");
         }
 
         // -----------------------------------------------------------------
@@ -164,7 +155,7 @@ namespace NarrativeEngine
         // -----------------------------------------------------------------
 
         std::mutex g_cooldownMutex;
-        double              g_lastDispatchGameHours = 0.0;
+        double g_lastDispatchGameHours = 0.0;
         SenderCooldownTable g_senderCooldowns;
 
         // -----------------------------------------------------------------
@@ -180,50 +171,48 @@ namespace NarrativeEngine
 
         enum class ComposeSubPhase : std::uint8_t
         {
-            Start,              // no work started
-            ComposingLLM,       // LetterComposer LLM in flight
-            LLMResultReady,     // composition arrived (or failed)
-            DispatchRequested,  // main-thread dispatch task queued
-            DispatchLaunched,   // EnsureQuestStarted returned true
-            PollingSender,      // waiting on Sender alias fill
-            PollingLetterRef,   // waiting on LetterRef alias fill
-            Succeeded,          // -> RUNNING
-            Failed,             // -> CLEANUP (failure_reason set)
+            Start,             // no work started
+            ComposingLLM,      // LetterComposer LLM in flight
+            LLMResultReady,    // composition arrived (or failed)
+            DispatchRequested, // main-thread dispatch task queued
+            DispatchLaunched,  // EnsureQuestStarted returned true
+            PollingSender,     // waiting on Sender alias fill
+            PollingLetterRef,  // waiting on LetterRef alias fill
+            Succeeded,         // -> RUNNING
+            Failed,            // -> CLEANUP (failure_reason set)
         };
 
-        std::mutex        g_sessionMutex;
-        BeatUtils::ComposeSubPhaseMachine<ComposeSubPhase>
-            g_subPhase{ComposeSubPhase::Start};
+        std::mutex g_sessionMutex;
+        BeatUtils::ComposeSubPhaseMachine<ComposeSubPhase> g_subPhase{ComposeSubPhase::Start};
 
         // Parameters resolved in OnStart.
-        RE::FormID                     g_paramSenderFormID = 0;
-        BeatParamHelpers::UrgencyHint  g_paramUrgency =
-            BeatParamHelpers::UrgencyHint::Medium;
+        RE::FormID g_paramSenderFormID = 0;
+        BeatParamHelpers::UrgencyHint g_paramUrgency = BeatParamHelpers::UrgencyHint::Medium;
 
         // Populated after the LLM call returns.
         std::optional<LetterComposer::LetterComposition> g_composition;
 
         // Populated by the dispatch main-thread task.
-        int        g_inFlightSlot     = -1;
+        int g_inFlightSlot = -1;
         RE::FormID g_inFlightBookFormID = 0;
         RE::FormID g_dispatchedSenderFormID = 0;
 
         // Tick counters for the sub-phase polls. All in poll ticks (250ms
         // each by default). At kPollBudgetTicks the sub-phase times out.
         int g_subPhaseTickCount = 0;
-        constexpr int kSubPhaseCheckEveryNTicks = 4;   // ~1s at 250ms
-        constexpr int kSubPhaseTimeoutTicks     = 20;  // ~5s at 250ms
+        constexpr int kSubPhaseCheckEveryNTicks = 4; // ~1s at 250ms
+        constexpr int kSubPhaseTimeoutTicks = 20;    // ~5s at 250ms
 
         // RUNNING arm counters — after CLEANUP fires the courier-container
         // verification, wait letterDispatchVerifyDelaySeconds worth of
         // ticks before giving up.
         int g_runningTickCount = 0;
-        constexpr int kRunningCheckEveryNTicks = 4;  // ~1s
+        constexpr int kRunningCheckEveryNTicks = 4; // ~1s
 
         BeatUtils::CleanupLatch g_cleanupLatch;
         // Which CLEANUP path to run — set once at the COMPOSE/RUNNING →
         // CLEANUP transition.
-        std::atomic<bool>       g_cleanupWasSuccess{false};
+        std::atomic<bool> g_cleanupWasSuccess{false};
 
         void ResetSessionState()
         {
@@ -264,12 +253,11 @@ namespace NarrativeEngine
         void MainThreadFireComposeLLM()
         {
             RE::FormID senderFormID = 0;
-            BeatParamHelpers::UrgencyHint urgency =
-                BeatParamHelpers::UrgencyHint::Medium;
+            BeatParamHelpers::UrgencyHint urgency = BeatParamHelpers::UrgencyHint::Medium;
             {
                 std::scoped_lock lock(g_sessionMutex);
                 senderFormID = g_paramSenderFormID;
-                urgency      = g_paramUrgency;
+                urgency = g_paramUrgency;
             }
 
             // Minimal BeatContext — LetterComposer only reads
@@ -278,22 +266,18 @@ namespace NarrativeEngine
             // OnStart's ctx via a persisted snapshot.
             BeatContext composeCtx;
             composeCtx.desiredDirection = PhaseTracker::Direction::Raise;
-            composeCtx.tensionDelta     = 0;
+            composeCtx.tensionDelta = 0;
 
             LetterComposer::Compose(
-                composeCtx, urgency, senderFormID,
-                [](std::optional<LetterComposer::LetterComposition> comp) {
-                    AsyncDispatch::MarshalToMainThread(
-                        [comp = std::move(comp)]() mutable {
-                            if (comp) {
-                                std::scoped_lock lock(g_sessionMutex);
-                                g_composition = std::move(comp);
-                            }
-                            SetSubPhase(
-                                comp ? ComposeSubPhase::LLMResultReady
-                                     : ComposeSubPhase::Failed,
-                                comp ? nullptr : "compose_llm_failed");
-                        });
+                composeCtx, urgency, senderFormID, [](std::optional<LetterComposer::LetterComposition> comp) {
+                    AsyncDispatch::MarshalToMainThread([comp = std::move(comp)]() mutable {
+                        if (comp) {
+                            std::scoped_lock lock(g_sessionMutex);
+                            g_composition = std::move(comp);
+                        }
+                        SetSubPhase(comp ? ComposeSubPhase::LLMResultReady : ComposeSubPhase::Failed,
+                                    comp ? nullptr : "compose_llm_failed");
+                    });
                 });
         }
 
@@ -302,7 +286,7 @@ namespace NarrativeEngine
             std::optional<LetterComposer::LetterComposition> comp;
             {
                 std::scoped_lock lock(g_sessionMutex);
-                comp = g_composition;  // copy so we don't hold the lock through allocator
+                comp = g_composition; // copy so we don't hold the lock through allocator
             }
             if (!comp) {
                 SetSubPhase(ComposeSubPhase::Failed, "no_composition_at_dispatch");
@@ -311,26 +295,28 @@ namespace NarrativeEngine
 
             auto alloc = LetterPool::Allocate();
             if (!alloc) {
-                const char* reason =
-                    (alloc.error() == LetterPool::AllocationFailure::PoolNotResolved)
-                        ? "letter_pool_not_resolved"
-                        : "letter_pool_exhausted";
+                const char* reason = (alloc.error() == LetterPool::AllocationFailure::PoolNotResolved)
+                                         ? "letter_pool_not_resolved"
+                                         : "letter_pool_exhausted";
                 logger::warn("NPCLetterBeat: allocation failed: {}", reason);
                 SetSubPhase(ComposeSubPhase::Failed, reason);
                 return;
             }
             const std::size_t slotIndex = alloc->slotIndex;
-            const RE::FormID  bookFormID = alloc->bookFormID;
+            const RE::FormID bookFormID = alloc->bookFormID;
 
-            LetterPool::PopulateSlot(
-                slotIndex,
-                comp->senderLabel, comp->body, comp->senderNpcFormID,
-                comp->topicTag, comp->mood, comp->tags);
+            LetterPool::PopulateSlot(slotIndex,
+                                     comp->senderLabel,
+                                     comp->body,
+                                     comp->senderNpcFormID,
+                                     comp->topicTag,
+                                     comp->mood,
+                                     comp->tags);
 
             {
                 std::scoped_lock lock(g_sessionMutex);
-                g_inFlightSlot          = static_cast<int>(slotIndex);
-                g_inFlightBookFormID    = bookFormID;
+                g_inFlightSlot = static_cast<int>(slotIndex);
+                g_inFlightBookFormID = bookFormID;
                 g_dispatchedSenderFormID = comp->senderNpcFormID;
             }
 
@@ -340,7 +326,7 @@ namespace NarrativeEngine
                 SetSubPhase(ComposeSubPhase::Failed, "per_slot_quest_missing");
                 return;
             }
-            auto* senderAlias    = g_perSlotSenderAlias[slotIndex];
+            auto* senderAlias = g_perSlotSenderAlias[slotIndex];
             auto* letterRefAlias = g_perSlotLetterRefAlias[slotIndex];
             if (!senderAlias || !letterRefAlias) {
                 LetterPool::AbortPending(slotIndex);
@@ -349,20 +335,19 @@ namespace NarrativeEngine
             }
 
             std::string liveResolveReason;
-            RE::Actor* sender = BeatParamHelpers::ResolveLiveSenderActor(
-                comp->senderNpcFormID, &liveResolveReason);
+            RE::Actor* sender = BeatParamHelpers::ResolveLiveSenderActor(comp->senderNpcFormID, &liveResolveReason);
             if (!sender) {
                 LetterPool::AbortPending(slotIndex);
-                g_subPhase.Fail(ComposeSubPhase::Failed,
-                                std::move(liveResolveReason));
+                g_subPhase.Fail(ComposeSubPhase::Failed, std::move(liveResolveReason));
                 return;
             }
 
-            logger::info(
-                "NPCLetterBeat: dispatching slot {} (quest=0x{:08X}) -> Phase A: "
-                "faction promote (sender=0x{:08X} -> rank {})",
-                slotIndex, quest->GetFormID(), comp->senderNpcFormID,
-                static_cast<int>(kSenderRankDesignated));
+            logger::info("NPCLetterBeat: dispatching slot {} (quest=0x{:08X}) -> Phase A: "
+                         "faction promote (sender=0x{:08X} -> rank {})",
+                         slotIndex,
+                         quest->GetFormID(),
+                         comp->senderNpcFormID,
+                         static_cast<int>(kSenderRankDesignated));
             PromoteSenderToDesignated(sender);
 
             bool engineResult = false;
@@ -370,18 +355,19 @@ namespace NarrativeEngine
             if (!callOk || !engineResult) {
                 DemoteSenderToCandidate(sender);
                 LetterPool::AbortPending(slotIndex);
-                logger::warn(
-                    "NPCLetterBeat: EnsureQuestStarted failed for slot {} "
-                    "(callOk={} engineResult={})",
-                    slotIndex, callOk, engineResult);
+                logger::warn("NPCLetterBeat: EnsureQuestStarted failed for slot {} "
+                             "(callOk={} engineResult={})",
+                             slotIndex,
+                             callOk,
+                             engineResult);
                 SetSubPhase(ComposeSubPhase::Failed, "ensure_quest_started_failed");
                 return;
             }
 
-            logger::info(
-                "NPCLetterBeat: slot {} EnsureQuestStarted ok (quest=0x{:08X}); "
-                "polling for Sender then LetterRef fill",
-                slotIndex, quest->GetFormID());
+            logger::info("NPCLetterBeat: slot {} EnsureQuestStarted ok (quest=0x{:08X}); "
+                         "polling for Sender then LetterRef fill",
+                         slotIndex,
+                         quest->GetFormID());
             SetSubPhase(ComposeSubPhase::PollingSender);
         }
 
@@ -398,9 +384,9 @@ namespace NarrativeEngine
             }
             auto* senderAlias = g_perSlotSenderAlias[slotIndex];
             if (senderAlias && senderAlias->GetReference()) {
-                logger::info(
-                    "NPCLetterBeat: slot {} Sender alias filled; polling for "
-                    "LetterRef fill", slotIndex);
+                logger::info("NPCLetterBeat: slot {} Sender alias filled; polling for "
+                             "LetterRef fill",
+                             slotIndex);
                 SetSubPhase(ComposeSubPhase::PollingLetterRef);
             }
             // else: still empty; sub-phase counter continues to tick
@@ -420,10 +406,10 @@ namespace NarrativeEngine
             auto* letterRefAlias = g_perSlotLetterRefAlias[slotIndex];
             if (letterRefAlias && letterRefAlias->GetReference()) {
                 auto* ref = letterRefAlias->GetReference();
-                logger::info(
-                    "NPCLetterBeat: slot {} LetterRef filled (REFR=0x{:08X}); "
-                    "COMPOSE succeeded, advancing to RUNNING",
-                    slotIndex, ref ? ref->GetFormID() : 0u);
+                logger::info("NPCLetterBeat: slot {} LetterRef filled (REFR=0x{:08X}); "
+                             "COMPOSE succeeded, advancing to RUNNING",
+                             slotIndex,
+                             ref ? ref->GetFormID() : 0u);
                 SetSubPhase(ComposeSubPhase::Succeeded);
             }
         }
@@ -450,12 +436,12 @@ namespace NarrativeEngine
         {
             const bool success = g_cleanupWasSuccess.load(std::memory_order_acquire);
 
-            int        slotIndex = -1;
+            int slotIndex = -1;
             RE::FormID senderFormID = 0;
             std::string reason;
             {
                 std::scoped_lock lock(g_sessionMutex);
-                slotIndex    = g_inFlightSlot;
+                slotIndex = g_inFlightSlot;
                 senderFormID = g_dispatchedSenderFormID;
             }
             reason = g_subPhase.FailureReason();
@@ -463,7 +449,7 @@ namespace NarrativeEngine
             // Demote sender if we ever promoted them (any non-early-fail
             // path reached the promote step).
             if (senderFormID != 0) {
-                auto* form   = RE::TESForm::LookupByID(senderFormID);
+                auto* form = RE::TESForm::LookupByID(senderFormID);
                 if (auto* sender = form ? form->As<RE::Actor>() : nullptr) {
                     DemoteSenderToCandidate(sender);
                 }
@@ -480,9 +466,7 @@ namespace NarrativeEngine
                         std::scoped_lock lock(g_cooldownMutex);
                         g_lastDispatchGameHours = dispatchHours;
                     }
-                    logger::info(
-                        "NPCLetterBeat: per-beat cooldown stamped at gameHours={:.2f}",
-                        dispatchHours);
+                    logger::info("NPCLetterBeat: per-beat cooldown stamped at gameHours={:.2f}", dispatchHours);
                     if (quest) {
                         QuestUtils::VMDispatchQuestSetStage(quest, kStageInCourierContainer);
                     }
@@ -491,29 +475,28 @@ namespace NarrativeEngine
                     // by C++) if the quest actually made it that far,
                     // otherwise just AbortPending (already done in
                     // main-thread dispatch on early failures).
-                    logger::warn(
-                        "NPCLetterBeat: cleanup rolling back slot {} (reason='{}')",
-                        slotIndex, reason);
+                    logger::warn("NPCLetterBeat: cleanup rolling back slot {} (reason='{}')", slotIndex, reason);
                     if (quest && quest->IsRunning()) {
                         QuestUtils::VMDispatchQuestSetStage(quest, kStageRecycledByCpp);
                     }
                     LetterPool::AbortPending(static_cast<std::size_t>(slotIndex));
                 }
             } else if (!success) {
-                logger::warn(
-                    "NPCLetterBeat: cleanup with no allocated slot (reason='{}')",
-                    reason);
+                logger::warn("NPCLetterBeat: cleanup with no allocated slot (reason='{}')", reason);
             }
 
             g_cleanupLatch.MarkComplete();
         }
-    }
+    } // namespace
 
     // ---------------------------------------------------------------------
     // IBeat implementation
     // ---------------------------------------------------------------------
 
-    std::string NPCLetterBeat::Name() const { return "npc_letter"; }
+    std::string NPCLetterBeat::Name() const
+    {
+        return "npc_letter";
+    }
 
     std::string NPCLetterBeat::Description() const
     {
@@ -550,7 +533,10 @@ namespace NarrativeEngine
                "silently ignored.";
     }
 
-    BeatPolarity NPCLetterBeat::Polarity() const { return BeatPolarity::Either; }
+    BeatPolarity NPCLetterBeat::Polarity() const
+    {
+        return BeatPolarity::Either;
+    }
 
     bool NPCLetterBeat::IsAvailable(const BeatContext& ctx) const
     {
@@ -575,13 +561,13 @@ namespace NarrativeEngine
             }
             if (lastDispatch > 0.0) {
                 const double nowHours = EngineUtils::GetCurrentGameHours();
-                const double elapsed  = nowHours - lastDispatch;
+                const double elapsed = nowHours - lastDispatch;
                 if (elapsed < static_cast<double>(cooldownHours)) {
                     if (debug) {
-                        logger::debug(
-                            "NPCLetterBeat::IsAvailable: blocked (per-beat "
-                            "cooldown: elapsed={:.2f}h < cooldown={}h)",
-                            elapsed, cooldownHours);
+                        logger::debug("NPCLetterBeat::IsAvailable: blocked (per-beat "
+                                      "cooldown: elapsed={:.2f}h < cooldown={}h)",
+                                      elapsed,
+                                      cooldownHours);
                     }
                     return false;
                 }
@@ -611,9 +597,10 @@ namespace NarrativeEngine
         }
         if (static_cast<int>(enrolled.size()) < minCandidates) {
             if (debug) {
-                logger::debug(
-                    "NPCLetterBeat::IsAvailable: blocked (only {} candidates, "
-                    "need {})", enrolled.size(), minCandidates);
+                logger::debug("NPCLetterBeat::IsAvailable: blocked (only {} candidates, "
+                              "need {})",
+                              enrolled.size(),
+                              minCandidates);
             }
             return false;
         }
@@ -624,20 +611,21 @@ namespace NarrativeEngine
     double NPCLetterBeat::RemainingCooldownGameHours() const
     {
         const int cooldownHours = Settings::Get().letterBeatCooldownGameHours;
-        if (cooldownHours <= 0) return 0.0;
+        if (cooldownHours <= 0)
+            return 0.0;
         double lastDispatch = 0.0;
         {
             std::scoped_lock lock(g_cooldownMutex);
             lastDispatch = g_lastDispatchGameHours;
         }
-        if (lastDispatch <= 0.0) return 0.0;
+        if (lastDispatch <= 0.0)
+            return 0.0;
         const double elapsed = EngineUtils::GetCurrentGameHours() - lastDispatch;
         const double remaining = static_cast<double>(cooldownHours) - elapsed;
         return remaining > 0.0 ? remaining : 0.0;
     }
 
-    void NPCLetterBeat::OnStart(const BeatContext&    /*ctx*/,
-                                const nlohmann::json& parameters)
+    void NPCLetterBeat::OnStart(const BeatContext& /*ctx*/, const nlohmann::json& parameters)
     {
         // Parse sender_npc_form_id + urgency_hint. On sender parse
         // failure, seed the session straight into the Failed sub-phase
@@ -645,8 +633,7 @@ namespace NarrativeEngine
         // set. urgency_hint has no failure path (missing / bad input
         // defaults to Medium).
         std::string failureReason;
-        const auto senderParsed =
-            BeatParamHelpers::ParseSenderFormID(parameters, &failureReason);
+        const auto senderParsed = BeatParamHelpers::ParseSenderFormID(parameters, &failureReason);
         const auto urgency = BeatParamHelpers::ParseUrgencyHint(parameters);
 
         ResetSessionState();
@@ -655,14 +642,13 @@ namespace NarrativeEngine
         } else {
             std::scoped_lock lock(g_sessionMutex);
             g_paramSenderFormID = *senderParsed;
-            g_paramUrgency      = urgency;
+            g_paramUrgency = urgency;
         }
-        logger::info(
-            "NPCLetterBeat::OnStart: sender=0x{:08X} urgency={}",
-            senderParsed.value_or(0),
-            urgency == BeatParamHelpers::UrgencyHint::Low    ? "low"
-          : urgency == BeatParamHelpers::UrgencyHint::High   ? "high"
-                                                              : "medium");
+        logger::info("NPCLetterBeat::OnStart: sender=0x{:08X} urgency={}",
+                     senderParsed.value_or(0),
+                     urgency == BeatParamHelpers::UrgencyHint::Low    ? "low"
+                     : urgency == BeatParamHelpers::UrgencyHint::High ? "high"
+                                                                      : "medium");
     }
 
     TickResult NPCLetterBeat::Tick(TickMode mode, BeatState state)
@@ -670,131 +656,120 @@ namespace NarrativeEngine
         // Freeze under any non-Normal gate. Neither the compose chain
         // nor the courier-container check should advance while paused /
         // in combat / mid-dialogue.
-        if (mode != TickMode::Normal) return {};
+        if (mode != TickMode::Normal)
+            return {};
 
         switch (state) {
-            case BeatState::COMPOSE: {
-                const ComposeSubPhase sub = g_subPhase.Get();
-                switch (sub) {
-                    case ComposeSubPhase::Start: {
-                        SetSubPhase(ComposeSubPhase::ComposingLLM);
-                        AsyncDispatch::MarshalToMainThread(&MainThreadFireComposeLLM);
-                        return {};
-                    }
-                    case ComposeSubPhase::ComposingLLM: {
-                        return {};  // waiting for callback
-                    }
-                    case ComposeSubPhase::LLMResultReady: {
-                        SetSubPhase(ComposeSubPhase::DispatchRequested);
-                        AsyncDispatch::MarshalToMainThread(&MainThreadDispatchQuest);
-                        return {};
-                    }
-                    case ComposeSubPhase::DispatchRequested:
-                    case ComposeSubPhase::DispatchLaunched: {
-                        return {};  // waiting for main-thread flip to PollingSender
-                    }
-                    case ComposeSubPhase::PollingSender: {
-                        int ticks;
-                        {
-                            std::scoped_lock lock(g_sessionMutex);
-                            ticks = ++g_subPhaseTickCount;
-                        }
-                        if (ticks > kSubPhaseTimeoutTicks) {
-                            g_subPhase.Fail(ComposeSubPhase::Failed,
-                                            "sender_fill_timeout");
-                            return {};
-                        }
-                        if ((ticks % kSubPhaseCheckEveryNTicks) == 0) {
-                            AsyncDispatch::MarshalToMainThread(
-                                &MainThreadCheckSenderFill);
-                        }
-                        return {};
-                    }
-                    case ComposeSubPhase::PollingLetterRef: {
-                        int ticks;
-                        {
-                            std::scoped_lock lock(g_sessionMutex);
-                            ticks = ++g_subPhaseTickCount;
-                        }
-                        if (ticks > kSubPhaseTimeoutTicks) {
-                            g_subPhase.Fail(ComposeSubPhase::Failed,
-                                            "letter_ref_fill_timeout");
-                            return {};
-                        }
-                        if ((ticks % kSubPhaseCheckEveryNTicks) == 0) {
-                            AsyncDispatch::MarshalToMainThread(
-                                &MainThreadCheckLetterRefFill);
-                        }
-                        return {};
-                    }
-                    case ComposeSubPhase::Succeeded: {
-                        logger::info(
-                            "NPCLetterBeat: COMPOSE succeeded; advancing to RUNNING");
-                        g_runningTickCount = 0;
-                        g_runningCheckInFlight.store(false, std::memory_order_release);
-                        g_runningCheckReady.store(false, std::memory_order_release);
-                        return {BeatState::RUNNING};
-                    }
-                    case ComposeSubPhase::Failed: {
-                        logger::warn(
-                            "NPCLetterBeat: COMPOSE failed ({}); advancing to CLEANUP",
-                            g_subPhase.FailureReason());
-                        g_cleanupWasSuccess.store(false, std::memory_order_release);
-                        return {BeatState::CLEANUP};
-                    }
+        case BeatState::COMPOSE: {
+            const ComposeSubPhase sub = g_subPhase.Get();
+            switch (sub) {
+            case ComposeSubPhase::Start: {
+                SetSubPhase(ComposeSubPhase::ComposingLLM);
+                AsyncDispatch::MarshalToMainThread(&MainThreadFireComposeLLM);
+                return {};
+            }
+            case ComposeSubPhase::ComposingLLM: {
+                return {}; // waiting for callback
+            }
+            case ComposeSubPhase::LLMResultReady: {
+                SetSubPhase(ComposeSubPhase::DispatchRequested);
+                AsyncDispatch::MarshalToMainThread(&MainThreadDispatchQuest);
+                return {};
+            }
+            case ComposeSubPhase::DispatchRequested:
+            case ComposeSubPhase::DispatchLaunched: {
+                return {}; // waiting for main-thread flip to PollingSender
+            }
+            case ComposeSubPhase::PollingSender: {
+                int ticks;
+                {
+                    std::scoped_lock lock(g_sessionMutex);
+                    ticks = ++g_subPhaseTickCount;
+                }
+                if (ticks > kSubPhaseTimeoutTicks) {
+                    g_subPhase.Fail(ComposeSubPhase::Failed, "sender_fill_timeout");
+                    return {};
+                }
+                if ((ticks % kSubPhaseCheckEveryNTicks) == 0) {
+                    AsyncDispatch::MarshalToMainThread(&MainThreadCheckSenderFill);
                 }
                 return {};
             }
-
-            case BeatState::RUNNING: {
-                // Consume any pending courier-check outcome.
-                if (g_runningCheckReady.load(std::memory_order_acquire)) {
-                    const bool present =
-                        g_runningLetterInCourier.load(std::memory_order_acquire);
-                    g_runningCheckReady.store(false, std::memory_order_release);
-                    if (present) {
-                        logger::info(
-                            "NPCLetterBeat: RUNNING detected letter in courier "
-                            "container; advancing to CLEANUP (success)");
-                        g_cleanupWasSuccess.store(true, std::memory_order_release);
-                        return {BeatState::CLEANUP};
-                    }
+            case ComposeSubPhase::PollingLetterRef: {
+                int ticks;
+                {
+                    std::scoped_lock lock(g_sessionMutex);
+                    ticks = ++g_subPhaseTickCount;
                 }
+                if (ticks > kSubPhaseTimeoutTicks) {
+                    g_subPhase.Fail(ComposeSubPhase::Failed, "letter_ref_fill_timeout");
+                    return {};
+                }
+                if ((ticks % kSubPhaseCheckEveryNTicks) == 0) {
+                    AsyncDispatch::MarshalToMainThread(&MainThreadCheckLetterRefFill);
+                }
+                return {};
+            }
+            case ComposeSubPhase::Succeeded: {
+                logger::info("NPCLetterBeat: COMPOSE succeeded; advancing to RUNNING");
+                g_runningTickCount = 0;
+                g_runningCheckInFlight.store(false, std::memory_order_release);
+                g_runningCheckReady.store(false, std::memory_order_release);
+                return {BeatState::RUNNING};
+            }
+            case ComposeSubPhase::Failed: {
+                logger::warn("NPCLetterBeat: COMPOSE failed ({}); advancing to CLEANUP", g_subPhase.FailureReason());
+                g_cleanupWasSuccess.store(false, std::memory_order_release);
+                return {BeatState::CLEANUP};
+            }
+            }
+            return {};
+        }
 
-                ++g_runningTickCount;
-                const int verifyDelayTicks =
-                    (Settings::Get().letterDispatchVerifyDelaySeconds * 1000) /
-                    std::max(1, Settings::Get().beatSystemPollIntervalMs);
-                if (g_runningTickCount > verifyDelayTicks) {
-                    g_subPhase.Fail(ComposeSubPhase::Failed,
-                                    "dispatch_verify_failed");
-                    logger::warn(
-                        "NPCLetterBeat: RUNNING verify window elapsed ({} ticks) "
-                        "with letter still missing from courier; advancing to "
-                        "CLEANUP (failure)", g_runningTickCount);
-                    g_cleanupWasSuccess.store(false, std::memory_order_release);
+        case BeatState::RUNNING: {
+            // Consume any pending courier-check outcome.
+            if (g_runningCheckReady.load(std::memory_order_acquire)) {
+                const bool present = g_runningLetterInCourier.load(std::memory_order_acquire);
+                g_runningCheckReady.store(false, std::memory_order_release);
+                if (present) {
+                    logger::info("NPCLetterBeat: RUNNING detected letter in courier "
+                                 "container; advancing to CLEANUP (success)");
+                    g_cleanupWasSuccess.store(true, std::memory_order_release);
                     return {BeatState::CLEANUP};
                 }
-                if ((g_runningTickCount % kRunningCheckEveryNTicks) == 0) {
-                    if (!g_runningCheckInFlight.exchange(true, std::memory_order_acq_rel)) {
-                        AsyncDispatch::MarshalToMainThread(&MainThreadCheckCourier);
-                    }
-                }
-                return {};
             }
 
-            case BeatState::CLEANUP: {
-                if (g_cleanupLatch.Poll(&MainThreadCleanup)) {
-                    logger::info(
-                        "NPCLetterBeat: CLEANUP done; returning to NOT_RUNNING");
-                    return {BeatState::NOT_RUNNING};
-                }
-                return {};
+            ++g_runningTickCount;
+            const int verifyDelayTicks = (Settings::Get().letterDispatchVerifyDelaySeconds * 1000)
+                                         / std::max(1, Settings::Get().beatSystemPollIntervalMs);
+            if (g_runningTickCount > verifyDelayTicks) {
+                g_subPhase.Fail(ComposeSubPhase::Failed, "dispatch_verify_failed");
+                logger::warn("NPCLetterBeat: RUNNING verify window elapsed ({} ticks) "
+                             "with letter still missing from courier; advancing to "
+                             "CLEANUP (failure)",
+                             g_runningTickCount);
+                g_cleanupWasSuccess.store(false, std::memory_order_release);
+                return {BeatState::CLEANUP};
             }
+            if ((g_runningTickCount % kRunningCheckEveryNTicks) == 0) {
+                if (!g_runningCheckInFlight.exchange(true, std::memory_order_acq_rel)) {
+                    AsyncDispatch::MarshalToMainThread(&MainThreadCheckCourier);
+                }
+            }
+            return {};
+        }
 
-            case BeatState::NOT_RUNNING:
-            default:
-                return {};
+        case BeatState::CLEANUP: {
+            if (g_cleanupLatch.Poll(&MainThreadCleanup)) {
+                logger::info("NPCLetterBeat: CLEANUP done; returning to NOT_RUNNING");
+                return {BeatState::NOT_RUNNING};
+            }
+            return {};
+        }
+
+        case BeatState::NOT_RUNNING:
+        default:
+            return {};
         }
     }
 
@@ -810,7 +785,7 @@ namespace NarrativeEngine
             ResolvePerSlotQuests();
             ResolveSenderFaction();
         }
-    }
+    } // namespace NPCLetterBeat_Init
 
     // ---------------------------------------------------------------------
     // NPCLetterBeat_QuestControl — external LetterPool call points
@@ -821,64 +796,70 @@ namespace NarrativeEngine
         void AdvanceSlotStage(std::size_t slotIndex, std::uint32_t stage)
         {
             auto* quest = GetPerSlotQuest(slotIndex);
-            if (!quest) return;
+            if (!quest)
+                return;
             QuestUtils::VMDispatchQuestSetStage(quest, stage);
         }
 
         void ShutdownSlotQuestSync(std::size_t slotIndex)
         {
             auto* quest = GetPerSlotQuest(slotIndex);
-            if (!quest) return;
+            if (!quest)
+                return;
             const bool wasRunning = quest->IsRunning();
             quest->Stop();
             quest->Reset();
-            logger::info(
-                "NPCLetterBeat: slot {} recycled by allocator "
-                "(quest=0x{:08X}, wasRunning={}, native Stop+Reset)",
-                slotIndex, quest->GetFormID(), wasRunning);
+            logger::info("NPCLetterBeat: slot {} recycled by allocator "
+                         "(quest=0x{:08X}, wasRunning={}, native Stop+Reset)",
+                         slotIndex,
+                         quest->GetFormID(),
+                         wasRunning);
         }
 
         void DeleteLetterRef(std::size_t slotIndex)
         {
-            if (slotIndex >= g_perSlotLetterRefAlias.size()) return;
+            if (slotIndex >= g_perSlotLetterRefAlias.size())
+                return;
             auto* alias = g_perSlotLetterRefAlias[slotIndex];
-            if (!alias) return;
+            if (!alias)
+                return;
             auto* ref = alias->GetReference();
-            if (!ref) return;
+            if (!ref)
+                return;
             const auto refID = ref->GetFormID();
             ref->Disable();
             ref->SetDelete(true);
-            logger::info(
-                "NPCLetterBeat: deleted LetterRef 0x{:08X} for slot {}",
-                refID, slotIndex);
+            logger::info("NPCLetterBeat: deleted LetterRef 0x{:08X} for slot {}", refID, slotIndex);
         }
 
         void ReleaseLetterFromCourier(std::size_t slotIndex)
         {
-            if (slotIndex >= g_perSlotLetterRefAlias.size()) return;
+            if (slotIndex >= g_perSlotLetterRefAlias.size())
+                return;
             auto* alias = g_perSlotLetterRefAlias[slotIndex];
-            if (!alias) return;
+            if (!alias)
+                return;
             auto* ref = alias->GetReference();
-            if (!ref) return;
+            if (!ref)
+                return;
             auto* courier = CourierUtils::ResolveCourierQuest();
-            if (!courier) return;
+            if (!courier)
+                return;
             const bool giveToPlayer = false;
             const bool queued = QuestUtils::VMDispatchOnQuest(
-                courier, "WICourierScript"sv, "removeRefFromContainer"sv,
-                ref, giveToPlayer);
+                courier, "WICourierScript"sv, "removeRefFromContainer"sv, ref, giveToPlayer);
             if (queued) {
-                logger::info(
-                    "NPCLetterBeat: released LetterRef 0x{:08X} from WICourier "
-                    "for slot {} (VM-dispatched)",
-                    ref->GetFormID(), slotIndex);
+                logger::info("NPCLetterBeat: released LetterRef 0x{:08X} from WICourier "
+                             "for slot {} (VM-dispatched)",
+                             ref->GetFormID(),
+                             slotIndex);
             } else {
-                logger::warn(
-                    "NPCLetterBeat: ReleaseLetterFromCourier VM dispatch failed "
-                    "for slot {} (VM unavailable or handle failed)",
-                    slotIndex);
+                logger::warn("NPCLetterBeat: ReleaseLetterFromCourier VM dispatch failed "
+                             "for slot {} (VM unavailable or handle failed)",
+                             slotIndex);
             }
         }
-    }
+    } // namespace NPCLetterBeat_QuestControl
 
     // ---------------------------------------------------------------------
     // NPCLetterBeat_Cooldowns — external LetterPool / LetterComposer callers
@@ -888,20 +869,17 @@ namespace NarrativeEngine
     {
         void OnLetterDelivered(RE::FormID senderNpcFormID)
         {
-            if (senderNpcFormID == 0) return;
+            if (senderNpcFormID == 0)
+                return;
             g_senderCooldowns.Stamp(senderNpcFormID);
-            logger::info(
-                "NPCLetterBeat: per-sender cooldown stamp set for 0x{:08X}",
-                senderNpcFormID);
+            logger::info("NPCLetterBeat: per-sender cooldown stamp set for 0x{:08X}", senderNpcFormID);
         }
 
         bool IsSenderOnCooldown(RE::FormID senderNpcFormID)
         {
-            return g_senderCooldowns.IsOnCooldown(
-                senderNpcFormID,
-                Settings::Get().letterSenderCooldownGameHours);
+            return g_senderCooldowns.IsOnCooldown(senderNpcFormID, Settings::Get().letterSenderCooldownGameHours);
         }
-    }
+    } // namespace NPCLetterBeat_Cooldowns
 
     // ---------------------------------------------------------------------
     // Cosave — 'NBLP' record, version 1.
@@ -917,7 +895,8 @@ namespace NarrativeEngine
 
         void OnSave(SKSE::SerializationInterface* intfc)
         {
-            if (!intfc) return;
+            if (!intfc)
+                return;
             if (!intfc->OpenRecord(kRecordTypeId, kRecordVersion)) {
                 logger::error("NPCLetterBeat::OnSave: OpenRecord failed");
                 return;
@@ -931,28 +910,27 @@ namespace NarrativeEngine
             g_senderCooldowns.Serialize(intfc);
         }
 
-        void OnLoad(SKSE::SerializationInterface* intfc,
-                    std::uint32_t version, std::uint32_t length)
+        void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length)
         {
-            if (!intfc) return;
+            if (!intfc)
+                return;
             if (version != kRecordVersion) {
-                logger::warn(
-                    "NPCLetterBeat::OnLoad: unknown version {} (length={}); "
-                    "clearing cooldown state", version, length);
+                logger::warn("NPCLetterBeat::OnLoad: unknown version {} (length={}); "
+                             "clearing cooldown state",
+                             version,
+                             length);
                 OnRevert();
                 return;
             }
             double lastDispatch = 0.0;
             if (intfc->ReadRecordData(lastDispatch) != sizeof(lastDispatch)) {
-                logger::error(
-                    "NPCLetterBeat::OnLoad: short read on lastDispatch; clearing");
+                logger::error("NPCLetterBeat::OnLoad: short read on lastDispatch; clearing");
                 OnRevert();
                 return;
             }
             if (!g_senderCooldowns.Deserialize(intfc)) {
-                logger::error(
-                    "NPCLetterBeat::OnLoad: sender-cooldown deserialize failed; "
-                    "cleared");
+                logger::error("NPCLetterBeat::OnLoad: sender-cooldown deserialize failed; "
+                              "cleared");
                 {
                     std::scoped_lock lock(g_cooldownMutex);
                     g_lastDispatchGameHours = 0.0;
@@ -963,9 +941,7 @@ namespace NarrativeEngine
                 std::scoped_lock lock(g_cooldownMutex);
                 g_lastDispatchGameHours = lastDispatch;
             }
-            logger::info(
-                "NPCLetterBeat::OnLoad: restored lastDispatchGameHours={:.2f}",
-                lastDispatch);
+            logger::info("NPCLetterBeat::OnLoad: restored lastDispatchGameHours={:.2f}", lastDispatch);
         }
 
         void OnRevert()
@@ -976,5 +952,5 @@ namespace NarrativeEngine
             }
             g_senderCooldowns.Clear();
         }
-    }
-}
+    } // namespace NPCLetterBeat_Persistence
+} // namespace NarrativeEngine

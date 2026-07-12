@@ -87,19 +87,18 @@ else {
     Write-Host "Created junction: $junctionPath -> $repoSource" -ForegroundColor Green
 }
 
-# --- create SkyrimNetApi.psc file symlink ------------------------------------
+# --- copy SkyrimNetApi.psc into external/ ------------------------------------
 #
-# Symlinks <repo>/external/SkyrimNet/Source/Scripts/SkyrimNetApi.psc to the
-# real file inside the SkyrimNet mod folder, so the Papyrus compiler
-# (invoked directly by CMake, not through MO2's VFS) can resolve
+# Copies <SkyrimNet mod folder>/Source/Scripts/SkyrimNetApi.psc into
+# <repo>/external/SkyrimNet/Source/Scripts/SkyrimNetApi.psc so the Papyrus
+# compiler (invoked directly by CMake, not through MO2's VFS) can resolve
 # `SkyrimNetApi` as an import. VS Code's Papyrus extension picks it up
 # through the same directory via the generated .ppj file.
 #
-# We link a single file rather than junctioning the whole folder so we only
-# expose the API surface we actually depend on. File symlinks (unlike
-# directory junctions) require either administrator privileges or Windows
-# Developer Mode; if neither is available, New-Item -SymbolicLink fails and
-# the script reports it clearly.
+# A plain copy (rather than a file symlink) avoids the Windows admin/Developer
+# Mode requirement, and the copy is refreshed on every setup run so we track
+# any SkyrimNet update. If someone left an old symlink from a previous run, we
+# replace it with a real file.
 #
 # Location resolution matches CMakeLists.txt: honor $env:SKYRIMNET_DIR if
 # set, otherwise fall back to <mods-folder>/SkyrimNet.
@@ -111,35 +110,31 @@ if (-not $skyrimNetRoot) {
 
 $skyrimNetApiSource = Join-Path $skyrimNetRoot 'Source/Scripts/SkyrimNetApi.psc'
 if (-not (Test-Path $skyrimNetApiSource -PathType Leaf)) {
-    Write-Warning "SkyrimNetApi.psc not found at '$skyrimNetApiSource'. Install SkyrimNet or set SKYRIMNET_DIR, then re-run this script to create the import symlink."
+    Write-Warning "SkyrimNetApi.psc not found at '$skyrimNetApiSource'. Install SkyrimNet or set SKYRIMNET_DIR, then re-run this script to copy the import file."
 }
 else {
-    # The containing dir must exist as a real (empty-ish) directory — this is
-    # what CMake passes to PapyrusCompiler as an -i= import path.
-    $skyrimNetLinkDir = Join-Path $PSScriptRoot 'external/SkyrimNet/Source/Scripts'
-    if (-not (Test-Path $skyrimNetLinkDir)) {
-        New-Item -ItemType Directory -Path $skyrimNetLinkDir -Force | Out-Null
+    # The containing dir must exist as a real directory — this is what CMake
+    # passes to PapyrusCompiler as an -i= import path.
+    $skyrimNetCopyDir = Join-Path $PSScriptRoot 'external/SkyrimNet/Source/Scripts'
+    if (-not (Test-Path $skyrimNetCopyDir)) {
+        New-Item -ItemType Directory -Path $skyrimNetCopyDir -Force | Out-Null
     }
 
-    $skyrimNetApiLink = Join-Path $skyrimNetLinkDir 'SkyrimNetApi.psc'
-    if (Test-Path $skyrimNetApiLink) {
-        $item = Get-Item $skyrimNetApiLink -Force
-        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-            Write-Host "SkyrimNetApi.psc symlink already exists: $skyrimNetApiLink" -ForegroundColor DarkGray
-        }
-        else {
-            throw "$skyrimNetApiLink exists as a regular file, not a symlink. Delete it and re-run this script."
-        }
-    }
-    else {
-        try {
-            New-Item -ItemType SymbolicLink -Path $skyrimNetApiLink -Target $skyrimNetApiSource -ErrorAction Stop | Out-Null
-            Write-Host "Created SkyrimNetApi.psc symlink: $skyrimNetApiLink -> $skyrimNetApiSource" -ForegroundColor Green
-        }
-        catch {
-            throw "Failed to create file symlink '$skyrimNetApiLink' -> '$skyrimNetApiSource': $($_.Exception.Message). File symlinks on Windows require either running this script from an elevated (admin) PowerShell, or enabling Developer Mode (Settings -> System -> For developers -> Developer Mode). Enable one of those and re-run."
+    $skyrimNetApiCopy = Join-Path $skyrimNetCopyDir 'SkyrimNetApi.psc'
+
+    # If a stale reparse point (symlink from earlier versions of this script)
+    # sits at the destination, drop it first — Copy-Item into a symlink writes
+    # through the link rather than replacing it.
+    if (Test-Path $skyrimNetApiCopy) {
+        $existing = Get-Item $skyrimNetApiCopy -Force
+        if ($existing.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            Remove-Item $skyrimNetApiCopy -Force
+            Write-Host "Removed stale SkyrimNetApi.psc symlink: $skyrimNetApiCopy" -ForegroundColor DarkGray
         }
     }
+
+    Copy-Item -Path $skyrimNetApiSource -Destination $skyrimNetApiCopy -Force
+    Write-Host "Copied SkyrimNetApi.psc: $skyrimNetApiSource -> $skyrimNetApiCopy" -ForegroundColor Green
 }
 
 # --- install git pre-commit hook --------------------------------------------
@@ -151,9 +146,8 @@ else {
 # latest CK edits.
 #
 # The hook is written with LF line endings so git-bash (which executes hooks
-# on Windows) can run it cleanly. Detection of "is this hook ours" is by a
-# marker comment in the script body; we replace our own version freely and
-# leave any third-party hook alone with a warning.
+# on Windows) can run it cleanly. Any existing pre-commit hook is overwritten
+# unconditionally — this script owns that file.
 
 $gitDir = Join-Path $PSScriptRoot '.git'
 if (Test-Path $gitDir -PathType Container) {
@@ -162,15 +156,15 @@ if (Test-Path $gitDir -PathType Container) {
         New-Item -ItemType Directory -Path $hooksDir | Out-Null
     }
     $hookPath = Join-Path $hooksDir 'pre-commit'
-    $marker   = '# NarrativeEngine pre-commit hook — managed by setup-mod-folder.ps1'
 
     # Hook body. Escape $ as `$ inside the here-string so PowerShell doesn't
     # interpolate the shell variables.
     $hookBody = @"
 #!/bin/sh
-$marker
-# Runs sync-esp.ps1 so the repo's ESP matches the mod folder, and stages any
-# resulting ESP change so it's part of this commit.
+# NarrativeEngine pre-commit hook — managed by setup-mod-folder.ps1
+# Runs sync-esp.ps1 so the repo's ESP matches the mod folder, stages any
+# resulting ESP change, then runs `pre-commit run` against staged files so
+# the formatters/linters in .pre-commit-config.yaml gate the commit.
 
 REPO_ROOT="`$(git rev-parse --show-toplevel)"
 ESP_PATH="`$REPO_ROOT/esp/NarrativeEngine.esp"
@@ -189,31 +183,48 @@ if [ "`$BEFORE_HASH" != "`$AFTER_HASH" ] && [ -f "`$ESP_PATH" ]; then
     echo "pre-commit: sync-esp.ps1 updated esp/NarrativeEngine.esp; staging the change"
     git add -- "`$ESP_PATH"
 fi
+
+# Run the pre-commit framework against staged files. Prefer the `pre-commit`
+# command on PATH; fall back to `python -m pre_commit` so pip --user installs
+# work before a fresh shell has picked up the new Scripts/ dir on PATH.
+# Skipped silently if neither resolves so a fresh clone can still commit before
+# setup is complete; the README's 'Linting and autoformatting' section walks
+# through the install.
+PRE_COMMIT_CMD=""
+if command -v pre-commit >/dev/null 2>&1; then
+    PRE_COMMIT_CMD="pre-commit"
+elif command -v python >/dev/null 2>&1 && python -c "import pre_commit" >/dev/null 2>&1; then
+    PRE_COMMIT_CMD="python -m pre_commit"
+elif command -v py >/dev/null 2>&1 && py -c "import pre_commit" >/dev/null 2>&1; then
+    PRE_COMMIT_CMD="py -m pre_commit"
+fi
+
+if [ -n "`$PRE_COMMIT_CMD" ]; then
+    # Capture output so VS Code's Git integration doesn't pop a "Git Hooks"
+    # dialog for the happy path (any stderr output triggers it, even on
+    # success). On failure, replay the full log to stderr so the developer
+    # sees exactly what went wrong.
+    PRE_COMMIT_OUT=`$(`$PRE_COMMIT_CMD run --hook-stage pre-commit 2>&1)
+    PRE_COMMIT_STATUS=`$?
+    if [ `$PRE_COMMIT_STATUS -ne 0 ]; then
+        echo "`$PRE_COMMIT_OUT" >&2
+        echo "" >&2
+        echo "pre-commit: formatters/linters reported issues; aborting commit" >&2
+        echo "pre-commit: run 'pwsh -File format.ps1' to auto-fix, then re-stage and commit" >&2
+        exit 1
+    fi
+else
+    echo "pre-commit: not on PATH and Python can't import pre_commit; skipping formatter/linter stage" >&2
+    echo "pre-commit: see README 'Linting and autoformatting' to install" >&2
+fi
 "@
 
-    $shouldInstall = $false
-    $action        = $null
-    if (-not (Test-Path $hookPath)) {
-        $shouldInstall = $true
-        $action        = 'Installed'
-    }
-    else {
-        $existing = Get-Content $hookPath -Raw -ErrorAction SilentlyContinue
-        if ($existing -and $existing.Contains($marker)) {
-            $shouldInstall = $true
-            $action        = 'Updated'
-        }
-        else {
-            Write-Warning "$hookPath exists and was not installed by this script; leaving it alone. Merge the sync-esp behavior in manually if you want it."
-        }
-    }
+    $action = if (Test-Path $hookPath) { 'Replaced' } else { 'Installed' }
 
-    if ($shouldInstall) {
-        # Normalize to LF so git-bash executes the hook on Windows.
-        $lfBody = $hookBody -replace "`r`n", "`n"
-        [System.IO.File]::WriteAllText($hookPath, $lfBody)
-        Write-Host "$action pre-commit hook: $hookPath" -ForegroundColor Green
-    }
+    # Normalize to LF so git-bash executes the hook on Windows.
+    $lfBody = $hookBody -replace "`r`n", "`n"
+    [System.IO.File]::WriteAllText($hookPath, $lfBody)
+    Write-Host "$action pre-commit hook: $hookPath" -ForegroundColor Green
 }
 else {
     Write-Host "No .git directory found at $gitDir; skipping pre-commit hook install" -ForegroundColor DarkGray

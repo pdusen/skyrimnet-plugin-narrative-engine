@@ -278,7 +278,7 @@ Eviction runs a defensive scan-and-cleanup rather than relying on a tracked cont
 handle — see the discussion under **Slot container tracking** below for the rationale.
 The sequence:
 
-```
+```text
 1. player->RemoveItem(book, INT_MAX, kRemove, nullptr, nullptr)
        // sweeps all copies from the player in one call (no-op if zero).
 2. For each currently-loaded actor (via SKSE process lists):
@@ -427,7 +427,7 @@ The prompt — `statics/SKSE/Plugins/SkyrimNet/prompts/narrative_engine_letter_c
 - `sender_candidates`: array, capped at top ~12 by engagement score so the prompt
   stays bounded. Each entry is:
 
-  ```
+  ```json
   {
     form_id,
     name,
@@ -540,7 +540,7 @@ cognitively engaged with the letter:
 1. **Sender NPC memory of having sent** — fired at delivery (in
    `LetterPool::MarkDelivered`):
 
-   ```
+   ```text
    formId            = sender_npc_form_id
    contentText       = "I wrote and sent a letter to <player_name>. The contents were as follows:\n\n<full_letter_text>"
                        where <player_name> is the player actor's live display name
@@ -569,7 +569,7 @@ cognitively engaged with the letter:
 
 2. **Player memory of receiving** — fired at read (in `LetterPool::MarkRead`):
 
-   ```
+   ```text
    formId            = player FormID (0x14)
    contentText       = "I received and read a letter from <sender>. The contents were as follows:\n\n<full_letter_text>"
                        where <sender> is the sender NPC's live display name and
@@ -731,7 +731,7 @@ keep C++ as the orchestrator:
 
 The C++ flow per dispatch:
 
-```
+```text
 1. Allocate LetterPool slot N. PopulateSlot(...) sets FULL and body cache.
 2. Resolve cached _ne_PooledLetterQuestN pointer.
 3. Sweep _ne_LetterSenderFaction: for any loaded actor currently at
@@ -1018,7 +1018,7 @@ New `[LetterPool]` section:
 
 New co-save record `'NELP'` (NarrativeEngine Letter Pool), versioned at 1. Payload:
 
-```
+```text
 uint32  slot_count          ; = pool size (20). Per-record validation guard.
 for each slot:
     uint8                            state
@@ -2672,8 +2672,8 @@ is purely about the LetterPool's lifecycle hooks for memory integration.
 - Failure to write either memory is logged but doesn't fail the lifecycle.
   The letter still works; we just lose that side of the recall.
 - The memory text on each side is deliberately first-person from that actor's
-  own frame ("I wrote and sent a letter to <player_name>." / "I received and
-  read a letter from <sender>.") so it reads naturally when SkyrimNet
+  own frame (`"I wrote and sent a letter to <player_name>."` / `"I received and
+  read a letter from <sender>."`) so it reads naturally when SkyrimNet
   surfaces the memory in that actor's own conversational context later.
 - The full composed letter body is embedded verbatim in *both* memory writes,
   separated from the leading sentence by two newlines. This is deliberate:

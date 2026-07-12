@@ -37,13 +37,13 @@ namespace NarrativeEngine::SenderCandidatePool
     // backwards compatibility.
     struct Candidate
     {
-        RE::FormID     formId           = 0;
-        std::string    name;
-        double         engagementScore  = 0.0;
-        double         lastInteractedAt = 0.0;
+        RE::FormID formId = 0;
+        std::string name;
+        double engagementScore = 0.0;
+        double lastInteractedAt = 0.0;
         // Per-candidate memory tail; already importance/diary-filtered
         // and sorted oldest-to-newest per the BuildOptions.
-        nlohmann::json memories         = nlohmann::json::array();
+        nlohmann::json memories = nlohmann::json::array();
     };
 
     // Callback returning true if the actor is a viable sender per the
@@ -60,11 +60,11 @@ namespace NarrativeEngine::SenderCandidatePool
     {
         // Cap on the returned pool. Post-filter; the internal fetch pulls
         // a multiple of this to give client-side filtering headroom.
-        int  maxCandidates             = 12;
+        int maxCandidates = 12;
 
         // Per-candidate memory tail cap. Applied after
         // importance/diary/sort filtering.
-        int  maxMemoriesPerCandidate   = 6;
+        int maxMemoriesPerCandidate = 6;
 
         // Extra viability filter — see the alias above.
         ViabilityFilter extraViabilityFilter;
@@ -79,25 +79,25 @@ namespace NarrativeEngine::SenderCandidatePool
         // dropped. Letters exclude diaries at action-select time (they
         // just clutter the "should I write?" pick) but include them at
         // compose time (they're first-person voice the LLM can imitate).
-        bool   excludeDiaryEntries     = false;
+        bool excludeDiaryEntries = false;
 
         // Multiplier applied to `maxMemoriesPerCandidate` when calling
         // SkyrimNetAPI::GetMemoriesForActor — over-fetch so importance
         // filtering still leaves us with roughly `maxMemoriesPerCandidate`
         // survivors even when the semantic-search tail has some
         // low-importance entries.
-        int    memoryFetchMultiplier   = 4;
+        int memoryFetchMultiplier = 4;
 
         // Whether to shuffle the returned candidate list. Letters do
         // (breaks the engagement-order LLM anchoring); visits do too.
-        bool   shuffleResult           = true;
+        bool shuffleResult = true;
 
         // If true, memories with no non-diary content are counted as
         // "kept none" and the candidate is dropped as
         // "no-significant-memories". False accepts candidates with empty
         // memory tails (VisitComposer wants to allow this since visits
         // work from live actor context rather than a memory-driven brief).
-        bool   requireMemories         = true;
+        bool requireMemories = true;
     };
 
     // Main-thread. Full pool build: engagement fetch + universal viability
@@ -110,11 +110,10 @@ namespace NarrativeEngine::SenderCandidatePool
     // once `min` viable candidates have been counted. Returns the
     // count seen, capped at `min` (may exceed `min` if the sample walked
     // beyond it before the early-exit tick fired).
-    std::size_t CountViable(const ViabilityFilter& extraFilter,
-                             std::size_t            min);
+    std::size_t CountViable(const ViabilityFilter& extraFilter, std::size_t min);
 
     // Player display name — cached lookup, used as the semantic-search
     // bias when pulling per-candidate memories. Empty when the player
     // hasn't loaded yet.
     std::string GetPlayerDisplayName();
-}
+} // namespace NarrativeEngine::SenderCandidatePool

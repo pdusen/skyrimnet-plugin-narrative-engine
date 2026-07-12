@@ -42,6 +42,18 @@ not defer to a later normalization step. See
 substitution table, the library-vs-manual rationale, and worked
 examples of how to identify which response fields need sanitizing.
 
+## Always run `format.ps1` after adding or modifying files
+
+After any batch of edits — code, docs, config, whatever — run `pwsh -File format.ps1` at the repo root
+and resolve every finding before considering the task complete. The `.pre-commit-config.yaml` hooks
+handle C++ (clang-format), Markdown (markdownlint --fix), CMake (gersemi), YAML/JSON (prettier),
+PowerShell (Invoke-Formatter + PSScriptAnalyzer), and whitespace/EOL hygiene. Most fixes are applied
+in place; if the run fails, re-read the output and fix the remaining findings yourself — do not hand
+that work to the user.
+
+Papyrus (`.psc`) is deliberately not autoformatted (no maintained formatter exists), so the hooks skip
+it — Papyrus errors surface at CK compile time via `build.ps1 build` instead.
+
 ## What NOT to assume
 
 - That a pattern IntelEngine uses is automatically appropriate for NarrativeEngine. The right

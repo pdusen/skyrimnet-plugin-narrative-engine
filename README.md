@@ -310,16 +310,21 @@ to bypass it (e.g. you're hand-editing one side and don't want the build clobber
 
 ### Pre-commit hook
 
-`setup-mod-folder.ps1` installs `.git/hooks/pre-commit` that runs `sync-esp.ps1` before every commit and
-stages the repo's ESP if the sync updated it. The full behavior:
+`setup-mod-folder.ps1` installs `.git/hooks/pre-commit`. The hook runs two stages before every commit:
 
-1. Snapshot the current `git hash-object` of `esp/NarrativeEngine.esp`.
-2. Run `sync-esp.ps1`. If it fails for any reason, the commit aborts.
-3. Re-hash the ESP. If the hash changed (the sync pulled in a CK edit from the mod folder), `git add` the
-   ESP so it rides along in the same commit you were already making.
+1. **ESP sync.** Snapshot the current `git hash-object` of `esp/NarrativeEngine.esp`, run `sync-esp.ps1`,
+   then re-hash. If the sync pulled in a CK edit from the mod folder, `git add` the ESP so it rides along
+   in the same commit. If `sync-esp.ps1` fails for any reason, the commit aborts.
+2. **Formatters / linters.** Invoke `pre-commit run --hook-stage pre-commit`, which executes every hook in
+   [`.pre-commit-config.yaml`](.pre-commit-config.yaml) against the staged files (clang-format for C++,
+   markdownlint for Markdown, gersemi for CMake, prettier for YAML/JSON, PSScriptAnalyzer for PowerShell,
+   plus generic whitespace/EOL hygiene). Any hook failure aborts the commit; run `pwsh -File format.ps1`
+   to auto-fix, re-stage, and retry. Skipped silently if `pre-commit` isn't on `PATH` so a fresh clone
+   can commit before tool setup is complete — see [Linting and autoformatting](#linting-and-autoformatting).
 
 What this means in practice: you can `git commit -m "..."` immediately after a CK session and the latest
-ESP state is guaranteed to be part of the commit, without remembering to sync first.
+ESP state is guaranteed to be part of the commit, without remembering to sync first — and the diff is
+guaranteed to be formatted the way the project expects.
 
 Operational notes:
 
@@ -356,6 +361,87 @@ The generated `NarrativeEngine.ppj` at the repo root is what the VS Code Papyrus
 source folders, output folders, and imports. Run a CMake configure (`pwsh -File build.ps1 configure`) at
 least once so the `.ppj` is generated before opening VS Code; from then on the extension auto-discovers it.
 
+## Linting and autoformatting
+
+Every text filetype in this repo has an autoformatter and/or linter attached to it, orchestrated by
+[pre-commit](https://pre-commit.com/) via [`.pre-commit-config.yaml`](.pre-commit-config.yaml). The full
+matrix:
+
+| Filetype                     | Tool                                              | Config                                                    |
+| ---------------------------- | ------------------------------------------------- | --------------------------------------------------------- |
+| C / C++ (`.cpp`, `.h`, …)    | `clang-format`                                    | [`.clang-format`](.clang-format)                          |
+| Markdown (`.md`)             | `markdownlint --fix`                              | [`.markdownlint.json`](.markdownlint.json)                |
+| CMake (`CMakeLists.txt`, `.cmake`) | `gersemi`                                   | (defaults)                                                |
+| YAML / JSON                  | `prettier`                                        | (defaults; `package-lock.json` and `CMakeUserPresets.json` excluded) |
+| PowerShell (`.ps1`, `.psm1`) | `Invoke-Formatter` + `Invoke-ScriptAnalyzer`      | [`scripts/lint-powershell.ps1`](scripts/lint-powershell.ps1) |
+| Whitespace / EOL / large files | `pre-commit-hooks`                              | (defaults; `.ps1`/`.bat`/`.cmd` keep CRLF)                |
+| Papyrus (`.psc`)             | *no formatter — PapyrusCompiler acts as lint at build time* | —                                             |
+
+The runtime editor discipline is codified in [`.editorconfig`](.editorconfig), which any modern editor
+picks up automatically.
+
+### One-time tool setup
+
+The hooks shell out to a mix of native tools (`clang-format`) and package-manager-installed tools
+(`markdownlint-cli` from npm, `pre-commit`/`gersemi` from pip, `PSScriptAnalyzer` from PSGallery). Install
+them once per development machine:
+
+```pwsh
+# 1. Python + pre-commit (drives the whole thing). Python 3.10+ recommended.
+pip install --user pre-commit gersemi
+
+# 2. Node.js + markdownlint-cli + prettier.
+npm install -g markdownlint-cli prettier
+
+# 3. clang-format. Any modern LLVM release works; the config targets clang-format 19.
+#    Options: `winget install LLVM.LLVM`, `choco install llvm`, or bundled with
+#    Visual Studio's C++ workload (`clang-format.exe` under
+#    `%ProgramFiles%\Microsoft Visual Studio\<year>\<edition>\VC\Tools\Llvm\bin`).
+
+# 4. PowerShell module for the PowerShell hook.
+Install-Module PSScriptAnalyzer -Scope CurrentUser
+```
+
+Verify everything resolves:
+
+```pwsh
+pre-commit --version
+clang-format --version
+markdownlint --version
+prettier --version
+gersemi --version
+Get-Module -ListAvailable PSScriptAnalyzer
+```
+
+On the **first** invocation of `pre-commit run` (either via the git hook or `format.ps1`), pre-commit
+downloads and caches the pinned versions of each hook repo into `~/.cache/pre-commit`. This takes 1–2
+minutes; subsequent runs are seconds.
+
+### Running formatters on demand
+
+```pwsh
+pwsh -File format.ps1                      # every hook against every tracked file (rewrites in place)
+pwsh -File format.ps1 -Staged              # only files currently `git add`ed
+pwsh -File format.ps1 -Hooks clang-format  # only the clang-format hook
+```
+
+`format.ps1` is a thin wrapper around `pre-commit run`; use it whenever you want to reformat without
+committing, or to re-run a single hook after adjusting its config.
+
+### Do NOT run `pre-commit install`
+
+The `.git/hooks/pre-commit` file is hand-managed by `setup-mod-folder.ps1` because it also has to run
+`sync-esp.ps1` (see [Pre-commit hook](#pre-commit-hook)). Running `pre-commit install` will overwrite it
+with a stock pre-commit-framework hook and break the ESP sync. If it happens by accident, re-run
+`pwsh -File setup-mod-folder.ps1` to restore the correct hook.
+
+### Papyrus is not autoformatted
+
+There is no maintained autoformatter for `.psc` source. The closest lint we have is the PapyrusCompiler
+run that `pwsh -File build.ps1 build` triggers — syntax and type errors surface there. If a Papyrus
+formatter appears in the ecosystem, add its hook to `.pre-commit-config.yaml` under the existing
+`local` block or as its own repo entry.
+
 ## Writing SkyrimNet `.prompt` files
 
 The `.prompt` files we ship under `statics/SKSE/Plugins/SkyrimNet/prompts/` are Jinja templates that render to
@@ -380,19 +466,19 @@ file, search the whole repo (e.g. `grep -r '](old-name.md)'`) to catch every ref
 
 ### Lint every edit with `markdownlint --fix`
 
-After creating or editing any markdown file, run `markdownlint --fix` against it and resolve any remaining issues
-before considering the change done. **Always pass `--fix` by default** — it auto-corrects most formatting issues in
-place (blank lines around headings/lists/fences, list-item style, trailing whitespace, etc.) so you only have to
-hand-fix what the linter can't.
+After creating or editing any markdown file, run markdownlint against it and resolve any remaining issues before
+considering the change done. The pre-commit hook enforces this at commit time (see
+[Linting and autoformatting](#linting-and-autoformatting)), but the fastest local loop is:
 
 ```sh
-markdownlint --fix path/to/FILE.md
+pwsh -File format.ps1 -Hooks markdownlint    # all markdown files, auto-fix
+markdownlint --fix path/to/FILE.md           # single-file, if the tool is on PATH directly
 ```
 
-If `markdownlint --fix` reports no remaining output and exits 0, the file is clean. `markdownlint` is available on
-this machine (verified v0.48.0). If a rule consistently fires for a stylistic choice the project wants to keep, the
-right move is to update [`.markdownlint.json`](.markdownlint.json) at the repo root rather than ignore the warning ad
-hoc. The current config sets `MD013` (line-length) to 120 with exemptions for code blocks, tables, headings, and
-unbreakable lines (e.g. long URLs), relaxes `MD024` (no-duplicate-heading) to `siblings_only` so repeated subheadings
-under different parents are allowed, and disables `MD060` (table-column-style); everything else is the default rule
-set.
+Always pass `--fix` by default — it auto-corrects most formatting issues in place (blank lines around
+headings/lists/fences, list-item style, trailing whitespace, etc.) so you only have to hand-fix what the linter can't.
+If a rule consistently fires for a stylistic choice the project wants to keep, update
+[`.markdownlint.json`](.markdownlint.json) rather than ignore the warning ad hoc. The current config sets `MD013`
+(line-length) to 120 with exemptions for code blocks, tables, headings, and unbreakable lines (e.g. long URLs),
+relaxes `MD024` (no-duplicate-heading) to `siblings_only` so repeated subheadings under different parents are allowed,
+and disables `MD060` (table-column-style); everything else is the default rule set.

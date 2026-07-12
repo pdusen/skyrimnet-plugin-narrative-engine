@@ -48,10 +48,10 @@ if (-not $modsRoot) {
     return
 }
 
-$modEsp  = Join-Path $modsRoot 'NarrativeEngine/NarrativeEngine.esp'
+$modEsp = Join-Path $modsRoot 'NarrativeEngine/NarrativeEngine.esp'
 $repoEsp = Join-Path $PSScriptRoot 'esp/NarrativeEngine.esp'
 
-$modExists  = Test-Path $modEsp  -PathType Leaf
+$modExists = Test-Path $modEsp  -PathType Leaf
 $repoExists = Test-Path $repoEsp -PathType Leaf
 
 if (-not $modExists -and -not $repoExists) {
@@ -70,7 +70,7 @@ if (-not $modExists -and $repoExists) {
 }
 
 # Both exist — compare timestamps.
-$modTime  = (Get-Item $modEsp).LastWriteTime
+$modTime = (Get-Item $modEsp).LastWriteTime
 $repoTime = (Get-Item $repoEsp).LastWriteTime
 
 if ($modTime -gt $repoTime) {

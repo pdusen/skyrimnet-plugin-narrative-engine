@@ -8,7 +8,7 @@ namespace RE
 {
     class TESObjectREFR;
     class TESQuest;
-}
+} // namespace RE
 
 // CourierUtils — vanilla WICourier / WICourierContainerRef resolution
 // and inventory-count helpers. Any beat that needs to hand items off to
@@ -41,4 +41,4 @@ namespace NarrativeEngine::CourierUtils
     // (bookFormID==0, courier not resolved, book isn't a bound object,
     // etc.).
     std::int32_t GetCourierInventoryCount(RE::FormID bookFormID);
-}
+} // namespace NarrativeEngine::CourierUtils

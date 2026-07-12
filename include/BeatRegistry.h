@@ -41,10 +41,10 @@ namespace NarrativeEngine::BeatRegistry
     // lock across engine calls.
     struct EntryView
     {
-        IBeat*      beat;
+        IBeat* beat;
         std::string name;
-        bool        enabled;
-        double      lastDispatchedRealTime;  // Unix-epoch seconds; 0 = never
+        bool enabled;
+        double lastDispatchedRealTime; // Unix-epoch seconds; 0 = never
     };
 
     // Snapshot of every registered beat + its runtime state, in
@@ -70,6 +70,5 @@ namespace NarrativeEngine::BeatRegistry
     // compatible with the desired direction. Beats whose enabled flag is
     // false are skipped before IsAvailable is ever called. A beat with
     // polarity Either matches both Raise and Lower.
-    std::vector<IBeat*> AvailableMatching(const BeatContext& ctx,
-                                          BeatPolarity        desired);
-}
+    std::vector<IBeat*> AvailableMatching(const BeatContext& ctx, BeatPolarity desired);
+} // namespace NarrativeEngine::BeatRegistry

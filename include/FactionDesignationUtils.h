@@ -7,7 +7,7 @@ namespace RE
 {
     class Actor;
     class TESFaction;
-}
+} // namespace RE
 
 // FactionDesignationUtils — the rank-based "designate one loaded actor
 // at a time" pattern shared by letter and visit beats. Both plant a
@@ -36,27 +36,24 @@ namespace NarrativeEngine::FactionDesignationUtils
     // demoted may be missed. In practice the normal flow demotes on
     // every terminal path, and the only way a straggler survives is a
     // crash inside the compose/dispatch window (~seconds).
-    void SweepStaleDesignated(RE::TESFaction*  fact,
-                              RE::Actor*       target,
-                              std::int8_t      designatedRank,
-                              std::int8_t      candidateRank,
+    void SweepStaleDesignated(RE::TESFaction* fact,
+                              RE::Actor* target,
+                              std::int8_t designatedRank,
+                              std::int8_t candidateRank,
                               std::string_view logTag);
 
     // Promote `sender` to `designatedRank`. Sweeps stale designated
     // members first so there's exactly one rank-`designatedRank` actor
     // when the caller's EnsureQuestStarted runs. Safe on already-
     // designated senders (no-op).
-    void PromoteToDesignated(RE::TESFaction*  fact,
-                             RE::Actor*       sender,
-                             std::int8_t      designatedRank,
-                             std::int8_t      candidateRank,
+    void PromoteToDesignated(RE::TESFaction* fact,
+                             RE::Actor* sender,
+                             std::int8_t designatedRank,
+                             std::int8_t candidateRank,
                              std::string_view logTag);
 
     // Return `sender` to `candidateRank`. Called on both success and
     // failure completion paths so the faction state is always cleaned
     // up. Safe on actors not in the faction (no-op).
-    void DemoteToCandidate(RE::TESFaction*  fact,
-                           RE::Actor*       sender,
-                           std::int8_t      candidateRank,
-                           std::string_view logTag);
-}
+    void DemoteToCandidate(RE::TESFaction* fact, RE::Actor* sender, std::int8_t candidateRank, std::string_view logTag);
+} // namespace NarrativeEngine::FactionDesignationUtils

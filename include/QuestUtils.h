@@ -35,29 +35,27 @@ namespace NarrativeEngine::QuestUtils
     // `is_not_reference<T>`; passing lvalue-reference-deduced pointer
     // args through forwarding references would fail that check.
     template <typename... Args>
-    inline bool VMDispatchOnQuest(RE::TESQuest*    quest,
+    inline bool VMDispatchOnQuest(RE::TESQuest* quest,
                                   std::string_view scriptName,
                                   std::string_view methodName,
-                                  Args...          args)
+                                  Args... args)
     {
-        if (!quest) return false;
+        if (!quest)
+            return false;
         auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-        if (!vm) return false;
+        if (!vm)
+            return false;
         auto* policy = vm->GetObjectHandlePolicy();
-        if (!policy) return false;
-        const auto handle =
-            policy->GetHandleForObject(RE::TESQuest::FORMTYPE, quest);
+        if (!policy)
+            return false;
+        const auto handle = policy->GetHandleForObject(RE::TESQuest::FORMTYPE, quest);
         auto* fnArgs = RE::MakeFunctionArguments(std::move(args)...);
         RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
         return vm->DispatchMethodCall(
-            handle,
-            RE::BSFixedString(scriptName.data()),
-            RE::BSFixedString(methodName.data()),
-            fnArgs,
-            callback);
+            handle, RE::BSFixedString(scriptName.data()), RE::BSFixedString(methodName.data()), fnArgs, callback);
     }
 
     // Convenience: VM-dispatch Quest.SetStage(int) on `quest`. Returns
     // whatever VMDispatchOnQuest returns (queued vs. not queued).
     bool VMDispatchQuestSetStage(RE::TESQuest* quest, std::uint32_t stage);
-}
+} // namespace NarrativeEngine::QuestUtils

@@ -66,7 +66,8 @@ if (Test-Path $presetFile) {
                 Set-Item -Path "Env:$($prop.Name)" -Value $prop.Value
             }
         }
-    } catch {
+    }
+    catch {
         Write-Warning "Couldn't parse CMakeUserPresets.json for preset '$Preset': $_"
     }
 }
@@ -95,16 +96,17 @@ function Invoke-Clean {
     if (Test-Path $buildDir) {
         Write-Host "==> removing $buildDir" -ForegroundColor Cyan
         Remove-Item -Recurse -Force $buildDir
-    } else {
+    }
+    else {
         Write-Host "==> $buildDir does not exist; nothing to clean" -ForegroundColor DarkGray
     }
 }
 
 switch ($Verb) {
     'configure' { Invoke-Configure }
-    'build'     { Invoke-Build }
-    'rebuild'   { Invoke-Configure; Invoke-Build }
-    'clean'     { Invoke-Clean }
+    'build' { Invoke-Build }
+    'rebuild' { Invoke-Configure; Invoke-Build }
+    'clean' { Invoke-Clean }
 }
 
 Write-Host "==> done ($Verb / $Preset)" -ForegroundColor Green

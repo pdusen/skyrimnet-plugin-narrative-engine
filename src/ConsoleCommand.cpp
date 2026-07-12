@@ -40,4 +40,4 @@ namespace NarrativeEngine::ConsoleCommand
         logger::info("ConsoleCommand::Run: executed '{}'", command);
         return true;
     }
-}
+} // namespace NarrativeEngine::ConsoleCommand

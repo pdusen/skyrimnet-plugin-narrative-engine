@@ -8,7 +8,10 @@
 
 #include <nlohmann/json_fwd.hpp>
 
-namespace RE { class Actor; }
+namespace RE
+{
+    class Actor;
+}
 
 // BeatParamHelpers — small self-contained helpers for the parameter-
 // parsing surface shared by beats that accept an LLM-supplied sender
@@ -21,9 +24,9 @@ namespace NarrativeEngine::BeatParamHelpers
     // visit compose paths speak the same type without translation.
     enum class UrgencyHint : std::uint8_t
     {
-        Low    = 0,
+        Low = 0,
         Medium = 1,
-        High   = 2,
+        High = 2,
     };
 
     // Parse `parameters["sender_npc_form_id"]` (hex string, e.g. "0xA2C8E").
@@ -31,9 +34,7 @@ namespace NarrativeEngine::BeatParamHelpers
     // wrong type, unparseable, resolves to zero) sets `*failureReason`
     // to a stable snake_case literal and returns nullopt. Never
     // touches the engine — just JSON + stoul.
-    std::optional<RE::FormID> ParseSenderFormID(
-        const nlohmann::json& parameters,
-        std::string*          failureReason);
+    std::optional<RE::FormID> ParseSenderFormID(const nlohmann::json& parameters, std::string* failureReason);
 
     // Parse `parameters["urgency_hint"]` (string "low" / "medium" /
     // "high"). Missing / wrong-type / unrecognized values return
@@ -45,7 +46,5 @@ namespace NarrativeEngine::BeatParamHelpers
     // actor is not dead, actor is not disabled. On any failure sets
     // `*failureReason` to a stable snake_case literal and returns
     // nullptr.
-    RE::Actor* ResolveLiveSenderActor(
-        RE::FormID   senderFormID,
-        std::string* failureReason);
-}
+    RE::Actor* ResolveLiveSenderActor(RE::FormID senderFormID, std::string* failureReason);
+} // namespace NarrativeEngine::BeatParamHelpers

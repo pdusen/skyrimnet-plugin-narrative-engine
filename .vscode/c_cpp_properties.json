@@ -1,22 +1,22 @@
 {
-    "version": 4,
-    "configurations": [
-        {
-            "name": "CMake Tools",
+  "version": 4,
+  "configurations": [
+    {
+      "name": "CMake Tools",
 
-            // Delegate include paths, defines, and compiler flags to the
-            // CMake Tools extension on a per-file basis. CMake Tools learns
-            // about new TUs the moment the next configure pass completes
-            // (it happens automatically on save thanks to
-            // "cmake.configureOnEdit" in settings.json) and pushes the
-            // updated config to the C/C++ extension via its provider API,
-            // so new files stop showing red squiggles WITHOUT a window
-            // reload.
-            "configurationProvider": "ms-vscode.cmake-tools",
+      // Delegate include paths, defines, and compiler flags to the
+      // CMake Tools extension on a per-file basis. CMake Tools learns
+      // about new TUs the moment the next configure pass completes
+      // (it happens automatically on save thanks to
+      // "cmake.configureOnEdit" in settings.json) and pushes the
+      // updated config to the C/C++ extension via its provider API,
+      // so new files stop showing red squiggles WITHOUT a window
+      // reload.
+      "configurationProvider": "ms-vscode.cmake-tools",
 
-            "intelliSenseMode": "windows-msvc-x64",
-            "cStandard": "c17",
-            "cppStandard": "c++23"
-        }
-    ]
+      "intelliSenseMode": "windows-msvc-x64",
+      "cStandard": "c17",
+      "cppStandard": "c++23"
+    }
+  ]
 }
