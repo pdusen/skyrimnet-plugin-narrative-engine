@@ -278,11 +278,11 @@ namespace NarrativeEngine::VisitComposer
                         return false;
                     }
                     // Skip the full visit-viability re-check here.
-                    // The sender was already vetted at action-select
-                    // time; NPCVisitAction's own callback will
-                    // handle any final "sender no longer valid"
-                    // case (death mid-round-trip, etc.) via its
-                    // own resolution guards.
+                    // The sender was already vetted at beat-select
+                    // time; NPCVisitBeat's compose result handler
+                    // catches any final "sender no longer valid"
+                    // case (death mid-round-trip, etc.) via its own
+                    // resolution guards.
                     return true;
                 };
 

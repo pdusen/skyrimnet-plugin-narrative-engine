@@ -85,9 +85,9 @@ namespace NarrativeEngine::SkyrimNetAPI
     std::uint64_t FormIDToUUID(std::uint32_t formId);
 
     // Returns per-actor engagement statistics as a JSON array, ranked
-    // by SkyrimNet's internal scoring. Used by NPCLetterAction to pick
-    // a sender pool. Empty array if SkyrimNet or its memory system
-    // isn't ready.
+    // by SkyrimNet's internal scoring. Used by NPCLetterBeat to pick a
+    // sender pool. Empty array if SkyrimNet or its memory system isn't
+    // ready.
     //
     // maxCount=0 returns every actor with any activity.
     // shortWindow / mediumWindow are in *game* seconds (86400=1 day,

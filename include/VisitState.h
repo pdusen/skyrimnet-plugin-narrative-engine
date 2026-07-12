@@ -10,7 +10,7 @@
 
 namespace SKSE { class SerializationInterface; }
 
-// VisitState — single-slot data module for the in-flight NPCVisitAction.
+// VisitState — single-slot data module for the in-flight NPCVisitBeat.
 //
 // The state-machine phase is NOT stored here; it's carried on the stages of
 // `_ne_VisitQuest`, which the engine auto-persists in the vanilla save.
@@ -103,10 +103,11 @@ namespace NarrativeEngine::VisitState
     inline constexpr std::size_t kHistoryRingSize = 10;
 
     // In-process flag signalling the Composing pseudo-state — the compose
-    // LLM call is in flight but the quest hasn't been started yet. Set at
-    // the top of NPCVisitAction::Start; cleared by the compose callback
-    // once `EnsureQuestStarted` has returned. Read by DerivePhase() and
-    // the re-entrancy guard in Start. Storage lives in the .cpp.
+    // LLM call is in flight but the quest hasn't been started yet. Set by
+    // NPCVisitBeat::OnStart; cleared by NPCVisitBeat's dispatch task
+    // once `EnsureQuestStarted` has returned. Read by DerivePhase() so
+    // the dashboard's Mode display can distinguish Composing from Idle
+    // during the pre-Salutation window. Storage lives in the .cpp.
     void SetComposingSender(bool value);
     bool GetComposingSender();
 
@@ -121,9 +122,7 @@ namespace NarrativeEngine::VisitState
 
     // Derive the current mode from live state — reads the composing flag
     // and the current stage of `_ne_VisitQuest` (looked up lazily by
-    // EditorID). Returns `Idle` when the quest isn't resolved yet (e.g.
-    // Phase 05 CK content hasn't been authored), so this is safe to call
-    // before Step 7's CK authoring lands.
+    // EditorID). Returns `Idle` when the quest isn't resolved.
     Mode DerivePhase();
 
     // Co-save handlers.

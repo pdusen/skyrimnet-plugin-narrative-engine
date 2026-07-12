@@ -15,9 +15,8 @@ namespace SKSE { class SerializationInterface; }
 // LetterPool — a fixed pool of 20 pre-authored Book records whose runtime
 // content (FULL field, body text) is mutated at allocation time and read
 // back through MinHook detours on the engine's book-rendering path. The
-// pool is allocated by NPCLetterAction and (in later phases) any other
-// action that needs to put dynamic-content book / note items into the
-// world.
+// pool is allocated by NPCLetterBeat and any other beat that needs to
+// put dynamic-content book / note items into the world.
 //
 // This header is the Step 4 scaffold: just the data structures and the
 // scalar lifecycle. The hook integration (Step 6), event-driven
@@ -92,8 +91,8 @@ namespace NarrativeEngine::LetterPool
     // the caller must ALSO hand the pool the per-slot delivery quest
     // pointers via SetPerSlotQuests. Until that happens, every slot
     // is undispatchable and Allocate refuses everything. In practice
-    // NPCLetterAction's own Initialize resolves the quests and hands
-    // them off within the same kDataLoaded tick.
+    // NPCLetterBeat_Init resolves the quests and hands them off
+    // within the same kDataLoaded tick.
     void Initialize();
 
     // Hand the pool the resolved per-slot delivery quests. `quests[i]`

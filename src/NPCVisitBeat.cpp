@@ -280,9 +280,10 @@ namespace NarrativeEngine
                 kSenderRankCandidate, "NPCVisitBeat");
         }
 
-        // Visit-specific candidate viability filter — mirrors the
-        // pre-refactor filter used by IsAvailable's cheap CountViable
-        // walk. Kept in sync with VisitComposer's filter.
+        // Visit-specific candidate viability filter used by
+        // IsAvailable's cheap CountViable walk. Kept in sync with
+        // VisitComposer's filter so the count matches what Compose()
+        // will end up building.
         bool VisitViabilityFilter_ForCountViable(RE::Actor* actor,
                                                   std::string* skipReasonOut)
         {

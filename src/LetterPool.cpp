@@ -1215,7 +1215,7 @@ namespace NarrativeEngine::LetterPool
                 tags);
         }
         // Fire the per-sender cooldown stamp outside our mutex to avoid
-        // any risk of lock inversion with NPCLetterAction's own mutex.
+        // any risk of lock inversion with NPCLetterBeat's own mutex.
         NPCLetterBeat_Cooldowns::OnLetterDelivered(senderFormID);
         NPCLetterBeat_QuestControl::AdvanceSlotStage(slotIndex, 30);
     }
@@ -1591,7 +1591,7 @@ namespace NarrativeEngine::LetterPool
         // Commit the loaded snapshot, then run the reconciliation pass.
         //
         // The per-slot quest pointer is a SESSION-ONLY binding
-        // established by NPCLetterAction at kDataLoaded via
+        // established by NPCLetterBeat_Init at kDataLoaded via
         // SetPerSlotQuests. It's NOT persisted (engine form pointers
         // aren't stable across sessions anyway), and it isn't re-bound
         // on save load. Preserve it here by snapshotting the current

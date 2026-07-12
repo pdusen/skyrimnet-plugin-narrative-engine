@@ -46,11 +46,12 @@ namespace NarrativeEngine::Settings
         int advanceThresholdFallingAction    = 30;   // -> Resolution when score <=
         int advanceThresholdResolution       = 25;   // -> Exposition when score >=
 
-        // Per-phase ideal durations in unpaused real-time seconds. The
-        // ActionDispatcher gates on these — actions may only fire after
-        // the current phase has overstayed its ideal duration. Total ideal
-        // cycle at defaults: 1200s (20 min); proportions follow the design
-        // narrative — Exposition and Resolution sit longer; Climax is brief.
+        // Per-phase ideal durations in unpaused real-time seconds.
+        // BeatSystem::ConsiderBeat gates on these — beats may only fire
+        // after the current phase has overstayed its ideal duration.
+        // Total ideal cycle at defaults: 1200s (20 min); proportions
+        // follow the design narrative — Exposition and Resolution sit
+        // longer; Climax is brief.
         int idealDurationExposition          = 330;  // 5.5 min
         int idealDurationRisingAction        = 225;  // 3.75 min
         int idealDurationClimax              = 90;   // 1.5 min
@@ -64,14 +65,11 @@ namespace NarrativeEngine::Settings
         // Beat dispatch knobs.
         int beatCooldownSeconds              = 120;  // wall-clock seconds after beat COMPLETION before next may fire
         int beatRepetitionWindowSeconds      = 300;  // window during which the same beat name is excluded from picks
-        // TODO PHASE-06: actionStaleLockTimeoutSeconds is only consumed by
-        // ActionDispatcher, which is deleted in Step 11. Removed with it.
-        int actionStaleLockTimeoutSeconds    = 900;  // (transitional — dies with ActionDispatcher)
 
-        // NPCLetterAction precondition: minimum number of recently-engaged
-        // NPCs SkyrimNet must report before the action becomes available.
+        // NPCLetterBeat precondition: minimum number of recently-engaged
+        // NPCs SkyrimNet must report before the beat becomes available.
         // Below this, the letter would either fail or fall back to a
-        // generated persona; we'd rather skip the action than ship that.
+        // generated persona; we'd rather skip the beat than ship that.
         int letterMinSenderCandidates        = 3;
 
         // [AlphaCanon]
@@ -87,20 +85,20 @@ namespace NarrativeEngine::Settings
         int combatEventsHitRadiusUnits = 6000;  // ~90 ft; distance gate for hit / collapse capture
         int combatEventsMaxStored      = 256;   // ring-buffer cap on retained internal combat events
 
-        // [Actions]
-        // Per-action enable defaults seeded into ActionRegistry at
-        // Register time. Dashboard Dispatch tab surfaces runtime
-        // toggles for these, but runtime changes don't write back to
-        // INI — reload the game and the INI value wins again. Debug
-        // testing aid, not a persistent config surface.
+        // [Beats]
+        // Per-beat enable defaults seeded into BeatRegistry at Register
+        // time. Dashboard Dispatch tab surfaces runtime toggles for
+        // these, but runtime changes don't write back to INI — reload
+        // the game and the INI value wins again. Debug testing aid, not
+        // a persistent config surface.
         bool enableAmbush    = true;
         bool enableNpcLetter = true;
 
-        // AmbushAction parameter defaults + clamps. The LLM may supply
-        // bandit_count and spawn_distance_units in its action-select
-        // response; the action validates against these bounds and falls
-        // back to the default when the supplied value is out of range or
-        // missing. See PHASE_03_ACTION_TOOLBOX.md.
+        // AmbushBeat parameter defaults + clamps. The LLM may supply
+        // bandit_count and spawn_distance_units in its beat-select
+        // response; the beat validates against these bounds and falls
+        // back to the default when the supplied value is out of range
+        // or missing.
         int ambushDefaultBanditCount         = 3;
         int ambushDefaultSpawnDistanceUnits  = 2000;
         int ambushMinBanditCount             = 2;
@@ -109,32 +107,31 @@ namespace NarrativeEngine::Settings
         int ambushMaxSpawnDistanceUnits      = 3000;
         // Per-action cooldown in *in-game hours* applied after a
         // successful ambush completion (the global
-        // iActionCooldownSeconds also applies on top of this). 0
-        // disables. Persists via the action's own co-save record.
+        // iBeatCooldownSeconds also applies on top of this). 0
+        // disables. Persists via the beat's own co-save record.
         int ambushPerBeatCooldownGameHours = 24;
 
-        // NPCLetterAction / LetterPool content + dispatch knobs. See
+        // NPCLetterBeat / LetterPool content + dispatch knobs. See
         // PHASE_04_LETTER_POOL_AND_NPC_LETTER_ACTION.md.
         int letterContentMinWords                = 60;   // lower bound on LLM body length
         int letterContentMaxWords                = 180;  // upper bound on LLM body length
         // Minimum `importance_score` (0.0–1.0) a SkyrimNet memory must
         // have to be included in the sender's memory tail passed to
         // the LLM. Filters out low-signal chatter so both the
-        // action-select "who should send this?" pick and the compose
+        // beat-select "who should send this?" pick and the compose
         // "what should they say?" call see only memories that carried
         // real weight when they happened.
         float letterMemoryImportanceThreshold    = 0.4f;
         int letterPoolSize                       = 20;   // informational; ESP defines the actual 20 forms
-        int letterDispatchVerifyDelaySeconds     = 5;    // grace window before DetectAndRollbackFailedStart gives up
+        int letterDispatchVerifyDelaySeconds     = 5;    // grace window before RUNNING gives up on the courier handoff
         int letterPendingDeliveryTimeoutSeconds  = 600;  // load-time demotion gate for stuck PendingDelivery slots
 
-        // Per-action cooldown in *in-game hours* applied after the
-        // letter successfully reaches the vanilla courier container
-        // (Phase C verified by DetectCompletion). Independent of the
-        // global iActionCooldownSeconds real-time cooldown, which
-        // still applies on top. 0 disables. Persists via the action's
-        // own co-save record. See notes in AmbushAction for the same
-        // pattern.
+        // Per-beat cooldown in *in-game hours* applied after the letter
+        // successfully reaches the vanilla courier container.
+        // Independent of the global iBeatCooldownSeconds real-time
+        // cooldown, which still applies on top. 0 disables. Persists
+        // via the beat's own co-save record. See notes on
+        // ambushPerBeatCooldownGameHours for the same pattern.
         int letterBeatCooldownGameHours          = 24;
 
         // Per-sender cooldown in *in-game hours* applied after the
@@ -143,19 +140,19 @@ namespace NarrativeEngine::Settings
         // candidate again for this many in-game hours, avoiding the
         // "three letters from Ancano in one session" pathology. 0
         // disables the filter. Persists per-sender-FormID in the
-        // action's co-save record.
+        // beat's co-save record.
         int letterSenderCooldownGameHours        = 72;
 
         // [LetterPool]
         // 0 = silent, 1 = log evictions, 2 = log every state transition.
         int letterPoolEvictionLogVerbosity       = 1;
 
-        // --- Phase 05 (NPCVisitAction) ---
+        // --- NPCVisitBeat ---
 
         // [Director]
-        // NPCVisitAction precondition: minimum number of viable sender
-        // candidates required for IsAvailable to return true. Below this the
-        // action declines and the dispatcher considers other picks.
+        // NPCVisitBeat precondition: minimum number of viable sender
+        // candidates required for IsAvailable to return true. Below
+        // this the beat declines and BeatSystem considers other picks.
         int visitMinSenderCandidates             = 3;
 
         // [Actions] — dispatch / composition
@@ -224,18 +221,8 @@ namespace NarrativeEngine::Settings
         // Outer wall-clock cap on ReturnHome — if the sender is still walking
         // after this many seconds, teleport anyway.
         int visitReturnHomeTimeoutSeconds        = 300;
-        // Upper bound on the wall-clock duration of the OnHold / ReEngage /
-        // Discuss polling watchdogs' async lifetimes. Not a visit-abort
-        // clock — its onTimeout branches only stop the watchdog and log a
-        // warning, they do not teleport the sender or teardown the visit.
-        // Sized well past any natural visit length so it functions purely
-        // as an infrastructure safety-net; the visit itself ends via poll
-        // conclusions, ignore-nudge cap, sender/player death, or combat-
-        // stuck (see CheckHardAbortConditions).
-        int visitHardTimeoutSeconds              = 86400;
 
-        // Enable toggle for the visit action; seeded into the ActionRegistry
-        // the same way ambush / letter enables are. Runtime dashboard toggles
+        // Enable toggle for the visit beat; runtime dashboard toggles
         // don't write back to INI.
         bool enableNpcVisit                      = true;
     };

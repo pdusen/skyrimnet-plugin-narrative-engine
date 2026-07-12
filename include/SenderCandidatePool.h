@@ -12,10 +12,10 @@
 
 // SenderCandidatePool — shared helper for building a bounded, viability-
 // filtered pool of "recently engaged with the player" NPCs, each with a
-// short player-involving memory tail attached. Used by both LetterComposer
-// (Phase 04) and VisitComposer (Phase 05) — the two composers have
-// different viability rules but share the underlying SkyrimNet fetch
-// scaffolding and memory-shape.
+// short player-involving memory tail attached. Used by both
+// LetterComposer and VisitComposer — the two composers have different
+// viability rules but share the underlying SkyrimNet fetch scaffolding
+// and memory-shape.
 //
 // The helper handles:
 //   - Engagement fetch via SkyrimNetAPI::GetActorEngagement.

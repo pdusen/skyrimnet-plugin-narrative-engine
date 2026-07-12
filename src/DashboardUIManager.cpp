@@ -1,7 +1,5 @@
 #include <DashboardUIManager.h>
 
-#include <ActionDispatcher.h>
-#include <ActionRegistry.h>
 #include <AlphaCanon.h>
 #include <AsyncDispatch.h>
 #include <BeatRegistry.h>

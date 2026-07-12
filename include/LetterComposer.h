@@ -14,7 +14,7 @@
 
 // LetterComposer — the LLM round trip that produces letter content
 // (sender, label, body, mood, topic) from the player's recent
-// SkyrimNet engagement history. NPCLetterAction owns the action-level
+// SkyrimNet engagement history. NPCLetterBeat owns the beat-level
 // dispatch and quest plumbing; this module owns just the LLM call.
 //
 // The composer runs on top of:
@@ -53,7 +53,7 @@ namespace NarrativeEngine::LetterComposer
     };
 
     // A single viable letter sender, resolved on the main thread by
-    // CollectSenderCandidates. Passed to the action-select stage so
+    // CollectSenderCandidates. Passed to the beat-select stage so
     // the LLM sees who's available and can pick one; also passed
     // (indirectly, via form_id) into Compose so the letter-writing
     // prompt has the full context without re-fetching.
@@ -72,20 +72,20 @@ namespace NarrativeEngine::LetterComposer
     // (kCandidateCap internally). Empty when SkyrimNet is unavailable or
     // no viable candidates exist.
     //
-    // Called by ActionDispatcher when npc_letter is among the action-
-    // select candidates, so the LLM sees a live list at pick time.
+    // Called by BeatSystem::ConsiderBeat when npc_letter is among the
+    // beat-select candidates, so the LLM sees a live list at pick time.
     std::vector<SenderCandidate> CollectSenderCandidates();
 
-    // Serialize a candidate list into the JSON shape the action-select
+    // Serialize a candidate list into the JSON shape the beat-select
     // and letter-compose prompts consume: [{form_id (hex str), name,
     // engagement_score, last_interacted_at, memories}].
     nlohmann::json SerializeSenderCandidates(
         const std::vector<SenderCandidate>& candidates);
 
-    // Async. Composes a letter FROM a pre-chosen sender — the action-
+    // Async. Composes a letter FROM a pre-chosen sender — the beat-
     // select LLM picks the sender, this call embodies them. Fresh-
     // fetches the sender's current memories on the main thread (so
-    // any events between action-select and compose surface here), then
+    // any events between beat-select and compose surface here), then
     // fires the compose prompt.
     //
     // The callback fires on a SkyrimNet worker thread — marshal back to

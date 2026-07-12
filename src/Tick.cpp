@@ -1,6 +1,5 @@
 #include <Tick.h>
 
-#include <ActionDispatcher.h>
 #include <AsyncDispatch.h>
 #include <CombatEventLog.h>
 #include <EvaluationPipeline.h>
@@ -70,18 +69,12 @@ namespace NarrativeEngine::Tick
                 return;
             }
 
-            // Housekeeping polls run regardless of the killswitch. Both
-            // observe engine state that changes even when the Director
-            // isn't allowed to make autonomous decisions:
-            //   - CombatEventLog watches player combat-state edges so
-            //     the event log stays truthful across a disabled span.
-            //   - ActionDispatcher::OnTick is the ONLY completion path
-            //     for actions started via the Dispatch tab's force-
-            //     dispatch button (which the user can invoke with the
-            //     killswitch engaged). Gating it here would leak the
-            //     in-flight lock forever after the letter delivered.
+            // Housekeeping poll — CombatEventLog watches player
+            // combat-state edges so the event log stays truthful even
+            // when the Director's killswitch is engaged. Beat
+            // completion detection lives inside each beat's Tick under
+            // BeatSystem's master poll, not here.
             CombatEventLog::Poll();
-            ActionDispatcher::OnTick();
 
             // Killswitch — when the dashboard's debug toggle is off, we
             // consume the elapsed sample above (so re-enabling doesn't

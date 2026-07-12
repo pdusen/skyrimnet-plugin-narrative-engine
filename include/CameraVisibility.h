@@ -10,7 +10,7 @@
 // between them.
 //
 // We want the facing-independent question because our callers
-// (currently just the ReturnHome LOS-lost gate in NPCVisitAction)
+// (currently just the ReturnHome LOS-lost gate in NPCVisitBeat)
 // want to know whether teleporting the target home would be
 // visually noticeable to the player at all — which depends on
 // obstruction geometry, not on where the camera currently points.

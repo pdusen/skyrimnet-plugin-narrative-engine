@@ -46,12 +46,11 @@ namespace NarrativeEngine::BeatSystem
 
         // ----- Anti-repetition ring (session-only) -----------------------
         //
-        // Ported from the pre-refactor ActionDispatcher. When a beat
-        // fires, its name + real-time is pushed to g_recentlyFired.
-        // ConsiderBeat's candidate filter drops any name still inside
-        // Settings::Get().beatRepetitionWindowSeconds. Not persisted —
-        // the window is short enough (default 300s) that a reload wipes
-        // it without visible consequence.
+        // When a beat fires, its name + real-time is pushed to
+        // g_recentlyFired. ConsiderBeat's candidate filter drops any
+        // name still inside Settings::Get().beatRepetitionWindowSeconds.
+        // Not persisted — the window is short enough (default 300s) that
+        // a reload wipes it without visible consequence.
         struct RecentlyFired
         {
             std::string name;
@@ -564,11 +563,10 @@ namespace NarrativeEngine::BeatSystem
             return ctx;
         }
 
-        // Globally-disqualifying world state. Same shape as
-        // ActionDispatcher::CheckGlobalActionPreconditions: returns
-        // nullptr on all-clear, or a short literal naming the gate that
-        // blocked. Runs twice per firing tick — once pre-LLM to save the
-        // round trip when we know we'd bail, once post-LLM in case the
+        // Globally-disqualifying world state. Returns nullptr on
+        // all-clear, or a short literal naming the gate that blocked.
+        // Runs twice per firing tick — once pre-LLM to save the round
+        // trip when we know we'd bail, once post-LLM in case the
         // situation changed during the round trip.
         const char* CheckGlobalBeatPreconditions(const BeatContext& ctx)
         {
@@ -616,10 +614,12 @@ namespace NarrativeEngine::BeatSystem
 
         // ---------- prompt context ----------
         //
-        // Ported from ActionDispatcher::BuildActionPromptContext. Prompt
-        // template still names it "action" on the SkyrimNet side; a
-        // rename to "beat" is deferred and would just be a file rename
-        // plus one string constant here.
+        // The SkyrimNet-side prompt template is still named
+        // `narrative_engine_action_select` — the file lives in
+        // statics/SKSE/Plugins/SkyrimNet/prompts/ and hasn't been
+        // renamed to `_beat_select` yet. Renaming there would only
+        // require a file rename plus one string-constant flip on the
+        // SkyrimNetAPI::SendCustomPromptToLLM call below.
         constexpr std::size_t kBeatSelectEventTailSize = 10;
 
         std::string BuildBeatSelectPromptContext(
@@ -710,12 +710,12 @@ namespace NarrativeEngine::BeatSystem
         // Called on the main thread after the LLM round trip has failed
         // (network error, malformed response, etc.). Stamps a failure
         // marker on the record and applies the same "global cooldown
-        // gate" the completion path would — mirrors the pre-refactor
-        // ActionDispatcher shape: "we tried to fire, so wait the normal
-        // cooldown before trying again." In BeatSystem's counter model,
-        // that means leaving g_globalCooldownMs at zero (it already is
-        // — the gate walk ran while NO_BEAT_RUNNING) and NOT touching
-        // the top-level state, so the counter climbs back up cleanly.
+        // gate" a successful completion would — "we tried to fire, so
+        // wait the normal cooldown before trying again." In the counter
+        // model that means leaving g_globalCooldownMs at zero (it
+        // already is — the gate walk ran while NO_BEAT_RUNNING) and
+        // NOT touching the top-level state, so the counter climbs back
+        // up cleanly.
         void FinalizeWithFailure(DecisionLog::DecisionRecord rec,
                                  const std::string&          reason,
                                  FinalizedCallback           onFinalized)
@@ -795,9 +795,8 @@ namespace NarrativeEngine::BeatSystem
                 rec.narrativeNote = std::move(narrativeNote);
             }
 
-            // Inject parameter_justification into params for the compose
-            // step to consume as sender-motivation seed. Same shape as
-            // the pre-refactor injection.
+            // Inject parameter_justification into params for the
+            // compose step to consume as sender-motivation seed.
             if (!parameterJustification.empty()) {
                 parameters["parameter_justification"] =
                     std::move(parameterJustification);

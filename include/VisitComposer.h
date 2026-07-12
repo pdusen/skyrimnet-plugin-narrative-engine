@@ -16,21 +16,20 @@
 // content for an in-person NPC visit to the player.
 //
 // Runs on top of SkyrimNetAPI::SendCustomPromptToLLM. The sender is
-// **pre-chosen** by the action-select LLM from the candidate list
+// **pre-chosen** by the beat-select LLM from the candidate list
 // exposed on the npc_visit entry — the compose call embodies them,
 // mirroring how LetterComposer takes a pre-picked sender from
-// action-select and only writes the content.
+// beat-select and only writes the content.
 //
-// Callers (NPCVisitAction and ActionDispatcher) drive the two-stage
-// flow:
-//   1. ActionDispatcher builds `visit_sender_candidates` via
+// The two-stage flow driven by NPCVisitBeat and BeatSystem:
+//   1. BeatSystem::ConsiderBeat builds `visit_sender_candidates` via
 //      `CollectSenderCandidates()` when npc_visit is on the shortlist,
-//      attaches them to the action-select prompt.
-//   2. Action-select LLM returns `sender_npc_form_id` in the
-//      npc_visit parameters block.
-//   3. NPCVisitAction::Start reads that FormID and passes it to
-//      `Compose()`, which produces the briefing / narration / mood /
-//      topic / tags for that sender.
+//      attaches them to the beat-select prompt.
+//   2. Beat-select LLM returns `sender_npc_form_id` in the npc_visit
+//      parameters block.
+//   3. NPCVisitBeat::OnStart records the FormID; the beat's COMPOSE
+//      arm passes it to `Compose()`, which produces the briefing /
+//      narration / mood / topic for that sender.
 namespace NarrativeEngine::VisitComposer
 {
     struct VisitBriefing
@@ -58,7 +57,7 @@ namespace NarrativeEngine::VisitComposer
     };
 
     // A single viable visit sender, resolved on the main thread by
-    // CollectSenderCandidates. Passed to the action-select stage so
+    // CollectSenderCandidates. Passed to the beat-select stage so
     // the LLM sees who's available and can pick one; the picked
     // FormID then flows into Compose (which fresh-fetches the
     // sender's memories on the main thread before composing).
@@ -79,11 +78,11 @@ namespace NarrativeEngine::VisitComposer
     // Empty when SkyrimNet is unavailable or no viable candidates
     // exist.
     //
-    // Called by ActionDispatcher when npc_visit is among the
-    // action-select candidates.
+    // Called by BeatSystem::ConsiderBeat when npc_visit is among the
+    // beat-select candidates.
     std::vector<SenderCandidate> CollectSenderCandidates();
 
-    // Serialize a candidate list into the JSON shape the action-select
+    // Serialize a candidate list into the JSON shape the beat-select
     // prompt consumes: [{form_id (hex str), name, engagement_score,
     // last_interacted_at, memories}]. Mirrors
     // LetterComposer::SerializeSenderCandidates.
@@ -103,19 +102,19 @@ namespace NarrativeEngine::VisitComposer
     // unavailable, sender no longer viable, LLM error, parse
     // failure, validation failure). Failure reasons are logged.
     // `parameterJustification` is the `parameter_justification`
-    // string the action-select LLM emitted alongside the sender pick
+    // string the beat-select LLM emitted alongside the sender pick
     // — the in-fiction, sender-frame explanation of why THIS sender
     // is coming (rooted in what they'd actually know). Rendered into
     // the compose prompt as the sender's motivation seed so the
     // compose LLM stays grounded in the director's actual choice
     // rather than inventing one from the sender's memory tail.
     //
-    // Deliberately separate from action-select's `narrative_note`
+    // Deliberately separate from beat-select's `narrative_note`
     // (which is director-frame commentary about world state the
     // sender may not know) — only the sender-frame justification
-    // reaches compose. Empty string means action-select didn't
-    // supply one; the prompt handles the empty case by falling back
-    // to the previous "invent-from-memories" behavior.
+    // reaches compose. Empty string means beat-select didn't supply
+    // one; the prompt handles the empty case by inventing motivation
+    // from the sender's memory tail.
     void Compose(
         const BeatContext& ctx,
         UrgencyHint          urgencyHint,

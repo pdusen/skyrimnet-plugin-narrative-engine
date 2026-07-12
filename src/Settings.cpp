@@ -80,12 +80,6 @@ namespace NarrativeEngine::Settings
             g_config.beatRepetitionWindowSeconds = static_cast<int>(
                 ini.GetLongValue("BeatSystem", "iBeatRepetitionWindowSeconds",
                                  g_config.beatRepetitionWindowSeconds));
-            // TODO PHASE-06: dies with ActionDispatcher in Step 11. Kept
-            // in the [Director] section for now so an existing INI still
-            // reads correctly.
-            g_config.actionStaleLockTimeoutSeconds = static_cast<int>(
-                ini.GetLongValue("Director", "iActionStaleLockTimeoutSeconds",
-                                 g_config.actionStaleLockTimeoutSeconds));
 
             g_config.letterMinSenderCandidates = static_cast<int>(
                 ini.GetLongValue("Director", "iLetterMinSenderCandidates",
@@ -163,7 +157,7 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("LetterPool", "iLetterPoolEvictionLogVerbosity",
                                  g_config.letterPoolEvictionLogVerbosity));
 
-            // --- Phase 05 (NPCVisitAction) ---
+            // --- NPCVisitBeat ---
 
             g_config.visitMinSenderCandidates = static_cast<int>(
                 ini.GetLongValue("Director", "iVisitMinSenderCandidates",
@@ -227,12 +221,6 @@ namespace NarrativeEngine::Settings
             g_config.visitReturnHomeTimeoutSeconds = static_cast<int>(
                 ini.GetLongValue("Beats", "iVisitReturnHomeTimeoutSeconds",
                                  g_config.visitReturnHomeTimeoutSeconds));
-            // TODO PHASE-06: visitHardTimeoutSeconds dies with the old
-            // NPCVisitAction in Step 10. Kept transitionally so the read
-            // path still populates it during the intervening builds.
-            g_config.visitHardTimeoutSeconds = static_cast<int>(
-                ini.GetLongValue("Beats", "iVisitHardTimeoutSeconds",
-                                 g_config.visitHardTimeoutSeconds));
 
             return true;
         }

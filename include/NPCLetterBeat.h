@@ -67,9 +67,10 @@ namespace NarrativeEngine
 
         // Synchronously Stop() + Reset() the per-slot delivery quest so
         // it's ready for the next allocation. Used by the allocator's
-        // recycle path — see the pre-refactor NPCLetterAction docs for
-        // the rationale (need synchronous Stop/Reset when the next
-        // dispatch would race the async Shutdown fragment chain).
+        // recycle path: the next dispatch on this slot lands in the same
+        // frame, and the quest's own async Shutdown fragment chain
+        // wouldn't finish before the fresh EnsureQuestStarted races it,
+        // so the native Stop+Reset unwinds synchronously instead.
         void ShutdownSlotQuestSync(std::size_t slotIndex);
 
         // Delete the LetterRef alias's spawned REFR for the given slot.

@@ -64,7 +64,7 @@ namespace NarrativeEngine::LocationKeywords
     // "Visit-hostile extras" — cells where a stranger NPC walking up to
     // start a conversation would read as jarring or immersion-breaking,
     // but which are NOT covered by `kDangerous` (they're civilised /
-    // settled). NPCVisitAction gates on `IsDangerous` PLUS these; the
+    // settled). NPCVisitBeat gates on `IsDangerous` PLUS these; the
     // extras are kept as a separate list so the dangerous-keyword table
     // stays focused on hostile combat encounters.
     inline constexpr std::array<std::string_view, 3> kVisitHostileExtras = {
@@ -117,7 +117,7 @@ namespace NarrativeEngine::LocationKeywords
     bool IsDangerous(RE::BGSLocation* loc);
 
     // True when `loc` (or any ancestor) is either kDangerous OR carries a
-    // keyword from kVisitHostileExtras. Used by NPCVisitAction's
+    // keyword from kVisitHostileExtras. Used by NPCVisitBeat's
     // IsAvailable gate to reject cells where an NPC walking up to talk
     // would be jarring — dungeons, bandit camps (via IsDangerous), plus
     // jails, arenas, and barracks (via the extras table).

@@ -12,16 +12,12 @@ namespace RE { class Actor; }
 
 // IBeat — the interface every Narrative Beat implements.
 //
-// Replaces the pre-Phase-06 IAction contract. The Narrative Beat System's
-// master poll drives every registered beat through a single Tick(mode,
-// state) entry point; the beat's own per-beat state machine (NOT_RUNNING /
-// COMPOSE / RUNNING / CLEANUP) decides what happens on each cycle.
-//
-// See docs/implementation/PHASE_06_BEAT_SYSTEM_REFACTOR.md for the full
-// architectural picture. Start(), DetectAndRollbackFailedStart(), and
-// DetectCompletion() from the old IAction interface are gone: Start's
-// role moves into Tick's COMPOSE arm, the two Detect polls become
-// counter-driven transitions inside Tick.
+// The Narrative Beat System's master poll drives every registered beat
+// through a single Tick(mode, state) entry point; the beat's own per-
+// beat state machine (NOT_RUNNING / COMPOSE / RUNNING / CLEANUP) decides
+// what happens on each cycle. Pre-quest work lives in Tick's COMPOSE
+// arm; failure detection and completion detection are counter-driven
+// transitions inside Tick.
 namespace NarrativeEngine
 {
     // Which way this beat pushes narrative tension.

@@ -1,7 +1,5 @@
 #include <Plugin.h>
 
-#include <ActionDispatcher.h>
-#include <ActionRegistry.h>
 #include <AmbushBeat.h>
 #include <AsyncDispatch.h>
 #include <BeatRegistry.h>
@@ -56,23 +54,12 @@ namespace NarrativeEngine
                     // source holder exists by then.
                     CombatEventLog::Initialize();
                     AsyncDispatch::Start();
-                    // ActionDispatcher registers the _ne_ActionCompleted
-                    // ModEvent sink. Order matters: AsyncDispatch must be
-                    // up because the sink marshals through it.
-                    ActionDispatcher::Initialize();
-                    // PHASE-06: BeatRegistry is initialized alongside
-                    // the existing ActionRegistry during the transitional
-                    // phase. Both coexist until Step 11 deletes the old
-                    // one.
                     BeatRegistry::Initialize();
                     // BeatSystem's master poll starts here. Runs
                     // continuously on its own worker thread from now
                     // until plugin unload; the top-level state stays at
                     // NO_BEAT_RUNNING until a beat gets dispatched.
                     BeatSystem::Initialize();
-                    // PHASE-06: Register the new IBeat-based beats.
-                    // AmbushBeat lands here (Step 8); NPCLetterBeat and
-                    // NPCVisitBeat land in Steps 9 and 10.
                     BeatRegistry::Register(std::make_unique<AmbushBeat>());
                     BeatRegistry::Register(std::make_unique<NPCLetterBeat>());
                     if (Settings::Get().enableNpcVisit) {
@@ -110,7 +97,6 @@ namespace NarrativeEngine
                     logger::info("OnMessage: kNewGame");
                     DecisionLog::Clear();
                     CombatEventLog::OnRevert();
-                    ActionDispatcher::OnRevert();
                     BeatSystem::OnRevert();
                     AmbushBeat_Persistence::OnRevert();
                     NPCLetterBeat_Persistence::OnRevert();
@@ -135,7 +121,6 @@ namespace NarrativeEngine
                     Tick::Stop();
                     DecisionLog::Clear();
                     CombatEventLog::OnRevert();
-                    ActionDispatcher::OnRevert();
                     BeatSystem::OnRevert();
                     AmbushBeat_Persistence::OnRevert();
                     NPCLetterBeat_Persistence::OnRevert();
@@ -162,7 +147,6 @@ namespace NarrativeEngine
             PhaseTracker::OnSave(intfc);
             DecisionLog::OnSave(intfc);
             CombatEventLog::OnSave(intfc);
-            ActionDispatcher::OnSave(intfc);
             BeatSystem::OnSave(intfc);
             AmbushBeat_Persistence::OnSave(intfc);
             NPCLetterBeat_Persistence::OnSave(intfc);
@@ -192,9 +176,6 @@ namespace NarrativeEngine
                         break;
                     case CombatEventLog::kRecordTypeId:
                         CombatEventLog::OnLoad(intfc, version, length);
-                        break;
-                    case ActionDispatcher::kRecordTypeId:
-                        ActionDispatcher::OnLoad(intfc, version, length);
                         break;
                     case BeatSystem::kRecordTypeId:
                         BeatSystem::OnLoad(intfc, version, length);
@@ -232,7 +213,6 @@ namespace NarrativeEngine
             PhaseTracker::OnRevert();
             DecisionLog::OnRevert();
             CombatEventLog::OnRevert();
-            ActionDispatcher::OnRevert();
             BeatSystem::OnRevert();
             AmbushBeat_Persistence::OnRevert();
             NPCLetterBeat_Persistence::OnRevert();

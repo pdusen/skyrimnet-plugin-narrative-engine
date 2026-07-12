@@ -61,9 +61,9 @@ namespace NarrativeEngine::BeatSystem
     std::string   GetRunningBeatName();
     std::uint32_t GetGlobalCooldownMs();
 
-    // In-flight query for the dashboard, mirroring the pre-refactor
-    // ActionDispatcher::GetInFlightInfo shape plus a BeatState field.
-    // Populated only when top-level state is BEAT_RUNNING.
+    // In-flight query for the dashboard: name, wall-clock start time,
+    // and current BeatState. Populated only when the top-level state
+    // is BEAT_RUNNING.
     struct InFlightInfo
     {
         std::string name;
@@ -78,11 +78,11 @@ namespace NarrativeEngine::BeatSystem
     // ownership of snapshot and rec.
     //
     // Walks the top-level gates (already-running / cooldown / phase
-    // dwell / registered-candidate availability), fires the beat-select
-    // LLM when the gates pass and there is at least one candidate,
-    // and eventually calls onFinalized exactly once on the main thread.
-    // When no candidates exist (Steps 6–7 baseline: no beats
-    // registered), skips cleanly with ApplyDecision + onFinalized.
+    // dwell / global preconditions / candidate availability), fires
+    // the beat-select LLM when the gates pass and there is at least
+    // one candidate, and eventually calls onFinalized exactly once on
+    // the main thread. When no candidates survive filtering, skips
+    // cleanly with ApplyDecision + onFinalized.
     using FinalizedCallback = std::function<void()>;
     void ConsiderBeat(Snapshot                    snapshot,
                       DecisionLog::DecisionRecord rec,
@@ -106,8 +106,7 @@ namespace NarrativeEngine::BeatSystem
     // lock and the global preconditions (combat / dialogue / scripted
     // scene / DND cell). Still runs the beat-select LLM against a
     // one-element candidate list so parameter validation flows through
-    // the same code path as the normal dispatch — mirrors the pre-
-    // refactor ActionDispatcher::ForceDispatchAction shape.
+    // the same code path as the normal dispatch.
     //
     // No-op when a beat is already running or when `name` isn't in the
     // registry. Logs and returns cleanly in both cases.

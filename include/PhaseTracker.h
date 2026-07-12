@@ -29,9 +29,9 @@ namespace NarrativeEngine::PhaseTracker
         Count,  // sentinel for bounds-checking; not a real phase
     };
 
-    // Which way tension needs to move to leave a given phase. Used by the
-    // ActionDispatcher to filter the toolbox down to candidates whose
-    // polarity matches the current phase's outgoing direction.
+    // Which way tension needs to move to leave a given phase. Used by
+    // BeatSystem::ConsiderBeat to filter the registry down to candidates
+    // whose polarity matches the current phase's outgoing direction.
     //   Exposition / RisingAction / Resolution → Raise
     //   Climax / FallingAction                 → Lower
     enum class Direction : std::uint8_t { Raise, Lower };

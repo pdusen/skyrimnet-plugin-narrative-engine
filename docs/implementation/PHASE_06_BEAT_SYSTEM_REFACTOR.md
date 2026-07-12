@@ -1781,7 +1781,7 @@ detours during combat.
 
 ### Step 12 — Delete old modules
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
