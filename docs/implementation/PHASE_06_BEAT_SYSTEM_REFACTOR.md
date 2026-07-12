@@ -831,7 +831,8 @@ Step order:
    `NPCVisitAction_Cooldowns` — have external callers in
    `LetterPool.cpp` and `VisitComposer.cpp` and can't be
    wrapped without breaking the link). The old files get
-   deleted when each beat is rewritten in Steps 9–11.
+   deleted when each beat is rewritten in Steps 8, 10,
+   and 11.
 2. Settings + INI rename.
 3. `IBeat` interface + `BeatRegistry` skeleton.
 4. `BeatSystem` module — master poll worker thread.
@@ -839,13 +840,16 @@ Step order:
 6. `EvaluationPipeline` redirect + `DecisionLog` rename.
 7. Dashboard rename + query-source swap.
 8. Reshape and rename Ambush → `AmbushBeat`.
-9. Reshape and rename NPC Letter → `NPCLetterBeat`.
-10. Reshape and rename NPC Visit → `NPCVisitBeat`.
-11. Delete `ActionDispatcher`, `IAction`, `ActionRegistry`,
+9. `BeatSystem::ConsiderBeat` — full beat-select LLM
+   handshake. Unblocks Director-normal-cadence dispatch
+   for every registered beat.
+10. Reshape and rename NPC Letter → `NPCLetterBeat`.
+11. Reshape and rename NPC Visit → `NPCVisitBeat`.
+12. Delete `ActionDispatcher`, `IAction`, `ActionRegistry`,
     `PollUntilOrTimeout`. (Deferred until every beat has
     been rewritten, at which point nothing references
     them.)
-12. Papyrus fragment sweep — remove
+13. Papyrus fragment sweep — remove
     `SendModEvent("_ne_ActionCompleted", ...)` calls.
 
 **Note on step reordering.** The initial plan put the old-
@@ -858,6 +862,17 @@ depends on `NPCLetterAction_QuestControl` /
 after the beat rewrites (where each old file is deleted
 by its replacement) resolves this without any extra
 surgery on `LetterPool` or `VisitComposer`.
+
+**Note on the LLM handshake (Step 9).** Step 6 wired
+`EvaluationPipeline` to call `BeatSystem::ConsiderBeat`,
+but the beat-select LLM round trip inside `ConsiderBeat`
+was left as a TODO. That meant Ambush (registered at
+Step 8) was reachable via dashboard force-dispatch but
+not via Director-normal-cadence dispatch. Step 9 ports
+the LLM handshake in — after which every registered beat
+becomes fully reachable end-to-end and the Letter/Visit
+rewrites in Steps 10–11 land onto a working dispatch
+pipeline.
 
 ---
 
@@ -954,9 +969,9 @@ setting.
 2. `actionStaleLockTimeoutSeconds` and
    `visitHardTimeoutSeconds` are **retained transitionally**:
    `actionStaleLockTimeoutSeconds` is still read by
-   `ActionDispatcher` (deleted in Step 11);
+   `ActionDispatcher` (deleted in Step 12);
    `visitHardTimeoutSeconds` is still read by
-   `NPCVisitAction` (rewritten in Step 10). Both are
+   `NPCVisitAction` (rewritten in Step 11). Both are
    removed at their consumer's death point. Marked with
    `// TODO PHASE-06` comments in `Settings.h` /
    `Settings.cpp` / `NarrativeEngine.ini`.
@@ -1008,7 +1023,8 @@ setting.
 
 **Goal:** Land the new interface and its registry as inert
 headers/source. Nothing calls into them yet; they exist
-only to be extended by Step 4 and consumed by Steps 9–11.
+only to be extended by Step 4 and consumed by Steps 8, 10,
+and 11.
 
 **Files:**
 
@@ -1017,7 +1033,7 @@ only to be extended by Step 4 and consumed by Steps 9–11.
 - `include/BeatRegistry.h` — new. Registration and lookup
   surface.
 - `src/BeatRegistry.cpp` — new. Vector of registered
-  beats; `Initialize()` as a no-op (Steps 9–11 add
+  beats; `Initialize()` as a no-op (Steps 8, 10, 11 add
   registrations); `LookupByName`; `EnumerateAvailable`.
 - `src/Plugin.cpp` — wire `BeatRegistry::Initialize()`
   into the existing `kDataLoaded` handler *alongside* the
@@ -1299,7 +1315,7 @@ beat name.
 4. Update the Dispatch tab's per-beat enable toggles and
    force-dispatch buttons to display beat names (empty
    list at this stage; registrations come back in
-   Steps 9–11).
+   Steps 8, 10, 11).
 
 **Verify:**
 
@@ -1387,7 +1403,173 @@ combat play out."
 
 ---
 
-### Step 9 — Reshape and rename NPC Letter → `NPCLetterBeat`
+### Step 9 — `BeatSystem::ConsiderBeat` — full beat-select LLM handshake
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+**Goal:** Replace the placeholder "candidate path not
+implemented yet — skipping" branch in `ConsiderBeat` with
+the full beat-select LLM round trip. After this step,
+every registered beat is reachable via both dashboard
+force-dispatch AND Director-normal-cadence dispatch. This
+unblocks Steps 10 and 11 (letter, visit) from having to
+add their own dispatch plumbing.
+
+The logic ported here mirrors what `ActionDispatcher::ConsiderAction`
+does today — the difference is the interface (`IBeat` /
+`BeatContext` / `BeatRegistry` / `BeatSystem::StartBeat`)
+and the top-level state model (BeatSystem's cosave record
+replaces ActionDispatcher's `g_actionInFlight`). The prompt
+template name (`narrative_engine_action_select`) is
+preserved as-is — the SkyrimNet-side rename is out of scope
+here.
+
+**Files:**
+
+- `include/BeatSystem.h` — declare
+  `ForceDispatchBeat(std::string_view name)` for the
+  dashboard's force-dispatch path (bypasses the LLM
+  candidate build but still runs prompt + response through
+  the same LLM to satisfy validation and land parameters
+  on the beat's OnStart).
+- `src/BeatSystem.cpp` — flesh out `ConsiderBeat`. Add
+  helper functions for the ported logic:
+  - `BuildBeatContextFromSnapshot(snapshot, direction, tensionDelta)`
+    — main-thread ctx builder, analogous to
+    `BuildActionContextFromSnapshot`.
+  - `CheckGlobalBeatPreconditions(ctx)` — port of
+    `CheckGlobalActionPreconditions` (combat / dialogue /
+    scripted scene / DND cell gates).
+  - `BuildBeatSelectPromptContext(...)` — port of
+    `BuildActionPromptContext`; assembles candidates,
+    per-candidate letter/visit sender lists, player
+    context, recent-events tail.
+  - `TrimRecentlyFiredLocked(now)` and
+    `WasFiredRecentlyLocked(name, now)` — port of the
+    anti-repetition ring. Owned by `BeatSystem` (its own
+    mutex + deque; not shared with ActionDispatcher).
+  - `FinalizeWithFailure(rec, reason, onFinalized)` — port
+    of the failure-path helper; stamps
+    `rec.beatSelected = "(failed: <reason>)"`, applies
+    global cooldown (resets `g_globalCooldownMs = 0`),
+    calls ApplyDecision + onFinalized.
+  - `FinalizeWithLLMResponse(snapshot, rec, candidateNames,
+    chosenBeat, parameters, narrativeNote,
+    parameterJustification, direction, tensionDelta,
+    onFinalized)` — port of the LLM-response finalizer.
+    Validates name, re-checks global preconditions,
+    populates rec, calls `StartBeat(chosenBeat,
+    parameters)`.
+- `include/EvaluationPipeline.h` — no changes; the
+  `ApplyDecision` accessor was already used from Step 6.
+- `src/DashboardUIManager.cpp` — swap the force-dispatch
+  handler from `BeatSystem::StartBeat(name, {})` to
+  `BeatSystem::ForceDispatchBeat(name)` so force-dispatch
+  runs through the same LLM validation path (this matches
+  what the old `ForceDispatchAction` did — single-element
+  candidate list, LLM invoked, response validated, then
+  StartBeat).
+
+**Sub-tasks:**
+
+1. Add the anti-repetition ring state to `BeatSystem.cpp`
+   (mutex + `std::deque<RecentlyFired>`). Cap and window
+   sourced from `Settings::Get().beatRepetitionWindowSeconds`.
+2. Author `BuildBeatContextFromSnapshot` — copy from
+   `ActionDispatcher::BuildActionContextFromSnapshot`,
+   swap `ActionContext` → `BeatContext`.
+3. Author `CheckGlobalBeatPreconditions` — port verbatim.
+4. Author `BuildBeatSelectPromptContext` — port
+   `BuildActionPromptContext`. Preserve the special-case
+   letter/visit sender-candidate collection (the branch
+   guarded on `a->Name() == "npc_letter"` /
+   `"npc_visit"`). Note: at Step 9 completion, only
+   `ambush` is registered — the letter/visit special-
+   cases sit dormant until Steps 10/11 land the beats.
+5. In `ConsiderBeat`, after Gate 5 (candidates
+   non-empty), continue with:
+   - Anti-repetition filter pass on candidates.
+   - Sender-candidate pre-collection for letter/visit
+     beats.
+   - Assemble prompt context via
+     `BuildBeatSelectPromptContext`.
+   - Fire `SkyrimNetAPI::SendCustomPromptToLLM`
+     (`narrative_engine_action_select` / `narrative_engine_director`).
+   - Callback: parse the response on the SkyrimNet
+     thread, marshal to main thread, call
+     `FinalizeWithLLMResponse`.
+   - Handle the `!queued` failure path with
+     `FinalizeWithFailure`.
+6. Author `FinalizeWithLLMResponse`. Key differences from
+   the old ActionDispatcher version:
+   - Chosen-beat lookup via `BeatRegistry::Find`.
+   - No `action->Start(ctx, parameters)` call — instead,
+     hand off to `BeatSystem::StartBeat(chosenBeat,
+     parameters)`. StartBeat's OnStart + top-level state
+     transition replace the old Start's role.
+   - After a successful StartBeat, push to the recently-
+     fired ring and call `ApplyDecision(rec)` +
+     `onFinalized`.
+7. Author `ForceDispatchBeat(name)` — mirror the
+   ActionDispatcher force-dispatch shape: build a
+   one-element candidate list, bypass every gate, fire the
+   LLM with the single-candidate prompt so parameter
+   validation still runs through the same code path, then
+   land on `FinalizeWithLLMResponse`. Refuses cleanly if
+   another beat is in flight.
+8. Swap `DashboardUIManager::OnDispatchAction` to call
+   `ForceDispatchBeat` instead of `StartBeat({})`.
+
+**Specifics:**
+
+- The prompt template stays
+  `narrative_engine_action_select` — its input schema is
+  driven by the same JSON we're building. A SkyrimNet-side
+  rename to `narrative_engine_beat_select` is deferred
+  and would just be a file rename plus one string
+  constant flip here.
+- The recently-fired ring lives inside `BeatSystem` and
+  is session-only (not persisted). Same shape as
+  `ActionDispatcher`'s ring; the cap is the same
+  `kRecentlyFiredCap = 32`.
+- The global cooldown counter (`g_globalCooldownMs`)
+  is what `ConsiderBeat`'s Gate 3 already reads. Landing
+  in `StartBeat` sets it to 0 (reset), and it ticks up
+  again while `NO_BEAT_RUNNING`. Nothing new to wire.
+- `FinalizeWithFailure` mirrors what the old dispatcher
+  does — writes `rec.beatSelected = "(failed: <reason>)"`
+  and applies the cooldown gate as if the beat had
+  completed. The design intent is "we tried to fire, so
+  wait the normal cooldown before trying again."
+- The Ambush registration from Step 8 stays intact; this
+  step just makes it reachable via the Director cadence
+  in addition to force-dispatch.
+
+**Verify:**
+
+- `pwsh -File build.ps1 build` succeeds.
+- Boot Skyrim; observe an ambient wilderness area.
+- Wait for the Director's tension-eval to fire (30s
+  intervals at dev settings). When the phase gate is
+  open and the environment is ambush-viable, log shows
+  `BeatSystem::ConsiderBeat` firing the LLM, receiving
+  a response, calling `StartBeat("ambush", ...)`, and
+  the beat runs end-to-end.
+- Dashboard's "Recent Decisions" table now shows
+  populated `beatSelected` values instead of empty.
+- Dashboard's "Dispatch → ambush" button still works
+  (routes through `ForceDispatchBeat`, LLM validates the
+  single candidate, ambush fires).
+- Trigger two ambushes in short succession by rewinding
+  cooldowns from the console; confirm the anti-
+  repetition window blocks the second selection with a
+  logged "gate recently_fired" line.
+
+---
+
+### Step 10 — Reshape and rename NPC Letter → `NPCLetterBeat`
 
 - [ ] Complete
 
@@ -1467,7 +1649,7 @@ single-slot courier-dispatch flow; medium complexity.
 
 ---
 
-### Step 10 — Reshape and rename NPC Visit → `NPCVisitBeat`
+### Step 11 — Reshape and rename NPC Visit → `NPCVisitBeat`
 
 - [ ] Complete
 
@@ -1597,7 +1779,7 @@ detours during combat.
 
 ---
 
-### Step 11 — Delete old modules
+### Step 12 — Delete old modules
 
 - [ ] Complete
 
@@ -1615,7 +1797,7 @@ made unreachable.
 - `include/IAction.h` — delete.
 - `include/VisitConclusionPoll.h`,
   `src/VisitConclusionPoll.cpp` — delete (absorbed into
-  `NPCVisitBeat` in Step 10; no remaining callers).
+  `NPCVisitBeat` in Step 11; no remaining callers).
 - `include/AsyncDispatch.h`, `src/AsyncDispatch.cpp` —
   remove the `PollUntilOrTimeout` declaration and
   implementation, plus its supporting constants/types if
@@ -1637,7 +1819,7 @@ made unreachable.
    the deleted symbols (`IAction`, `ActionDispatcher`,
    `ActionRegistry`, `PollUntilOrTimeout`,
    `VisitConclusionPoll`). No matches should remain —
-   Steps 8, 9, and 10 already replaced each beat's file
+   Steps 8, 10, and 11 already replaced each beat's file
    with an `IBeat`-based rewrite, so nothing includes
    the old headers.
 3. Update CMake.
@@ -1653,7 +1835,7 @@ made unreachable.
 
 ---
 
-### Step 12 — Papyrus fragment sweep
+### Step 13 — Papyrus fragment sweep
 
 - [ ] Complete
 
