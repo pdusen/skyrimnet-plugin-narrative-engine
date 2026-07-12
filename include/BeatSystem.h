@@ -8,6 +8,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include <nlohmann/json_fwd.hpp>
 
@@ -92,13 +93,25 @@ namespace NarrativeEngine::BeatSystem
     // BEAT_RUNNING with the given name, seeds the beat's OnStart from
     // the LLM-supplied parameters JSON, and stamps
     // BeatRegistry::MarkDispatched. Called from ConsiderBeat's LLM
-    // response path (once wired) and from the dashboard's force-
-    // dispatch button.
+    // response path and (indirectly, via ForceDispatchBeat) from the
+    // dashboard's force-dispatch button.
     //
     // No-op when a beat is already running or when `name` isn't in the
     // registry. Logs and returns cleanly in both cases.
     void StartBeat(const std::string&    name,
                    const nlohmann::json& parameters);
+
+    // Debug / dashboard entry point for force-dispatching a specific
+    // beat. Bypasses every ConsiderBeat gate except the single-flight
+    // lock and the global preconditions (combat / dialogue / scripted
+    // scene / DND cell). Still runs the beat-select LLM against a
+    // one-element candidate list so parameter validation flows through
+    // the same code path as the normal dispatch — mirrors the pre-
+    // refactor ActionDispatcher::ForceDispatchAction shape.
+    //
+    // No-op when a beat is already running or when `name` isn't in the
+    // registry. Logs and returns cleanly in both cases.
+    void ForceDispatchBeat(std::string_view name);
 
     // Co-save handlers — implementations land in Step 5.
     void OnSave(SKSE::SerializationInterface* intfc);

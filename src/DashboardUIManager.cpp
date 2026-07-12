@@ -204,7 +204,10 @@ namespace NarrativeEngine::DashboardUIManager
 
         // Backs the per-row "Dispatch" button. Payload is the bare
         // beat name (no JSON wrapping — one field). Routes through
-        // BeatSystem::StartBeat, bypassing the LLM candidate flow.
+        // BeatSystem::ForceDispatchBeat so the beat-select LLM still
+        // runs against a one-element candidate list — parameter
+        // validation flows through the same code path as the normal
+        // Director-cadence dispatch.
         void OnDispatchAction(const char* argument)
         {
             const std::string name = argument ? argument : "";
@@ -215,7 +218,7 @@ namespace NarrativeEngine::DashboardUIManager
             logger::info(
                 "DashboardUIManager: ne_dispatchAction('{}') received", name);
             AsyncDispatch::MarshalToMainThread([name]() mutable {
-                BeatSystem::StartBeat(name, nlohmann::json::object());
+                BeatSystem::ForceDispatchBeat(name);
                 // Push once now so the dashboard reflects the "in-
                 // flight" state within a frame.
                 PushFullState();

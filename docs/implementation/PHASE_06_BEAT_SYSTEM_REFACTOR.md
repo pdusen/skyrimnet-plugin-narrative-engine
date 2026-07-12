@@ -1405,7 +1405,7 @@ combat play out."
 
 ### Step 9 — `BeatSystem::ConsiderBeat` — full beat-select LLM handshake
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
