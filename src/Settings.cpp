@@ -197,9 +197,9 @@ namespace NarrativeEngine::Settings
             g_config.visitPollTurnCountThreshold = static_cast<int>(
                 ini.GetLongValue("Actions", "iVisitPollTurnCountThreshold",
                                  g_config.visitPollTurnCountThreshold));
-            g_config.visitPollSilenceGameMinutes = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitPollSilenceGameMinutes",
-                                 g_config.visitPollSilenceGameMinutes));
+            g_config.visitPollSilenceRealSeconds = static_cast<int>(
+                ini.GetLongValue("Actions", "iVisitPollSilenceRealSeconds",
+                                 g_config.visitPollSilenceRealSeconds));
             g_config.visitPollMaxIntervalGameMinutes = static_cast<int>(
                 ini.GetLongValue("Actions", "iVisitPollMaxIntervalGameMinutes",
                                  g_config.visitPollMaxIntervalGameMinutes));

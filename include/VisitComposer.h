@@ -102,10 +102,25 @@ namespace NarrativeEngine::VisitComposer
     // The callback receives nullopt on any failure path (SkyrimNet
     // unavailable, sender no longer viable, LLM error, parse
     // failure, validation failure). Failure reasons are logged.
+    // `parameterJustification` is the `parameter_justification`
+    // string the action-select LLM emitted alongside the sender pick
+    // — the in-fiction, sender-frame explanation of why THIS sender
+    // is coming (rooted in what they'd actually know). Rendered into
+    // the compose prompt as the sender's motivation seed so the
+    // compose LLM stays grounded in the director's actual choice
+    // rather than inventing one from the sender's memory tail.
+    //
+    // Deliberately separate from action-select's `narrative_note`
+    // (which is director-frame commentary about world state the
+    // sender may not know) — only the sender-frame justification
+    // reaches compose. Empty string means action-select didn't
+    // supply one; the prompt handles the empty case by falling back
+    // to the previous "invent-from-memories" behavior.
     void Compose(
         const ActionContext& ctx,
         UrgencyHint          urgencyHint,
         RE::FormID           senderNpcFormID,
+        std::string          parameterJustification,
         std::function<void(std::optional<VisitBriefing>)> callback);
 
     // The set of moods the composer will accept. Exposed for testing.

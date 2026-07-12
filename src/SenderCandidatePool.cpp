@@ -1,13 +1,17 @@
 #include <SenderCandidatePool.h>
 
+#include <AliasWalkFilter.h>
 #include <LLMTextSanitizer.h>
+#include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <logger.h>
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdio>
 #include <random>
+#include <string>
 #include <utility>
 
 namespace NarrativeEngine::SenderCandidatePool
@@ -160,6 +164,20 @@ namespace NarrativeEngine::SenderCandidatePool
                 return;
             }
 
+            const bool debug = Settings::Get().debugMode;
+
+            // Per-walk skip-reason tally. Aggregated summary is
+            // logged at end of walk so we can see WHY the pool
+            // shrank without one line per candidate spamming the log.
+            int skippedNoActor       = 0;
+            int skippedDead          = 0;
+            int skippedDisabled      = 0;
+            int skippedNoName        = 0;
+            int skippedStoryActive   = 0;
+            int skippedExtraFilter   = 0;
+            std::string firstStoryActiveReason;
+            std::string firstExtraFilterReason;
+
             for (auto& entry : enrolled) {
                 if (!entry.is_object()) continue;
 
@@ -172,9 +190,9 @@ namespace NarrativeEngine::SenderCandidatePool
 
                 auto* form  = RE::TESForm::LookupByID(formId);
                 auto* actor = form ? form->As<RE::Actor>() : nullptr;
-                if (!actor)           continue;
-                if (actor->IsDead())    continue;
-                if (actor->IsDisabled()) continue;
+                if (!actor)             { ++skippedNoActor;   continue; }
+                if (actor->IsDead())    { ++skippedDead;      continue; }
+                if (actor->IsDisabled()) { ++skippedDisabled; continue; }
 
                 // Name is required for the LLM to identify the candidate.
                 std::string name;
@@ -182,17 +200,78 @@ namespace NarrativeEngine::SenderCandidatePool
                     it != entry.end() && it->is_string()) {
                     name = LLMTextSanitizer::Sanitize(it->get<std::string>());
                 }
-                if (name.empty()) continue;
+                if (name.empty())       { ++skippedNoName;    continue; }
+
+                // Story-active gate — reject NPCs currently being
+                // puppeteered by another quest's alias-supplied AI
+                // package or by an in-progress scene. Verbose in
+                // debug mode so the walk trace is inspectable.
+                {
+                    std::string storyReason;
+                    if (AliasWalkFilter::IsActorStoryActive(
+                            actor, &storyReason, debug)) {
+                        ++skippedStoryActive;
+                        if (firstStoryActiveReason.empty()) {
+                            char idBuf[16];
+                            std::snprintf(idBuf, sizeof(idBuf), "0x%X",
+                                          formId);
+                            firstStoryActiveReason =
+                                name + "(" + idBuf + ")=" + storyReason;
+                        }
+                        if (debug) {
+                            logger::debug(
+                                "SenderCandidatePool: skipping '{}' (0x{:X}) — "
+                                "story-active: {}",
+                                name, formId, storyReason);
+                        }
+                        continue;
+                    }
+                }
 
                 if (extraFilter) {
                     std::string skipReason;
                     if (!extraFilter(actor, &skipReason)) {
+                        ++skippedExtraFilter;
+                        if (firstExtraFilterReason.empty() && !skipReason.empty()) {
+                            firstExtraFilterReason =
+                                name + "=" + skipReason;
+                        }
                         continue;
                     }
                 }
 
                 onViable(actor, entry, std::move(name));
-                if (stopWhen()) return;
+                if (stopWhen()) {
+                    if (debug) {
+                        logger::debug(
+                            "SenderCandidatePool: walk early-exit (cap reached) "
+                            "— skips: story-active={}, extra-filter={}, no-actor={}, "
+                            "dead={}, disabled={}, no-name={}",
+                            skippedStoryActive, skippedExtraFilter,
+                            skippedNoActor, skippedDead, skippedDisabled,
+                            skippedNoName);
+                    }
+                    return;
+                }
+            }
+
+            if (debug) {
+                const std::string storyExample =
+                    firstStoryActiveReason.empty()
+                        ? std::string{}
+                        : " (e.g. " + firstStoryActiveReason + ")";
+                const std::string extraExample =
+                    firstExtraFilterReason.empty()
+                        ? std::string{}
+                        : " (e.g. " + firstExtraFilterReason + ")";
+                logger::debug(
+                    "SenderCandidatePool: walk complete — skips: "
+                    "story-active={}{}, extra-filter={}{}, no-actor={}, "
+                    "dead={}, disabled={}, no-name={}",
+                    skippedStoryActive, storyExample,
+                    skippedExtraFilter, extraExample,
+                    skippedNoActor, skippedDead, skippedDisabled,
+                    skippedNoName);
             }
         }
     }

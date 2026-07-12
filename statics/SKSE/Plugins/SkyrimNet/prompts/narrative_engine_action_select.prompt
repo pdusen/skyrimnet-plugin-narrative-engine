@@ -23,7 +23,7 @@ Pick **one** action that best fits the present moment, choose any
 parameters it needs, and return your selection.
 
 ## Output Format
-Return a JSON object with exactly three keys. No markdown fences. No prose
+Return a JSON object with exactly four keys. No markdown fences. No prose
 before or after the object.
 
 - `action` — string. MUST exactly match one of the `name` values in the
@@ -34,7 +34,16 @@ before or after the object.
   chosen action validates its own parameter shape — missing or
   out-of-range fields fall back to defaults.
 - `narrative_note` — one sentence, ≤200 characters, explaining why this
-  action fits this moment.
+  action fits this moment. Director-frame commentary — "the beat calls
+  for X because Y". Do NOT put words in a sender's mouth here; this is
+  YOUR reasoning as the director, not the sender's motivation.
+- `parameter_justification` — one to three sentences, ≤400 characters.
+  In-fiction reasoning for the specific `parameters` values, written
+  in the frame of whoever/whatever the parameters refer to. For a
+  chosen sender: name them by their human-readable name and state
+  their own motivation for the action, grounded strictly in what
+  they'd know from their memories and prior dialogue — never in
+  player-experienced events they weren't part of.
 
 ## Hard Constraints
 - Output strict JSON. No markdown code fences. No prose before or after

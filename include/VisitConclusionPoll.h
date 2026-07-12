@@ -77,12 +77,26 @@ namespace NarrativeEngine::VisitConclusionPoll
     // in Step 15).
     std::uint32_t ConsecutivePollFailures();
 
-    // Game-time seconds since the last observed speech turn from
-    // sender/player. Returns 0 if the poll is disarmed or no
-    // speech has ever been observed. Used by Step 11's verdict
-    // handler to decide whether to fire a ContinueConversation
-    // nudge on a `should_conclude=false` verdict.
-    double SilenceGameSeconds();
+    // Real (wall-clock) seconds since the last observed speech
+    // turn from sender/player, EXCLUDING intervals during which
+    // `RE::UI::GameIsPaused()` was true — journal, inventory, map,
+    // load screens, main-menu stints, etc. Advanced incrementally
+    // on each GateTick call, so the accumulation reflects "the
+    // player was actively in the game world doing nothing".
+    // Returns 0 if the poll is disarmed or no speech has ever been
+    // observed. Used by Step 11's verdict handler to decide
+    // whether to fire a ContinueConversation nudge on a
+    // `should_conclude=false` verdict.
+    //
+    // Rationale: the previous game-time measurement made the
+    // nudge/valediction cadence depend on the user's iTimescale
+    // (many users run 4-6 rather than the vanilla 20), so on a
+    // slower timescale the silence gate could trip while the
+    // player was just reading the dialogue view for what was, in
+    // real time, an ordinary reply beat. Real-time-with-pause-
+    // subtracted matches how long a human conversation partner
+    // would actually wait before assuming they were being ignored.
+    double SilenceRealSeconds();
 
     // Game-time seconds at which Discuss was armed. Consumers use
     // this to filter out pre-Salutation dialogue from event

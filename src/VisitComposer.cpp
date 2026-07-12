@@ -298,7 +298,8 @@ namespace NarrativeEngine::VisitComposer
             const std::string&    senderName,
             RE::FormID            senderFormID,
             const nlohmann::json& senderMemories,
-            const nlohmann::json& senderRecentDialogue)
+            const nlohmann::json& senderRecentDialogue,
+            const std::string&    parameterJustification)
         {
             const auto& cfg = Settings::Get();
 
@@ -321,6 +322,7 @@ namespace NarrativeEngine::VisitComposer
             root["sender_form_id"] = idBuf;
             root["sender_memories"] = senderMemories;
             root["sender_recent_dialogue"] = senderRecentDialogue;
+            root["parameter_justification"] = parameterJustification;
             return root;
         }
     }
@@ -392,6 +394,7 @@ namespace NarrativeEngine::VisitComposer
         const ActionContext& ctx,
         UrgencyHint          urgencyHint,
         RE::FormID           senderNpcFormID,
+        std::string          parameterJustification,
         std::function<void(std::optional<VisitBriefing>)> callback)
     {
         if (!callback) return;
@@ -468,7 +471,7 @@ namespace NarrativeEngine::VisitComposer
 
         const auto promptCtx = BuildComposePromptContext(
             ctx, urgencyHint, playerName, senderName, senderNpcFormID,
-            memories, recentDialogue);
+            memories, recentDialogue, parameterJustification);
         const auto promptCtxStr = promptCtx.dump();
         if (Settings::Get().debugMode) {
             logger::debug("VisitComposer: prompt context: {}", promptCtxStr);

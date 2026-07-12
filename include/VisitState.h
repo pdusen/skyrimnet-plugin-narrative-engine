@@ -52,7 +52,7 @@ namespace NarrativeEngine::VisitState
         Completed,     // Discuss reached a natural conclusion via the poll
         Unsatisfied,   // sender left because the player ignored them
         RolledBack,    // Salutation timeout; beat never really started
-        Aborted,       // hard-abort branch fired (death or outer timeout)
+        Aborted,       // hard-abort branch fired (death, combat-stuck, or poll-broken)
     };
 
     // The persisted data — cached briefing, return-teleport bookkeeping,
@@ -71,8 +71,9 @@ namespace NarrativeEngine::VisitState
         std::string             topicTag;
         std::string             mood;
 
-        // Wall-clock start time of the whole visit lifecycle (drives the
-        // outer hard-timeout guard).
+        // Wall-clock start time of the whole visit lifecycle. Used for
+        // history-entry duration and for the dashboard's "visit started
+        // at" display; no longer feeds any abort clock.
         double                  dispatchedAtRealSeconds = 0.0;
 
         // Consecutive `ContinueConversation` fires without a poll ever

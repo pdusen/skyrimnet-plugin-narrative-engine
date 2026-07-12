@@ -436,6 +436,7 @@ namespace NarrativeEngine::ActionDispatcher
                                      std::string                   chosenAction,
                                      nlohmann::json                parameters,
                                      std::string                   narrativeNote,
+                                     std::string                   parameterJustification,
                                      PhaseTracker::Direction       direction,
                                      int                           tensionDelta,
                                      FinalizedCallback             onFinalized)
@@ -498,6 +499,29 @@ namespace NarrativeEngine::ActionDispatcher
             rec.actionParametersJSON = parameters.dump();
             if (!narrativeNote.empty()) {
                 rec.narrativeNote = std::move(narrativeNote);
+            }
+
+            // Inject the LLM's `parameter_justification` into the
+            // parameters JSON so downstream compose steps (currently
+            // visit-compose; letter-compose may adopt the same shape
+            // later) can seed the sender's stated in-fiction
+            // motivation from the director's actual chosen reason,
+            // rather than the compose LLM inventing one from scratch.
+            //
+            // This field is deliberately separate from `narrative_note`:
+            // narrative_note is director-frame ("this beat lands
+            // because…") and often references facts the sender doesn't
+            // know; parameter_justification is in-fiction-frame,
+            // written from the sender's POV, grounded in what they can
+            // plausibly know. Only the latter should reach compose as
+            // motivation seed.
+            //
+            // Empty string = key omitted; consumers treat a missing
+            // field as "no seed available" and fall back to the
+            // memory-anchored path.
+            if (!parameterJustification.empty()) {
+                parameters["parameter_justification"] =
+                    std::move(parameterJustification);
             }
 
             // Start the action. The action owns parameter validation and
@@ -804,6 +828,19 @@ namespace NarrativeEngine::ActionDispatcher
                         narrativeNote.resize(200);
                     }
                 }
+                // parameter_justification — in-fiction sender-motivation
+                // seed. Same sanitize pass; 400-char cap since it's
+                // authored to be up to three sentences and gets rendered
+                // downstream as scene direction.
+                std::string parameterJustification;
+                if (auto it = parsed.find("parameter_justification");
+                    it != parsed.end() && it->is_string()) {
+                    parameterJustification =
+                        LLMTextSanitizer::Sanitize(it->get<std::string>());
+                    if (parameterJustification.size() > 400) {
+                        parameterJustification.resize(400);
+                    }
+                }
 
                 AsyncDispatch::MarshalToMainThread(
                     [snapshot       = std::move(snapshot),
@@ -812,6 +849,7 @@ namespace NarrativeEngine::ActionDispatcher
                      chosenAction   = std::move(chosenAction),
                      parameters     = std::move(parameters),
                      narrativeNote  = std::move(narrativeNote),
+                     parameterJustification = std::move(parameterJustification),
                      direction,
                      tensionDelta,
                      onFinalized    = std::move(onFinalized)]() mutable {
@@ -819,6 +857,7 @@ namespace NarrativeEngine::ActionDispatcher
                             std::move(snapshot), std::move(rec),
                             std::move(candidateNames), std::move(chosenAction),
                             std::move(parameters), std::move(narrativeNote),
+                            std::move(parameterJustification),
                             direction, tensionDelta,
                             std::move(onFinalized));
                     });
@@ -992,6 +1031,18 @@ namespace NarrativeEngine::ActionDispatcher
                         narrativeNote.resize(200);
                     }
                 }
+                // parameter_justification — see the twin parse site
+                // in the normal-dispatch path above for the shape and
+                // clamp rationale.
+                std::string parameterJustification;
+                if (auto it = parsed.find("parameter_justification");
+                    it != parsed.end() && it->is_string()) {
+                    parameterJustification =
+                        LLMTextSanitizer::Sanitize(it->get<std::string>());
+                    if (parameterJustification.size() > 400) {
+                        parameterJustification.resize(400);
+                    }
+                }
 
                 AsyncDispatch::MarshalToMainThread(
                     [snapshot       = std::move(snapshot),
@@ -1000,6 +1051,7 @@ namespace NarrativeEngine::ActionDispatcher
                      chosenAction   = std::move(chosenAction),
                      parameters     = std::move(parameters),
                      narrativeNote  = std::move(narrativeNote),
+                     parameterJustification = std::move(parameterJustification),
                      direction,
                      tensionDelta,
                      onFinalized    = std::move(onFinalized)]() mutable {
@@ -1007,6 +1059,7 @@ namespace NarrativeEngine::ActionDispatcher
                             std::move(snapshot), std::move(rec),
                             std::move(candidateNames), std::move(chosenAction),
                             std::move(parameters), std::move(narrativeNote),
+                            std::move(parameterJustification),
                             direction, tensionDelta,
                             std::move(onFinalized));
                     });

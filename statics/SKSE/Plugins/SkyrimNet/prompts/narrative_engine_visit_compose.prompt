@@ -5,7 +5,7 @@
    Receives:
      desired_direction, tension_delta, urgency_hint, min_words, max_words,
      player_name, sender_name, sender_form_id, sender_memories,
-     sender_recent_dialogue
+     sender_recent_dialogue, parameter_justification
 
    Returns:
      { briefing, narration, topic_tag, mood }
@@ -20,9 +20,36 @@ scene: what's on {{ sender_name }}'s mind, what they mean to say, and
 a third-person narration that primes the dialogue system to have them
 speak in character.
 
+{% if length(parameter_justification) > 0 %}
+## Why {{ sender_name }} is coming to see {{ player_name }}
+
+The Director's stated in-fiction reason for {{ sender_name }} to visit
+{{ player_name }} right now is:
+
+> {{ parameter_justification }}
+
+**The motivation for this visit MUST be rooted in that justification.**
+It is the seed the Director already identified for {{ sender_name }}'s
+own frame; your job is to embody it, not to invent a fresh reason. The
+memories and recent dialogue below exist to give you specifics — names,
+prior events, tone — that let you make the justification concrete in
+{{ sender_name }}'s voice. Do NOT compose a visit whose subject is
+disconnected from the justification above.
+
+The justification is written in {{ sender_name }}'s frame — grounded in
+what {{ sender_name }} could plausibly know. Stay in that frame. Do not
+introduce facts about {{ player_name }}'s recent activities that
+{{ sender_name }} would have no way of knowing about (recent combats,
+places {{ player_name }} has just been, encounters {{ sender_name }}
+wasn't part of and hasn't heard about through the sender's own memory
+tail). If the justification implies knowledge {{ sender_name }} clearly
+wouldn't have, refine the topic toward something they DO know while
+preserving the emotional weight.
+{% else %}
 Anchor the visit in something concrete from {{ sender_name }}'s recent
 memories (below). The specific matter they've come to discuss should
 grow naturally from what they actually remember.
+{% endif %}
 
 ## Output Format
 Return a JSON object with exactly these four keys. No markdown fences. No

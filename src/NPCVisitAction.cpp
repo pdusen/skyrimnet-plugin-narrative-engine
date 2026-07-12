@@ -2,6 +2,7 @@
 
 #include <ActionDispatcher.h>
 #include <AsyncDispatch.h>
+#include <CameraVisibility.h>
 #include <LocationKeywords.h>
 #include <SenderCandidatePool.h>
 #include <Settings.h>
@@ -14,11 +15,15 @@
 #include <nlohmann/json.hpp>
 
 #include <RE/A/Actor.h>
+#include <RE/B/BGSBaseAlias.h>
 #include <RE/B/BGSRefAlias.h>
+#include <RE/B/BGSScene.h>
+#include <RE/B/BSAtomic.h>
 #include <RE/B/BSFixedString.h>
 #include <RE/B/BSTSmartPointer.h>
 #include <RE/C/Calendar.h>
 #include <RE/D/DialogueMenu.h>
+#include <RE/E/ExtraAliasInstanceArray.h>
 #include <RE/F/FunctionArguments.h>
 #include <RE/I/IObjectHandlePolicy.h>
 #include <RE/I/IStackCallbackFunctor.h>
@@ -27,8 +32,10 @@
 #include <RE/T/TESCombatEvent.h>
 #include <RE/T/TESDeathEvent.h>
 #include <RE/T/TESFaction.h>
+#include <RE/T/TESFile.h>
 #include <RE/T/TESObjectCELL.h>
 #include <RE/T/TESObjectREFR.h>
+#include <RE/T/TESPackage.h>
 #include <RE/T/TESQuest.h>
 #include <RE/U/UI.h>
 #include <RE/V/VirtualMachine.h>
@@ -37,6 +44,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <future>
 #include <memory>
@@ -1024,15 +1032,21 @@ namespace NarrativeEngine
         // ---- Hard-abort (Step 15) ----------------------------------
         //
         // Unified teardown for the abort cases: sender/player death,
-        // outer wall-clock timeout, combat-stuck, consecutive poll
+        // combat-stuck (OnHold-combat-max exceeded), consecutive poll
         // failures. Skips the ReturnHome walk entirely; teleports
         // the sender home (if alive), demotes, SetStage(200), and
         // pushes an `aborted` history entry.
         //
         // Guarded so multiple triggers landing near-simultaneously
-        // (e.g. sender_death right after outer_timeout) run
+        // (e.g. sender_death right after combat_stuck) run
         // teardown exactly once. Latch atomic lives at the top of
         // the anon namespace.
+        //
+        // Note: there is intentionally no outer wall-clock timeout
+        // among the abort triggers. A visit that runs long ends
+        // naturally via the ignore-nudge cap when the player is
+        // unresponsive; killing it on a fixed clock warps the sender
+        // away mid-scene and breaks immersion.
 
         void HardAbortVisit(const char* reason)
         {
@@ -1171,10 +1185,18 @@ namespace NarrativeEngine
             }
         }
 
-        // Cheap tick — checks the outer wall-clock hard-timeout and
-        // the poll-broken threshold. Called from the Discuss and
-        // OnHold watchdogs' predicate paths (both run each ~1s).
-        // Returns true if hard-abort was fired.
+        // Cheap tick — checks the poll-broken threshold. Called from
+        // the Discuss and OnHold watchdogs' predicate paths (both run
+        // each ~1s). Returns true if hard-abort was fired.
+        //
+        // There is intentionally NO outer wall-clock timeout here.
+        // A visit that runs long is either productive (player is
+        // engaged) or unproductive (player is ignoring the sender);
+        // the ignore-nudge cap ends the unproductive case naturally
+        // via Valediction. A blunt "N minutes and out" clock kills
+        // the beat mid-conversation and teleports the sender away
+        // in front of the player — the exact immersion break we're
+        // avoiding.
         bool CheckHardAbortConditions()
         {
             if (g_hardAbortFired.load()) return true;
@@ -1182,24 +1204,7 @@ namespace NarrativeEngine
             const auto stage = g_visitQuest->GetCurrentStageID();
             if (stage == 0 || stage == 60 || stage == 200) return false;
 
-            const auto snap = VisitState::GetSnapshot();
             const auto& cfg = Settings::Get();
-
-            // Outer wall-clock timeout.
-            if (snap.dispatchedAtRealSeconds > 0.0) {
-                const auto elapsed =
-                    RealSecondsNow() - snap.dispatchedAtRealSeconds;
-                const auto limit =
-                    static_cast<double>(std::max(60, cfg.visitHardTimeoutSeconds));
-                if (elapsed >= limit) {
-                    logger::warn(
-                        "NPCVisitAction[HARD-ABORT-CHECK]: outer_timeout — elapsed "
-                        "{:.1f}s >= {:.0f}s",
-                        elapsed, limit);
-                    HardAbortVisit("outer_timeout");
-                    return true;
-                }
-            }
 
             // Poll-broken threshold.
             const auto failures = VisitConclusionPoll::ConsecutivePollFailures();
@@ -1369,13 +1374,15 @@ namespace NarrativeEngine
                     // Line-of-sight check — treat "player can no
                     // longer see the sender" as a valid exit signal
                     // so the sender doesn't vanish in plain view.
-                    // Actor::HasLineOfSight populates the bool out-
-                    // arg with an implementation detail we don't
-                    // need; pass a dummy. Fail-open (assume LOS) if
-                    // the engine doesn't answer.
-                    bool losIgnored = false;
+                    //
+                    // We use CameraVisibility::IsAnyPartVisibleFromCamera
+                    // rather than the engine's HasLineOfSight so the
+                    // "player turned camera slightly away from a
+                    // sender in open air" case doesn't spuriously
+                    // report LOS-lost. See CameraVisibility.h for
+                    // the algorithm.
                     const bool losToSender =
-                        player->HasLineOfSight(senderRef, losIgnored);
+                        CameraVisibility::IsAnyPartVisibleFromCamera(senderRef);
 
                     // Throttled progress log every 5s.
                     const auto now = RealSecondsNow();
@@ -1601,13 +1608,17 @@ namespace NarrativeEngine
             }
 
             // should_conclude=false. Consult the silence gate.
-            const double silence = VisitConclusionPoll::SilenceGameSeconds();
+            // Silence is measured in unpaused real seconds (see
+            // VisitConclusionPoll::SilenceRealSeconds) so this matches
+            // how long a human conversation partner would actually
+            // have waited before deciding they were being ignored.
+            const double silence = VisitConclusionPoll::SilenceRealSeconds();
             const double silenceLimit =
-                static_cast<double>(std::max(0, cfg.visitPollSilenceGameMinutes)) * 60.0;
+                static_cast<double>(std::max(0, cfg.visitPollSilenceRealSeconds));
             if (silenceLimit <= 0.0 || silence < silenceLimit) {
                 logger::debug(
                     "NPCVisitAction[DISCUSS]: verdict=continue; silence gate "
-                    "not tripped ({:.1f}s < {:.1f}s) — no nudge",
+                    "not tripped ({:.1f}s < {:.1f}s real) — no nudge",
                     silence, silenceLimit);
                 return;
             }
@@ -1619,7 +1630,7 @@ namespace NarrativeEngine
             snap.ignoreNudgeCount = nextNudge;
             VisitState::SetSnapshot(snap);
             logger::info(
-                "NPCVisitAction[DISCUSS]: silence gate tripped ({:.1f}s >= {:.1f}s) — "
+                "NPCVisitAction[DISCUSS]: silence gate tripped ({:.1f}s >= {:.1f}s real) — "
                 "firing ContinueConversation (nudge #{})",
                 silence, silenceLimit, nextNudge);
             VMDispatchRunSenderAction(g_visitQuest, "ContinueConversation", "");
@@ -1665,13 +1676,20 @@ namespace NarrativeEngine
         // true if at least one new turn was from the player — the
         // Step 11 verdict path uses this to reset the ignore-nudge
         // counter.
+        //
+        // Sourced from SkyrimNet's `GetRecentDialogue`, NOT the event
+        // stream. The event stream's `dialogue_*` events don't
+        // reliably surface player chat/voice turns, and continuation
+        // NPC speech appears to be appended to an existing event's
+        // `text` field rather than firing new events — so a
+        // GetRecentEvents-based sampler goes silent mid-conversation.
+        // The dialogue API is per-turn and captures both sides.
         bool SampleAndRegisterNewSpeechTurns(RE::FormID senderFormID)
         {
             if (!SkyrimNetAPI::IsAvailable()) return false;
 
-            const auto raw = SkyrimNetAPI::GetRecentEvents(
-                senderFormID, kDiscussSpeechSamplePerTick,
-                "dialogue,direct_narration,dialogue_npc,dialogue_player");
+            const auto raw = SkyrimNetAPI::GetRecentDialogue(
+                senderFormID, kDiscussSpeechSamplePerTick);
             auto parsed = nlohmann::json::parse(raw, nullptr, false);
             if (parsed.is_discarded() || !parsed.is_array()) return false;
 
@@ -1701,24 +1719,41 @@ namespace NarrativeEngine
                 if (gameTime <= lastSeen) continue;
                 if (gameTime > maxSeen) maxSeen = gameTime;
 
-                std::string speaker;
-                if (auto it = entry.find("originatingActorName");
+                // Speaker resolution. SkyrimNet's GetRecentDialogue
+                // emits `speaker` as a role literal (`"npc"` or
+                // `"player"`), not the actor's display name. Map the
+                // role to who it refers to so the sender/player
+                // classification below actually works. Older payload
+                // shapes that carried a name go through the else
+                // branch and match by name as before.
+                std::string speakerRaw;
+                if (auto it = entry.find("speaker");
                     it != entry.end() && it->is_string()) {
-                    speaker = it->get<std::string>();
+                    speakerRaw = it->get<std::string>();
                 }
-                // Only count turns from sender or player. Empty
-                // speaker (rare) still counts — better to over-count
-                // than miss a turn.
-                if (!speaker.empty() &&
-                    !senderName.empty() &&
-                    !playerName.empty() &&
-                    speaker != senderName && speaker != playerName) {
-                    continue;
+                bool isPlayerTurn = false;
+                bool isSenderTurn = false;
+                if (speakerRaw == "player") {
+                    isPlayerTurn = true;
+                } else if (speakerRaw == "npc") {
+                    // For our purposes any "npc" turn on this
+                    // sender's dialogue log is a sender turn — we
+                    // scope the GetRecentDialogue call to this
+                    // sender's FormID.
+                    isSenderTurn = true;
+                } else if (!speakerRaw.empty()) {
+                    if (!senderName.empty() && speakerRaw == senderName) {
+                        isSenderTurn = true;
+                    } else if (!playerName.empty() &&
+                               speakerRaw == playerName) {
+                        isPlayerTurn = true;
+                    } else {
+                        // Non-player, non-sender speaker (rare) —
+                        // skip; not a turn we care about.
+                        continue;
+                    }
                 }
-                if (!speaker.empty() && !playerName.empty() &&
-                    speaker == playerName) {
-                    sawPlayerTurn = true;
-                }
+                if (isPlayerTurn) sawPlayerTurn = true;
                 VisitConclusionPoll::RegisterSpeechTurn();
                 ++newCount;
             }
@@ -1766,11 +1801,12 @@ namespace NarrativeEngine
                 "NPCVisitAction[DISCUSS]: watchdog registered — poll={:d}s, "
                 "sender=0x{:08X}, initial_sampler_cursor={:.1f}",
                 gateTickSeconds, senderFormID, nowGameSeconds);
-            // Discuss has no built-in real-time limit — only the
-            // outer hard-timeout (Step 15) bounds it. Use a large
-            // maxDuration so PollUntilOrTimeout's fallback is a
-            // no-op; the predicate's stage-change branch is the
-            // real exit condition.
+            // Discuss has no built-in real-time limit. The predicate's
+            // stage-change branch is the real exit condition; the
+            // poll-broken hard-abort catches a broken LLM path. The
+            // maxDuration here is a pure async-infrastructure safety
+            // net (24h at the default), sized so it never bounds a
+            // natural visit.
             const auto maxDuration =
                 std::chrono::seconds(std::max(60, Settings::Get().visitHardTimeoutSeconds));
 
@@ -1796,9 +1832,9 @@ namespace NarrativeEngine
                         logger::debug("NPCVisitAction[DISCUSS]: quest handle null — exiting");
                         return true;
                     }
-                    // Hard-abort check first — an outer-timeout or
-                    // poll-broken trigger routes to Stage 200 and
-                    // this predicate should exit.
+                    // Hard-abort check first — a poll-broken /
+                    // combat-stuck / death trigger routes to Stage
+                    // 200 and this predicate should exit.
                     if (CheckHardAbortConditions()) {
                         logger::debug(
                             "NPCVisitAction[DISCUSS]: hard-abort detected — exiting");
@@ -1847,11 +1883,11 @@ namespace NarrativeEngine
                         "NPCVisitAction[DISCUSS]: watchdog onSuccess — disarming poll");
                     VisitConclusionPoll::Disarm();
                 },
-                // onTimeout — outer hard-timeout as a safety net.
+                // onTimeout — 24h async safety net; not player-facing.
                 []() {
                     logger::warn(
-                        "NPCVisitAction[DISCUSS]: watchdog outer hard-timeout — "
-                        "disarming poll");
+                        "NPCVisitAction[DISCUSS]: watchdog outer safety-net "
+                        "duration reached — disarming poll");
                     VisitConclusionPoll::Disarm();
                 },
                 std::chrono::seconds(gateTickSeconds),
@@ -1932,6 +1968,89 @@ namespace NarrativeEngine
             // this actor during EnsureQuestStarted's alias-fill.
             PromoteSenderToDesignated(sender);
 
+            // Diagnostic block — dump every state a candidate sender
+            // could be in that might reasonably prevent the alias
+            // fill from succeeding. Emitted at info so it survives
+            // in non-debug logs too; we're specifically trying to
+            // catch the "which state was the failing sender in" case
+            // so we can add proactive viability gates upstream.
+            // Everything below is diagnostic-only — no branches.
+            {
+                const bool has3D            = sender->Get3D() != nullptr;
+                const bool is3DLoaded       = sender->Is3DLoaded();
+                const auto* pcell           = sender->GetParentCell();
+                const bool cellAttached     = pcell ? pcell->IsAttached() : false;
+                const std::uint32_t cellID  = pcell ? pcell->GetFormID() : 0u;
+                const auto* scene           = sender->GetCurrentScene();
+                const std::uint32_t sceneID = scene ? scene->GetFormID() : 0u;
+                const std::uint32_t sceneQuestID =
+                    (scene && scene->parentQuest)
+                        ? scene->parentQuest->GetFormID() : 0u;
+                const auto* pkg             = sender->GetCurrentPackage();
+                const std::uint32_t pkgID   = pkg ? pkg->GetFormID() : 0u;
+                // GetSitSleepState lives on ActorState, reachable
+                // via AsActorState (position of ActorState in the
+                // Actor VMT differs by runtime version).
+                const auto sitSleep         =
+                    sender->AsActorState()
+                        ? sender->AsActorState()->GetSitSleepState()
+                        : RE::SIT_SLEEP_STATE::kNormal;
+                const bool inKillMove       = sender->IsInKillMove();
+                const bool inRagdoll        = sender->IsInRagdollState();
+                const bool aiEnabled        = sender->IsAIEnabled();
+                const auto furnHandle       = sender->GetOccupiedFurniture();
+                const bool inFurniture      = static_cast<bool>(furnHandle);
+                const bool inCombat         = sender->IsInCombat();
+
+                // Alias-instance count + reservation summary — just
+                // count entries, tag any with kReserves or
+                // kQuestObject on foreign quests. Duplicates what
+                // AliasWalkFilter already logs for the same actor at
+                // pool-build time, but a candidate can be picked and
+                // held for several seconds while compose runs, and
+                // reservation status can change in that window —
+                // this snapshot is the one that matters for the
+                // fill.
+                int aliasEntries       = 0;
+                int aliasReservedByFor  = 0;
+                int aliasQuestObjByFor  = 0;
+                if (auto* arr = sender->extraList.GetByType<
+                                    RE::ExtraAliasInstanceArray>()) {
+                    RE::BSReadLockGuard lock(arr->lock);
+                    aliasEntries = static_cast<int>(arr->aliases.size());
+                    for (const auto* e : arr->aliases) {
+                        if (!e || !e->alias || !e->quest) continue;
+                        // Skip our own quests so the count reflects
+                        // *external* holds only.
+                        if (auto* f = e->quest->GetFile(0)) {
+                            if (_strnicmp(f->fileName,
+                                          "NarrativeEngine.esp",
+                                          sizeof(f->fileName)) == 0) {
+                                continue;
+                            }
+                        }
+                        using F = RE::BGSBaseAlias::FLAGS;
+                        if (e->alias->flags.any(F::kReserves))
+                            ++aliasReservedByFor;
+                        if (e->alias->flags.any(F::kQuestObject))
+                            ++aliasQuestObjByFor;
+                    }
+                }
+
+                logger::info(
+                    "NPCVisitAction: pre-Start diagnostic sender=0x{:08X} "
+                    "has3D={} is3DLoaded={} parentCell=0x{:08X} cellAttached={} "
+                    "sceneFormID=0x{:08X} sceneParentQuest=0x{:08X} "
+                    "currentPackage=0x{:08X} sitSleepState={} inKillMove={} "
+                    "inRagdoll={} aiEnabled={} inFurniture={} inCombat={} "
+                    "aliasEntries={} foreignReservedEntries={} foreignQuestObjEntries={}",
+                    sender->GetFormID(), has3D, is3DLoaded, cellID, cellAttached,
+                    sceneID, sceneQuestID, pkgID,
+                    static_cast<int>(sitSleep), inKillMove, inRagdoll,
+                    aiEnabled, inFurniture, inCombat,
+                    aliasEntries, aliasReservedByFor, aliasQuestObjByFor);
+            }
+
             // Start the quest natively. Sender fills via faction-rank
             // FMR; SpawnMarker fills via nearest-XMarkerHeading FMR;
             // ReturnAnchor spawns a new XMarkerHeading REFR at
@@ -1941,10 +2060,27 @@ namespace NarrativeEngine
             const bool callOk =
                 g_visitQuest->EnsureQuestStarted(engineResult, /*a_startNow=*/true);
             if (!callOk || !engineResult) {
+                // Post-failure diagnostic — which alias came back
+                // unfilled? EnsureQuestStarted returning false without
+                // more detail leaves us guessing between "Sender FMR
+                // couldn't find our promoted actor" vs "SpawnMarker
+                // FMR couldn't find a marker near the player" vs
+                // "ReturnAnchor Create-Reference failed". Reading
+                // each alias's GetReference() right after the failure
+                // pins it down.
+                const bool senderFilled = g_senderAlias
+                    && g_senderAlias->GetReference() != nullptr;
+                const bool spawnFilled  = g_spawnMarkerAlias
+                    && g_spawnMarkerAlias->GetReference() != nullptr;
+                const bool anchorFilled = g_returnAnchorAlias
+                    && g_returnAnchorAlias->GetReference() != nullptr;
                 logger::warn(
                     "NPCVisitAction: EnsureQuestStarted failed "
-                    "(callOk={}, engineResult={}) — demoting sender and rolling back",
-                    callOk, engineResult);
+                    "(callOk={}, engineResult={}) alias_state after failure: "
+                    "Sender_filled={} SpawnMarker_filled={} ReturnAnchor_filled={} "
+                    "— demoting sender and rolling back",
+                    callOk, engineResult,
+                    senderFilled, spawnFilled, anchorFilled);
                 DemoteSenderToCandidate(sender);
                 finishWithFailure("EnsureQuestStarted reported failure");
                 return;
@@ -2292,6 +2428,23 @@ namespace NarrativeEngine
             else if (v == "high") urgency = VisitComposer::UrgencyHint::High;
         }
 
+        // Parameter justification — the in-fiction, sender-frame
+        // motivation the action-select LLM emitted for the specific
+        // sender/urgency it picked. Injected by ActionDispatcher as
+        // `parameter_justification` (distinct from `narrative_note`,
+        // which is director-frame commentary that must NOT reach the
+        // sender's motivation). Passed to the compose prompt so the
+        // sender's stated reason for showing up is rooted in what the
+        // director already decided about the sender's own frame,
+        // rather than the compose LLM inventing one from scratch (or,
+        // worse, from world state the sender wouldn't know). Empty
+        // when the action-select LLM omitted the field.
+        std::string parameterJustification;
+        if (auto it = parameters.find("parameter_justification");
+            it != parameters.end() && it->is_string()) {
+            parameterJustification = it->get<std::string>();
+        }
+
         // Enter Composing pseudo-state — DerivePhase will report
         // Mode::Composing, and DetectAndRollbackFailedStart will
         // return false until the flag clears.
@@ -2318,7 +2471,7 @@ namespace NarrativeEngine
                                                            : "medium");
 
         VisitComposer::Compose(
-            ctx, urgency, senderNpcFormID,
+            ctx, urgency, senderNpcFormID, std::move(parameterJustification),
             [senderNpcFormID]
             (std::optional<VisitComposer::VisitBriefing> briefing) {
                 AsyncDispatch::MarshalToMainThread(

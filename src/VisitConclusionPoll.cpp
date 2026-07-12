@@ -13,6 +13,7 @@
 #include <RE/C/Calendar.h>
 #include <RE/T/TESForm.h>
 #include <RE/T/TESNPC.h>
+#include <RE/U/UI.h>
 
 #include <algorithm>
 #include <atomic>
@@ -49,10 +50,34 @@ namespace NarrativeEngine::VisitConclusionPoll
         // Game-time seconds (RE::Calendar::GetHoursPassed() * 3600)
         // stamped whenever the corresponding threshold reset should
         // apply. 0 = "never" — the first tick after Arm establishes
-        // a baseline.
+        // a baseline. NOTE: the silence watchdog no longer uses game
+        // time — see g_silenceRealSeconds below. The remaining game-
+        // time timestamps here drive the interval-since-last-poll
+        // safety ceiling and the discuss-armed-at cutoff for pre-
+        // Salutation event filtering, which are naturally in game-time
+        // terms.
         double                      g_lastPollGameSeconds         = 0.0;
-        double                      g_lastSpeechTurnGameSeconds   = 0.0;
         double                      g_armedAtGameSeconds          = 0.0;
+
+        // Accumulated real (wall-clock) seconds since the last
+        // observed speech turn, EXCLUDING intervals during which
+        // `RE::UI::GameIsPaused()` returned true. Advanced on each
+        // GateTick call by `now - g_lastGateTickRealSeconds` when the
+        // game was not paused across that tick. Reset to 0 on Arm and
+        // on every RegisterSpeechTurn.
+        //
+        // Why an accumulator and not `now - lastSpeechTurnReal`: the
+        // straight-subtract form counts real time spent in pause
+        // menus / load screens, which is exactly what the user does
+        // NOT want to count as "the player is ignoring the NPC".
+        double                      g_silenceRealSeconds          = 0.0;
+
+        // Real (steady-clock) seconds captured on the previous
+        // GateTick, so we can compute a tick-delta and add it to
+        // g_silenceRealSeconds when the game wasn't paused. 0 means
+        // "no prior tick this arm" — the first tick after Arm
+        // establishes the baseline without adding anything.
+        double                      g_lastGateTickRealSeconds     = 0.0;
 
         std::uint32_t               g_turnsSinceLastPoll          = 0;
         std::atomic<std::uint32_t>  g_consecutivePollFailures     = 0;
@@ -121,146 +146,144 @@ namespace NarrativeEngine::VisitConclusionPoll
             return {};
         }
 
-        // Extract the spoken text from a SkyrimNet event object.
-        // SkyrimNet's various event surfaces use different field
-        // names for the actual content — the C API's PublicGetRecentEvents
-        // returns `text`, but the internal registration path stores
-        // dialogue under `data.dialogue`, and direct_narration events
-        // sometimes have `data.content` instead. Try the whole
-        // sequence and return the first non-empty match.
-        std::string ExtractEventText(const nlohmann::json& entry)
-        {
-            auto tryField = [&](const nlohmann::json& obj, const char* key) -> std::string {
-                auto it = obj.find(key);
-                if (it == obj.end() || !it->is_string()) return {};
-                return LLMTextSanitizer::Sanitize(it->get<std::string>());
-            };
-
-            std::string text = tryField(entry, "text");
-            if (!text.empty()) return text;
-
-            auto dataIt = entry.find("data");
-            if (dataIt == entry.end() || !dataIt->is_object()) return {};
-            text = tryField(*dataIt, "dialogue");
-            if (!text.empty()) return text;
-            text = tryField(*dataIt, "content");
-            if (!text.empty()) return text;
-            text = tryField(*dataIt, "narration");
-            return text;
-        }
-
-        // Extract the speaker name from a SkyrimNet event object.
-        // Fallback order: originatingActorName → speaker → data.speaker.
-        std::string ExtractEventSpeaker(const nlohmann::json& entry)
-        {
-            auto tryField = [&](const nlohmann::json& obj, const char* key) -> std::string {
-                auto it = obj.find(key);
-                if (it == obj.end() || !it->is_string()) return {};
-                return LLMTextSanitizer::Sanitize(it->get<std::string>());
-            };
-
-            std::string speaker = tryField(entry, "originatingActorName");
-            if (!speaker.empty()) return speaker;
-            speaker = tryField(entry, "speaker");
-            if (!speaker.empty()) return speaker;
-            auto dataIt = entry.find("data");
-            if (dataIt != entry.end() && dataIt->is_object()) {
-                speaker = tryField(*dataIt, "speaker");
-            }
-            return speaker;
-        }
-
-        // Sample the last N speech / dialogue events involving the
-        // sender or the player from SkyrimNet's event history.
-        // Returns a JSON array of `{ speaker, text }` objects.
-        // Empty array on any failure — the prompt handles the empty
-        // case gracefully.
+        // Sample the last N player↔sender dialogue turns from
+        // SkyrimNet's dialogue log (`GetRecentDialogue`). Returns a
+        // JSON array of `{ speaker, text }` objects, oldest first.
+        // Empty array on any failure — the prompt handles empty
+        // gracefully.
+        //
+        // Why the dialogue API and not the event stream: SkyrimNet's
+        // `GetRecentEvents(..., "dialogue,direct_narration,...")` does
+        // not reliably emit the player's chat/voice-input turns as
+        // distinct events, and appears to append continuation NPC
+        // speech onto the SAME event's `text` field rather than
+        // firing new events. Either behavior blinds a poll that wants
+        // to see "who said what, in order." `GetRecentDialogue`
+        // is purpose-built for player↔NPC dialogue and returns one
+        // entry per turn with `{ speaker, text, gameTime }`.
         nlohmann::json SampleRecentLines(RE::FormID senderFormID)
         {
             auto arr = nlohmann::json::array();
             if (!SkyrimNetAPI::IsAvailable()) return arr;
 
-            // Ask SkyrimNet for a bounded recent-events window.
-            //
-            // Filter includes both `dialogue` (normal SkyrimNet
-            // dialogue events) AND `direct_narration` (events fired
-            // via SkyrimNetApi.DirectNarration — which is exactly
-            // how we trigger the sender's opening/reengage/closing
-            // lines). SkyrimNet's C API accepts a comma-separated
-            // list here.
-            const auto raw = SkyrimNetAPI::GetRecentEvents(
-                senderFormID, kRecentLinesSampleCount * 4,
-                "dialogue,direct_narration,dialogue_npc,dialogue_player");
+            // Overfetch — we need to cap the LLM prompt to
+            // kRecentLinesSampleCount lines but want headroom to
+            // filter out pre-Discuss chatter first.
+            const int fetchCap = std::max(kRecentLinesSampleCount * 4, 16);
+            const auto raw = SkyrimNetAPI::GetRecentDialogue(
+                senderFormID, fetchCap);
             auto parsed = nlohmann::json::parse(raw, nullptr, false);
             if (parsed.is_discarded() || !parsed.is_array()) {
                 logger::warn(
-                    "VisitConclusionPoll::SampleRecentLines: could not parse raw "
-                    "event stream as JSON array (raw.len={})",
+                    "VisitConclusionPoll::SampleRecentLines: could not parse "
+                    "recent-dialogue payload as JSON array (raw.len={})",
                     raw.size());
                 return arr;
             }
 
             const auto senderName = SenderDisplayName(senderFormID);
             const auto playerName = PlayerDisplayName();
-            // Filter events by gameTime >= discussStartedAt so
-            // pre-Salutation dialogue from earlier conversations
-            // doesn't poison the poll's `recent_lines` context.
-            // Read outside the mutex-guarded g_armed check because
-            // we're already inside FirePoll (which is armed).
+            // Filter entries by gameTime >= discussStartedAt so
+            // pre-Salutation exchanges from earlier player-sender
+            // conversations don't poison the poll's `recent_lines`
+            // context.
             double discussStartedAt = 0.0;
             {
                 std::scoped_lock lock(g_mutex);
                 discussStartedAt = g_armedAtGameSeconds;
             }
 
-            // Debug: dump the raw event stream on first call per
-            // Discuss watchdog. Kept at debug so it doesn't blow up
-            // the log on every gate tick.
             logger::debug(
-                "VisitConclusionPoll::SampleRecentLines: fetched {} raw event(s) "
-                "(sender='{}', player='{}', discussStartedAt={:.1f})",
+                "VisitConclusionPoll::SampleRecentLines: fetched {} raw "
+                "dialogue turn(s) (sender='{}', player='{}', "
+                "discussStartedAt={:.1f})",
                 parsed.size(), senderName, playerName, discussStartedAt);
 
-            std::size_t skippedEmptyText = 0;
-            std::size_t skippedBystander = 0;
+            std::size_t skippedEmptyText  = 0;
+            std::size_t skippedBystander  = 0;
             std::size_t skippedPreDiscuss = 0;
 
+            // Chronological (oldest-first) is SkyrimNet's guarantee
+            // for GetRecentDialogue. Walk once to filter, then take
+            // the tail (most-recent kRecentLinesSampleCount) so the
+            // prompt sees the newest exchanges even when there's a
+            // long backlog.
+            nlohmann::json filtered = nlohmann::json::array();
             for (const auto& entry : parsed) {
                 if (!entry.is_object()) continue;
 
-                // Filter out anything that predates the Discuss arm
-                // — old exchanges from previous player-NPC
-                // encounters would otherwise convince the LLM that
-                // the current visit is a continuation of a stale
-                // conversation.
                 if (discussStartedAt > 0.0) {
                     auto gtIt = entry.find("gameTime");
                     if (gtIt != entry.end() && gtIt->is_number()) {
-                        const double eventGameTime = gtIt->get<double>();
-                        if (eventGameTime < discussStartedAt) {
+                        if (gtIt->get<double>() < discussStartedAt) {
                             ++skippedPreDiscuss;
                             continue;
                         }
                     }
                 }
 
-                const std::string text = ExtractEventText(entry);
+                // Text extraction. SkyrimNet's GetRecentDialogue
+                // stores each turn's utterance under `data` (as a
+                // plain string, not a nested object). `text` was our
+                // original guess and is retained as a fallback in
+                // case a future SkyrimNet build reverts. `content` /
+                // `utterance` are further speculative fallbacks — cheap
+                // to check, they cover other shapes we've seen on
+                // related SkyrimNet APIs.
+                std::string text;
+                for (const char* candidate :
+                        { "data", "text", "content", "utterance" }) {
+                    auto it = entry.find(candidate);
+                    if (it != entry.end() && it->is_string()) {
+                        text = LLMTextSanitizer::Sanitize(
+                            it->get<std::string>());
+                        if (!text.empty()) break;
+                    }
+                }
                 if (text.empty()) {
                     ++skippedEmptyText;
-                    // Emit the offending entry once at debug so we
-                    // can figure out what field carries the text.
                     if (skippedEmptyText <= 2) {
                         logger::debug(
-                            "VisitConclusionPoll::SampleRecentLines: skipped "
-                            "empty-text entry: {}", entry.dump());
+                            "VisitConclusionPoll::SampleRecentLines: entry "
+                            "has no text under known field names — raw JSON: {}",
+                            entry.dump());
                     }
                     continue;
                 }
 
-                const std::string speaker = ExtractEventSpeaker(entry);
+                // Speaker resolution. GetRecentDialogue's `speaker`
+                // field is a ROLE literal (`"npc"` or `"player"`),
+                // not the actor's display name — the display name for
+                // the NPC lives under `npcName`. Map the role to the
+                // human-readable name so downstream bystander
+                // filtering and prompt rendering both work.
+                std::string speakerRaw;
+                if (auto it = entry.find("speaker");
+                    it != entry.end() && it->is_string()) {
+                    speakerRaw = it->get<std::string>();
+                }
+                std::string npcNameField;
+                if (auto it = entry.find("npcName");
+                    it != entry.end() && it->is_string()) {
+                    npcNameField =
+                        LLMTextSanitizer::Sanitize(it->get<std::string>());
+                }
 
-                // Accept only lines from the sender or the player;
-                // skip bystander chatter.
+                std::string speaker;
+                if (speakerRaw == "player") {
+                    speaker = playerName;
+                } else if (speakerRaw == "npc") {
+                    speaker = !npcNameField.empty() ? npcNameField
+                                                    : senderName;
+                } else {
+                    // Older / alternate payloads that carry a real
+                    // name in `speaker` — trust it as-is.
+                    speaker = LLMTextSanitizer::Sanitize(speakerRaw);
+                }
+
+                // Bystander skip — reject anything that resolves to
+                // a name other than the sender or the player. Empty
+                // speaker still gets kept (better to over-include).
                 if (!speaker.empty() &&
                     !senderName.empty() &&
                     !playerName.empty() &&
@@ -272,15 +295,27 @@ namespace NarrativeEngine::VisitConclusionPoll
                 nlohmann::json line;
                 line["speaker"] = speaker.empty() ? std::string{"?"} : speaker;
                 line["text"]    = text;
-                arr.push_back(std::move(line));
-                if (static_cast<int>(arr.size()) >= kRecentLinesSampleCount) break;
+                filtered.push_back(std::move(line));
+            }
+
+            // Take the last kRecentLinesSampleCount entries so the
+            // prompt sees the newest exchange, preserving oldest-
+            // first order within the slice.
+            const std::size_t keep = static_cast<std::size_t>(
+                std::max(1, kRecentLinesSampleCount));
+            const std::size_t start = filtered.size() > keep
+                                          ? filtered.size() - keep
+                                          : 0;
+            for (std::size_t i = start; i < filtered.size(); ++i) {
+                arr.push_back(std::move(filtered[i]));
             }
 
             logger::info(
                 "VisitConclusionPoll::SampleRecentLines: kept {} line(s) for "
                 "poll context (skipped_empty_text={}, skipped_bystander={}, "
                 "skipped_pre_discuss={})",
-                arr.size(), skippedEmptyText, skippedBystander, skippedPreDiscuss);
+                arr.size(), skippedEmptyText, skippedBystander,
+                skippedPreDiscuss);
             return arr;
         }
 
@@ -313,7 +348,8 @@ namespace NarrativeEngine::VisitConclusionPoll
         const auto now              = GameSecondsNow();
         g_armedAtGameSeconds        = now;
         g_lastPollGameSeconds       = now;
-        g_lastSpeechTurnGameSeconds = now;
+        g_silenceRealSeconds        = 0.0;
+        g_lastGateTickRealSeconds   = 0.0;
         g_turnsSinceLastPoll        = 0;
         g_consecutivePollFailures.store(0);
         logger::info(
@@ -328,8 +364,9 @@ namespace NarrativeEngine::VisitConclusionPoll
         g_armed = false;
         g_snapshotAtArm = VisitState::Snapshot{};
         g_lastPollGameSeconds = 0.0;
-        g_lastSpeechTurnGameSeconds = 0.0;
         g_armedAtGameSeconds = 0.0;
+        g_silenceRealSeconds = 0.0;
+        g_lastGateTickRealSeconds = 0.0;
         g_turnsSinceLastPoll = 0;
         logger::info("VisitConclusionPoll: disarmed");
     }
@@ -346,10 +383,37 @@ namespace NarrativeEngine::VisitConclusionPoll
         if (!g_armed) return false;
 
         const auto& cfg = Settings::Get();
-        const double now = GameSecondsNow();
+        const double nowGame = GameSecondsNow();
+        const double nowReal = RealSecondsNow();
+
+        // Advance the unpaused-real-seconds silence accumulator.
+        // Only the delta since the previous tick is added, and only
+        // if the game was not paused at the moment of this tick.
+        // (Skyrim's UI::GameIsPaused returns true for menus that
+        // freeze the gameplay clock — journal, inventory, map, load
+        // screens, main menu. It does NOT return true for the
+        // dialogue view, which by design keeps the game running.)
+        //
+        // On the first tick after Arm, g_lastGateTickRealSeconds is
+        // 0.0 — we just establish the baseline and add nothing, so a
+        // long stall before the first tick can't retroactively pile
+        // up silence.
+        bool paused = false;
+        if (auto* ui = RE::UI::GetSingleton()) {
+            paused = ui->GameIsPaused();
+        }
+        double addedSilence = 0.0;
+        if (g_lastGateTickRealSeconds > 0.0) {
+            const double delta = nowReal - g_lastGateTickRealSeconds;
+            if (delta > 0.0 && !paused) {
+                g_silenceRealSeconds += delta;
+                addedSilence = delta;
+            }
+        }
+        g_lastGateTickRealSeconds = nowReal;
 
         const double silenceLimit =
-            static_cast<double>(std::max(0, cfg.visitPollSilenceGameMinutes)) * 60.0;
+            static_cast<double>(std::max(0, cfg.visitPollSilenceRealSeconds));
         const double maxInterval =
             static_cast<double>(std::max(0, cfg.visitPollMaxIntervalGameMinutes)) * 60.0;
         const std::uint32_t turnLimit =
@@ -358,20 +422,31 @@ namespace NarrativeEngine::VisitConclusionPoll
         const bool turnsHit   = (turnLimit > 0) &&
                                 (g_turnsSinceLastPoll >= turnLimit);
         const bool silenceHit = (silenceLimit > 0.0) &&
-                                (g_lastSpeechTurnGameSeconds > 0.0) &&
-                                (now - g_lastSpeechTurnGameSeconds >= silenceLimit);
+                                (g_silenceRealSeconds >= silenceLimit);
         const bool intervalHit = (maxInterval > 0.0) &&
                                  (g_lastPollGameSeconds > 0.0) &&
-                                 (now - g_lastPollGameSeconds >= maxInterval);
+                                 (nowGame - g_lastPollGameSeconds >= maxInterval);
 
         if (turnsHit || silenceHit || intervalHit) {
             logger::debug(
                 "VisitConclusionPoll: gate tripped (turns={} limit={}, "
-                "silenceSec={:.1f} limit={:.1f}, intervalSec={:.1f} limit={:.1f})",
+                "silenceRealSec={:.1f} limit={:.1f} paused_this_tick={}, "
+                "intervalGameSec={:.1f} limit={:.1f})",
                 g_turnsSinceLastPoll, turnLimit,
-                now - g_lastSpeechTurnGameSeconds, silenceLimit,
-                now - g_lastPollGameSeconds, maxInterval);
+                g_silenceRealSeconds, silenceLimit, paused,
+                nowGame - g_lastPollGameSeconds, maxInterval);
             return true;
+        }
+
+        // In debug mode, tick-level trace so we can watch the
+        // accumulator climb and confirm pause-time isn't counted.
+        // Only log when we actually added silence — every-tick chatter
+        // when the game is paused isn't useful and would flood the log.
+        if (addedSilence > 0.0 && Settings::Get().debugMode) {
+            logger::debug(
+                "VisitConclusionPoll: gate tick — silenceRealSec={:.1f}/{:.1f} "
+                "(+{:.2f} this tick, paused={})",
+                g_silenceRealSeconds, silenceLimit, addedSilence, paused);
         }
         return false;
     }
@@ -491,7 +566,11 @@ namespace NarrativeEngine::VisitConclusionPoll
         std::scoped_lock lock(g_mutex);
         if (!g_armed) return;
         g_turnsSinceLastPoll += 1;
-        g_lastSpeechTurnGameSeconds = GameSecondsNow();
+        // A fresh speech turn resets the unpaused-real-seconds silence
+        // accumulator. `g_lastGateTickRealSeconds` deliberately isn't
+        // reset — it just marks "when did we last observe a tick" and
+        // is used as a delta baseline in GateTick.
+        g_silenceRealSeconds = 0.0;
     }
 
     std::uint32_t ConsecutivePollFailures()
@@ -499,13 +578,11 @@ namespace NarrativeEngine::VisitConclusionPoll
         return g_consecutivePollFailures.load();
     }
 
-    double SilenceGameSeconds()
+    double SilenceRealSeconds()
     {
         std::scoped_lock lock(g_mutex);
         if (!g_armed) return 0.0;
-        if (g_lastSpeechTurnGameSeconds <= 0.0) return 0.0;
-        const double now = GameSecondsNow();
-        return std::max(0.0, now - g_lastSpeechTurnGameSeconds);
+        return std::max(0.0, g_silenceRealSeconds);
     }
 
     double DiscussStartedAtGameSeconds()

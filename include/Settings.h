@@ -187,10 +187,13 @@ namespace NarrativeEngine::Settings
         // Speech turns observed since the last poll before a poll fires
         // (rough proxy for ~30 real sec of active exchange).
         int visitPollTurnCountThreshold          = 4;
-        // In-game minutes of silence since the last speech turn before a poll
-        // fires. Doubles as the "silence exceeded -> ContinueConversation"
-        // threshold. ~30 real sec at Skyrim's default timescale 20.
-        int visitPollSilenceGameMinutes          = 10;
+        // Real seconds of silence since the last observed speech turn before
+        // a poll fires. Doubles as the "silence exceeded -> ContinueConversation"
+        // threshold. Accumulation pauses while the game is paused (menus, load
+        // screens) — see VisitConclusionPoll::GateTick. Real-time rather than
+        // game-time so the threshold matches how long a real conversation
+        // partner would wait, regardless of the user's iTimescale.
+        int visitPollSilenceRealSeconds          = 120;
         // In-game minutes since the last poll before a poll fires as a safety
         // ceiling. Guarantees the LLM verdict refreshes even during a
         // productive back-and-forth that never trips the other gates.
@@ -211,13 +214,19 @@ namespace NarrativeEngine::Settings
         // Sender-to-player distance during ReturnHome that triggers the final
         // teleport + shutdown. Also triggered by line-of-sight loss or cell
         // unload — whichever comes first.
-        int visitReturnHomeExitDistanceUnits     = 4000;
+        int visitReturnHomeExitDistanceUnits     = 8000;
         // Outer wall-clock cap on ReturnHome — if the sender is still walking
         // after this many seconds, teleport anyway.
         int visitReturnHomeTimeoutSeconds        = 300;
-        // Outer wall-clock timeout on the entire visit lifecycle (dispatch ->
-        // return teleport); hard-abort past this.
-        int visitHardTimeoutSeconds              = 900;
+        // Upper bound on the wall-clock duration of the OnHold / ReEngage /
+        // Discuss polling watchdogs' async lifetimes. Not a visit-abort
+        // clock — its onTimeout branches only stop the watchdog and log a
+        // warning, they do not teleport the sender or teardown the visit.
+        // Sized well past any natural visit length so it functions purely
+        // as an infrastructure safety-net; the visit itself ends via poll
+        // conclusions, ignore-nudge cap, sender/player death, or combat-
+        // stuck (see CheckHardAbortConditions).
+        int visitHardTimeoutSeconds              = 86400;
 
         // Enable toggle for the visit action; seeded into the ActionRegistry
         // the same way ambush / letter enables are. Runtime dashboard toggles

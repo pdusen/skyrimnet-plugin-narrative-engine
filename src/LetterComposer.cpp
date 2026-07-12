@@ -242,17 +242,65 @@ namespace NarrativeEngine::LetterComposer
                 return nlohmann::json::array();
             }
 
+            // Resolve player + sender display names up front so we
+            // can rewrite the `speaker` role literal SkyrimNet emits
+            // (`"npc"` / `"player"`) into a human-readable name the
+            // compose prompt can render directly.
+            std::string playerName;
+            if (auto* p = RE::PlayerCharacter::GetSingleton()) {
+                if (auto* n = p->GetName()) playerName = n;
+            }
+            std::string senderName;
+            if (auto* form = RE::TESForm::LookupByID(formId)) {
+                if (auto* a = form->As<RE::Actor>()) {
+                    if (auto* n = a->GetName()) senderName = n;
+                }
+            }
+
             auto trimmed = nlohmann::json::array();
             for (auto& e : parsed) {
                 if (!e.is_object()) continue;
                 nlohmann::json out = nlohmann::json::object();
+
+                // Speaker — role literal → display name mapping.
+                // Falls through to the raw string if the value is
+                // something other than the known role literals (older
+                // SkyrimNet builds carried a display name here).
                 if (auto it = e.find("speaker");
                     it != e.end() && it->is_string()) {
-                    out["speaker"] = LLMTextSanitizer::Sanitize(it->get<std::string>());
+                    const auto raw = it->get<std::string>();
+                    std::string mapped;
+                    if (raw == "player") {
+                        mapped = playerName;
+                    } else if (raw == "npc") {
+                        std::string npcNameField;
+                        if (auto nit = e.find("npcName");
+                            nit != e.end() && nit->is_string()) {
+                            npcNameField = LLMTextSanitizer::Sanitize(
+                                nit->get<std::string>());
+                        }
+                        mapped = !npcNameField.empty() ? npcNameField
+                                                       : senderName;
+                    } else {
+                        mapped = LLMTextSanitizer::Sanitize(raw);
+                    }
+                    if (!mapped.empty()) out["speaker"] = std::move(mapped);
                 }
-                if (auto it = e.find("text");
-                    it != e.end() && it->is_string()) {
-                    out["text"] = LLMTextSanitizer::Sanitize(it->get<std::string>());
+
+                // Text — try `data` first (current SkyrimNet shape),
+                // then `text` / `content` / `utterance` for
+                // version-shift resilience.
+                for (const char* candidate :
+                        { "data", "text", "content", "utterance" }) {
+                    auto it = e.find(candidate);
+                    if (it != e.end() && it->is_string()) {
+                        auto s = LLMTextSanitizer::Sanitize(
+                            it->get<std::string>());
+                        if (!s.empty()) {
+                            out["text"] = std::move(s);
+                            break;
+                        }
+                    }
                 }
                 if (auto it = e.find("gameTime");
                     it != e.end() && it->is_number()) {
