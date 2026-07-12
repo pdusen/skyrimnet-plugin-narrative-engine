@@ -1,6 +1,6 @@
 #pragma once
 
-#include <IAction.h>
+#include <IBeat.h>
 
 #include <cstdint>
 #include <functional>
@@ -117,7 +117,7 @@ namespace NarrativeEngine::VisitComposer
     // supply one; the prompt handles the empty case by falling back
     // to the previous "invent-from-memories" behavior.
     void Compose(
-        const ActionContext& ctx,
+        const BeatContext& ctx,
         UrgencyHint          urgencyHint,
         RE::FormID           senderNpcFormID,
         std::string          parameterJustification,

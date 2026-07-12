@@ -2,7 +2,7 @@
 
 #include <EvaluationPipeline.h>
 #include <LLMTextSanitizer.h>
-#include <NPCVisitAction.h>
+#include <NPCVisitBeat.h>
 #include <SenderCandidatePool.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -89,7 +89,7 @@ namespace NarrativeEngine::VisitComposer
             // Per-sender cooldown — this NPC visited recently and is
             // still within their in-game-hours cooldown window. Filters
             // out the "Ancano visits three times in a row" pathology.
-            if (NPCVisitAction_Cooldowns::IsSenderOnCooldown(actor->GetFormID())) {
+            if (NPCVisitBeat_Cooldowns::IsSenderOnCooldown(actor->GetFormID())) {
                 if (skipReasonOut) *skipReasonOut = "sender-cooldown";
                 return false;
             }
@@ -292,7 +292,7 @@ namespace NarrativeEngine::VisitComposer
         }
 
         nlohmann::json BuildComposePromptContext(
-            const ActionContext&  ctx,
+            const BeatContext&  ctx,
             UrgencyHint           urgencyHint,
             const std::string&    playerName,
             const std::string&    senderName,
@@ -391,7 +391,7 @@ namespace NarrativeEngine::VisitComposer
     }
 
     void Compose(
-        const ActionContext& ctx,
+        const BeatContext& ctx,
         UrgencyHint          urgencyHint,
         RE::FormID           senderNpcFormID,
         std::string          parameterJustification,

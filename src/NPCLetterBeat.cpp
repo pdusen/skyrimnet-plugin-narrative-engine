@@ -3,6 +3,7 @@
 #include <AsyncDispatch.h>
 #include <CourierUtils.h>
 #include <EngineUtils.h>
+#include <FactionDesignationUtils.h>
 #include <LetterComposer.h>
 #include <LetterPool.h>
 #include <LocationKeywords.h>
@@ -141,78 +142,19 @@ namespace NarrativeEngine
             return fact;
         }
 
-        void SweepStaleDesignatedSenders(RE::TESFaction* fact,
-                                         RE::Actor*      target)
-        {
-            if (!fact) return;
-            auto* pl = RE::ProcessLists::GetSingleton();
-            if (!pl) return;
-            std::size_t swept = 0;
-            const auto walk =
-                [&](const RE::BSTArray<RE::ActorHandle>& list) {
-                    for (const auto& h : list) {
-                        auto ref = h.get();
-                        auto* actor = ref.get();
-                        if (!actor || actor == target) continue;
-                        if (actor->GetFactionRank(fact, false) >= kSenderRankDesignated) {
-                            actor->AddToFaction(fact, kSenderRankCandidate);
-                            ++swept;
-                            logger::info(
-                                "NPCLetterBeat[FACTION]: swept stale rank-{}+ "
-                                "member 0x{:08X} -> rank {}",
-                                static_cast<int>(kSenderRankDesignated),
-                                actor->GetFormID(),
-                                static_cast<int>(kSenderRankCandidate));
-                        }
-                    }
-                };
-            walk(pl->highActorHandles);
-            walk(pl->middleHighActorHandles);
-            walk(pl->middleLowActorHandles);
-            walk(pl->lowActorHandles);
-            if (swept > 0) {
-                logger::info(
-                    "NPCLetterBeat[FACTION]: pre-dispatch sweep demoted {} "
-                    "stale rank-{}+ actor(s)",
-                    swept, static_cast<int>(kSenderRankDesignated));
-            }
-        }
-
         void PromoteSenderToDesignated(RE::Actor* sender)
         {
-            auto* fact = ResolveSenderFaction();
-            if (!fact || !sender) return;
-            SweepStaleDesignatedSenders(fact, sender);
-            const auto currentRank = sender->GetFactionRank(fact, false);
-            if (currentRank == kSenderRankDesignated) return;
-            sender->AddToFaction(fact, kSenderRankDesignated);
-            if (currentRank < 0) {
-                logger::info(
-                    "NPCLetterBeat[FACTION]: added sender 0x{:08X} at rank {}",
-                    sender->GetFormID(),
-                    static_cast<int>(kSenderRankDesignated));
-            } else {
-                logger::info(
-                    "NPCLetterBeat[FACTION]: promoted sender 0x{:08X} from "
-                    "rank {} to rank {}",
-                    sender->GetFormID(), currentRank,
-                    static_cast<int>(kSenderRankDesignated));
-            }
+            FactionDesignationUtils::PromoteToDesignated(
+                ResolveSenderFaction(), sender,
+                kSenderRankDesignated, kSenderRankCandidate,
+                "NPCLetterBeat");
         }
 
         void DemoteSenderToCandidate(RE::Actor* sender)
         {
-            auto* fact = ResolveSenderFaction();
-            if (!fact || !sender) return;
-            const auto currentRank = sender->GetFactionRank(fact, false);
-            if (currentRank < 0) return;
-            if (currentRank == kSenderRankCandidate) return;
-            sender->AddToFaction(fact, kSenderRankCandidate);
-            logger::info(
-                "NPCLetterBeat[FACTION]: demoted sender 0x{:08X} from rank {} "
-                "back to rank {}",
-                sender->GetFormID(), currentRank,
-                static_cast<int>(kSenderRankCandidate));
+            FactionDesignationUtils::DemoteToCandidate(
+                ResolveSenderFaction(), sender,
+                kSenderRankCandidate, "NPCLetterBeat");
         }
 
         // -----------------------------------------------------------------

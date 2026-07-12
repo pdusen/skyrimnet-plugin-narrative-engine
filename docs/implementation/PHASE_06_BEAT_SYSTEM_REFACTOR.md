@@ -1651,7 +1651,7 @@ single-slot courier-dispatch flow; medium complexity.
 
 ### Step 11 — Reshape and rename NPC Visit → `NPCVisitBeat`
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
