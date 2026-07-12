@@ -1,5 +1,6 @@
 #pragma once
 
+#include <BeatParamHelpers.h>
 #include <IBeat.h>
 
 #include <cstdint>
@@ -48,13 +49,9 @@ namespace NarrativeEngine::VisitComposer
         std::string mood;
     };
 
-    // Mirrors LetterComposer's shape so the two composers feel parallel.
-    enum class UrgencyHint : std::uint8_t
-    {
-        Low    = 0,
-        Medium = 1,
-        High   = 2,
-    };
+    // Beat-select LLM's urgency signal. Aliased from the shared
+    // BeatParamHelpers enum so all sender-picking beats speak one type.
+    using UrgencyHint = BeatParamHelpers::UrgencyHint;
 
     // A single viable visit sender, resolved on the main thread by
     // CollectSenderCandidates. Passed to the beat-select stage so

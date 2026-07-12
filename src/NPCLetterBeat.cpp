@@ -1,6 +1,8 @@
 #include <NPCLetterBeat.h>
 
 #include <AsyncDispatch.h>
+#include <BeatParamHelpers.h>
+#include <BeatUtils.h>
 #include <CourierUtils.h>
 #include <EngineUtils.h>
 #include <FactionDesignationUtils.h>
@@ -8,6 +10,7 @@
 #include <LetterPool.h>
 #include <LocationKeywords.h>
 #include <QuestUtils.h>
+#include <SenderCooldownTable.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <logger.h>
@@ -25,7 +28,6 @@
 #include <cstdio>
 #include <mutex>
 #include <string_view>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -162,8 +164,8 @@ namespace NarrativeEngine
         // -----------------------------------------------------------------
 
         std::mutex g_cooldownMutex;
-        double g_lastDispatchGameHours = 0.0;
-        std::unordered_map<RE::FormID, double> g_senderLastDeliveryGameHours;
+        double              g_lastDispatchGameHours = 0.0;
+        SenderCooldownTable g_senderCooldowns;
 
         // -----------------------------------------------------------------
         // Session state (not persisted; reset by OnStart / OnRevert)
@@ -190,12 +192,13 @@ namespace NarrativeEngine
         };
 
         std::mutex        g_sessionMutex;
-        ComposeSubPhase   g_composeSubPhase = ComposeSubPhase::Start;
-        std::string       g_failureReason;
+        BeatUtils::ComposeSubPhaseMachine<ComposeSubPhase>
+            g_subPhase{ComposeSubPhase::Start};
 
         // Parameters resolved in OnStart.
         RE::FormID                     g_paramSenderFormID = 0;
-        LetterComposer::UrgencyHint    g_paramUrgency = LetterComposer::UrgencyHint::Medium;
+        BeatParamHelpers::UrgencyHint  g_paramUrgency =
+            BeatParamHelpers::UrgencyHint::Medium;
 
         // Populated after the LLM call returns.
         std::optional<LetterComposer::LetterComposition> g_composition;
@@ -217,21 +220,17 @@ namespace NarrativeEngine
         int g_runningTickCount = 0;
         constexpr int kRunningCheckEveryNTicks = 4;  // ~1s
 
-        // CLEANUP task handoff (mirrors AmbushBeat's cleanup pattern).
-        std::atomic<bool> g_cleanupTaskFired{false};
-        std::atomic<bool> g_cleanupOutcomeReady{false};
-        // What CLEANUP should do — set once at the COMPOSE/RUNNING → CLEANUP
-        // transition.
-        std::atomic<bool> g_cleanupWasSuccess{false};
+        BeatUtils::CleanupLatch g_cleanupLatch;
+        // Which CLEANUP path to run — set once at the COMPOSE/RUNNING →
+        // CLEANUP transition.
+        std::atomic<bool>       g_cleanupWasSuccess{false};
 
         void ResetSessionState()
         {
             {
                 std::scoped_lock lock(g_sessionMutex);
-                g_composeSubPhase = ComposeSubPhase::Start;
-                g_failureReason.clear();
                 g_paramSenderFormID = 0;
-                g_paramUrgency = LetterComposer::UrgencyHint::Medium;
+                g_paramUrgency = BeatParamHelpers::UrgencyHint::Medium;
                 g_composition.reset();
                 g_inFlightSlot = -1;
                 g_inFlightBookFormID = 0;
@@ -239,25 +238,23 @@ namespace NarrativeEngine
                 g_subPhaseTickCount = 0;
                 g_runningTickCount = 0;
             }
-            g_cleanupTaskFired.store(false, std::memory_order_release);
-            g_cleanupOutcomeReady.store(false, std::memory_order_release);
+            g_subPhase.Reset();
+            g_cleanupLatch.Reset();
             g_cleanupWasSuccess.store(false, std::memory_order_release);
         }
 
+        // Transition the sub-phase machine. On a Failed transition,
+        // records `reason` as the failure-reason string; on any other
+        // transition, `reason` is ignored.
         void SetSubPhase(ComposeSubPhase phase, const char* reason = nullptr)
         {
-            std::scoped_lock lock(g_sessionMutex);
-            g_composeSubPhase = phase;
-            g_subPhaseTickCount = 0;
             if (reason && phase == ComposeSubPhase::Failed) {
-                g_failureReason = reason;
+                g_subPhase.Fail(phase, reason);
+            } else {
+                g_subPhase.Set(phase);
             }
-        }
-
-        ComposeSubPhase GetSubPhase()
-        {
             std::scoped_lock lock(g_sessionMutex);
-            return g_composeSubPhase;
+            g_subPhaseTickCount = 0;
         }
 
         // -----------------------------------------------------------------
@@ -266,9 +263,9 @@ namespace NarrativeEngine
 
         void MainThreadFireComposeLLM()
         {
-            RE::FormID  senderFormID = 0;
-            LetterComposer::UrgencyHint urgency =
-                LetterComposer::UrgencyHint::Medium;
+            RE::FormID senderFormID = 0;
+            BeatParamHelpers::UrgencyHint urgency =
+                BeatParamHelpers::UrgencyHint::Medium;
             {
                 std::scoped_lock lock(g_sessionMutex);
                 senderFormID = g_paramSenderFormID;
@@ -351,16 +348,13 @@ namespace NarrativeEngine
                 return;
             }
 
-            auto* form   = RE::TESForm::LookupByID(comp->senderNpcFormID);
-            auto* sender = form ? form->As<RE::Actor>() : nullptr;
+            std::string liveResolveReason;
+            RE::Actor* sender = BeatParamHelpers::ResolveLiveSenderActor(
+                comp->senderNpcFormID, &liveResolveReason);
             if (!sender) {
                 LetterPool::AbortPending(slotIndex);
-                SetSubPhase(ComposeSubPhase::Failed, "sender_not_actor");
-                return;
-            }
-            if (sender->IsDead() || sender->IsDisabled()) {
-                LetterPool::AbortPending(slotIndex);
-                SetSubPhase(ComposeSubPhase::Failed, "sender_dead_or_disabled");
+                g_subPhase.Fail(ComposeSubPhase::Failed,
+                                std::move(liveResolveReason));
                 return;
             }
 
@@ -463,8 +457,8 @@ namespace NarrativeEngine
                 std::scoped_lock lock(g_sessionMutex);
                 slotIndex    = g_inFlightSlot;
                 senderFormID = g_dispatchedSenderFormID;
-                reason       = g_failureReason;
             }
+            reason = g_subPhase.FailureReason();
 
             // Demote sender if we ever promoted them (any non-early-fail
             // path reached the promote step).
@@ -511,7 +505,7 @@ namespace NarrativeEngine
                     reason);
             }
 
-            g_cleanupOutcomeReady.store(true, std::memory_order_release);
+            g_cleanupLatch.MarkComplete();
         }
     }
 
@@ -645,59 +639,30 @@ namespace NarrativeEngine
     void NPCLetterBeat::OnStart(const BeatContext&    /*ctx*/,
                                 const nlohmann::json& parameters)
     {
-        // Parse sender_npc_form_id. On any failure, seed the session
-        // straight into the Failed sub-phase so the very first Tick
-        // transitions to CLEANUP with the reason set.
-        RE::FormID senderFormID = 0;
+        // Parse sender_npc_form_id + urgency_hint. On sender parse
+        // failure, seed the session straight into the Failed sub-phase
+        // so the very first Tick transitions to CLEANUP with the reason
+        // set. urgency_hint has no failure path (missing / bad input
+        // defaults to Medium).
         std::string failureReason;
-        if (!parameters.is_object()) {
-            failureReason = "parameters_not_object";
-        } else {
-            auto it = parameters.find("sender_npc_form_id");
-            if (it == parameters.end() || !it->is_string()) {
-                failureReason = "sender_npc_form_id_missing";
-            } else {
-                const auto idStr = it->get<std::string>();
-                try {
-                    senderFormID = static_cast<RE::FormID>(
-                        std::stoul(idStr, nullptr, /*base=*/0));
-                } catch (...) {
-                    failureReason = "sender_npc_form_id_unparseable";
-                }
-                if (failureReason.empty() && senderFormID == 0) {
-                    failureReason = "sender_npc_form_id_zero";
-                }
-            }
-        }
-
-        LetterComposer::UrgencyHint urgency = LetterComposer::UrgencyHint::Medium;
-        if (failureReason.empty()) {
-            if (auto it = parameters.find("urgency_hint");
-                it != parameters.end() && it->is_string())
-            {
-                const auto v = it->get<std::string>();
-                if      (v == "low")  urgency = LetterComposer::UrgencyHint::Low;
-                else if (v == "high") urgency = LetterComposer::UrgencyHint::High;
-            }
-        }
+        const auto senderParsed =
+            BeatParamHelpers::ParseSenderFormID(parameters, &failureReason);
+        const auto urgency = BeatParamHelpers::ParseUrgencyHint(parameters);
 
         ResetSessionState();
-        {
+        if (!senderParsed) {
+            g_subPhase.Fail(ComposeSubPhase::Failed, std::move(failureReason));
+        } else {
             std::scoped_lock lock(g_sessionMutex);
-            if (!failureReason.empty()) {
-                g_composeSubPhase = ComposeSubPhase::Failed;
-                g_failureReason   = std::move(failureReason);
-            } else {
-                g_paramSenderFormID = senderFormID;
-                g_paramUrgency      = urgency;
-            }
+            g_paramSenderFormID = *senderParsed;
+            g_paramUrgency      = urgency;
         }
         logger::info(
             "NPCLetterBeat::OnStart: sender=0x{:08X} urgency={}",
-            senderFormID,
-            urgency == LetterComposer::UrgencyHint::Low    ? "low"
-          : urgency == LetterComposer::UrgencyHint::High   ? "high"
-                                                            : "medium");
+            senderParsed.value_or(0),
+            urgency == BeatParamHelpers::UrgencyHint::Low    ? "low"
+          : urgency == BeatParamHelpers::UrgencyHint::High   ? "high"
+                                                              : "medium");
     }
 
     TickResult NPCLetterBeat::Tick(TickMode mode, BeatState state)
@@ -709,7 +674,7 @@ namespace NarrativeEngine
 
         switch (state) {
             case BeatState::COMPOSE: {
-                const ComposeSubPhase sub = GetSubPhase();
+                const ComposeSubPhase sub = g_subPhase.Get();
                 switch (sub) {
                     case ComposeSubPhase::Start: {
                         SetSubPhase(ComposeSubPhase::ComposingLLM);
@@ -729,28 +694,34 @@ namespace NarrativeEngine
                         return {};  // waiting for main-thread flip to PollingSender
                     }
                     case ComposeSubPhase::PollingSender: {
-                        std::scoped_lock lock(g_sessionMutex);
-                        ++g_subPhaseTickCount;
-                        if (g_subPhaseTickCount > kSubPhaseTimeoutTicks) {
-                            g_composeSubPhase = ComposeSubPhase::Failed;
-                            g_failureReason   = "sender_fill_timeout";
+                        int ticks;
+                        {
+                            std::scoped_lock lock(g_sessionMutex);
+                            ticks = ++g_subPhaseTickCount;
+                        }
+                        if (ticks > kSubPhaseTimeoutTicks) {
+                            g_subPhase.Fail(ComposeSubPhase::Failed,
+                                            "sender_fill_timeout");
                             return {};
                         }
-                        if ((g_subPhaseTickCount % kSubPhaseCheckEveryNTicks) == 0) {
+                        if ((ticks % kSubPhaseCheckEveryNTicks) == 0) {
                             AsyncDispatch::MarshalToMainThread(
                                 &MainThreadCheckSenderFill);
                         }
                         return {};
                     }
                     case ComposeSubPhase::PollingLetterRef: {
-                        std::scoped_lock lock(g_sessionMutex);
-                        ++g_subPhaseTickCount;
-                        if (g_subPhaseTickCount > kSubPhaseTimeoutTicks) {
-                            g_composeSubPhase = ComposeSubPhase::Failed;
-                            g_failureReason   = "letter_ref_fill_timeout";
+                        int ticks;
+                        {
+                            std::scoped_lock lock(g_sessionMutex);
+                            ticks = ++g_subPhaseTickCount;
+                        }
+                        if (ticks > kSubPhaseTimeoutTicks) {
+                            g_subPhase.Fail(ComposeSubPhase::Failed,
+                                            "letter_ref_fill_timeout");
                             return {};
                         }
-                        if ((g_subPhaseTickCount % kSubPhaseCheckEveryNTicks) == 0) {
+                        if ((ticks % kSubPhaseCheckEveryNTicks) == 0) {
                             AsyncDispatch::MarshalToMainThread(
                                 &MainThreadCheckLetterRefFill);
                         }
@@ -765,14 +736,9 @@ namespace NarrativeEngine
                         return {BeatState::RUNNING};
                     }
                     case ComposeSubPhase::Failed: {
-                        std::string reason;
-                        {
-                            std::scoped_lock lock(g_sessionMutex);
-                            reason = g_failureReason;
-                        }
                         logger::warn(
                             "NPCLetterBeat: COMPOSE failed ({}); advancing to CLEANUP",
-                            reason);
+                            g_subPhase.FailureReason());
                         g_cleanupWasSuccess.store(false, std::memory_order_release);
                         return {BeatState::CLEANUP};
                     }
@@ -800,10 +766,8 @@ namespace NarrativeEngine
                     (Settings::Get().letterDispatchVerifyDelaySeconds * 1000) /
                     std::max(1, Settings::Get().beatSystemPollIntervalMs);
                 if (g_runningTickCount > verifyDelayTicks) {
-                    {
-                        std::scoped_lock lock(g_sessionMutex);
-                        g_failureReason = "dispatch_verify_failed";
-                    }
+                    g_subPhase.Fail(ComposeSubPhase::Failed,
+                                    "dispatch_verify_failed");
                     logger::warn(
                         "NPCLetterBeat: RUNNING verify window elapsed ({} ticks) "
                         "with letter still missing from courier; advancing to "
@@ -820,13 +784,10 @@ namespace NarrativeEngine
             }
 
             case BeatState::CLEANUP: {
-                if (g_cleanupOutcomeReady.load(std::memory_order_acquire)) {
+                if (g_cleanupLatch.Poll(&MainThreadCleanup)) {
                     logger::info(
                         "NPCLetterBeat: CLEANUP done; returning to NOT_RUNNING");
                     return {BeatState::NOT_RUNNING};
-                }
-                if (!g_cleanupTaskFired.exchange(true, std::memory_order_acq_rel)) {
-                    AsyncDispatch::MarshalToMainThread(&MainThreadCleanup);
                 }
                 return {};
             }
@@ -928,30 +889,17 @@ namespace NarrativeEngine
         void OnLetterDelivered(RE::FormID senderNpcFormID)
         {
             if (senderNpcFormID == 0) return;
-            const double nowHours = EngineUtils::GetCurrentGameHours();
-            {
-                std::scoped_lock lock(g_cooldownMutex);
-                g_senderLastDeliveryGameHours[senderNpcFormID] = nowHours;
-            }
+            g_senderCooldowns.Stamp(senderNpcFormID);
             logger::info(
-                "NPCLetterBeat: per-sender cooldown stamp set for 0x{:08X} at "
-                "gameHours={:.2f}", senderNpcFormID, nowHours);
+                "NPCLetterBeat: per-sender cooldown stamp set for 0x{:08X}",
+                senderNpcFormID);
         }
 
         bool IsSenderOnCooldown(RE::FormID senderNpcFormID)
         {
-            const int cooldownHours = Settings::Get().letterSenderCooldownGameHours;
-            if (cooldownHours <= 0 || senderNpcFormID == 0) return false;
-            double stamp = 0.0;
-            {
-                std::scoped_lock lock(g_cooldownMutex);
-                auto it = g_senderLastDeliveryGameHours.find(senderNpcFormID);
-                if (it == g_senderLastDeliveryGameHours.end()) return false;
-                stamp = it->second;
-            }
-            if (stamp <= 0.0) return false;
-            const double elapsed = EngineUtils::GetCurrentGameHours() - stamp;
-            return elapsed < static_cast<double>(cooldownHours);
+            return g_senderCooldowns.IsOnCooldown(
+                senderNpcFormID,
+                Settings::Get().letterSenderCooldownGameHours);
         }
     }
 
@@ -975,22 +923,12 @@ namespace NarrativeEngine
                 return;
             }
             double lastDispatch = 0.0;
-            std::vector<std::pair<RE::FormID, double>> senderStamps;
             {
                 std::scoped_lock lock(g_cooldownMutex);
                 lastDispatch = g_lastDispatchGameHours;
-                senderStamps.reserve(g_senderLastDeliveryGameHours.size());
-                for (const auto& kv : g_senderLastDeliveryGameHours) {
-                    senderStamps.emplace_back(kv.first, kv.second);
-                }
             }
             intfc->WriteRecordData(lastDispatch);
-            const std::uint32_t count = static_cast<std::uint32_t>(senderStamps.size());
-            intfc->WriteRecordData(count);
-            for (const auto& kv : senderStamps) {
-                intfc->WriteRecordData(kv.first);
-                intfc->WriteRecordData(kv.second);
-            }
+            g_senderCooldowns.Serialize(intfc);
         }
 
         void OnLoad(SKSE::SerializationInterface* intfc,
@@ -1004,7 +942,6 @@ namespace NarrativeEngine
                 OnRevert();
                 return;
             }
-
             double lastDispatch = 0.0;
             if (intfc->ReadRecordData(lastDispatch) != sizeof(lastDispatch)) {
                 logger::error(
@@ -1012,49 +949,32 @@ namespace NarrativeEngine
                 OnRevert();
                 return;
             }
-            std::uint32_t count = 0;
-            if (intfc->ReadRecordData(count) != sizeof(count)) {
+            if (!g_senderCooldowns.Deserialize(intfc)) {
                 logger::error(
-                    "NPCLetterBeat::OnLoad: short read on sender-count; clearing");
-                OnRevert();
+                    "NPCLetterBeat::OnLoad: sender-cooldown deserialize failed; "
+                    "cleared");
+                {
+                    std::scoped_lock lock(g_cooldownMutex);
+                    g_lastDispatchGameHours = 0.0;
+                }
                 return;
             }
-
-            std::unordered_map<RE::FormID, double> loaded;
-            loaded.reserve(count);
-            for (std::uint32_t i = 0; i < count; ++i) {
-                RE::FormID fid = 0;
-                double     h = 0.0;
-                if (intfc->ReadRecordData(fid) != sizeof(fid) ||
-                    intfc->ReadRecordData(h) != sizeof(h))
-                {
-                    logger::error(
-                        "NPCLetterBeat::OnLoad: short read on sender entry {}; "
-                        "clearing everything and bailing", i);
-                    OnRevert();
-                    return;
-                }
-                RE::FormID resolved = 0;
-                if (intfc->ResolveFormID(fid, resolved) && resolved != 0) {
-                    loaded[resolved] = h;
-                }
-            }
-
             {
                 std::scoped_lock lock(g_cooldownMutex);
-                g_lastDispatchGameHours       = lastDispatch;
-                g_senderLastDeliveryGameHours = std::move(loaded);
+                g_lastDispatchGameHours = lastDispatch;
             }
             logger::info(
-                "NPCLetterBeat::OnLoad: restored lastDispatchGameHours={:.2f}, "
-                "senderCount={}", lastDispatch, count);
+                "NPCLetterBeat::OnLoad: restored lastDispatchGameHours={:.2f}",
+                lastDispatch);
         }
 
         void OnRevert()
         {
-            std::scoped_lock lock(g_cooldownMutex);
-            g_lastDispatchGameHours = 0.0;
-            g_senderLastDeliveryGameHours.clear();
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                g_lastDispatchGameHours = 0.0;
+            }
+            g_senderCooldowns.Clear();
         }
     }
 }

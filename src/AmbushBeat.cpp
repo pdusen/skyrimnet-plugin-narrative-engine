@@ -1,6 +1,7 @@
 #include <AmbushBeat.h>
 
 #include <AsyncDispatch.h>
+#include <BeatUtils.h>
 #include <EngineUtils.h>
 #include <JsonUtils.h>
 #include <LocationKeywords.h>
@@ -51,8 +52,7 @@ namespace NarrativeEngine
         std::atomic<bool> g_completionOutcomeReady{false};
         std::atomic<bool> g_completionDetected{false};
 
-        std::atomic<bool> g_cleanupTaskFired{false};
-        std::atomic<bool> g_cleanupOutcomeReady{false};
+        BeatUtils::CleanupLatch g_cleanupLatch;
 
         std::mutex        g_sessionMutex;
         std::string       g_failureReason;
@@ -80,8 +80,7 @@ namespace NarrativeEngine
             g_completionOutcomeReady.store(false, std::memory_order_release);
             g_completionDetected.store(false, std::memory_order_release);
 
-            g_cleanupTaskFired.store(false, std::memory_order_release);
-            g_cleanupOutcomeReady.store(false, std::memory_order_release);
+            g_cleanupLatch.Reset();
 
             std::scoped_lock lock(g_sessionMutex);
             g_failureReason.clear();
@@ -174,7 +173,7 @@ namespace NarrativeEngine
                     "AmbushBeat: per-beat cooldown stamped at gameHours={:.2f}",
                     now);
             }
-            g_cleanupOutcomeReady.store(true, std::memory_order_release);
+            g_cleanupLatch.MarkComplete();
         }
     }
 
@@ -337,13 +336,10 @@ namespace NarrativeEngine
             }
 
             case BeatState::CLEANUP: {
-                if (g_cleanupOutcomeReady.load(std::memory_order_acquire)) {
+                if (g_cleanupLatch.Poll(&MainThreadCleanup)) {
                     logger::info(
                         "AmbushBeat: CLEANUP done; returning to NOT_RUNNING");
                     return {BeatState::NOT_RUNNING};
-                }
-                if (!g_cleanupTaskFired.exchange(true, std::memory_order_acq_rel)) {
-                    AsyncDispatch::MarshalToMainThread(&MainThreadCleanup);
                 }
                 return {};
             }
