@@ -13,8 +13,8 @@ namespace SKSE
 }
 
 // Persistent, bounded ring buffer of every Director evaluation (including
-// no-action evaluations). Doubles as the Director's record of its own past
-// actions — `actionSelected` + `narrativeNote` + `advancedToPhase` capture
+// no-beat evaluations). Doubles as the Director's record of its own past
+// dispatches — `beatSelected` + `narrativeNote` + `advancedToPhase` capture
 // everything Beta-canon needs.
 //
 // Threading: appends and structural mutations are exclusive; snapshot reads
@@ -29,8 +29,8 @@ namespace NarrativeEngine::DecisionLog
         std::uint32_t                       tensionScore       = 0;  // 0..100
         PhaseTracker::Phase                 currentPhase       = PhaseTracker::Phase::Exposition;
         std::optional<PhaseTracker::Phase>  advancedToPhase;          // nullopt = no advancement this tick
-        std::string                         actionSelected;           // empty = no action selected
-        std::string                         actionParametersJSON;
+        std::string                         beatSelected;             // empty = no beat selected
+        std::string                         beatParametersJSON;
         std::string                         narrativeNote;            // LLM-supplied rationale
         std::uint32_t                       alphaCanonActiveSignals = 0;  // bitmask snapshot at evaluation time
     };

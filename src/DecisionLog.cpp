@@ -126,8 +126,8 @@ namespace NarrativeEngine::DecisionLog
                 r.advancedToPhase.value_or(PhaseTracker::Phase::Exposition));
             intfc->WriteRecordData(advancedByte);
 
-            WriteString(intfc, r.actionSelected);
-            WriteString(intfc, r.actionParametersJSON);
+            WriteString(intfc, r.beatSelected);
+            WriteString(intfc, r.beatParametersJSON);
             WriteString(intfc, r.narrativeNote);
 
             intfc->WriteRecordData(r.alphaCanonActiveSignals);
@@ -170,8 +170,8 @@ namespace NarrativeEngine::DecisionLog
                 Clear();
                 return;
             }
-            if (!ReadString(intfc, r.actionSelected) ||
-                !ReadString(intfc, r.actionParametersJSON) ||
+            if (!ReadString(intfc, r.beatSelected) ||
+                !ReadString(intfc, r.beatParametersJSON) ||
                 !ReadString(intfc, r.narrativeNote)) {
                 logger::error("DecisionLog::OnLoad: string read failure on record {}/{}; discarding payload",
                               i, count);

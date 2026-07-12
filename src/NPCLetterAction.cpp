@@ -1286,7 +1286,7 @@ namespace NarrativeEngine
 
     double NPCLetterAction::RemainingCooldownGameHours() const
     {
-        const int cooldownHours = Settings::Get().letterActionCooldownGameHours;
+        const int cooldownHours = Settings::Get().letterBeatCooldownGameHours;
         if (cooldownHours <= 0) return 0.0;
         double lastDispatch = 0.0;
         {
@@ -1364,7 +1364,7 @@ namespace NarrativeEngine
 
         // Per-action in-game-hours cooldown. Stamped by DetectCompletion
         // when a dispatch verifies as landed in the courier container.
-        const int cooldownHours = Settings::Get().letterActionCooldownGameHours;
+        const int cooldownHours = Settings::Get().letterBeatCooldownGameHours;
         if (cooldownHours > 0)
         {
             double lastDispatch = 0.0;

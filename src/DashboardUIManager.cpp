@@ -4,6 +4,8 @@
 #include <ActionRegistry.h>
 #include <AlphaCanon.h>
 #include <AsyncDispatch.h>
+#include <BeatRegistry.h>
+#include <BeatSystem.h>
 #include <CombatEventLog.h>
 #include <DecisionLog.h>
 #include <LetterPool.h>
@@ -179,13 +181,13 @@ namespace NarrativeEngine::DashboardUIManager
                 name, enabled);
             AsyncDispatch::MarshalToMainThread(
                 [name = std::move(name), enabled]() mutable {
-                    ActionRegistry::SetEnabled(name, enabled);
+                    BeatRegistry::SetEnabled(name, enabled);
                     PushFullState();
                 });
         }
 
         // Backs the "Enable All" / "Disable All" bulk buttons under
-        // the actions table. Payload is `"true"` or `"false"`.
+        // the beats table. Payload is `"true"` or `"false"`.
         void OnSetAllActionsEnabled(const char* argument)
         {
             const bool enabled = ParseBoolArg(argument);
@@ -193,15 +195,16 @@ namespace NarrativeEngine::DashboardUIManager
                 "DashboardUIManager: ne_setAllActionsEnabled({}) received",
                 enabled ? "true" : "false");
             AsyncDispatch::MarshalToMainThread([enabled] {
-                for (const auto& entry : ActionRegistry::All()) {
-                    ActionRegistry::SetEnabled(entry.name, enabled);
+                for (const auto& entry : BeatRegistry::All()) {
+                    BeatRegistry::SetEnabled(entry.name, enabled);
                 }
                 PushFullState();
             });
         }
 
         // Backs the per-row "Dispatch" button. Payload is the bare
-        // action name (no JSON wrapping — one field).
+        // beat name (no JSON wrapping — one field). Routes through
+        // BeatSystem::StartBeat, bypassing the LLM candidate flow.
         void OnDispatchAction(const char* argument)
         {
             const std::string name = argument ? argument : "";
@@ -212,11 +215,9 @@ namespace NarrativeEngine::DashboardUIManager
             logger::info(
                 "DashboardUIManager: ne_dispatchAction('{}') received", name);
             AsyncDispatch::MarshalToMainThread([name]() mutable {
-                ActionDispatcher::ForceDispatchAction(name);
+                BeatSystem::StartBeat(name, nlohmann::json::object());
                 // Push once now so the dashboard reflects the "in-
-                // flight" state within a frame. The completion path
-                // pushes again from FinalizeWithLLMResponse ->
-                // ApplyDecision like any normal dispatch.
+                // flight" state within a frame.
                 PushFullState();
             });
         }
@@ -302,9 +303,9 @@ namespace NarrativeEngine::DashboardUIManager
                 {"timestamp",      r.realTimeSec},
                 {"tension_score",  r.tensionScore},
                 {"phase",          PhaseTracker::PhaseName(r.currentPhase)},
-                {"action",         r.actionSelected.empty()
+                {"action",         r.beatSelected.empty()
                                        ? nlohmann::json(nullptr)
-                                       : nlohmann::json(r.actionSelected)},
+                                       : nlohmann::json(r.beatSelected)},
                 {"narrative_note", r.narrativeNote},
             });
         }
@@ -321,21 +322,24 @@ namespace NarrativeEngine::DashboardUIManager
                                             ? nlohmann::json(PhaseTracker::PhaseName(*latest.advancedToPhase))
                                             : nlohmann::json(nullptr)},
                 {"alpha_canon_signals", AlphaCanon::Names(mask)},
-                {"action",              latest.actionSelected.empty()
+                {"action",              latest.beatSelected.empty()
                                             ? nlohmann::json(nullptr)
-                                            : nlohmann::json(latest.actionSelected)},
+                                            : nlohmann::json(latest.beatSelected)},
             };
         } else {
             j["last_evaluation"] = nullptr;
         }
 
-        // action_in_flight — populated from the dispatcher's live state, not
-        // the decision log (the log captures the start of an action; the
-        // in-flight badge needs to reflect "is it still running right now").
-        if (auto info = ActionDispatcher::GetInFlightInfo()) {
+        // action_in_flight — populated from BeatSystem's live top-
+        // level state, not the decision log. (JSON key retained as
+        // "action_in_flight" because the dashboard's JS side still
+        // reads that key; the client-side rename to "beat_in_flight"
+        // is a follow-up.)
+        if (auto info = BeatSystem::GetInFlightInfo()) {
             j["action_in_flight"] = {
                 {"name",       info->name},
-                {"started_at", info->startedAt},
+                {"started_at", info->startedAtRealSeconds},
+                {"state",      static_cast<int>(info->state)},
             };
         } else {
             j["action_in_flight"] = nullptr;
@@ -434,20 +438,20 @@ namespace NarrativeEngine::DashboardUIManager
             };
         }
 
-        // actions — for the Dispatch tab. Every registered action, in
+        // actions — for the Dispatch tab. Every registered beat, in
         // registration order, with its runtime toggle state, the wall-
         // clock of its most recent successful dispatch (session only),
-        // and any in-game-hours cooldown remaining. Consumed by
-        // ActionDispatchTable on the dashboard.
+        // and any in-game-hours cooldown remaining. (JSON key retained
+        // as "actions" pending the JS side's rename.)
         {
             nlohmann::json actions = nlohmann::json::array();
-            for (const auto& entry : ActionRegistry::All()) {
-                if (!entry.action) continue;
+            for (const auto& entry : BeatRegistry::All()) {
+                if (!entry.beat) continue;
                 actions.push_back({
                     {"name",                     entry.name},
                     {"enabled",                  entry.enabled},
                     {"last_dispatched_at",       entry.lastDispatchedRealTime},
-                    {"remaining_cooldown_hours", entry.action->RemainingCooldownGameHours()},
+                    {"remaining_cooldown_hours", entry.beat->RemainingCooldownGameHours()},
                 });
             }
             j["actions"] = std::move(actions);

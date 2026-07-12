@@ -57,10 +57,16 @@ namespace NarrativeEngine::Settings
         int idealDurationFallingAction       = 225;  // 3.75 min
         int idealDurationResolution          = 330;  // 5.5 min
 
-        // ActionDispatcher knobs.
-        int actionCooldownSeconds            = 120;  // wall-clock seconds after action COMPLETION before next may fire
-        int actionRepetitionWindowSeconds    = 300;  // window during which the same action name is excluded from picks
-        int actionStaleLockTimeoutSeconds    = 900;  // auto-clear an in-flight action that never sends completion
+        // [BeatSystem]
+        // Master poll cadence for the Narrative Beat System's worker
+        // thread. See PHASE_06_BEAT_SYSTEM_REFACTOR.md.
+        int beatSystemPollIntervalMs         = 250;
+        // Beat dispatch knobs.
+        int beatCooldownSeconds              = 120;  // wall-clock seconds after beat COMPLETION before next may fire
+        int beatRepetitionWindowSeconds      = 300;  // window during which the same beat name is excluded from picks
+        // TODO PHASE-06: actionStaleLockTimeoutSeconds is only consumed by
+        // ActionDispatcher, which is deleted in Step 11. Removed with it.
+        int actionStaleLockTimeoutSeconds    = 900;  // (transitional — dies with ActionDispatcher)
 
         // NPCLetterAction precondition: minimum number of recently-engaged
         // NPCs SkyrimNet must report before the action becomes available.
@@ -105,7 +111,7 @@ namespace NarrativeEngine::Settings
         // successful ambush completion (the global
         // iActionCooldownSeconds also applies on top of this). 0
         // disables. Persists via the action's own co-save record.
-        int ambushPerActionCooldownGameHours = 24;
+        int ambushPerBeatCooldownGameHours = 24;
 
         // NPCLetterAction / LetterPool content + dispatch knobs. See
         // PHASE_04_LETTER_POOL_AND_NPC_LETTER_ACTION.md.
@@ -129,7 +135,7 @@ namespace NarrativeEngine::Settings
         // still applies on top. 0 disables. Persists via the action's
         // own co-save record. See notes in AmbushAction for the same
         // pattern.
-        int letterActionCooldownGameHours        = 24;
+        int letterBeatCooldownGameHours          = 24;
 
         // Per-sender cooldown in *in-game hours* applied after the
         // vanilla courier hands the letter to the player (delivery

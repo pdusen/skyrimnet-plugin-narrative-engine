@@ -824,98 +824,100 @@ also require an in-game force-dispatch pass.
 Step order:
 
 1. **Neutralize existing beat sources** — the three actions
-   are wrapped in `#if 0` so the system rewrite can proceed
-   without the old `IAction` contract cluttering the diff.
+   are removed from `ActionRegistry::Register` at plugin
+   init so no beat can be dispatched. The action `.cpp`
+   files themselves stay live (their utility namespaces —
+   `NPCLetterAction_QuestControl`, `NPCLetterAction_Cooldowns`,
+   `NPCVisitAction_Cooldowns` — have external callers in
+   `LetterPool.cpp` and `VisitComposer.cpp` and can't be
+   wrapped without breaking the link). The old files get
+   deleted when each beat is rewritten in Steps 9–11.
 2. Settings + INI rename.
 3. `IBeat` interface + `BeatRegistry` skeleton.
 4. `BeatSystem` module — master poll worker thread.
 5. `BeatSystem` cosave layer.
 6. `EvaluationPipeline` redirect + `DecisionLog` rename.
 7. Dashboard rename + query-source swap.
-8. Delete `ActionDispatcher`, `IAction`, `ActionRegistry`,
-   `PollUntilOrTimeout`, `VisitConclusionPoll`.
-9. Uncomment + refactor Ambush → `AmbushBeat`.
-10. Uncomment + refactor NPC Letter → `NPCLetterBeat`.
-11. Uncomment + refactor NPC Visit → `NPCVisitBeat`.
+8. Reshape and rename Ambush → `AmbushBeat`.
+9. Reshape and rename NPC Letter → `NPCLetterBeat`.
+10. Reshape and rename NPC Visit → `NPCVisitBeat`.
+11. Delete `ActionDispatcher`, `IAction`, `ActionRegistry`,
+    `PollUntilOrTimeout`. (Deferred until every beat has
+    been rewritten, at which point nothing references
+    them.)
 12. Papyrus fragment sweep — remove
     `SendModEvent("_ne_ActionCompleted", ...)` calls.
+
+**Note on step reordering.** The initial plan put the old-
+module deletion at Step 8 (before the beat rewrites) and
+assumed the action `.cpp` files could be wrapped in
+`#if 0` at Step 1. That doesn't work: `LetterPool.cpp`
+depends on `NPCLetterAction_QuestControl` /
+`_Cooldowns`, and `VisitComposer.cpp` depends on
+`NPCVisitAction_Cooldowns`. Deferring the deletion until
+after the beat rewrites (where each old file is deleted
+by its replacement) resolves this without any extra
+surgery on `LetterPool` or `VisitComposer`.
 
 ---
 
 ### Step 1 — Neutralize existing beat sources
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
 **Goal:** Take the three existing `IAction` implementations
-out of the build without deleting them, so the system
-rewrite in Steps 3–8 can proceed against a clean slate.
-Each action file's contents are wrapped in `#if 0`/`#endif`;
-their registration calls are commented out.
+out of the dispatch pool so no beat can fire, and disable
+their init hooks that reach into CK content. The `.cpp`
+files stay live because their utility namespaces have
+external callers (see the reordering note above).
 
 **Files:**
 
-- `src/AmbushAction.cpp` — wrap body.
-- `src/NPCLetterAction.cpp` — wrap body.
-- `src/NPCVisitAction.cpp` — wrap body.
-- `src/VisitConclusionPoll.cpp` — wrap body (it depends on
-  `PollUntilOrTimeout`, which Step 8 removes; wrapping now
-  keeps the intermediate builds clean).
-- `src/ActionRegistry.cpp` — comment out the three
-  registration calls (`Register(std::make_unique<...>())`)
-  for the affected actions.
-- `include/AmbushAction.h`, `include/NPCLetterAction.h`,
-  `include/NPCVisitAction.h`,
-  `include/VisitConclusionPoll.h` — leave in place;
-  callers that include them will be either gone or
-  themselves wrapped by this step's changes.
-- `include/VisitState.h`, `src/VisitState.cpp` — untouched.
-  It's a data-only module; no `IAction` dependency.
-  Continues to serve pending cosave load traffic on the
-  old `'NEVS'` record until Step 5 replaces the schema.
-- `include/VisitComposer.h`, `include/LetterComposer.h` —
-  untouched. LLM prompt builders; no `IAction` dependency.
+- `src/Plugin.cpp` — comment out the three
+  `ActionRegistry::Register(...)` calls at `kDataLoaded`,
+  plus `NPCVisitAction_Init::Initialize()` and
+  `NPCLetterAction_Init::Initialize()`. Leave a
+  `// PHASE-06: temporarily disabled; restored in
+  Step 9/10/11` comment above each so the reason is
+  obvious to a future reader.
 
-**Sub-tasks:**
+Files intentionally NOT touched:
 
-1. At the top of each `.cpp` file listed above, insert
-   `#if 0` immediately after the `#include` block. At the
-   bottom of the file, insert `#endif`. Leaves the
-   `#include`s outside the guard so unused-header warnings
-   don't fire; if any file has a translation-unit-level
-   symbol the linker looks for (e.g. a `static`
-   registration trampoline), move that outside the guard
-   too.
-2. In `ActionRegistry.cpp`, comment out the three
-   `Register(...)` lines for `AmbushAction`,
-   `NPCLetterAction`, `NPCVisitAction`. Include a
-   `// PHASE-06: temporarily disabled; re-registered in
-   Step 9/10/11` comment above each so the reason is
-   obvious to a future reader.
-3. If the dashboard's Dispatch tab attempts to show
-   per-action state from any of the three, verify it
-   degrades gracefully — with an empty registry the
-   candidate list is empty and the "Force Dispatch"
-   buttons should either disappear or grey out.
+- `src/AmbushAction.cpp`, `src/NPCLetterAction.cpp`,
+  `src/NPCVisitAction.cpp`, `src/VisitConclusionPoll.cpp` —
+  left intact. The classes exist and compile, but nothing
+  instantiates them. Their utility namespaces continue to
+  serve `LetterPool.cpp` and `VisitComposer.cpp`.
+- Every corresponding header — untouched.
+- Cosave `OnSave` / `OnLoad` / `OnRevert` calls in
+  `Plugin.cpp` for `AmbushAction_Persistence` /
+  `NPCLetterAction_Persistence` /
+  `NPCVisitAction_Persistence` — left in place. The
+  records will remain empty (no beat is running), and
+  the skip handlers from Step 5 will not conflict
+  because these handlers reference the *pre-refactor*
+  record IDs directly.
 
 **Verify:**
 
 - `pwsh -File build.ps1 build` succeeds.
-- Boot Skyrim; SKSE log shows no crash on init and the
-  existing `ActionRegistry: registered N actions` line
-  reports `0`.
-- Open dashboard; Dispatch tab renders with no candidate
-  actions; "current in-flight" panel shows nothing.
+- The build emits an `unused-includes` warning for
+  `<memory>` in `Plugin.cpp` — expected; Step 3 restores
+  the include's use.
+- On boot the `ActionRegistry: registered '{}'` info
+  line does not fire for any action. `ActionRegistry`'s
+  internal state stays empty.
 - Wait past the Director's `iTickIntervalSeconds`
-  interval; log shows `ConsiderAction: no candidates` or
-  the equivalent skip path.
+  interval; log shows the action-select gate skipping
+  with an empty candidate list.
 
 ---
 
 ### Step 2 — Settings + INI rename
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -949,8 +951,15 @@ setting.
      `ambushPerBeatCooldownGameHours`
    - `letterActionCooldownGameHours` →
      `letterBeatCooldownGameHours`
-2. Remove `actionStaleLockTimeoutSeconds` and
-   `visitHardTimeoutSeconds` fields.
+2. `actionStaleLockTimeoutSeconds` and
+   `visitHardTimeoutSeconds` are **retained transitionally**:
+   `actionStaleLockTimeoutSeconds` is still read by
+   `ActionDispatcher` (deleted in Step 11);
+   `visitHardTimeoutSeconds` is still read by
+   `NPCVisitAction` (rewritten in Step 10). Both are
+   removed at their consumer's death point. Marked with
+   `// TODO PHASE-06` comments in `Settings.h` /
+   `Settings.cpp` / `NarrativeEngine.ini`.
 3. Add `int beatSystemPollIntervalMs = 250;` under a new
    `// [BeatSystem]` grouping comment.
 4. Update `Settings.cpp` INI reads to match — `Get...`
@@ -963,19 +972,14 @@ setting.
    - Add `[BeatSystem]` section with
      `iBeatSystemPollIntervalMs=250` and an inline
      comment describing what it controls.
-   - Remove `iActionStaleLockTimeoutSeconds` and
-     `iVisitHardTimeoutSeconds` lines including their
-     comment blocks.
-   - Update any inline comment that mentions "action" in
-     the Narrative Engine sense to say "beat" instead.
-6. Sweep all readers of the renamed fields elsewhere in
-   the codebase (search for the old field names). At this
-   stage the only reader inside enabled code should be
-   the `ActionDispatcher` (still present, still calling
-   `iActionCooldownSeconds` on the old name).
-   `ActionDispatcher.cpp` reads move to the new field
-   names — the file itself gets deleted in Step 8, but
-   until then it must still compile.
+   - `iActionStaleLockTimeoutSeconds` and
+     `iVisitHardTimeoutSeconds` retained with transitional
+     comment (see sub-task 2).
+   - Update inline comments that mention "action" in the
+     Narrative Engine sense to say "beat" instead.
+6. Sweep readers of the renamed fields elsewhere in the
+   codebase (`ActionDispatcher.cpp`, `AmbushAction.cpp`,
+   `NPCLetterAction.cpp`) to the new field names.
 
 **Specifics:**
 
@@ -998,7 +1002,7 @@ setting.
 
 ### Step 3 — `IBeat` interface + `BeatRegistry` skeleton
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1043,7 +1047,7 @@ only to be extended by Step 4 and consumed by Steps 9–11.
 
 ### Step 4 — `BeatSystem` module + master poll
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1120,7 +1124,7 @@ wiring come in Steps 5 and 6.
 
 ### Step 5 — `BeatSystem` cosave layer
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1184,7 +1188,7 @@ handlers for the four pre-refactor record IDs.
 
 ### Step 6 — `EvaluationPipeline` redirect + `DecisionLog` rename
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1263,7 +1267,7 @@ name.
 
 ### Step 7 — Dashboard rename + query-source swap
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1307,68 +1311,9 @@ beat name.
 
 ---
 
-### Step 8 — Delete old modules
+### Step 8 — Reshape and rename Ambush → `AmbushBeat`
 
-- [ ] Complete
-
-**[CLAUDE]**
-
-**Goal:** Physically remove every module the refactor
-made unreachable.
-
-**Files:**
-
-- `include/ActionDispatcher.h`,
-  `src/ActionDispatcher.cpp` — delete.
-- `include/ActionRegistry.h`,
-  `src/ActionRegistry.cpp` — delete.
-- `include/IAction.h` — delete.
-- `include/VisitConclusionPoll.h`,
-  `src/VisitConclusionPoll.cpp` — delete (files were
-  wrapped in `#if 0` at Step 1; now physical).
-- `include/AsyncDispatch.h`, `src/AsyncDispatch.cpp` —
-  remove the `PollUntilOrTimeout` declaration and
-  implementation, plus its supporting constants/types if
-  they exist only for it. Keep `MarshalToMainThread` and
-  every other helper.
-- `src/Plugin.cpp` — remove any remaining reference to
-  `ActionRegistry::Initialize()`,
-  `ActionDispatcher::Initialize`, and their cosave
-  registrations (`'NEAC'` — replaced by the skip handler
-  installed in Step 5, so the registration line can be
-  removed cleanly).
-- CMake target file list — remove entries for the four
-  deleted `.cpp` files.
-
-**Sub-tasks:**
-
-1. Delete the files.
-2. Search the codebase for any remaining reference to
-   the deleted symbols (`IAction`, `ActionDispatcher`,
-   `ActionRegistry`, `PollUntilOrTimeout`,
-   `VisitConclusionPoll`). None should remain in enabled
-   code; the `#if 0`-guarded action bodies (still
-   commented out from Step 1) may still include
-   `IAction.h`, and that's fine because the guard hides
-   the include from the compiler.
-3. Update CMake.
-
-**Verify:**
-
-- `pwsh -File build.ps1 build` succeeds with the four
-  files gone.
-- Boot Skyrim; log shows no init failures; dashboard
-  still opens cleanly.
-- Grep `src` and `include` for any of the deleted symbol
-  names returns matches only inside `#if 0` blocks
-  (which Steps 9–11 will resolve as each beat is
-  uncommented and refactored).
-
----
-
-### Step 9 — Uncomment + refactor Ambush → `AmbushBeat`
-
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1442,7 +1387,7 @@ combat play out."
 
 ---
 
-### Step 10 — Uncomment + refactor NPC Letter → `NPCLetterBeat`
+### Step 9 — Reshape and rename NPC Letter → `NPCLetterBeat`
 
 - [ ] Complete
 
@@ -1522,7 +1467,7 @@ single-slot courier-dispatch flow; medium complexity.
 
 ---
 
-### Step 11 — Uncomment + refactor NPC Visit → `NPCVisitBeat`
+### Step 10 — Reshape and rename NPC Visit → `NPCVisitBeat`
 
 - [ ] Complete
 
@@ -1649,6 +1594,62 @@ detours during combat.
   Discuss cleanly.
 - Confirm the per-sender cooldown persists across a save
   cycle.
+
+---
+
+### Step 11 — Delete old modules
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+**Goal:** Physically remove every module the refactor
+made unreachable.
+
+**Files:**
+
+- `include/ActionDispatcher.h`,
+  `src/ActionDispatcher.cpp` — delete.
+- `include/ActionRegistry.h`,
+  `src/ActionRegistry.cpp` — delete.
+- `include/IAction.h` — delete.
+- `include/VisitConclusionPoll.h`,
+  `src/VisitConclusionPoll.cpp` — delete (absorbed into
+  `NPCVisitBeat` in Step 10; no remaining callers).
+- `include/AsyncDispatch.h`, `src/AsyncDispatch.cpp` —
+  remove the `PollUntilOrTimeout` declaration and
+  implementation, plus its supporting constants/types if
+  they exist only for it. Keep `MarshalToMainThread` and
+  every other helper.
+- `src/Plugin.cpp` — remove any remaining reference to
+  `ActionRegistry::Initialize()`,
+  `ActionDispatcher::Initialize`, and their cosave
+  registrations (`'NEAC'` — replaced by the skip handler
+  installed in Step 5, so the registration line can be
+  removed cleanly).
+- CMake target file list — remove entries for the four
+  deleted `.cpp` files.
+
+**Sub-tasks:**
+
+1. Delete the files.
+2. Search the codebase for any remaining reference to
+   the deleted symbols (`IAction`, `ActionDispatcher`,
+   `ActionRegistry`, `PollUntilOrTimeout`,
+   `VisitConclusionPoll`). No matches should remain —
+   Steps 8, 9, and 10 already replaced each beat's file
+   with an `IBeat`-based rewrite, so nothing includes
+   the old headers.
+3. Update CMake.
+
+**Verify:**
+
+- `pwsh -File build.ps1 build` succeeds with the four
+  files gone.
+- Boot Skyrim; log shows no init failures; dashboard
+  still opens cleanly.
+- Grep `src` and `include` for any of the deleted symbol
+  names returns no matches.
 
 ---
 

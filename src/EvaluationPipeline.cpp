@@ -3,6 +3,7 @@
 #include <ActionDispatcher.h>
 #include <AlphaCanon.h>
 #include <AsyncDispatch.h>
+#include <BeatSystem.h>
 #include <CombatEventLog.h>
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
@@ -315,7 +316,7 @@ namespace NarrativeEngine::EvaluationPipeline
                     {"t", r.realTimeSec},
                     {"tension_score", r.tensionScore},
                     {"phase", PhaseTracker::PhaseName(r.currentPhase)},
-                    {"action", r.actionSelected},
+                    {"action", r.beatSelected},
                     {"narrative_note", r.narrativeNote},
                 };
                 if (r.advancedToPhase)
@@ -363,7 +364,8 @@ namespace NarrativeEngine::EvaluationPipeline
         r.currentPhase            = PhaseTracker::PhaseFromName(snapshot.currentPhase)
                                         .value_or(PhaseTracker::Phase::Exposition);
         r.alphaCanonActiveSignals = snapshot.alphaCanonSignalBitmask;
-        // actionSelected stays empty for MVP (no in-world Director actions).
+        // beatSelected stays empty at this point — the Director's
+        // beat-select LLM callback populates it later in ConsiderBeat.
 
         const std::string body = StripMarkdownFences(jsonResponse);
         const auto parsed = nlohmann::json::parse(body, /*cb=*/nullptr,
@@ -506,14 +508,14 @@ namespace NarrativeEngine::EvaluationPipeline
 
                     // Phase D parser runs on this (SkyrimNet) thread — it
                     // touches no engine state. The marshal hands snapshot
-                    // + rec to ActionDispatcher::ConsiderAction, which
-                    // takes ownership and is responsible for calling
+                    // + rec to BeatSystem::ConsiderBeat, which takes
+                    // ownership and is responsible for calling
                     // ApplyDecision (possibly after a deferred LLM round-
                     // trip) and the finalizer exactly once.
                     DecisionLog::DecisionRecord rec = ParseDecision(response, snapshot);
                     AsyncDispatch::MarshalToMainThread(
                         [snapshot = std::move(snapshot), rec = std::move(rec)]() mutable {
-                            ActionDispatcher::ConsiderAction(
+                            BeatSystem::ConsiderBeat(
                                 std::move(snapshot), std::move(rec),
                                 [] { g_inFlight.store(false); });
                         });

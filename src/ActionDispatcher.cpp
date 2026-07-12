@@ -84,7 +84,7 @@ namespace NarrativeEngine::ActionDispatcher
         void TrimRecentlyFiredLocked(double now)
         {
             const double window = static_cast<double>(
-                Settings::Get().actionRepetitionWindowSeconds);
+                Settings::Get().beatRepetitionWindowSeconds);
             while (!g_recentlyFired.empty() &&
                    (now - g_recentlyFired.front().completedAt) > window) {
                 g_recentlyFired.pop_front();
@@ -98,7 +98,7 @@ namespace NarrativeEngine::ActionDispatcher
         bool WasFiredRecentlyLocked(const std::string& name, double now)
         {
             const double window = static_cast<double>(
-                Settings::Get().actionRepetitionWindowSeconds);
+                Settings::Get().beatRepetitionWindowSeconds);
             for (const auto& r : g_recentlyFired) {
                 if (r.name == name && (now - r.completedAt) <= window) {
                     return true;
@@ -417,7 +417,7 @@ namespace NarrativeEngine::ActionDispatcher
                                  const std::string&             reason,
                                  FinalizedCallback              onFinalized)
         {
-            rec.actionSelected = "(failed: " + reason + ")";
+            rec.beatSelected = "(failed: " + reason + ")";
             {
                 std::scoped_lock lock(g_mutex);
                 g_lastActionCompletedAt = NowUnixSeconds();
@@ -492,11 +492,11 @@ namespace NarrativeEngine::ActionDispatcher
                 return;
             }
 
-            // Populate the record fields up-front. actionSelected is
+            // Populate the record fields up-front. beatSelected is
             // tentatively the action name; the failure path below will
             // overwrite it with the "(failed: ...)" form if Start fails.
-            rec.actionSelected       = chosenAction;
-            rec.actionParametersJSON = parameters.dump();
+            rec.beatSelected       = chosenAction;
+            rec.beatParametersJSON = parameters.dump();
             if (!narrativeNote.empty()) {
                 rec.narrativeNote = std::move(narrativeNote);
             }
@@ -593,7 +593,7 @@ namespace NarrativeEngine::ActionDispatcher
 
         // Gate 3: global cooldown.
         const double now      = NowUnixSeconds();
-        const double cooldown = static_cast<double>(Settings::Get().actionCooldownSeconds);
+        const double cooldown = static_cast<double>(Settings::Get().beatCooldownSeconds);
         if (lastCompletedCopy > 0.0 && (now - lastCompletedCopy) < cooldown) {
             if (debug) {
                 const double remaining = cooldown - (now - lastCompletedCopy);
@@ -920,7 +920,7 @@ namespace NarrativeEngine::ActionDispatcher
         rec.currentPhase             = currentPhase;
         rec.alphaCanonActiveSignals  = 0;
         rec.narrativeNote            = "forced dispatch via debug UI";
-        // actionSelected + actionParametersJSON get populated by
+        // beatSelected + beatParametersJSON get populated by
         // FinalizeWithLLMResponse once the LLM comes back.
 
         const int tensionDelta = ComputeTensionDelta(currentPhase, rec.tensionScore);

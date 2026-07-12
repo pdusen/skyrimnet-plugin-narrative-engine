@@ -71,12 +71,18 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("Director", "iIdealDurationResolution",
                                  g_config.idealDurationResolution));
 
-            g_config.actionCooldownSeconds = static_cast<int>(
-                ini.GetLongValue("Director", "iActionCooldownSeconds",
-                                 g_config.actionCooldownSeconds));
-            g_config.actionRepetitionWindowSeconds = static_cast<int>(
-                ini.GetLongValue("Director", "iActionRepetitionWindowSeconds",
-                                 g_config.actionRepetitionWindowSeconds));
+            g_config.beatSystemPollIntervalMs = static_cast<int>(
+                ini.GetLongValue("BeatSystem", "iBeatSystemPollIntervalMs",
+                                 g_config.beatSystemPollIntervalMs));
+            g_config.beatCooldownSeconds = static_cast<int>(
+                ini.GetLongValue("BeatSystem", "iBeatCooldownSeconds",
+                                 g_config.beatCooldownSeconds));
+            g_config.beatRepetitionWindowSeconds = static_cast<int>(
+                ini.GetLongValue("BeatSystem", "iBeatRepetitionWindowSeconds",
+                                 g_config.beatRepetitionWindowSeconds));
+            // TODO PHASE-06: dies with ActionDispatcher in Step 11. Kept
+            // in the [Director] section for now so an existing INI still
+            // reads correctly.
             g_config.actionStaleLockTimeoutSeconds = static_cast<int>(
                 ini.GetLongValue("Director", "iActionStaleLockTimeoutSeconds",
                                  g_config.actionStaleLockTimeoutSeconds));
@@ -102,55 +108,55 @@ namespace NarrativeEngine::Settings
                                  g_config.combatEventsMaxStored));
 
             g_config.enableAmbush = ini.GetBoolValue(
-                "Actions", "bEnableAmbush", g_config.enableAmbush);
+                "Beats", "bEnableAmbush", g_config.enableAmbush);
             g_config.enableNpcLetter = ini.GetBoolValue(
-                "Actions", "bEnableNpcLetter", g_config.enableNpcLetter);
+                "Beats", "bEnableNpcLetter", g_config.enableNpcLetter);
 
             g_config.ambushDefaultBanditCount = static_cast<int>(
-                ini.GetLongValue("Actions", "iAmbushDefaultBanditCount",
+                ini.GetLongValue("Beats", "iAmbushDefaultBanditCount",
                                  g_config.ambushDefaultBanditCount));
             g_config.ambushDefaultSpawnDistanceUnits = static_cast<int>(
-                ini.GetLongValue("Actions", "iAmbushDefaultSpawnDistanceUnits",
+                ini.GetLongValue("Beats", "iAmbushDefaultSpawnDistanceUnits",
                                  g_config.ambushDefaultSpawnDistanceUnits));
             g_config.ambushMinBanditCount = static_cast<int>(
-                ini.GetLongValue("Actions", "iAmbushMinBanditCount",
+                ini.GetLongValue("Beats", "iAmbushMinBanditCount",
                                  g_config.ambushMinBanditCount));
             g_config.ambushMaxBanditCount = static_cast<int>(
-                ini.GetLongValue("Actions", "iAmbushMaxBanditCount",
+                ini.GetLongValue("Beats", "iAmbushMaxBanditCount",
                                  g_config.ambushMaxBanditCount));
             g_config.ambushMinSpawnDistanceUnits = static_cast<int>(
-                ini.GetLongValue("Actions", "iAmbushMinSpawnDistanceUnits",
+                ini.GetLongValue("Beats", "iAmbushMinSpawnDistanceUnits",
                                  g_config.ambushMinSpawnDistanceUnits));
             g_config.ambushMaxSpawnDistanceUnits = static_cast<int>(
-                ini.GetLongValue("Actions", "iAmbushMaxSpawnDistanceUnits",
+                ini.GetLongValue("Beats", "iAmbushMaxSpawnDistanceUnits",
                                  g_config.ambushMaxSpawnDistanceUnits));
-            g_config.ambushPerActionCooldownGameHours = static_cast<int>(
-                ini.GetLongValue("Actions", "iAmbushPerActionCooldownGameHours",
-                                 g_config.ambushPerActionCooldownGameHours));
+            g_config.ambushPerBeatCooldownGameHours = static_cast<int>(
+                ini.GetLongValue("Beats", "iAmbushPerBeatCooldownGameHours",
+                                 g_config.ambushPerBeatCooldownGameHours));
 
             g_config.letterContentMinWords = static_cast<int>(
-                ini.GetLongValue("Actions", "iLetterContentMinWords",
+                ini.GetLongValue("Beats", "iLetterContentMinWords",
                                  g_config.letterContentMinWords));
             g_config.letterContentMaxWords = static_cast<int>(
-                ini.GetLongValue("Actions", "iLetterContentMaxWords",
+                ini.GetLongValue("Beats", "iLetterContentMaxWords",
                                  g_config.letterContentMaxWords));
             g_config.letterMemoryImportanceThreshold = static_cast<float>(
-                ini.GetDoubleValue("Actions", "fLetterMemoryImportanceThreshold",
+                ini.GetDoubleValue("Beats", "fLetterMemoryImportanceThreshold",
                                    g_config.letterMemoryImportanceThreshold));
             g_config.letterPoolSize = static_cast<int>(
-                ini.GetLongValue("Actions", "iLetterPoolSize",
+                ini.GetLongValue("Beats", "iLetterPoolSize",
                                  g_config.letterPoolSize));
             g_config.letterDispatchVerifyDelaySeconds = static_cast<int>(
-                ini.GetLongValue("Actions", "iLetterDispatchVerifyDelaySeconds",
+                ini.GetLongValue("Beats", "iLetterDispatchVerifyDelaySeconds",
                                  g_config.letterDispatchVerifyDelaySeconds));
             g_config.letterPendingDeliveryTimeoutSeconds = static_cast<int>(
-                ini.GetLongValue("Actions", "iLetterPendingDeliveryTimeoutSeconds",
+                ini.GetLongValue("Beats", "iLetterPendingDeliveryTimeoutSeconds",
                                  g_config.letterPendingDeliveryTimeoutSeconds));
-            g_config.letterActionCooldownGameHours = static_cast<int>(
-                ini.GetLongValue("Actions", "iLetterActionCooldownGameHours",
-                                 g_config.letterActionCooldownGameHours));
+            g_config.letterBeatCooldownGameHours = static_cast<int>(
+                ini.GetLongValue("Beats", "iLetterBeatCooldownGameHours",
+                                 g_config.letterBeatCooldownGameHours));
             g_config.letterSenderCooldownGameHours = static_cast<int>(
-                ini.GetLongValue("Actions", "iLetterSenderCooldownGameHours",
+                ini.GetLongValue("Beats", "iLetterSenderCooldownGameHours",
                                  g_config.letterSenderCooldownGameHours));
 
             g_config.letterPoolEvictionLogVerbosity = static_cast<int>(
@@ -164,65 +170,68 @@ namespace NarrativeEngine::Settings
                                  g_config.visitMinSenderCandidates));
 
             g_config.enableNpcVisit = ini.GetBoolValue(
-                "Actions", "bEnableNpcVisit", g_config.enableNpcVisit);
+                "Beats", "bEnableNpcVisit", g_config.enableNpcVisit);
 
             g_config.visitBriefingMinWords = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitBriefingMinWords",
+                ini.GetLongValue("Beats", "iVisitBriefingMinWords",
                                  g_config.visitBriefingMinWords));
             g_config.visitBriefingMaxWords = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitBriefingMaxWords",
+                ini.GetLongValue("Beats", "iVisitBriefingMaxWords",
                                  g_config.visitBriefingMaxWords));
             g_config.visitMarkerMinDistanceUnits = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitMarkerMinDistanceUnits",
+                ini.GetLongValue("Beats", "iVisitMarkerMinDistanceUnits",
                                  g_config.visitMarkerMinDistanceUnits));
             g_config.visitMarkerMaxDistanceUnits = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitMarkerMaxDistanceUnits",
+                ini.GetLongValue("Beats", "iVisitMarkerMaxDistanceUnits",
                                  g_config.visitMarkerMaxDistanceUnits));
             g_config.visitSenderCooldownGameHours = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitSenderCooldownGameHours",
+                ini.GetLongValue("Beats", "iVisitSenderCooldownGameHours",
                                  g_config.visitSenderCooldownGameHours));
 
             g_config.visitApproachTimeoutSeconds = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitApproachTimeoutSeconds",
+                ini.GetLongValue("Beats", "iVisitApproachTimeoutSeconds",
                                  g_config.visitApproachTimeoutSeconds));
             g_config.visitSalutationApproachDistanceUnits = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitSalutationApproachDistanceUnits",
+                ini.GetLongValue("Beats", "iVisitSalutationApproachDistanceUnits",
                                  g_config.visitSalutationApproachDistanceUnits));
             g_config.visitReEngageApproachDistanceUnits = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitReEngageApproachDistanceUnits",
+                ini.GetLongValue("Beats", "iVisitReEngageApproachDistanceUnits",
                                  g_config.visitReEngageApproachDistanceUnits));
             g_config.visitPollGateTickSeconds = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitPollGateTickSeconds",
+                ini.GetLongValue("Beats", "iVisitPollGateTickSeconds",
                                  g_config.visitPollGateTickSeconds));
             g_config.visitPollTurnCountThreshold = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitPollTurnCountThreshold",
+                ini.GetLongValue("Beats", "iVisitPollTurnCountThreshold",
                                  g_config.visitPollTurnCountThreshold));
             g_config.visitPollSilenceRealSeconds = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitPollSilenceRealSeconds",
+                ini.GetLongValue("Beats", "iVisitPollSilenceRealSeconds",
                                  g_config.visitPollSilenceRealSeconds));
             g_config.visitPollMaxIntervalGameMinutes = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitPollMaxIntervalGameMinutes",
+                ini.GetLongValue("Beats", "iVisitPollMaxIntervalGameMinutes",
                                  g_config.visitPollMaxIntervalGameMinutes));
             g_config.visitConclusionPollMaxConsecutiveFailures = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitConclusionPollMaxConsecutiveFailures",
+                ini.GetLongValue("Beats", "iVisitConclusionPollMaxConsecutiveFailures",
                                  g_config.visitConclusionPollMaxConsecutiveFailures));
             g_config.visitMaxIgnoreNudges = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitMaxIgnoreNudges",
+                ini.GetLongValue("Beats", "iVisitMaxIgnoreNudges",
                                  g_config.visitMaxIgnoreNudges));
             g_config.visitOnHoldCombatMaxSeconds = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitOnHoldCombatMaxSeconds",
+                ini.GetLongValue("Beats", "iVisitOnHoldCombatMaxSeconds",
                                  g_config.visitOnHoldCombatMaxSeconds));
             g_config.visitValedictionDwellSeconds = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitValedictionDwellSeconds",
+                ini.GetLongValue("Beats", "iVisitValedictionDwellSeconds",
                                  g_config.visitValedictionDwellSeconds));
             g_config.visitReturnHomeExitDistanceUnits = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitReturnHomeExitDistanceUnits",
+                ini.GetLongValue("Beats", "iVisitReturnHomeExitDistanceUnits",
                                  g_config.visitReturnHomeExitDistanceUnits));
             g_config.visitReturnHomeTimeoutSeconds = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitReturnHomeTimeoutSeconds",
+                ini.GetLongValue("Beats", "iVisitReturnHomeTimeoutSeconds",
                                  g_config.visitReturnHomeTimeoutSeconds));
+            // TODO PHASE-06: visitHardTimeoutSeconds dies with the old
+            // NPCVisitAction in Step 10. Kept transitionally so the read
+            // path still populates it during the intervening builds.
             g_config.visitHardTimeoutSeconds = static_cast<int>(
-                ini.GetLongValue("Actions", "iVisitHardTimeoutSeconds",
+                ini.GetLongValue("Beats", "iVisitHardTimeoutSeconds",
                                  g_config.visitHardTimeoutSeconds));
 
             return true;

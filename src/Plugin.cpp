@@ -2,8 +2,10 @@
 
 #include <ActionDispatcher.h>
 #include <ActionRegistry.h>
-#include <AmbushAction.h>
+#include <AmbushBeat.h>
 #include <AsyncDispatch.h>
+#include <BeatRegistry.h>
+#include <BeatSystem.h>
 #include <CombatEventLog.h>
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
@@ -58,22 +60,27 @@ namespace NarrativeEngine
                     // ModEvent sink. Order matters: AsyncDispatch must be
                     // up because the sink marshals through it.
                     ActionDispatcher::Initialize();
-                    // Register shipped actions. The dispatcher must be
-                    // live first so its completion sink is in place
-                    // before any action can fire.
-                    ActionRegistry::Register(std::make_unique<AmbushAction>());
-                    ActionRegistry::Register(std::make_unique<NPCLetterAction>());
-                    if (Settings::Get().enableNpcVisit) {
-                        ActionRegistry::Register(std::make_unique<NPCVisitAction>());
-                        // Resolve the Phase 05 CK content (quest,
-                        // faction, aliases) so Start's dispatch chain
-                        // has warm handles. Must run after the action
-                        // has been registered so any registration-time
-                        // gating sees the resolved state.
-                        NPCVisitAction_Init::Initialize();
-                    } else {
-                        logger::info("Plugin: NPCVisitAction disabled via bEnableNpcVisit=false");
-                    }
+                    // PHASE-06: BeatRegistry is initialized alongside
+                    // the existing ActionRegistry during the transitional
+                    // phase. Both coexist until Step 11 deletes the old
+                    // one.
+                    BeatRegistry::Initialize();
+                    // BeatSystem's master poll starts here. Runs
+                    // continuously on its own worker thread from now
+                    // until plugin unload; the top-level state stays at
+                    // NO_BEAT_RUNNING until a beat gets dispatched.
+                    BeatSystem::Initialize();
+                    // PHASE-06: Register the new IBeat-based beats.
+                    // AmbushBeat lands here (Step 8); NPCLetterBeat and
+                    // NPCVisitBeat land in Steps 9 and 10.
+                    BeatRegistry::Register(std::make_unique<AmbushBeat>());
+                    // ActionRegistry::Register(std::make_unique<NPCLetterAction>());
+                    // if (Settings::Get().enableNpcVisit) {
+                    //     ActionRegistry::Register(std::make_unique<NPCVisitAction>());
+                    //     NPCVisitAction_Init::Initialize();
+                    // } else {
+                    //     logger::info("Plugin: NPCVisitAction disabled via bEnableNpcVisit=false");
+                    // }
                     // Resolve the 20 _ne_PooledLetterNN EditorIDs to Book
                     // FormIDs. Must run AFTER kDataLoaded fires the rest
                     // of the registry chain because TESForm lookups by
@@ -91,19 +98,19 @@ namespace NarrativeEngine
                     // (courier → player) and the discard / drop recycle
                     // paths.
                     LetterPool::RegisterContainerEventSink();
-                    // Warm the WICourier resolution and resolve the 20
-                    // _ne_PooledLetterQuestNN per-slot delivery quests
-                    // into NPCLetterAction's dispatch cache. Must run
-                    // AFTER LetterPool::Initialize so the slot indexing
-                    // is consistent across both subsystems.
-                    NPCLetterAction_Init::Initialize();
+                    // PHASE-06: NPCLetterAction_Init temporarily disabled
+                    // while the Narrative Beat System is stood up.
+                    // Restored in Phase 06 Step 10 (as part of
+                    // NPCLetterBeat's own init).
+                    // NPCLetterAction_Init::Initialize();
                     break;
                 case SKSE::MessagingInterface::kNewGame:
                     logger::info("OnMessage: kNewGame");
                     DecisionLog::Clear();
                     CombatEventLog::OnRevert();
                     ActionDispatcher::OnRevert();
-                    AmbushAction_Persistence::OnRevert();
+                    BeatSystem::OnRevert();
+                    AmbushBeat_Persistence::OnRevert();
                     NPCLetterAction_Persistence::OnRevert();
                     NPCVisitAction_Persistence::OnRevert();
                     VisitState::OnRevert();
@@ -127,7 +134,8 @@ namespace NarrativeEngine
                     DecisionLog::Clear();
                     CombatEventLog::OnRevert();
                     ActionDispatcher::OnRevert();
-                    AmbushAction_Persistence::OnRevert();
+                    BeatSystem::OnRevert();
+                    AmbushBeat_Persistence::OnRevert();
                     NPCLetterAction_Persistence::OnRevert();
                     NPCVisitAction_Persistence::OnRevert();
                     VisitState::OnRevert();
@@ -153,7 +161,8 @@ namespace NarrativeEngine
             DecisionLog::OnSave(intfc);
             CombatEventLog::OnSave(intfc);
             ActionDispatcher::OnSave(intfc);
-            AmbushAction_Persistence::OnSave(intfc);
+            BeatSystem::OnSave(intfc);
+            AmbushBeat_Persistence::OnSave(intfc);
             NPCLetterAction_Persistence::OnSave(intfc);
             NPCVisitAction_Persistence::OnSave(intfc);
             LetterPool::OnSave(intfc);
@@ -185,8 +194,11 @@ namespace NarrativeEngine
                     case ActionDispatcher::kRecordTypeId:
                         ActionDispatcher::OnLoad(intfc, version, length);
                         break;
-                    case AmbushAction_Persistence::kRecordTypeId:
-                        AmbushAction_Persistence::OnLoad(intfc, version, length);
+                    case BeatSystem::kRecordTypeId:
+                        BeatSystem::OnLoad(intfc, version, length);
+                        break;
+                    case AmbushBeat_Persistence::kRecordTypeId:
+                        AmbushBeat_Persistence::OnLoad(intfc, version, length);
                         break;
                     case NPCLetterAction_Persistence::kRecordTypeId:
                         NPCLetterAction_Persistence::OnLoad(intfc, version, length);
@@ -219,7 +231,8 @@ namespace NarrativeEngine
             DecisionLog::OnRevert();
             CombatEventLog::OnRevert();
             ActionDispatcher::OnRevert();
-            AmbushAction_Persistence::OnRevert();
+            BeatSystem::OnRevert();
+            AmbushBeat_Persistence::OnRevert();
             NPCLetterAction_Persistence::OnRevert();
             NPCVisitAction_Persistence::OnRevert();
             LetterPool::OnRevert();
