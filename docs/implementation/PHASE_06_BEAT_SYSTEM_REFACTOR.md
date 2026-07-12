@@ -1837,7 +1837,7 @@ made unreachable.
 
 ### Step 13 — Papyrus fragment sweep
 
-- [ ] Complete
+- [x] Complete
 
 **[USER]**
 
