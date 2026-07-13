@@ -66,10 +66,6 @@ namespace NarrativeEngine::BeatSystem
         std::thread g_worker;
         bool g_running = false;
 
-        // Heartbeat cadence — one log line every kHeartbeatEveryNTicks
-        // iterations. At 250ms cadence, 40 ticks = ~10s.
-        constexpr int kHeartbeatEveryNTicks = 40;
-
         // Gate-derived TickMode. The three underlying reads live in
         // EngineUtils so other subsystems (e.g. beats' own Tick logic
         // that wants a paused-check without going through BeatSystem)
@@ -204,7 +200,13 @@ namespace NarrativeEngine::BeatSystem
                 static_cast<std::uint32_t>(std::max(1, Settings::Get().beatSystemPollIntervalMs));
             const auto sleepDuration = std::chrono::milliseconds(intervalMs);
 
-            int tickCounter = 0;
+            bool hasPrev = false;
+            TopLevelState prevTopState = TopLevelState::NO_BEAT_RUNNING;
+            TickMode prevMode = TickMode::Normal;
+            std::string prevRunningName;
+            BeatState prevRunningState = BeatState::NOT_RUNNING;
+            std::uint32_t prevCooldown = 0;
+
             while (!g_stopRequested.load(std::memory_order_acquire)) {
                 std::this_thread::sleep_for(sleepDuration);
                 if (g_stopRequested.load(std::memory_order_acquire))
@@ -218,21 +220,33 @@ namespace NarrativeEngine::BeatSystem
                     logger::error("BeatSystem: tick threw unknown exception");
                 }
 
-                if (++tickCounter >= kHeartbeatEveryNTicks) {
-                    tickCounter = 0;
-                    if (Settings::Get().debugMode) {
-                        std::string runningName;
-                        BeatState runningState = BeatState::NOT_RUNNING;
-                        TopLevelState topState;
-                        std::uint32_t cooldown;
-                        {
-                            std::scoped_lock lock(g_stateMutex);
-                            topState = g_topLevelState;
-                            runningName = g_runningBeatName;
-                            runningState = g_runningBeatCurrentState;
-                            cooldown = g_globalCooldownMs;
-                        }
-                        const TickMode mode = ComputeTickMode();
+                if (Settings::Get().debugMode) {
+                    std::string runningName;
+                    BeatState runningState = BeatState::NOT_RUNNING;
+                    TopLevelState topState;
+                    std::uint32_t cooldown;
+                    {
+                        std::scoped_lock lock(g_stateMutex);
+                        topState = g_topLevelState;
+                        runningName = g_runningBeatName;
+                        runningState = g_runningBeatCurrentState;
+                        cooldown = g_globalCooldownMs;
+                    }
+                    const TickMode mode = ComputeTickMode();
+
+                    // Cooldown counts up by intervalMs each Normal-mode
+                    // tick and is frozen otherwise; those two shapes are
+                    // the routine "boring" change and don't warrant a
+                    // log. Anything else (reset to 0, cosave load jump,
+                    // saturation clamp) is a discontinuity worth
+                    // recording.
+                    const bool cooldownRoutine = cooldown == prevCooldown || cooldown == prevCooldown + intervalMs;
+
+                    const bool changed = !hasPrev || topState != prevTopState || mode != prevMode
+                                         || runningName != prevRunningName || runningState != prevRunningState
+                                         || !cooldownRoutine;
+
+                    if (changed) {
                         if (topState == TopLevelState::NO_BEAT_RUNNING) {
                             logger::debug("BeatSystem: heartbeat state={} mode={} cooldown={:.1f}s",
                                           TopLevelStateName(topState),
@@ -247,6 +261,13 @@ namespace NarrativeEngine::BeatSystem
                                           static_cast<int>(runningState));
                         }
                     }
+
+                    hasPrev = true;
+                    prevTopState = topState;
+                    prevMode = mode;
+                    prevRunningName = runningName;
+                    prevRunningState = runningState;
+                    prevCooldown = cooldown;
                 }
             }
             logger::info("BeatSystem: master poll worker thread stopped");
