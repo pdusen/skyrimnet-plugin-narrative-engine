@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from 'react';
+
 import type { ActionInfo } from '../types';
 
 interface Props {
@@ -5,6 +7,13 @@ interface Props {
     inFlightName: string | null;
     nowSeconds: number;
 }
+
+// Safety valve: how long to hold the "pending dispatch" disable if the
+// server never reports an in-flight action after a click. Long enough
+// to cover a slow beat-select LLM call, short enough that a silent
+// failure (unknown beat, blocked by global precondition, LLM error) is
+// recoverable without a page reload.
+const PENDING_DISPATCH_TIMEOUT_MS = 30000;
 
 declare global {
     interface Window {
@@ -31,10 +40,54 @@ function formatCooldownHours(hours: number): string {
 export function ActionDispatchTable({ actions, inFlightName, nowSeconds }: Props) {
     const anyInFlight = inFlightName !== null && inFlightName !== '';
 
+    // Client-only "pending dispatch" flag. Held between click and the
+    // first server-state push that reports a non-null in-flight action.
+    // Bridges the beat-select-LLM window: ForceDispatchBeat kicks off
+    // asynchronously and doesn't set g_topLevelState=BEAT_RUNNING until
+    // the LLM callback lands, so the initial PushFullState after the
+    // click still carries a null action_in_flight. Without this flag,
+    // the buttons re-enable during that gap and the player could stack
+    // dispatch clicks.
+    const [pendingDispatchName, setPendingDispatchName] = useState<string | null>(null);
+    const pendingTimeoutRef = useRef<number | null>(null);
+
+    const clearPendingTimeout = () => {
+        if (pendingTimeoutRef.current !== null) {
+            window.clearTimeout(pendingTimeoutRef.current);
+            pendingTimeoutRef.current = null;
+        }
+    };
+
+    // Hand off from client-pending to server-in-flight the moment the
+    // server reports any action in flight. From then on, the disable is
+    // driven by anyInFlight (which clears when the beat completes or
+    // rolls back — the whole "until it completes or cancels" window is
+    // covered by that server-side signal).
+    useEffect(() => {
+        if (pendingDispatchName !== null && anyInFlight) {
+            setPendingDispatchName(null);
+            clearPendingTimeout();
+        }
+    }, [pendingDispatchName, anyInFlight]);
+
+    // Cancel a stuck timeout on unmount so the setState below can't
+    // fire against a torn-down component.
+    useEffect(() => clearPendingTimeout, []);
+
     const onToggleEnabled = (name: string, next: boolean) => {
         window.ne_setActionEnabled?.(JSON.stringify({ name, enabled: next }));
     };
     const onDispatch = (name: string) => {
+        setPendingDispatchName(name);
+        clearPendingTimeout();
+        pendingTimeoutRef.current = window.setTimeout(() => {
+            // Safety valve — the dispatch presumably failed before ever
+            // populating an in-flight record (unknown beat, refused by
+            // a global precondition, LLM timeout). Release the disable
+            // so the player isn't stuck.
+            setPendingDispatchName(null);
+            pendingTimeoutRef.current = null;
+        }, PENDING_DISPATCH_TIMEOUT_MS);
         window.ne_dispatchAction?.(name);
     };
 
@@ -54,11 +107,18 @@ export function ActionDispatchTable({ actions, inFlightName, nowSeconds }: Props
                     const last = a.last_dispatched_at > 0
                         ? formatRelative(nowSeconds - a.last_dispatched_at)
                         : 'never';
-                    // Dispatch button is disabled only while any action
-                    // is in-flight (single-flight lock). Cooldown state
-                    // does NOT gate the button — force-dispatch bypasses
-                    // cooldowns by design.
-                    const disableDispatch = anyInFlight;
+                    // Dispatch button is disabled while any action is in
+                    // flight (single-flight lock) OR while a click is
+                    // pending — the beat-select LLM window between click
+                    // and in-flight populating. Cooldown state does NOT
+                    // gate the button — force-dispatch bypasses cooldowns
+                    // by design.
+                    const disableDispatch = anyInFlight || pendingDispatchName !== null;
+                    const disableReason = anyInFlight
+                        ? `Another action is in flight (${inFlightName})`
+                        : pendingDispatchName !== null
+                            ? `Dispatching ${pendingDispatchName}…`
+                            : null;
                     return (
                         <tr key={a.name}>
                             <td className="col-name">{a.name}</td>
@@ -79,9 +139,7 @@ export function ActionDispatchTable({ actions, inFlightName, nowSeconds }: Props
                                     className="dispatch-button"
                                     disabled={disableDispatch}
                                     onClick={() => onDispatch(a.name)}
-                                    title={disableDispatch
-                                        ? `Another action is in flight (${inFlightName})`
-                                        : 'Force-dispatch this action, bypassing cooldowns'}
+                                    title={disableReason ?? 'Force-dispatch this action, bypassing cooldowns'}
                                 >
                                     Dispatch
                                 </button>
