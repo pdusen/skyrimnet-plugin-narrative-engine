@@ -1,5 +1,10 @@
 # NarrativeEngine
 
+> [!WARNING]
+> **NarrativeEngine is in early alpha.** Features are still landing, and edge-case behavior hasn't been broadly
+> tested. Do not install it into a stable or long-term playthrough you care about — try it on a dedicated save or
+> a short-lived character while the mod is still in this state.
+
 A Skyrim mod, in active development. The mod is a **plugin for SkyrimNet** — not a standalone mod.
 
 **SkyrimNet** is itself a Skyrim mod (combining an `.esp` and an SKSE plugin) that puts LLMs in control of various
