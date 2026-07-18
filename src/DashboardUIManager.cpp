@@ -115,6 +115,29 @@ namespace NarrativeEngine::DashboardUIManager
                 }
 
                 if (fire) {
+                    // Gate the *open* action so the hotkey doesn't stack our
+                    // overlay on top of the Main Menu, MCM, Inventory,
+                    // Journal, or another mod's PrismaUI view. The *close*
+                    // action always fires: if the dashboard is somehow
+                    // already visible during a pause (or while another
+                    // PrismaUI overlay has focus), the player should still
+                    // be able to dismiss it with the hotkey.
+                    //
+                    // Two gates:
+                    //   - RE::UI::GameIsPaused() catches every engine menu
+                    //     that pauses the game (Main Menu, Inventory, MCM,
+                    //     load screens, ...).
+                    //   - PrismaUI::HasAnyActiveFocus() catches other mods'
+                    //     PrismaUI overlays, which don't pause the game.
+                    if (!g_visible.load()) {
+                        auto* ui = RE::UI::GetSingleton();
+                        if ((ui && ui->GameIsPaused()) || PrismaUI_API::HasAnyActiveFocus()) {
+                            fire = false;
+                        }
+                    }
+                }
+
+                if (fire) {
                     AsyncDispatch::MarshalToMainThread([] { ToggleVisibility(); });
                 }
                 return RE::BSEventNotifyControl::kContinue;

@@ -65,6 +65,12 @@ namespace NarrativeEngine::PrismaUI_API
     // string — for structured data, serialize it as JSON before calling.
     void InvokeJS(ViewHandle view, const std::string& functionName, const std::string& argument);
 
+    // True if any PrismaUI view — from any mod, not just ours — currently
+    // holds focus. Used to suppress our own hotkey when another mod's
+    // PrismaUI overlay is up, so we don't stack overlays. Returns false
+    // when PrismaUI is unavailable.
+    bool HasAnyActiveFocus();
+
     // Signature for a JS -> C++ listener. `argument` is the single string
     // the JS side passes to `window.<functionName>(arg)`. The callback is
     // invoked on PrismaUI's worker thread — marshal to the main thread

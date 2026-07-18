@@ -133,6 +133,15 @@ namespace NarrativeEngine::PrismaUI_API
         g_api->InteropCall(view, functionName.c_str(), argument.c_str());
     }
 
+    bool HasAnyActiveFocus()
+    {
+        // IVPrismaUI1::HasAnyActiveFocus()
+        if (!g_api) {
+            return false;
+        }
+        return g_api->HasAnyActiveFocus();
+    }
+
     void RegisterJSListener(ViewHandle view, const std::string& functionName, JSListenerCallback callback)
     {
         // IVPrismaUI1::RegisterJSListener(PrismaView, const char* functionName, JSListenerCallback)
