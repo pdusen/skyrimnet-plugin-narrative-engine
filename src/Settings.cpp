@@ -71,8 +71,8 @@ namespace NarrativeEngine::Settings
             g_config.doNotDisturbCellEDIDsCSV =
                 ini.GetValue("AlphaCanon", "sDoNotDisturbCellEDIDsCSV", g_config.doNotDisturbCellEDIDsCSV.c_str());
 
-            g_config.dashboardHotkeyVK =
-                static_cast<int>(ini.GetLongValue("Dashboard", "iHotkeyVK", g_config.dashboardHotkeyVK));
+            g_config.dashboardHotkeyDXSC =
+                static_cast<int>(ini.GetLongValue("Dashboard", "iHotkeyDXSC", g_config.dashboardHotkeyDXSC));
             g_config.dashboardHotkeyModifiers = static_cast<std::uint8_t>(
                 ini.GetLongValue("Dashboard", "iHotkeyModifiers", g_config.dashboardHotkeyModifiers));
 
@@ -182,8 +182,8 @@ namespace NarrativeEngine::Settings
                 return false;
             }
 
-            g_config.dashboardHotkeyVK =
-                static_cast<int>(ini.GetLongValue("Dashboard", "iHotkeyVK", g_config.dashboardHotkeyVK));
+            g_config.dashboardHotkeyDXSC =
+                static_cast<int>(ini.GetLongValue("Dashboard", "iHotkeyDXSC", g_config.dashboardHotkeyDXSC));
             g_config.dashboardHotkeyModifiers = static_cast<std::uint8_t>(
                 ini.GetLongValue("Dashboard", "iHotkeyModifiers", g_config.dashboardHotkeyModifiers));
 
@@ -210,8 +210,8 @@ namespace NarrativeEngine::Settings
         if (g_config.debugMode) {
             logger::info("Settings: debug mode ON");
         }
-        logger::info("Settings: dashboard hotkey VK={} mods={}",
-                     g_config.dashboardHotkeyVK,
+        logger::info("Settings: dashboard hotkey DXSC={} mods={}",
+                     g_config.dashboardHotkeyDXSC,
                      static_cast<int>(g_config.dashboardHotkeyModifiers));
     }
 

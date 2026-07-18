@@ -8,16 +8,18 @@
 // Read once at SKSE's kDataLoaded message via Load(). Sources, in order:
 //   1. Data/SKSE/Plugins/NarrativeEngine.ini (the plugin INI)
 //   2. Data/MCM/Settings/NarrativeEngine.ini (MCM Helper-managed; overrides
-//      only the [Dashboard] keys when present)
+//      only the [Dashboard] iHotkeyDXSC / iHotkeyModifiers keys when present)
 //
 // Any missing file or missing key falls back to the default baked into the
 // Config struct below — the plugin is fully functional with no INI at all.
 namespace NarrativeEngine::Settings
 {
-    // Bitmask values for the dashboard hotkey's modifier keys.
-    // Combinable: (kModCtrl | kModShift | kModAlt) == 7.
-    inline constexpr std::uint8_t kModCtrl = 1;
-    inline constexpr std::uint8_t kModShift = 2;
+    // Bitmask values for the dashboard hotkey's modifier keys. Bit assignment
+    // matches SkyUI / MCM Helper convention so the value MCM writes into
+    // iHotkeyModifiers can be consumed directly without a remap.
+    // Combinable: (kModShift | kModCtrl | kModAlt) == 7.
+    inline constexpr std::uint8_t kModShift = 1;
+    inline constexpr std::uint8_t kModCtrl = 2;
     inline constexpr std::uint8_t kModAlt = 4;
 
     struct Config
@@ -78,8 +80,8 @@ namespace NarrativeEngine::Settings
         std::string doNotDisturbCellEDIDsCSV;
 
         // [Dashboard]
-        int dashboardHotkeyVK = 118;               // Windows VK code; 118 == VK_F7; -1 disables
-        std::uint8_t dashboardHotkeyModifiers = 0; // kModCtrl|kModShift|kModAlt bitmask; 0 = none
+        int dashboardHotkeyDXSC = 65;              // DirectX scan code; 65 == DIK_F7; -1 disables
+        std::uint8_t dashboardHotkeyModifiers = 0; // kModShift|kModCtrl|kModAlt bitmask; 0 = none
 
         // [CombatEvents]
         int combatEventsHitRadiusUnits = 6000; // ~90 ft; distance gate for hit / collapse capture

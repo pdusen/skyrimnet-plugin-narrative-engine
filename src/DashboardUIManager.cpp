@@ -38,6 +38,19 @@ namespace NarrativeEngine::DashboardUIManager
         // events. The dispatch marshals back to the main thread before
         // touching PrismaUI / engine state — the input sink may fire on a
         // non-main thread.
+        //
+        // The comparison is in DirectX-scan-code space throughout — the
+        // native input space of SKSE's button events, SkyUI's keymap
+        // controls, and MCM Helper's keymap sink. `Settings::Get()
+        // .dashboardHotkeyDXSC` is likewise a scan code, so no
+        // scan/VK translation is needed.
+
+        // DIK_ESCAPE. Used for the "ESC closes the dashboard" affordance
+        // below. Modifier reads still use GetAsyncKeyState, which speaks
+        // VK — but that's an OS-level "is the key currently held" probe,
+        // not an event-time key match, and doesn't participate in the
+        // scan-code comparison.
+        constexpr std::uint32_t kDIK_ESCAPE = 1;
 
         struct HotkeySink : public RE::BSTEventSink<RE::InputEvent*>
         {
@@ -56,12 +69,8 @@ namespace NarrativeEngine::DashboardUIManager
                     if (!btn || !btn->IsDown())
                         continue;
 
-                    const std::uint32_t scanCode = btn->GetIDCode();
-                    // SKSE input events use DirectInput scan codes; the user
-                    // configures the hotkey as a Windows VK code. Translate
-                    // via MapVirtualKeyW so the comparison is in VK space.
-                    const std::uint32_t vk = ::MapVirtualKeyW(scanCode, MAPVK_VSC_TO_VK);
-                    if (vk == 0)
+                    const std::uint32_t dxsc = btn->GetIDCode();
+                    if (dxsc == 0)
                         continue;
 
                     // ESC closes the dashboard when it's open and no
@@ -71,7 +80,7 @@ namespace NarrativeEngine::DashboardUIManager
                     // play (where ESC opens the pause menu). Modifier-
                     // combo ESC bindings are left alone so the player can
                     // still use them for other mods.
-                    if (vk == VK_ESCAPE) {
+                    if (dxsc == kDIK_ESCAPE) {
                         if (!g_visible.load())
                             continue;
                         const bool anyMod = (::GetAsyncKeyState(VK_CONTROL) & 0x8000)
@@ -83,16 +92,18 @@ namespace NarrativeEngine::DashboardUIManager
                         break;
                     }
 
-                    if (static_cast<int>(vk) != Settings::Get().dashboardHotkeyVK)
+                    if (static_cast<int>(dxsc) != Settings::Get().dashboardHotkeyDXSC)
                         continue;
 
                     // Modifier match is exact, not a superset. (F7+Shift is
-                    // a different binding than plain F7.)
+                    // a different binding than plain F7.) The bitmask is
+                    // packed to SkyUI / MCM Helper convention: bit 0 =
+                    // Shift, bit 1 = Ctrl, bit 2 = Alt.
                     std::uint8_t actualMods = 0;
-                    if (::GetAsyncKeyState(VK_CONTROL) & 0x8000)
-                        actualMods |= Settings::kModCtrl;
                     if (::GetAsyncKeyState(VK_SHIFT) & 0x8000)
                         actualMods |= Settings::kModShift;
+                    if (::GetAsyncKeyState(VK_CONTROL) & 0x8000)
+                        actualMods |= Settings::kModCtrl;
                     if (::GetAsyncKeyState(VK_MENU) & 0x8000)
                         actualMods |= Settings::kModAlt;
                     if (actualMods != Settings::Get().dashboardHotkeyModifiers)
@@ -253,8 +264,8 @@ namespace NarrativeEngine::DashboardUIManager
         }
 
         const auto& cfg = Settings::Get();
-        logger::info("DashboardUIManager: initialized (view created, hotkey VK={} mods={})",
-                     cfg.dashboardHotkeyVK,
+        logger::info("DashboardUIManager: initialized (view created, hotkey DXSC={} mods={})",
+                     cfg.dashboardHotkeyDXSC,
                      static_cast<int>(cfg.dashboardHotkeyModifiers));
     }
 
