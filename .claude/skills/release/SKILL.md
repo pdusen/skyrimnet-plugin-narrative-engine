@@ -1,0 +1,169 @@
+---
+name: release
+description: Publish a new GitHub release of NarrativeEngine. Verifies the working tree is clean, proposes a version and release notes based on commits since the last tag, packages the mod with package.ps1, tags and pushes, then creates a `gh` release with the zip attached and prints the URL.
+---
+
+# release
+
+Cut a new NarrativeEngine GitHub release. Work through the steps below in order.
+Pause for user input at each explicit approval gate — do NOT shortcut around
+them. The user is the final authority on version and release-notes wording.
+
+## 0. Verify GitHub CLI auth
+
+Before touching anything else, run `gh auth status`. If it reports the user is
+not logged in, or that the token lacks the required scopes (`repo` is enough
+for creating releases), stop immediately and ask the user to run
+`gh auth login` before re-invoking the skill.
+
+Failing here costs nothing. Failing at step 7 after the tag is already pushed
+leaves the repo in an awkward split state that requires manual cleanup, so
+this check runs first on purpose.
+
+## 1. Verify a clean working tree
+
+Run `git status --porcelain`. If the output is non-empty, abort with a summary
+of the dirty files and ask the user to commit or stash before continuing. Do
+NOT stage or commit on their behalf.
+
+Verify the current branch is `main` with `git branch --show-current`. If it
+isn't, ask the user to confirm they intend to release from a non-main branch
+before proceeding.
+
+## 2. Read changes since the last release tag
+
+Find the most recent release tag:
+
+```powershell
+git tag --list 'v*' --sort=-v:refname | Select-Object -First 1
+```
+
+- If a tag exists, the change window is `<tag>..HEAD`.
+- If no tag exists (first release), the range is the entire history.
+
+Read the changes with:
+
+```powershell
+git log --no-merges --pretty=format:'%h %s' <range>
+git diff --stat <range>
+```
+
+Skim commit subjects for user-visible changes. Ignore purely mechanical churn
+(formatter runs, doc-only edits with no player-facing effect) when it isn't
+relevant to a user's install decision.
+
+## 3. Propose a version number
+
+While the mod is in early alpha (see the README warning), the scheme is
+`0.MINOR.PATCH`:
+
+- Bump PATCH for bug fixes and small internal changes with no new player-facing
+  surface.
+- Bump MINOR for any new player-facing feature, subsystem, beat, dashboard tab,
+  or noticeable behavior change.
+- The first release starts at `0.1.0`.
+- Once the mod exits alpha (README warning removed and `1.0.0` cut), switch to
+  standard semver — bump MAJOR on breaking changes.
+
+State the current latest tag (or "no prior release"), the proposed new version,
+and a one-sentence justification. Then ask:
+
+> Proposed version: **vX.Y.Z**. Accept, or specify a different one?
+
+Wait for their answer. Store the accepted version as `$Version` (bare, no `v`
+prefix) — `package.ps1` and `gh release create` both want the bare form; the
+`v` prefix is added only at the git-tag and archive-filename layers.
+
+## 4. Draft release notes and iterate to approval
+
+Draft in this shape (skip sections that would have zero bullets — don't ship
+an empty "Fixes" header just to keep the template):
+
+```markdown
+## Summary
+
+<one or two sentences describing what this release is about>
+
+## What's New
+
+- <bullet per user-visible change>
+
+## Fixes
+
+- <bullet per user-visible bug fix>
+
+## Notes
+
+<optional caveats — known issues, upgrade steps, etc.>
+```
+
+Framing rules:
+
+- Player-facing framing, not engineer framing. "The Director now respects a
+  minimum phase-dwell floor before advancing" beats "Refactor
+  `PhaseTracker::EvaluateAdvance` signature."
+- Cite behaviors, not file paths or symbol names.
+- Keep it tight. A short list beats a wall of prose.
+
+Present the draft and ask for revisions. Iterate until the user explicitly
+approves ("approved", "ship it", "looks good", or similar). Do NOT proceed to
+packaging on ambiguous feedback.
+
+## 5. Package the mod
+
+Run:
+
+```powershell
+pwsh -File package.ps1 -Version $Version
+```
+
+Wait for it to complete. On non-zero exit, report the failure and stop — do
+not proceed to tagging. Confirm `out/NarrativeEngine-v<Version>.zip` exists on
+disk before continuing.
+
+## 6. Tag and push
+
+Create an annotated tag and push it:
+
+```powershell
+git tag -a "v$Version" -m "NarrativeEngine v$Version"
+git push origin "v$Version"
+```
+
+If either step fails (tag already exists, push rejected), stop and report — do
+NOT force-push or delete existing tags without explicit user approval.
+
+## 7. Create the GitHub release
+
+Write the approved release notes to a temp file first so multi-line content
+passes cleanly:
+
+```powershell
+$notesFile = New-TemporaryFile
+Set-Content -LiteralPath $notesFile -Value $releaseNotes
+gh release create "v$Version" `
+    "out/NarrativeEngine-v$Version.zip" `
+    --title "NarrativeEngine v$Version" `
+    --notes-file $notesFile
+Remove-Item -LiteralPath $notesFile
+```
+
+If `gh release create` fails after the tag has been pushed, report clearly that
+the tag exists on origin but no release was created, and stop. The user can
+either retry `gh release create` manually or delete the tag and re-run the
+skill.
+
+## 8. Report the release URL
+
+Retrieve and print the URL as a clickable Markdown link:
+
+```powershell
+gh release view "v$Version" --json url --jq .url
+```
+
+Format the final output as:
+
+> Release published: **[NarrativeEngine v$Version](<url>)**
+
+Do NOT perform any post-release actions (editing the release, uploading
+additional assets, drafting the next tag) unless the user asks.
