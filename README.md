@@ -7,478 +7,178 @@ emergent gameplay systems — most notably ad-hoc dialogue generation for NPCs. 
 other mods can extend its LLM-driven systems.
 
 NarrativeEngine ships both an `.esp` and an SKSE plugin of its own (the same shape as SkyrimNet itself, and the same
-shape as the IntelEngine prior-art reference described below).
+shape as the IntelEngine prior-art reference described in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)).
+
+## Table of Contents
+
+- [What This Plugin Does](#what-this-plugin-does)
+- [Requirements](#requirements)
+- [Getting Started](#getting-started)
+- [Q&A](#qa)
+- [Contributing](#contributing)
+
+## What This Plugin Does
+
+NarrativeEngine is a **Director** that watches your playthrough and, at a steady cadence, decides whether *right now*
+is a good moment for something to happen — a letter arriving, someone showing up to talk to you, a fight breaking
+out — and then makes it happen using characters, topics, and pretexts drawn from what you've actually been doing
+in-game.
+
+The goal is a playthrough with *shape*. Instead of random encounters that fire on distance or timer, events unfold in
+a familiar dramatic arc: quiet setup, escalating pressure, a peak, a wind-down, and a return to quiet before the next
+cycle begins. Which phase you're in influences both *when* the next event fires (peaks are brief; setups linger) and
+*what kind* of event feels right for the moment (a climax wants a confrontation; a resolution wants something
+reflective).
+
+Under the hood, NarrativeEngine leans heavily on SkyrimNet's memory system — the same one that lets NPCs remember
+your past conversations — to answer questions like "who around here has a reason to reach out?" and "what should this
+letter be about?". Every so often the plugin sends a small evaluation request to the model to score the current
+dramatic tension, then either advances the arc to its next phase or picks one of a small set of *narrative beats* to
+dispatch:
+
+- **NPC Letter** — a courier delivers a handwritten letter from someone whose path has recently crossed yours,
+  written in their voice, about something that actually happened between you.
+- **NPC Visit** — an NPC travels to your location, opens a spoken exchange in their own words, and departs when
+  the conversation reaches a natural close.
+- **Ambush** — bandits assemble along your path, sized and positioned by the model based on where the story
+  currently sits and what tone fits.
+
+Each beat's specifics — who, why, what topic, what mood, how far away — are authored by the LLM from the actual
+state of your game, not drawn from a static list. NarrativeEngine also ships an in-game dashboard (bound to a
+hotkey, F7 by default) that surfaces what the Director is thinking, shows why it picked what it picked, and lets
+you tune the pacing and the individual beats to your taste.
+
+## Requirements
+
+**SkyrimNet.** NarrativeEngine is a plugin for SkyrimNet and cannot run without it. Install SkyrimNet first and
+confirm it works on its own — if characters aren't speaking and NPCs aren't remembering conversations, NarrativeEngine
+won't run either. SkyrimNet has its own set of prerequisites (SKSE, Address Library, PapyrusUtil, a configured LLM
+provider, and so on); rather than duplicate that list here, defer to their maintained
+[System Requirements](https://github.com/MinLL/SkyrimNet-GamePlugin#-system-requirements) section and make sure every
+item there is satisfied before layering NarrativeEngine on top.
+
+Beyond what SkyrimNet already requires, NarrativeEngine needs:
+
+- **MCM Helper** — hosts NarrativeEngine's Mod Configuration Menu page (mod credits and a hotkey rebind for the
+  in-game dashboard). Available on Nexus Mods.
+
+That's the only *additional* install. NarrativeEngine also hard-requires **PrismaUI** (which hosts the in-game
+dashboard) and **SkyUI** (which MCM Helper depends on), but both are already in SkyrimNet's requirements list
+linked above — following that guide end-to-end covers them. If SkyrimNet is working, they're in place.
+
+## Getting Started
+
+1. **Install SkyrimNet and its prerequisites, and confirm SkyrimNet works standalone.** Follow the SkyrimNet install
+   guide end to end — SKSE, Address Library, PapyrusUtil, an LLM provider (OpenRouter is the path of least
+   resistance), and SkyrimNet itself. Load a save and verify NPCs are speaking generated dialogue and remembering
+   past conversations. Do **not** install NarrativeEngine until this works — trying to debug both at once is
+   miserable.
+2. **Install MCM Helper.** Not one of SkyrimNet's prerequisites, but NarrativeEngine needs it — the mod's MCM
+   page (credits + dashboard-hotkey rebind) won't register without it. Install through your mod manager the same
+   way any other Skyrim mod goes in; no per-mod configuration needed.
+3. **Install NarrativeEngine.** Add it to your load order *after* SkyrimNet (SkyrimNet must be loaded first so
+   NarrativeEngine can register its plugin manifest with it). No FOMOD choices to make — it's a single-option
+   install.
+4. **Launch the game and open the dashboard.** Load a save (or start a new game). Press **F7** — the NarrativeEngine
+   dashboard should appear as an overlay. If it doesn't, check `Data/SKSE/Plugins/NarrativeEngine.log` for the
+   line reading `DashboardUIManager: initialized`; its absence usually means PrismaUI failed to load, which
+   almost always traces back to a SKSE / Address Library mismatch. Close the dashboard the same way you opened
+   it, or with Esc.
+5. **Point the Director at a fast, cheap model.** Open the SkyrimNet dashboard (SkyrimNet's own PrismaUI
+   overlay) and navigate to **AI → Models**. The full list of SkyrimNet's model profiles appears there,
+   including two NarrativeEngine registers: `narrative_engine_director` and `narrative_engine_composer`. Only
+   the director needs your attention: it runs on every tick to score dramatic tension and pick beats, so a
+   top-tier model here gets expensive fast. Override it to something small and cheap;
+   `deepseek/deepseek-v4-flash` is a reasonable pick on OpenRouter. The composer profile (letters and
+   briefings written in a specific NPC's voice) fires only when a beat actually starts, so its default —
+   inheriting SkyrimNet's dialogue model — is fine.
+6. **Play.** The Director starts ticking as soon as you're in-world. First few ticks may not fire any beats — the
+   arc has to build up tension and the phase has to overstay its ideal duration first. Open the dashboard any time
+   to watch what it's thinking, tune the phase durations under the Settings tab if the pacing feels off, or
+   temporarily disable the tick from the Dispatch tab when you want a quiet stretch.
+
+## Q&A
+
+### Doesn't IntelEngine already do a lot of this?
+
+Yes, IntelEngine covers some of the same ground. But it isn't currently being maintained, and there are aspects
+of its architecture I wanted to approach differently. The main one: IntelEngine's events fire on a fixed timer
+cadence, with little regard for what the player is actually doing in the moment. The goal here is for the events
+this plugin generates to weave seamlessly into your ongoing gameplay.
+
+### Is this meant to replace IntelEngine?
+
+No, not currently. IntelEngine provides a lot of features and event types that this plugin has no answer for.
+That said, as development continues, the hope is for this plugin to grow feature-rich enough to fill many of the
+same needs. As new features land that overlap with IntelEngine's, this README will be updated with guidance on
+running the two plugins side by side.
 
-## Prior art reference: IntelEngine
+### Was AI used to write this plugin?
 
-The creator of another SkyrimNet plugin called **IntelEngine** stopped developing it and released the source as open
-source. It is split across two local repos:
+Yes, heavily. I'm a full-time software engineer at my day job, and taking on a major solo programming project in
+what little spare time I have left is unappealing. It's also been several years since I was regularly writing
+C++, which I don't use at my day job, so getting fully up to speed on modern C++ programming isn't something I
+have time for.
 
-- `C:\Projects\IntelEngine-NativePlugin\` — SKSE source tree (C++ + Papyrus + dashboard source + CK design docs)
-- `C:\Projects\IntelEngine-GamePlugin\` — deployment / `Data/` payload (compiled `.esp`, `.dll`, `.pex`, SkyrimNet
-  asset YAMLs/prompts, MCM Helper JSON, PrismaUI views, FOMOD)
+That said, I didn't just ask Claude to implement the plugin top-to-bottom on its own; I have high standards for
+software and am very picky about the way things are done. Every step of development involved heavy direction
+from me, and there's a detailed planning stage before every phase of development. If you want a glimpse of that
+process, the [implementation phase-planning documents](docs/implementation/) are all still here in the repository
+for anyone to read.
 
-Both are **read-only reference** for NarrativeEngine work.
+If you have a moral objection to AI, I don't blame you, but I'm also not sure why you'd be looking at this plugin
+in the first place.
 
-### Detailed notes live in `docs/prior-art/`
+### What kind of monthly cost should I expect running this alongside SkyrimNet?
 
-Everything we've learned about IntelEngine is organized in [`docs/prior-art/`](docs/prior-art/README.md). It is a
-**lookup index, not a checklist** — consult it when a specific NarrativeEngine design question is in front of you
-and you want to see whether the IntelEngine author solved a similar one.
+The straight answer is that I haven't done a thorough audit of this plugin's LLM costs, and given the mod's
+alpha state, I don't feel comfortable making a firm guess right now. I don't think they're crazy, but if you're
+on an extremely tight budget, I recommend against running this for now.
 
-[`docs/prior-art/REPO_MAP.md`](docs/prior-art/REPO_MAP.md) — Where in the IntelEngine repos each subsystem,
-asset, and file lives.
+### Is it safe to add or remove NarrativeEngine mid-playthrough?
 
-[`docs/prior-art/FEATURE_OVERVIEW.md`](docs/prior-art/FEATURE_OVERVIEW.md) — What IntelEngine does at the
-gameplay level (feature list, pitch).
+It's safe to add at any time. Once you've added it, I do NOT recommend removing it — multiple quests run in the
+background, and pulling the plugin out once they're active would have unpredictable results.
 
-[`docs/prior-art/ARCHITECTURE.md`](docs/prior-art/ARCHITECTURE.md) — Full preserved architecture analysis:
-layers, every C++ module, every Papyrus script, data flow, threading, persistence, dependency graph.
+### How often should I actually expect something to happen during play?
 
-[`docs/prior-art/SKYRIMNET_PLUGIN_CONTRACT.md`](docs/prior-art/SKYRIMNET_PLUGIN_CONTRACT.md) — **The SkyrimNet
-plugin extension contract** — actions, categories, manifest/variants/schema, prompts, character-bio
-submodules, decorators, ModEvents, StorageUtil namespace.
+There's no fixed answer to this. The system moves through a cycle of narrative phases; some build tension,
+others release it. It watches what's currently going on in your game, and if the current phase has been active
+longer than its ideal duration, it tries to fire an event to help move things along to the next phase.
 
-[`docs/prior-art/ESP_STRUCTURE.md`](docs/prior-art/ESP_STRUCTURE.md) — `.esp` / Creation Kit setup: quest,
-alias slot pattern, AI packages (speed variants + linked-ref keying), keywords, globals, TaskFaction, package
-priorities.
+Theoretically, if your regular gameplay happens to perfectly follow the cadence of rising and falling narrative
+action through each of the narrative phases, you might never see an event fire at all. In my experience,
+however, that's highly unlikely.
 
-[`docs/prior-art/DEPLOYMENT_LAYOUT.md`](docs/prior-art/DEPLOYMENT_LAYOUT.md) — What ships in the `Data/`
-folder and which tool consumes each file.
+You can adjust the ideal duration for each phase from the dashboard's Settings tab. If you don't care about the
+narrative cycle and just want to see a particular type of event right now, the Dispatch tab has buttons for that
+— though they're primarily meant for debugging.
 
-[`docs/prior-art/PATTERNS_AND_LESSONS.md`](docs/prior-art/PATTERNS_AND_LESSONS.md) — Reusable patterns and
-lessons: three-phase async, fuzzy cascade, escalating recovery, soft dependency loading, dispatch ring
-buffer, save-scum recovery, single source of truth.
+### Can I disable specific beats I don't want to see?
 
-## Working directory conventions
+Yes, the dashboard's Dispatch tab has checkboxes to disable specific beats you don't want to see. However, at
+the moment, the list of available beats is small enough that I don't recommend turning any of them off unless
+you feel very strongly about one.
 
-- The repo lives at `C:\Projects\NarrativeEngine\`.
-- `docs/prior-art/` is the IntelEngine reference library — extend it (don't rewrite it) if new learnings come in about IntelEngine.
-- The IntelEngine repos at `C:\Projects\IntelEngine-NativePlugin\` and `C:\Projects\IntelEngine-GamePlugin\` are
-  **read-only reference**.
+### Will the Director interrupt me during vanilla quests, combat, or dialogue?
 
-## C++ source layout
+No. Those situations represent what the plugin considers "alpha canon" — facts about what's happening in the
+game that can't be disputed or overwritten. The plugin will observe them and factor them in when judging the
+current scene's narrative tension, but it won't generate new events while they're occurring.
 
-These rules apply to **every** C++ source file in this repo:
+There are also safeguards in place to prevent the plugin from taking any action at all while you're in a menu
+or in vanilla dialogue.
 
-- `.cpp` files go in `src/`.
-- `.h` files go in `include/`.
+### Does the plugin work in non-English Skyrim installations?
 
-The CMake build picks up `src/*.cpp` automatically (via the glob in `CMakeLists.txt`) and puts `include/` on the
-include path. That means our own headers should be included with angle brackets — `#include <Foo.h>` — to match the
-existing convention used for `<logger.h>` and `<PublicAPI.h>`.
+It depends. If your SkyrimNet installation is already generating dialogue and other content correctly in your
+preferred language, that should carry over here. I haven't tested it myself, though, so no guarantees.
 
-**Exception: files that already exist at the project root stay at the project root.** Specifically:
+Static content — the PrismaUI dashboard, and certain events the plugin writes to SkyrimNet's event log — is
+currently English-only.
 
-- `plugin.cpp` — the SKSE `SKSEPluginLoad` entry point. The CMake target adds it explicitly alongside the
-  `src/*.cpp` glob; it's kept thin and forwards into `src/Plugin.cpp`.
-- `PCH.h` — the project-wide precompiled header, wired in via `target_precompile_headers`.
+## Contributing
 
-Do not move or rename these. Anything new follows the `src/` + `include/` split.
-
-## EditorID naming convention
-
-Every form, Papyrus script, and ModEvent name we author for this mod uses the prefix **`_ne_`** (short for
-"NarrativeEngine"). The leading underscore is deliberate — most CK form lists sort it to the top, which makes our
-forms easy to find in long lists. Examples:
-
-- Quest: `_ne_Quest`
-- Keywords: `_ne_TravelTarget`, `_ne_SandboxLocation`, `_ne_TaskAssigned`
-- Faction: `_ne_TaskFaction`
-- AI Packages: `_ne_TravelPackage_Walk`, `_ne_SandboxPackage`, …
-- Globals: `_ne_DebugMode`, `_ne_TickIntervalSeconds`
-- ReferenceAliases: `_ne_PlayerAlias`, `_ne_AgentAlias00`, `_ne_TargetAlias00`, …
-- Papyrus scripts: `_ne_Core`, `_ne_PlayerAlias`, `_ne_Natives`
-- SKSE ModEvents: `_ne_Dispatch`, `_ne_Maintenance`
-
-What does *not* take the prefix:
-
-- The plugin file (`NarrativeEngine.esp`) — that's a filename, not an EditorID.
-- The SkyrimNet plugin folder + manifest name (`SKSE/Plugins/SkyrimNet/config/plugins/NarrativeEngine/`,
-  `plugin.name: NarrativeEngine`) — SkyrimNet's own plugin identifier surface.
-- C++ namespaces / classes (`namespace NarrativeEngine`, `class ClosureDeliveryAction`) — these live entirely on
-  the C++ side and the form-naming convention doesn't reach them.
-- The mod's mod-manager folder (`$SKYRIM_MODS_FOLDER/NarrativeEngine/`) — also a filename.
-
-When adding any new CK form, Papyrus script, or ModEvent, give it the `_ne_` prefix unless one of the above
-exceptions applies.
-
-## Environment setup
-
-Configure, build, ESP sync, and Papyrus compile all read paths from environment variables that
-point at this machine's vcpkg root, MO2 mods folder, Skyrim install, SkyrimNet location, and a
-couple of dependency-specific spots. Set these once per development machine (typically as Windows
-user environment variables) before running `setup-mod-folder.ps1` or `build.ps1`.
-
-Any of these can alternatively be pinned per-preset in `CMakeUserPresets.json` (gitignored) —
-useful when you want different values per build preset or prefer not to pollute your global
-environment.
-
-### Required for every build
-
-- `VCPKG_ROOT` — absolute path to your vcpkg checkout. CMake's toolchain file is resolved as
-  `$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake` (see `CMakePresets.json`).
-- `SKYRIM_MODS_FOLDER` — absolute path to your MO2 (or Vortex) `mods/` folder. The build deploys
-  the compiled DLL, `statics/` payload, dashboard bundle, and `.pex` files under
-  `$SKYRIM_MODS_FOLDER/NarrativeEngine/`. `setup-mod-folder.ps1` and `sync-esp.ps1` also read it.
-- `PRISMA_UI_INCLUDE` — absolute path to the directory containing `PrismaUI_API.h`. CMake
-  `FATAL_ERROR`s if the header isn't found at this path.
-
-### SkyrimNet location (one of)
-
-CMake needs SkyrimNet's `CppAPI/` headers on the include path. It looks in two places, in order:
-
-- `SKYRIMNET_DIR` — explicit absolute path to the SkyrimNet mod folder (the one containing
-  `CppAPI/PublicAPI.h`). Takes precedence when set.
-- `$SKYRIM_MODS_FOLDER/SkyrimNet/` — automatic fallback when `SKYRIM_MODS_FOLDER` is set and
-  SkyrimNet is installed at the standard subpath. No additional env var needed in the common case.
-
-CMake `FATAL_ERROR`s if neither resolves to a valid `CppAPI/` directory.
-
-### Required once `.psc` sources exist
-
-The repo now contains Papyrus sources under `esp/Source/Scripts/`, so these are required at
-configure time (not deferred):
-
-- `PAPYRUS_COMPILER` — absolute path to Bethesda's `PapyrusCompiler.exe`, typically
-  `<CK_DIR>/Papyrus Compiler/PapyrusCompiler.exe`.
-- `NE_PAPYRUS_IMPORT_SKYRIM` — vanilla Skyrim Papyrus source folder. Auto-defaults to
-  `$SKYRIM_FOLDER/Data/Source/Scripts` when `SKYRIM_FOLDER` is set, so you can usually leave this
-  unset.
-- `NE_PAPYRUS_IMPORT_SKSE` — SKSE Papyrus source folder. No auto-detection — ships in the SKSE
-  archive and must be pointed at explicitly.
-
-### Optional
-
-- `SKYRIM_FOLDER` — absolute path to your Skyrim Special Edition install. Used (a) as a fallback
-  `OUTPUT_FOLDER` when `SKYRIM_MODS_FOLDER` is unset (rare — most contributors are on a mod
-  manager) and (b) to auto-default `NE_PAPYRUS_IMPORT_SKYRIM`.
-
-### Verifying your setup
-
-In a fresh PowerShell window after setting the variables:
-
-```pwsh
-pwsh -File setup-mod-folder.ps1      # creates mod folder + junction + git pre-commit hook
-pwsh -File build.ps1 configure       # confirms CMake can locate vcpkg, SkyrimNet, PrismaUI, the Papyrus compiler, and the imports
-```
-
-If `configure` exits 0, every required path resolved correctly. After that,
-`pwsh -File build.ps1 build` performs incremental builds.
-
-## Building C++ changes
-
-Always build through `build.ps1` at the repo root, invoked via **PowerShell** (not Bash). The
-script loads the Visual Studio Developer environment, picks up the user-specific presets from
-`CMakeUserPresets.json` (gitignored — preset names `local-debug` / `local-release`), and forwards to
-`cmake`.
-
-**CRT linkage: dynamic `/MD`.** SkyrimNet's `PublicAPI.h` documents an ABI requirement: "Both DLLs must use
-the same MSVC version and CRT linkage (dynamic `/MD`)." This matters because SkyrimNet's exported APIs (e.g.
-`PublicGetRecentEvents`) return `std::string` by value. With `/MD`, every DLL in the process shares one CRT
-instance (`ucrtbase.dll`) and therefore one heap, so a buffer SkyrimNet allocated can be freed by our DLL's
-destructor without crashing. CMakePresets.json bakes this in via `VCPKG_TARGET_TRIPLET=x64-windows-static-md`
-(deps still link statically into our DLL) plus `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded[Debug]DLL`.
-
-**Default preset: `local-release`.** Debug builds don't work at runtime against the installed SkyrimNet
-because of a **debug vs. release CRT mismatch**: `/MDd` debug builds link against `ucrtbased.dll`, SkyrimNet
-release links against `ucrtbase.dll`. Different CRTs, different heaps. So `build.ps1` defaults to release and
-you should not pass `-Preset local-debug` for everyday testing.
-
-`-Preset local-debug` is still available for the rare case where you want STL asserts / iterator debug
-checks on code paths that **don't** touch SkyrimNet. But any test path that triggers a SkyrimNet call will
-crash the game in debug.
-
-```sh
-pwsh -File build.ps1 build       # incremental release build (auto-configures if needed)
-pwsh -File build.ps1 configure   # explicit re-configure
-pwsh -File build.ps1 rebuild     # configure + build
-pwsh -File build.ps1 clean       # remove build/local-release
-pwsh -File build.ps1 build -Preset local-debug   # only when SkyrimNet isn't on the test path
-```
-
-After C++ edits, the right workflow is:
-
-1. `pwsh -File build.ps1 build` — verify the build succeeds before considering the change done.
-2. On success, the DLL is auto-deployed by the existing CMake post-build step to
-   `$SKYRIM_MODS_FOLDER/NarrativeEngine/SKSE/Plugins/NarrativeEngine.dll`.
-
-Notes:
-
-- **Do not invoke `cmake` directly from Bash** — `cl.exe` and Ninja aren't on the Bash `PATH`, and CMake
-  won't pick up the user presets without the VS Dev Shell. The script handles all of that.
-- First-time configure is slow (vcpkg installs `commonlibsse-ng-fork`, `simpleini`, etc. — ~5 min on a
-  fresh checkout). Subsequent builds are seconds.
-- A `'vswhere.exe' is not recognized` warning at the top of the dev-shell load output is harmless and
-  expected; ignore it.
-- `CMakeUserPresets.json` is gitignored on purpose — it pins absolute paths specific to this machine
-  (`VCPKG_ROOT`, `SKYRIMNET_DIR`, `SKYRIM_MODS_FOLDER`). Don't try to commit it.
-- A clean rebuild is rarely needed. Reach for `clean` only when CMake itself is confused (e.g., after
-  changing presets, the toolchain, or `CMakeLists.txt` in ways that affect cache validity).
-- Release builds still produce `.pdb` files (CMake's release config emits them), so Visual Studio's
-  debugger can attach to a release build with mostly-meaningful stack traces. You lose some local-variable
-  visibility to optimization, but it's enough for the rare interactive-debug session.
-
-## Using the `statics/` folder
-
-`statics/` is a verbatim deploy tree — its layout mirrors the runtime mod folder, and the CMake post-build step
-copies every file under it into `$SKYRIM_MODS_FOLDER/NarrativeEngine/` preserving relative paths (see
-`CMakeLists.txt` around the `STATICS_SOURCE_DIR` block).
-
-### When to put a file in `statics/`
-
-Put a file there if **all** of these are true:
-
-- It is a hand-authored runtime asset that ships with the mod (INI defaults, SkyrimNet plugin manifest /
-  prompts / character-bio YAMLs, MCM Helper JSON, PrismaUI views, etc.).
-- Its content is static — not generated by the build, not produced by the Creation Kit, not compiled from
-  source. Build outputs (the `.dll`, compiled `.pex`, the `.esp`) and CK-authored forms do **not** go here.
-- Its final on-disk location under `Data/` is known and stable.
-
-### How to add a file
-
-1. Create the file at the path it should occupy at runtime, rooted at `statics/`. The relative path under
-   `statics/` is the relative path under the deployed mod folder — no rewriting at copy time.
-   - Example: a settings INI that must end up at `Data/SKSE/Plugins/NarrativeEngine.ini` goes at
-     `statics/SKSE/Plugins/NarrativeEngine.ini`.
-2. Re-run CMake configure (or a full build via `pwsh -File build.ps1 build`) so the `CONFIGURE_DEPENDS` glob
-   picks up the new file. Incremental builds after that will `copy_if_different` it on each build.
-3. Do **not** add per-file copy logic to `CMakeLists.txt` — the existing glob handles every file under
-   `statics/` uniformly. If you find yourself wanting a special case, reconsider whether the file belongs
-   somewhere else (e.g. generated output, Papyrus source which has its own deploy step).
-
-### What not to do
-
-- Don't stage build outputs under `statics/` — the build deploys those itself.
-- Don't put planning docs, design notes, or other repo-only files under `statics/` — anything there ships
-  to the player's `Data/` folder on every build.
-- Don't rename or restructure `statics/` subfolders to differ from the runtime layout; the 1:1 mapping is
-  the whole point.
-
-## ESP and Papyrus workflow
-
-CK-authored content (the `.esp`) and Papyrus source (`.psc`) live under `esp/` in the repo. The build deploys
-or syncs everything into the MO2 mod folder at `$SKYRIM_MODS_FOLDER/NarrativeEngine/` so CK, the player's game,
-and our tooling all see the same files.
-
-### Repo paths
-
-- `esp/NarrativeEngine.esp` — authoritative repo-side ESP. A version-controlled mirror of what CK edits.
-- `esp/Source/Scripts/*.psc` — authoritative Papyrus source. Junctioned (see below) so CK and VS Code edit
-  these files directly.
-- `NarrativeEngine.ppj.in` (repo root) — template for the Papyrus project file. CMake `configure_file`
-  substitutes machine-specific absolute paths into `NarrativeEngine.ppj` (gitignored) at the repo root.
-- `setup-mod-folder.ps1` (repo root) — one-time per-machine setup; creates the mod folder and the
-  `Source/Scripts/` junction.
-- `sync-esp.ps1` (repo root) — bidirectional ESP sync (newest copy wins), invoked by CMake on every build.
-
-### One-time setup
-
-After cloning, run:
-
-```pwsh
-pwsh -File setup-mod-folder.ps1
-```
-
-This does three things:
-
-- Creates `$SKYRIM_MODS_FOLDER/NarrativeEngine/` if needed.
-- Creates an NTFS directory junction at `<mod-folder>/Source/Scripts/` pointing at
-  `<repo>/esp/Source/Scripts/`. Junctions don't require admin or Developer Mode and are transparent to MO2's
-  USVFS. We chose junctions over file symlinks because junctions are NTFS-native reparse points with a long,
-  boring track record in Skyrim modding tooling; file symlinks have reported MO2 / CK compatibility quirks.
-- Installs a git pre-commit hook (see [Pre-commit hook](#pre-commit-hook) below).
-
-The script is idempotent — safe to re-run. A second run reports each piece as "already exists" or
-"updated" and exits cleanly.
-
-### ESP flow (bidirectional, newest wins)
-
-The `.esp` exists in two locations: `<repo>/esp/NarrativeEngine.esp` (version-controlled) and
-`<mod-folder>/NarrativeEngine.esp` (what CK edits and what Skyrim loads). On every build, `sync-esp.ps1`
-compares their modification times and copies whichever is newer over the older. Two cases this handles
-without any manual intervention:
-
-- After a CK session, the mod-folder copy is newer → it propagates back into the repo so you can commit.
-- After a `git pull` that brings in an ESP change from elsewhere, the repo copy is newer → it propagates
-  out to the mod folder so Skyrim picks it up on the next launch.
-
-When both copies have equal mtime, nothing happens.
-
-Override the auto-sync via `-DNE_SKIP_ESP_SYNC=ON` on the cmake configure line if you have a specific reason
-to bypass it (e.g. you're hand-editing one side and don't want the build clobbering the other).
-
-### Pre-commit hook
-
-`setup-mod-folder.ps1` installs `.git/hooks/pre-commit`. The hook runs two stages before every commit:
-
-1. **ESP sync.** Snapshot the current `git hash-object` of `esp/NarrativeEngine.esp`, run `sync-esp.ps1`,
-   then re-hash. If the sync pulled in a CK edit from the mod folder, `git add` the ESP so it rides along
-   in the same commit. If `sync-esp.ps1` fails for any reason, the commit aborts.
-2. **Formatters / linters.** Invoke `pre-commit run --hook-stage pre-commit`, which executes every hook in
-   [`.pre-commit-config.yaml`](.pre-commit-config.yaml) against the staged files (clang-format for C++,
-   markdownlint for Markdown, gersemi for CMake, prettier for YAML/JSON, PSScriptAnalyzer for PowerShell,
-   plus generic whitespace/EOL hygiene). Any hook failure aborts the commit; run `pwsh -File format.ps1`
-   to auto-fix, re-stage, and retry. Skipped silently if `pre-commit` isn't on `PATH` so a fresh clone
-   can commit before tool setup is complete — see [Linting and autoformatting](#linting-and-autoformatting).
-
-What this means in practice: you can `git commit -m "..."` immediately after a CK session and the latest
-ESP state is guaranteed to be part of the commit, without remembering to sync first — and the diff is
-guaranteed to be formatted the way the project expects.
-
-Operational notes:
-
-- **Detection by marker comment.** The script identifies its own hook via a marker line in the script
-  body. If a third-party `pre-commit` hook already exists, the setup script warns and leaves it alone
-  rather than clobbering. If the marker is present, the setup script overwrites freely — re-running setup
-  is how you pick up any future hook-body changes.
-- **LF line endings.** The hook is written with Unix line endings so git-bash on Windows can execute it
-  cleanly.
-- **Escape hatch.** `git commit --no-verify` bypasses the hook the standard git-wide way. Use it
-  intentionally when you want to commit without picking up the latest CK state.
-
-### Papyrus flow
-
-`.psc` files live in `esp/Source/Scripts/`. CK and VS Code both edit them via the junction (so a CK
-quest-fragment edit lands in the repo immediately). On every build, the CMake `compile_papyrus` target
-invokes `PapyrusCompiler.exe` against the project's generated `NarrativeEngine.ppj`, and the `.pex` output
-deploys directly into `<mod-folder>/Scripts/`. `.pex` files are never tracked in the repo — they're build
-output that lives only in the mod folder.
-
-The Papyrus compile target is **conditional** on `.psc` files existing under `esp/Source/Scripts/`. Until
-the first `.psc` is authored, the step is dormant — no compiler invocation, no `PAPYRUS_COMPILER` env-var
-requirement.
-
-### Required env vars (when Papyrus is active)
-
-`PAPYRUS_COMPILER`, `NE_PAPYRUS_IMPORT_SKYRIM`, and `NE_PAPYRUS_IMPORT_SKSE` are required at
-configure time once `.psc` files exist under `esp/Source/Scripts/` (which they now do). See
-[Environment setup](#environment-setup) for the full list and their default-resolution rules.
-
-### VS Code Papyrus extension
-
-The generated `NarrativeEngine.ppj` at the repo root is what the VS Code Papyrus extension uses to discover
-source folders, output folders, and imports. Run a CMake configure (`pwsh -File build.ps1 configure`) at
-least once so the `.ppj` is generated before opening VS Code; from then on the extension auto-discovers it.
-
-## Linting and autoformatting
-
-Every text filetype in this repo has an autoformatter and/or linter attached to it, orchestrated by
-[pre-commit](https://pre-commit.com/) via [`.pre-commit-config.yaml`](.pre-commit-config.yaml). The full
-matrix:
-
-| Filetype                     | Tool                                              | Config                                                    |
-| ---------------------------- | ------------------------------------------------- | --------------------------------------------------------- |
-| C / C++ (`.cpp`, `.h`, …)    | `clang-format`                                    | [`.clang-format`](.clang-format)                          |
-| Markdown (`.md`)             | `markdownlint --fix`                              | [`.markdownlint.json`](.markdownlint.json)                |
-| CMake (`CMakeLists.txt`, `.cmake`) | `gersemi`                                   | (defaults)                                                |
-| YAML / JSON                  | `prettier`                                        | (defaults; `package-lock.json` and `CMakeUserPresets.json` excluded) |
-| PowerShell (`.ps1`, `.psm1`) | `Invoke-Formatter` + `Invoke-ScriptAnalyzer`      | [`scripts/lint-powershell.ps1`](scripts/lint-powershell.ps1) |
-| Whitespace / EOL / large files | `pre-commit-hooks`                              | (defaults; `.ps1`/`.bat`/`.cmd` keep CRLF)                |
-| Papyrus (`.psc`)             | *no formatter — PapyrusCompiler acts as lint at build time* | —                                             |
-
-The runtime editor discipline is codified in [`.editorconfig`](.editorconfig), which any modern editor
-picks up automatically.
-
-### One-time tool setup
-
-The hooks shell out to a mix of native tools (`clang-format`) and package-manager-installed tools
-(`markdownlint-cli` from npm, `pre-commit`/`gersemi` from pip, `PSScriptAnalyzer` from PSGallery). Install
-them once per development machine:
-
-```pwsh
-# 1. Python + pre-commit (drives the whole thing). Python 3.10+ recommended.
-pip install --user pre-commit gersemi
-
-# 2. Node.js + markdownlint-cli + prettier.
-npm install -g markdownlint-cli prettier
-
-# 3. clang-format. Any modern LLVM release works; the config targets clang-format 19.
-#    Options: `winget install LLVM.LLVM`, `choco install llvm`, or bundled with
-#    Visual Studio's C++ workload (`clang-format.exe` under
-#    `%ProgramFiles%\Microsoft Visual Studio\<year>\<edition>\VC\Tools\Llvm\bin`).
-
-# 4. PowerShell module for the PowerShell hook.
-Install-Module PSScriptAnalyzer -Scope CurrentUser
-```
-
-Verify everything resolves:
-
-```pwsh
-pre-commit --version
-clang-format --version
-markdownlint --version
-prettier --version
-gersemi --version
-Get-Module -ListAvailable PSScriptAnalyzer
-```
-
-On the **first** invocation of `pre-commit run` (either via the git hook or `format.ps1`), pre-commit
-downloads and caches the pinned versions of each hook repo into `~/.cache/pre-commit`. This takes 1–2
-minutes; subsequent runs are seconds.
-
-### Running formatters on demand
-
-```pwsh
-pwsh -File format.ps1                      # every hook against every tracked file (rewrites in place)
-pwsh -File format.ps1 -Staged              # only files currently `git add`ed
-pwsh -File format.ps1 -Hooks clang-format  # only the clang-format hook
-```
-
-`format.ps1` is a thin wrapper around `pre-commit run`; use it whenever you want to reformat without
-committing, or to re-run a single hook after adjusting its config.
-
-### Do NOT run `pre-commit install`
-
-The `.git/hooks/pre-commit` file is hand-managed by `setup-mod-folder.ps1` because it also has to run
-`sync-esp.ps1` (see [Pre-commit hook](#pre-commit-hook)). Running `pre-commit install` will overwrite it
-with a stock pre-commit-framework hook and break the ESP sync. If it happens by accident, re-run
-`pwsh -File setup-mod-folder.ps1` to restore the correct hook.
-
-### Papyrus is not autoformatted
-
-There is no maintained autoformatter for `.psc` source. The closest lint we have is the PapyrusCompiler
-run that `pwsh -File build.ps1 build` triggers — syntax and type errors surface there. If a Papyrus
-formatter appears in the ecosystem, add its hook to `.pre-commit-config.yaml` under the existing
-`local` block or as its own repo entry.
-
-## Writing SkyrimNet `.prompt` files
-
-The `.prompt` files we ship under `statics/SKSE/Plugins/SkyrimNet/prompts/` are Jinja templates that render to
-Markdown chat messages sent to an LLM. They use SkyrimNet's `[ system ] ... [ end system ]` /
-`[ user ] ... [ end user ]` section markers and follow specific conventions about what to tell the LLM (and
-what to deliberately hide — e.g. the cadence at which the call fires). When authoring or editing one, read and
-follow [`docs/CUSTOM_PROMPTS.md`](docs/CUSTOM_PROMPTS.md).
-
-## Markdown conventions
-
-These rules apply to **every** markdown file in this repository.
-
-### Filename casing: SCREAMING_SNAKE_CASE
-
-All markdown files use SCREAMING_SNAKE_CASE (a.k.a. MACRO_CASE / CONSTANT_CASE) for their basenames — e.g.
-`REPO_MAP.md`, `SKYRIMNET_PLUGIN_CONTRACT.md`, `PATTERNS_AND_LESSONS.md`. Words are uppercase and separated by
-underscores; no hyphens, no spaces, no lowercase. This includes `README.md` and `CLAUDE.md` (already conformant as
-single-word all-caps).
-
-When creating a new markdown file or renaming an existing one, use this convention. When updating links to a renamed
-file, search the whole repo (e.g. `grep -r '](old-name.md)'`) to catch every reference.
-
-### Lint every edit with `markdownlint --fix`
-
-After creating or editing any markdown file, run markdownlint against it and resolve any remaining issues before
-considering the change done. The pre-commit hook enforces this at commit time (see
-[Linting and autoformatting](#linting-and-autoformatting)), but the fastest local loop is:
-
-```sh
-pwsh -File format.ps1 -Hooks markdownlint    # all markdown files, auto-fix
-markdownlint --fix path/to/FILE.md           # single-file, if the tool is on PATH directly
-```
-
-Always pass `--fix` by default — it auto-corrects most formatting issues in place (blank lines around
-headings/lists/fences, list-item style, trailing whitespace, etc.) so you only have to hand-fix what the linter can't.
-If a rule consistently fires for a stylistic choice the project wants to keep, update
-[`.markdownlint.json`](.markdownlint.json) rather than ignore the warning ad hoc. The current config sets `MD013`
-(line-length) to 120 with exemptions for code blocks, tables, headings, and unbreakable lines (e.g. long URLs),
-relaxes `MD024` (no-duplicate-heading) to `siblings_only` so repeated subheadings under different parents are allowed,
-and disables `MD060` (table-column-style); everything else is the default rule set.
+Everything a contributor needs — the IntelEngine prior-art reference, working-directory and naming conventions,
+C++ source layout, environment setup, build / statics / ESP / Papyrus workflows, linting and autoformatting, and
+markdown conventions — lives in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md). Start there.

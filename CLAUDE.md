@@ -1,8 +1,9 @@
 # NarrativeEngine — Instructions for Claude
 
 For general project information, conventions, build instructions, and the ESP/Papyrus workflow,
-read [`README.md`](README.md) — everything that applies to any contributor lives there. This file
-contains only the discipline that's specific to how Claude should approach this project.
+read [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — everything that applies to any contributor
+lives there. This file contains only the discipline that's specific to how Claude should approach
+this project.
 
 ## Working method: phased implementation
 
@@ -68,8 +69,8 @@ it — Papyrus errors surface at CK compile time via `build.ps1 build` instead.
 ## IntelEngine prior art — discipline
 
 The factual reference (what IntelEngine is, where the repos and prior-art docs live) is in
-[`README.md`](README.md#prior-art-reference-intelengine). The discipline below governs how to USE that
-material.
+[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md#prior-art-reference-intelengine). The discipline below
+governs how to USE that material.
 
 ### IntelEngine's role in this project
 
