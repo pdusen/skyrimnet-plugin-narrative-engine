@@ -757,7 +757,7 @@ Papyrus binding whenever a save loads.
 
 ### Step 4 — End-to-end verification
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE + USER]**
 
