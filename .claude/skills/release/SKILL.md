@@ -105,6 +105,18 @@ Framing rules:
 - Cite behaviors, not file paths or symbol names.
 - Keep it tight. A short list beats a wall of prose.
 
+Formatting rule (important — GitHub renders release notes with hard line
+breaks): each bullet and each paragraph must be a **single unwrapped line**
+in the source. Do NOT wrap prose at 80/100/120 columns inside a bullet or
+paragraph — GitHub will render every soft newline as a `<br>`, breaking
+sentences mid-thought on the published page. Only insert a newline where
+you want the rendered output to actually break (between bullets, between
+paragraphs, before/after headers).
+
+The draft you present to the user in chat can be wrapped for readability,
+but the release notes you eventually write to disk in step 7 must be
+unwrapped. Either draft unwrapped from the start, or unwrap before writing.
+
 Present the draft and ask for revisions. Iterate until the user explicitly
 approves ("approved", "ship it", "looks good", or similar). Do NOT proceed to
 packaging on ambiguous feedback.
