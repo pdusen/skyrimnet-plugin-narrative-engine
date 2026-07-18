@@ -68,6 +68,11 @@ export interface SettingsTabState {
     // mount points read from the same underlying Tick::IsEnabled().
     tick_enabled: boolean;
     tick_interval_seconds: number;
+    // Uniform floor (all phases) on how many unpaused real-time seconds
+    // the current phase must run before PhaseTracker::EvaluateAdvance is
+    // allowed to transition. Distinct from ideal_duration_seconds below,
+    // which gates whether the beat system may fire an event.
+    min_phase_duration_seconds: number;
     ideal_duration_seconds: {
         exposition: number;
         rising_action: number;

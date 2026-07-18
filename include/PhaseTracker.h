@@ -56,13 +56,15 @@ namespace NarrativeEngine::PhaseTracker
     // terminal phase, so this is total — every Phase has a valid successor.
     Phase NextPhase(Phase p);
 
-    // Given a tension score in [0..100] and the current phase, decides
-    // whether the Director should advance into NextPhase(current). Pure
-    // function — reads only Settings::Get() thresholds. Returns the new
-    // phase when this current-phase's threshold has been crossed, nullopt
-    // to remain. Used by EvaluationPipeline::ParseDecision so the LLM only
-    // has to produce a tension score, not a stay-or-advance verdict.
-    std::optional<Phase> EvaluateAdvance(Phase current, std::uint32_t tensionScore);
+    // Given a tension score in [0..100], the current phase, and the current
+    // dwell time in that phase (unpaused real-time seconds), decides whether
+    // the Director should advance into NextPhase(current). Pure function —
+    // reads only Settings::Get() thresholds and minPhaseDurationSeconds.
+    // Returns the new phase when the tension threshold has been crossed AND
+    // the dwell has met the minimum floor; nullopt to remain. Used by
+    // EvaluationPipeline::ParseDecision so the LLM only has to produce a
+    // tension score, not a stay-or-advance verdict.
+    std::optional<Phase> EvaluateAdvance(Phase current, std::uint32_t tensionScore, float timeInPhaseSeconds);
 
     // Returns the tension-movement direction the cycle wants in order to
     // leave the given phase. Total — every Phase has a defined direction.

@@ -10,6 +10,7 @@ declare global {
     interface Window {
         ne_setDebugMode?: (arg: string) => void;
         ne_setTickInterval?: (arg: string) => void;
+        ne_setMinPhaseDuration?: (arg: string) => void;
         ne_setPhaseIdealDuration?: (arg: string) => void;
         ne_beginHotkeyRebind?: (arg: string) => void;
         ne_cancelHotkeyRebind?: (arg: string) => void;
@@ -105,6 +106,7 @@ export function SettingsTab({ state }: Props) {
     };
     const onRebind = () => window.ne_beginHotkeyRebind?.('');
     const onCommitTickInterval = (v: number) => window.ne_setTickInterval?.(String(v));
+    const onCommitMinPhaseDuration = (v: number) => window.ne_setMinPhaseDuration?.(String(v));
     const onCommitPhase = (phase: string, seconds: number) => {
         window.ne_setPhaseIdealDuration?.(JSON.stringify({ phase, seconds }));
     };
@@ -143,6 +145,17 @@ export function SettingsTab({ state }: Props) {
                         step={5}
                         unit="s"
                         onCommit={onCommitTickInterval}
+                    />
+                </div>
+                <div className="settings-row">
+                    <span className="settings-row-label">Min Phase Duration</span>
+                    <LiveSlider
+                        value={s.min_phase_duration_seconds}
+                        min={0}
+                        max={600}
+                        step={5}
+                        unit="s"
+                        onCommit={onCommitMinPhaseDuration}
                     />
                 </div>
             </section>

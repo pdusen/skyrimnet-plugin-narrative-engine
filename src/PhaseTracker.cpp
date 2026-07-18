@@ -3,6 +3,7 @@
 #include <logger.h>
 #include <Settings.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <mutex>
@@ -109,9 +110,21 @@ namespace NarrativeEngine::PhaseTracker
         return static_cast<Phase>(idx + 1);
     }
 
-    std::optional<Phase> EvaluateAdvance(Phase current, std::uint32_t tensionScore)
+    std::optional<Phase> EvaluateAdvance(Phase current, std::uint32_t tensionScore, float timeInPhaseSeconds)
     {
         const auto& cfg = Settings::Get();
+
+        // Minimum-dwell floor: no phase transition until the current phase
+        // has been active at least this many unpaused real-time seconds.
+        // Applies uniformly across all phases and both threshold directions
+        // (raise / lower). Separates "when is advancement even permitted"
+        // from "when is a beat welcome to nudge things along" — the latter
+        // lives in BeatSystem::ConsiderBeat under the per-phase ideal
+        // durations.
+        if (timeInPhaseSeconds < static_cast<float>(std::max(0, cfg.minPhaseDurationSeconds))) {
+            return std::nullopt;
+        }
+
         const int score = static_cast<int>(tensionScore);
         switch (current) {
         case Phase::Exposition:

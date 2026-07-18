@@ -63,6 +63,20 @@ namespace NarrativeEngine::Settings
         // ever supplies the initial value.
         bool tickEnabled = true;
 
+        // Minimum dwell in the current phase (unpaused real-time
+        // seconds) before PhaseTracker::EvaluateAdvance is allowed to
+        // transition to the next phase. Applies uniformly to every
+        // phase — a single floor, not per-phase. Distinct from the
+        // per-phase idealDuration values, which gate whether the beat
+        // system may fire an event to nudge the story forward. The
+        // ideal durations are "when it's a good time for something to
+        // happen"; this is "the earliest we'll let a phase change fire
+        // at all". Default is deliberately low so tension-driven
+        // advancement stays responsive; players who want a floor of
+        // real narrative dwell before any phase can hand off can raise
+        // it via the Settings tab.
+        int minPhaseDurationSeconds = 30;
+
         // Per-current-phase tension thresholds that drive Freytag advancement.
         // The LLM returns only a tension score; the system decides advancement
         // by comparing that score against the threshold for the *current*
@@ -270,6 +284,7 @@ namespace NarrativeEngine::Settings
         std::optional<bool> debugMode;
         std::optional<bool> tickEnabled;
         std::optional<int> tickIntervalSeconds;
+        std::optional<int> minPhaseDurationSeconds;
         std::optional<int> idealDurationExposition;
         std::optional<int> idealDurationRisingAction;
         std::optional<int> idealDurationClimax;

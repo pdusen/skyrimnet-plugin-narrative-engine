@@ -378,11 +378,14 @@ namespace NarrativeEngine::EvaluationPipeline
         }
 
         // System-side phase advancement: compare the LLM's tension score
-        // against the per-current-phase threshold. The LLM no longer votes
-        // on this directly — it just scores tension, and the thresholds
-        // capture the dramatic shape of each transition (rises into
-        // Exposition/Climax, drops out of Climax/FallingAction).
-        r.advancedToPhase = PhaseTracker::EvaluateAdvance(r.currentPhase, r.tensionScore);
+        // against the per-current-phase threshold, gated by the minimum
+        // dwell floor. The LLM no longer votes on this directly — it just
+        // scores tension, and the thresholds capture the dramatic shape of
+        // each transition (rises into Exposition/Climax, drops out of
+        // Climax/FallingAction). The dwell floor prevents a single
+        // borderline tension score early in a phase from immediately
+        // advancing on the next tick.
+        r.advancedToPhase = PhaseTracker::EvaluateAdvance(r.currentPhase, r.tensionScore, snapshot.timeInPhaseSeconds);
 
         // narrative_note — sanitize LLM-returned Unicode noise (smart quotes,
         // em-dashes, ellipsis, NBSPs, etc.) per docs/LLM_RESPONSE_HANDLING.md,

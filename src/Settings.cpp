@@ -42,6 +42,8 @@ namespace NarrativeEngine::Settings
             dst.tickIntervalSeconds =
                 static_cast<int>(ini.GetLongValue("Director", "iTickIntervalSeconds", dst.tickIntervalSeconds));
             dst.tickEnabled = ini.GetBoolValue("Director", "bTickEnabled", dst.tickEnabled);
+            dst.minPhaseDurationSeconds =
+                static_cast<int>(ini.GetLongValue("Director", "iMinPhaseDurationSeconds", dst.minPhaseDurationSeconds));
             dst.decisionLogMaxEntries =
                 static_cast<int>(ini.GetLongValue("Director", "iDecisionLogMaxEntries", dst.decisionLogMaxEntries));
             dst.decisionLogTailSizeForPrompt = static_cast<int>(
@@ -271,6 +273,12 @@ namespace NarrativeEngine::Settings
             ini.SetLongValue("Director", "iTickIntervalSeconds", *mutations.tickIntervalSeconds);
             g_config.tickIntervalSeconds = *mutations.tickIntervalSeconds;
             logger::info("Settings: MCM override write: iTickIntervalSeconds={}", *mutations.tickIntervalSeconds);
+        }
+        if (mutations.minPhaseDurationSeconds) {
+            ini.SetLongValue("Director", "iMinPhaseDurationSeconds", *mutations.minPhaseDurationSeconds);
+            g_config.minPhaseDurationSeconds = *mutations.minPhaseDurationSeconds;
+            logger::info("Settings: MCM override write: iMinPhaseDurationSeconds={}",
+                         *mutations.minPhaseDurationSeconds);
         }
         if (mutations.idealDurationExposition) {
             ini.SetLongValue("Director", "iIdealDurationExposition", *mutations.idealDurationExposition);

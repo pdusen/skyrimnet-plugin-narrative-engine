@@ -564,6 +564,33 @@ namespace NarrativeEngine::DashboardUIManager
             });
         }
 
+        // Backs the Settings tab's Minimum Phase Duration slider. Payload
+        // is a bare integer string, clamped to `[0, 600]`. Same shape as
+        // OnSetTickInterval — one integer, one INI write, one push.
+        void OnSetMinPhaseDuration(const char* argument)
+        {
+            const std::string arg = argument ? argument : "";
+            int value = 0;
+            const auto* first = arg.data();
+            const auto* last = arg.data() + arg.size();
+            auto [ptr, ec] = std::from_chars(first, last, value);
+            if (ec != std::errc{} || ptr != last) {
+                logger::warn("DashboardUIManager: ne_setMinPhaseDuration: malformed payload '{}'", arg);
+                return;
+            }
+            if (value < 0)
+                value = 0;
+            if (value > 600)
+                value = 600;
+            logger::info("DashboardUIManager: ne_setMinPhaseDuration({}) received", value);
+            AsyncDispatch::MarshalToMainThread([value] {
+                Settings::McmOverride mut;
+                mut.minPhaseDurationSeconds = value;
+                Settings::WriteMcmOverride(mut);
+                PushFullState();
+            });
+        }
+
         // Backs the Settings tab's five per-phase duration sliders.
         // Payload is `{"phase":"exposition","seconds":420}`. Phase name
         // is validated against the five known values; seconds is
@@ -673,6 +700,7 @@ namespace NarrativeEngine::DashboardUIManager
         // Phase 08 Settings tab listeners.
         PrismaUI_API::RegisterJSListener(g_view, "ne_setDebugMode", &OnSetDebugMode);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setTickInterval", &OnSetTickInterval);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setMinPhaseDuration", &OnSetMinPhaseDuration);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setPhaseIdealDuration", &OnSetPhaseIdealDuration);
         PrismaUI_API::RegisterJSListener(g_view, "ne_beginHotkeyRebind", &OnBeginHotkeyRebind);
         PrismaUI_API::RegisterJSListener(g_view, "ne_cancelHotkeyRebind", &OnCancelHotkeyRebind);
@@ -730,6 +758,7 @@ namespace NarrativeEngine::DashboardUIManager
                 {"dashboard_hotkey_capture_active", g_hotkeyCaptureMode.load(std::memory_order_acquire)},
                 {"tick_enabled", Tick::IsEnabled()},
                 {"tick_interval_seconds", cfg.tickIntervalSeconds},
+                {"min_phase_duration_seconds", cfg.minPhaseDurationSeconds},
                 {"ideal_duration_seconds",
                  {
                      {"exposition", cfg.idealDurationExposition},
