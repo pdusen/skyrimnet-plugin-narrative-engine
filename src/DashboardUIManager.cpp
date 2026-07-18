@@ -40,10 +40,11 @@ namespace NarrativeEngine::DashboardUIManager
         // non-main thread.
         //
         // The comparison is in DirectX-scan-code space throughout — the
-        // native input space of SKSE's button events, SkyUI's keymap
-        // controls, and MCM Helper's keymap sink. `Settings::Get()
-        // .dashboardHotkeyDXSC` is likewise a scan code, so no
-        // scan/VK translation is needed.
+        // native input space of SKSE's button events and SkyUI's keymap
+        // controls. `Settings::Get().dashboardHotkeyDXSC` is likewise a
+        // scan code (populated from the plugin INI or overridden at
+        // runtime by _ne_MCM.psc's ModEvent), so no scan/VK translation
+        // is needed.
 
         // DIK_ESCAPE. Used for the "ESC closes the dashboard" affordance
         // below. Modifier reads still use GetAsyncKeyState, which speaks
@@ -97,8 +98,8 @@ namespace NarrativeEngine::DashboardUIManager
 
                     // Modifier match is exact, not a superset. (F7+Shift is
                     // a different binding than plain F7.) The bitmask is
-                    // packed to SkyUI / MCM Helper convention: bit 0 =
-                    // Shift, bit 1 = Ctrl, bit 2 = Alt.
+                    // packed to SkyUI convention: bit 0 = Shift, bit 1 =
+                    // Ctrl, bit 2 = Alt.
                     std::uint8_t actualMods = 0;
                     if (::GetAsyncKeyState(VK_SHIFT) & 0x8000)
                         actualMods |= Settings::kModShift;

@@ -10,6 +10,7 @@
 #include <Decorators.h>
 #include <LetterPool.h>
 #include <logger.h>
+#include <MCMEventSink.h>
 #include <NPCLetterBeat.h>
 #include <NPCVisitBeat.h>
 #include <PhaseTracker.h>
@@ -38,6 +39,12 @@ namespace NarrativeEngine
                 // Settings::Load() runs FIRST so later subsystems can
                 // consult the populated Config when they initialize.
                 Settings::Load();
+                // MCMEventSink listens for _ne_MCM.psc's ModEvent so the
+                // MCM-rebound hotkey can overwrite the INI-loaded default
+                // once a save fires OnGameReload. Register before any
+                // subsystem that reads dashboardHotkey* so the sink is
+                // ready when the first Papyrus event lands.
+                MCMEventSink::Initialize();
                 DecisionLog::SetMaxEntries(
                     static_cast<std::size_t>(std::max(0, Settings::Get().decisionLogMaxEntries)));
                 SkyrimNetAPI::Initialize();

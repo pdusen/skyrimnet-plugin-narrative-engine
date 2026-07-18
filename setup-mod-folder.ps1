@@ -137,6 +137,67 @@ else {
     Write-Host "Copied SkyrimNetApi.psc: $skyrimNetApiSource -> $skyrimNetApiCopy" -ForegroundColor Green
 }
 
+# --- copy SkyUI SDK sources into external/ ----------------------------------
+#
+# Copies every .psc under <SkyUI SDK mod folder>/Source/Scripts/ into
+# <repo>/external/SkyUI/Source/Scripts/ so the Papyrus compiler can resolve
+# SKI_ConfigBase, SKI_QuestBase, and their siblings as imports. The MCM
+# script (esp/Source/Scripts/_ne_MCM.psc, landing in Phase 07) extends
+# SKI_ConfigBase and can't compile without these files visible on the
+# import path.
+#
+# Same rationale as the SkyrimNet block above: plain copies (no symlinks),
+# refreshed every run so an SDK update is picked up automatically, and any
+# stale reparse points from prior runs are dropped in place.
+#
+# Location resolution: honor $env:SKYUI_SDK_DIR if set, otherwise fall back
+# to <mods-folder>/SkyUI SDK (the exact folder name of the MO2 mod install).
+
+$skyuiSdkRoot = $env:SKYUI_SDK_DIR
+if (-not $skyuiSdkRoot) {
+    $skyuiSdkRoot = Join-Path $modsRoot 'SkyUI SDK'
+}
+
+$skyuiSdkSourceDir = Join-Path $skyuiSdkRoot 'Source/Scripts'
+if (-not (Test-Path $skyuiSdkSourceDir -PathType Container)) {
+    Write-Warning "SkyUI SDK sources not found at '$skyuiSdkSourceDir'. Install the SkyUI SDK mod (or set SKYUI_SDK_DIR), then re-run this script to copy the import files."
+}
+else {
+    $skyuiCopyDir = Join-Path $PSScriptRoot 'external/SkyUI/Source/Scripts'
+    if (-not (Test-Path $skyuiCopyDir)) {
+        New-Item -ItemType Directory -Path $skyuiCopyDir -Force | Out-Null
+    }
+
+    $skyuiScripts = Get-ChildItem -Path $skyuiSdkSourceDir -Filter '*.psc' -File -Recurse -ErrorAction SilentlyContinue
+    if (-not $skyuiScripts) {
+        Write-Warning "SkyUI SDK folder '$skyuiSdkSourceDir' exists but contains no .psc files. Verify the SDK download includes source scripts (some Nexus uploads ship only .pex)."
+    }
+    else {
+        foreach ($script in $skyuiScripts) {
+            # Preserve any subdirectory structure inside Source/Scripts/.
+            $relative = $script.FullName.Substring($skyuiSdkSourceDir.Length).TrimStart('\', '/')
+            $destination = Join-Path $skyuiCopyDir $relative
+            $destinationParent = Split-Path $destination -Parent
+            if (-not (Test-Path $destinationParent)) {
+                New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
+            }
+
+            # Drop stale reparse points before writing, same reasoning as
+            # the SkyrimNet block above.
+            if (Test-Path $destination) {
+                $existing = Get-Item $destination -Force
+                if ($existing.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                    Remove-Item $destination -Force
+                    Write-Host "Removed stale SkyUI symlink: $destination" -ForegroundColor DarkGray
+                }
+            }
+
+            Copy-Item -Path $script.FullName -Destination $destination -Force
+        }
+        Write-Host "Copied $($skyuiScripts.Count) SkyUI SDK script(s): $skyuiSdkSourceDir -> $skyuiCopyDir" -ForegroundColor Green
+    }
+}
+
 # --- install git pre-commit hook --------------------------------------------
 #
 # Runs sync-esp.ps1 before every commit. If the sync updates

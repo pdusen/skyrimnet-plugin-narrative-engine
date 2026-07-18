@@ -1,3 +1,4 @@
 *.esl filter=lfs diff=lfs merge=lfs -text
 *.esp filter=lfs diff=lfs merge=lfs -text
 *.esm filter=lfs diff=lfs merge=lfs -text
+*.seq filter=lfs diff=lfs merge=lfs -text

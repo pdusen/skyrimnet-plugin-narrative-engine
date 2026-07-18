@@ -449,6 +449,12 @@ if(DEFINED OUTPUT_FOLDER)
         set(NE_PAPYRUS_IMPORT_SKYRIMNET
             "${CMAKE_SOURCE_DIR}/external/SkyrimNet/Source/Scripts"
         )
+        # SkyUI SDK (SKI_ConfigBase.psc, SKI_QuestBase.psc) copied by
+        # setup-mod-folder.ps1 from the SkyUI SDK mod folder. Needed at
+        # compile time by _ne_MCM.psc (extends SKI_ConfigBase).
+        set(NE_PAPYRUS_IMPORT_SKYUI
+            "${CMAKE_SOURCE_DIR}/external/SkyUI/Source/Scripts"
+        )
         configure_file(
             "${CMAKE_SOURCE_DIR}/NarrativeEngine.ppj.in"
             "${CMAKE_SOURCE_DIR}/NarrativeEngine.ppj"
@@ -469,7 +475,10 @@ if(DEFINED OUTPUT_FOLDER)
             COMMAND
                 "${NE_PAPYRUS_COMPILER}" "${NE_PAPYRUS_SOURCE_DIR}" -all
                 "-f=TESV_Papyrus_Flags.flg"
-                "-i=${NE_PAPYRUS_SOURCE_DIR};${NE_PAPYRUS_IMPORT_SKYRIMNET};${NE_PAPYRUS_IMPORT_SKYRIM};${NE_PAPYRUS_IMPORT_SKSE}"
+                # SKSE's Papyrus scripts extend vanilla ones (e.g. Form.psc
+                # adds SendModEvent); they must come BEFORE the vanilla
+                # import so the compiler resolves the augmented versions.
+                "-i=${NE_PAPYRUS_SOURCE_DIR};${NE_PAPYRUS_IMPORT_SKYRIMNET};${NE_PAPYRUS_IMPORT_SKYUI};${NE_PAPYRUS_IMPORT_SKSE};${NE_PAPYRUS_IMPORT_SKYRIM}"
                 "-o=${NE_PAPYRUS_OUTPUT_DIR}" -op
             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
             DEPENDS ${PAPYRUS_SOURCES}

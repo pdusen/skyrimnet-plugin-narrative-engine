@@ -29,8 +29,10 @@
                 Anonymize="false">
     <Imports>
         <Import>@NE_PAPYRUS_IMPORT_SKYRIMNET@</Import>
-        <Import>@NE_PAPYRUS_IMPORT_SKYRIM@</Import>
+        <Import>@NE_PAPYRUS_IMPORT_SKYUI@</Import>
+        <!-- SKSE before vanilla: augmented Form.psc etc. must win. -->
         <Import>@NE_PAPYRUS_IMPORT_SKSE@</Import>
+        <Import>@NE_PAPYRUS_IMPORT_SKYRIM@</Import>
     </Imports>
     <Folders>
         <Folder>@NE_PAPYRUS_SOURCE_DIR@</Folder>
