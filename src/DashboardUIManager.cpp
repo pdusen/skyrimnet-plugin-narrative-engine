@@ -22,6 +22,7 @@
 #include <Windows.h>
 
 #include <atomic>
+#include <charconv>
 #include <string>
 
 namespace NarrativeEngine::DashboardUIManager
@@ -30,6 +31,18 @@ namespace NarrativeEngine::DashboardUIManager
     {
         PrismaUI_API::ViewHandle g_view = PrismaUI_API::kInvalidView;
         std::atomic<bool> g_visible = false;
+
+        // Set true by ne_beginHotkeyRebind; consumed by HotkeySink's
+        // per-button-down loop on the next non-modifier keypress. While
+        // true, the Settings tab's rebind modal is displayed (a pure
+        // function of the state pushed to the browser). Reset by:
+        //   * a successful capture (writes MCM INI, PushFullState);
+        //   * ESC during capture (cancels);
+        //   * ne_cancelHotkeyRebind from the modal's Cancel button;
+        //   * ToggleVisibility's hide branch (safety — a mid-rebind hide
+        //     mustn't leave a latent capture that snags a random
+        //     keypress later).
+        std::atomic<bool> g_hotkeyCaptureMode = false;
 
         // -- Hotkey input sink --------------------------------------------
         //
@@ -73,6 +86,47 @@ namespace NarrativeEngine::DashboardUIManager
                     const std::uint32_t dxsc = btn->GetIDCode();
                     if (dxsc == 0)
                         continue;
+
+                    // Hotkey-rebind capture mode. Consumes the next
+                    // non-modifier keypress, writes the four MCM-INI
+                    // hotkey keys via WriteMcmOverride, and drops back
+                    // to normal binding-match mode. Modifier keys seen
+                    // during capture are skipped so pressing Shift on
+                    // the way to Shift+F7 doesn't bind just Shift; the
+                    // held-modifier state is probed at capture time via
+                    // GetAsyncKeyState. ESC cancels rather than binds.
+                    if (g_hotkeyCaptureMode.load(std::memory_order_acquire)) {
+                        // Left/Right Shift, Ctrl, Alt DIK codes.
+                        if (dxsc == 42 || dxsc == 54 || dxsc == 29 || dxsc == 157 || dxsc == 56 || dxsc == 184) {
+                            continue;
+                        }
+                        if (dxsc == kDIK_ESCAPE) {
+                            g_hotkeyCaptureMode.store(false, std::memory_order_release);
+                            logger::info("DashboardUIManager: hotkey rebind cancelled (ESC)");
+                            AsyncDispatch::MarshalToMainThread([] { PushFullState(); });
+                            return RE::BSEventNotifyControl::kContinue;
+                        }
+                        const bool shift = (::GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+                        const bool ctrl = (::GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+                        const bool alt = (::GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+                        const int capturedDxsc = static_cast<int>(dxsc);
+                        g_hotkeyCaptureMode.store(false, std::memory_order_release);
+                        logger::info("DashboardUIManager: hotkey rebound DXSC={} shift={} ctrl={} alt={}",
+                                     capturedDxsc,
+                                     shift ? 1 : 0,
+                                     ctrl ? 1 : 0,
+                                     alt ? 1 : 0);
+                        AsyncDispatch::MarshalToMainThread([capturedDxsc, shift, ctrl, alt] {
+                            Settings::McmOverride mut;
+                            mut.dashboardHotkeyDXSC = capturedDxsc;
+                            mut.hotkeyShift = shift;
+                            mut.hotkeyCtrl = ctrl;
+                            mut.hotkeyAlt = alt;
+                            Settings::WriteMcmOverride(mut);
+                            PushFullState();
+                        });
+                        return RE::BSEventNotifyControl::kContinue;
+                    }
 
                     // ESC closes the dashboard when it's open and no
                     // modifier keys are held. Doesn't open it when closed
@@ -173,6 +227,214 @@ namespace NarrativeEngine::DashboardUIManager
             return arg == "true" || arg == "1";
         }
 
+        // Friendly-name display for a DIK scan code + SkyUI-convention
+        // modifier bitmask. Powers state.settings.dashboard_hotkey_display
+        // so the Settings tab shows "Ctrl+F7" instead of raw numbers.
+        // Uncommon codes fall back to "DIK #<N>". Modifiers render in a
+        // fixed order (Ctrl, Shift, Alt) — one canonical shape so
+        // rebinds always display the same way.
+        std::string FormatHotkeyBinding(int dxsc, std::uint8_t mods)
+        {
+            if (dxsc < 0) {
+                return "(none)";
+            }
+            std::string s;
+            if (mods & Settings::kModCtrl)
+                s += "Ctrl+";
+            if (mods & Settings::kModShift)
+                s += "Shift+";
+            if (mods & Settings::kModAlt)
+                s += "Alt+";
+
+            // DIK constants — same values SKSE's button events emit.
+            switch (dxsc) {
+            case 1:
+                s += "Esc";
+                break;
+            case 14:
+                s += "Backspace";
+                break;
+            case 15:
+                s += "Tab";
+                break;
+            case 28:
+                s += "Enter";
+                break;
+            case 41:
+                s += "`";
+                break;
+            case 43:
+                s += "\\";
+                break;
+            case 57:
+                s += "Space";
+                break;
+            case 59:
+                s += "F1";
+                break;
+            case 60:
+                s += "F2";
+                break;
+            case 61:
+                s += "F3";
+                break;
+            case 62:
+                s += "F4";
+                break;
+            case 63:
+                s += "F5";
+                break;
+            case 64:
+                s += "F6";
+                break;
+            case 65:
+                s += "F7";
+                break;
+            case 66:
+                s += "F8";
+                break;
+            case 67:
+                s += "F9";
+                break;
+            case 68:
+                s += "F10";
+                break;
+            case 87:
+                s += "F11";
+                break;
+            case 88:
+                s += "F12";
+                break;
+            // Digits (main row).
+            case 2:
+                s += "1";
+                break;
+            case 3:
+                s += "2";
+                break;
+            case 4:
+                s += "3";
+                break;
+            case 5:
+                s += "4";
+                break;
+            case 6:
+                s += "5";
+                break;
+            case 7:
+                s += "6";
+                break;
+            case 8:
+                s += "7";
+                break;
+            case 9:
+                s += "8";
+                break;
+            case 10:
+                s += "9";
+                break;
+            case 11:
+                s += "0";
+                break;
+            // Letters (QWERTY-order DIK layout — not alphabetical).
+            case 16:
+                s += "Q";
+                break;
+            case 17:
+                s += "W";
+                break;
+            case 18:
+                s += "E";
+                break;
+            case 19:
+                s += "R";
+                break;
+            case 20:
+                s += "T";
+                break;
+            case 21:
+                s += "Y";
+                break;
+            case 22:
+                s += "U";
+                break;
+            case 23:
+                s += "I";
+                break;
+            case 24:
+                s += "O";
+                break;
+            case 25:
+                s += "P";
+                break;
+            case 30:
+                s += "A";
+                break;
+            case 31:
+                s += "S";
+                break;
+            case 32:
+                s += "D";
+                break;
+            case 33:
+                s += "F";
+                break;
+            case 34:
+                s += "G";
+                break;
+            case 35:
+                s += "H";
+                break;
+            case 36:
+                s += "J";
+                break;
+            case 37:
+                s += "K";
+                break;
+            case 38:
+                s += "L";
+                break;
+            case 44:
+                s += "Z";
+                break;
+            case 45:
+                s += "X";
+                break;
+            case 46:
+                s += "C";
+                break;
+            case 47:
+                s += "V";
+                break;
+            case 48:
+                s += "B";
+                break;
+            case 49:
+                s += "N";
+                break;
+            case 50:
+                s += "M";
+                break;
+            // Arrows.
+            case 200:
+                s += "Up";
+                break;
+            case 208:
+                s += "Down";
+                break;
+            case 203:
+                s += "Left";
+                break;
+            case 205:
+                s += "Right";
+                break;
+            default:
+                s += "DIK #" + std::to_string(dxsc);
+                break;
+            }
+            return s;
+        }
+
         // JS -> C++ listener for the dashboard debug tick killswitch.
         // Fires on PrismaUI's worker thread when the dashboard checkbox
         // is toggled; marshal to the main thread before touching engine
@@ -183,6 +445,14 @@ namespace NarrativeEngine::DashboardUIManager
             logger::info("DashboardUIManager: ne_setTickEnabled({}) received", enabled ? "true" : "false");
             AsyncDispatch::MarshalToMainThread([enabled] {
                 Tick::SetEnabled(enabled);
+                // Persist so the toggle survives reboot. Phase 08 change:
+                // pre-Phase 08 this was session-only. Both dashboard mount
+                // points (Dispatch and Settings tabs) flow through this
+                // handler, so the write happens once regardless of which
+                // surface the player toggled.
+                Settings::McmOverride mut;
+                mut.tickEnabled = enabled;
+                Settings::WriteMcmOverride(mut);
                 PushFullState();
             });
         }
@@ -252,6 +522,127 @@ namespace NarrativeEngine::DashboardUIManager
                 PushFullState();
             });
         }
+
+        // Backs the Settings tab's Debug Mode checkbox. Payload is
+        // `"true"` or `"false"`.
+        void OnSetDebugMode(const char* argument)
+        {
+            const bool enabled = ParseBoolArg(argument);
+            logger::info("DashboardUIManager: ne_setDebugMode({}) received", enabled ? "true" : "false");
+            AsyncDispatch::MarshalToMainThread([enabled] {
+                Settings::McmOverride mut;
+                mut.debugMode = enabled;
+                Settings::WriteMcmOverride(mut);
+                PushFullState();
+            });
+        }
+
+        // Backs the Settings tab's Tick Interval slider. Payload is a
+        // bare integer string; clamped to the slider's [10, 600] range
+        // defensively so a browser-side glitch can't write a wild value.
+        void OnSetTickInterval(const char* argument)
+        {
+            const std::string arg = argument ? argument : "";
+            int value = 0;
+            const auto* first = arg.data();
+            const auto* last = arg.data() + arg.size();
+            auto [ptr, ec] = std::from_chars(first, last, value);
+            if (ec != std::errc{} || ptr != last) {
+                logger::warn("DashboardUIManager: ne_setTickInterval: malformed payload '{}'", arg);
+                return;
+            }
+            if (value < 10)
+                value = 10;
+            if (value > 600)
+                value = 600;
+            logger::info("DashboardUIManager: ne_setTickInterval({}) received", value);
+            AsyncDispatch::MarshalToMainThread([value] {
+                Settings::McmOverride mut;
+                mut.tickIntervalSeconds = value;
+                Settings::WriteMcmOverride(mut);
+                PushFullState();
+            });
+        }
+
+        // Backs the Settings tab's five per-phase duration sliders.
+        // Payload is `{"phase":"exposition","seconds":420}`. Phase name
+        // is validated against the five known values; seconds is
+        // clamped to the phase's per-slider range.
+        void OnSetPhaseIdealDuration(const char* argument)
+        {
+            const std::string arg = argument ? argument : "";
+            auto parsed = nlohmann::json::parse(arg, nullptr, false);
+            if (parsed.is_discarded() || !parsed.is_object()) {
+                logger::warn("DashboardUIManager: ne_setPhaseIdealDuration: malformed payload '{}'", arg);
+                return;
+            }
+            std::string phase;
+            int seconds = 0;
+            if (auto it = parsed.find("phase"); it != parsed.end() && it->is_string()) {
+                phase = it->get<std::string>();
+            }
+            if (auto it = parsed.find("seconds"); it != parsed.end() && it->is_number_integer()) {
+                seconds = it->get<int>();
+            }
+            if (phase.empty()) {
+                logger::warn("DashboardUIManager: ne_setPhaseIdealDuration: missing/empty phase in '{}'", arg);
+                return;
+            }
+
+            // Per-phase slider ranges match Settings tab UI: climax is
+            // 30..600 (shorter phase), the other four are 60..1200.
+            const auto clamp = [](int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); };
+            Settings::McmOverride mut;
+            if (phase == "exposition") {
+                mut.idealDurationExposition = clamp(seconds, 60, 1200);
+            } else if (phase == "rising_action") {
+                mut.idealDurationRisingAction = clamp(seconds, 60, 1200);
+            } else if (phase == "climax") {
+                mut.idealDurationClimax = clamp(seconds, 30, 600);
+            } else if (phase == "falling_action") {
+                mut.idealDurationFallingAction = clamp(seconds, 60, 1200);
+            } else if (phase == "resolution") {
+                mut.idealDurationResolution = clamp(seconds, 60, 1200);
+            } else {
+                logger::warn("DashboardUIManager: ne_setPhaseIdealDuration: unknown phase '{}'", phase);
+                return;
+            }
+            logger::info(
+                "DashboardUIManager: ne_setPhaseIdealDuration(phase='{}', seconds={}) received", phase, seconds);
+            AsyncDispatch::MarshalToMainThread([mut = std::move(mut)]() mutable {
+                Settings::WriteMcmOverride(mut);
+                PushFullState();
+            });
+        }
+
+        // Backs the Settings tab's Rebind button. Flips the input sink
+        // into hotkey-capture mode; the next non-modifier keypress
+        // becomes the new binding (see HotkeySink::ProcessEvent). No
+        // argument.
+        void OnBeginHotkeyRebind(const char* /*argument*/)
+        {
+            logger::info("DashboardUIManager: hotkey rebind capture armed");
+            AsyncDispatch::MarshalToMainThread([] {
+                g_hotkeyCaptureMode.store(true, std::memory_order_release);
+                PushFullState();
+            });
+        }
+
+        // Backs the Settings tab's rebind modal's Cancel button.
+        // Idempotent — if the capture already ended (e.g. via ESC in
+        // the input sink) this is a no-op. No argument.
+        void OnCancelHotkeyRebind(const char* /*argument*/)
+        {
+            AsyncDispatch::MarshalToMainThread([] {
+                const bool was = g_hotkeyCaptureMode.exchange(false, std::memory_order_acq_rel);
+                if (was) {
+                    logger::info("DashboardUIManager: hotkey rebind cancelled (Cancel button)");
+                } else {
+                    logger::debug("DashboardUIManager: ne_cancelHotkeyRebind: capture already inactive");
+                }
+                PushFullState();
+            });
+        }
     } // namespace
 
     void Initialize()
@@ -279,6 +670,12 @@ namespace NarrativeEngine::DashboardUIManager
         PrismaUI_API::RegisterJSListener(g_view, "ne_setActionEnabled", &OnSetActionEnabled);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setAllActionsEnabled", &OnSetAllActionsEnabled);
         PrismaUI_API::RegisterJSListener(g_view, "ne_dispatchAction", &OnDispatchAction);
+        // Phase 08 Settings tab listeners.
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setDebugMode", &OnSetDebugMode);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setTickInterval", &OnSetTickInterval);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setPhaseIdealDuration", &OnSetPhaseIdealDuration);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_beginHotkeyRebind", &OnBeginHotkeyRebind);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_cancelHotkeyRebind", &OnCancelHotkeyRebind);
 
         // Hook input events for the hotkey.
         if (auto* inputManager = RE::BSInputDeviceManager::GetSingleton()) {
@@ -319,6 +716,30 @@ namespace NarrativeEngine::DashboardUIManager
             // bound to this and calls back via `window.ne_setTickEnabled`.
             {"tick_enabled", Tick::IsEnabled()},
         };
+
+        // settings — Phase 08. Backs the Settings tab; also provides a
+        // second read of tick_enabled for the Dispatch tab (via its own
+        // status field) and the Settings tab (via this one) so both
+        // mount points share one on-disk source of truth.
+        {
+            const auto& cfg = Settings::Get();
+            j["settings"] = {
+                {"debug_mode", cfg.debugMode},
+                {"dashboard_hotkey_display",
+                 FormatHotkeyBinding(cfg.dashboardHotkeyDXSC, cfg.dashboardHotkeyModifiers)},
+                {"dashboard_hotkey_capture_active", g_hotkeyCaptureMode.load(std::memory_order_acquire)},
+                {"tick_enabled", Tick::IsEnabled()},
+                {"tick_interval_seconds", cfg.tickIntervalSeconds},
+                {"ideal_duration_seconds",
+                 {
+                     {"exposition", cfg.idealDurationExposition},
+                     {"rising_action", cfg.idealDurationRisingAction},
+                     {"climax", cfg.idealDurationClimax},
+                     {"falling_action", cfg.idealDurationFallingAction},
+                     {"resolution", cfg.idealDurationResolution},
+                 }},
+            };
+        }
 
         // phase
         j["current_phase"] = PhaseTracker::PhaseName(PhaseTracker::Get());
@@ -609,6 +1030,10 @@ namespace NarrativeEngine::DashboardUIManager
             PrismaUI_API::Unfocus(g_view);
             PrismaUI_API::Hide(g_view);
             g_visible = false;
+            // Safety: if the player hides the dashboard mid-rebind, clear
+            // the capture flag so the next arbitrary keypress (with the
+            // dashboard closed) doesn't land as an unintended binding.
+            g_hotkeyCaptureMode.store(false, std::memory_order_release);
             logger::debug("DashboardUIManager: hidden");
         } else {
             // Push fresh state before showing so the view doesn't render the

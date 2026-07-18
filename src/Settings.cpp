@@ -13,160 +13,191 @@ namespace NarrativeEngine::Settings
         constexpr const char* kPluginIniPath = "Data/SKSE/Plugins/NarrativeEngine.ini";
         constexpr const char* kMcmIniPath = "Data/MCM/Settings/NarrativeEngine.ini";
 
-        // Try to load the plugin INI; return true on success (file present
-        // and parsed). Missing keys retain whatever value g_config already
-        // holds — i.e. the baked-in default seeded by Load() before this call.
-        bool LoadPluginIni()
+        // Populate `dst` from every recognized key in `ini`.
+        //
+        // The load-bearing convention: each Get*Value call passes the
+        // current `dst.<field>` as its default. That single pattern gives
+        // the cascade its fall-through semantics regardless of which INI
+        // is being read:
+        //   * First pass (against the plugin INI, `dst` freshly defaulted
+        //     from Config{}): missing keys land on the Config baked-in
+        //     default.
+        //   * Second pass (against the MCM INI, `dst` already populated
+        //     from the plugin INI): missing keys land on the plugin-INI
+        //     value.
+        // If a future refactor drops the convention (e.g. passing 0 as
+        // the default for an int read), the cascade silently breaks for
+        // that key — reviewers should watch for that.
+        //
+        // The hotkey [Dashboard] section holds three separate bools for
+        // the modifier keys (MCM Helper toggles have no built-in
+        // bit-manipulation semantics; three checkboxes is the standard
+        // shape). We reconstruct the SkyUI-convention bitmask on read;
+        // the plugin INI can use either shape (bools or `iHotkeyModifiers`),
+        // with the bools taking precedence when both are present.
+        void ReadIniInto(CSimpleIniA& ini, Config& dst)
         {
-            CSimpleIniA ini;
-            ini.SetUnicode();
-            const SI_Error err = ini.LoadFile(kPluginIniPath);
-            if (err < 0) {
-                return false;
+            dst.debugMode = ini.GetBoolValue("General", "bDebugMode", dst.debugMode);
+
+            dst.tickIntervalSeconds =
+                static_cast<int>(ini.GetLongValue("Director", "iTickIntervalSeconds", dst.tickIntervalSeconds));
+            dst.tickEnabled = ini.GetBoolValue("Director", "bTickEnabled", dst.tickEnabled);
+            dst.decisionLogMaxEntries =
+                static_cast<int>(ini.GetLongValue("Director", "iDecisionLogMaxEntries", dst.decisionLogMaxEntries));
+            dst.decisionLogTailSizeForPrompt = static_cast<int>(
+                ini.GetLongValue("Director", "iDecisionLogTailSizeForPrompt", dst.decisionLogTailSizeForPrompt));
+            dst.skyrimNetEventTailSizeForPrompt = static_cast<int>(
+                ini.GetLongValue("Director", "iSkyrimNetEventTailSizeForPrompt", dst.skyrimNetEventTailSizeForPrompt));
+
+            dst.advanceThresholdExposition = static_cast<int>(
+                ini.GetLongValue("Director", "iAdvanceThresholdExposition", dst.advanceThresholdExposition));
+            dst.advanceThresholdRisingAction = static_cast<int>(
+                ini.GetLongValue("Director", "iAdvanceThresholdRisingAction", dst.advanceThresholdRisingAction));
+            dst.advanceThresholdClimax =
+                static_cast<int>(ini.GetLongValue("Director", "iAdvanceThresholdClimax", dst.advanceThresholdClimax));
+            dst.advanceThresholdFallingAction = static_cast<int>(
+                ini.GetLongValue("Director", "iAdvanceThresholdFallingAction", dst.advanceThresholdFallingAction));
+            dst.advanceThresholdResolution = static_cast<int>(
+                ini.GetLongValue("Director", "iAdvanceThresholdResolution", dst.advanceThresholdResolution));
+
+            dst.idealDurationExposition =
+                static_cast<int>(ini.GetLongValue("Director", "iIdealDurationExposition", dst.idealDurationExposition));
+            dst.idealDurationRisingAction = static_cast<int>(
+                ini.GetLongValue("Director", "iIdealDurationRisingAction", dst.idealDurationRisingAction));
+            dst.idealDurationClimax =
+                static_cast<int>(ini.GetLongValue("Director", "iIdealDurationClimax", dst.idealDurationClimax));
+            dst.idealDurationFallingAction = static_cast<int>(
+                ini.GetLongValue("Director", "iIdealDurationFallingAction", dst.idealDurationFallingAction));
+            dst.idealDurationResolution =
+                static_cast<int>(ini.GetLongValue("Director", "iIdealDurationResolution", dst.idealDurationResolution));
+
+            dst.beatSystemPollIntervalMs = static_cast<int>(
+                ini.GetLongValue("BeatSystem", "iBeatSystemPollIntervalMs", dst.beatSystemPollIntervalMs));
+            dst.beatCooldownSeconds =
+                static_cast<int>(ini.GetLongValue("BeatSystem", "iBeatCooldownSeconds", dst.beatCooldownSeconds));
+            dst.beatRepetitionWindowSeconds = static_cast<int>(
+                ini.GetLongValue("BeatSystem", "iBeatRepetitionWindowSeconds", dst.beatRepetitionWindowSeconds));
+
+            dst.letterMinSenderCandidates = static_cast<int>(
+                ini.GetLongValue("Director", "iLetterMinSenderCandidates", dst.letterMinSenderCandidates));
+
+            dst.doNotDisturbCellEDIDsCSV =
+                ini.GetValue("AlphaCanon", "sDoNotDisturbCellEDIDsCSV", dst.doNotDisturbCellEDIDsCSV.c_str());
+
+            // [Dashboard] — DXSC always via GetLongValue; modifiers via
+            // the three-bool shape (MCM Helper's schema), reconstructed
+            // into the bitmask. If none of the three bool keys are
+            // present, fall back to `iHotkeyModifiers` for
+            // plugin-INI-only backwards compatibility.
+            dst.dashboardHotkeyDXSC =
+                static_cast<int>(ini.GetLongValue("Dashboard", "iHotkeyDXSC", dst.dashboardHotkeyDXSC));
+
+            const bool hasShift = ini.GetValue("Dashboard", "bHotkeyShift", nullptr) != nullptr;
+            const bool hasCtrl = ini.GetValue("Dashboard", "bHotkeyCtrl", nullptr) != nullptr;
+            const bool hasAlt = ini.GetValue("Dashboard", "bHotkeyAlt", nullptr) != nullptr;
+            if (hasShift || hasCtrl || hasAlt) {
+                const bool shift = ini.GetBoolValue("Dashboard", "bHotkeyShift", false);
+                const bool ctrl = ini.GetBoolValue("Dashboard", "bHotkeyCtrl", false);
+                const bool alt = ini.GetBoolValue("Dashboard", "bHotkeyAlt", false);
+                std::uint8_t mods = 0;
+                if (shift)
+                    mods |= kModShift;
+                if (ctrl)
+                    mods |= kModCtrl;
+                if (alt)
+                    mods |= kModAlt;
+                dst.dashboardHotkeyModifiers = mods;
+            } else {
+                dst.dashboardHotkeyModifiers = static_cast<std::uint8_t>(
+                    ini.GetLongValue("Dashboard", "iHotkeyModifiers", dst.dashboardHotkeyModifiers));
             }
 
-            g_config.debugMode = ini.GetBoolValue("General", "bDebugMode", g_config.debugMode);
+            dst.combatEventsHitRadiusUnits =
+                static_cast<int>(ini.GetLongValue("CombatEvents", "iHitRadiusUnits", dst.combatEventsHitRadiusUnits));
+            dst.combatEventsMaxStored =
+                static_cast<int>(ini.GetLongValue("CombatEvents", "iMaxStored", dst.combatEventsMaxStored));
 
-            g_config.tickIntervalSeconds =
-                static_cast<int>(ini.GetLongValue("Director", "iTickIntervalSeconds", g_config.tickIntervalSeconds));
-            g_config.decisionLogMaxEntries = static_cast<int>(
-                ini.GetLongValue("Director", "iDecisionLogMaxEntries", g_config.decisionLogMaxEntries));
-            g_config.decisionLogTailSizeForPrompt = static_cast<int>(
-                ini.GetLongValue("Director", "iDecisionLogTailSizeForPrompt", g_config.decisionLogTailSizeForPrompt));
-            g_config.skyrimNetEventTailSizeForPrompt = static_cast<int>(ini.GetLongValue(
-                "Director", "iSkyrimNetEventTailSizeForPrompt", g_config.skyrimNetEventTailSizeForPrompt));
+            dst.enableAmbush = ini.GetBoolValue("Beats", "bEnableAmbush", dst.enableAmbush);
+            dst.enableNpcLetter = ini.GetBoolValue("Beats", "bEnableNpcLetter", dst.enableNpcLetter);
 
-            g_config.advanceThresholdExposition = static_cast<int>(
-                ini.GetLongValue("Director", "iAdvanceThresholdExposition", g_config.advanceThresholdExposition));
-            g_config.advanceThresholdRisingAction = static_cast<int>(
-                ini.GetLongValue("Director", "iAdvanceThresholdRisingAction", g_config.advanceThresholdRisingAction));
-            g_config.advanceThresholdClimax = static_cast<int>(
-                ini.GetLongValue("Director", "iAdvanceThresholdClimax", g_config.advanceThresholdClimax));
-            g_config.advanceThresholdFallingAction = static_cast<int>(
-                ini.GetLongValue("Director", "iAdvanceThresholdFallingAction", g_config.advanceThresholdFallingAction));
-            g_config.advanceThresholdResolution = static_cast<int>(
-                ini.GetLongValue("Director", "iAdvanceThresholdResolution", g_config.advanceThresholdResolution));
+            dst.ambushDefaultBanditCount =
+                static_cast<int>(ini.GetLongValue("Beats", "iAmbushDefaultBanditCount", dst.ambushDefaultBanditCount));
+            dst.ambushDefaultSpawnDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iAmbushDefaultSpawnDistanceUnits", dst.ambushDefaultSpawnDistanceUnits));
+            dst.ambushMinBanditCount =
+                static_cast<int>(ini.GetLongValue("Beats", "iAmbushMinBanditCount", dst.ambushMinBanditCount));
+            dst.ambushMaxBanditCount =
+                static_cast<int>(ini.GetLongValue("Beats", "iAmbushMaxBanditCount", dst.ambushMaxBanditCount));
+            dst.ambushMinSpawnDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iAmbushMinSpawnDistanceUnits", dst.ambushMinSpawnDistanceUnits));
+            dst.ambushMaxSpawnDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iAmbushMaxSpawnDistanceUnits", dst.ambushMaxSpawnDistanceUnits));
+            dst.ambushPerBeatCooldownGameHours = static_cast<int>(
+                ini.GetLongValue("Beats", "iAmbushPerBeatCooldownGameHours", dst.ambushPerBeatCooldownGameHours));
 
-            g_config.idealDurationExposition = static_cast<int>(
-                ini.GetLongValue("Director", "iIdealDurationExposition", g_config.idealDurationExposition));
-            g_config.idealDurationRisingAction = static_cast<int>(
-                ini.GetLongValue("Director", "iIdealDurationRisingAction", g_config.idealDurationRisingAction));
-            g_config.idealDurationClimax =
-                static_cast<int>(ini.GetLongValue("Director", "iIdealDurationClimax", g_config.idealDurationClimax));
-            g_config.idealDurationFallingAction = static_cast<int>(
-                ini.GetLongValue("Director", "iIdealDurationFallingAction", g_config.idealDurationFallingAction));
-            g_config.idealDurationResolution = static_cast<int>(
-                ini.GetLongValue("Director", "iIdealDurationResolution", g_config.idealDurationResolution));
+            dst.letterContentMinWords =
+                static_cast<int>(ini.GetLongValue("Beats", "iLetterContentMinWords", dst.letterContentMinWords));
+            dst.letterContentMaxWords =
+                static_cast<int>(ini.GetLongValue("Beats", "iLetterContentMaxWords", dst.letterContentMaxWords));
+            dst.letterMemoryImportanceThreshold = static_cast<float>(
+                ini.GetDoubleValue("Beats", "fLetterMemoryImportanceThreshold", dst.letterMemoryImportanceThreshold));
+            dst.letterPoolSize = static_cast<int>(ini.GetLongValue("Beats", "iLetterPoolSize", dst.letterPoolSize));
+            dst.letterDispatchVerifyDelaySeconds = static_cast<int>(
+                ini.GetLongValue("Beats", "iLetterDispatchVerifyDelaySeconds", dst.letterDispatchVerifyDelaySeconds));
+            dst.letterPendingDeliveryTimeoutSeconds = static_cast<int>(ini.GetLongValue(
+                "Beats", "iLetterPendingDeliveryTimeoutSeconds", dst.letterPendingDeliveryTimeoutSeconds));
+            dst.letterBeatCooldownGameHours = static_cast<int>(
+                ini.GetLongValue("Beats", "iLetterBeatCooldownGameHours", dst.letterBeatCooldownGameHours));
+            dst.letterSenderCooldownGameHours = static_cast<int>(
+                ini.GetLongValue("Beats", "iLetterSenderCooldownGameHours", dst.letterSenderCooldownGameHours));
 
-            g_config.beatSystemPollIntervalMs = static_cast<int>(
-                ini.GetLongValue("BeatSystem", "iBeatSystemPollIntervalMs", g_config.beatSystemPollIntervalMs));
-            g_config.beatCooldownSeconds =
-                static_cast<int>(ini.GetLongValue("BeatSystem", "iBeatCooldownSeconds", g_config.beatCooldownSeconds));
-            g_config.beatRepetitionWindowSeconds = static_cast<int>(
-                ini.GetLongValue("BeatSystem", "iBeatRepetitionWindowSeconds", g_config.beatRepetitionWindowSeconds));
-
-            g_config.letterMinSenderCandidates = static_cast<int>(
-                ini.GetLongValue("Director", "iLetterMinSenderCandidates", g_config.letterMinSenderCandidates));
-
-            g_config.doNotDisturbCellEDIDsCSV =
-                ini.GetValue("AlphaCanon", "sDoNotDisturbCellEDIDsCSV", g_config.doNotDisturbCellEDIDsCSV.c_str());
-
-            g_config.dashboardHotkeyDXSC =
-                static_cast<int>(ini.GetLongValue("Dashboard", "iHotkeyDXSC", g_config.dashboardHotkeyDXSC));
-            g_config.dashboardHotkeyModifiers = static_cast<std::uint8_t>(
-                ini.GetLongValue("Dashboard", "iHotkeyModifiers", g_config.dashboardHotkeyModifiers));
-
-            g_config.combatEventsHitRadiusUnits = static_cast<int>(
-                ini.GetLongValue("CombatEvents", "iHitRadiusUnits", g_config.combatEventsHitRadiusUnits));
-            g_config.combatEventsMaxStored =
-                static_cast<int>(ini.GetLongValue("CombatEvents", "iMaxStored", g_config.combatEventsMaxStored));
-
-            g_config.enableAmbush = ini.GetBoolValue("Beats", "bEnableAmbush", g_config.enableAmbush);
-            g_config.enableNpcLetter = ini.GetBoolValue("Beats", "bEnableNpcLetter", g_config.enableNpcLetter);
-
-            g_config.ambushDefaultBanditCount = static_cast<int>(
-                ini.GetLongValue("Beats", "iAmbushDefaultBanditCount", g_config.ambushDefaultBanditCount));
-            g_config.ambushDefaultSpawnDistanceUnits = static_cast<int>(ini.GetLongValue(
-                "Beats", "iAmbushDefaultSpawnDistanceUnits", g_config.ambushDefaultSpawnDistanceUnits));
-            g_config.ambushMinBanditCount =
-                static_cast<int>(ini.GetLongValue("Beats", "iAmbushMinBanditCount", g_config.ambushMinBanditCount));
-            g_config.ambushMaxBanditCount =
-                static_cast<int>(ini.GetLongValue("Beats", "iAmbushMaxBanditCount", g_config.ambushMaxBanditCount));
-            g_config.ambushMinSpawnDistanceUnits = static_cast<int>(
-                ini.GetLongValue("Beats", "iAmbushMinSpawnDistanceUnits", g_config.ambushMinSpawnDistanceUnits));
-            g_config.ambushMaxSpawnDistanceUnits = static_cast<int>(
-                ini.GetLongValue("Beats", "iAmbushMaxSpawnDistanceUnits", g_config.ambushMaxSpawnDistanceUnits));
-            g_config.ambushPerBeatCooldownGameHours = static_cast<int>(
-                ini.GetLongValue("Beats", "iAmbushPerBeatCooldownGameHours", g_config.ambushPerBeatCooldownGameHours));
-
-            g_config.letterContentMinWords =
-                static_cast<int>(ini.GetLongValue("Beats", "iLetterContentMinWords", g_config.letterContentMinWords));
-            g_config.letterContentMaxWords =
-                static_cast<int>(ini.GetLongValue("Beats", "iLetterContentMaxWords", g_config.letterContentMaxWords));
-            g_config.letterMemoryImportanceThreshold = static_cast<float>(ini.GetDoubleValue(
-                "Beats", "fLetterMemoryImportanceThreshold", g_config.letterMemoryImportanceThreshold));
-            g_config.letterPoolSize =
-                static_cast<int>(ini.GetLongValue("Beats", "iLetterPoolSize", g_config.letterPoolSize));
-            g_config.letterDispatchVerifyDelaySeconds = static_cast<int>(ini.GetLongValue(
-                "Beats", "iLetterDispatchVerifyDelaySeconds", g_config.letterDispatchVerifyDelaySeconds));
-            g_config.letterPendingDeliveryTimeoutSeconds = static_cast<int>(ini.GetLongValue(
-                "Beats", "iLetterPendingDeliveryTimeoutSeconds", g_config.letterPendingDeliveryTimeoutSeconds));
-            g_config.letterBeatCooldownGameHours = static_cast<int>(
-                ini.GetLongValue("Beats", "iLetterBeatCooldownGameHours", g_config.letterBeatCooldownGameHours));
-            g_config.letterSenderCooldownGameHours = static_cast<int>(
-                ini.GetLongValue("Beats", "iLetterSenderCooldownGameHours", g_config.letterSenderCooldownGameHours));
-
-            g_config.letterPoolEvictionLogVerbosity = static_cast<int>(ini.GetLongValue(
-                "LetterPool", "iLetterPoolEvictionLogVerbosity", g_config.letterPoolEvictionLogVerbosity));
+            dst.letterPoolEvictionLogVerbosity = static_cast<int>(
+                ini.GetLongValue("LetterPool", "iLetterPoolEvictionLogVerbosity", dst.letterPoolEvictionLogVerbosity));
 
             // --- NPCVisitBeat ---
 
-            g_config.visitMinSenderCandidates = static_cast<int>(
-                ini.GetLongValue("Director", "iVisitMinSenderCandidates", g_config.visitMinSenderCandidates));
+            dst.visitMinSenderCandidates = static_cast<int>(
+                ini.GetLongValue("Director", "iVisitMinSenderCandidates", dst.visitMinSenderCandidates));
 
-            g_config.enableNpcVisit = ini.GetBoolValue("Beats", "bEnableNpcVisit", g_config.enableNpcVisit);
+            dst.enableNpcVisit = ini.GetBoolValue("Beats", "bEnableNpcVisit", dst.enableNpcVisit);
 
-            g_config.visitBriefingMinWords =
-                static_cast<int>(ini.GetLongValue("Beats", "iVisitBriefingMinWords", g_config.visitBriefingMinWords));
-            g_config.visitBriefingMaxWords =
-                static_cast<int>(ini.GetLongValue("Beats", "iVisitBriefingMaxWords", g_config.visitBriefingMaxWords));
-            g_config.visitMarkerMinDistanceUnits = static_cast<int>(
-                ini.GetLongValue("Beats", "iVisitMarkerMinDistanceUnits", g_config.visitMarkerMinDistanceUnits));
-            g_config.visitMarkerMaxDistanceUnits = static_cast<int>(
-                ini.GetLongValue("Beats", "iVisitMarkerMaxDistanceUnits", g_config.visitMarkerMaxDistanceUnits));
-            g_config.visitSenderCooldownGameHours = static_cast<int>(
-                ini.GetLongValue("Beats", "iVisitSenderCooldownGameHours", g_config.visitSenderCooldownGameHours));
+            dst.visitBriefingMinWords =
+                static_cast<int>(ini.GetLongValue("Beats", "iVisitBriefingMinWords", dst.visitBriefingMinWords));
+            dst.visitBriefingMaxWords =
+                static_cast<int>(ini.GetLongValue("Beats", "iVisitBriefingMaxWords", dst.visitBriefingMaxWords));
+            dst.visitMarkerMinDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitMarkerMinDistanceUnits", dst.visitMarkerMinDistanceUnits));
+            dst.visitMarkerMaxDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitMarkerMaxDistanceUnits", dst.visitMarkerMaxDistanceUnits));
+            dst.visitSenderCooldownGameHours = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitSenderCooldownGameHours", dst.visitSenderCooldownGameHours));
 
-            g_config.visitApproachTimeoutSeconds = static_cast<int>(
-                ini.GetLongValue("Beats", "iVisitApproachTimeoutSeconds", g_config.visitApproachTimeoutSeconds));
-            g_config.visitSalutationApproachDistanceUnits = static_cast<int>(ini.GetLongValue(
-                "Beats", "iVisitSalutationApproachDistanceUnits", g_config.visitSalutationApproachDistanceUnits));
-            g_config.visitReEngageApproachDistanceUnits = static_cast<int>(ini.GetLongValue(
-                "Beats", "iVisitReEngageApproachDistanceUnits", g_config.visitReEngageApproachDistanceUnits));
-            g_config.visitPollGateTickSeconds = static_cast<int>(
-                ini.GetLongValue("Beats", "iVisitPollGateTickSeconds", g_config.visitPollGateTickSeconds));
-            g_config.visitPollTurnCountThreshold = static_cast<int>(
-                ini.GetLongValue("Beats", "iVisitPollTurnCountThreshold", g_config.visitPollTurnCountThreshold));
-            g_config.visitPollSilenceRealSeconds = static_cast<int>(
-                ini.GetLongValue("Beats", "iVisitPollSilenceRealSeconds", g_config.visitPollSilenceRealSeconds));
-            g_config.visitPollMaxIntervalGameMinutes = static_cast<int>(ini.GetLongValue(
-                "Beats", "iVisitPollMaxIntervalGameMinutes", g_config.visitPollMaxIntervalGameMinutes));
-            g_config.visitConclusionPollMaxConsecutiveFailures =
-                static_cast<int>(ini.GetLongValue("Beats",
-                                                  "iVisitConclusionPollMaxConsecutiveFailures",
-                                                  g_config.visitConclusionPollMaxConsecutiveFailures));
-            g_config.visitMaxIgnoreNudges =
-                static_cast<int>(ini.GetLongValue("Beats", "iVisitMaxIgnoreNudges", g_config.visitMaxIgnoreNudges));
-            g_config.visitOnHoldCombatMaxSeconds = static_cast<int>(
-                ini.GetLongValue("Beats", "iVisitOnHoldCombatMaxSeconds", g_config.visitOnHoldCombatMaxSeconds));
-            g_config.visitValedictionDwellSeconds = static_cast<int>(
-                ini.GetLongValue("Beats", "iVisitValedictionDwellSeconds", g_config.visitValedictionDwellSeconds));
-            g_config.visitReturnHomeExitDistanceUnits = static_cast<int>(ini.GetLongValue(
-                "Beats", "iVisitReturnHomeExitDistanceUnits", g_config.visitReturnHomeExitDistanceUnits));
-            g_config.visitReturnHomeTimeoutSeconds = static_cast<int>(
-                ini.GetLongValue("Beats", "iVisitReturnHomeTimeoutSeconds", g_config.visitReturnHomeTimeoutSeconds));
-
-            return true;
+            dst.visitApproachTimeoutSeconds = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitApproachTimeoutSeconds", dst.visitApproachTimeoutSeconds));
+            dst.visitSalutationApproachDistanceUnits = static_cast<int>(ini.GetLongValue(
+                "Beats", "iVisitSalutationApproachDistanceUnits", dst.visitSalutationApproachDistanceUnits));
+            dst.visitReEngageApproachDistanceUnits = static_cast<int>(ini.GetLongValue(
+                "Beats", "iVisitReEngageApproachDistanceUnits", dst.visitReEngageApproachDistanceUnits));
+            dst.visitPollGateTickSeconds =
+                static_cast<int>(ini.GetLongValue("Beats", "iVisitPollGateTickSeconds", dst.visitPollGateTickSeconds));
+            dst.visitPollTurnCountThreshold = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitPollTurnCountThreshold", dst.visitPollTurnCountThreshold));
+            dst.visitPollSilenceRealSeconds = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitPollSilenceRealSeconds", dst.visitPollSilenceRealSeconds));
+            dst.visitPollMaxIntervalGameMinutes = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitPollMaxIntervalGameMinutes", dst.visitPollMaxIntervalGameMinutes));
+            dst.visitConclusionPollMaxConsecutiveFailures = static_cast<int>(ini.GetLongValue(
+                "Beats", "iVisitConclusionPollMaxConsecutiveFailures", dst.visitConclusionPollMaxConsecutiveFailures));
+            dst.visitMaxIgnoreNudges =
+                static_cast<int>(ini.GetLongValue("Beats", "iVisitMaxIgnoreNudges", dst.visitMaxIgnoreNudges));
+            dst.visitOnHoldCombatMaxSeconds = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitOnHoldCombatMaxSeconds", dst.visitOnHoldCombatMaxSeconds));
+            dst.visitValedictionDwellSeconds = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitValedictionDwellSeconds", dst.visitValedictionDwellSeconds));
+            dst.visitReturnHomeExitDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitReturnHomeExitDistanceUnits", dst.visitReturnHomeExitDistanceUnits));
+            dst.visitReturnHomeTimeoutSeconds = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitReturnHomeTimeoutSeconds", dst.visitReturnHomeTimeoutSeconds));
         }
     } // namespace
 
@@ -176,7 +207,10 @@ namespace NarrativeEngine::Settings
         // happen) produce a deterministic result rather than stacking values.
         g_config = Config{};
 
-        if (LoadPluginIni()) {
+        CSimpleIniA plugin;
+        plugin.SetUnicode();
+        if (plugin.LoadFile(kPluginIniPath) >= 0) {
+            ReadIniInto(plugin, g_config);
             logger::info("Settings: loaded from {}", kPluginIniPath);
         } else {
             logger::info("Settings: no plugin INI at {}; using defaults", kPluginIniPath);
@@ -184,7 +218,8 @@ namespace NarrativeEngine::Settings
 
         // Apply the MCM Helper-written override on top of the plugin INI,
         // if the file exists. Silent no-op otherwise (first-run before the
-        // player has opened the MCM page).
+        // player has opened the MCM page). The universal cascade honors
+        // *every* recognized key in the MCM INI — not just [Dashboard].
         ApplyMcmOverride();
 
         if (g_config.debugMode) {
@@ -204,34 +239,109 @@ namespace NarrativeEngine::Settings
     {
         CSimpleIniA ini;
         ini.SetUnicode();
-        const SI_Error err = ini.LoadFile(kMcmIniPath);
-        if (err < 0) {
+        if (ini.LoadFile(kMcmIniPath) < 0) {
             // Fresh install, or player hasn't opened the MCM page yet.
             // Leave the plugin-INI-loaded values in place.
             return;
         }
+        ReadIniInto(ini, g_config);
+        logger::info("Settings: MCM overrides applied from {}", kMcmIniPath);
+    }
 
-        g_config.dashboardHotkeyDXSC =
-            static_cast<int>(ini.GetLongValue("Dashboard", "iHotkeyDXSC", g_config.dashboardHotkeyDXSC));
+    void WriteMcmOverride(const McmOverride& mutations)
+    {
+        CSimpleIniA ini;
+        ini.SetUnicode();
+        // Loading a non-existent file returns an error but leaves `ini`
+        // empty, which is exactly what we want for the "first write"
+        // case — SaveFile creates the file with just our keys.
+        (void)ini.LoadFile(kMcmIniPath);
 
-        // The modifier bitmask is stored as three separate bools in the
-        // MCM INI (MCM Helper's toggle control has no built-in
-        // bit-manipulation semantics; three checkboxes is the standard
-        // shape). Reconstruct the SkyUI-convention bitmask on read.
-        const bool shift = ini.GetBoolValue("Dashboard", "bHotkeyShift", false);
-        const bool ctrl = ini.GetBoolValue("Dashboard", "bHotkeyCtrl", false);
-        const bool alt = ini.GetBoolValue("Dashboard", "bHotkeyAlt", false);
+        if (mutations.debugMode) {
+            ini.SetBoolValue("General", "bDebugMode", *mutations.debugMode);
+            g_config.debugMode = *mutations.debugMode;
+            logger::info("Settings: MCM override write: bDebugMode={}", *mutations.debugMode ? 1 : 0);
+        }
+        if (mutations.tickEnabled) {
+            ini.SetBoolValue("Director", "bTickEnabled", *mutations.tickEnabled);
+            g_config.tickEnabled = *mutations.tickEnabled;
+            logger::info("Settings: MCM override write: bTickEnabled={}", *mutations.tickEnabled ? 1 : 0);
+        }
+        if (mutations.tickIntervalSeconds) {
+            ini.SetLongValue("Director", "iTickIntervalSeconds", *mutations.tickIntervalSeconds);
+            g_config.tickIntervalSeconds = *mutations.tickIntervalSeconds;
+            logger::info("Settings: MCM override write: iTickIntervalSeconds={}", *mutations.tickIntervalSeconds);
+        }
+        if (mutations.idealDurationExposition) {
+            ini.SetLongValue("Director", "iIdealDurationExposition", *mutations.idealDurationExposition);
+            g_config.idealDurationExposition = *mutations.idealDurationExposition;
+            logger::info("Settings: MCM override write: iIdealDurationExposition={}",
+                         *mutations.idealDurationExposition);
+        }
+        if (mutations.idealDurationRisingAction) {
+            ini.SetLongValue("Director", "iIdealDurationRisingAction", *mutations.idealDurationRisingAction);
+            g_config.idealDurationRisingAction = *mutations.idealDurationRisingAction;
+            logger::info("Settings: MCM override write: iIdealDurationRisingAction={}",
+                         *mutations.idealDurationRisingAction);
+        }
+        if (mutations.idealDurationClimax) {
+            ini.SetLongValue("Director", "iIdealDurationClimax", *mutations.idealDurationClimax);
+            g_config.idealDurationClimax = *mutations.idealDurationClimax;
+            logger::info("Settings: MCM override write: iIdealDurationClimax={}", *mutations.idealDurationClimax);
+        }
+        if (mutations.idealDurationFallingAction) {
+            ini.SetLongValue("Director", "iIdealDurationFallingAction", *mutations.idealDurationFallingAction);
+            g_config.idealDurationFallingAction = *mutations.idealDurationFallingAction;
+            logger::info("Settings: MCM override write: iIdealDurationFallingAction={}",
+                         *mutations.idealDurationFallingAction);
+        }
+        if (mutations.idealDurationResolution) {
+            ini.SetLongValue("Director", "iIdealDurationResolution", *mutations.idealDurationResolution);
+            g_config.idealDurationResolution = *mutations.idealDurationResolution;
+            logger::info("Settings: MCM override write: iIdealDurationResolution={}",
+                         *mutations.idealDurationResolution);
+        }
+        if (mutations.dashboardHotkeyDXSC) {
+            ini.SetLongValue("Dashboard", "iHotkeyDXSC", *mutations.dashboardHotkeyDXSC);
+            g_config.dashboardHotkeyDXSC = *mutations.dashboardHotkeyDXSC;
+            logger::info("Settings: MCM override write: iHotkeyDXSC={}", *mutations.dashboardHotkeyDXSC);
+        }
+        // The three hotkey modifier bools are written independently but
+        // reassembled into the runtime bitmask together — after all three
+        // are processed we rebuild `dashboardHotkeyModifiers` from the
+        // final in-memory bool state, so a call that only sets a subset
+        // still yields a correct combined bitmask.
+        if (mutations.hotkeyShift) {
+            ini.SetBoolValue("Dashboard", "bHotkeyShift", *mutations.hotkeyShift);
+            logger::info("Settings: MCM override write: bHotkeyShift={}", *mutations.hotkeyShift ? 1 : 0);
+        }
+        if (mutations.hotkeyCtrl) {
+            ini.SetBoolValue("Dashboard", "bHotkeyCtrl", *mutations.hotkeyCtrl);
+            logger::info("Settings: MCM override write: bHotkeyCtrl={}", *mutations.hotkeyCtrl ? 1 : 0);
+        }
+        if (mutations.hotkeyAlt) {
+            ini.SetBoolValue("Dashboard", "bHotkeyAlt", *mutations.hotkeyAlt);
+            logger::info("Settings: MCM override write: bHotkeyAlt={}", *mutations.hotkeyAlt ? 1 : 0);
+        }
+        if (mutations.hotkeyShift || mutations.hotkeyCtrl || mutations.hotkeyAlt) {
+            std::uint8_t mods = 0;
+            const bool shift =
+                mutations.hotkeyShift ? *mutations.hotkeyShift : (g_config.dashboardHotkeyModifiers & kModShift) != 0;
+            const bool ctrl =
+                mutations.hotkeyCtrl ? *mutations.hotkeyCtrl : (g_config.dashboardHotkeyModifiers & kModCtrl) != 0;
+            const bool alt =
+                mutations.hotkeyAlt ? *mutations.hotkeyAlt : (g_config.dashboardHotkeyModifiers & kModAlt) != 0;
+            if (shift)
+                mods |= kModShift;
+            if (ctrl)
+                mods |= kModCtrl;
+            if (alt)
+                mods |= kModAlt;
+            g_config.dashboardHotkeyModifiers = mods;
+        }
 
-        std::uint8_t mods = 0;
-        if (shift) {
-            mods |= kModShift;
+        if (ini.SaveFile(kMcmIniPath) < 0) {
+            logger::warn("Settings: failed to save MCM override to {}", kMcmIniPath);
         }
-        if (ctrl) {
-            mods |= kModCtrl;
-        }
-        if (alt) {
-            mods |= kModAlt;
-        }
-        g_config.dashboardHotkeyModifiers = mods;
     }
 } // namespace NarrativeEngine::Settings

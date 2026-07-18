@@ -1,25 +1,37 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 // Author-tunable plugin configuration.
 //
 // Read once at SKSE's kDataLoaded message via Load(). Sources, in order:
 //   1. Data/SKSE/Plugins/NarrativeEngine.ini (the plugin INI — author
-//      defaults for every setting).
+//      defaults for every setting; the file a modder editing the mod's
+//      source tree hand-tunes).
 //   2. Data/MCM/Settings/NarrativeEngine.ini (MCM Helper-managed;
-//      overrides only the [Dashboard] keys when present).
+//      universal override layer — any Config field named here overrides
+//      the plugin-INI value on the same key).
 //
-// Any missing file or missing key falls back to the default baked into the
-// Config struct below — the plugin is fully functional with no INI at all.
+// Both files are parsed through a single shared per-key enumeration
+// (see ReadIniInto in Settings.cpp), so **every** Config field is
+// MCM-overridable — including the fifty-plus knobs no UI surface
+// exposes. Absent keys fall through: MCM INI absent → plugin-INI value
+// stands; plugin INI absent → the baked-in default in Config below
+// stands. The plugin is fully functional with no INI at all.
 //
-// The MCM override INI is re-read at runtime whenever the player changes a
-// value in the MCM page: _ne_MCM.psc fires the
+// The MCM override INI is re-read at runtime whenever the player
+// changes a value in the MCM page: _ne_MCM.psc fires the
 // "_ne_DashboardHotkeyChanged" ModEvent (via SKI_ConfigBase's
-// OnSettingChange), and MCMEventSink calls ApplyMcmOverride() to refresh
-// the [Dashboard] fields in place. MCM Helper writes the INI atomically
-// before firing the event, so the sink always sees a consistent file.
+// OnSettingChange), and MCMEventSink calls ApplyMcmOverride() which
+// re-runs the same shared enumeration against the MCM INI.
+//
+// The plugin also writes to the MCM INI directly (via
+// WriteMcmOverride) from dashboard-authored setting changes. The write
+// surface is deliberately narrower than the read surface — the reader
+// honors every Config field, but the writer only knows how to author
+// the specific keys the dashboard UI edits.
 namespace NarrativeEngine::Settings
 {
     // Bitmask values for the dashboard hotkey's modifier keys. Bit
@@ -42,6 +54,14 @@ namespace NarrativeEngine::Settings
         int decisionLogMaxEntries = 200;          // ring buffer cap
         int decisionLogTailSizeForPrompt = 10;    // entries fed into BuildPromptContext
         int skyrimNetEventTailSizeForPrompt = 40; // maxCount passed to PublicGetRecentEvents
+
+        // Runtime killswitch initial state. Seeds Tick::g_enabled at
+        // Tick::Start. Runtime changes via the dashboard update this
+        // field in place *and* write to the MCM INI (so a subsequent
+        // boot's ReadIniInto re-seeds correctly). The authoritative
+        // runtime store is Tick::g_enabled (atomic); this field only
+        // ever supplies the initial value.
+        bool tickEnabled = true;
 
         // Per-current-phase tension thresholds that drive Freytag advancement.
         // The LLM returns only a tension score; the system decides advancement
@@ -238,21 +258,57 @@ namespace NarrativeEngine::Settings
         bool enableNpcVisit = true;
     };
 
+    // Narrow mutation surface for WriteMcmOverride. One optional per
+    // key the dashboard UI can edit; unset optionals are left alone on
+    // disk. Field order mirrors Config's field order for readability.
+    // The read surface (ReadIniInto) is *universal* — every Config
+    // field is populated on read. The write surface is deliberately
+    // narrower so callers can't accidentally author a key the UI has
+    // no editor for.
+    struct McmOverride
+    {
+        std::optional<bool> debugMode;
+        std::optional<bool> tickEnabled;
+        std::optional<int> tickIntervalSeconds;
+        std::optional<int> idealDurationExposition;
+        std::optional<int> idealDurationRisingAction;
+        std::optional<int> idealDurationClimax;
+        std::optional<int> idealDurationFallingAction;
+        std::optional<int> idealDurationResolution;
+        std::optional<int> dashboardHotkeyDXSC;
+        std::optional<bool> hotkeyShift;
+        std::optional<bool> hotkeyCtrl;
+        std::optional<bool> hotkeyAlt;
+    };
+
     // Read the plugin INI, then apply any MCM-managed override, and
     // populate the singleton. Call once from kDataLoaded BEFORE any
     // subsystem that reads settings.
     void Load();
 
     // Access the loaded config. Stable reference for the plugin's lifetime.
-    // The [Dashboard] fields may be mutated at runtime via
-    // ApplyMcmOverride (see below); every other field is populated by
-    // Load() and never touched again.
+    // Fields may be mutated at runtime via ApplyMcmOverride (which re-runs
+    // the universal read against the MCM INI) or WriteMcmOverride (which
+    // updates specific fields in place before writing them to disk).
     const Config& Get();
 
-    // Re-read Data/MCM/Settings/NarrativeEngine.ini and overwrite the
-    // [Dashboard] fields in place. Called by MCMEventSink when the MCM
-    // page fires "_ne_DashboardHotkeyChanged". Safe to call any time
-    // after Load(); no-ops silently if the MCM INI is absent (fresh
-    // install where the player has never opened the page).
+    // Re-read Data/MCM/Settings/NarrativeEngine.ini and apply every
+    // recognized key as an override on top of the current in-memory
+    // Config. Called by MCMEventSink when the MCM page fires
+    // "_ne_DashboardHotkeyChanged", and by Load() as the second pass
+    // of the cascade. Safe to call any time after Load(); no-ops
+    // silently if the MCM INI is absent (fresh install where the
+    // player has never opened the page).
     void ApplyMcmOverride();
+
+    // Write a subset of Config fields to the MCM INI at
+    // Data/MCM/Settings/NarrativeEngine.ini. Reads the current file
+    // (preserving unknown keys / comments), sets the values whose
+    // optionals are engaged, writes back atomically, then applies the
+    // same mutations to the in-memory Config singleton so
+    // Settings::Get() reflects the write immediately (no wait for a
+    // subsequent Load / ApplyMcmOverride). Never touches the plugin
+    // INI. Safe to call from the main thread only (SimpleIni is
+    // single-threaded).
+    void WriteMcmOverride(const McmOverride& mutations);
 } // namespace NarrativeEngine::Settings

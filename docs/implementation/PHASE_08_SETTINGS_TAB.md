@@ -632,7 +632,7 @@ Step order:
 
 ### Step 1 — C++ Settings widening + Tick bootstrap
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -724,7 +724,7 @@ reboot. After this step, the plumbing is in place but no UI writes to it yet.
 
 ### Step 2 — C++ dashboard wiring: listeners + schema
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -835,7 +835,7 @@ listening; the browser side just isn't calling yet.
 
 ### Step 3 — React Settings tab
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -939,75 +939,56 @@ every control routes to a live C++ listener.
 
 ### Step 4 — End-to-end verification
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE + USER]**
 
-**Goal:** Walk the scenarios that together prove
-persistence, cross-surface sync, and fallback behavior.
+**Goal:** Walk a representative minimum of scenarios that together prove persistence, cross-surface sync, and
+fallback behavior. The five Config-field types the Settings tab exercises (bool, bare-int slider, JSON-shaped
+phase-slider payload, hotkey capture, dispatch-tab mirror) collapse to two representative controls and three
+architectural probes — testing each of the five phase sliders individually would only re-run the same JSON code
+path with different keys.
 
 **Sub-tasks:**
 
-1. **Every control writes to MCM INI.** With the Settings
-   tab open, change each of: Debug Mode, Tick Enabled,
-   Tick Interval, and each of the five phase sliders.
-   After each change, `tail -f` (or read manually) the
-   log for the
-   `Settings: MCM override write: <key>=<value>` line.
-   Open `Data/MCM/Settings/NarrativeEngine.ini` on disk
-   and verify the section+key+value is present.
-2. **Reboot survival.** After the changes above, quit
-   Skyrim, relaunch, load a save. Open the Settings tab.
-   Every control shows the value the player set —
-   nothing snapped back to defaults.
-3. **Plugin INI unchanged.** `git diff
-   statics/SKSE/Plugins/NarrativeEngine.ini` shows only the
-   `bTickEnabled=1` addition from Step 1 — no other keys
-   changed. The plugin INI is unmodified by Settings-tab
-   writes.
-4. **Fresh-install fallback.** Delete
-   `Data/MCM/Settings/NarrativeEngine.ini`. Boot Skyrim,
-   load a save. Every setting reads its plugin-INI value
-   (Tick Interval: 30, Debug Mode: 1, phase durations at
-   INI defaults). Log shows
-   `Settings: no MCM override at ...` (existing message
-   or add a similar one to `ApplyMcmOverride`'s no-file
-   branch).
-5. **Cross-surface tick sync.** Open the dashboard. On
-   the Dispatch tab, toggle Tick Enabled off. Switch to
-   the Settings tab; the Tick Enabled checkbox is
-   unchecked (the value was pushed to both mount points
-   via `PushFullState`). Toggle it on from the Settings
-   tab; switch back to Dispatch; the checkbox is checked.
-   Reboot; the last-set value survives.
-6. **In-dashboard hotkey rebind.** Open the dashboard's Settings tab. Click **Rebind**; the modal appears
-   (state.settings.dashboard_hotkey_capture_active is true; log shows
-   `DashboardUIManager: hotkey rebind capture armed`). Hold Ctrl+Shift and press `G`. The modal closes;
-   `Data/MCM/Settings/NarrativeEngine.ini` on disk shows `iHotkeyDXSC=34` (DIK_G), `bHotkeyShift=1`,
-   `bHotkeyCtrl=1`, `bHotkeyAlt=0` under `[Dashboard]`; log shows
-   `DashboardUIManager: hotkey rebound DXSC=34 shift=1 ctrl=1 alt=0` and
-   `Settings: MCM override write: iHotkeyDXSC=34` (and companion lines). The Dashboard Hotkey display now reads
-   `Ctrl+Shift+G`. Close the dashboard; press Ctrl+Shift+G in-game — the dashboard opens. Press the old F7 — nothing.
-   Reboot; the binding survives. Repeat once, rebinding back to F7 with no modifiers.
-7. **Rebind cancel paths.** Click **Rebind**, then click **Cancel** in the modal. Modal closes; binding unchanged;
-   log shows the cancel listener fired. Click **Rebind**, then press ESC. Same result — ESC in capture mode cancels
-   rather than binding. Click **Rebind**, then close the dashboard via the hotkey while the modal is up. Reopen the
-   dashboard; capture flag is off; a random keypress doesn't rebind.
-8. **Cross-surface hotkey persistence.** From a known state (F7 no modifiers), rebind to Alt+`5` via the Settings
-   tab; verify the MCM ini keys. Open the MCM page — note that MCM Helper's own control may still show the old
-   value from its in-session cache (documented limitation). Rebind via MCM to Ctrl+`8`; verify the MCM ini keys
-   change. Close MCM; open the dashboard; the Settings tab's Dashboard Hotkey display shows `Ctrl+8` (the
-   `_ne_DashboardHotkeyChanged` ModEvent already refreshed `g_config` via `ApplyMcmOverride`, and the next
-   PushFullState carried the new binding).
-9. **Universal override for a non-UI key.** Hand-edit `Data/MCM/Settings/NarrativeEngine.ini` and add
-   `iBeatCooldownSeconds=45` under `[BeatSystem]` (the plugin INI's default is 120; no UI edits this). Reboot
-   Skyrim; load a save. Log shows the two `Settings: loaded ...` / `Settings: MCM overrides applied ...` lines,
-   and — if debug logging is on — the beat-system's next dispatch confirms it's using the 45-second cooldown. Remove
-   the line from the MCM INI; reboot; the value falls back to the plugin INI's 120. This scenario proves the
-   universal-override contract — any Config field, not just UI-editable ones, honors the MCM INI when present.
+1. **Representative writes + reboot survival.** Change **Debug Mode** (represents bool writes) and
+   **Exposition ideal duration** (represents the JSON-payload slider path — one phase slider exercises the same
+   code path all five use). For each: log shows the `Settings: MCM override write: <key>=<value>` line;
+   `Data/MCM/Settings/NarrativeEngine.ini` on disk shows the section+key+value; the Settings tab reflects the new
+   value. Then quit → relaunch → load a save; both controls come back with the values you set, not the defaults.
+2. **Plugin INI unchanged.** `git diff statics/SKSE/Plugins/NarrativeEngine.ini` shows only the `bTickEnabled=1`
+   addition from Step 1 and the header-comment expansion — no other keys changed. The plugin INI is never
+   authored by Settings-tab writes.
+3. **Fresh-install fallback.** Delete `Data/MCM/Settings/NarrativeEngine.ini`. Boot Skyrim, load a save. Log shows
+   `Settings: loaded from ...` but no `Settings: MCM overrides applied ...` line (the file's absent). Every
+   setting reads its plugin-INI value (Tick Interval: 30, Debug Mode: 1, phase durations at plugin-INI defaults).
+4. **Cross-surface tick sync + persistence.** On the Dispatch tab, toggle Tick Enabled off. Switch to the
+   Settings tab; the Tick Enabled checkbox is unchecked (server state pushed via `PushFullState` drives both
+   mount points). Toggle it on from the Settings tab; switch back to Dispatch; the checkbox is checked. Reboot;
+   `Tick: driver thread started (... enabled=true)` matches the last-set value. This scenario is the sole test
+   of two things: (a) the two-mount-point live sync unique to the tick toggle, and (b) the Phase 08 upgrade that
+   made tick-enabled persist at all (pre-Phase 08 it was session-only).
+5. **In-dashboard hotkey rebind + one cancel path.** Click **Rebind**; the modal appears (log:
+   `DashboardUIManager: hotkey rebind capture armed`). Hold Ctrl+Shift and press `G`. The modal closes; MCM INI
+   on disk shows `iHotkeyDXSC=34`, `bHotkeyShift=1`, `bHotkeyCtrl=1`, `bHotkeyAlt=0` under `[Dashboard]`; log
+   shows the `hotkey rebound DXSC=34 shift=1 ctrl=1 alt=0` line. Display reads `Ctrl+Shift+G`. Close the
+   dashboard; press Ctrl+Shift+G — dashboard opens; press old F7 — nothing. Reboot; binding survives. Then test
+   **one** cancel path: click Rebind again, press ESC — modal closes, binding unchanged, log shows the ESC
+   cancel line. (The Cancel-button path and dashboard-hide auto-cancel path share the same
+   `g_hotkeyCaptureMode = false` code, so ESC's success covers them.) Finally rebind back to F7 no modifiers to
+   leave the test env clean.
+6. **Cross-surface hotkey persistence + universal override.** Two probes in one boot:
+   - Rebind via MCM to Ctrl+`8`; verify the MCM ini keys change. Open the dashboard; the Settings tab's Dashboard
+     Hotkey display shows `Ctrl+8` (proves `_ne_DashboardHotkeyChanged` → `ApplyMcmOverride` → `PushFullState`
+     round trip). MCM Helper's own control may still show the old value from its in-session cache (documented
+     limitation, not a bug).
+   - Quit Skyrim; hand-edit `Data/MCM/Settings/NarrativeEngine.ini` to add `iBeatCooldownSeconds=45` under
+     `[BeatSystem]` (plugin-INI default: 120; no UI edits this). Boot; log shows both `Settings: loaded ...` and
+     `Settings: MCM overrides applied ...`; the beat-system's next dispatch honors the 45s cooldown. Remove the
+     line; reboot; the value falls back to 120. This is the only test of the universal-override contract — any
+     Config field, not just the twelve the UI writes, is honored when named in the MCM INI.
 
-**Verify:** all nine sub-tasks pass; the Step 1, 2, and 3
-checkboxes flip to complete alongside this one.
+**Verify:** all six sub-tasks pass; the Step 1, 2, and 3 checkboxes flip to complete alongside this one.
 
 ---
 

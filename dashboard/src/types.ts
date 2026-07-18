@@ -46,6 +46,35 @@ export interface DirectorState {
     letter_pool: LetterPoolState;
     actions: ActionInfo[];
     visit: VisitTabState;
+    settings: SettingsTabState;
+}
+
+// Settings tab payload — populated by the C++ DashboardUIManager per
+// Phase 08. The write surface (see WriteMcmOverride in Settings.cpp) is
+// narrower than the fields represented here — every field is a live
+// mirror of Config, but only the ones with a UI control in SettingsTab
+// have a writer wired up.
+export interface SettingsTabState {
+    debug_mode: boolean;
+    // Human-readable display of the current dashboard hotkey binding
+    // (e.g. "F7", "Ctrl+F7"). Composed on the C++ side so the friendly
+    // name matches what the input sink actually matches against.
+    dashboard_hotkey_display: string;
+    // When true, HotkeySink is in temporary capture mode: the next
+    // non-modifier keypress becomes the new binding. Drives the Rebind
+    // modal's visibility as a pure function of server state.
+    dashboard_hotkey_capture_active: boolean;
+    // Duplicated on status.tick_enabled for the Dispatch tab; both
+    // mount points read from the same underlying Tick::IsEnabled().
+    tick_enabled: boolean;
+    tick_interval_seconds: number;
+    ideal_duration_seconds: {
+        exposition: number;
+        rising_action: number;
+        climax: number;
+        falling_action: number;
+        resolution: number;
+    };
 }
 
 // Visit tab payload — populated by the C++ DashboardUIManager per

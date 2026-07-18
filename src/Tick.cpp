@@ -136,10 +136,18 @@ namespace NarrativeEngine::Tick
         g_unpausedSecondsSinceLastTick = 0.0;
         g_tickCount = 0;
 
+        // Seed the runtime killswitch from Config before the worker
+        // starts polling. tickEnabled is populated by Settings::Load's
+        // cascade — plugin INI supplies the author default, MCM INI
+        // overrides if the player has toggled it and rebooted.
+        g_enabled.store(Settings::Get().tickEnabled, std::memory_order_release);
+
         g_shouldStop = false;
         g_running = true;
         g_thread = std::thread(DriverLoop);
-        logger::info("Tick: driver thread started (interval={}s, paused-aware)", Settings::Get().tickIntervalSeconds);
+        logger::info("Tick: driver thread started (interval={}s, paused-aware, enabled={})",
+                     Settings::Get().tickIntervalSeconds,
+                     Settings::Get().tickEnabled);
     }
 
     void SetEnabled(bool enabled)

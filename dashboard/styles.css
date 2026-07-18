@@ -689,3 +689,87 @@ body {
     font-size: 12px;
     margin: 4px 0 0;
 }
+
+/* Settings tab (Phase 08) */
+.settings-tab .panel + .panel {
+    margin-top: 12px;
+}
+
+.settings-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 8px 0;
+}
+
+.settings-row-label {
+    color: #d4d8e0;
+    font-size: 13px;
+    min-width: 160px;
+}
+
+.settings-hotkey-display {
+    color: #a8b0bd;
+    font-family: 'Consolas', 'Menlo', monospace;
+    font-size: 13px;
+    background: #1a1d24;
+    padding: 4px 10px;
+    border-radius: 3px;
+    min-width: 80px;
+    text-align: center;
+}
+
+.settings-slider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+}
+
+.settings-slider input[type='range'] {
+    flex: 1;
+    accent-color: #6b8fb8;
+}
+
+.settings-slider-value {
+    color: #d4d8e0;
+    font-size: 13px;
+    font-family: 'Consolas', 'Menlo', monospace;
+    min-width: 60px;
+    text-align: right;
+}
+
+.settings-rebind-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+
+.settings-rebind-panel {
+    background: #22262e;
+    border: 1px solid #3a4048;
+    border-radius: 4px;
+    padding: 24px;
+    max-width: 420px;
+    text-align: center;
+}
+
+.settings-rebind-panel h3 {
+    margin: 0 0 12px;
+    color: #e4e8f0;
+    font-size: 16px;
+}
+
+.settings-rebind-panel p {
+    color: #a8b0bd;
+    font-size: 13px;
+    margin: 0 0 16px;
+    line-height: 1.4;
+}

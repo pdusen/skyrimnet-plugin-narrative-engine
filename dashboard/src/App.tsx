@@ -5,6 +5,7 @@ import { TabBar, type TabId } from './components/TabBar';
 import { DirectorTab } from './components/tabs/DirectorTab';
 import { DispatchTab } from './components/tabs/DispatchTab';
 import { LettersTab } from './components/tabs/LettersTab';
+import { SettingsTab } from './components/tabs/SettingsTab';
 import { VisitTab } from './components/tabs/VisitTab';
 import { stateStore, type Snapshot } from './stateStore';
 
@@ -40,6 +41,7 @@ export function App() {
             {activeTab === 'letters'  && <LettersTab pool={s.letter_pool} nowSeconds={nowSeconds} />}
             {activeTab === 'visit'    && <VisitTab visit={s.visit} nowSeconds={nowSeconds} />}
             {activeTab === 'dispatch' && <DispatchTab state={s} nowSeconds={nowSeconds} />}
+            {activeTab === 'settings' && <SettingsTab state={s} />}
         </div>
     );
 }
