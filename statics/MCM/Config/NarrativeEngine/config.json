@@ -1,0 +1,71 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Exit-9B/MCM-Helper/main/docs/config.schema.json",
+  "modName": "NarrativeEngine",
+  "displayName": "NarrativeEngine",
+  "cursorFillMode": "topToBottom",
+  "content": [
+    {
+      "text": "About",
+      "type": "header"
+    },
+    {
+      "text": "NarrativeEngine",
+      "type": "text",
+      "valueOptions": {
+        "value": "v0.1.0 (dev)"
+      }
+    },
+    {
+      "text": "Author",
+      "type": "text",
+      "valueOptions": {
+        "value": "pdusen"
+      }
+    },
+    {
+      "text": "Description",
+      "type": "text",
+      "valueOptions": {
+        "value": "Narrative Director for SkyrimNet"
+      }
+    },
+    {
+      "text": "Controls",
+      "type": "header",
+      "position": 1
+    },
+    {
+      "id": "iHotkeyDXSC:Dashboard",
+      "text": "Dashboard Hotkey",
+      "help": "Press a key to bind. Use the Require Shift / Ctrl / Alt toggles below to require a modifier held at activation.",
+      "type": "keymap",
+      "valueOptions": {
+        "sourceType": "ModSettingInt"
+      }
+    },
+    {
+      "id": "bHotkeyShift:Dashboard",
+      "text": "Require Shift",
+      "type": "toggle",
+      "valueOptions": {
+        "sourceType": "ModSettingBool"
+      }
+    },
+    {
+      "id": "bHotkeyCtrl:Dashboard",
+      "text": "Require Ctrl",
+      "type": "toggle",
+      "valueOptions": {
+        "sourceType": "ModSettingBool"
+      }
+    },
+    {
+      "id": "bHotkeyAlt:Dashboard",
+      "text": "Require Alt",
+      "type": "toggle",
+      "valueOptions": {
+        "sourceType": "ModSettingBool"
+      }
+    }
+  ]
+}

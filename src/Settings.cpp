@@ -11,6 +11,7 @@ namespace NarrativeEngine::Settings
         Config g_config{};
 
         constexpr const char* kPluginIniPath = "Data/SKSE/Plugins/NarrativeEngine.ini";
+        constexpr const char* kMcmIniPath = "Data/MCM/Settings/NarrativeEngine.ini";
 
         // Try to load the plugin INI; return true on success (file present
         // and parsed). Missing keys retain whatever value g_config already
@@ -181,6 +182,11 @@ namespace NarrativeEngine::Settings
             logger::info("Settings: no plugin INI at {}; using defaults", kPluginIniPath);
         }
 
+        // Apply the MCM Helper-written override on top of the plugin INI,
+        // if the file exists. Silent no-op otherwise (first-run before the
+        // player has opened the MCM page).
+        ApplyMcmOverride();
+
         if (g_config.debugMode) {
             logger::info("Settings: debug mode ON");
         }
@@ -194,9 +200,38 @@ namespace NarrativeEngine::Settings
         return g_config;
     }
 
-    void UpdateDashboardHotkey(int dxsc, std::uint8_t modifiers)
+    void ApplyMcmOverride()
     {
-        g_config.dashboardHotkeyDXSC = dxsc;
-        g_config.dashboardHotkeyModifiers = modifiers;
+        CSimpleIniA ini;
+        ini.SetUnicode();
+        const SI_Error err = ini.LoadFile(kMcmIniPath);
+        if (err < 0) {
+            // Fresh install, or player hasn't opened the MCM page yet.
+            // Leave the plugin-INI-loaded values in place.
+            return;
+        }
+
+        g_config.dashboardHotkeyDXSC =
+            static_cast<int>(ini.GetLongValue("Dashboard", "iHotkeyDXSC", g_config.dashboardHotkeyDXSC));
+
+        // The modifier bitmask is stored as three separate bools in the
+        // MCM INI (MCM Helper's toggle control has no built-in
+        // bit-manipulation semantics; three checkboxes is the standard
+        // shape). Reconstruct the SkyUI-convention bitmask on read.
+        const bool shift = ini.GetBoolValue("Dashboard", "bHotkeyShift", false);
+        const bool ctrl = ini.GetBoolValue("Dashboard", "bHotkeyCtrl", false);
+        const bool alt = ini.GetBoolValue("Dashboard", "bHotkeyAlt", false);
+
+        std::uint8_t mods = 0;
+        if (shift) {
+            mods |= kModShift;
+        }
+        if (ctrl) {
+            mods |= kModCtrl;
+        }
+        if (alt) {
+            mods |= kModAlt;
+        }
+        g_config.dashboardHotkeyModifiers = mods;
     }
 } // namespace NarrativeEngine::Settings

@@ -5,9 +5,6 @@
 #include <Settings.h>
 
 #include <atomic>
-#include <cstdint>
-#include <cstdlib>
-#include <string>
 
 namespace NarrativeEngine::MCMEventSink
 {
@@ -21,22 +18,19 @@ namespace NarrativeEngine::MCMEventSink
             RE::BSEventNotifyControl ProcessEvent(const SKSE::ModCallbackEvent* a_event,
                                                   RE::BSTEventSource<SKSE::ModCallbackEvent>* /*src*/) override
             {
-                if (!a_event)
+                if (!a_event) {
                     return RE::BSEventNotifyControl::kContinue;
-
-                if (a_event->eventName != kEventName)
+                }
+                if (a_event->eventName != kEventName) {
                     return RE::BSEventNotifyControl::kContinue;
+                }
 
-                // Payload packing (mirrors _ne_MCM.psc::SendHotkeyChangedEvent):
-                //   numArg = DXSC (float, exact for small ints)
-                //   strArg = modifiers bitmask formatted as decimal string
-                const int dxsc = static_cast<int>(a_event->numArg);
-                const std::string modsStr(a_event->strArg.c_str() ? a_event->strArg.c_str() : "");
-                const int mods = modsStr.empty() ? 0 : std::atoi(modsStr.c_str());
-
-                AsyncDispatch::MarshalToMainThread([dxsc, mods] {
-                    Settings::UpdateDashboardHotkey(dxsc, static_cast<std::uint8_t>(mods));
-                    logger::info("MCMEventSink: dashboard hotkey rebound DXSC={} mods={}", dxsc, mods);
+                AsyncDispatch::MarshalToMainThread([] {
+                    Settings::ApplyMcmOverride();
+                    const auto& cfg = Settings::Get();
+                    logger::info("MCMEventSink: dashboard hotkey rebound DXSC={} mods={}",
+                                 cfg.dashboardHotkeyDXSC,
+                                 static_cast<int>(cfg.dashboardHotkeyModifiers));
                 });
 
                 return RE::BSEventNotifyControl::kContinue;
@@ -50,8 +44,9 @@ namespace NarrativeEngine::MCMEventSink
     void Initialize()
     {
         bool expected = false;
-        if (!g_registered.compare_exchange_strong(expected, true))
+        if (!g_registered.compare_exchange_strong(expected, true)) {
             return;
+        }
 
         auto* source = SKSE::GetModCallbackEventSource();
         if (!source) {

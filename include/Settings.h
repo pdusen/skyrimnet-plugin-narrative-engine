@@ -5,18 +5,21 @@
 
 // Author-tunable plugin configuration.
 //
-// Read once at SKSE's kDataLoaded message via Load() from
-// Data/SKSE/Plugins/NarrativeEngine.ini. Any missing file or missing key
-// falls back to the default baked into the Config struct below — the plugin
-// is fully functional with no INI at all.
+// Read once at SKSE's kDataLoaded message via Load(). Sources, in order:
+//   1. Data/SKSE/Plugins/NarrativeEngine.ini (the plugin INI — author
+//      defaults for every setting).
+//   2. Data/MCM/Settings/NarrativeEngine.ini (MCM Helper-managed;
+//      overrides only the [Dashboard] keys when present).
 //
-// The dashboard hotkey ([Dashboard] section) can additionally be rebound at
-// runtime via the SkyUI MCM page. When the player rebinds, _ne_MCM.psc fires
-// the "_ne_DashboardHotkeyChanged" ModEvent; MCMEventSink consumes it and
-// calls UpdateDashboardHotkey() to overwrite the two fields in place. The
-// same ModEvent fires on save-load (via SKI_QuestBase::OnGameReload), so
-// the persisted Papyrus binding beats the INI default whenever a saved game
-// carries one.
+// Any missing file or missing key falls back to the default baked into the
+// Config struct below — the plugin is fully functional with no INI at all.
+//
+// The MCM override INI is re-read at runtime whenever the player changes a
+// value in the MCM page: _ne_MCM.psc fires the
+// "_ne_DashboardHotkeyChanged" ModEvent (via SKI_ConfigBase's
+// OnSettingChange), and MCMEventSink calls ApplyMcmOverride() to refresh
+// the [Dashboard] fields in place. MCM Helper writes the INI atomically
+// before firing the event, so the sink always sees a consistent file.
 namespace NarrativeEngine::Settings
 {
     // Bitmask values for the dashboard hotkey's modifier keys. Bit
@@ -235,20 +238,21 @@ namespace NarrativeEngine::Settings
         bool enableNpcVisit = true;
     };
 
-    // Read the plugin INI and populate the singleton. Call once from
-    // kDataLoaded BEFORE any subsystem that reads settings.
+    // Read the plugin INI, then apply any MCM-managed override, and
+    // populate the singleton. Call once from kDataLoaded BEFORE any
+    // subsystem that reads settings.
     void Load();
 
     // Access the loaded config. Stable reference for the plugin's lifetime.
     // The [Dashboard] fields may be mutated at runtime via
-    // UpdateDashboardHotkey (see below); every other field is
-    // populated by Load() and never touched again.
+    // ApplyMcmOverride (see below); every other field is populated by
+    // Load() and never touched again.
     const Config& Get();
 
-    // Overwrite the dashboard hotkey fields. Called by MCMEventSink when
-    // the MCM page fires "_ne_DashboardHotkeyChanged" (either on rebind or
-    // on save-load). Callable from any thread — the writes race benignly
-    // with HotkeySink's reads (worst case: one mis-interpreted keypress
-    // during the microsecond-long overlap).
-    void UpdateDashboardHotkey(int dxsc, std::uint8_t modifiers);
+    // Re-read Data/MCM/Settings/NarrativeEngine.ini and overwrite the
+    // [Dashboard] fields in place. Called by MCMEventSink when the MCM
+    // page fires "_ne_DashboardHotkeyChanged". Safe to call any time
+    // after Load(); no-ops silently if the MCM INI is absent (fresh
+    // install where the player has never opened the page).
+    void ApplyMcmOverride();
 } // namespace NarrativeEngine::Settings
