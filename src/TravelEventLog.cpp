@@ -537,35 +537,70 @@ namespace NarrativeEngine::TravelEventLog
             return names.size() >= 2 ? "are" : "is";
         }
 
+        // Ensure a hold display name ends with " Hold". Idempotent;
+        // handles the case where vanilla data already includes "Hold"
+        // in the location's FullName vs. cases where it doesn't. The
+        // suffix disambiguates cities from their holds — "Whiterun"
+        // the city vs. "Whiterun Hold" the region.
+        std::string FormatHoldName(const std::string& name)
+        {
+            if (name.empty()) {
+                return name;
+            }
+            static constexpr std::string_view suffix = " Hold";
+            if (name.size() >= suffix.size() && std::string_view(name).ends_with(suffix)) {
+                return name;
+            }
+            return name + " Hold";
+        }
+
         // Best-of rendering for a location/hold pair — prefer the
-        // named location, fall back to the hold. Empty when neither
-        // is populated.
+        // named location, fall back to the hold (with " Hold" suffix
+        // applied so consumers can always distinguish city from hold).
+        // Empty when neither is populated.
         std::string BestName(const std::string& locName, const std::string& holdName)
         {
-            if (!locName.empty())
+            if (!locName.empty()) {
                 return locName;
-            return holdName;
+            }
+            return FormatHoldName(holdName);
         }
 
         // Standalone (single-event) sentence rendering, minus the
         // "[N ago]" prefix.
+        //
+        // Verb choice distinguishes exterior (arrived at / departed
+        // from) from interior (entered / exited / visited) so the
+        // reader can tell a Lakeview Manor exterior arrival from
+        // walking through its front door.
         std::string RenderEventBody(const InternalEvent& e)
         {
             const std::string party = RenderParty(e.partyNames);
             switch (e.kind) {
             case Kind::EnteredLocation:
-                return party + " entered " + e.toLocationName + ".";
+                return party + (e.toInterior ? " entered " : " arrived at ") + e.toLocationName + ".";
             case Kind::LeftLocation:
-                return party + " left " + e.fromLocationName + ".";
+                return party + (e.fromInterior ? " exited " : " departed from ") + e.fromLocationName + ".";
             case Kind::CrossedHolds:
-                return party + " crossed from " + e.fromHoldName + " into " + e.toHoldName + ".";
-            case Kind::EnteredWilderness:
-                return party + " left " + e.fromHoldName + " and " + PartyVerb(e.partyNames)
-                       + " now in the wilderness.";
+                return party + " crossed from " + FormatHoldName(e.fromHoldName) + " into "
+                       + FormatHoldName(e.toHoldName) + ".";
+            case Kind::EnteredWilderness: {
+                // Player was in a named location, now in wilderness
+                // within the same hold. Mention the location they
+                // departed from (not the hold — they haven't left it).
+                // Fall back to the hold if the location name is empty
+                // for some edge case.
+                const std::string& origin =
+                    !e.fromLocationName.empty() ? e.fromLocationName : FormatHoldName(e.fromHoldName);
+                const char* verb = (e.fromInterior && !e.fromLocationName.empty()) ? "exited" : "departed from";
+                return party + " " + verb + " " + origin + " and " + PartyVerb(e.partyNames)
+                       + " now in the wilderness of " + FormatHoldName(e.fromHoldName) + ".";
+            }
             case Kind::FastTravelArrived: {
                 const std::string arriveName = BestName(e.toLocationName, e.toHoldName);
                 const std::string originName = BestName(e.fromLocationName, e.fromHoldName);
-                std::string out = party + " arrived in " + arriveName;
+                const char* arriveVerb = e.toInterior ? "entered " : "arrived at ";
+                std::string out = party + " " + arriveVerb + arriveName;
                 if (!originName.empty()) {
                     out += ", having journeyed from " + originName;
                 }
