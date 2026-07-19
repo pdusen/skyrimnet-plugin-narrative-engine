@@ -1,5 +1,6 @@
 #include <Region.h>
 
+#include <HoldGrid.h>
 #include <logger.h>
 
 #include <array>
@@ -114,10 +115,50 @@ namespace NarrativeEngine::Region
                              (full && *full) ? full : "?");
             }
         }
+
+        // Build a full Resolution from a known hold-level BGSLocation.
+        // Shared by both the HoldGrid fast-path (which returns a raw
+        // FormID) and the parent-walk fallback (which returns the
+        // location pointer directly). Populates display name and
+        // climate from the location + climate table.
+        Resolution BuildResolution(RE::BGSLocation* holdLoc)
+        {
+            Resolution r;
+            if (!holdLoc)
+                return r;
+            r.holdFormID = holdLoc->GetFormID();
+            if (const char* full = holdLoc->GetFullName(); full && *full) {
+                r.holdDisplayName = full;
+            } else if (const char* edid = holdLoc->GetFormEditorID(); edid && *edid) {
+                r.holdDisplayName = edid;
+            }
+            const auto& table = ResolvedClimateTable();
+            if (const auto it = table.find(r.holdFormID); it != table.end()) {
+                r.climate = it->second;
+            } else {
+                NoteUnclassifiedHold(holdLoc);
+            }
+            return r;
+        }
     } // namespace
 
     Resolution ForPlayer()
     {
+        // Fast path: HoldGrid precomputed a coordinate → hold FormID
+        // partition for every exterior cell at kDataLoaded. If the
+        // player is on an exterior cell that landed in the grid, we
+        // get an O(1) hash lookup with no location-chain walk.
+        if (const auto holdFormID = HoldGrid::LookupPlayer(); holdFormID != 0) {
+            auto* form = RE::TESForm::LookupByID(holdFormID);
+            auto* holdLoc = form ? form->As<RE::BGSLocation>() : nullptr;
+            if (holdLoc) {
+                return BuildResolution(holdLoc);
+            }
+        }
+
+        // Fallback: parent-walk on the player's current location.
+        // Covers interior cells (which the grid doesn't index) and
+        // any exterior cells the BFS couldn't reach from a seed.
         auto* pc = RE::PlayerCharacter::GetSingleton();
         if (!pc) {
             return {};
@@ -138,20 +179,7 @@ namespace NarrativeEngine::Region
         RE::BGSLocation* loc = startLoc;
         for (int depth = 0; loc != nullptr && depth < kMaxParentDepth; ++depth) {
             if (loc->HasKeyword(holdKw)) {
-                Resolution r;
-                r.holdFormID = loc->GetFormID();
-                if (const char* full = loc->GetFullName(); full && *full) {
-                    r.holdDisplayName = full;
-                } else if (const char* edid = loc->GetFormEditorID(); edid && *edid) {
-                    r.holdDisplayName = edid;
-                }
-                const auto& table = ResolvedClimateTable();
-                if (const auto it = table.find(loc->GetFormID()); it != table.end()) {
-                    r.climate = it->second;
-                } else {
-                    NoteUnclassifiedHold(loc);
-                }
-                return r;
+                return BuildResolution(loc);
             }
             loc = loc->parentLoc;
         }

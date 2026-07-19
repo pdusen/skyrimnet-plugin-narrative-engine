@@ -142,6 +142,47 @@ namespace NarrativeEngine::Settings
         // category flips inside a single sampling window.
         int weatherEventsDebounceSeconds = 20;
 
+        // [HoldGrid]
+        // Debug: after HoldGrid::Initialize builds the partition,
+        // dump one 24-bit BMP per worldspace to the SKSE log
+        // directory visualizing the fill. Each hold gets a distinct
+        // color, seeded cells are black, unassigned cells are white.
+        // Overwrites existing files each session. Disabled by default
+        // — flip to true only when auditing the fill quality.
+        bool holdGridDebugBitmap = false;
+        // Between the seed collection pass and the BFS fill, drop
+        // small seed clusters that are geographically far from the
+        // rest of their hold's seeds. Purpose: filter out cells whose
+        // vanilla BGSLocation chain resolves to a hold they clearly
+        // aren't part of — mis-authored strays that would otherwise
+        // seed a bad fill front that propagates to the map edge.
+        //
+        //   iHoldGridPruneMaxClusterSize    — K. Only same-hold seed
+        //                                     clusters of size <= K
+        //                                     are candidates for
+        //                                     pruning. Cluster is
+        //                                     computed via 4-neighbor
+        //                                     adjacency on the seed
+        //                                     set. Default 3 catches
+        //                                     vanilla strays; setting
+        //                                     to 0 disables the pass.
+        //   iHoldGridPruneIsolationRadius   — R. A candidate cluster
+        //                                     is kept if any same-hold
+        //                                     seed OUTSIDE the cluster
+        //                                     lies within Manhattan
+        //                                     distance R of any cell
+        //                                     in the cluster. Dropped
+        //                                     otherwise. Default 5
+        //                                     — empirically tuned
+        //                                     against vanilla Skyrim
+        //                                     to catch mis-authored
+        //                                     strays without harming
+        //                                     legitimate outposts.
+        //                                     Setting to 0 disables
+        //                                     the pass.
+        int holdGridPruneMaxClusterSize = 3;
+        int holdGridPruneIsolationRadius = 5;
+
         // [EventHistory]
         // Testing aid: writes every emitted internal event plus
         // SkyrimNet's own event stream to a rotating session-scoped

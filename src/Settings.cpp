@@ -126,6 +126,12 @@ namespace NarrativeEngine::Settings
             dst.weatherEventsDebounceSeconds = static_cast<int>(
                 ini.GetLongValue("WeatherEvents", "iWeatherEventDebounceSeconds", dst.weatherEventsDebounceSeconds));
 
+            dst.holdGridDebugBitmap = ini.GetBoolValue("HoldGrid", "bHoldGridDebugBitmap", dst.holdGridDebugBitmap);
+            dst.holdGridPruneMaxClusterSize = static_cast<int>(
+                ini.GetLongValue("HoldGrid", "iHoldGridPruneMaxClusterSize", dst.holdGridPruneMaxClusterSize));
+            dst.holdGridPruneIsolationRadius = static_cast<int>(
+                ini.GetLongValue("HoldGrid", "iHoldGridPruneIsolationRadius", dst.holdGridPruneIsolationRadius));
+
             dst.eventHistoryEnabled = ini.GetBoolValue("EventHistory", "bEventHistoryEnabled", dst.eventHistoryEnabled);
             dst.eventHistoryFlushIntervalSeconds = static_cast<int>(ini.GetLongValue(
                 "EventHistory", "iEventHistoryFlushIntervalSeconds", dst.eventHistoryFlushIntervalSeconds));

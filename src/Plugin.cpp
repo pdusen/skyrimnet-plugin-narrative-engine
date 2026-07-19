@@ -9,6 +9,7 @@
 #include <DecisionLog.h>
 #include <Decorators.h>
 #include <EventHistoryWriter.h>
+#include <HoldGrid.h>
 #include <LetterPool.h>
 #include <logger.h>
 #include <MCMEventSink.h>
@@ -66,6 +67,11 @@ namespace NarrativeEngine
                 // WeatherEventLog is pure-poll (no sinks). Initialize
                 // here for logging symmetry; Tick drives its Poll.
                 WeatherEventLog::Initialize();
+                // HoldGrid: one-shot BFS partition of exterior cells
+                // to holds. Runs BEFORE TravelEventLog::Initialize so
+                // Region::ForPlayer can use it as a fast-path from the
+                // very first Poll. ~10s of ms on vanilla data.
+                HoldGrid::Initialize();
                 // TravelEventLog: registers TESFastTravelEndEvent sink
                 // in Step 7. Tick drives the location-diff Poll.
                 TravelEventLog::Initialize();
