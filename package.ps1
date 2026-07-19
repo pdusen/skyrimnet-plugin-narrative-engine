@@ -48,7 +48,21 @@ if ($LASTEXITCODE -ne 0) {
     throw "build.ps1 failed (exit $LASTEXITCODE); refusing to package."
 }
 
-# --- 2. Sanity-check the mod folder ----------------------------------------
+# --- 2. Validate ESL FormID range in the synced plugin tree ----------------
+#
+# build.ps1 triggers CMake's sync_esp target, which runs sync-esp.ps1 and refreshes
+# esp/plugin/ from the mod folder. That refresh is what we validate here - any CK
+# session that assigned an out-of-ESL-range FormID (a recurring CK bug on light-flagged
+# plugins) will have been captured in the fresh YAML tree, and this check surfaces it
+# BEFORE we bake the broken ESP into a release archive.
+
+Write-Host '==> Validating ESL FormID range in esp/plugin/' -ForegroundColor Cyan
+& (Join-Path $PSScriptRoot 'check-esl-formids.ps1')
+if ($LASTEXITCODE -ne 0) {
+    throw "check-esl-formids.ps1 reported violations (exit $LASTEXITCODE); refusing to package."
+}
+
+# --- 3. Sanity-check the mod folder ----------------------------------------
 
 if (-not (Test-Path -LiteralPath $modFolder -PathType Container)) {
     throw "Expected mod folder does not exist: $modFolder"
@@ -58,7 +72,7 @@ if (-not $modContents) {
     throw "Mod folder is empty: $modFolder"
 }
 
-# --- 3. Package -------------------------------------------------------------
+# --- 4. Package -------------------------------------------------------------
 #
 # CreateFromDirectory with includeBaseDirectory=$false puts the folder's
 # *contents* at the archive root — exactly what MO2 / Vortex expect for a

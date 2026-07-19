@@ -267,6 +267,15 @@ if [ "`$BEFORE_HASH" != "`$AFTER_HASH" ]; then
     git add -- "`$PLUGIN_DIR"
 fi
 
+# Validate ESL FormID range in the (possibly refreshed) plugin tree. Catches
+# the recurring CK bug where a light-flagged plugin gets new records assigned
+# FormIDs outside 0x800..0xFFF - failing here keeps a broken ESP from being
+# committed and released.
+if ! pwsh -NoProfile -File "`$REPO_ROOT/check-esl-formids.ps1"; then
+    echo "pre-commit: ESL FormID validation failed; aborting commit" >&2
+    exit 1
+fi
+
 # Run the pre-commit framework against staged files. Prefer the `pre-commit`
 # command on PATH; fall back to `python -m pre_commit` so pip --user installs
 # work before a fresh shell has picked up the new Scripts/ dir on PATH.
