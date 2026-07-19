@@ -31,6 +31,7 @@
 #include <limits>
 #include <mutex>
 #include <unordered_set>
+#include <vector>
 
 namespace NarrativeEngine::LetterPool
 {
@@ -1588,6 +1589,18 @@ namespace NarrativeEngine::LetterPool
         // save load doesn't silently strip dispatchability from every
         // slot.
         std::size_t demoted = 0;
+        // Slots demoted out of PendingDelivery need their letter REFR
+        // pulled back from the vanilla WICourier container and the
+        // per-slot delivery quest torn down. Without that, the courier
+        // is still carrying a REFR to the pool's Book form and will
+        // eventually hand it to the player as an empty shell: the
+        // demotion cleared the slot's cached body/senderLabel, and the
+        // base form's fullName was reset to the ESP placeholder when
+        // the plugin reloaded at kDataLoaded. Collect the indices here
+        // under the lock and marshal the engine-touching cleanup to
+        // the main thread after OnLoad returns, so the world / VM have
+        // finished streaming in.
+        std::vector<std::size_t> pendingDeliveryOrphans;
         {
             std::scoped_lock lock(g_mutex);
             for (std::size_t i = 0; i < kPoolSize; ++i) {
@@ -1615,6 +1628,7 @@ namespace NarrativeEngine::LetterPool
                     const auto timeoutSeconds =
                         static_cast<double>(Settings::Get().letterPendingDeliveryTimeoutSeconds);
                     if (NowUnixSeconds() - slot.deliveredAt > timeoutSeconds) {
+                        pendingDeliveryOrphans.push_back(i);
                         DemoteToFreeLocked(i, "PendingDelivery aged past timeout");
                         ++demoted;
                     }
@@ -1652,6 +1666,25 @@ namespace NarrativeEngine::LetterPool
         }
 
         logger::info("LetterPool::OnLoad: restored {} slot(s) ({} demoted)", kPoolSize, demoted);
+
+        if (!pendingDeliveryOrphans.empty()) {
+            // Deferred to the main-thread task queue so this runs after
+            // OnLoad returns and the world / VM have finished streaming
+            // in. Each call is idempotent and no-ops on an unfilled
+            // alias, an already-stopped quest, or an unavailable VM, so
+            // it's safe if the timing lands slightly off.
+            AsyncDispatch::MarshalToMainThread([orphans = std::move(pendingDeliveryOrphans)]() {
+                for (auto i : orphans) {
+                    logger::info("LetterPool::OnLoad: releasing orphaned PendingDelivery "
+                                 "letter for slot {} (courier release + REFR delete + "
+                                 "per-slot quest shutdown)",
+                                 i);
+                    NPCLetterBeat_QuestControl::ReleaseLetterFromCourier(i);
+                    NPCLetterBeat_QuestControl::DeleteLetterRef(i);
+                    NPCLetterBeat_QuestControl::ShutdownSlotQuestSync(i);
+                }
+            });
+        }
     }
 
     void OnRevert()
