@@ -10,6 +10,7 @@
 exclude: |
   (?x)^(
     esp/NarrativeEngine\.esp|
+    esp/plugin/.*|
     build/.*|
     dashboard/node_modules/.*|
     external/.*|

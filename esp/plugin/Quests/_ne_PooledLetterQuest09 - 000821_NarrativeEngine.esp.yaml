@@ -1,0 +1,111 @@
+FormKey: 000821:NarrativeEngine.esp
+EditorID: _ne_PooledLetterQuest09
+VirtualMachineAdapter:
+  Scripts:
+  - Name: _ne__QF__ne_PooledLetterQuest_05000821
+    Properties:
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_LetterRef
+      Object: 000821:NarrativeEngine.esp
+      Alias: 1
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_Sender
+      Object: 000821:NarrativeEngine.esp
+      Alias: 0
+  - Name: _ne_PooledLetterQuest
+    Properties:
+    - MutagenObjectType: ScriptObjectProperty
+      Name: LetterRef
+      Object: 000821:NarrativeEngine.esp
+      Alias: 1
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Sender
+      Object: 000821:NarrativeEngine.esp
+      Alias: 0
+    - MutagenObjectType: ScriptObjectProperty
+      Name: WICourier
+      Object: 039F82:Skyrim.esm
+  FileName: _ne__QF__ne_PooledLetterQuest_05000821
+  Fragments:
+  - Unknown2: 1
+    ScriptName: _ne__QF__ne_PooledLetterQuest_05000821
+    FragmentName: Fragment_0
+  - Stage: 10
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_PooledLetterQuest_05000821
+    FragmentName: Fragment_1
+  - Stage: 20
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_PooledLetterQuest_05000821
+    FragmentName: Fragment_2
+  - Stage: 30
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_PooledLetterQuest_05000821
+    FragmentName: Fragment_3
+  - Stage: 40
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_PooledLetterQuest_05000821
+    FragmentName: Fragment_4
+  - Stage: 50
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_PooledLetterQuest_05000821
+    FragmentName: Fragment_5
+  - Stage: 60
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_PooledLetterQuest_05000821
+    FragmentName: Fragment_6
+  - Stage: 200
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_PooledLetterQuest_05000821
+    FragmentName: Fragment_7
+Flags:
+- AllowRepeatedStages
+Priority: 90
+Stages:
+- Flags:
+  - StartUpStage
+  LogEntries:
+  - Flags: []
+- Index: 10
+  LogEntries:
+  - Flags: []
+- Index: 20
+  LogEntries:
+  - Flags: []
+- Index: 30
+  LogEntries:
+  - Flags: []
+- Index: 40
+  LogEntries:
+  - Flags: []
+- Index: 50
+  LogEntries:
+  - Flags: []
+- Index: 60
+  LogEntries:
+  - Flags: []
+- Index: 200
+  LogEntries:
+  - Flags:
+    - CompleteQuest
+NextAliasID: 2
+Aliases:
+- Name: Sender
+  Flags:
+  - AllowReserved
+  Conditions:
+  - MutagenObjectType: ConditionFloat
+    CompareOperator: GreaterThanOrEqualTo
+    Data:
+      MutagenObjectType: GetFactionRankConditionData
+      Faction: 000818:NarrativeEngine.esp
+    ComparisonValue: 4
+  VoiceTypes: Null
+- ID: 1
+  Name: LetterRef
+  Flags: []
+  CreateReferenceToObject:
+    Object: 00080B:NarrativeEngine.esp
+    Create: In
+    Level: 4
+  VoiceTypes: Null

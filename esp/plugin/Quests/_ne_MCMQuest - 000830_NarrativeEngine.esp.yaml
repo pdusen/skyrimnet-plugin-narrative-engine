@@ -1,0 +1,23 @@
+FormKey: 000830:NarrativeEngine.esp
+EditorID: _ne_MCMQuest
+VirtualMachineAdapter:
+  Scripts:
+  - Name: _ne_MCM
+  FileName: ''
+  Aliases:
+  - Property:
+      Name: ''
+      Object: 000830:NarrativeEngine.esp
+      Alias: 0
+    Scripts:
+    - Name: SKI_PlayerLoadGameAlias
+Flags:
+- StartGameEnabled
+- 0x10
+- RunOnce
+NextAliasID: 1
+Aliases:
+- Name: Player
+  Flags: []
+  ForcedReference: 000014:Skyrim.esm
+  VoiceTypes: Null

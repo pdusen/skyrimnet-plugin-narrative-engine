@@ -1,0 +1,48 @@
+FormKey: 000802:NarrativeEngine.esp
+EditorID: _ne_BanditAmbushTravel
+Flags:
+- PreferredSpeed
+- AllowSwimming
+- WeaponDrawn
+Type: Package
+PreferredSpeed: Run
+ScheduleMonth: -1
+ScheduleDayOfWeek: Any
+ScheduleHour: -1
+ScheduleMinute: -1
+Unknown3: 0x000000
+Conditions:
+- MutagenObjectType: ConditionFloat
+  CompareOperator: GreaterThan
+  Data:
+    MutagenObjectType: GetDistanceConditionData
+    UseAliases: True
+  ComparisonValue: 600
+OwnerQuest: 000800:NarrativeEngine.esp
+PackageTemplate: 016FAA:Skyrim.esm
+DataInputVersion: 3
+Data:
+- Key: 0
+  Value:
+    MutagenObjectType: PackageDataLocation
+    Location:
+      Target:
+        MutagenObjectType: LocationFallback
+        Type: AliasForReference
+      Radius: 200
+- Key: 2
+  Value:
+    MutagenObjectType: PackageDataBool
+- Key: 4
+  Value:
+    MutagenObjectType: PackageDataBool
+XnamMarker: 0x05
+OnBegin:
+  Topics:
+  - MutagenObjectType: TopicReference
+OnEnd:
+  Topics:
+  - MutagenObjectType: TopicReference
+OnChange:
+  Topics:
+  - MutagenObjectType: TopicReference

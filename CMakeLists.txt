@@ -338,11 +338,13 @@ if(DEFINED OUTPUT_FOLDER)
     # -------------------------------------------------------------------
     #
     # Pre-build target that runs `sync-esp.ps1` on every build. The script
-    # compares <mod-folder>/NarrativeEngine.esp against
-    # <repo>/esp/NarrativeEngine.esp and copies whichever is newer over the
-    # older. CK edits in the mod folder propagate into the repo; pulled
-    # repo changes propagate out to the mod folder. See sync-esp.ps1 for
-    # the full decision matrix.
+    # syncs <mod-folder>/NarrativeEngine.esp against the Spriggit-serialized
+    # YAML tree at <repo>/esp/plugin/, using content hashes recorded in
+    # <repo>/esp/.sync-state.json (machine-local, gitignored) to detect which
+    # side has changed since the last sync. CK edits in the mod folder
+    # propagate into the repo via `spriggit serialize`; pulled repo changes
+    # propagate out to the mod folder via `spriggit deserialize`. See
+    # sync-esp.ps1 for the full decision matrix.
     #
     # Wired as an ALL custom target plus add_dependencies so it runs before
     # the DLL link step. Uses pwsh from PATH; if you want a different

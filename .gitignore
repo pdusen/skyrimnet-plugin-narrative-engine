@@ -14,6 +14,19 @@ dashboard/dist/
 # Papyrus compile output (deployed directly to the mod folder; never tracked).
 *.pex
 
+# The binary NarrativeEngine.esp is no longer version-controlled - the repo
+# stores the Spriggit-serialized YAML tree under esp/plugin/ instead. If a
+# local sync temporarily deserializes into esp/ (older sync-esp.ps1 workflow,
+# or a manual `spriggit deserialize`), ignore it.
+/esp/NarrativeEngine.esp
+
+# Machine-local sync baseline written by sync-esp.ps1. Records the mod-ESP
+# hash and the plugin-tree hash at the last successful sync so we can detect
+# which side changed. Machine-local because each dev's mod-folder ESP hash is
+# their own state; sharing it via git would cause spurious "mod changed" sync
+# decisions on every pull.
+/esp/.sync-state.json
+
 # CK backup / temp files.
 *.esp.bak
 *.esm.bak

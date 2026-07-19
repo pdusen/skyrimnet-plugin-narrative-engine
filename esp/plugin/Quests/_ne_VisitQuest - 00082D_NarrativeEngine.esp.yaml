@@ -1,0 +1,165 @@
+FormKey: 00082D:NarrativeEngine.esp
+EditorID: _ne_VisitQuest
+VirtualMachineAdapter:
+  Scripts:
+  - Name: _ne__QF__ne_VisitQuest_0500FB2E
+    Properties:
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_PlayerRef
+      Object: 00082D:NarrativeEngine.esp
+      Alias: 0
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_ReturnAnchor
+      Object: 00082D:NarrativeEngine.esp
+      Alias: 5
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_Sender
+      Object: 00082D:NarrativeEngine.esp
+      Alias: 1
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_SpawnMarker
+      Object: 00082D:NarrativeEngine.esp
+      Alias: 4
+  - Name: _ne_VisitQuest
+    Properties:
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Sender
+      Object: 00082D:NarrativeEngine.esp
+      Alias: 1
+    - MutagenObjectType: ScriptObjectProperty
+      Name: SpawnMarker
+      Object: 00082D:NarrativeEngine.esp
+      Alias: 4
+  FileName: _ne__QF__ne_VisitQuest_0500FB2E
+  Fragments:
+  - Unknown2: 1
+    ScriptName: _ne__QF__ne_VisitQuest_0500FB2E
+    FragmentName: Fragment_0
+  - Stage: 10
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_VisitQuest_0500FB2E
+    FragmentName: Fragment_1
+  - Stage: 20
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_VisitQuest_0500FB2E
+    FragmentName: Fragment_2
+  - Stage: 25
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_VisitQuest_0500FB2E
+    FragmentName: Fragment_3
+  - Stage: 27
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_VisitQuest_0500FB2E
+    FragmentName: Fragment_4
+  - Stage: 30
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_VisitQuest_0500FB2E
+    FragmentName: Fragment_5
+  - Stage: 50
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_VisitQuest_0500FB2E
+    FragmentName: Fragment_6
+  - Stage: 60
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_VisitQuest_0500FB2E
+    FragmentName: Fragment_7
+  - Stage: 200
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_VisitQuest_0500FB2E
+    FragmentName: Fragment_8
+Flags:
+- AllowRepeatedStages
+- WarnOnAliasFillFailure
+Priority: 90
+Stages:
+- Flags:
+  - StartUpStage
+  LogEntries:
+  - Flags: []
+- Index: 10
+  LogEntries:
+  - Flags: []
+- Index: 20
+  LogEntries:
+  - Flags: []
+- Index: 25
+  LogEntries:
+  - Flags: []
+- Index: 27
+  LogEntries:
+  - Flags: []
+- Index: 30
+  LogEntries:
+  - Flags: []
+- Index: 50
+  LogEntries:
+  - Flags: []
+- Index: 60
+  LogEntries:
+  - Flags: []
+- Index: 200
+  LogEntries:
+  - Flags:
+    - CompleteQuest
+NextAliasID: 6
+Aliases:
+- Name: PlayerRef
+  Flags:
+  - AllowReserved
+  ForcedReference: 000014:Skyrim.esm
+  VoiceTypes: Null
+- ID: 1
+  Name: Sender
+  Flags:
+  - ReservesLocationOrReference
+  Conditions:
+  - MutagenObjectType: ConditionFloat
+    CompareOperator: GreaterThanOrEqualTo
+    Data:
+      MutagenObjectType: GetFactionRankConditionData
+      Faction: 000819:NarrativeEngine.esp
+    ComparisonValue: 4
+  PackageData:
+  - 00082E:NarrativeEngine.esp
+  - 00082F:NarrativeEngine.esp
+  VoiceTypes: Null
+- ID: 4
+  Name: SpawnMarker
+  Flags:
+  - MatchingRefInLoadedArea
+  - AllowReserved
+  - MatchingRefClosest
+  Conditions:
+  - MutagenObjectType: ConditionFloat
+    Data:
+      MutagenObjectType: IsInListConditionData
+      FormList: 000801:NarrativeEngine.esp
+    ComparisonValue: 1
+  - MutagenObjectType: ConditionFloat
+    CompareOperator: LessThan
+    Data:
+      MutagenObjectType: GetDistanceConditionData
+      UseAliases: True
+    ComparisonValue: 8000
+  - MutagenObjectType: ConditionFloat
+    CompareOperator: GreaterThanOrEqualTo
+    Data:
+      MutagenObjectType: GetDistanceConditionData
+      UseAliases: True
+    ComparisonValue: 3000
+  - MutagenObjectType: ConditionFloat
+    Data:
+      MutagenObjectType: GetLineOfSightConditionData
+      UseAliases: True
+  - MutagenObjectType: ConditionFloat
+    Data:
+      MutagenObjectType: IsInInteriorConditionData
+  VoiceTypes: Null
+- ID: 5
+  Name: ReturnAnchor
+  Flags:
+  - ReservesLocationOrReference
+  CreateReferenceToObject:
+    Object: 000034:Skyrim.esm
+    AliasID: 1
+  VoiceTypes: Null

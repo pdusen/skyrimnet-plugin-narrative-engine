@@ -1,0 +1,8 @@
+FormKey: 000818:NarrativeEngine.esp
+EditorID: _ne_LetterSenderFaction
+Flags:
+- HiddenFromPC
+CrimeValues:
+  Arrest: True
+  AttackOnSight: True
+VendorValues: {}

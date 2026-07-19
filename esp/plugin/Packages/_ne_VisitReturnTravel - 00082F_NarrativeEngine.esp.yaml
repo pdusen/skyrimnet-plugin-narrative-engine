@@ -1,0 +1,47 @@
+FormKey: 00082F:NarrativeEngine.esp
+EditorID: _ne_VisitReturnTravel
+Flags:
+- PreferredSpeed
+Type: Package
+PreferredSpeed: FastWalk
+ScheduleMonth: -1
+ScheduleDayOfWeek: Any
+ScheduleHour: -1
+ScheduleMinute: -1
+Unknown3: 0x000000
+Conditions:
+- MutagenObjectType: ConditionFloat
+  CompareOperator: GreaterThanOrEqualTo
+  Data:
+    MutagenObjectType: GetStageConditionData
+    Quest: 00082D:NarrativeEngine.esp
+  ComparisonValue: 50
+OwnerQuest: 00082D:NarrativeEngine.esp
+PackageTemplate: 016FAA:Skyrim.esm
+DataInputVersion: 3
+Data:
+- Key: 0
+  Value:
+    MutagenObjectType: PackageDataLocation
+    Location:
+      Target:
+        MutagenObjectType: LocationFallback
+        Type: AliasForReference
+        Data: 5
+- Key: 2
+  Value:
+    MutagenObjectType: PackageDataBool
+- Key: 4
+  Value:
+    MutagenObjectType: PackageDataBool
+    Data: True
+XnamMarker: 0x05
+OnBegin:
+  Topics:
+  - MutagenObjectType: TopicReference
+OnEnd:
+  Topics:
+  - MutagenObjectType: TopicReference
+OnChange:
+  Topics:
+  - MutagenObjectType: TopicReference

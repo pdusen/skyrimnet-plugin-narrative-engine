@@ -1,0 +1,284 @@
+FormKey: 000800:NarrativeEngine.esp
+EditorID: _ne_BanditAmbushQuest
+VirtualMachineAdapter:
+  Scripts:
+  - Name: _ne__QF__ne_BanditAmbushQuest_0500FB00
+    Properties:
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_Bandit01Ref
+      Object: 000800:NarrativeEngine.esp
+      Alias: 10
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_Bandit02Ref
+      Object: 000800:NarrativeEngine.esp
+      Alias: 12
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_Bandit03Ref
+      Object: 000800:NarrativeEngine.esp
+      Alias: 13
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_Bandit04Ref
+      Object: 000800:NarrativeEngine.esp
+      Alias: 14
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_Bandit05Ref
+      Object: 000800:NarrativeEngine.esp
+      Alias: 15
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_Bandit06Ref
+      Object: 000800:NarrativeEngine.esp
+      Alias: 16
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_Location
+      Object: 000800:NarrativeEngine.esp
+      Alias: 5
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_PlayerRef
+      Object: 000800:NarrativeEngine.esp
+      Alias: 0
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_SpawnMarker
+      Object: 000800:NarrativeEngine.esp
+      Alias: 8
+  - Name: _ne_BanditAmbushQuest
+    Properties:
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Bandit01Ref
+      Object: 000800:NarrativeEngine.esp
+      Alias: 10
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Bandit02Ref
+      Object: 000800:NarrativeEngine.esp
+      Alias: 12
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Bandit03Ref
+      Object: 000800:NarrativeEngine.esp
+      Alias: 13
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Bandit04Ref
+      Object: 000800:NarrativeEngine.esp
+      Alias: 14
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Bandit05Ref
+      Object: 000800:NarrativeEngine.esp
+      Alias: 15
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Bandit06Ref
+      Object: 000800:NarrativeEngine.esp
+      Alias: 16
+  FileName: _ne__QF__ne_BanditAmbushQuest_0500FB00
+  Fragments:
+  - Unknown2: 1
+    ScriptName: _ne__QF__ne_BanditAmbushQuest_0500FB00
+    FragmentName: Fragment_0
+  - Stage: 10
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_BanditAmbushQuest_0500FB00
+    FragmentName: Fragment_2
+  - Stage: 200
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_BanditAmbushQuest_0500FB00
+    FragmentName: Fragment_6
+  Aliases:
+  - Property:
+      Name: ''
+      Object: 000800:NarrativeEngine.esp
+      Alias: 10
+    Scripts:
+    - Name: _ne_BanditAmbushQuest_SpawnedBandit
+      Properties:
+      - MutagenObjectType: ScriptObjectProperty
+        Name: BanditAmbushQuest
+        Object: 000800:NarrativeEngine.esp
+      - MutagenObjectType: ScriptObjectProperty
+        Name: PlayerRef
+        Object: 000800:NarrativeEngine.esp
+        Alias: 0
+  - Property:
+      Name: ''
+      Object: 000800:NarrativeEngine.esp
+      Alias: 12
+    Scripts:
+    - Name: _ne_BanditAmbushQuest_SpawnedBandit
+      Properties:
+      - MutagenObjectType: ScriptObjectProperty
+        Name: BanditAmbushQuest
+        Object: 000800:NarrativeEngine.esp
+      - MutagenObjectType: ScriptObjectProperty
+        Name: PlayerRef
+        Object: 000800:NarrativeEngine.esp
+        Alias: 0
+  - Property:
+      Name: ''
+      Object: 000800:NarrativeEngine.esp
+      Alias: 13
+    Scripts:
+    - Name: _ne_BanditAmbushQuest_SpawnedBandit
+      Properties:
+      - MutagenObjectType: ScriptObjectProperty
+        Name: BanditAmbushQuest
+        Object: 000800:NarrativeEngine.esp
+      - MutagenObjectType: ScriptObjectProperty
+        Name: PlayerRef
+        Object: 000800:NarrativeEngine.esp
+        Alias: 0
+  - Property:
+      Name: ''
+      Object: 000800:NarrativeEngine.esp
+      Alias: 14
+    Scripts:
+    - Name: _ne_BanditAmbushQuest_SpawnedBandit
+      Properties:
+      - MutagenObjectType: ScriptObjectProperty
+        Name: BanditAmbushQuest
+        Object: 000800:NarrativeEngine.esp
+      - MutagenObjectType: ScriptObjectProperty
+        Name: PlayerRef
+        Object: 000800:NarrativeEngine.esp
+        Alias: 0
+  - Property:
+      Name: ''
+      Object: 000800:NarrativeEngine.esp
+      Alias: 15
+    Scripts:
+    - Name: _ne_BanditAmbushQuest_SpawnedBandit
+      Properties:
+      - MutagenObjectType: ScriptObjectProperty
+        Name: BanditAmbushQuest
+        Object: 000800:NarrativeEngine.esp
+      - MutagenObjectType: ScriptObjectProperty
+        Name: PlayerRef
+        Object: 000800:NarrativeEngine.esp
+        Alias: 0
+  - Property:
+      Name: ''
+      Object: 000800:NarrativeEngine.esp
+      Alias: 16
+    Scripts:
+    - Name: _ne_BanditAmbushQuest_SpawnedBandit
+      Properties:
+      - MutagenObjectType: ScriptObjectProperty
+        Name: BanditAmbushQuest
+        Object: 000800:NarrativeEngine.esp
+      - MutagenObjectType: ScriptObjectProperty
+        Name: PlayerRef
+        Object: 000800:NarrativeEngine.esp
+        Alias: 0
+Flags:
+- AllowRepeatedStages
+Priority: 90
+Stages:
+- Flags:
+  - StartUpStage
+  LogEntries:
+  - Flags: []
+- Index: 10
+  LogEntries:
+  - Flags: []
+- Index: 200
+  LogEntries:
+  - Flags:
+    - CompleteQuest
+NextAliasID: 17
+Aliases:
+- Name: PlayerRef
+  Flags: []
+  ForcedReference: 000014:Skyrim.esm
+  VoiceTypes: Null
+- ID: 5
+  Type: Location
+  Name: Location
+  Flags: []
+  Location:
+    AliasID: 0
+- ID: 8
+  Name: SpawnMarker
+  Flags:
+  - MatchingRefInLoadedArea
+  - AllowReserved
+  - MatchingRefClosest
+  Conditions:
+  - MutagenObjectType: ConditionFloat
+    Data:
+      MutagenObjectType: IsInListConditionData
+      FormList: 000801:NarrativeEngine.esp
+    ComparisonValue: 1
+  - MutagenObjectType: ConditionFloat
+    Data:
+      MutagenObjectType: GetInCurrentLocAliasConditionData
+      LocationAliasIndex: 5
+    ComparisonValue: 1
+  - MutagenObjectType: ConditionFloat
+    CompareOperator: LessThan
+    Data:
+      MutagenObjectType: GetDistanceConditionData
+      UseAliases: True
+    ComparisonValue: 8000
+  - MutagenObjectType: ConditionFloat
+    CompareOperator: GreaterThanOrEqualTo
+    Data:
+      MutagenObjectType: GetDistanceConditionData
+      UseAliases: True
+    ComparisonValue: 3000
+  - MutagenObjectType: ConditionFloat
+    Data:
+      MutagenObjectType: GetLineOfSightConditionData
+      UseAliases: True
+  - MutagenObjectType: ConditionFloat
+    Data:
+      MutagenObjectType: IsInInteriorConditionData
+  VoiceTypes: Null
+- ID: 10
+  Name: Bandit01Ref
+  Flags: []
+  CreateReferenceToObject:
+    Object: 03DEC9:Skyrim.esm
+    AliasID: 8
+  PackageData:
+  - 000802:NarrativeEngine.esp
+  VoiceTypes: Null
+- ID: 12
+  Name: Bandit02Ref
+  Flags: []
+  CreateReferenceToObject:
+    Object: 03DECD:Skyrim.esm
+    AliasID: 8
+  PackageData:
+  - 000802:NarrativeEngine.esp
+  VoiceTypes: Null
+- ID: 13
+  Name: Bandit03Ref
+  Flags: []
+  CreateReferenceToObject:
+    Object: 03DECD:Skyrim.esm
+    AliasID: 8
+  PackageData:
+  - 000802:NarrativeEngine.esp
+  VoiceTypes: Null
+- ID: 14
+  Name: Bandit04Ref
+  Flags: []
+  CreateReferenceToObject:
+    Object: 03DECD:Skyrim.esm
+    AliasID: 8
+  PackageData:
+  - 000802:NarrativeEngine.esp
+  VoiceTypes: Null
+- ID: 15
+  Name: Bandit05Ref
+  Flags: []
+  CreateReferenceToObject:
+    Object: 01E770:Skyrim.esm
+    AliasID: 8
+  PackageData:
+  - 000802:NarrativeEngine.esp
+  VoiceTypes: Null
+- ID: 16
+  Name: Bandit06Ref
+  Flags: []
+  CreateReferenceToObject:
+    Object: 01E770:Skyrim.esm
+    AliasID: 8
+  PackageData:
+  - 000802:NarrativeEngine.esp
+  VoiceTypes: Null

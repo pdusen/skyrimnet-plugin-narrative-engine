@@ -1,0 +1,91 @@
+FormKey: 00082E:NarrativeEngine.esp
+EditorID: _ne_VisitFollow
+Type: Package
+PreferredSpeed: Run
+ScheduleMonth: -1
+ScheduleDayOfWeek: Any
+ScheduleHour: -1
+ScheduleMinute: -1
+Unknown3: 0x000000
+Conditions:
+- MutagenObjectType: ConditionFloat
+  CompareOperator: LessThan
+  Data:
+    MutagenObjectType: GetStageConditionData
+    Quest: 00082D:NarrativeEngine.esp
+  ComparisonValue: 50
+OwnerQuest: 00082D:NarrativeEngine.esp
+PackageTemplate: 0750BE:Skyrim.esm
+DataInputVersion: 8
+Data:
+- Key: 0
+  Value:
+    MutagenObjectType: PackageDataTarget
+    Type: SingleRef
+    Target:
+      MutagenObjectType: PackageTargetSpecificReference
+      Reference: 000014:Skyrim.esm
+- Key: 1
+  Value:
+    MutagenObjectType: PackageDataFloat
+    Data: 128
+- Key: 2
+  Value:
+    MutagenObjectType: PackageDataFloat
+    Data: 256
+- Key: 6
+  Value:
+    MutagenObjectType: PackageDataBool
+- Key: 9
+  Value:
+    MutagenObjectType: PackageDataLocation
+    Location:
+      Target:
+        MutagenObjectType: LocationFallback
+        Type: NearSelf
+      Radius: 256
+- Key: 10
+  Value:
+    MutagenObjectType: PackageDataBool
+- Key: 11
+  Value:
+    MutagenObjectType: PackageDataBool
+- Key: 16
+  Value:
+    MutagenObjectType: PackageDataBool
+    Data: True
+- Key: 17
+  Value:
+    MutagenObjectType: PackageDataBool
+- Key: 18
+  Value:
+    MutagenObjectType: PackageDataBool
+- Key: 19
+  Value:
+    MutagenObjectType: PackageDataBool
+    Data: True
+- Key: 20
+  Value:
+    MutagenObjectType: PackageDataBool
+    Data: True
+- Key: 21
+  Value:
+    MutagenObjectType: PackageDataBool
+    Data: True
+- Key: 23
+  Value:
+    MutagenObjectType: PackageDataFloat
+- Key: 25
+  Value:
+    MutagenObjectType: PackageDataBool
+    Data: True
+XnamMarker: 0x1A
+OnBegin:
+  Topics:
+  - MutagenObjectType: TopicReference
+OnEnd:
+  Topics:
+  - MutagenObjectType: TopicReference
+OnChange:
+  Topics:
+  - MutagenObjectType: TopicReference

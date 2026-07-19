@@ -258,14 +258,21 @@ and our tooling all see the same files.
 
 ### Repo paths
 
-- `esp/NarrativeEngine.esp` — authoritative repo-side ESP. A version-controlled mirror of what CK edits.
+- `esp/plugin/` — authoritative repo-side ESP as a [Spriggit](https://github.com/Mutagen-Modding/Spriggit)-serialized
+  YAML tree. What CK writes to `NarrativeEngine.esp` gets serialized here; what's committed here gets
+  deserialized back to the mod folder. The binary `esp/NarrativeEngine.esp` is **not** tracked.
+- `esp/.sync-state.json` — machine-local sync baseline (SHA-256 of the mod-folder ESP and the plugin
+  tree at the last successful sync). Gitignored; written by `sync-esp.ps1`.
+- `.spriggit` (repo root) — Spriggit config file identifying the package (`Spriggit.Yaml`), the game
+  release (`SkyrimSE`), and the Spriggit version to use.
 - `esp/Source/Scripts/*.psc` — authoritative Papyrus source. Junctioned (see below) so CK and VS Code edit
   these files directly.
 - `NarrativeEngine.ppj.in` (repo root) — template for the Papyrus project file. CMake `configure_file`
   substitutes machine-specific absolute paths into `NarrativeEngine.ppj` (gitignored) at the repo root.
 - `setup-mod-folder.ps1` (repo root) — one-time per-machine setup; creates the mod folder and the
   `Source/Scripts/` junction.
-- `sync-esp.ps1` (repo root) — bidirectional ESP sync (newest copy wins), invoked by CMake on every build.
+- `sync-esp.ps1` (repo root) — bidirectional ESP sync via Spriggit serialize/deserialize, invoked by
+  CMake on every build and by the pre-commit hook.
 
 ### One-time setup
 
@@ -287,18 +294,31 @@ This does three things:
 The script is idempotent — safe to re-run. A second run reports each piece as "already exists" or
 "updated" and exits cleanly.
 
-### ESP flow (bidirectional, newest wins)
+### ESP flow (bidirectional, content-hash driven)
 
-The `.esp` exists in two locations: `<repo>/esp/NarrativeEngine.esp` (version-controlled) and
-`<mod-folder>/NarrativeEngine.esp` (what CK edits and what Skyrim loads). On every build, `sync-esp.ps1`
-compares their modification times and copies whichever is newer over the older. Two cases this handles
-without any manual intervention:
+The `.esp` exists in two representations: `<repo>/esp/plugin/` (a Spriggit-serialized YAML tree,
+version-controlled) and `<mod-folder>/NarrativeEngine.esp` (the binary CK edits and Skyrim loads). On
+every build, `sync-esp.ps1` reconciles them via the [Spriggit CLI](https://github.com/Mutagen-Modding/Spriggit):
 
-- After a CK session, the mod-folder copy is newer → it propagates back into the repo so you can commit.
-- After a `git pull` that brings in an ESP change from elsewhere, the repo copy is newer → it propagates
-  out to the mod folder so Skyrim picks it up on the next launch.
+- mod → repo uses `spriggit serialize -i <mod-esp> -o esp/plugin`
+- repo → mod uses `spriggit deserialize -i esp/plugin -o <mod-esp>`
 
-When both copies have equal mtime, nothing happens.
+Because serialize/deserialize is not a byte-preserving round-trip, we can't use mtime comparison to
+decide which side is "newer." Instead, each successful sync records SHA-256s of both sides in
+`esp/.sync-state.json` (machine-local, gitignored) and later runs compare current hashes to that
+baseline to see which side has drifted:
+
+- Only the mod-folder ESP hash changed → CK edits; serialize mod → repo.
+- Only the plugin tree hash changed → git pull or manual edit; deserialize repo → mod.
+- Both changed → divergence; the script refuses to auto-resolve. Re-run with `-Prefer mod` (keep the
+  CK edits, overwrite the repo) or `-Prefer repo` (keep the committed tree, overwrite the mod folder).
+
+On a fresh clone (no `.sync-state.json` yet), the script bootstraps by whichever side actually exists;
+if both exist without a baseline, it tiebreaks on mtime (mod-ESP vs. newest file under `esp/plugin/`)
+the way the old script did, or you can pass `-Prefer` explicitly.
+
+Prerequisite: `Spriggit.CLI.exe` on `PATH` (or point `$env:SPRIGGIT_CLI` at its full path). Install
+from [github.com/Mutagen-Modding/Spriggit](https://github.com/Mutagen-Modding/Spriggit/releases).
 
 Override the auto-sync via `-DNE_SKIP_ESP_SYNC=ON` on the cmake configure line if you have a specific reason
 to bypass it (e.g. you're hand-editing one side and don't want the build clobbering the other).
@@ -307,9 +327,10 @@ to bypass it (e.g. you're hand-editing one side and don't want the build clobber
 
 `setup-mod-folder.ps1` installs `.git/hooks/pre-commit`. The hook runs two stages before every commit:
 
-1. **ESP sync.** Snapshot the current `git hash-object` of `esp/NarrativeEngine.esp`, run `sync-esp.ps1`,
-   then re-hash. If the sync pulled in a CK edit from the mod folder, `git add` the ESP so it rides along
-   in the same commit. If `sync-esp.ps1` fails for any reason, the commit aborts.
+1. **ESP sync.** Snapshot the current on-disk hash of `esp/plugin/`, run `sync-esp.ps1`, then re-hash.
+   If the sync pulled in a CK edit from the mod folder (serialize mod → repo produced new YAML), `git
+   add` the updated `esp/plugin/` tree so those changes ride along in the same commit. If
+   `sync-esp.ps1` fails for any reason, the commit aborts.
 2. **Formatters / linters.** Invoke `pre-commit run --hook-stage pre-commit`, which executes every hook in
    [`.pre-commit-config.yaml`](../.pre-commit-config.yaml) against the staged files (clang-format for C++,
    markdownlint for Markdown, gersemi for CMake, prettier for YAML/JSON, PSScriptAnalyzer for PowerShell,

@@ -211,11 +211,11 @@ if (Test-Path $skyuiCopyDir) {
 
 # --- install git pre-commit hook --------------------------------------------
 #
-# Runs sync-esp.ps1 before every commit. If the sync updates
-# esp/NarrativeEngine.esp (because the mod-folder copy was newer), the hook
-# also stages the updated file so the change rides along in the same commit
-# the developer was already making — no risk of forgetting to commit the
-# latest CK edits.
+# Runs sync-esp.ps1 before every commit. If the sync updates the serialized
+# plugin tree under esp/plugin/ (because CK edits in the mod folder were
+# newer than the last recorded baseline), the hook also stages those changes
+# so the updated YAML rides along in the same commit the developer was
+# already making — no risk of forgetting to commit the latest CK edits.
 #
 # The hook is written with LF line endings so git-bash (which executes hooks
 # on Windows) can run it cleanly. Any existing pre-commit hook is overwritten
@@ -234,26 +234,37 @@ if (Test-Path $gitDir -PathType Container) {
     $hookBody = @"
 #!/bin/sh
 # NarrativeEngine pre-commit hook — managed by setup-mod-folder.ps1
-# Runs sync-esp.ps1 so the repo's ESP matches the mod folder, stages any
-# resulting ESP change, then runs `pre-commit run` against staged files so
-# the formatters/linters in .pre-commit-config.yaml gate the commit.
+# Runs sync-esp.ps1 so the repo's serialized ESP tree matches the mod folder,
+# stages any resulting change under esp/plugin/, then runs `pre-commit run`
+# against staged files so the formatters/linters in .pre-commit-config.yaml
+# gate the commit.
 
 REPO_ROOT="`$(git rev-parse --show-toplevel)"
-ESP_PATH="`$REPO_ROOT/esp/NarrativeEngine.esp"
+PLUGIN_DIR="`$REPO_ROOT/esp/plugin"
 
-# Hash before — `git hash-object` returns the same hash git would store, so
-# it's exactly the right shape for "did the file content change."
-BEFORE_HASH=`$(git hash-object "`$ESP_PATH" 2>/dev/null || echo "")
+# Diff-tree hash before — `git diff --cached HEAD -- <path>` vs `git status
+# --porcelain -- <path>` would both work, but a tree hash over the working
+# copy is the simplest "did the sync change anything on disk" probe.
+if [ -d "`$PLUGIN_DIR" ]; then
+    BEFORE_HASH=`$(git ls-files -o -c --exclude-standard -- "`$PLUGIN_DIR" | sort | xargs -I{} git hash-object "`$REPO_ROOT/{}" 2>/dev/null | sha256sum | awk '{print `$1}')
+else
+    BEFORE_HASH=""
+fi
 
 if ! pwsh -NoProfile -File "`$REPO_ROOT/sync-esp.ps1"; then
     echo "pre-commit: sync-esp.ps1 failed; aborting commit" >&2
     exit 1
 fi
 
-AFTER_HASH=`$(git hash-object "`$ESP_PATH" 2>/dev/null || echo "")
-if [ "`$BEFORE_HASH" != "`$AFTER_HASH" ] && [ -f "`$ESP_PATH" ]; then
-    echo "pre-commit: sync-esp.ps1 updated esp/NarrativeEngine.esp; staging the change"
-    git add -- "`$ESP_PATH"
+if [ -d "`$PLUGIN_DIR" ]; then
+    AFTER_HASH=`$(git ls-files -o -c --exclude-standard -- "`$PLUGIN_DIR" | sort | xargs -I{} git hash-object "`$REPO_ROOT/{}" 2>/dev/null | sha256sum | awk '{print `$1}')
+else
+    AFTER_HASH=""
+fi
+
+if [ "`$BEFORE_HASH" != "`$AFTER_HASH" ]; then
+    echo "pre-commit: sync-esp.ps1 updated esp/plugin/; staging the changes"
+    git add -- "`$PLUGIN_DIR"
 fi
 
 # Run the pre-commit framework against staged files. Prefer the `pre-commit`
