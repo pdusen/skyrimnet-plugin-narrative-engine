@@ -16,7 +16,7 @@ not logged in, or that the token lacks the required scopes (`repo` is enough
 for creating releases), stop immediately and ask the user to run
 `gh auth login` before re-invoking the skill.
 
-Failing here costs nothing. Failing at step 8 after the tag is already pushed
+Failing here costs nothing. Failing at step 9 after the tag is already pushed
 leaves the repo in an awkward split state that requires manual cleanup, so
 this check runs first on purpose.
 
@@ -165,7 +165,7 @@ you want the rendered output to actually break (between bullets, between
 paragraphs, before/after headers).
 
 The draft you present to the user in chat can be wrapped for readability,
-but the release notes you eventually write to disk in step 8 must be
+but the release notes you eventually write to disk in step 9 must be
 unwrapped. Either draft unwrapped from the start, or unwrap before writing.
 
 Present the draft in normal chat text, then gate approval using the
@@ -190,7 +190,40 @@ do NOT list a "Request revisions" option yourself. Behavior by pick:
 
 Do NOT proceed to packaging on ambiguous feedback.
 
-## 5. Bump the advertised version in tracked files and commit
+## 5. Confirm authorization for the remaining operations
+
+Before touching anything on the machine or on origin, get explicit user
+authorization for the batch of operations the rest of the skill will perform.
+This gate exists because the Claude Code auto-mode classifier will block
+direct-to-main pushes (and similar high-blast-radius commands) unless the user
+has said so in the current session — a mid-run block leaves the release
+half-done (bump committed locally but not pushed, tag not pushed, GitHub
+release not created), and untangling that is worse than asking once upfront.
+
+Ask via `AskUserQuestion` with a single-select shape:
+
+- **question:** `"Authorize the remaining release operations for vX.Y.Z?"`
+- **header:** `"Authorize"`
+- **options** (single-select, in this order):
+  1. `"Authorize all remaining operations (Recommended)"` — description
+     should enumerate exactly what will run: bump the two statics files,
+     commit the bump and push to main, run `package.ps1`, tag `vX.Y.Z`, push
+     the tag to origin, and create the GitHub release with the approved
+     notes and the packaged zip attached.
+  2. `"Cancel the release"` — description: `"Abort the skill; no bump, tag, or push."`
+
+Enumerate the specific operations in the option-1 description so the
+authorization is scoped and auditable — the user is agreeing to exactly this
+list, not a blank check. If a later step needs an operation NOT in that list,
+stop and ask separately.
+
+If option 1, proceed to step 6. If option 2, abort the skill immediately with
+no side effects. If Other with freeform text, treat it as revision input on
+the operation list (not as approval) unless the text is unambiguously
+affirmative ("do it", "authorized", "go ahead"). Re-present the
+`AskUserQuestion` after any adjustment.
+
+## 6. Bump the advertised version in tracked files and commit
 
 Two files carry the mod's advertised version and must be updated to match the
 accepted `$Version` before the packaged artifact is built (`package.ps1` runs
@@ -209,7 +242,7 @@ verify with a `git diff` that only the intended lines changed. If either edit
 produces no diff (file was already at target version), stop and report — the
 bump is a no-op and something is out of order.
 
-Then commit and push the bump so the tag created in step 7 lands on a commit
+Then commit and push the bump so the tag created in step 8 lands on a commit
 that exists on origin:
 
 ```powershell
@@ -226,7 +259,7 @@ user's working tree.
 If the push is rejected (e.g. branch protection, remote ahead), stop and
 report. Do NOT force-push.
 
-## 6. Package the mod
+## 7. Package the mod
 
 Run:
 
@@ -238,7 +271,7 @@ Wait for it to complete. On non-zero exit, report the failure and stop — do
 not proceed to tagging. Confirm `out/NarrativeEngine-v<Version>.zip` exists on
 disk before continuing.
 
-## 7. Tag and push
+## 8. Tag and push
 
 Create an annotated tag and push it:
 
@@ -250,7 +283,7 @@ git push origin "v$Version"
 If either step fails (tag already exists, push rejected), stop and report — do
 NOT force-push or delete existing tags without explicit user approval.
 
-## 8. Create the GitHub release
+## 9. Create the GitHub release
 
 Write the approved release notes to a temp file first so multi-line content
 passes cleanly:
@@ -270,7 +303,7 @@ the tag exists on origin but no release was created, and stop. The user can
 either retry `gh release create` manually or delete the tag and re-run the
 skill.
 
-## 9. Report the release URL
+## 10. Report the release URL
 
 Retrieve and print the URL as a clickable Markdown link:
 
