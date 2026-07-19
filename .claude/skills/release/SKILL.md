@@ -16,7 +16,7 @@ not logged in, or that the token lacks the required scopes (`repo` is enough
 for creating releases), stop immediately and ask the user to run
 `gh auth login` before re-invoking the skill.
 
-Failing here costs nothing. Failing at step 7 after the tag is already pushed
+Failing here costs nothing. Failing at step 8 after the tag is already pushed
 leaves the repo in an awkward split state that requires manual cleanup, so
 this check runs first on purpose.
 
@@ -114,14 +114,50 @@ you want the rendered output to actually break (between bullets, between
 paragraphs, before/after headers).
 
 The draft you present to the user in chat can be wrapped for readability,
-but the release notes you eventually write to disk in step 7 must be
+but the release notes you eventually write to disk in step 8 must be
 unwrapped. Either draft unwrapped from the start, or unwrap before writing.
 
 Present the draft and ask for revisions. Iterate until the user explicitly
 approves ("approved", "ship it", "looks good", or similar). Do NOT proceed to
 packaging on ambiguous feedback.
 
-## 5. Package the mod
+## 5. Bump the advertised version in tracked files and commit
+
+Two files carry the mod's advertised version and must be updated to match the
+accepted `$Version` before the packaged artifact is built (`package.ps1` runs
+`build.ps1` which syncs these into the mod folder — the archive will bake in
+whatever version is on disk at packaging time):
+
+- `statics/SKSE/Plugins/SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml`
+  — update the `version: "..."` key in the top-level `plugin:` block.
+- `statics/MCM/Config/NarrativeEngine/config.json` — update the
+  `valueOptions.value` string on the version-display item under the `About`
+  header (the row labeled `"NarrativeEngine"`). Only replace the leading
+  `vX.Y.Z` token; preserve any trailing suffix (e.g. `(dev)`) verbatim.
+
+Read both files first to confirm the current values, apply the edits, then
+verify with a `git diff` that only the intended lines changed. If either edit
+produces no diff (file was already at target version), stop and report — the
+bump is a no-op and something is out of order.
+
+Then commit and push the bump so the tag created in step 7 lands on a commit
+that exists on origin:
+
+```powershell
+git add statics/SKSE/Plugins/SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml `
+        statics/MCM/Config/NarrativeEngine/config.json
+git commit -m "chore(release): v$Version"
+git push origin (git branch --show-current)
+```
+
+This step is exempt from step 1's "do not stage or commit on their behalf"
+rule — the changes were made by the skill itself, not carried over from the
+user's working tree.
+
+If the push is rejected (e.g. branch protection, remote ahead), stop and
+report. Do NOT force-push.
+
+## 6. Package the mod
 
 Run:
 
@@ -133,7 +169,7 @@ Wait for it to complete. On non-zero exit, report the failure and stop — do
 not proceed to tagging. Confirm `out/NarrativeEngine-v<Version>.zip` exists on
 disk before continuing.
 
-## 6. Tag and push
+## 7. Tag and push
 
 Create an annotated tag and push it:
 
@@ -145,7 +181,7 @@ git push origin "v$Version"
 If either step fails (tag already exists, push rejected), stop and report — do
 NOT force-push or delete existing tags without explicit user approval.
 
-## 7. Create the GitHub release
+## 8. Create the GitHub release
 
 Write the approved release notes to a temp file first so multi-line content
 passes cleanly:
@@ -165,7 +201,7 @@ the tag exists on origin but no release was created, and stop. The user can
 either retry `gh release create` manually or delete the tag and re-run the
 skill.
 
-## 8. Report the release URL
+## 9. Report the release URL
 
 Retrieve and print the URL as a clickable Markdown link:
 
