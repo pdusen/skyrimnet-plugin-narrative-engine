@@ -15,6 +15,7 @@
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
 #include <VisitComposer.h>
+#include <WeatherEventLog.h>
 
 #include <RE/Skyrim.h>
 
@@ -708,6 +709,7 @@ namespace NarrativeEngine::BeatSystem
                 auto merged = SkyrimNetEvents::BuildMergedTimeline(
                     std::move(skyrimSide),
                     CombatEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
+                    WeatherEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
                     snapshot.player.gameTimeSeconds);
 
                 if (merged.is_array() && merged.size() > kBeatSelectEventTailSize) {

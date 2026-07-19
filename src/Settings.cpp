@@ -119,6 +119,13 @@ namespace NarrativeEngine::Settings
             dst.combatEventsMaxStored =
                 static_cast<int>(ini.GetLongValue("CombatEvents", "iMaxStored", dst.combatEventsMaxStored));
 
+            dst.weatherEventsMaxStored = static_cast<int>(
+                ini.GetLongValue("WeatherEvents", "iWeatherEventsMaxStored", dst.weatherEventsMaxStored));
+            dst.weatherEventPollIntervalSeconds = static_cast<int>(ini.GetLongValue(
+                "WeatherEvents", "iWeatherEventPollIntervalSeconds", dst.weatherEventPollIntervalSeconds));
+            dst.weatherEventsDebounceSeconds = static_cast<int>(
+                ini.GetLongValue("WeatherEvents", "iWeatherEventDebounceSeconds", dst.weatherEventsDebounceSeconds));
+
             dst.enableAmbush = ini.GetBoolValue("Beats", "bEnableAmbush", dst.enableAmbush);
             dst.enableNpcLetter = ini.GetBoolValue("Beats", "bEnableNpcLetter", dst.enableNpcLetter);
 

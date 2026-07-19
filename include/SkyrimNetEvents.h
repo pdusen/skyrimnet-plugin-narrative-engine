@@ -31,15 +31,15 @@ namespace NarrativeEngine::SkyrimNetEvents
     // missing fields and non-object entries.
     void FormatEventsText(nlohmann::json& events, double currentGameTimeSeconds);
 
-    // Merges a SkyrimNet event array (already FormatEventsText'd, oldest-
-    // first) with a CombatEventLog rendered tail (oldest-first), produces a
-    // single oldest-first timeline sorted ascending by `localTime`, and
-    // condenses runs of consecutive internal `hit` events between non-hit
-    // events into one summary entry. Discriminates internal events by the
-    // presence of `ne_kind` — SkyrimNet events have no such field. The
-    // condensed entry carries `type = "narrative_engine_combat_summary"` so
-    // the dashboard can style it if it wants; the LLM reads only `text`.
+    // Merges the SkyrimNet event tail with each internal-source tail
+    // (combat + weather), sorts the union ascending by `localTime`, and
+    // condenses runs of consecutive internal `hit` events between non-
+    // hit events into one summary entry. Weather events are surfaced
+    // as-is — they represent discrete narrative moments and are not
+    // subject to condensation. Discriminates internal events by the
+    // presence of `ne_kind` — SkyrimNet events have no such field.
     nlohmann::json BuildMergedTimeline(nlohmann::json skyrimNetEvents,
                                        nlohmann::json combatEvents,
+                                       nlohmann::json weatherEvents,
                                        double currentGameTimeSeconds);
 } // namespace NarrativeEngine::SkyrimNetEvents

@@ -456,7 +456,7 @@ vocabulary or the tail-merge wire-in yet. Splitting keeps this step tightly boun
 
 ### Step 5 — In-game verification of `WeatherEventLog`
 
-- [ ] Complete
+- [x] Complete
 
 **[USER]**
 

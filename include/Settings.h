@@ -130,6 +130,18 @@ namespace NarrativeEngine::Settings
         int combatEventsHitRadiusUnits = 6000; // ~90 ft; distance gate for hit / collapse capture
         int combatEventsMaxStored = 256;       // ring-buffer cap on retained internal combat events
 
+        // [WeatherEvents]
+        // Ring-buffer cap on retained internal weather events.
+        int weatherEventsMaxStored = 128;
+        // Minimum real seconds between weather-state samples. Weather
+        // updates on the order of tens of seconds; sampling every Tick
+        // (500ms) would waste work without producing new signal.
+        int weatherEventPollIntervalSeconds = 30;
+        // Minimum real seconds between emitted weather events, applied
+        // on top of the poll interval. Debounces pathological rapid
+        // category flips inside a single sampling window.
+        int weatherEventsDebounceSeconds = 20;
+
         // [Beats]
         // Per-beat enable defaults seeded into BeatRegistry at Register
         // time. Dashboard Dispatch tab surfaces runtime toggles for

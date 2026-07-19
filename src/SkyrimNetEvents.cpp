@@ -311,6 +311,7 @@ namespace NarrativeEngine::SkyrimNetEvents
 
     nlohmann::json BuildMergedTimeline(nlohmann::json skyrimNetEvents,
                                        nlohmann::json combatEvents,
+                                       nlohmann::json weatherEvents,
                                        double currentGameTimeSeconds)
     {
         // Game-time staleness: drop anything past this age, append an idle
@@ -322,13 +323,20 @@ namespace NarrativeEngine::SkyrimNetEvents
 
         // Concatenate, guarding against the inputs not being arrays.
         std::vector<nlohmann::json> merged;
+        const std::size_t total = (skyrimNetEvents.is_array() ? skyrimNetEvents.size() : 0)
+                                  + (combatEvents.is_array() ? combatEvents.size() : 0)
+                                  + (weatherEvents.is_array() ? weatherEvents.size() : 0);
+        merged.reserve(total);
         if (skyrimNetEvents.is_array()) {
-            merged.reserve(skyrimNetEvents.size() + (combatEvents.is_array() ? combatEvents.size() : 0));
             for (auto& e : skyrimNetEvents)
                 merged.push_back(std::move(e));
         }
         if (combatEvents.is_array()) {
             for (auto& e : combatEvents)
+                merged.push_back(std::move(e));
+        }
+        if (weatherEvents.is_array()) {
+            for (auto& e : weatherEvents)
                 merged.push_back(std::move(e));
         }
 

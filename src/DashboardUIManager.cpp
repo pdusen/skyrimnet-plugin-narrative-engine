@@ -16,6 +16,7 @@
 #include <Tick.h>
 #include <VisitConclusionPoll.h>
 #include <VisitState.h>
+#include <WeatherEventLog.h>
 
 #include <nlohmann/json.hpp>
 
@@ -840,8 +841,11 @@ namespace NarrativeEngine::DashboardUIManager
             SkyrimNetEvents::FormatEventsText(parsed, currentGameTimeSeconds);
             skyrimSide = std::move(parsed);
         }
-        j["recent_events"] = SkyrimNetEvents::BuildMergedTimeline(
-            std::move(skyrimSide), CombatEventLog::GetRenderedTail(currentGameTimeSeconds), currentGameTimeSeconds);
+        j["recent_events"] =
+            SkyrimNetEvents::BuildMergedTimeline(std::move(skyrimSide),
+                                                 CombatEventLog::GetRenderedTail(currentGameTimeSeconds),
+                                                 WeatherEventLog::GetRenderedTail(currentGameTimeSeconds),
+                                                 currentGameTimeSeconds);
 
         // letter_pool — full per-slot snapshot for the Letters tab, plus
         // the most-recent-dispatch index so the client doesn't have to

@@ -12,6 +12,7 @@
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
+#include <WeatherEventLog.h>
 
 #include <nlohmann/json.hpp>
 
@@ -276,25 +277,28 @@ namespace NarrativeEngine::EvaluationPipeline
                     parsed = std::move(kept);
                 }
 
-                // Merge in NarrativeEngine's internal combat events (Phase
-                // 02). The combat tail is already phase-pruned in memory,
-                // so no extra filter pass is needed on it. BuildMergedTimeline
-                // sorts by localTime and condenses runs of hit events.
+                // Merge in NarrativeEngine's internal event tails (combat
+                // from Phase 02, weather from Phase 09). Both tails are
+                // already phase-pruned in memory, so no extra filter pass
+                // is needed. BuildMergedTimeline sorts by localTime and
+                // condenses runs of hit events.
                 ctx["recent_events"] = SkyrimNetEvents::BuildMergedTimeline(
                     std::move(parsed),
                     CombatEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
+                    WeatherEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
                     snapshot.player.gameTimeSeconds);
             } else {
                 if (parsed.is_discarded() && !snapshot.skyrimNetEventsJSON.empty()) {
-                    logger::warn("BuildPromptContext: recent_events JSON failed to parse; using combat-only tail");
+                    logger::warn("BuildPromptContext: recent_events JSON failed to parse; using internal-only tail");
                 } else if (!parsed.is_discarded()) {
-                    logger::warn("BuildPromptContext: recent_events JSON wasn't an array; using combat-only tail");
+                    logger::warn("BuildPromptContext: recent_events JSON wasn't an array; using internal-only tail");
                 }
-                // Even with no SkyrimNet events, we still want our internal
-                // combat events to reach the prompt.
+                // Even with no SkyrimNet events, we still want our
+                // internal event tails to reach the prompt.
                 ctx["recent_events"] = SkyrimNetEvents::BuildMergedTimeline(
                     nlohmann::json::array(),
                     CombatEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
+                    WeatherEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
                     snapshot.player.gameTimeSeconds);
             }
         }

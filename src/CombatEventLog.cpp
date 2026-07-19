@@ -1,5 +1,6 @@
 #include <CombatEventLog.h>
 
+#include <EventLogUtil.h>
 #include <logger.h>
 #include <Settings.h>
 #include <SkyrimNetEvents.h>
@@ -7,7 +8,6 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <chrono>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -91,23 +91,6 @@ namespace NarrativeEngine::CombatEventLog
             if (v <= 0)
                 return kDefaultHitRadiusUnits;
             return static_cast<float>(v);
-        }
-
-        double NowUnixSeconds()
-        {
-            return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
-        }
-
-        double NowGameTimeOfDaySeconds()
-        {
-            // Match the units SkyrimNet uses for per-event `gameTime`:
-            // time-of-day in seconds [0..86400). Calendar->GetHour() returns
-            // fractional hours since midnight.
-            if (auto* cal = RE::Calendar::GetSingleton()) {
-                const float h = cal->GetHour();
-                return static_cast<double>(h) * 3600.0;
-            }
-            return 0.0;
         }
 
         // Wrappers around the RE singletons so the sinks can be tested
@@ -304,8 +287,8 @@ namespace NarrativeEngine::CombatEventLog
         {
             InternalEvent e;
             e.kind = Kind::RegainFooting;
-            e.localTime = NowUnixSeconds();
-            e.gameTime = NowGameTimeOfDaySeconds();
+            e.localTime = EventLogUtil::NowUnixSeconds();
+            e.gameTime = EventLogUtil::NowGameTimeSeconds();
             e.actorName = name;
             e.actorIsNamedActor = true;
             PushLocked(std::move(e));
@@ -402,8 +385,8 @@ namespace NarrativeEngine::CombatEventLog
 
                 InternalEvent e;
                 e.kind = Kind::Hit;
-                e.localTime = NowUnixSeconds();
-                e.gameTime = NowGameTimeOfDaySeconds();
+                e.localTime = EventLogUtil::NowUnixSeconds();
+                e.gameTime = EventLogUtil::NowGameTimeSeconds();
                 e.actorName = src.label; // may be empty (bare fallback)
                 e.targetName = std::move(targetName);
                 e.actorIsNamedActor = src.isNamedActor;
@@ -438,8 +421,8 @@ namespace NarrativeEngine::CombatEventLog
 
                 InternalEvent e;
                 e.kind = Kind::Collapse;
-                e.localTime = NowUnixSeconds();
-                e.gameTime = NowGameTimeOfDaySeconds();
+                e.localTime = EventLogUtil::NowUnixSeconds();
+                e.gameTime = EventLogUtil::NowGameTimeSeconds();
                 e.actorName = name;
                 e.actorIsNamedActor = true;
 
@@ -478,8 +461,8 @@ namespace NarrativeEngine::CombatEventLog
 
             InternalEvent e;
             e.kind = nowInCombat ? Kind::CombatStart : Kind::CombatEnd;
-            e.localTime = NowUnixSeconds();
-            e.gameTime = NowGameTimeOfDaySeconds();
+            e.localTime = EventLogUtil::NowUnixSeconds();
+            e.gameTime = EventLogUtil::NowGameTimeSeconds();
             e.actorName = ActorDisplayName(player);
             if (e.actorName.empty())
                 e.actorName = "Player";
@@ -651,28 +634,6 @@ namespace NarrativeEngine::CombatEventLog
 
     // -------- persistence --------------------------------------------
 
-    namespace
-    {
-        void WriteString(SKSE::SerializationInterface* intfc, const std::string& s)
-        {
-            const auto len = static_cast<std::uint32_t>(s.size());
-            intfc->WriteRecordData(len);
-            if (len > 0)
-                intfc->WriteRecordData(s.data(), len);
-        }
-
-        bool ReadString(SKSE::SerializationInterface* intfc, std::string& out)
-        {
-            std::uint32_t len = 0;
-            if (intfc->ReadRecordData(len) != sizeof(len))
-                return false;
-            out.resize(len);
-            if (len > 0 && intfc->ReadRecordData(out.data(), len) != len)
-                return false;
-            return true;
-        }
-    } // namespace
-
     void OnSave(SKSE::SerializationInterface* intfc)
     {
         if (!intfc)
@@ -704,8 +665,8 @@ namespace NarrativeEngine::CombatEventLog
             intfc->WriteRecordData(kindByte);
             intfc->WriteRecordData(e.localTime);
             intfc->WriteRecordData(e.gameTime);
-            WriteString(intfc, e.actorName);
-            WriteString(intfc, e.targetName);
+            EventLogUtil::WriteString(intfc, e.actorName);
+            EventLogUtil::WriteString(intfc, e.targetName);
             intfc->WriteRecordData(namedByte);
         }
     }
@@ -739,7 +700,7 @@ namespace NarrativeEngine::CombatEventLog
                 OnRevert();
                 return;
             }
-            if (!ReadString(intfc, e.actorName) || !ReadString(intfc, e.targetName)) {
+            if (!EventLogUtil::ReadString(intfc, e.actorName) || !EventLogUtil::ReadString(intfc, e.targetName)) {
                 logger::error("CombatEventLog::OnLoad: string read failure on record {}/{}", i, count);
                 OnRevert();
                 return;

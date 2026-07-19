@@ -19,6 +19,7 @@
 #include <SkyrimNetAPI.h>
 #include <Tick.h>
 #include <VisitState.h>
+#include <WeatherEventLog.h>
 
 #include <algorithm>
 #include <memory>
@@ -60,6 +61,9 @@ namespace NarrativeEngine
                 // events. Safe to register at kDataLoaded — the event
                 // source holder exists by then.
                 CombatEventLog::Initialize();
+                // WeatherEventLog is pure-poll (no sinks). Initialize
+                // here for logging symmetry; Tick drives its Poll.
+                WeatherEventLog::Initialize();
                 AsyncDispatch::Start();
                 BeatRegistry::Initialize();
                 // BeatSystem's master poll starts here. Runs
@@ -104,6 +108,7 @@ namespace NarrativeEngine
                 logger::info("OnMessage: kNewGame");
                 DecisionLog::Clear();
                 CombatEventLog::OnRevert();
+                WeatherEventLog::OnRevert();
                 BeatSystem::OnRevert();
                 AmbushBeat_Persistence::OnRevert();
                 NPCLetterBeat_Persistence::OnRevert();
@@ -128,6 +133,7 @@ namespace NarrativeEngine
                 Tick::Stop();
                 DecisionLog::Clear();
                 CombatEventLog::OnRevert();
+                WeatherEventLog::OnRevert();
                 BeatSystem::OnRevert();
                 AmbushBeat_Persistence::OnRevert();
                 NPCLetterBeat_Persistence::OnRevert();
@@ -141,6 +147,10 @@ namespace NarrativeEngine
                 // high-process actors so recovery detection works for
                 // any actor mid-bleedout at save time.
                 CombatEventLog::OnPostLoadGame();
+                // Seed WeatherEventLog's baseline category from the
+                // freshly-loaded sky so the first Poll doesn't emit a
+                // bogus transition event.
+                WeatherEventLog::OnPostLoadGame();
                 Tick::Start();
                 break;
             default:
@@ -154,6 +164,7 @@ namespace NarrativeEngine
             PhaseTracker::OnSave(intfc);
             DecisionLog::OnSave(intfc);
             CombatEventLog::OnSave(intfc);
+            WeatherEventLog::OnSave(intfc);
             BeatSystem::OnSave(intfc);
             AmbushBeat_Persistence::OnSave(intfc);
             NPCLetterBeat_Persistence::OnSave(intfc);
@@ -183,6 +194,9 @@ namespace NarrativeEngine
                     break;
                 case CombatEventLog::kRecordTypeId:
                     CombatEventLog::OnLoad(intfc, version, length);
+                    break;
+                case WeatherEventLog::kRecordTypeId:
+                    WeatherEventLog::OnLoad(intfc, version, length);
                     break;
                 case BeatSystem::kRecordTypeId:
                     BeatSystem::OnLoad(intfc, version, length);
@@ -221,6 +235,7 @@ namespace NarrativeEngine
             PhaseTracker::OnRevert();
             DecisionLog::OnRevert();
             CombatEventLog::OnRevert();
+            WeatherEventLog::OnRevert();
             BeatSystem::OnRevert();
             AmbushBeat_Persistence::OnRevert();
             NPCLetterBeat_Persistence::OnRevert();

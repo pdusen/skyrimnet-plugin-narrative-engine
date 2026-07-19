@@ -6,6 +6,7 @@
 #include <logger.h>
 #include <PhaseTracker.h>
 #include <Settings.h>
+#include <WeatherEventLog.h>
 
 #include <algorithm>
 #include <atomic>
@@ -74,6 +75,14 @@ namespace NarrativeEngine::Tick
             // completion detection lives inside each beat's Tick under
             // BeatSystem's master poll, not here.
             CombatEventLog::Poll();
+            // WeatherEventLog samples Sky state on a pause-aware cadence
+            // (default 30s of unpaused play between samples). We only
+            // reach this line when the game is unpaused, so `elapsedSec`
+            // — the wall-clock delta since the previous PollOnMainThread
+            // cycle, capped at ~500ms during normal play — is genuine
+            // unpaused elapsed time. WeatherEventLog accumulates it and
+            // fires the sample once the accumulator crosses the interval.
+            WeatherEventLog::Poll(elapsedSec);
 
             // Killswitch — when the dashboard's debug toggle is off, we
             // consume the elapsed sample above (so re-enabling doesn't
