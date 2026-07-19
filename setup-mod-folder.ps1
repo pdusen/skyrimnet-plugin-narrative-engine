@@ -328,4 +328,39 @@ else {
     Write-Host "PAPYRUS_COMPILER: $($env:PAPYRUS_COMPILER)" -ForegroundColor DarkGray
 }
 
+# --- sanity-check Spriggit CLI (warn-only) ----------------------------------
+#
+# sync-esp.ps1 invokes Spriggit.CLI.exe to (de)serialize NarrativeEngine.esp
+# against the YAML tree under esp/plugin/. Without it, every build's ESP sync
+# step will fail. Honor $env:SPRIGGIT_CLI as an explicit override, otherwise
+# probe PATH for the same name candidates the sync script uses. Warn-only so
+# a fresh clone can still complete setup; the user can install Spriggit later
+# and rerun.
+
+$spriggitCli = $null
+if ($env:SPRIGGIT_CLI) {
+    if (Test-Path -LiteralPath $env:SPRIGGIT_CLI -PathType Leaf) {
+        $spriggitCli = $env:SPRIGGIT_CLI
+    }
+    else {
+        Write-Warning "SPRIGGIT_CLI ('$($env:SPRIGGIT_CLI)') does not point at an existing file."
+    }
+}
+else {
+    foreach ($name in @('Spriggit.CLI.exe', 'Spriggit.CLI', 'spriggit')) {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($cmd) {
+            $spriggitCli = $cmd.Source
+            break
+        }
+    }
+}
+
+if ($spriggitCli) {
+    Write-Host "Spriggit CLI: $spriggitCli" -ForegroundColor DarkGray
+}
+else {
+    Write-Warning "Spriggit CLI (Spriggit.CLI.exe) not found on PATH. sync-esp.ps1 needs it to (de)serialize esp/plugin/; install from https://github.com/Mutagen-Modding/Spriggit/releases, or set SPRIGGIT_CLI to its full path."
+}
+
 Write-Host "Setup complete." -ForegroundColor Cyan
