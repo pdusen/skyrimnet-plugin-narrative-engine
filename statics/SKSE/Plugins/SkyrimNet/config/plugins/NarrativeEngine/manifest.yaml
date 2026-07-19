@@ -29,7 +29,7 @@
 
 plugin:
   name: NarrativeEngine
-  version: "0.1.2"
+  version: "0.1.3"
   description: "AI Director for Skyrim, layered on top of SkyrimNet — judges story-arc pacing per real-time tick."
 
 variants:
