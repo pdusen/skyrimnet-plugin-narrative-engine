@@ -41,16 +41,49 @@ git tag --list 'v*' --sort=-v:refname | Select-Object -First 1
 - If a tag exists, the change window is `<tag>..HEAD`.
 - If no tag exists (first release), the range is the entire history.
 
-Read the changes with:
+Read the changes at two levels — this is a hard requirement, not a suggestion,
+because commit subjects alone routinely miss detail that has to appear in
+release notes (save-compatibility warnings, renamed editor IDs / form IDs,
+upgrade steps, changed prompt/manifest surface, etc.).
+
+**Level 1 — full commit messages, not just subjects.** Read every commit's
+entire message including its body:
 
 ```powershell
-git log --no-merges --pretty=format:'%h %s' <range>
-git diff --stat <range>
+git log --no-merges --format='commit %h%n%s%n%n%b%n---' <range>
 ```
 
-Skim commit subjects for user-visible changes. Ignore purely mechanical churn
-(formatter runs, doc-only edits with no player-facing effect) when it isn't
-relevant to a user's install decision.
+Authors put `IMPORTANT:` warnings, save-compat notes, and "users must do X
+before updating" caveats in the body. `--pretty=format:'%h %s'` (subject-only)
+hides all of that, and any of it that exists MUST be surfaced in the Notes
+section of the draft in step 4.
+
+**Level 2 — the actual diff, not just `--stat`.** Read `--stat` first for a
+map of what changed, then inspect the actual diff content for player-facing
+areas the commit messages didn't fully cover:
+
+```powershell
+git diff --stat <range>
+git diff <range> -- <interesting paths>
+```
+
+Paths that are almost always worth inspecting when they appear in `--stat`:
+
+- `esp/plugin/**` — renamed / renumbered forms, added quests, editor-ID
+  changes. These are the diffs that surface save-compat concerns.
+- `statics/SKSE/Plugins/SkyrimNet/prompts/**` — prompt changes affect LLM
+  behavior; often not fully captured in the commit subject.
+- `statics/MCM/**` and `statics/SKSE/Plugins/NarrativeEngine.ini` — user
+  tunables added / removed / renamed.
+- `statics/SKSE/Plugins/SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml`
+  — action / hook surface exposed to SkyrimNet.
+- `dashboard/**` — dashboard tabs / controls the player interacts with.
+
+Skim commit subjects and bodies for user-visible changes. Ignore purely
+mechanical churn (formatter runs, doc-only edits with no player-facing effect)
+when it isn't relevant to a user's install decision. But do NOT ignore
+anything a commit body flags as important, and do NOT rely on commit messages
+alone — cross-check against the actual diff.
 
 ## 3. Propose a version number
 
