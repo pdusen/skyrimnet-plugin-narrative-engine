@@ -8,6 +8,7 @@
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
 #include <Decorators.h>
+#include <EventHistoryWriter.h>
 #include <LetterPool.h>
 #include <logger.h>
 #include <MCMEventSink.h>
@@ -18,6 +19,7 @@
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <Tick.h>
+#include <TravelEventLog.h>
 #include <VisitState.h>
 #include <WeatherEventLog.h>
 
@@ -64,6 +66,13 @@ namespace NarrativeEngine
                 // WeatherEventLog is pure-poll (no sinks). Initialize
                 // here for logging symmetry; Tick drives its Poll.
                 WeatherEventLog::Initialize();
+                // TravelEventLog: registers TESFastTravelEndEvent sink
+                // in Step 7. Tick drives the location-diff Poll.
+                TravelEventLog::Initialize();
+                // EventHistoryWriter: opens the rotating history log
+                // at OnSessionStart (kNewGame / kPostLoadGame).
+                // Initialize just registers the module.
+                EventHistoryWriter::Initialize();
                 AsyncDispatch::Start();
                 BeatRegistry::Initialize();
                 // BeatSystem's master poll starts here. Runs
@@ -109,12 +118,17 @@ namespace NarrativeEngine
                 DecisionLog::Clear();
                 CombatEventLog::OnRevert();
                 WeatherEventLog::OnRevert();
+                TravelEventLog::OnRevert();
                 BeatSystem::OnRevert();
                 AmbushBeat_Persistence::OnRevert();
                 NPCLetterBeat_Persistence::OnRevert();
                 NPCVisitBeat_Persistence::OnRevert();
                 VisitState::OnRevert();
                 PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
+                // Rotate the history log for the new session BEFORE
+                // Tick starts polling — the first Poll cycle needs the
+                // file already open to actually write anything.
+                EventHistoryWriter::OnSessionStart();
                 Tick::Start();
                 break;
             case SKSE::MessagingInterface::kPreLoadGame:
@@ -131,9 +145,15 @@ namespace NarrativeEngine
                 // Character A's saved state persists into Character
                 // B's session if B's save doesn't have the record).
                 Tick::Stop();
+                // Final flush + close for the outgoing session's
+                // history file — must happen BEFORE the *EventLog
+                // OnReverts clear the pending queues, or we'd lose
+                // any events that hadn't landed on disk yet.
+                EventHistoryWriter::OnSessionEnd();
                 DecisionLog::Clear();
                 CombatEventLog::OnRevert();
                 WeatherEventLog::OnRevert();
+                TravelEventLog::OnRevert();
                 BeatSystem::OnRevert();
                 AmbushBeat_Persistence::OnRevert();
                 NPCLetterBeat_Persistence::OnRevert();
@@ -151,6 +171,12 @@ namespace NarrativeEngine
                 // freshly-loaded sky so the first Poll doesn't emit a
                 // bogus transition event.
                 WeatherEventLog::OnPostLoadGame();
+                // Seed TravelEventLog's baseline snapshot too, for the
+                // same reason.
+                TravelEventLog::OnPostLoadGame();
+                // Rotate + open the history log for the loaded
+                // session BEFORE Tick starts polling.
+                EventHistoryWriter::OnSessionStart();
                 Tick::Start();
                 break;
             default:
@@ -165,6 +191,7 @@ namespace NarrativeEngine
             DecisionLog::OnSave(intfc);
             CombatEventLog::OnSave(intfc);
             WeatherEventLog::OnSave(intfc);
+            TravelEventLog::OnSave(intfc);
             BeatSystem::OnSave(intfc);
             AmbushBeat_Persistence::OnSave(intfc);
             NPCLetterBeat_Persistence::OnSave(intfc);
@@ -197,6 +224,9 @@ namespace NarrativeEngine
                     break;
                 case WeatherEventLog::kRecordTypeId:
                     WeatherEventLog::OnLoad(intfc, version, length);
+                    break;
+                case TravelEventLog::kRecordTypeId:
+                    TravelEventLog::OnLoad(intfc, version, length);
                     break;
                 case BeatSystem::kRecordTypeId:
                     BeatSystem::OnLoad(intfc, version, length);
@@ -236,6 +266,7 @@ namespace NarrativeEngine
             DecisionLog::OnRevert();
             CombatEventLog::OnRevert();
             WeatherEventLog::OnRevert();
+            TravelEventLog::OnRevert();
             BeatSystem::OnRevert();
             AmbushBeat_Persistence::OnRevert();
             NPCLetterBeat_Persistence::OnRevert();

@@ -126,6 +126,17 @@ namespace NarrativeEngine::Settings
             dst.weatherEventsDebounceSeconds = static_cast<int>(
                 ini.GetLongValue("WeatherEvents", "iWeatherEventDebounceSeconds", dst.weatherEventsDebounceSeconds));
 
+            dst.eventHistoryEnabled = ini.GetBoolValue("EventHistory", "bEventHistoryEnabled", dst.eventHistoryEnabled);
+            dst.eventHistoryFlushIntervalSeconds = static_cast<int>(ini.GetLongValue(
+                "EventHistory", "iEventHistoryFlushIntervalSeconds", dst.eventHistoryFlushIntervalSeconds));
+
+            dst.travelEventsMaxStored =
+                static_cast<int>(ini.GetLongValue("TravelEvents", "iTravelEventsMaxStored", dst.travelEventsMaxStored));
+            dst.travelCondensationWindowSeconds = static_cast<int>(ini.GetLongValue(
+                "TravelEvents", "iTravelCondensationWindowSeconds", dst.travelCondensationWindowSeconds));
+            dst.travelFollowerRadiusUnits = static_cast<int>(
+                ini.GetLongValue("TravelEvents", "iTravelFollowerRadiusUnits", dst.travelFollowerRadiusUnits));
+
             dst.enableAmbush = ini.GetBoolValue("Beats", "bEnableAmbush", dst.enableAmbush);
             dst.enableNpcLetter = ini.GetBoolValue("Beats", "bEnableNpcLetter", dst.enableNpcLetter);
 

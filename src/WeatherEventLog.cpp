@@ -84,6 +84,13 @@ namespace NarrativeEngine::WeatherEventLog
         std::mutex g_mutex;
         std::vector<InternalEvent> g_events;
 
+        // Session-only pending queue drained by EventHistoryWriter.
+        // Populated at emit time (right after PushLocked). Not
+        // persisted — anything sitting here at save/load boundary
+        // gets flushed to the outgoing session's history file by
+        // EventHistoryWriter::OnSessionEnd and then discarded.
+        std::vector<EventLogUtil::HistoryEntry> g_pendingHistory;
+
         // Sentinel unpopulated snapshot — indicates "no baseline yet";
         // the next Poll seeds instead of diffing.
         std::optional<WeatherCategory> g_lastCategory;
@@ -221,6 +228,72 @@ namespace NarrativeEngine::WeatherEventLog
                 g_events.erase(g_events.begin());
             }
         }
+
+        // Transition-to-sentence rendering. The table is deliberately
+        // small and hand-authored — the LLM reads `text`, and a
+        // deterministic sentence per transition is easier to reason
+        // about than templating. Fallback: "The weather has shifted."
+        //
+        // Slug conventions: <primary>_<direction> where direction is
+        // start / stop / intensify / subside. Slugs are stable and
+        // exposed as `ne_kind` so any future consumer can branch on
+        // kind without re-parsing the text.
+        struct Rendering
+        {
+            std::string_view slug;
+            std::string_view text;
+        };
+
+        // Classify the transition into (slug, sentence). Called with
+        // guaranteed-non-equal categories.
+        Rendering ClassifyTransition(WeatherCategory from, WeatherCategory to)
+        {
+            // Same primary category, stormy bit flipped: intensify /
+            // subside.
+            if (from.primary == to.primary) {
+                if (!from.stormy && to.stormy) {
+                    if (to.primary == Primary::Snowy) {
+                        return {"blizzard_start", "A blizzard has struck."};
+                    }
+                    return {"storm_intensify", "The wind is picking up and the storm intensifies."};
+                }
+                if (from.stormy && !to.stormy) {
+                    return {"storm_subside", "The storm is subsiding."};
+                }
+                return {"weather_shift", "The weather has shifted."};
+            }
+
+            // Precipitation transitions dominate the vocabulary — they
+            // read as the most narratively concrete weather changes.
+            if (to.primary == Primary::Rainy) {
+                if (to.stormy) {
+                    return {"storm_start", "A thunderstorm is rolling in."};
+                }
+                return {"rain_start", "Rain has started to fall."};
+            }
+            if (to.primary == Primary::Snowy) {
+                if (to.stormy) {
+                    return {"blizzard_start", "A blizzard has struck."};
+                }
+                return {"snow_start", "Snow is beginning to fall."};
+            }
+            if (from.primary == Primary::Rainy) {
+                return {"rain_stop", "The rain has stopped."};
+            }
+            if (from.primary == Primary::Snowy) {
+                return {"snow_stop", "The snow is letting up."};
+            }
+
+            // Non-precipitation transitions between clear/cloudy/other.
+            if (to.primary == Primary::Pleasant) {
+                return {"clear_start", "The clouds have parted and the sun is coming out."};
+            }
+            if (to.primary == Primary::Cloudy) {
+                return {"cloudy_start", "The sky has clouded over."};
+            }
+
+            return {"weather_shift", "The weather has shifted."};
+        }
     } // namespace
 
     void Initialize()
@@ -347,80 +420,27 @@ namespace NarrativeEngine::WeatherEventLog
                      e.from.stormy,
                      PrimaryName(e.to.primary),
                      e.to.stormy);
+
+        // History-writer feed: render the transition to its final
+        // sentence NOW using the same table GetRenderedTail uses, so
+        // the writer just concatenates without re-rendering. Gated
+        // on the master switch so the queue can't grow unbounded on
+        // long sessions with the writer off.
+        if (Settings::Get().eventHistoryEnabled) {
+            const auto r = ClassifyTransition(e.from, e.to);
+            EventLogUtil::HistoryEntry h;
+            h.localTime = e.localTime;
+            h.inGameTimestamp = EventLogUtil::CurrentInGameTimestamp();
+            h.sourceKind = std::string("internal/weather_event/") + std::string(r.slug);
+            h.body = std::string(r.text);
+            g_pendingHistory.push_back(std::move(h));
+        }
+
         PushLocked(std::move(e));
 
         g_lastCategory = sampled;
         g_unpausedSecondsSinceLastEmit = 0.0;
     }
-
-    namespace
-    {
-        // Transition-to-sentence rendering. The table is deliberately
-        // small and hand-authored — the LLM reads `text`, and a
-        // deterministic sentence per transition is easier to reason
-        // about than templating. Fallback: "The weather has shifted."
-        //
-        // Slug conventions: <primary>_<direction> where direction is
-        // start / stop / intensify / subside. Slugs are stable and
-        // exposed as `ne_kind` so any future consumer can branch on
-        // kind without re-parsing the text.
-        struct Rendering
-        {
-            std::string_view slug;
-            std::string_view text;
-        };
-
-        // Classify the transition into (slug, sentence). Called with
-        // guaranteed-non-equal categories.
-        Rendering ClassifyTransition(WeatherCategory from, WeatherCategory to)
-        {
-            // Same primary category, stormy bit flipped: intensify /
-            // subside.
-            if (from.primary == to.primary) {
-                if (!from.stormy && to.stormy) {
-                    if (to.primary == Primary::Snowy) {
-                        return {"blizzard_start", "A blizzard has struck."};
-                    }
-                    return {"storm_intensify", "The wind is picking up and the storm intensifies."};
-                }
-                if (from.stormy && !to.stormy) {
-                    return {"storm_subside", "The storm is subsiding."};
-                }
-                return {"weather_shift", "The weather has shifted."};
-            }
-
-            // Precipitation transitions dominate the vocabulary — they
-            // read as the most narratively concrete weather changes.
-            if (to.primary == Primary::Rainy) {
-                if (to.stormy) {
-                    return {"storm_start", "A thunderstorm is rolling in."};
-                }
-                return {"rain_start", "Rain has started to fall."};
-            }
-            if (to.primary == Primary::Snowy) {
-                if (to.stormy) {
-                    return {"blizzard_start", "A blizzard has struck."};
-                }
-                return {"snow_start", "Snow is beginning to fall."};
-            }
-            if (from.primary == Primary::Rainy) {
-                return {"rain_stop", "The rain has stopped."};
-            }
-            if (from.primary == Primary::Snowy) {
-                return {"snow_stop", "The snow is letting up."};
-            }
-
-            // Non-precipitation transitions between clear/cloudy/other.
-            if (to.primary == Primary::Pleasant) {
-                return {"clear_start", "The clouds have parted and the sun is coming out."};
-            }
-            if (to.primary == Primary::Cloudy) {
-                return {"cloudy_start", "The sky has clouded over."};
-            }
-
-            return {"weather_shift", "The weather has shifted."};
-        }
-    } // namespace
 
     nlohmann::json GetRenderedTail(double currentGameTimeSeconds)
     {
@@ -545,5 +565,12 @@ namespace NarrativeEngine::WeatherEventLog
         g_lastCategory.reset();
         g_unpausedSecondsSinceLastCheck = 0.0;
         g_unpausedSecondsSinceLastEmit = 0.0;
+        g_pendingHistory.clear();
+    }
+
+    std::vector<EventLogUtil::HistoryEntry> DrainHistoryTail()
+    {
+        std::scoped_lock lock(g_mutex);
+        return EventLogUtil::DrainVector(g_pendingHistory);
     }
 } // namespace NarrativeEngine::WeatherEventLog

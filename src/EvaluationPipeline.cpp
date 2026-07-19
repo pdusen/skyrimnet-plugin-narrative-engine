@@ -12,6 +12,7 @@
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
+#include <TravelEventLog.h>
 #include <WeatherEventLog.h>
 
 #include <nlohmann/json.hpp>
@@ -286,6 +287,7 @@ namespace NarrativeEngine::EvaluationPipeline
                     std::move(parsed),
                     CombatEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
                     WeatherEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
+                    TravelEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
                     snapshot.player.gameTimeSeconds);
             } else {
                 if (parsed.is_discarded() && !snapshot.skyrimNetEventsJSON.empty()) {
@@ -299,6 +301,7 @@ namespace NarrativeEngine::EvaluationPipeline
                     nlohmann::json::array(),
                     CombatEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
                     WeatherEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
+                    TravelEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
                     snapshot.player.gameTimeSeconds);
             }
         }

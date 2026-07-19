@@ -14,6 +14,7 @@
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
 #include <Tick.h>
+#include <TravelEventLog.h>
 #include <VisitConclusionPoll.h>
 #include <VisitState.h>
 #include <WeatherEventLog.h>
@@ -845,6 +846,7 @@ namespace NarrativeEngine::DashboardUIManager
             SkyrimNetEvents::BuildMergedTimeline(std::move(skyrimSide),
                                                  CombatEventLog::GetRenderedTail(currentGameTimeSeconds),
                                                  WeatherEventLog::GetRenderedTail(currentGameTimeSeconds),
+                                                 TravelEventLog::GetRenderedTail(currentGameTimeSeconds),
                                                  currentGameTimeSeconds);
 
         // letter_pool — full per-slot snapshot for the Letters tab, plus

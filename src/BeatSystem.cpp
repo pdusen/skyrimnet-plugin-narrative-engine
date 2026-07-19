@@ -14,6 +14,7 @@
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
+#include <TravelEventLog.h>
 #include <VisitComposer.h>
 #include <WeatherEventLog.h>
 
@@ -710,6 +711,7 @@ namespace NarrativeEngine::BeatSystem
                     std::move(skyrimSide),
                     CombatEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
                     WeatherEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
+                    TravelEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
                     snapshot.player.gameTimeSeconds);
 
                 if (merged.is_array() && merged.size() > kBeatSelectEventTailSize) {

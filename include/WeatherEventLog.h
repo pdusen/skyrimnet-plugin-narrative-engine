@@ -1,8 +1,11 @@
 #pragma once
 
+#include <EventLogUtil.h>
+
 #include <nlohmann/json_fwd.hpp>
 
 #include <cstdint>
+#include <vector>
 
 namespace SKSE
 {
@@ -84,4 +87,13 @@ namespace NarrativeEngine::WeatherEventLog
     void OnSave(SKSE::SerializationInterface* intfc);
     void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);
     void OnRevert();
+
+    // Drain the session-only pending history queue for the
+    // EventHistoryWriter. Called on the writer's flush cadence.
+    // Each entry corresponds to one emitted weather_event and carries
+    // its absolute in-game timestamp (captured at emit time) plus the
+    // rendered sentence body. Not persisted; anything pending at
+    // save/load boundary is written to the outgoing session's history
+    // file and discarded.
+    std::vector<EventLogUtil::HistoryEntry> DrainHistoryTail();
 } // namespace NarrativeEngine::WeatherEventLog

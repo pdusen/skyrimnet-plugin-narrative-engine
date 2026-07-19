@@ -142,6 +142,41 @@ namespace NarrativeEngine::Settings
         // category flips inside a single sampling window.
         int weatherEventsDebounceSeconds = 20;
 
+        // [EventHistory]
+        // Testing aid: writes every emitted internal event plus
+        // SkyrimNet's own event stream to a rotating session-scoped
+        // file at Data/../SKSE/NarrativeEngine_EventHistory.log,
+        // each line prefixed with an absolute in-game timestamp.
+        // Not the same as the ring-buffered tail the LLM sees. Session
+        // rotation keeps the previous 5 files.
+        //
+        // Disabled by default. When disabled, the file is never
+        // opened AND each event log skips its per-emit push to the
+        // pending queue (so the queue can't grow unbounded on a
+        // long-running session with the writer off). Flip to true
+        // for Step 9 testing and back to false after.
+        bool eventHistoryEnabled = false;
+        // Flush cadence in unpaused real seconds (Tick-driven
+        // accumulator). Weather / travel events emit slowly; 5s is a
+        // comfortable trade between file-write frequency and how long
+        // events sit in the pending queues before landing on disk.
+        int eventHistoryFlushIntervalSeconds = 5;
+
+        // [TravelEvents]
+        // Ring-buffer cap on retained internal travel events.
+        int travelEventsMaxStored = 128;
+        // Maximum inter-event gap (in unpaused real seconds) within a
+        // condensable run. Consecutive travel events whose localTime
+        // gap is <= this window collapse together in GetRenderedTail:
+        // net-zero runs drop or fold to a "visited X" summary; non-zero
+        // runs fold to a "travelled from A to B" summary.
+        int travelCondensationWindowSeconds = 60;
+        // Follower inclusion distance (engine units). Any alive
+        // PlayerTeammate within this radius of the player at emission
+        // time gets baked into the event's partyNames list. ~4000
+        // units ≈ 60 ft — visually plausible "with you" range.
+        int travelFollowerRadiusUnits = 4000;
+
         // [Beats]
         // Per-beat enable defaults seeded into BeatRegistry at Register
         // time. Dashboard Dispatch tab surfaces runtime toggles for

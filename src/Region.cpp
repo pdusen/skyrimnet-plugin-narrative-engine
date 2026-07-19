@@ -5,72 +5,114 @@
 #include <array>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace NarrativeEngine::Region
 {
     namespace
     {
-        struct HoldEntry
+        // Upper bound on parentLoc traversal depth. Vanilla chains are
+        // typically 2–4 deep; cap defensively against malformed data.
+        constexpr int kMaxParentDepth = 16;
+
+        // Small side table: hold-level BGSLocation EditorID → Climate.
+        // Populates the Climate field of the resolved Resolution so
+        // future biome-gated beats can filter by climate without doing
+        // their own hold lookup. Everything else — hold identity and
+        // display name — comes straight from the resolved location.
+        //
+        // Empty entries or missing holds are non-fatal: they resolve to
+        // Climate::Unknown but still carry a valid holdFormID +
+        // display name so travel event detection still works.
+        //
+        // If any EditorID fails to resolve at cache-build time, one
+        // warning is logged and the entry is skipped. Mirror lives at
+        // docs/vanilla/regions/holds.csv.
+        struct HoldClimateEntry
         {
             std::string_view editorId;
             Climate climate;
-            std::string_view displayName;
+        };
+        constexpr std::array<HoldClimateEntry, 10> kHoldClimateTable = {
+            HoldClimateEntry{"WhiterunHoldLocation", Climate::Tundra},
+            HoldClimateEntry{"FalkreathHoldLocation", Climate::Pine},
+            HoldClimateEntry{"HjaalmarchHoldLocation", Climate::Marsh},
+            HoldClimateEntry{"WinterholdHoldLocation", Climate::Snow},
+            HoldClimateEntry{"PaleHoldLocation", Climate::Snow},
+            HoldClimateEntry{"ReachHoldLocation", Climate::Reach},
+            HoldClimateEntry{"RiftHoldLocation", Climate::Rift},
+            HoldClimateEntry{"HaafingarHoldLocation", Climate::Coast},
+            HoldClimateEntry{"EastmarchHoldLocation", Climate::Volcanic},
+            HoldClimateEntry{"DLC2SolstheimLocation", Climate::Solstheim},
         };
 
-        // Curated table of vanilla per-hold TESRegion EditorIDs. The
-        // Tamriel root region is deliberately unmapped — it's the parent
-        // of every outdoor cell in Skyrim and matching it would swallow
-        // every hold. Only hold-level entries live here.
-        //
-        // Mirror lives at docs/vanilla/regions/holds.csv (source of truth
-        // for edits — keep both in sync). Confirm any additions against
-        // the CK / xEdit; a wrong EditorID silently degrades to
-        // Climate::Unknown for that hold.
-        constexpr std::array<HoldEntry, 10> kHoldTable = {
-            HoldEntry{"HoldWhiterunRegion", Climate::Tundra, "Whiterun Hold"},
-            HoldEntry{"HoldFalkreathRegion", Climate::Pine, "Falkreath Hold"},
-            HoldEntry{"HoldHjaalmarchRegion", Climate::Marsh, "Hjaalmarch"},
-            HoldEntry{"HoldWinterholdRegion", Climate::Snow, "Winterhold"},
-            HoldEntry{"HoldThePaleRegion", Climate::Snow, "The Pale"},
-            HoldEntry{"HoldTheReachRegion", Climate::Reach, "The Reach"},
-            HoldEntry{"HoldTheRiftRegion", Climate::Rift, "The Rift"},
-            HoldEntry{"HoldHaafingarRegion", Climate::Coast, "Haafingar"},
-            HoldEntry{"HoldEastmarchRegion", Climate::Volcanic, "Eastmarch"},
-            HoldEntry{"DLC2SolstheimRegion", Climate::Solstheim, "Solstheim"},
-        };
+        // Cached LocTypeHold keyword pointer. Resolves once on first
+        // call; nullptr on unrecoverable failure (missing powerofthree's
+        // Tweaks or the vanilla keyword renamed), in which case every
+        // Region query returns an empty Resolution.
+        RE::BGSKeyword* LocTypeHoldKeyword()
+        {
+            static RE::BGSKeyword* cached = []() -> RE::BGSKeyword* {
+                auto* form = RE::TESForm::LookupByEditorID("LocTypeHold");
+                if (!form) {
+                    logger::warn("Region: LocTypeHold keyword did not resolve; hold detection disabled "
+                                 "(is powerofthree's Tweaks installed?)");
+                    return nullptr;
+                }
+                auto* kw = form->As<RE::BGSKeyword>();
+                if (!kw) {
+                    logger::warn("Region: 'LocTypeHold' resolved to non-keyword form (type=0x{:02X}); "
+                                 "hold detection disabled",
+                                 static_cast<unsigned>(form->GetFormType()));
+                    return nullptr;
+                }
+                return kw;
+            }();
+            return cached;
+        }
 
-        // Cached resolution table: FormID → HoldEntry pointer. Built once
-        // on first ForCell / ForPlayer call; subsequent lookups are a
-        // single hash-map hit per region in the cell's region list.
-        //
-        // Unresolved EditorIDs log a single warning at cache-build time
-        // (missing powerofthree's Tweaks, or the CK renamed a region
-        // between game versions). Filter degrades open — resolves to
-        // Climate::Unknown for callers of that hold.
-        const std::unordered_map<RE::FormID, const HoldEntry*>& ResolvedTable()
+        // FormID → Climate cache, built once on first call from the
+        // hardcoded EditorID table. Unresolved EditorIDs log one warning
+        // and are skipped (the hold still resolves — it just gets
+        // Climate::Unknown).
+        const std::unordered_map<RE::FormID, Climate>& ResolvedClimateTable()
         {
             static const auto cache = []() {
-                std::unordered_map<RE::FormID, const HoldEntry*> out;
-                out.reserve(kHoldTable.size());
-                for (const auto& entry : kHoldTable) {
+                std::unordered_map<RE::FormID, Climate> out;
+                out.reserve(kHoldClimateTable.size());
+                for (const auto& entry : kHoldClimateTable) {
                     auto* form = RE::TESForm::LookupByEditorID(entry.editorId);
                     if (!form) {
-                        logger::warn(
-                            "Region: EditorID '{}' did not resolve; hold degraded to Unknown (is powerofthree's Tweaks installed?)",
-                            entry.editorId);
+                        logger::warn("Region: climate-table EditorID '{}' did not resolve; hold will resolve "
+                                     "with Climate::Unknown",
+                                     entry.editorId);
                         continue;
                     }
-                    if (form->GetFormType() != RE::FormType::Region) {
-                        logger::warn("Region: EditorID '{}' resolved to non-Region form (type=0x{:02X})",
-                                     entry.editorId,
-                                     static_cast<unsigned>(form->GetFormType()));
-                        continue;
-                    }
-                    out.emplace(form->GetFormID(), &entry);
+                    out.emplace(form->GetFormID(), entry.climate);
                 }
                 return out;
             }();
             return cache;
+        }
+
+        // Log one warning the first time we see a hold-level location
+        // whose FormID isn't in the climate table. Helps identify what
+        // additions kHoldClimateTable needs.
+        void NoteUnclassifiedHold(RE::BGSLocation* loc)
+        {
+            if (!loc)
+                return;
+            static std::unordered_set<RE::FormID> logged;
+            const auto id = loc->GetFormID();
+            if (logged.insert(id).second) {
+                const char* edid = loc->GetFormEditorID();
+                const char* full = loc->GetFullName();
+                logger::info("Region: hold-level location [0x{:08X}] EditorID='{}' FullName='{}' has no "
+                             "Climate mapping (Climate::Unknown returned)",
+                             id,
+                             (edid && *edid) ? edid : "?",
+                             (full && *full) ? full : "?");
+            }
         }
     } // namespace
 
@@ -80,33 +122,38 @@ namespace NarrativeEngine::Region
         if (!pc) {
             return {};
         }
-        return ForCell(pc->GetParentCell());
+        return ForLocation(pc->GetCurrentLocation());
     }
 
-    Resolution ForCell(RE::TESObjectCELL* cell)
+    Resolution ForLocation(RE::BGSLocation* startLoc)
     {
-        if (!cell) {
+        if (!startLoc) {
             return {};
         }
-        auto* list = cell->GetRegionList(false);
-        if (!list) {
+        auto* holdKw = LocTypeHoldKeyword();
+        if (!holdKw) {
             return {};
         }
-        const auto& table = ResolvedTable();
-        for (auto* region : *list) {
-            if (!region) {
-                continue;
+
+        RE::BGSLocation* loc = startLoc;
+        for (int depth = 0; loc != nullptr && depth < kMaxParentDepth; ++depth) {
+            if (loc->HasKeyword(holdKw)) {
+                Resolution r;
+                r.holdFormID = loc->GetFormID();
+                if (const char* full = loc->GetFullName(); full && *full) {
+                    r.holdDisplayName = full;
+                } else if (const char* edid = loc->GetFormEditorID(); edid && *edid) {
+                    r.holdDisplayName = edid;
+                }
+                const auto& table = ResolvedClimateTable();
+                if (const auto it = table.find(loc->GetFormID()); it != table.end()) {
+                    r.climate = it->second;
+                } else {
+                    NoteUnclassifiedHold(loc);
+                }
+                return r;
             }
-            const auto it = table.find(region->GetFormID());
-            if (it == table.end()) {
-                continue;
-            }
-            const HoldEntry* entry = it->second;
-            Resolution out;
-            out.climate = entry->climate;
-            out.holdRegionFormID = region->GetFormID();
-            out.holdDisplayName = std::string(entry->displayName);
-            return out;
+            loc = loc->parentLoc;
         }
         return {};
     }

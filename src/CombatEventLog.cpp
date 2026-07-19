@@ -69,6 +69,16 @@ namespace NarrativeEngine::CombatEventLog
         double g_currentEncounterStartRealTime = 0.0;
         std::unordered_map<RE::FormID, std::string> g_bleedingOut;
 
+        // Session-only pending queue drained by EventHistoryWriter.
+        // Stores raw events with the emit-time in-game timestamp;
+        // DrainHistoryTail renders bodies at drain time.
+        struct PendingHistoryItem
+        {
+            InternalEvent event;
+            std::string inGameTimestamp;
+        };
+        std::vector<PendingHistoryItem> g_pendingHistory;
+
         // Tracks the player's IsInCombat as observed on the last Poll() call.
         // Flip from false → true emits combat_start; true → false emits
         // combat_end. Seeded in OnPostLoadGame, reset in OnRevert.
@@ -275,6 +285,17 @@ namespace NarrativeEngine::CombatEventLog
 
         void PushLocked(InternalEvent evt)
         {
+            // Feed the history-writer's pending queue first. Timestamp
+            // captured NOW so the log preserves emit-time ordering
+            // regardless of when the writer's flush cadence runs.
+            // Gated on the master switch so the queue can't grow
+            // unbounded on long sessions with the writer off.
+            if (Settings::Get().eventHistoryEnabled) {
+                PendingHistoryItem item;
+                item.event = evt;
+                item.inGameTimestamp = EventLogUtil::CurrentInGameTimestamp();
+                g_pendingHistory.push_back(std::move(item));
+            }
             g_events.push_back(std::move(evt));
             while (g_events.size() > MaxStored()) {
                 g_events.erase(g_events.begin());
@@ -296,35 +317,36 @@ namespace NarrativeEngine::CombatEventLog
 
         // ----------- rendered text --------------------------------------
 
-        std::string RenderText(const InternalEvent& e, double currentGameTimeSeconds)
+        // Body-only rendering — same output as RenderText but without
+        // the "[N ago]" prefix. Used by the history-writer drain path,
+        // which prepends an absolute in-game timestamp instead.
+        std::string RenderBody(const InternalEvent& e)
         {
-            std::string body;
             switch (e.kind) {
             case Kind::CombatStart:
-                body = e.actorName + " enters combat";
-                break;
+                return e.actorName + " enters combat";
             case Kind::CombatEnd:
-                body = e.actorName + " leaves combat";
-                break;
+                return e.actorName + " leaves combat";
             case Kind::Hit:
                 if (e.actorIsNamedActor) {
-                    body = e.actorName + " strikes " + e.targetName;
-                } else if (!e.actorName.empty()) {
-                    body = e.targetName + " took damage from " + e.actorName;
-                } else {
-                    body = e.targetName + " took damage";
+                    return e.actorName + " strikes " + e.targetName;
                 }
-                break;
+                if (!e.actorName.empty()) {
+                    return e.targetName + " took damage from " + e.actorName;
+                }
+                return e.targetName + " took damage";
             case Kind::Collapse:
-                body = e.actorName + " collapses";
-                break;
+                return e.actorName + " collapses";
             case Kind::RegainFooting:
-                body = e.actorName + " regains their footing";
-                break;
+                return e.actorName + " regains their footing";
             }
+            return {};
+        }
 
+        std::string RenderText(const InternalEvent& e, double currentGameTimeSeconds)
+        {
             const double delta = currentGameTimeSeconds - e.gameTime;
-            return "[" + SkyrimNetEvents::FormatRelativeGameTime(delta < 0.0 ? 0.0 : delta) + "] " + body;
+            return "[" + SkyrimNetEvents::FormatRelativeGameTime(delta < 0.0 ? 0.0 : delta) + "] " + RenderBody(e);
         }
 
         // ----------- sinks ----------------------------------------------
@@ -750,5 +772,26 @@ namespace NarrativeEngine::CombatEventLog
         g_currentEncounterStartRealTime = 0.0;
         g_bleedingOut.clear();
         g_playerInCombatLast = false;
+        g_pendingHistory.clear();
+    }
+
+    std::vector<EventLogUtil::HistoryEntry> DrainHistoryTail()
+    {
+        std::vector<PendingHistoryItem> drained;
+        {
+            std::scoped_lock lock(g_mutex);
+            drained.swap(g_pendingHistory);
+        }
+        std::vector<EventLogUtil::HistoryEntry> out;
+        out.reserve(drained.size());
+        for (const auto& item : drained) {
+            EventLogUtil::HistoryEntry h;
+            h.localTime = item.event.localTime;
+            h.inGameTimestamp = item.inGameTimestamp;
+            h.sourceKind = std::string("internal/combat_event/") + KindName(item.event.kind);
+            h.body = RenderBody(item.event);
+            out.push_back(std::move(h));
+        }
+        return out;
     }
 } // namespace NarrativeEngine::CombatEventLog

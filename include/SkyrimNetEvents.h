@@ -32,14 +32,16 @@ namespace NarrativeEngine::SkyrimNetEvents
     void FormatEventsText(nlohmann::json& events, double currentGameTimeSeconds);
 
     // Merges the SkyrimNet event tail with each internal-source tail
-    // (combat + weather), sorts the union ascending by `localTime`, and
-    // condenses runs of consecutive internal `hit` events between non-
-    // hit events into one summary entry. Weather events are surfaced
-    // as-is — they represent discrete narrative moments and are not
-    // subject to condensation. Discriminates internal events by the
-    // presence of `ne_kind` — SkyrimNet events have no such field.
+    // (combat + weather + travel), sorts the union ascending by
+    // `localTime`, and condenses runs of consecutive internal `hit`
+    // events between non-hit events into one summary entry. Weather and
+    // travel events are surfaced as-is — travel's own GetRenderedTail
+    // does per-source condensation before the merge, and weather events
+    // are discrete narrative moments. Discriminates internal events by
+    // the presence of `ne_kind` — SkyrimNet events have no such field.
     nlohmann::json BuildMergedTimeline(nlohmann::json skyrimNetEvents,
                                        nlohmann::json combatEvents,
                                        nlohmann::json weatherEvents,
+                                       nlohmann::json travelEvents,
                                        double currentGameTimeSeconds);
 } // namespace NarrativeEngine::SkyrimNetEvents

@@ -3,9 +3,11 @@
 #include <AsyncDispatch.h>
 #include <CombatEventLog.h>
 #include <EvaluationPipeline.h>
+#include <EventHistoryWriter.h>
 #include <logger.h>
 #include <PhaseTracker.h>
 #include <Settings.h>
+#include <TravelEventLog.h>
 #include <WeatherEventLog.h>
 
 #include <algorithm>
@@ -83,6 +85,18 @@ namespace NarrativeEngine::Tick
             // unpaused elapsed time. WeatherEventLog accumulates it and
             // fires the sample once the accumulator crosses the interval.
             WeatherEventLog::Poll(elapsedSec);
+            // TravelEventLog samples location + hold on every unpaused
+            // Tick — no throttle, since cell-load transitions can be
+            // transient and we want to catch them all. `elapsedSec` is
+            // passed for signature symmetry with the Tick-driven-
+            // accumulator pattern even though Travel has no cadenced
+            // work today.
+            TravelEventLog::Poll(elapsedSec);
+            // Testing aid: rotating history log at
+            // Data/../SKSE/NarrativeEngine_EventHistory.log. Same
+            // Tick-driven accumulator pattern — the writer throttles
+            // internally to iEventHistoryFlushIntervalSeconds.
+            EventHistoryWriter::Poll(elapsedSec);
 
             // Killswitch — when the dashboard's debug toggle is off, we
             // consume the elapsed sample above (so re-enabling doesn't

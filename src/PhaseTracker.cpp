@@ -8,14 +8,19 @@
 #include <chrono>
 #include <mutex>
 
-// Forward decl to avoid pulling CombatEventLog / WeatherEventLog into the
-// PhaseTracker header. Keeps the dependency one-way (PhaseTracker.cpp →
-// event logs) and out of every translation unit that includes PhaseTracker.h.
+// Forward decls to avoid pulling the event-log headers into
+// PhaseTracker.h. Keeps the dependency one-way (PhaseTracker.cpp →
+// event logs) and out of every translation unit that includes
+// PhaseTracker.h.
 namespace NarrativeEngine::CombatEventLog
 {
     void OnPhaseAdvanced();
 }
 namespace NarrativeEngine::WeatherEventLog
+{
+    void OnPhaseAdvanced();
+}
+namespace NarrativeEngine::TravelEventLog
 {
     void OnPhaseAdvanced();
 }
@@ -213,6 +218,7 @@ namespace NarrativeEngine::PhaseTracker
         // and we don't want to hold two at once.
         CombatEventLog::OnPhaseAdvanced();
         WeatherEventLog::OnPhaseAdvanced();
+        TravelEventLog::OnPhaseAdvanced();
         logger::info("PhaseTracker: advanced {} -> {} (at realTime={:.1f})",
                      PhaseName(previous),
                      PhaseName(newPhase),
@@ -235,6 +241,7 @@ namespace NarrativeEngine::PhaseTracker
         // Same notify-outside-mutex discipline as AdvanceTo.
         CombatEventLog::OnPhaseAdvanced();
         WeatherEventLog::OnPhaseAdvanced();
+        TravelEventLog::OnPhaseAdvanced();
     }
 
     void Tick()

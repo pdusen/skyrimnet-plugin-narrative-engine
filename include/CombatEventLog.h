@@ -1,8 +1,11 @@
 #pragma once
 
+#include <EventLogUtil.h>
+
 #include <nlohmann/json_fwd.hpp>
 
 #include <cstdint>
+#include <vector>
 
 namespace SKSE
 {
@@ -72,4 +75,12 @@ namespace NarrativeEngine::CombatEventLog
     void OnSave(SKSE::SerializationInterface* intfc);
     void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);
     void OnRevert();
+
+    // Drain the session-only pending history queue for the
+    // EventHistoryWriter. See WeatherEventLog::DrainHistoryTail for
+    // shape / semantics — identical contract. hit / collapse /
+    // regain_footing / combat_start / combat_end all get one entry
+    // each; no condensation on this path (the history log is the
+    // "raw record," not the LLM-facing tail).
+    std::vector<EventLogUtil::HistoryEntry> DrainHistoryTail();
 } // namespace NarrativeEngine::CombatEventLog
