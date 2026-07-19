@@ -66,9 +66,27 @@ While the mod is in early alpha (see the README warning), the scheme is
   standard semver — bump MAJOR on breaking changes.
 
 State the current latest tag (or "no prior release"), the proposed new version,
-and a one-sentence justification. Then ask:
+and a one-sentence justification in normal chat text.
 
-> Proposed version: **vX.Y.Z**. Accept, or specify a different one?
+Then present the approval gate using the `AskUserQuestion` tool — NOT a
+plain-text prompt. Structured selection is the correct UX for this decision,
+and "Other" is auto-added by the harness so the user can still supply a custom
+version. Use a single-select question shaped like this:
+
+- **question:** `"Proposed version: vX.Y.Z. Accept, or bump differently?"`
+- **header:** `"Version"`
+- **options** (single-select, in this order):
+  1. `"Accept vX.Y.Z (Recommended)"` — description: what the accepted bump
+     means (e.g. "PATCH bump; no player-facing changes since vA.B.C").
+  2. The next-larger bump on the same track — e.g. if you proposed PATCH,
+     offer the corresponding MINOR (`v0.<MINOR+1>.0`); if you proposed MINOR,
+     offer the next-higher MINOR. Description: one line on why the user might
+     prefer it (e.g. "if you consider these changes big enough to warrant a
+     MINOR").
+
+Do NOT list "Other" yourself — the harness adds it. If the user picks Other and
+types their own version string, accept it verbatim (per the "don't second-guess
+user-provided identifiers" rule); do not silently normalize it.
 
 Wait for their answer. Store the accepted version as `$Version` (bare, no `v`
 prefix) — `package.ps1` and `gh release create` both want the bare form; the
@@ -117,9 +135,27 @@ The draft you present to the user in chat can be wrapped for readability,
 but the release notes you eventually write to disk in step 8 must be
 unwrapped. Either draft unwrapped from the start, or unwrap before writing.
 
-Present the draft and ask for revisions. Iterate until the user explicitly
-approves ("approved", "ship it", "looks good", or similar). Do NOT proceed to
-packaging on ambiguous feedback.
+Present the draft in normal chat text, then gate approval using the
+`AskUserQuestion` tool — NOT a plain-text "does this look good?" prompt. Use a
+single-select question shaped like this:
+
+- **question:** `"Approve these release notes, or cancel the release?"`
+- **header:** `"Notes"`
+- **options** (single-select, in this order):
+  1. `"Approve as drafted (Recommended)"` — description: `"Ship these notes as-is."`
+  2. `"Cancel the release"` — description: `"Abort the skill; no tag, package, or commit."`
+
+The user provides revision requests through the harness-added "Other" slot —
+do NOT list a "Request revisions" option yourself. Behavior by pick:
+
+- Option 1 → explicit approval; proceed to step 5.
+- Option 2 → abort the skill immediately with no side effects.
+- Other with freeform text → treat as revision input (not approval) unless
+  the text is unambiguously affirmative ("ship it", "approved", "looks
+  good"). Apply the requested changes and re-present the updated draft via a
+  fresh `AskUserQuestion` call. Repeat until they pick option 1 or option 2.
+
+Do NOT proceed to packaging on ambiguous feedback.
 
 ## 5. Bump the advertised version in tracked files and commit
 
