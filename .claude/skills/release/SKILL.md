@@ -135,9 +135,18 @@ an empty "Fixes" header just to keep the template):
 
 <one or two sentences describing what this release is about>
 
-## What's New
+## What's New — Player-Facing
 
-- <bullet per user-visible change>
+- <bullet per change the player can see or interact with in-game or in the
+  dashboard: new beats, dashboard controls, tunables that shift Director
+  behavior, event sources feeding the LLM's context, MCM entries, etc.>
+
+## What's New — Internals and Debug Aids
+
+- <bullet per change that doesn't directly change what the player sees
+  during normal play: internal subsystems, testing aids that ship off
+  by default, release/packaging tooling improvements, engine-level
+  scaffolding, etc.>
 
 ## Fixes
 
@@ -148,11 +157,27 @@ an empty "Fixes" header just to keep the template):
 <optional caveats — known issues, upgrade steps, etc.>
 ```
 
+The two-way split under "What's New" is required, not optional — a flat
+"What's New" list buries player-facing features behind internal plumbing
+and makes the release read like a changelog. Player-facing goes FIRST
+because that's what a mod-page reader is scanning for; internals go SECOND
+so a curious reader can still find them. When a change straddles both
+(e.g. a new dashboard control backed by a new subsystem), put the visible
+symptom in the first section and the subsystem in the second, cross-
+referencing briefly if it helps.
+
+If either subsection would have zero bullets, drop the whole subsection
+header (don't ship an empty "Internals and Debug Aids" just to keep the
+template). Same rule applies to "Fixes" — omit the header entirely if
+nothing landed there.
+
 Framing rules:
 
-- Player-facing framing, not engineer framing. "The Director now respects a
-  minimum phase-dwell floor before advancing" beats "Refactor
-  `PhaseTracker::EvaluateAdvance` signature."
+- Player-facing framing in the first subsection, not engineer framing.
+  "The Director now respects a minimum phase-dwell floor before advancing"
+  beats "Refactor `PhaseTracker::EvaluateAdvance` signature." The internals
+  subsection can be a bit more technical, but still avoid raw file paths
+  and symbol names when a behavior description works.
 - Cite behaviors, not file paths or symbol names.
 - Keep it tight. A short list beats a wall of prose.
 
