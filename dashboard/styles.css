@@ -539,10 +539,46 @@ body {
     cursor: pointer;
 }
 
-.bulk-button:hover {
+.bulk-button:hover:not(:disabled) {
     background: #2a3040;
     color: #c9d5e6;
     border-color: #4a5058;
+}
+
+.bulk-button:disabled {
+    color: #5a5e66;
+    background: #14171c;
+    border-color: #2a2e36;
+    cursor: not-allowed;
+}
+
+.dispatch-controls .bulk-button {
+    display: block;
+    margin-top: 10px;
+}
+
+/* Danger variant — used for destructive actions (Abort Running Beat,
+   Confirm Abort). Larger, bold, red, so the player can tell at a
+   glance that the button will interrupt something. */
+.bulk-button-danger {
+    padding: 8px 20px;
+    font-size: 13px;
+    font-weight: bold;
+    color: #f5e6e6;
+    background: #7a1f22;
+    border-color: #a02a2e;
+}
+
+.bulk-button-danger:hover:not(:disabled) {
+    background: #a02a2e;
+    color: #ffffff;
+    border-color: #c93338;
+}
+
+.bulk-button-danger:disabled {
+    color: #5a4444;
+    background: #2a1518;
+    border-color: #3a1e20;
 }
 
 /* ---- Visit tab (Phase 05 Step 16) ------------------------------- */
@@ -772,4 +808,10 @@ body {
     font-size: 13px;
     margin: 0 0 16px;
     line-height: 1.4;
+}
+
+.settings-rebind-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
 }

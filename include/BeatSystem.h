@@ -109,6 +109,18 @@ namespace NarrativeEngine::BeatSystem
     // registry. Logs and returns cleanly in both cases.
     void ForceDispatchBeat(std::string_view name);
 
+    // Debug / dashboard entry point for aborting the currently in-
+    // flight beat. Main thread. Calls the beat's IBeat::Abort to
+    // synchronously unwind its world-side effects, then forces the
+    // top-level state back to NO_BEAT_RUNNING and clears the global
+    // cooldown so a fresh dispatch can be considered on the next
+    // Director tick.
+    //
+    // No-op (returns false) when no beat is currently in flight.
+    // Already-persisted memories and already-spoken narrations are
+    // NOT rolled back — abort stops the in-progress beat only.
+    bool AbortRunningBeat();
+
     // Co-save handlers — implementations land in Step 5.
     void OnSave(SKSE::SerializationInterface* intfc);
     void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);

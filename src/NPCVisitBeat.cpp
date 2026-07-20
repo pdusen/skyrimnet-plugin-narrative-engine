@@ -1429,6 +1429,23 @@ namespace NarrativeEngine
         }
     }
 
+    void NPCVisitBeat::Abort()
+    {
+        logger::warn("NPCVisitBeat: Abort() invoked — running terminal cleanup");
+        // HardAbortVisit teleports the sender home (if alive), demotes
+        // them from the marker faction, dispatches kStageShutdown on the
+        // visit quest, pushes an Aborted history entry, and sets the
+        // terminal-cleanup latch. Idempotent — a second call after the
+        // first no-ops via g_hardAbortFired. When the beat is mid-COMPOSE
+        // (quest handle null or stage 0), the guard clauses inside
+        // HardAbortVisit return early; VisitState::Reset covers that
+        // case. Already-spoken narrations and any dialogue memories
+        // SkyrimNet has committed are left intact.
+        HardAbortVisit("user_abort");
+        VisitState::Reset();
+        VisitState::SetComposingSender(false);
+    }
+
     // ---------------------------------------------------------------
     // Cooldowns + Persistence
     // ---------------------------------------------------------------

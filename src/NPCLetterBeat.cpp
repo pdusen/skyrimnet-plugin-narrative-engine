@@ -773,6 +773,21 @@ namespace NarrativeEngine
         }
     }
 
+    void NPCLetterBeat::Abort()
+    {
+        logger::warn("NPCLetterBeat: Abort() invoked — running terminal cleanup");
+        // Route the cleanup down the failure branch: any in-flight
+        // per-slot quest is rolled back via kStageRecycledByCpp +
+        // LetterPool::AbortPending, the sender is demoted from the
+        // marker faction, and no per-beat cooldown is stamped. Already-
+        // delivered letters (Read / Discarded slots) are unaffected —
+        // MainThreadCleanup only touches the beat's current in-flight
+        // slot.
+        g_cleanupWasSuccess.store(false, std::memory_order_release);
+        MainThreadCleanup();
+        ResetSessionState();
+    }
+
     // ---------------------------------------------------------------------
     // NPCLetterBeat_Init — kDataLoaded resolution
     // ---------------------------------------------------------------------

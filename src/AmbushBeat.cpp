@@ -346,6 +346,18 @@ namespace NarrativeEngine
         }
     }
 
+    void AmbushBeat::Abort()
+    {
+        logger::warn("AmbushBeat: Abort() invoked — running terminal cleanup");
+        // Force cleanup to run down the failure path (do not stamp the
+        // per-beat completion cooldown). MainThreadCleanup is safe to
+        // call synchronously on the main thread; it handles Stop/Reset
+        // /SetEnabled on the quest and marks the cleanup latch complete.
+        g_composeSucceeded.store(false, std::memory_order_release);
+        MainThreadCleanup();
+        ResetSessionState();
+    }
+
     // -----------------------------------------------------------------
     // Cosave — 'NBAM' record, version 1.
     // Layout: double lastCompletionGameHours

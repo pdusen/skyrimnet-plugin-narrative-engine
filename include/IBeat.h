@@ -151,5 +151,17 @@ namespace NarrativeEngine
         {
             return 0.0;
         }
+
+        // Force this beat to terminal cleanup immediately, regardless
+        // of sub-phase. Called on the main thread by
+        // BeatSystem::AbortRunningBeat in response to the dashboard's
+        // Abort button. Must synchronously unwind any world-side
+        // effects the beat has installed (quest stages, alias fills,
+        // faction promotions, spawned refs, event sinks) and reset
+        // internal session state so a subsequent StartBeat can run
+        // cleanly. Does NOT roll back memories already written to
+        // SkyrimNet or narrations already spoken by NPCs — those are
+        // considered "already happened."
+        virtual void Abort() = 0;
     };
 } // namespace NarrativeEngine

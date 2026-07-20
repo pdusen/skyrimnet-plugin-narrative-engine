@@ -525,6 +525,19 @@ namespace NarrativeEngine::DashboardUIManager
             });
         }
 
+        // Backs the Dispatch tab's Abort button (after confirmation).
+        // Marshals to main and delegates to BeatSystem::AbortRunningBeat.
+        // No argument. Safe if the button somehow fires when no beat is
+        // in flight — the backend no-ops in that case.
+        void OnAbortRunningBeat(const char* /*argument*/)
+        {
+            logger::info("DashboardUIManager: ne_abortRunningBeat received");
+            AsyncDispatch::MarshalToMainThread([] {
+                BeatSystem::AbortRunningBeat();
+                PushFullState();
+            });
+        }
+
         // Backs the Settings tab's Debug Mode checkbox. Payload is
         // `"true"` or `"false"`.
         void OnSetDebugMode(const char* argument)
@@ -699,6 +712,7 @@ namespace NarrativeEngine::DashboardUIManager
         PrismaUI_API::RegisterJSListener(g_view, "ne_setActionEnabled", &OnSetActionEnabled);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setAllActionsEnabled", &OnSetAllActionsEnabled);
         PrismaUI_API::RegisterJSListener(g_view, "ne_dispatchAction", &OnDispatchAction);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_abortRunningBeat", &OnAbortRunningBeat);
         // Phase 08 Settings tab listeners.
         PrismaUI_API::RegisterJSListener(g_view, "ne_setDebugMode", &OnSetDebugMode);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setTickInterval", &OnSetTickInterval);

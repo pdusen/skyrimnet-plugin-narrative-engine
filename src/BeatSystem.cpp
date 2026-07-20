@@ -1299,4 +1299,51 @@ namespace NarrativeEngine::BeatSystem
                           /*onFinalized=*/nullptr,
                           "force-dispatch ");
     }
+    bool AbortRunningBeat()
+    {
+        std::string runningName;
+        {
+            std::scoped_lock lock(g_stateMutex);
+            if (g_topLevelState != TopLevelState::BEAT_RUNNING) {
+                logger::info("BeatSystem::AbortRunningBeat: no beat in flight; no-op");
+                return false;
+            }
+            runningName = g_runningBeatName;
+        }
+
+        IBeat* beat = BeatRegistry::Find(runningName);
+        if (beat) {
+            logger::warn("BeatSystem::AbortRunningBeat: aborting '{}'", runningName);
+            try {
+                beat->Abort();
+            } catch (const std::exception& e) {
+                logger::error("BeatSystem::AbortRunningBeat: '{}' Abort threw: {}; "
+                              "continuing to force NO_BEAT_RUNNING",
+                              runningName,
+                              e.what());
+            } catch (...) {
+                logger::error("BeatSystem::AbortRunningBeat: '{}' Abort threw unknown "
+                              "exception; continuing to force NO_BEAT_RUNNING",
+                              runningName);
+            }
+        } else {
+            logger::warn("BeatSystem::AbortRunningBeat: BEAT_RUNNING with unknown beat "
+                         "'{}'; forcing NO_BEAT_RUNNING without calling Abort",
+                         runningName);
+        }
+
+        // Force top-level state back to idle regardless of Abort
+        // outcome — the worker Tick reads state under the same mutex
+        // before dispatching to the beat, so this cleanly halts any
+        // further Tick calls into the aborted beat.
+        {
+            std::scoped_lock lock(g_stateMutex);
+            g_topLevelState = TopLevelState::NO_BEAT_RUNNING;
+            g_runningBeatName.clear();
+            g_runningBeatCurrentState = BeatState::NOT_RUNNING;
+            g_runningBeatStartedAt = 0.0;
+            g_globalCooldownMs = 0;
+        }
+        return true;
+    }
 } // namespace NarrativeEngine::BeatSystem

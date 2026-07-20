@@ -44,6 +44,7 @@ namespace NarrativeEngine
         bool IsAvailable(const BeatContext& ctx) const override;
         void OnStart(const BeatContext& ctx, const nlohmann::json& parameters) override;
         TickResult Tick(TickMode mode, BeatState state) override;
+        void Abort() override;
     };
 
     namespace NPCVisitBeat_Init

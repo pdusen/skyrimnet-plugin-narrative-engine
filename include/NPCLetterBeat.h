@@ -38,6 +38,7 @@ namespace NarrativeEngine
         void OnStart(const BeatContext& ctx, const nlohmann::json& parameters) override;
         TickResult Tick(TickMode mode, BeatState state) override;
         double RemainingCooldownGameHours() const override;
+        void Abort() override;
     };
 
     namespace NPCLetterBeat_Init
