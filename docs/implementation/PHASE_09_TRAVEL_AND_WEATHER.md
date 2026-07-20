@@ -7,6 +7,14 @@ consume.
 
 No gameplay features. No LLM calls. No new beats. This phase is scoped to observation and event surfacing only.
 
+> **Historical note (doc-frozen retrospective).** The design overview and step bodies below describe the plan as
+> it was drafted at the start of the phase. Implementation diverged in several places — most notably the
+> `Region` module (redesigned around `BGSLocation` + `LocTypeHold` parent-walk instead of `TESRegion` records,
+> after the latter turned out to be weather zones rather than political boundaries), and two new modules were
+> added that weren't in the original numbered steps: `HoldGrid` (precomputed exterior-cell → hold partition via
+> BFS) and `EventHistoryWriter` (rotating session-scoped log file used as a testing aid). See the
+> **Post-implementation additions** section at the end for a summary of what shipped beyond the numbered plan.
+
 ---
 
 ## Why this phase exists
@@ -40,19 +48,32 @@ it too.
 
 ### In scope
 
-- A new **`Region`** module resolving the player's current hold and climate from `TESRegion` records.
+- A new **`Region`** module resolving the player's current hold and climate. Shipped implementation walks
+  `BGSLocation`'s `parentLoc` chain looking for the `LocTypeHold` keyword (not `TESRegion` records as
+  originally planned — see the `Region` design section below for why).
+- A new **`HoldGrid`** module (not in the original plan) — precomputes an exterior-cell → hold FormID
+  partition via BFS at plugin load, so `Region::ForPlayer` can serve grid-covered lookups in O(1) hash-map
+  time. Fills in wilderness cells whose own `BGSLocation` chain doesn't reach `LocTypeHold`, and includes an
+  isolated-cluster pruning step that filters vanilla mis-authored seeds.
 - A new **`WeatherEventLog`** module observing `RE::Sky` state and emitting events on weather-category shifts.
-- A new **`TravelEventLog`** module observing player location/region/parent-chain transitions and emitting
-  travel events. Includes follower rendering, fast-travel specialization, and a run-collapsing condensation
-  pass in `GetRenderedTail` modelled after combat's `hit`-condensation.
-- A small shared-utility extraction (`EventLogUtil.h/.cpp`) so the three event-log modules
+- A new **`TravelEventLog`** module observing player location + hold transitions and emitting travel events.
+  Includes follower rendering, fast-travel specialization, exterior/interior verb-split rendering, and a
+  run-collapsing condensation pass in `GetRenderedTail` modelled after combat's `hit`-condensation.
+- A new **`EventHistoryWriter`** module (not in the original plan) — testing-aid rotating log file at
+  `<SKSE logs dir>/NarrativeEngine_EventHistory.log` capturing every emitted internal event plus SkyrimNet's
+  own event stream, in chronological order, with absolute in-game timestamps. Session boundaries rotate the
+  file (keeps five previous sessions). Disabled by default; enabled locally via MCM override for Step 9
+  testing.
+- A shared-utility extraction (`EventLogUtil.h/.cpp`) so the three event-log modules
   (`CombatEventLog` + the two new ones) don't triplicate identical timestamp / string-serialization helpers.
+  Also houses `CurrentInGameTimestamp` / `FormatInGameTimestampFromGameTime` used by the history writer.
 - Wire-in of both new tails into `EvaluationPipeline::BuildPromptContext` and
   `DashboardUIManager::ComposeFullStateJSON` via the existing `BuildMergedTimeline` merger.
 - New cosave records (`'NEWE'`, `'NETR'`) with the same on-save-prune-then-write discipline `CombatEventLog`
   uses.
-- New INI section `[TravelEvents]` and `[WeatherEvents]` with a small handful of tunables (ring-buffer caps,
-  condensation window, follower radius, debounce interval).
+- New INI sections `[TravelEvents]`, `[WeatherEvents]`, `[HoldGrid]`, and `[EventHistory]` with tunables
+  (ring-buffer caps, condensation window, follower radius, debounce interval, hold-grid pruning parameters,
+  event-history master switch + flush interval).
 
 ### Deferred (explicitly out)
 
@@ -92,12 +113,12 @@ multiple times.
 
 ### `Region` — hold and biome resolution
 
-Small module with two entry points:
+Shipped API:
 
 ```cpp
 namespace NarrativeEngine::Region {
     enum class Climate : std::uint8_t {
-        Unknown,     // interior, unrecognised region, or no region — callers should treat as "no signal"
+        Unknown,     // no hold resolved, or hold not in the climate table
         Tundra,      // Whiterun Hold plains
         Pine,        // Falkreath Hold forest
         Marsh,       // Hjaalmarch
@@ -111,41 +132,132 @@ namespace NarrativeEngine::Region {
 
     struct Resolution {
         Climate climate = Climate::Unknown;
-        RE::FormID holdRegionFormID = 0;   // the TESRegion FormID that resolved, if any — 0 when Unknown
-        std::string holdDisplayName;       // "Whiterun Hold", "Falkreath Hold", ... derived from the region
-                                           // EditorID via a small lookup; empty when Unknown
+        RE::FormID holdFormID = 0;         // BGSLocation FormID of the hold-level ancestor, or 0
+        std::string holdDisplayName;       // BGSLocation::GetFullName() (e.g. "Whiterun Hold")
+                                           // — Region normalises this at render time to ensure the
+                                           // " Hold" suffix (see TravelEventLog rendering below)
     };
 
     Resolution ForPlayer();
-    Resolution ForCell(RE::TESObjectCELL* cell);
+    Resolution ForLocation(RE::BGSLocation* startLoc);
 }
 ```
 
-Internally: walks `cell->GetRegionList(false)`, matches each `TESRegion` by EditorID against a curated table,
-returns the most specific hit (per-hold beats the Tamriel root region). EditorIDs are resolved lazily via
-`RE::TESForm::LookupByEditorID` on first call (requires powerofthree's Tweaks, same as `LocationKeywords`) and
-cached. Source-of-truth CSV lives at `docs/vanilla/regions/holds.csv` so a maintainer can audit/extend without
-touching code.
+**Design pivot from the original plan.** The initial plan keyed hold detection on `TESRegion` records looked up
+via `RE::TESObjectCELL::GetRegionList`. In-game testing revealed that Skyrim's `TESRegion` records are
+weather/vegetation zones with names like `WeatherTundra`, `WeatherSnow`, `WeatherPineForest` — they don't
+cleanly map to political-boundary holds (e.g. `WeatherSnow` covers Winterhold, The Pale, and Hjaalmarch). The
+whole approach was junked and rewritten around the mechanism vanilla actually uses for "which hold is the
+player in": walking `BGSLocation::parentLoc` from the player's current location, looking for an ancestor
+tagged with the `LocTypeHold` keyword. Each hold has a hold-level `BGSLocation` (`WhiterunHoldLocation`,
+`FalkreathHoldLocation`, ...) that every child location — city, wilderness, dungeon, building interior —
+chains up to.
 
-`Sky::region` is available as an optimisation path (the engine has already picked a region for weather purposes)
-but the cell-walk fallback is authoritative — during fast travel and cell-load transitions `Sky::region` briefly
-lags. Start with the cell walk; add the `Sky` shortcut only if profiling shows the walk matters, which it won't.
+**Query path (ShippedRegion::ForPlayer):**
+
+1. **Fast path** — `HoldGrid::LookupPlayer()` (see below) returns a hold FormID via O(1) coordinate lookup for
+   exterior cells that landed in the precomputed grid.
+2. **Fallback** — walk `player->GetCurrentLocation()`'s `parentLoc` chain looking for `LocTypeHold`. Covers
+   interior cells (which the grid doesn't index) and any exterior cells the grid couldn't populate.
+
+Both paths funnel through a shared `BuildResolution(holdLoc)` helper that pulls the display name from
+`BGSLocation::GetFullName()` and looks up the Climate value from a small hardcoded table keyed on
+hold-location FormID.
+
+The Climate table is a nice-to-have for future biome-gated beats; missing entries resolve to
+`Climate::Unknown` but the hold FormID + display name still resolve correctly. A one-time diagnostic
+(`NoteUnclassifiedHold`) logs the FormID + EditorID + FullName of any resolved hold that isn't in the Climate
+table, so the table can be filled in over time without guesswork.
+
+### `HoldGrid` — precomputed exterior-cell → hold partition
+
+New module added mid-phase to plug wilderness-cell coverage gaps that the pure `LocTypeHold` parent-walk
+missed. Many exterior wilderness cells in vanilla Skyrim either have no `BGSLocation` assigned or have one
+whose `parentLoc` chain doesn't reach a `LocTypeHold`-tagged ancestor. Those cells returned `Unknown` from
+`Region::ForPlayer`, producing empty hold names in travel events like
+`"Varian left  and is now in the wilderness."` (empty from-hold).
+
+**Build (one-shot at `kDataLoaded`):**
+
+1. Iterate every `TESWorldSpace` and its `cellMap`. For each exterior cell whose `BGSLocation` chain reaches
+   `LocTypeHold`, record a seed entry `(worldspace, cellX, cellY) → holdFormID`.
+2. **Isolated-cluster pruning.** Compute connected components on the seed set (4-neighbor adjacency,
+   same-hold). Drop any component of size ≤ `iHoldGridPruneMaxClusterSize` (default 3) that has no other
+   same-hold seed within Manhattan distance `iHoldGridPruneIsolationRadius` (default 5) — these are vanilla
+   mis-authored strays that would otherwise seed a bad fill front that propagates all the way to the map
+   edge.
+3. **Round-robin BFS** from all surviving seeds simultaneously, 4-neighbor adjacency, first-touch wins.
+   Under Manhattan distance this approximates a Voronoi partition — each cell is labelled with the hold of
+   its nearest seed.
+
+**Query API:**
+
+```cpp
+namespace NarrativeEngine::HoldGrid {
+    void Initialize();  // one-shot; safe to call multiple times
+    RE::FormID LookupCell(RE::TESWorldSpace* ws, std::int16_t cellX, std::int16_t cellY);
+    RE::FormID LookupWorldPosition(RE::TESWorldSpace* ws, float x, float y);
+    RE::FormID LookupPlayer();  // convenience — resolves player's parent cell
+}
+```
+
+**Debug bitmap output** (gated on `bHoldGridDebugBitmap`, off by default): after the BFS completes, dumps one
+24-bit BMP per worldspace to the SKSE log directory (`NarrativeEngine_HoldGrid_<worldspaceEditorID>.bmp`)
+showing the partition. Each hold gets a distinct colour from a curated palette assigned in FormID-sorted
+order; seed cells are black, unassigned cells are white. Overwrites existing files each session. Used
+during Phase 9 tuning to visually verify the fill and iterate on prune parameters.
+
+Cost: ~10-50ms one-time at plugin load for vanilla data. ~10-20k grid entries total across all worldspaces
+(~120KB memory).
+
+### `EventHistoryWriter` — testing-aid rotating log file
+
+New module added late in the phase to make Step 9 travel validation easier. Not intended for shipping use.
+
+Writes every emitted internal event (combat + weather + travel) plus SkyrimNet's own event stream to a
+running log at `<SKSE logs dir>/NarrativeEngine_EventHistory.log`, in chronological order, each line
+prefixed with an absolute in-game timestamp (`[4E 201, Frostfall 15, 17:42:07]`) rather than the
+`[N ago]` relative form the LLM sees.
+
+**Session-boundary rotation.** On `kNewGame` / `kPostLoadGame` (both firing per save-game session):
+`.4.log` → `.5.log`, `.3.log` → `.4.log`, ..., current → `.1.log`, previous `.5.log` deleted. Fresh current
+file opened in truncate mode. Keeps five previous sessions. On `kPreLoadGame`, the outgoing session's file
+is flushed and closed before rotation happens for the incoming one.
+
+**Data flow.** Each internal event log module exposes a `DrainHistoryTail()` returning a
+`std::vector<EventLogUtil::HistoryEntry>` populated at emit time (session-only pending queue, cleared on
+each drain). SkyrimNet events are pulled by the writer via `SkyrimNetAPI::GetRecentEvents`, filtered by a
+`localTime` bookmark for dedup, and rendered with `FormatInGameTimestampFromGameTime` (which decodes each
+event's cumulative `gameTime` into its own Skyrim calendar date, so backfill batches at session start
+don't collapse to the flush moment).
+
+**Cadence.** Tick-driven accumulator (see the `feedback_tick_driven_accumulators` memory) —
+`Poll(unpausedElapsedSeconds)` accumulates until crossing `iEventHistoryFlushIntervalSeconds` (default 5),
+then drains all sources, sorts the combined batch by `localTime`, appends to the file.
+
+**Master switch.** `bEventHistoryEnabled` (default `false` in the shipping INI). When off, every event
+log's pending-queue push is skipped so the queue can't grow unbounded on a long session with the writer
+inactive. Set to `true` in a local MCM override for testing.
 
 ### `WeatherEventLog` — observation-only
 
-Poll-based, no sinks. `Poll()` is called from `Tick::Poll` on the 500 ms cadence but internally throttles —
-weather transitions happen on the order of tens of seconds and don't warrant frequent re-sampling. An
-accumulator checks `NowUnixSeconds() - g_lastPolledAt` against `iWeatherEventPollIntervalSeconds` (default 30)
-and early-returns cheaply on the poll cycles in between. When the interval elapses, it reads
-`RE::Sky::GetSingleton()`, derives a small `WeatherCategory { primary, stormy }` tuple from
-`currentWeather->data.flags` plus lightning frequency, and diffs against the last-observed tuple. On mismatch,
+Poll-based, no sinks. `Poll(unpausedElapsedSeconds)` is called from `Tick::Poll` when the game is unpaused
+and uses the Tick-driven accumulator pattern — the caller-supplied unpaused delta is added to
+`g_unpausedSecondsSinceLastCheck`; once the accumulator crosses `iWeatherEventPollIntervalSeconds` (default
+30), the sample fires and the interval is subtracted from the accumulator (overshoot rolls into the next
+window). Pausing the game freezes the accumulator; wall-clock time doesn't leak in. When the interval
+elapses, `Poll` reads `RE::Sky::GetSingleton()`, derives a small `WeatherCategory { primary, stormy }` tuple
+from `currentWeather->data.flags` plus wind speed, and diffs against the last-observed tuple. On mismatch,
 emits a `weather_event` with `ne_kind` drawn from a small hardcoded transition vocabulary.
 
 `primary` is a priority-ordered enum: `Snowy` > `Rainy` > `Pleasant` > `Cloudy` > `Other`. `stormy` is a
-derived bool set when a rainy/snowy weather has non-zero `Data::thunderLightningFrequency` OR high wind speed.
-Rendering vocabulary lives entirely in `WeatherEventLog.cpp` as a static transition table (from-primary,
-to-primary, from-stormy, to-stormy) → sentence. Transitions with no table entry render as a generic
-"The weather has changed."
+derived bool set when a rainy/snowy weather has `windSpeed >= 128` (empirically, vanilla `SkyrimStormRain`
+and `SkyrimStormSnow` have `windSpeed = 150` while their non-storm counterparts sit near `10`; the
+`thunderLightningFrequency` field is unset on both storm variants — raw byte `0xFF` = `-1` when read as
+`int8_t` — so it's a poor discriminator, though we still OR it in as a fallback for any weather that does
+have thunder authored). Rendering vocabulary lives entirely in `WeatherEventLog.cpp` as a static transition
+table (from-primary, to-primary, from-stormy, to-stormy) → sentence. Transitions with no table entry render
+as a generic "The weather has changed."
 
 Explicitly *not* suppressed:
 
@@ -164,50 +276,70 @@ Suppressed:
 
 ### `TravelEventLog` — observation with condensation
 
-Poll-based comparison of a per-tick `TravelSnapshot`; a single `TESFastTravelEndEvent` sink flags the next
+Poll-based comparison of a per-tick `TravelSnapshot`; a `TESFastTravelEndEvent` sink flags the next
 observed transition as a fast-travel arrival.
 
-**Snapshot:**
+**Snapshot** (shipped shape — simpler than the original plan; no parent chain):
 
 ```cpp
 struct TravelSnapshot {
-    RE::FormID currentLocationID = 0;              // player->GetCurrentLocation()->GetFormID()
-    std::vector<RE::FormID> parentChain;           // BGSLocation::parentLoc walk, root-first
-    RE::FormID holdRegionFormID = 0;               // via Region::ForPlayer()
-    Region::Climate climate = Climate::Unknown;
-    bool interior = false;
-    double sampledAt = 0.0;                        // Unix-epoch seconds
+    RE::FormID currentLocationID = 0;              // player->GetCurrentLocation()->GetFormID(), 0 in wilderness
+    std::string currentLocationName;               // BGSLocation::GetFullName()
+    bool interior = false;                         // player->GetParentCell()->IsInteriorCell()
+    RE::FormID holdFormID = 0;                     // via Region::ForPlayer() (HoldGrid + parent-walk)
+    std::string holdName;                          // Resolution.holdDisplayName
+    Region::Climate climate = Region::Climate::Unknown;
 };
 ```
 
 **Emitted events** (all `type: "travel_event"`, discriminated by `ne_kind`):
 
-- `entered_location` — a new location joined the parent chain (most-specific child took precedence).
-- `left_location` — a location dropped out of the parent chain, with no replacement child.
-- `crossed_holds` — hold region changed (`holdRegionFormID` diff), regardless of location chain state.
-- `entered_wilderness` — location went null AND the hold region also flipped.
-- `fast_travel_arrived` — sink-flagged. Includes an origin field captured from the previous snapshot.
+- `entered_location` — the current location changed to a new named location.
+- `left_location` — the current location was a named location and is now different (either another named
+  location or null).
+- `crossed_holds` — hold FormID changed, both sides are non-zero and neither side is interior.
+- `entered_wilderness` — location went null AND hold did *not* change (player walked out of a named area into
+  the same hold's wilderness). Note: this diverges from the original plan's semantics ("location went null
+  AND hold also flipped"), which turned out to be wrong — when both change, `left_location` +
+  `crossed_holds` already cover it.
+- `fast_travel_arrived` — sink-flagged. Includes an origin field captured from the pre-fast-travel snapshot.
+  When fast travel is detected, the ordinary `entered_location` / `crossed_holds` emissions for the same
+  transition are suppressed to avoid duplication.
 
 Each event bakes the follower list at emission time — walking `RE::ProcessLists::ForEachHighActor`, filtering
 alive + `IsPlayerTeammate()` + within `iTravelFollowerRadiusUnits` (default 4000) of the player, capturing
-display names. Rendering as "Varian and Jenassa entered Riverwood." / "Varian, Jenassa, and Marcurio arrived in
-Solitude, having journeyed from Whiterun." Oxford-comma formatting.
+display names. Player is always first in the list.
 
-Each event *also* stores both endpoints (`fromLocationID`/`fromHoldRegion` + `toLocationID`/`toHoldRegion`) —
-not just the destination — so the condensation pass can identify start-and-end-at-same-place runs without walking
-back through prior events.
+Each event stores both endpoints (`fromLocationID`/`fromHoldFormID`/`fromInterior` +
+`toLocationID`/`toHoldFormID`/`toInterior`) so the condensation pass can identify start-and-end-at-same-place
+runs and the renderer can pick exterior/interior verb variants.
+
+**Rendering vocabulary** distinguishes exterior arrivals/departures from interior ones so the reader can
+tell walking up to the Lakeview Manor exterior cell from stepping through its front door:
+
+- Exterior: `"Varian arrived at Riverwood."` / `"Varian departed from Riverwood."`
+- Interior: `"Varian entered the Bannered Mare."` / `"Varian exited the Bannered Mare."`
+- Interior visit summary (net-zero run touching one or more interiors):
+  `"Varian visited the Bannered Mare."` / `"Varian visited the Bannered Mare and Belethor's."`
+- Hold-crossing: `"Varian crossed from Whiterun Hold into Falkreath Hold."`
+- Wilderness: `"Varian departed from Riverwood and is now in the wilderness of Whiterun Hold."`
+- Fast travel exterior arrival: `"Varian arrived at Solitude, having journeyed from Whiterun."`
+- Fast travel interior arrival: `"Varian entered the Bannered Mare, having journeyed from Riverwood."`
+
+All hold names are passed through `FormatHoldName` which idempotently appends `" Hold"` if not already
+present — disambiguates a city ("Whiterun") from the hold that shares its name ("Whiterun Hold").
 
 **Suppression:**
 
-- Interior-to-interior transitions only (e.g. loading-door hop from one building to another, or between
-  dungeon zones) are suppressed. Interior↔exterior transitions still emit — entering a house fires
-  `entered_location: "Varian entered the Bannered Mare."`, exiting fires `left_location`. The gate is on the
-  *pair* of snapshots: skip emission when both `g_lastSnapshot.interior` and the new snapshot's `interior`
-  are true.
-- While `interior == true`, hold-region diffs are suppressed (interior cells frequently have no assigned
-  region, which would otherwise look like a spurious `crossed_holds`). The snapshot preserves the last-known
-  hold from the exterior side; when the player exits back to exterior, the fresh region query may then
-  legitimately fire a `crossed_holds` if they left through a different hold's door.
+- Interior-to-interior transitions (loading-door hop from one building to another, dungeon zone changes) are
+  suppressed. Interior↔exterior transitions still emit. The gate is on the *pair* of snapshots: skip
+  emission when both `g_lastSnapshot.interior` and the new snapshot's `interior` are true.
+- When either side is interior, `crossed_holds` and `entered_wilderness` are suppressed — only the
+  location-chain events fire on interior↔exterior transitions.
+- When `Region::ForPlayer` returns `holdFormID == 0` for the fresh snapshot (unclassified interior or
+  wilderness pocket), the last-known non-zero hold is preserved from `g_lastSnapshot`. This keeps hold
+  tracking stable across excursions into unclassified areas — the moment the player exits back into
+  classified territory, the fresh query takes over.
 - Transitions where nothing changed except the cell (same location, same hold, same interior flag) are
   dropped silently.
 - The first `Poll()` after `OnPostLoadGame` seeds baseline, no event emission.
@@ -244,7 +376,7 @@ LLM does, but detailed inspection is available via logs.
 
 ### Step 1 — Extract shared event-log utilities
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -278,7 +410,7 @@ modules don't duplicate them. Preparatory; no behaviour change.
 
 ### Step 2 — `Region` module
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -329,7 +461,7 @@ gated beats can consume later.
 
 ### Step 3 — `WeatherEventLog` module (infrastructure)
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -401,7 +533,7 @@ vocabulary or the tail-merge wire-in yet. Splitting keeps this step tightly boun
 
 ### Step 4 — `WeatherEventLog` rendering + tail merge
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -501,7 +633,7 @@ sentences, respects the interior gate, and persists across save/load.
 
 ### Step 6 — `TravelEventLog` module (snapshot + poll + cosave)
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -614,7 +746,7 @@ yet. Purely the "diff and emit" spine.
 
 ### Step 7 — Fast-travel specialization sink
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -659,7 +791,7 @@ without depending on this.
 
 ### Step 8 — `TravelEventLog` rendering + condensation + tail merge
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -736,7 +868,7 @@ without depending on this.
 
 ### Step 9 — In-game verification of `TravelEventLog`
 
-- [ ] Complete
+- [x] Complete
 
 **[USER]**
 
@@ -824,21 +956,36 @@ content matches in-memory pruning rules.
 
 ## Settings summary
 
-New `[WeatherEvents]` section:
+`[WeatherEvents]`:
 
 - `iWeatherEventsMaxStored` — ring-buffer cap. Default `128`.
-- `iWeatherEventPollIntervalSeconds` — minimum real seconds between weather-state samples. Weather changes
-  on the order of tens of seconds, so the module throttles internally rather than sampling every Tick.
-  Default `30`.
-- `iWeatherEventDebounceSeconds` — minimum inter-event gap, applied on top of the poll interval. Default `20`.
+- `iWeatherEventPollIntervalSeconds` — minimum *unpaused* seconds between weather-state samples (Tick-driven
+  accumulator, not wall-clock). Default `30`.
+- `iWeatherEventDebounceSeconds` — minimum inter-event gap in unpaused seconds, applied on top of the poll
+  interval. Default `20`.
 
-New `[TravelEvents]` section:
+`[TravelEvents]`:
 
 - `iTravelEventsMaxStored` — ring-buffer cap. Default `128`.
 - `iTravelCondensationWindowSeconds` — max inter-event gap within a condensable run. Default `60`.
 - `iTravelFollowerRadiusUnits` — follower-inclusion distance gate. Default `4000`.
 
-All four go through the same INI cascade every other setting uses (plugin INI → MCM override → in-code
+`[HoldGrid]`:
+
+- `bHoldGridDebugBitmap` — dump one 24-bit BMP per worldspace after the BFS partition. Default `false`.
+- `iHoldGridPruneMaxClusterSize` — K. Only same-hold seed clusters (via 4-neighbor adjacency on the seed
+  set) of size ≤ K are candidates for isolated-cluster pruning. Default `3`.
+- `iHoldGridPruneIsolationRadius` — R. A candidate cluster is kept if any same-hold seed *outside* the
+  cluster lies within Manhattan distance R of any cell in the cluster; dropped otherwise. Default `5`.
+
+`[EventHistory]`:
+
+- `bEventHistoryEnabled` — master switch for the rotating history log. Default `false`. When off, each
+  event log skips its per-emit push to the writer's pending queue (so nothing accumulates during a long
+  session with the writer inactive).
+- `iEventHistoryFlushIntervalSeconds` — unpaused seconds between flushes to disk. Default `5`.
+
+All settings go through the same INI cascade every other setting uses (plugin INI → MCM override → in-code
 default). No dashboard UI surface — modder-tunables only.
 
 ---
@@ -849,8 +996,52 @@ Failure modes not covered by the numbered verification steps but worth watching 
 
 - LLM prompt bloat from too many weather / travel entries surviving merge. If observed, lower the ring-buffer
   caps or narrow the debounce / condensation windows.
-- `TESRegion` mis-detection in the DLC02 Solstheim worldspace — verify with a Solstheim save if available;
-  fall through to `Unknown` is acceptable if the DLC isn't installed.
+- Modded worldspaces that aren't seeded correctly by `HoldGrid`. If any modded exterior area returns
+  `holdFormID == 0` from `Region::ForPlayer`, the `HoldGrid::LookupPlayer` miss falls back to the parent-walk
+  on `player->GetCurrentLocation()`. If that also fails, the travel event lands with an empty hold name —
+  worth checking `HoldGrid: worldspace ...` init log lines to confirm the modded worldspace was covered.
 - Interior-vs-exterior race on cell load — a rapid door-transition might briefly show the wrong
   `IsInteriorCell` reading. Manifest as a spurious `entered_wilderness` / `crossed_holds` right after
   exiting a house. If seen, add a one-poll debounce on interior-exterior transitions.
+
+---
+
+## Post-implementation additions
+
+Modules and behaviors that shipped beyond the original nine-step plan:
+
+- **`Region` redesign around `LocTypeHold` parent-walk** (replaces the `TESRegion` approach from Step 2). See
+  the `Region` design section above for why the pivot happened.
+- **`HoldGrid` module** (`include/HoldGrid.h`, `src/HoldGrid.cpp`) — precomputed exterior-cell → hold FormID
+  partition via BFS with isolated-cluster pruning. Initialized at `kDataLoaded` from `Plugin.cpp`. Consumed
+  by `Region::ForPlayer` as an O(1) fast-path. Includes optional debug bitmap output for auditing the
+  partition.
+- **`EventHistoryWriter` module** (`include/EventHistoryWriter.h`, `src/EventHistoryWriter.cpp`) —
+  testing-aid rotating log file at `<SKSE logs dir>/NarrativeEngine_EventHistory.log`. Session-boundary
+  rotation keeps five previous sessions. Master switch defaults to `false`; enabled in a local MCM override
+  for Step 9 travel validation.
+- **Exterior/interior verb split in `TravelEventLog` rendering** (arrived at / departed from vs. entered /
+  exited / visited) — added late so travel entries disambiguate exterior arrivals at named locations from
+  interior door transitions with the same name (e.g. Lakeview Manor's exterior cell vs. its interior).
+- **`FormatHoldName` normalisation** — ensures every hold name rendered by `TravelEventLog` ends in
+  `" Hold"`, so a city and its containing hold with the same base name ("Whiterun" vs "Whiterun Hold") are
+  never confusable in the tail.
+- **`EnteredWilderness` semantics correction** — the original design specified it fired when the location
+  went null AND the hold flipped, but that case is already covered by `left_location` + `crossed_holds`.
+  Shipped semantics: fires when the location goes null AND the hold stays the same (i.e. player walked out
+  of a named area into unnamed wilderness within the same hold). Rendered as `"Varian departed from
+  Riverwood and is now in the wilderness of Whiterun Hold."` (uses the location name for the departure
+  point, not the hold name — the player didn't leave the hold).
+- **`EventLogUtil::NowGameTimeSeconds` unit fix** — the shared timestamp helper originally returned
+  time-of-day only (seconds since midnight, 0..86400). This silently broke every internal event on any
+  save past day 1 because `BuildMergedTimeline`'s age filter compares to cumulative game-time and would
+  see every event as "millions of seconds old." Fixed to cumulative `GetDaysPassed() * 86400` mid-phase;
+  incidentally fixed a latent `CombatEventLog` bug that would have surfaced on any non-fresh save.
+- **`WeatherEventLog` wind-based stormy classification** — originally keyed on
+  `TESWeather::Data::thunderLightningFrequency`, which turned out to be unset (raw byte `0xFF`, interpreted
+  as `int8_t` = `-1`) on vanilla storm variants. Switched to `windSpeed >= 128` after in-game observation
+  showed storm variants have `windSpeed = 150` vs. `10` for calm variants. Thunder is still OR'd in as a
+  fallback for weathers that do have it authored.
+- **Weather + travel poll signatures switched to `Poll(double unpausedElapsedSeconds)`** to match the
+  Tick-driven accumulator pattern (see the `feedback_tick_driven_accumulators` memory). The original design
+  used `NowUnixSeconds()`-diff throttles, which incorrectly credited paused time toward the poll interval.
