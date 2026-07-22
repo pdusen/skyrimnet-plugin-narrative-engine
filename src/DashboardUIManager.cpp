@@ -8,6 +8,7 @@
 #include <DecisionLog.h>
 #include <LetterPool.h>
 #include <logger.h>
+#include <MainThread.h>
 #include <PhaseTracker.h>
 #include <PrismaUI.h>
 #include <Settings.h>
@@ -743,7 +744,7 @@ namespace NarrativeEngine::DashboardUIManager
         }
     }
 
-    std::string ComposeFullStateJSON()
+    std::string ComposeFullStateJSON(const DashboardEngineReads& reads)
     {
         nlohmann::json j;
 
@@ -843,10 +844,12 @@ namespace NarrativeEngine::DashboardUIManager
         // internal combat tail, formatted via the shared helper (same
         // `text` synthesis + condensation the LLM prompt uses, so the
         // dashboard reads identically to what the Director sees).
-        double currentGameTimeSeconds = 0.0;
-        if (auto* cal = RE::Calendar::GetSingleton()) {
-            currentGameTimeSeconds = static_cast<double>(cal->GetDaysPassed()) * 86400.0;
-        }
+        //
+        // currentGameTimeSeconds comes from the caller — RE::Calendar
+        // reads are main-thread-only and PushFullState bundles that
+        // read into a single MainThread::Run alongside the per-beat
+        // cooldown gather below.
+        const double currentGameTimeSeconds = reads.currentGameTimeSeconds;
 
         const auto eventsJson = SkyrimNetAPI::GetRecentEvents(0, 20, "");
         auto parsed = nlohmann::json::parse(eventsJson, /*cb=*/nullptr, /*allow_exceptions=*/false);
@@ -955,11 +958,19 @@ namespace NarrativeEngine::DashboardUIManager
             for (const auto& entry : BeatRegistry::All()) {
                 if (!entry.beat)
                     continue;
+                // Cooldown hours were captured on the main thread by
+                // PushFullState alongside the calendar read; look up
+                // by name here rather than re-invoking the IBeat method
+                // off-main.
+                double cooldownHours = 0.0;
+                if (auto it = reads.beatCooldownHours.find(entry.name); it != reads.beatCooldownHours.end()) {
+                    cooldownHours = it->second;
+                }
                 actions.push_back({
                     {"name", entry.name},
                     {"enabled", entry.enabled},
                     {"last_dispatched_at", entry.lastDispatchedRealTime},
-                    {"remaining_cooldown_hours", entry.beat->RemainingCooldownGameHours()},
+                    {"remaining_cooldown_hours", cooldownHours},
                 });
             }
             j["actions"] = std::move(actions);
@@ -1063,8 +1074,43 @@ namespace NarrativeEngine::DashboardUIManager
         if (!PrismaUI_API::IsAvailable() || g_view == PrismaUI_API::kInvalidView) {
             return;
         }
-        const std::string json = ComposeFullStateJSON();
-        PrismaUI_API::InvokeJS(g_view, "updateFullState", json);
+        // Audit finding 4 fix: skip the compose entirely when the
+        // dashboard is hidden. Every applied Director decision used to
+        // recompute the full state JSON regardless of whether anybody
+        // was looking — pure waste on the main thread.
+        if (!g_visible.load(std::memory_order_acquire)) {
+            return;
+        }
+
+        // Move the compose off main. The caller may be on any thread
+        // (main from ToggleVisibility / MarshalToMainThread input
+        // handlers, plugin from ApplyDecision) — either way we
+        // enqueue onto the plugin thread and run the JSON build
+        // there. One bundled MainThread::Run hop covers RE::Calendar
+        // and per-beat IBeat::RemainingCooldownGameHours (the only
+        // engine-touching reads ComposeFullStateJSON needs); the rest
+        // of its reads (LetterPool, BeatRegistry, PhaseTracker,
+        // DecisionLog, VisitState, VisitConclusionPoll, SkyrimNetAPI
+        // event tail) are all mutex-guarded or DLL-thread-safe.
+        AsyncDispatch::EnqueueWork([](const PluginThread::Token& pt) {
+            const DashboardEngineReads reads = MainThread::Run(pt, [](const MainThread::Token&) {
+                DashboardEngineReads r;
+                if (auto* cal = RE::Calendar::GetSingleton()) {
+                    r.currentGameTimeSeconds = static_cast<double>(cal->GetDaysPassed()) * 86400.0;
+                }
+                for (const auto& entry : BeatRegistry::All()) {
+                    if (!entry.beat) {
+                        continue;
+                    }
+                    r.beatCooldownHours.emplace(entry.name, entry.beat->RemainingCooldownGameHours());
+                }
+                return r;
+            });
+            const std::string json = ComposeFullStateJSON(reads);
+            // PrismaUI_API::InvokeJS is documented as async on
+            // PrismaUI's end — safe to call off main.
+            PrismaUI_API::InvokeJS(g_view, "updateFullState", json);
+        });
     }
 
     void ToggleVisibility()
@@ -1085,8 +1131,18 @@ namespace NarrativeEngine::DashboardUIManager
             g_hotkeyCaptureMode.store(false, std::memory_order_release);
             logger::debug("DashboardUIManager: hidden");
         } else {
-            // Push fresh state before showing so the view doesn't render the
-            // last stale snapshot.
+            // Flip the visibility flag BEFORE PushFullState so the
+            // visibility guard inside PushFullState (audit finding 4
+            // fix — skip the compose when hidden) accepts this initial
+            // "seed the view with fresh state" push. The compose runs
+            // on the plugin thread; Show/Focus below fire immediately
+            // on main. The InvokeJS therefore races Show — either
+            // lands first (view appears with fresh data) or shortly
+            // after (view briefly shows empty state, then pops in
+            // within a frame or two). Either way better than the
+            // pre-fix behaviour where the initial push was silently
+            // dropped and the view stayed on the "waiting" placeholder.
+            g_visible = true;
             PushFullState();
             PrismaUI_API::Show(g_view);
             // Focus pauses the game while the dashboard is on screen. The
@@ -1094,7 +1150,6 @@ namespace NarrativeEngine::DashboardUIManager
             // it easier for the player to actually read the state instead
             // of dodging arrows while squinting at the panel.
             PrismaUI_API::Focus(g_view, /*pauseGame=*/true, /*disableFocusMenu=*/false);
-            g_visible = true;
             logger::debug("DashboardUIManager: shown");
         }
     }

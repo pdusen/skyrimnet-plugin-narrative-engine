@@ -12,11 +12,13 @@
 //     — capture game state (with a single MainThread::Run hop for
 //       the specific engine reads), build the JSON prompt context,
 //       fire the LLM call.
-//   Phase D (main thread, ParseDecision + ApplyDecision via BeatSystem's
-//           ConsiderBeat finalize chain)
-//     — parse, write log, advance phase. Still main-thread today
-//       because BeatSystem's downstream chain lives there; the audit-
-//       fix follow-on migration of BeatSystem will move it.
+//   Phase D (plugin thread — ParseDecision runs inline; ConsiderBeat's
+//           gate walk, beat-select LLM, and JSON parse all live on the
+//           plugin thread. Only the finalize chain — StartBeat's
+//           OnStart per IBeat's main-thread contract, plus ApplyDecision's
+//           DashboardUI push — hops back to main via
+//           MainThread::FireAndForget.)
+//     — parse, write log, advance phase.
 namespace NarrativeEngine::EvaluationPipeline
 {
     // Entry point — called by the tick driver on the plugin thread
@@ -52,9 +54,13 @@ namespace NarrativeEngine::EvaluationPipeline
     // a usable record. Stubbed for Step 9.
     DecisionLog::DecisionRecord ParseDecision(const std::string& jsonResponse, const Snapshot& snapshot);
 
-    // Phase D applier — main thread. Appends to DecisionLog and applies any
-    // phase advance. Stubbed for Step 9.
-    void ApplyDecision(const DecisionLog::DecisionRecord& record);
+    // Phase D applier — plugin thread. Appends to DecisionLog (mutex-
+    // guarded), applies any phase advance via PhaseTracker::AdvanceTo
+    // (also mutex-guarded), and calls DashboardUIManager::PushFullState
+    // (which itself hops the compose off main via AsyncDispatch and does
+    // its own bundled MainThread::Run for the tiny engine reads it needs).
+    // No direct engine touches remain on the applier's own thread.
+    void ApplyDecision(const PluginThread::Token&, const DecisionLog::DecisionRecord& record);
 
     // Strip leading/trailing whitespace and a wrapping markdown code fence
     // (```json ... ``` or ``` ... ```) if present. LLMs sometimes wrap their

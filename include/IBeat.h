@@ -57,14 +57,20 @@ namespace NarrativeEngine
 
     // Read-only snapshot of world state for the beat-selection pathway.
     // Built by ConsiderBeat immediately before calling IsAvailable, and
-    // by StartBeat immediately before calling OnStart. Both call sites
-    // run on the main thread so engine reads are safe. Beats may not
+    // by StartBeat immediately before calling OnStart. Beats may not
     // extend the struct.
     //
+    // The two call sites run on different threads today: ConsiderBeat
+    // + IsAvailable run on the plugin thread (see IsAvailable's doc
+    // below); StartBeat + OnStart run on the main thread. The struct
+    // itself is thread-agnostic — a plain snapshot of world state
+    // captured by the caller before entry.
+    //
     // NOT passed to Tick — Tick runs on the BeatSystem's worker thread,
-    // where most engine reads are unsafe, so beats that need engine
+    // where most engine reads still require the token-based main-hop
+    // pattern (see docs/THREADING_MODEL.md); beats that need engine
     // state during Tick must marshal to the main thread via
-    // AsyncDispatch::MarshalToMainThread.
+    // MainThread::Run or MainThread::FireAndForget.
     struct BeatContext
     {
         RE::Actor* player = nullptr;
@@ -112,9 +118,17 @@ namespace NarrativeEngine
         virtual BeatPolarity Polarity() const = 0;
 
         // Cheap synchronous check: does current world state permit this
-        // beat to fire right now? Main thread. Called once per beat per
-        // Director tick to build the candidate manifest. Must be side-
-        // effect free.
+        // beat to fire right now? Called once per beat per Director
+        // tick to build the candidate manifest, from the plugin
+        // thread (BeatSystem::ConsiderBeat's BuildBeatSelectPrep).
+        // Must be side-effect free and safe to call off-main under
+        // the codebase's documented "stable engine singleton pointer
+        // + plain bool/pointer load" precedent (see
+        // docs/MAIN_THREAD_STUTTER_AUDIT.md). SkyrimNet DLL calls and
+        // engine reads that carry their own read lock (e.g.
+        // ExtraAliasInstanceArray behind BSReadLockGuard) are the
+        // canonical off-main-safe shapes here; anything that mutates
+        // engine state does not belong in IsAvailable.
         virtual bool IsAvailable(const BeatContext& ctx) const = 0;
 
         // Called by BeatSystem::StartBeat exactly once, immediately after
@@ -122,7 +136,16 @@ namespace NarrativeEngine
         // first Tick lands. The beat stores whatever LLM-supplied
         // parameters it needs on its own cosave record; typical beats
         // do minimal work here (validate + clamp params, seed the
-        // per-beat state to COMPOSE). Main thread.
+        // per-beat state to COMPOSE).
+        //
+        // Plugin thread. This is param-parse + session-state-reset
+        // territory — mutex- or atomic-guarded internal state is
+        // fine, but do NOT read or mutate engine state here. Beats
+        // that need engine state during Tick already marshal
+        // explicitly per Tick's doc below; the same rule applies to
+        // any first-tick setup that would want engine access — defer
+        // it to the first Tick's COMPOSE arm rather than doing it in
+        // OnStart.
         virtual void OnStart(const BeatContext& ctx, const nlohmann::json& parameters) = 0;
 
         // The beat's whole per-poll lifecycle. Called by BeatSystem's

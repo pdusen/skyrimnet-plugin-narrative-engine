@@ -67,13 +67,18 @@ namespace NarrativeEngine::VisitComposer
         nlohmann::json memories = nlohmann::json::array();
     };
 
-    // Main-thread only. Ranks recent engagement through
-    // SenderCandidatePool with visit-specific viability rules
-    // (unique / not in combat / not follower / has resolvable
-    // location) and returns the surviving candidates with their
-    // memory tails attached. Bounded output size (12 by default).
-    // Empty when SkyrimNet is unavailable or no viable candidates
-    // exist.
+    // Safe from the plugin thread (BeatSystem::ConsiderBeat's
+    // BuildBeatSelectPrep is the caller). Same off-main-safety
+    // story as LetterComposer::CollectSenderCandidates — every
+    // underlying read is off-main-safe per the audit doc, and no
+    // engine mutation happens here.
+    //
+    // Ranks recent engagement through SenderCandidatePool with
+    // visit-specific viability rules (unique / not in combat / not
+    // follower / has resolvable location) and returns the surviving
+    // candidates with their memory tails attached. Bounded output
+    // size (12 by default). Empty when SkyrimNet is unavailable or
+    // no viable candidates exist.
     //
     // Called by BeatSystem::ConsiderBeat when npc_visit is among the
     // beat-select candidates.

@@ -1,7 +1,6 @@
 #include <EvaluationPipeline.h>
 
 #include <AlphaCanon.h>
-#include <AsyncDispatch.h>
 #include <BeatSystem.h>
 #include <CombatEventLog.h>
 #include <DashboardUIManager.h>
@@ -468,25 +467,27 @@ namespace NarrativeEngine::EvaluationPipeline
         return r;
     }
 
-    void ApplyDecision(const DecisionLog::DecisionRecord& record)
+    void ApplyDecision(const PluginThread::Token&, const DecisionLog::DecisionRecord& record)
     {
         // Append first so the next tick's snapshot sees this decision in
         // its `decisionLogTail`. The `ne_narrative_tension` decorator
         // (Step 12) will read this record's tensionScore on the very next
-        // NPC bio render.
+        // NPC bio render. DecisionLog::Append is mutex-guarded — safe
+        // from the plugin thread.
         DecisionLog::Append(record);
 
-        // Phase advance, if any. AdvanceTo zeroes time-in-phase. The
+        // Phase advance, if any. AdvanceTo zeroes time-in-phase and
+        // notifies event logs; all of that is mutex-guarded. The
         // `ne_narrative_phase` decorator will see the new phase on the
         // next bio render.
         if (record.advancedToPhase) {
             PhaseTracker::AdvanceTo(*record.advancedToPhase);
         }
 
-        // Push the fresh DirectorState to the PrismaUI dashboard view, if
-        // one exists. No-op when PrismaUI is unavailable. Cheap — JSON
-        // compose is microseconds and PrismaUI's InteropCall is async on
-        // its end, so this doesn't add latency to ApplyDecision.
+        // Push the fresh DirectorState to the PrismaUI dashboard view.
+        // PushFullState is safe from any thread — it early-outs when
+        // hidden and moves the compose off the caller's thread via
+        // AsyncDispatch, so we pay no compose cost here.
         DashboardUIManager::PushFullState();
 
         if (Settings::Get().debugMode) {
@@ -561,15 +562,13 @@ namespace NarrativeEngine::EvaluationPipeline
         // Phase D parser — plugin thread, touches no engine state.
         DecisionLog::DecisionRecord rec = ParseDecision(result.response, snapshot);
 
-        // Phase D applier hand-off. BeatSystem::ConsiderBeat still
-        // runs on main today; the deprecated MarshalToMainThread path
-        // is preserved here until the follow-on phase moves
-        // BeatSystem's chain off main. ConsiderBeat takes ownership of
-        // snapshot + rec and is responsible for calling ApplyDecision
-        // (possibly after a deferred LLM round-trip) and the finalizer
-        // exactly once.
-        AsyncDispatch::MarshalToMainThread([snapshot = std::move(snapshot), rec = std::move(rec)]() mutable {
-            BeatSystem::ConsiderBeat(std::move(snapshot), std::move(rec), [] { g_inFlight.store(false); });
-        });
+        // Phase D applier hand-off. ConsiderBeat now runs on the
+        // plugin thread — its own gate walk, LLM round-trip, and JSON
+        // parse are all thread-safe; only the finalize step (which
+        // calls beat->OnStart per IBeat's main-thread contract) hops
+        // back to main via MainThread::FireAndForget. ConsiderBeat
+        // takes ownership of snapshot + rec and is responsible for
+        // calling ApplyDecision and the finalizer exactly once.
+        BeatSystem::ConsiderBeat(pt, std::move(snapshot), std::move(rec), [] { g_inFlight.store(false); });
     }
 } // namespace NarrativeEngine::EvaluationPipeline

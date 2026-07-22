@@ -2,6 +2,7 @@
 
 #include <DecisionLog.h>
 #include <IBeat.h>
+#include <PluginThread.h>
 #include <Snapshot.h>
 
 #include <cstdint>
@@ -73,30 +74,44 @@ namespace NarrativeEngine::BeatSystem
     // Returns std::nullopt when no beat is in flight.
     std::optional<InFlightInfo> GetInFlightInfo();
 
-    // Per-evaluation hook called from EvaluationPipeline on the main
+    // Per-evaluation hook called from EvaluationPipeline on the plugin
     // thread after ParseDecision produces a provisional record. Takes
     // ownership of snapshot and rec.
     //
     // Walks the top-level gates (already-running / cooldown / phase
     // dwell / global preconditions / candidate availability), fires
     // the beat-select LLM when the gates pass and there is at least
-    // one candidate, and eventually calls onFinalized exactly once on
-    // the main thread. When no candidates survive filtering, skips
-    // cleanly with ApplyDecision + onFinalized.
+    // one candidate, and eventually calls onFinalized exactly once
+    // (from the main thread, since the finalize path re-checks
+    // preconditions and calls beat->OnStart). When no candidates
+    // survive filtering, skips cleanly with ApplyDecision + onFinalized.
+    //
+    // Gate walk runs on the plugin thread. Engine-touching work (
+    // BuildBeatContext, precondition probes, per-beat IsAvailable,
+    // sender-candidate collection) is bundled into a single
+    // MainThread::Run hop. The LLM round-trip uses the synchronous
+    // SkyrimNetAPI wrapper — the caller is already single-flighted via
+    // EvaluationPipeline::g_inFlight so blocking the plugin thread is
+    // acceptable.
     using FinalizedCallback = std::function<void()>;
-    void ConsiderBeat(Snapshot snapshot, DecisionLog::DecisionRecord rec, FinalizedCallback onFinalized);
+    void ConsiderBeat(const PluginThread::Token& pt,
+                      Snapshot snapshot,
+                      DecisionLog::DecisionRecord rec,
+                      FinalizedCallback onFinalized);
 
     // Public entry point for handing dispatch control to a specific
-    // registered beat. Main thread. Sets the top-level state to
+    // registered beat. Plugin thread. Sets the top-level state to
     // BEAT_RUNNING with the given name, seeds the beat's OnStart from
     // the LLM-supplied parameters JSON, and stamps
-    // BeatRegistry::MarkDispatched. Called from ConsiderBeat's LLM
-    // response path and (indirectly, via ForceDispatchBeat) from the
-    // dashboard's force-dispatch button.
+    // BeatRegistry::MarkDispatched. Builds a fresh BeatContext from
+    // the current snapshot so the beat sees live world state.
     //
     // No-op when a beat is already running or when `name` isn't in the
     // registry. Logs and returns cleanly in both cases.
-    void StartBeat(const std::string& name, const nlohmann::json& parameters);
+    //
+    // Called by ConsiderBeat's LLM response path via StartBeatInternal
+    // and exposed publicly for cosave restore / direct-startup paths.
+    void StartBeat(const PluginThread::Token&, const std::string& name, const nlohmann::json& parameters);
 
     // Debug / dashboard entry point for force-dispatching a specific
     // beat. Bypasses every ConsiderBeat gate except the single-flight

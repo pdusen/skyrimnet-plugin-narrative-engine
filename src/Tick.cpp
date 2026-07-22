@@ -153,10 +153,12 @@ namespace NarrativeEngine::Tick
             // BeginEvaluation internally hops to main via
             // MainThread::Run for BuildSnapshot's engine reads (one
             // bundled hop per firing tick) and then does the prompt
-            // build + LLM fire inline on the plugin thread. The Phase
-            // D hand-off to BeatSystem::ConsiderBeat still marshals to
-            // main from inside the LLM callback until the follow-on
-            // BeatSystem migration lands.
+            // build + LLM fire inline on the plugin thread.
+            // BeatSystem::ConsiderBeat also runs on the plugin thread
+            // — its gate walk, beat-select LLM, and JSON parse are all
+            // off-main; only the finalize step (beat->OnStart plus
+            // ApplyDecision's DashboardUI push) hops back to main via
+            // MainThread::FireAndForget.
             PhaseTracker::Tick(pt);
             EvaluationPipeline::BeginEvaluation(pt);
         }

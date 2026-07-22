@@ -10,6 +10,7 @@
 #include <LetterComposer.h>
 #include <LLMTextSanitizer.h>
 #include <logger.h>
+#include <MainThread.h>
 #include <PhaseTracker.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -497,18 +498,27 @@ namespace NarrativeEngine::BeatSystem
     // Director handshake — ConsiderBeat + StartBeat
     // -----------------------------------------------------------------
     //
-    // ConsiderBeat is called on the main thread from
-    // EvaluationPipeline::ProcessTick after the tension-eval LLM has
-    // populated `rec`. Its job is:
+    // ConsiderBeat is called on the plugin thread from
+    // EvaluationPipeline::BeginEvaluation after the tension-eval LLM
+    // has populated `rec`. Its job is:
     //
     //   1. Walk the top-level gates (already-running, cooldown, phase
-    //      just-advanced, phase dwell).
-    //   2. Build the candidate list from BeatRegistry filtered by
-    //      IsAvailable + polarity + repetition window.
-    //   3. If any survive, fire the beat-select LLM. On response,
-    //      validate the chosen name and delegate to StartBeat.
-    //   4. In either the "no candidates" or "gates block" branches,
-    //      call ApplyDecision(rec) and onFinalized cleanly.
+    //      just-advanced, phase dwell) — pure state-mutex reads and
+    //      pure computation, plugin-thread-safe.
+    //   2. Bundle the engine-touching work (BuildBeatContext,
+    //      precondition probes, per-beat IsAvailable, sender-candidate
+    //      collection with min-threshold pruning) into a single
+    //      MainThread::Run hop.
+    //   3. Recency filter — plugin thread, brief g_recentMutex acquire.
+    //   4. If any candidates survive, fire the beat-select LLM via
+    //      the synchronous SkyrimNetAPI wrapper (plugin thread blocks
+    //      for the round-trip). Parse the response on the plugin
+    //      thread; marshal to main only for the finalize step
+    //      (StartBeat calls beat->OnStart which is main-thread by
+    //      IBeat contract; ApplyDecision pushes DashboardUI state).
+    //   5. In the "no candidates" or "gates block" branches, marshal a
+    //      MainThread::FireAndForget of FinalizeWithoutBeat, which
+    //      calls ApplyDecision(rec) and onFinalized cleanly.
     //
     // For Steps 6–7 the candidate list is always empty (no beats
     // registered yet), so this implementation only exercises gate walk
@@ -518,9 +528,15 @@ namespace NarrativeEngine::BeatSystem
 
     namespace
     {
-        void FinalizeWithoutBeat(DecisionLog::DecisionRecord rec, FinalizedCallback onFinalized)
+        // Plugin thread. ApplyDecision is a plugin-thread body (mutex-
+        // guarded log append + PhaseTracker::AdvanceTo + a
+        // PushFullState that internally schedules its compose off
+        // main) — nothing here needs a main-thread hop.
+        void FinalizeWithoutBeat(const PluginThread::Token& pt,
+                                 DecisionLog::DecisionRecord rec,
+                                 FinalizedCallback onFinalized)
         {
-            EvaluationPipeline::ApplyDecision(std::move(rec));
+            EvaluationPipeline::ApplyDecision(pt, rec);
             if (onFinalized)
                 onFinalized();
         }
@@ -741,7 +757,12 @@ namespace NarrativeEngine::BeatSystem
         // already is — the gate walk ran while NO_BEAT_RUNNING) and
         // NOT touching the top-level state, so the counter climbs back
         // up cleanly.
-        void FinalizeWithFailure(DecisionLog::DecisionRecord rec,
+        // Plugin thread. Called from FireBeatSelectLLM's failure
+        // branches after the sync SkyrimNet round-trip returned an
+        // error or malformed body. The state-mutex acquire is safe
+        // from any thread; ApplyDecision is plugin-thread.
+        void FinalizeWithFailure(const PluginThread::Token& pt,
+                                 DecisionLog::DecisionRecord rec,
                                  const std::string& reason,
                                  FinalizedCallback onFinalized)
         {
@@ -751,20 +772,26 @@ namespace NarrativeEngine::BeatSystem
                 g_globalCooldownMs = 0;
             }
             logger::warn("BeatSystem: beat-select failed: {}", reason);
-            EvaluationPipeline::ApplyDecision(rec);
+            EvaluationPipeline::ApplyDecision(pt, rec);
             if (onFinalized)
                 onFinalized();
         }
 
         // Forward declaration — StartBeat's definition lives at the
         // bottom of this file.
-        void StartBeatInternal(const std::string& name, const BeatContext& ctx, const nlohmann::json& parameters);
+        void StartBeatInternal(const PluginThread::Token&,
+                               const std::string& name,
+                               const BeatContext& ctx,
+                               const nlohmann::json& parameters);
 
-        // Called on the main thread when the LLM response has been
-        // parsed and is structurally valid. Validates the chosen name
-        // against the candidate set, re-checks global preconditions,
-        // populates the record, and hands off to StartBeatInternal.
-        void FinalizeWithLLMResponse(Snapshot snapshot,
+        // Plugin thread. Called from FireBeatSelectLLM after a
+        // structurally-valid LLM response. Runs the whole finalize
+        // chain off main except for the single MainThread::Run hop
+        // that re-checks preconditions and calls StartBeatInternal
+        // (which must be main because beat->OnStart is main-thread
+        // per IBeat contract).
+        void FinalizeWithLLMResponse(const PluginThread::Token& pt,
+                                     Snapshot snapshot,
                                      DecisionLog::DecisionRecord rec,
                                      std::vector<std::string> candidateNames,
                                      std::string chosenBeat,
@@ -775,39 +802,29 @@ namespace NarrativeEngine::BeatSystem
                                      int tensionDelta,
                                      FinalizedCallback onFinalized)
         {
+            // Registry lookup + validation — thread-safe (BeatRegistry
+            // is mutex-guarded internally).
             const bool isValidCandidate =
                 std::find(candidateNames.begin(), candidateNames.end(), chosenBeat) != candidateNames.end();
             if (!isValidCandidate) {
                 FinalizeWithFailure(
-                    std::move(rec), "LLM returned unknown beat '" + chosenBeat + "'", std::move(onFinalized));
+                    pt, std::move(rec), "LLM returned unknown beat '" + chosenBeat + "'", std::move(onFinalized));
                 return;
             }
 
             IBeat* beat = BeatRegistry::Find(chosenBeat);
             if (!beat) {
-                FinalizeWithFailure(std::move(rec),
+                FinalizeWithFailure(pt,
+                                    std::move(rec),
                                     "LLM-chosen beat '" + chosenBeat + "' missing from registry",
                                     std::move(onFinalized));
                 return;
             }
 
-            const BeatContext ctx = BuildBeatContextFromSnapshot(snapshot, direction, tensionDelta);
-
-            if (const char* blockedBy = CheckGlobalBeatPreconditions(ctx)) {
-                if (Settings::Get().debugMode) {
-                    logger::debug("BeatSystem: global preconditions changed during "
-                                  "LLM round trip (blocked: {}); dropping chosen "
-                                  "beat '{}'",
-                                  blockedBy,
-                                  chosenBeat);
-                }
-                FinalizeWithoutBeat(std::move(rec), std::move(onFinalized));
-                return;
-            }
-
-            // Populate the record. beatSelected is tentatively the beat
-            // name; a StartBeat failure downstream doesn't roll this
-            // back — the beat *was* chosen, just failed to fire.
+            // Populate the record on the plugin thread. beatSelected is
+            // tentatively the beat name; a StartBeat failure downstream
+            // doesn't roll this back — the beat *was* chosen, just
+            // failed to fire.
             rec.beatSelected = chosenBeat;
             rec.beatParametersJSON = parameters.dump();
             if (!narrativeNote.empty()) {
@@ -820,7 +837,27 @@ namespace NarrativeEngine::BeatSystem
                 parameters["parameter_justification"] = std::move(parameterJustification);
             }
 
-            StartBeatInternal(chosenBeat, ctx, parameters);
+            // Re-check global preconditions off-main — they may have
+            // changed during the LLM round-trip. Uses the same off-
+            // main-safe reads BuildBeatSelectPrep uses.
+            const BeatContext ctx = BuildBeatContextFromSnapshot(snapshot, direction, tensionDelta);
+            if (const char* blockedBy = CheckGlobalBeatPreconditions(ctx)) {
+                if (Settings::Get().debugMode) {
+                    logger::debug("BeatSystem: global preconditions changed during "
+                                  "LLM round trip (blocked: {}); dropping chosen "
+                                  "beat '{}'",
+                                  blockedBy,
+                                  chosenBeat);
+                }
+                FinalizeWithoutBeat(pt, std::move(rec), std::move(onFinalized));
+                return;
+            }
+
+            // Runs on the plugin thread. StartBeatInternal's state
+            // flip is mutex-guarded and beat->OnStart is documented
+            // as plugin-thread-safe (see IBeat::OnStart).
+            StartBeatInternal(pt, chosenBeat, ctx, parameters);
+
             PushRecentlyFired(chosenBeat);
             logger::info("BeatSystem: beat '{}' selected (direction={}, "
                          "tension_delta={})",
@@ -828,17 +865,19 @@ namespace NarrativeEngine::BeatSystem
                          (direction == PhaseTracker::Direction::Raise) ? "raise" : "lower",
                          tensionDelta);
 
-            EvaluationPipeline::ApplyDecision(rec);
+            EvaluationPipeline::ApplyDecision(pt, rec);
             if (onFinalized)
                 onFinalized();
         }
 
-        // The shared body invoked by both ConsiderBeat's LLM finalizer
-        // and ForceDispatchBeat. Sends the beat-select prompt with a
-        // pre-built candidate list; on response, marshals to main and
-        // hands off to FinalizeWithLLMResponse. Handles the !queued
-        // failure path.
-        void FireBeatSelectLLM(Snapshot snapshot,
+        // The shared body invoked by both ConsiderBeat and
+        // ForceDispatchBeat. Runs entirely on the plugin thread:
+        // prompt build, sync LLM round-trip, JSON parse, and the
+        // finalize step (including StartBeatInternal + beat->OnStart,
+        // both plugin-thread-safe per their contracts) all live
+        // off-main.
+        void FireBeatSelectLLM(const PluginThread::Token& pt,
+                               Snapshot snapshot,
                                DecisionLog::DecisionRecord rec,
                                std::vector<IBeat*> candidates,
                                std::vector<LetterComposer::SenderCandidate> letterSenderCandidates,
@@ -861,110 +900,192 @@ namespace NarrativeEngine::BeatSystem
                     candidateNames.push_back(b->Name());
             }
 
-            DecisionLog::DecisionRecord recBackup = rec;
-            FinalizedCallback finalizedBackup = onFinalized;
+            // Sync LLM round-trip. Blocks the plugin thread. See
+            // SkyrimNetAPI.h for the rationale — the caller is
+            // single-flighted (EvaluationPipeline::g_inFlight for
+            // ConsiderBeat, top-level BEAT_RUNNING slot for
+            // ForceDispatchBeat) so no plugin-thread work is idle-
+            // starving during the wait.
+            const auto result = SkyrimNetAPI::SendCustomPromptToLLM(
+                pt, "narrative_engine_action_select", "narrative_engine_director", promptCtx);
 
-            const bool queued = SkyrimNetAPI::SendCustomPromptToLLM(
-                "narrative_engine_action_select",
-                "narrative_engine_director",
-                promptCtx,
-                [snapshot = std::move(snapshot),
-                 rec = std::move(rec),
-                 candidateNames = std::move(candidateNames),
-                 onFinalized = std::move(onFinalized),
-                 direction,
-                 tensionDelta](const PluginThread::Token&, std::string response, bool success) mutable {
-                    if (!success) {
-                        AsyncDispatch::MarshalToMainThread([rec = std::move(rec),
-                                                            onFinalized = std::move(onFinalized),
-                                                            response = std::move(response)]() mutable {
-                            FinalizeWithFailure(
-                                std::move(rec), std::string("LLM error: ") + response, std::move(onFinalized));
-                        });
-                        return;
-                    }
-
-                    if (Settings::Get().debugMode) {
-                        logger::debug("BeatSystem: beat-select LLM callback: body={}B", response.size());
-                        if (!response.empty()) {
-                            logger::debug("BeatSystem: beat-select LLM response: {}", response);
-                        }
-                    }
-
-                    const std::string body = EvaluationPipeline::StripMarkdownFences(response);
-                    auto parsed = nlohmann::json::parse(body, nullptr, false);
-
-                    if (parsed.is_discarded() || !parsed.is_object()) {
-                        AsyncDispatch::MarshalToMainThread([rec = std::move(rec),
-                                                            onFinalized = std::move(onFinalized),
-                                                            response = std::move(response)]() mutable {
-                            FinalizeWithFailure(std::move(rec),
-                                                std::string("LLM response was not a "
-                                                            "JSON object: ")
-                                                    + response,
-                                                std::move(onFinalized));
-                        });
-                        return;
-                    }
-
-                    std::string chosenBeat;
-                    if (auto it = parsed.find("action"); it != parsed.end() && it->is_string()) {
-                        chosenBeat = it->get<std::string>();
-                    }
-                    nlohmann::json parameters = nlohmann::json::object();
-                    if (auto it = parsed.find("parameters"); it != parsed.end() && it->is_object()) {
-                        parameters = *it;
-                    }
-                    std::string narrativeNote;
-                    if (auto it = parsed.find("narrative_note"); it != parsed.end() && it->is_string()) {
-                        narrativeNote = LLMTextSanitizer::Sanitize(it->get<std::string>());
-                        if (narrativeNote.size() > 200) {
-                            narrativeNote.resize(200);
-                        }
-                    }
-                    std::string parameterJustification;
-                    if (auto it = parsed.find("parameter_justification"); it != parsed.end() && it->is_string()) {
-                        parameterJustification = LLMTextSanitizer::Sanitize(it->get<std::string>());
-                        if (parameterJustification.size() > 400) {
-                            parameterJustification.resize(400);
-                        }
-                    }
-
-                    AsyncDispatch::MarshalToMainThread([snapshot = std::move(snapshot),
-                                                        rec = std::move(rec),
-                                                        candidateNames = std::move(candidateNames),
-                                                        chosenBeat = std::move(chosenBeat),
-                                                        parameters = std::move(parameters),
-                                                        narrativeNote = std::move(narrativeNote),
-                                                        parameterJustification = std::move(parameterJustification),
-                                                        direction,
-                                                        tensionDelta,
-                                                        onFinalized = std::move(onFinalized)]() mutable {
-                        FinalizeWithLLMResponse(std::move(snapshot),
-                                                std::move(rec),
-                                                std::move(candidateNames),
-                                                std::move(chosenBeat),
-                                                std::move(parameters),
-                                                std::move(narrativeNote),
-                                                std::move(parameterJustification),
-                                                direction,
-                                                tensionDelta,
-                                                std::move(onFinalized));
-                    });
-                });
-
-            if (!queued) {
-                logger::warn("BeatSystem: {}SendCustomPromptToLLM returned false; "
-                             "treating as failure",
-                             logPrefix);
-                FinalizeWithFailure(std::move(recBackup),
-                                    "SendCustomPromptToLLM returned false (queue full?)",
-                                    std::move(finalizedBackup));
+            if (!result.ok) {
+                logger::warn("BeatSystem: {}beat-select LLM call failed: {}", logPrefix, result.response);
+                FinalizeWithFailure(
+                    pt, std::move(rec), std::string("LLM error: ") + result.response, std::move(onFinalized));
+                return;
             }
+
+            if (Settings::Get().debugMode) {
+                logger::debug("BeatSystem: beat-select LLM callback: body={}B", result.response.size());
+                if (!result.response.empty()) {
+                    logger::debug("BeatSystem: beat-select LLM response: {}", result.response);
+                }
+            }
+
+            const std::string body = EvaluationPipeline::StripMarkdownFences(result.response);
+            auto parsed = nlohmann::json::parse(body, nullptr, false);
+
+            if (parsed.is_discarded() || !parsed.is_object()) {
+                FinalizeWithFailure(pt,
+                                    std::move(rec),
+                                    std::string("LLM response was not a JSON object: ") + result.response,
+                                    std::move(onFinalized));
+                return;
+            }
+
+            std::string chosenBeat;
+            if (auto it = parsed.find("action"); it != parsed.end() && it->is_string()) {
+                chosenBeat = it->get<std::string>();
+            }
+            nlohmann::json parameters = nlohmann::json::object();
+            if (auto it = parsed.find("parameters"); it != parsed.end() && it->is_object()) {
+                parameters = *it;
+            }
+            std::string narrativeNote;
+            if (auto it = parsed.find("narrative_note"); it != parsed.end() && it->is_string()) {
+                narrativeNote = LLMTextSanitizer::Sanitize(it->get<std::string>());
+                if (narrativeNote.size() > 200) {
+                    narrativeNote.resize(200);
+                }
+            }
+            std::string parameterJustification;
+            if (auto it = parsed.find("parameter_justification"); it != parsed.end() && it->is_string()) {
+                parameterJustification = LLMTextSanitizer::Sanitize(it->get<std::string>());
+                if (parameterJustification.size() > 400) {
+                    parameterJustification.resize(400);
+                }
+            }
+
+            FinalizeWithLLMResponse(pt,
+                                    std::move(snapshot),
+                                    std::move(rec),
+                                    std::move(candidateNames),
+                                    std::move(chosenBeat),
+                                    std::move(parameters),
+                                    std::move(narrativeNote),
+                                    std::move(parameterJustification),
+                                    direction,
+                                    tensionDelta,
+                                    std::move(onFinalized));
         }
     } // namespace
 
-    void ConsiderBeat(Snapshot snapshot, DecisionLog::DecisionRecord rec, FinalizedCallback onFinalized)
+    namespace
+    {
+        // Bundled result of the main-thread engine reads ConsiderBeat
+        // needs: BeatContext build, precondition probe, IsAvailable
+        // gathering, and sender-candidate collection with min-threshold
+        // pruning. Everything the LLM prompt needs to know about the
+        // world lands here in one MainThread::Run hop, so the plugin
+        // thread never has to make repeated round trips.
+        //
+        // Result codes:
+        //   * blockedReason non-null → precondition failed; skip cleanly
+        //   * candidates.empty() (and blockedReason null) → no viable
+        //     beats after IsAvailable + composer prune
+        //   * otherwise → fire the LLM with the returned lists
+        struct BeatSelectPrep
+        {
+            const char* blockedReason = nullptr;
+            BeatContext ctx;
+            std::vector<IBeat*> candidates;
+            std::vector<LetterComposer::SenderCandidate> letterSenderCandidates;
+            std::vector<VisitComposer::SenderCandidate> visitSenderCandidates;
+        };
+
+        // Runs entirely on the plugin thread. Every engine read
+        // here is either (a) a stable singleton pointer + plain
+        // bool/pointer load that the codebase already accepts off-
+        // main (see docs/MAIN_THREAD_STUTTER_AUDIT.md and the
+        // BeatSystem worker's own gate reads via EngineUtils), or
+        // (b) a SkyrimNet DLL call that's documented thread-safe,
+        // or (c) an alias / extra-list walk that carries its own
+        // BSReadLockGuard precisely to permit off-main reading.
+        // Nothing here mutates engine state.
+        //
+        // Concretely:
+        //   * BuildBeatContextFromSnapshot: PlayerCharacter::IsInCombat,
+        //     UI::IsMenuOpen — matches EngineUtils::IsPlayerInCombat /
+        //     IsPlayerInDialogue (both untagged, safe-from-any-thread).
+        //   * CheckGlobalBeatPreconditions → AlphaCanon::IsInScriptedScene
+        //     / IsInDoNotDisturbCell — stable-singleton pointer walks
+        //     + bool/string loads.
+        //   * BeatRegistry::AvailableMatching → per-beat IsAvailable —
+        //     the two implementations that exist (NPCLetterBeat,
+        //     NPCVisitBeat) do SkyrimNet DLL calls + alias-walk
+        //     filtering, both off-main-safe per the audit.
+        //   * LetterComposer / VisitComposer CollectSenderCandidates —
+        //     same shape as the IsAvailable path (SenderCandidatePool
+        //     build).
+        BeatSelectPrep BuildBeatSelectPrep(const PluginThread::Token&,
+                                           const Snapshot& snapshot,
+                                           PhaseTracker::Direction direction,
+                                           int tensionDelta,
+                                           bool debug)
+        {
+            BeatSelectPrep prep;
+            prep.ctx = BuildBeatContextFromSnapshot(snapshot, direction, tensionDelta);
+
+            if (const char* blockedBy = CheckGlobalBeatPreconditions(prep.ctx)) {
+                prep.blockedReason = blockedBy;
+                return prep;
+            }
+
+            const BeatPolarity desired =
+                (direction == PhaseTracker::Direction::Raise) ? BeatPolarity::Raise : BeatPolarity::Lower;
+            prep.candidates = BeatRegistry::AvailableMatching(prep.ctx, desired);
+
+            // Composer collection + min-threshold prune. Both
+            // collectors iterate over live actor pools via the same
+            // off-main-safe reads the per-beat IsAvailable path uses
+            // (SkyrimNetAPI::GetActorEngagement + alias walk). A pool
+            // falling under its threshold drops that beat from the
+            // candidate list rather than starving the LLM with an
+            // unviable sender pool.
+            const auto isLetterBeat = [](IBeat* b) { return b && b->Name() == "npc_letter"; };
+            const auto isVisitBeat = [](IBeat* b) { return b && b->Name() == "npc_visit"; };
+            const bool npcLetterPresent = std::any_of(prep.candidates.begin(), prep.candidates.end(), isLetterBeat);
+            const bool npcVisitPresent = std::any_of(prep.candidates.begin(), prep.candidates.end(), isVisitBeat);
+            if (npcLetterPresent) {
+                prep.letterSenderCandidates = LetterComposer::CollectSenderCandidates();
+                const int minSenders = Settings::Get().letterMinSenderCandidates;
+                if (static_cast<int>(prep.letterSenderCandidates.size()) < minSenders) {
+                    if (debug) {
+                        logger::debug("BeatSystem::ConsiderBeat: dropping npc_letter "
+                                      "from candidates ({} viable senders < min {})",
+                                      prep.letterSenderCandidates.size(),
+                                      minSenders);
+                    }
+                    prep.candidates.erase(std::remove_if(prep.candidates.begin(), prep.candidates.end(), isLetterBeat),
+                                          prep.candidates.end());
+                    prep.letterSenderCandidates.clear();
+                }
+            }
+            if (npcVisitPresent) {
+                prep.visitSenderCandidates = VisitComposer::CollectSenderCandidates();
+                const int minSenders = Settings::Get().visitMinSenderCandidates;
+                if (static_cast<int>(prep.visitSenderCandidates.size()) < minSenders) {
+                    if (debug) {
+                        logger::debug("BeatSystem::ConsiderBeat: dropping npc_visit "
+                                      "from candidates ({} viable senders < min {})",
+                                      prep.visitSenderCandidates.size(),
+                                      minSenders);
+                    }
+                    prep.candidates.erase(std::remove_if(prep.candidates.begin(), prep.candidates.end(), isVisitBeat),
+                                          prep.candidates.end());
+                    prep.visitSenderCandidates.clear();
+                }
+            }
+
+            return prep;
+        }
+    } // namespace
+
+    void ConsiderBeat(const PluginThread::Token& pt,
+                      Snapshot snapshot,
+                      DecisionLog::DecisionRecord rec,
+                      FinalizedCallback onFinalized)
     {
         const bool debug = Settings::Get().debugMode;
 
@@ -984,7 +1105,7 @@ namespace NarrativeEngine::BeatSystem
                               "'{}' is still running",
                               inFlightName);
             }
-            FinalizeWithoutBeat(std::move(rec), std::move(onFinalized));
+            FinalizeWithoutBeat(pt, std::move(rec), std::move(onFinalized));
             return;
         }
 
@@ -994,7 +1115,7 @@ namespace NarrativeEngine::BeatSystem
                 logger::debug("BeatSystem::ConsiderBeat: gate just_advanced blocked: "
                               "phase advanced this tick");
             }
-            FinalizeWithoutBeat(std::move(rec), std::move(onFinalized));
+            FinalizeWithoutBeat(pt, std::move(rec), std::move(onFinalized));
             return;
         }
 
@@ -1010,7 +1131,7 @@ namespace NarrativeEngine::BeatSystem
                               cooldownThresholdMs / 1000.0,
                               remaining / 1000.0);
             }
-            FinalizeWithoutBeat(std::move(rec), std::move(onFinalized));
+            FinalizeWithoutBeat(pt, std::move(rec), std::move(onFinalized));
             return;
         }
 
@@ -1022,7 +1143,7 @@ namespace NarrativeEngine::BeatSystem
                               "unknown phase '{}'",
                               snapshot.currentPhase);
             }
-            FinalizeWithoutBeat(std::move(rec), std::move(onFinalized));
+            FinalizeWithoutBeat(pt, std::move(rec), std::move(onFinalized));
             return;
         }
         const int ideal = IdealDurationFor(*currentPhaseOpt);
@@ -1033,7 +1154,7 @@ namespace NarrativeEngine::BeatSystem
                               snapshot.timeInPhaseSeconds,
                               ideal);
             }
-            FinalizeWithoutBeat(std::move(rec), std::move(onFinalized));
+            FinalizeWithoutBeat(pt, std::move(rec), std::move(onFinalized));
             return;
         }
 
@@ -1043,89 +1164,42 @@ namespace NarrativeEngine::BeatSystem
         const auto direction = PhaseTracker::OutgoingDirection(*currentPhaseOpt);
         const int tensionDelta = ComputeTensionDelta(*currentPhaseOpt, rec.tensionScore);
 
-        // Gate 5: global beat preconditions (combat / dialogue /
-        // scripted scene / DND cell). Checked before the LLM round trip
-        // so we don't waste it.
-        const BeatContext ctx = BuildBeatContextFromSnapshot(snapshot, direction, tensionDelta);
-        if (const char* blockedBy = CheckGlobalBeatPreconditions(ctx)) {
+        // Build BeatContext, check global preconditions, gather
+        // IsAvailable candidates, collect letter/visit sender pools,
+        // prune under min-thresholds. All on the plugin thread —
+        // every engine read on this path is off-main-safe per the
+        // helper's contract. See BuildBeatSelectPrep above.
+        auto prep = BuildBeatSelectPrep(pt, snapshot, direction, tensionDelta, debug);
+
+        if (prep.blockedReason) {
             if (debug) {
                 logger::debug("BeatSystem::ConsiderBeat: gate "
                               "global_preconditions blocked: {}",
-                              blockedBy);
+                              prep.blockedReason);
             }
-            FinalizeWithoutBeat(std::move(rec), std::move(onFinalized));
+            FinalizeWithoutBeat(pt, std::move(rec), std::move(onFinalized));
             return;
         }
 
-        // Gate 6: at least one candidate survives IsAvailable + recency.
-        const BeatPolarity desired =
-            (direction == PhaseTracker::Direction::Raise) ? BeatPolarity::Raise : BeatPolarity::Lower;
-        auto candidates = BeatRegistry::AvailableMatching(ctx, desired);
-
-        if (!candidates.empty()) {
+        // Recency filter — runs on plugin thread, briefly acquires the
+        // session-only g_recentMutex.
+        if (!prep.candidates.empty()) {
             const double now = NowUnixSeconds();
             std::scoped_lock lock(g_recentMutex);
             TrimRecentlyFiredLocked(now);
-            candidates.erase(std::remove_if(candidates.begin(),
-                                            candidates.end(),
-                                            [now](IBeat* b) { return WasFiredRecentlyLocked(b->Name(), now); }),
-                             candidates.end());
+            prep.candidates.erase(std::remove_if(prep.candidates.begin(),
+                                                 prep.candidates.end(),
+                                                 [now](IBeat* b) { return WasFiredRecentlyLocked(b->Name(), now); }),
+                                  prep.candidates.end());
         }
 
-        if (candidates.empty()) {
+        if (prep.candidates.empty()) {
             if (debug) {
                 logger::debug("BeatSystem::ConsiderBeat: gate candidates blocked: "
                               "0 candidates after filtering");
             }
-            FinalizeWithoutBeat(std::move(rec), std::move(onFinalized));
+            FinalizeWithoutBeat(pt, std::move(rec), std::move(onFinalized));
             return;
-        }
-
-        // Gate 7: collect per-beat sender candidate lists for the two
-        // beats that need them at select time. If a pool falls under
-        // its min-candidate threshold, drop that beat from the list
-        // rather than starve the LLM.
-        std::vector<LetterComposer::SenderCandidate> letterSenderCandidates;
-        std::vector<VisitComposer::SenderCandidate> visitSenderCandidates;
-        const auto isLetterBeat = [](IBeat* b) { return b && b->Name() == "npc_letter"; };
-        const auto isVisitBeat = [](IBeat* b) { return b && b->Name() == "npc_visit"; };
-        const bool npcLetterPresent = std::any_of(candidates.begin(), candidates.end(), isLetterBeat);
-        const bool npcVisitPresent = std::any_of(candidates.begin(), candidates.end(), isVisitBeat);
-        if (npcLetterPresent) {
-            letterSenderCandidates = LetterComposer::CollectSenderCandidates();
-            const int minSenders = Settings::Get().letterMinSenderCandidates;
-            if (static_cast<int>(letterSenderCandidates.size()) < minSenders) {
-                if (debug) {
-                    logger::debug("BeatSystem::ConsiderBeat: dropping npc_letter "
-                                  "from candidates ({} viable senders < min {})",
-                                  letterSenderCandidates.size(),
-                                  minSenders);
-                }
-                candidates.erase(std::remove_if(candidates.begin(), candidates.end(), isLetterBeat), candidates.end());
-                letterSenderCandidates.clear();
-                if (candidates.empty()) {
-                    FinalizeWithoutBeat(std::move(rec), std::move(onFinalized));
-                    return;
-                }
-            }
-        }
-        if (npcVisitPresent) {
-            visitSenderCandidates = VisitComposer::CollectSenderCandidates();
-            const int minSenders = Settings::Get().visitMinSenderCandidates;
-            if (static_cast<int>(visitSenderCandidates.size()) < minSenders) {
-                if (debug) {
-                    logger::debug("BeatSystem::ConsiderBeat: dropping npc_visit "
-                                  "from candidates ({} viable senders < min {})",
-                                  visitSenderCandidates.size(),
-                                  minSenders);
-                }
-                candidates.erase(std::remove_if(candidates.begin(), candidates.end(), isVisitBeat), candidates.end());
-                visitSenderCandidates.clear();
-                if (candidates.empty()) {
-                    FinalizeWithoutBeat(std::move(rec), std::move(onFinalized));
-                    return;
-                }
-            }
         }
 
         // All gates passed — fire the beat-select LLM call.
@@ -1136,17 +1210,18 @@ namespace NarrativeEngine::BeatSystem
                      "dwell={:.1f}/{}s)",
                      dirName,
                      tensionDelta,
-                     candidates.size(),
-                     letterSenderCandidates.size(),
-                     visitSenderCandidates.size(),
+                     prep.candidates.size(),
+                     prep.letterSenderCandidates.size(),
+                     prep.visitSenderCandidates.size(),
                      snapshot.timeInPhaseSeconds,
                      ideal);
 
-        FireBeatSelectLLM(std::move(snapshot),
+        FireBeatSelectLLM(pt,
+                          std::move(snapshot),
                           std::move(rec),
-                          std::move(candidates),
-                          std::move(letterSenderCandidates),
-                          std::move(visitSenderCandidates),
+                          std::move(prep.candidates),
+                          std::move(prep.letterSenderCandidates),
+                          std::move(prep.visitSenderCandidates),
                           direction,
                           tensionDelta,
                           std::move(onFinalized),
@@ -1155,13 +1230,20 @@ namespace NarrativeEngine::BeatSystem
 
     namespace
     {
-        // Shared body for StartBeat / FinalizeWithLLMResponse. Assumes
-        // main thread and a valid `beat` in the registry; performs the
-        // top-level flip, calls OnStart, and stamps
-        // BeatRegistry::MarkDispatched. On OnStart throw, reverts the
-        // top-level state so the system doesn't get stuck in
-        // BEAT_RUNNING with a beat that never ran.
-        void StartBeatInternal(const std::string& name, const BeatContext& ctx, const nlohmann::json& parameters)
+        // Shared body for StartBeat / FinalizeWithLLMResponse. Runs on
+        // the plugin thread: BeatRegistry::Find and the g_stateMutex
+        // flip are mutex-guarded; the beat->OnStart implementations
+        // that exist today (AmbushBeat, NPCLetterBeat, NPCVisitBeat)
+        // do only param parse + session-state reset behind their own
+        // mutexes / atomics — no engine reads or mutations. See
+        // IBeat::OnStart's contract.
+        //
+        // On OnStart throw, reverts the top-level state so the system
+        // doesn't get stuck in BEAT_RUNNING with a beat that never ran.
+        void StartBeatInternal(const PluginThread::Token&,
+                               const std::string& name,
+                               const BeatContext& ctx,
+                               const nlohmann::json& parameters)
         {
             IBeat* beat = BeatRegistry::Find(name);
             if (!beat) {
@@ -1206,17 +1288,21 @@ namespace NarrativeEngine::BeatSystem
         }
     } // namespace
 
-    void StartBeat(const std::string& name, const nlohmann::json& parameters)
+    void StartBeat(const PluginThread::Token& pt, const std::string& name, const nlohmann::json& parameters)
     {
         // Build a live BeatContext from a fresh snapshot so callers
-        // that don't (e.g. cosave restore paths, direct startups) still
-        // land the beat with real world state visible to OnStart.
-        Snapshot snapshot = EvaluationPipeline::BuildSnapshot();
+        // that don't provide one (cosave restore paths, direct
+        // startups) still land the beat with real world state visible
+        // to OnStart. BuildSnapshot(pt) runs on the plugin thread with
+        // a single bundled MainThread::Run for its engine reads.
+        // BuildBeatContextFromSnapshot itself is off-main-safe (see
+        // BuildBeatSelectPrep's contract in this file).
+        Snapshot snapshot = EvaluationPipeline::BuildSnapshot(pt);
         const auto currentPhaseOpt = PhaseTracker::PhaseFromName(snapshot.currentPhase);
         const auto currentPhase = currentPhaseOpt.value_or(PhaseTracker::Phase::Exposition);
         const auto direction = PhaseTracker::OutgoingDirection(currentPhase);
         const BeatContext ctx = BuildBeatContextFromSnapshot(snapshot, direction, 0);
-        StartBeatInternal(name, ctx, parameters);
+        StartBeatInternal(pt, name, ctx, parameters);
     }
 
     void ForceDispatchBeat(std::string_view name)
@@ -1295,15 +1381,32 @@ namespace NarrativeEngine::BeatSystem
 
         // Empty finalizer — force-dispatch runs outside the normal
         // evaluation loop, so there's no g_inFlight guard to release.
-        FireBeatSelectLLM(std::move(snapshot),
-                          std::move(rec),
-                          std::move(candidates),
-                          std::move(letterSenderCandidates),
-                          std::move(visitSenderCandidates),
-                          direction,
-                          tensionDelta,
-                          /*onFinalized=*/nullptr,
-                          "force-dispatch ");
+        //
+        // Hop onto the plugin thread for the LLM round-trip.
+        // ForceDispatchBeat's front-half runs on main today (dashboard
+        // -> MarshalToMainThread -> here), so we enqueue the LLM firing
+        // + finalize chain instead of calling FireBeatSelectLLM
+        // directly. This mirrors the ConsiderBeat migration: the LLM
+        // wait is off-main; only StartBeat's OnStart hop returns to
+        // main via MainThread::FireAndForget inside FireBeatSelectLLM.
+        AsyncDispatch::EnqueueWork([snapshot = std::move(snapshot),
+                                    rec = std::move(rec),
+                                    candidates = std::move(candidates),
+                                    letterSenderCandidates = std::move(letterSenderCandidates),
+                                    visitSenderCandidates = std::move(visitSenderCandidates),
+                                    direction,
+                                    tensionDelta](const PluginThread::Token& pt) mutable {
+            FireBeatSelectLLM(pt,
+                              std::move(snapshot),
+                              std::move(rec),
+                              std::move(candidates),
+                              std::move(letterSenderCandidates),
+                              std::move(visitSenderCandidates),
+                              direction,
+                              tensionDelta,
+                              /*onFinalized=*/nullptr,
+                              "force-dispatch ");
+        });
     }
     bool AbortRunningBeat()
     {

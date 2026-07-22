@@ -64,11 +64,17 @@ namespace NarrativeEngine::LetterComposer
         nlohmann::json memories = nlohmann::json::array();
     };
 
-    // Main-thread only. Ranks recent engagement, filters out dead /
-    // disabled / cooldown / missing candidates, and pulls each survivor's
-    // player-involving memory tail from SkyrimNet. Bounded output size
-    // (kCandidateCap internally). Empty when SkyrimNet is unavailable or
-    // no viable candidates exist.
+    // Safe from the plugin thread (BeatSystem::ConsiderBeat's
+    // BuildBeatSelectPrep is the caller). Every underlying read
+    // (SenderCandidatePool → SkyrimNetAPI DLL calls + alias walk
+    // under BSReadLockGuard) is off-main-safe per the audit doc;
+    // no engine mutation happens here.
+    //
+    // Ranks recent engagement, filters out dead / disabled / cooldown
+    // / missing candidates, and pulls each survivor's player-involving
+    // memory tail from SkyrimNet. Bounded output size (kCandidateCap
+    // internally). Empty when SkyrimNet is unavailable or no viable
+    // candidates exist.
     //
     // Called by BeatSystem::ConsiderBeat when npc_letter is among the
     // beat-select candidates, so the LLM sees a live list at pick time.
