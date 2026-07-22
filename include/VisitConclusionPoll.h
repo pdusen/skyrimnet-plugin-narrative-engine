@@ -1,5 +1,6 @@
 #pragma once
 
+#include <IBeat.h>
 #include <VisitState.h>
 
 #include <cstddef>
@@ -55,8 +56,21 @@ namespace NarrativeEngine::VisitConclusionPoll
     // True iff the poll is currently armed (in the Discuss window).
     bool IsArmed();
 
+    // Advance the silence accumulator baseline. Call at the top of
+    // every NPCVisitBeat::Tick, BEFORE any mode filter — the wall-
+    // clock baseline must stay fresh across Paused / Dialogue / Combat
+    // ticks so a resuming Normal tick doesn't retroactively credit the
+    // whole gap to silence. Delta is only added to
+    // g_silenceRealSeconds when `mode == TickMode::Normal` and the
+    // poll is armed; on any other mode the baseline still updates.
+    // Cheap: one mutex acquire and a `std::chrono::steady_clock::now()`
+    // per call.
+    void TickAccumulator(TickMode mode);
+
     // Cheap tick — evaluate the three thresholds. Returns true if
     // any tripped this tick. Reads RE::Calendar for game time.
+    // Assumes the silence accumulator has already been advanced this
+    // tick via TickAccumulator.
     bool GateTick();
 
     // Fire the natural-conclusion LLM poll. Async — callback fires
@@ -78,11 +92,13 @@ namespace NarrativeEngine::VisitConclusionPoll
     std::uint32_t ConsecutivePollFailures();
 
     // Real (wall-clock) seconds since the last observed speech
-    // turn from sender/player, EXCLUDING intervals during which
-    // `RE::UI::GameIsPaused()` was true — journal, inventory, map,
-    // load screens, main-menu stints, etc. Advanced incrementally
-    // on each GateTick call, so the accumulation reflects "the
-    // player was actively in the game world doing nothing".
+    // turn from sender/player, counting ONLY intervals during which
+    // the beat's Tick was called with `mode == TickMode::Normal` —
+    // Paused / Dialogue / Combat ticks freeze the accumulator, so
+    // menu time, dialogue-view time, and combat time all elide.
+    // Advanced incrementally on each TickAccumulator call, so the
+    // accumulation reflects "the player was actively in the game
+    // world doing nothing".
     // Returns 0 if the poll is disarmed or no speech has ever been
     // observed. Used by Step 11's verdict handler to decide
     // whether to fire a ContinueConversation nudge on a

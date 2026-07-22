@@ -13,7 +13,6 @@
 #include <RE/C/Calendar.h>
 #include <RE/T/TESForm.h>
 #include <RE/T/TESNPC.h>
-#include <RE/U/UI.h>
 
 #include <algorithm>
 #include <atomic>
@@ -60,16 +59,18 @@ namespace NarrativeEngine::VisitConclusionPoll
         double g_armedAtGameSeconds = 0.0;
 
         // Accumulated real (wall-clock) seconds since the last
-        // observed speech turn, EXCLUDING intervals during which
-        // `RE::UI::GameIsPaused()` returned true. Advanced on each
-        // GateTick call by `now - g_lastGateTickRealSeconds` when the
-        // game was not paused across that tick. Reset to 0 on Arm and
-        // on every RegisterSpeechTurn.
+        // observed speech turn, counting ONLY intervals during which
+        // TickAccumulator was called with mode == TickMode::Normal.
+        // Advanced on each such call by `now - g_lastGateTickRealSeconds`;
+        // Paused / Dialogue / Combat ticks just refresh the baseline
+        // without adding. Reset to 0 on Arm and on every
+        // RegisterSpeechTurn.
         //
         // Why an accumulator and not `now - lastSpeechTurnReal`: the
         // straight-subtract form counts real time spent in pause
-        // menus / load screens, which is exactly what the user does
-        // NOT want to count as "the player is ignoring the NPC".
+        // menus / load screens / dialogue view, which is exactly what
+        // the user does NOT want to count as "the player is ignoring
+        // the NPC".
         double g_silenceRealSeconds = 0.0;
 
         // Real (steady-clock) seconds captured on the previous
@@ -376,6 +377,50 @@ namespace NarrativeEngine::VisitConclusionPoll
         return g_armed;
     }
 
+    void TickAccumulator(TickMode mode)
+    {
+        std::scoped_lock lock(g_mutex);
+        if (!g_armed)
+            return;
+
+        // Sample wall-clock on every call so the baseline stays fresh
+        // across Paused / Dialogue / Combat ticks. Only Normal ticks
+        // credit the delta to the silence accumulator; every other
+        // mode just advances the baseline without adding anything.
+        //
+        // First tick after Arm has g_lastGateTickRealSeconds == 0.0 —
+        // we establish the baseline and add nothing, so a long stall
+        // before the first tick can't retroactively pile up silence.
+        const double nowReal = RealSecondsNow();
+        double addedSilence = 0.0;
+        if (g_lastGateTickRealSeconds > 0.0) {
+            const double delta = nowReal - g_lastGateTickRealSeconds;
+            if (delta > 0.0 && mode == TickMode::Normal) {
+                g_silenceRealSeconds += delta;
+                addedSilence = delta;
+            }
+        }
+        g_lastGateTickRealSeconds = nowReal;
+
+        // Tick-level trace so we can watch the accumulator climb and
+        // confirm non-Normal ticks aren't counted. Log only when the
+        // accumulator crosses a whole-second boundary — TickAccumulator
+        // fires every ~250 ms, so an every-call trace would produce
+        // four lines per second of silence and drown the log.
+        if (addedSilence > 0.0 && Settings::Get().debugMode) {
+            const double prevSilence = g_silenceRealSeconds - addedSilence;
+            const auto prevWhole = static_cast<std::uint64_t>(prevSilence);
+            const auto nowWhole = static_cast<std::uint64_t>(g_silenceRealSeconds);
+            if (nowWhole > prevWhole) {
+                const double silenceLimit =
+                    static_cast<double>(std::max(0, Settings::Get().visitPollSilenceRealSeconds));
+                logger::debug("VisitConclusionPoll: silenceRealSec={:.1f}/{:.1f} (mode=Normal)",
+                              g_silenceRealSeconds,
+                              silenceLimit);
+            }
+        }
+    }
+
     bool GateTick()
     {
         std::scoped_lock lock(g_mutex);
@@ -384,33 +429,6 @@ namespace NarrativeEngine::VisitConclusionPoll
 
         const auto& cfg = Settings::Get();
         const double nowGame = GameSecondsNow();
-        const double nowReal = RealSecondsNow();
-
-        // Advance the unpaused-real-seconds silence accumulator.
-        // Only the delta since the previous tick is added, and only
-        // if the game was not paused at the moment of this tick.
-        // (Skyrim's UI::GameIsPaused returns true for menus that
-        // freeze the gameplay clock — journal, inventory, map, load
-        // screens, main menu. It does NOT return true for the
-        // dialogue view, which by design keeps the game running.)
-        //
-        // On the first tick after Arm, g_lastGateTickRealSeconds is
-        // 0.0 — we just establish the baseline and add nothing, so a
-        // long stall before the first tick can't retroactively pile
-        // up silence.
-        bool paused = false;
-        if (auto* ui = RE::UI::GetSingleton()) {
-            paused = ui->GameIsPaused();
-        }
-        double addedSilence = 0.0;
-        if (g_lastGateTickRealSeconds > 0.0) {
-            const double delta = nowReal - g_lastGateTickRealSeconds;
-            if (delta > 0.0 && !paused) {
-                g_silenceRealSeconds += delta;
-                addedSilence = delta;
-            }
-        }
-        g_lastGateTickRealSeconds = nowReal;
 
         const double silenceLimit = static_cast<double>(std::max(0, cfg.visitPollSilenceRealSeconds));
         const double maxInterval = static_cast<double>(std::max(0, cfg.visitPollMaxIntervalGameMinutes)) * 60.0;
@@ -423,29 +441,15 @@ namespace NarrativeEngine::VisitConclusionPoll
 
         if (turnsHit || silenceHit || intervalHit) {
             logger::debug("VisitConclusionPoll: gate tripped (turns={} limit={}, "
-                          "silenceRealSec={:.1f} limit={:.1f} paused_this_tick={}, "
+                          "silenceRealSec={:.1f} limit={:.1f}, "
                           "intervalGameSec={:.1f} limit={:.1f})",
                           g_turnsSinceLastPoll,
                           turnLimit,
                           g_silenceRealSeconds,
                           silenceLimit,
-                          paused,
                           nowGame - g_lastPollGameSeconds,
                           maxInterval);
             return true;
-        }
-
-        // In debug mode, tick-level trace so we can watch the
-        // accumulator climb and confirm pause-time isn't counted.
-        // Only log when we actually added silence — every-tick chatter
-        // when the game is paused isn't useful and would flood the log.
-        if (addedSilence > 0.0 && Settings::Get().debugMode) {
-            logger::debug("VisitConclusionPoll: gate tick — silenceRealSec={:.1f}/{:.1f} "
-                          "(+{:.2f} this tick, paused={})",
-                          g_silenceRealSeconds,
-                          silenceLimit,
-                          addedSilence,
-                          paused);
         }
         return false;
     }

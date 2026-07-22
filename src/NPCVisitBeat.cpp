@@ -89,6 +89,50 @@ namespace NarrativeEngine
                    / 1000.0;
         }
 
+        // Beat-lifetime accumulators of wall-clock seconds, advanced at
+        // the top of Tick() by the delta since the previous Tick. Each
+        // accumulator advances only under the TickMode whose gates
+        // consume it — so a timer never registers "elapsed" during ticks
+        // that couldn't have fired its check.
+        //
+        // g_normalElapsedSec drives salutation approach, valediction
+        // dwell, return-home timeout, and the distance-log throttle.
+        // Those live in stage bodies that early-return unless mode ==
+        // Normal, so counting only Normal ticks keeps the gate and its
+        // clock in sync.
+        //
+        // g_combatElapsedSec drives the OnHold combat-stuck watchdog,
+        // which only ever evaluates under mode == Combat. It needs its
+        // own timebase — a Normal-only accumulator would be frozen for
+        // the entire duration of a combat episode and the watchdog
+        // would never fire.
+        //
+        // Both freeze on Paused (Paused precludes Normal/Combat) and on
+        // Dialogue (Dialogue precludes Normal/Combat). Same shape as
+        // VisitConclusionPoll's silence accumulator. Reset by
+        // ResetSessionState at the start of every visit.
+        std::atomic<double> g_normalElapsedSec = 0.0;
+        std::atomic<double> g_combatElapsedSec = 0.0;
+
+        // Wall-clock timestamp captured on the previous Tick, used to
+        // compute the "seconds since last Tick" delta credited to
+        // whichever accumulator matches the current TickMode. 0.0
+        // sentinel = "no prior tick this visit" — the first Tick after
+        // OnStart establishes the baseline and adds nothing (so a long
+        // stall before the first Tick can't retroactively pile up
+        // elapsed time on either clock).
+        std::atomic<double> g_lastAccumulatorSampleRealSec = 0.0;
+
+        double NormalElapsedNow()
+        {
+            return g_normalElapsedSec.load(std::memory_order_acquire);
+        }
+
+        double CombatElapsedNow()
+        {
+            return g_combatElapsedSec.load(std::memory_order_acquire);
+        }
+
         bool VMDispatchRunSenderAction(RE::TESQuest* quest, const std::string& actionName, const std::string& argsJson)
         {
             return QuestUtils::VMDispatchOnQuest(quest,
@@ -142,11 +186,11 @@ namespace NarrativeEngine
         std::atomic<bool> g_hardAbortFired = false;
         std::atomic<bool> g_valedictionFired = false;
         std::atomic<bool> g_terminalCleanupDone = false;
-        std::atomic<double> g_salutationEnteredAtRealSeconds = 0.0;
-        std::atomic<double> g_valedictionEnteredAtRealSeconds = 0.0;
-        std::atomic<double> g_returnHomeStartedAtRealSeconds = 0.0;
-        std::atomic<double> g_lastDistanceLogRealSeconds = 0.0;
-        std::atomic<double> g_onHoldCombatStartedAtRealSeconds = 0.0;
+        std::atomic<double> g_salutationEnteredAtNormalSec = 0.0;
+        std::atomic<double> g_valedictionEnteredAtNormalSec = 0.0;
+        std::atomic<double> g_returnHomeStartedAtNormalSec = 0.0;
+        std::atomic<double> g_lastDistanceLogNormalSec = 0.0;
+        std::atomic<double> g_onHoldCombatStartedAtCombatSec = 0.0;
 
         // Combat-stuck / poll_broken hard-abort reason surface, set by
         // the sink or the abort helper before HardAbort teardown runs.
@@ -180,11 +224,14 @@ namespace NarrativeEngine
             g_hardAbortFired.store(false, std::memory_order_release);
             g_valedictionFired.store(false, std::memory_order_release);
             g_terminalCleanupDone.store(false, std::memory_order_release);
-            g_salutationEnteredAtRealSeconds.store(0.0, std::memory_order_release);
-            g_valedictionEnteredAtRealSeconds.store(0.0, std::memory_order_release);
-            g_returnHomeStartedAtRealSeconds.store(0.0, std::memory_order_release);
-            g_lastDistanceLogRealSeconds.store(0.0, std::memory_order_release);
-            g_onHoldCombatStartedAtRealSeconds.store(0.0, std::memory_order_release);
+            g_salutationEnteredAtNormalSec.store(0.0, std::memory_order_release);
+            g_valedictionEnteredAtNormalSec.store(0.0, std::memory_order_release);
+            g_returnHomeStartedAtNormalSec.store(0.0, std::memory_order_release);
+            g_lastDistanceLogNormalSec.store(0.0, std::memory_order_release);
+            g_onHoldCombatStartedAtCombatSec.store(0.0, std::memory_order_release);
+            g_normalElapsedSec.store(0.0, std::memory_order_release);
+            g_combatElapsedSec.store(0.0, std::memory_order_release);
+            g_lastAccumulatorSampleRealSec.store(0.0, std::memory_order_release);
             g_lastSampledEventGameTime.store(0.0, std::memory_order_release);
             g_discussSenderFormID.store(0, std::memory_order_release);
             g_runningTickCount = 0;
@@ -392,7 +439,7 @@ namespace NarrativeEngine
                 logger::info("NPCVisitBeat[SINK]: {} entered combat during Discuss — "
                              "dispatching SetStage(OnHold)",
                              who);
-                g_onHoldCombatStartedAtRealSeconds.store(RealSecondsNow());
+                g_onHoldCombatStartedAtCombatSec.store(CombatElapsedNow());
                 QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageOnHold);
                 return RE::BSEventNotifyControl::kContinue;
             }
@@ -527,7 +574,7 @@ namespace NarrativeEngine
                 g_hardAbortReason = reason;
             }
             VisitConclusionPoll::Disarm();
-            g_onHoldCombatStartedAtRealSeconds.store(0.0);
+            g_onHoldCombatStartedAtCombatSec.store(0.0);
 
             auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
             auto* anchorRef = g_returnAnchorAlias ? g_returnAnchorAlias->GetReference() : nullptr;
@@ -655,7 +702,7 @@ namespace NarrativeEngine
                              ignored);
                 VMDispatchRunSenderNarration(g_visitQuest, closingNarration);
             }
-            g_valedictionEnteredAtRealSeconds.store(RealSecondsNow());
+            g_valedictionEnteredAtNormalSec.store(NormalElapsedNow());
         }
 
         // ---- Discuss speech sampler --------------------------------
@@ -897,8 +944,8 @@ namespace NarrativeEngine
                 SetSubPhase(ComposeSubPhase::Failed, "ensure_quest_started_unfilled_alias");
                 return;
             }
-            g_salutationEnteredAtRealSeconds.store(RealSecondsNow());
-            g_lastDistanceLogRealSeconds.store(0.0);
+            g_salutationEnteredAtNormalSec.store(NormalElapsedNow());
+            g_lastDistanceLogNormalSec.store(0.0);
             VisitState::SetComposingSender(false);
             SetSubPhase(ComposeSubPhase::Succeeded);
         }
@@ -929,12 +976,12 @@ namespace NarrativeEngine
                 const int approachDist = std::max(1, cfg.visitSalutationApproachDistanceUnits);
                 const int timeoutSec = std::max(1, cfg.visitApproachTimeoutSeconds);
                 const auto dist = senderRef->GetPosition().GetDistance(player->GetPosition());
-                const auto now = RealSecondsNow();
-                const auto enteredAt = g_salutationEnteredAtRealSeconds.load();
+                const auto now = NormalElapsedNow();
+                const auto enteredAt = g_salutationEnteredAtNormalSec.load();
                 const auto elapsed = enteredAt > 0.0 ? (now - enteredAt) : 0.0;
-                const auto lastLog = g_lastDistanceLogRealSeconds.load();
+                const auto lastLog = g_lastDistanceLogNormalSec.load();
                 if (now - lastLog >= 5.0) {
-                    g_lastDistanceLogRealSeconds.store(now);
+                    g_lastDistanceLogNormalSec.store(now);
                     logger::info("NPCVisitBeat[SALUTATION]: elapsed={:.1f}s, "
                                  "sender-to-player distance={:.0f}u (timeout at {}s, "
                                  "approach<={}u)",
@@ -1005,17 +1052,17 @@ namespace NarrativeEngine
                     logger::info("NPCVisitBeat[ONHOLD]: triggers cleared — dispatching "
                                  "SetStage(ReEngage)");
                     QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageReEngage);
-                    g_onHoldCombatStartedAtRealSeconds.store(0.0);
+                    g_onHoldCombatStartedAtCombatSec.store(0.0);
                     return;
                 }
                 // Combat-stuck check runs under Combat mode.
                 if (mode == TickMode::Combat && inCombat) {
                     const int combatMax = std::max(1, cfg.visitOnHoldCombatMaxSeconds);
-                    const auto combatStart = g_onHoldCombatStartedAtRealSeconds.load();
+                    const auto combatStart = g_onHoldCombatStartedAtCombatSec.load();
                     if (combatStart <= 0.0) {
-                        g_onHoldCombatStartedAtRealSeconds.store(RealSecondsNow());
+                        g_onHoldCombatStartedAtCombatSec.store(CombatElapsedNow());
                     } else {
-                        const auto elapsed = RealSecondsNow() - combatStart;
+                        const auto elapsed = CombatElapsedNow() - combatStart;
                         if (elapsed >= static_cast<double>(combatMax)) {
                             logger::warn("NPCVisitBeat[ONHOLD]: combat_stuck — elapsed "
                                          "{:.1f}s >= {}s",
@@ -1039,7 +1086,7 @@ namespace NarrativeEngine
                                  inCombat);
                     QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageOnHold);
                     if (inCombat) {
-                        g_onHoldCombatStartedAtRealSeconds.store(RealSecondsNow());
+                        g_onHoldCombatStartedAtCombatSec.store(CombatElapsedNow());
                     }
                     return;
                 }
@@ -1049,10 +1096,10 @@ namespace NarrativeEngine
                     return;
                 const int approachDist = std::max(1, cfg.visitReEngageApproachDistanceUnits);
                 const auto dist = senderRef->GetPosition().GetDistance(player->GetPosition());
-                const auto now = RealSecondsNow();
-                const auto lastLog = g_lastDistanceLogRealSeconds.load();
+                const auto now = NormalElapsedNow();
+                const auto lastLog = g_lastDistanceLogNormalSec.load();
                 if (now - lastLog >= 5.0) {
-                    g_lastDistanceLogRealSeconds.store(now);
+                    g_lastDistanceLogNormalSec.store(now);
                     logger::info("NPCVisitBeat[REENGAGE]: distance={:.0f}u (threshold {}u)", dist, approachDist);
                 }
                 if (dist <= static_cast<float>(approachDist)) {
@@ -1070,18 +1117,18 @@ namespace NarrativeEngine
             case kStageValediction: {
                 if (mode != TickMode::Normal)
                     return;
-                const auto enteredAt = g_valedictionEnteredAtRealSeconds.load();
+                const auto enteredAt = g_valedictionEnteredAtNormalSec.load();
                 if (enteredAt <= 0.0)
                     return;
                 const int dwellSec = std::max(1, cfg.visitValedictionDwellSeconds);
-                const auto elapsed = RealSecondsNow() - enteredAt;
+                const auto elapsed = NormalElapsedNow() - enteredAt;
                 if (elapsed >= static_cast<double>(dwellSec)) {
                     logger::info("NPCVisitBeat[VALEDICTION]: dwell expired ({:.1f}s "
                                  ">= {}s) — advancing to ReturnHome",
                                  elapsed,
                                  dwellSec);
                     QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageReturnHome);
-                    g_returnHomeStartedAtRealSeconds.store(RealSecondsNow());
+                    g_returnHomeStartedAtNormalSec.store(NormalElapsedNow());
                 }
                 return;
             }
@@ -1096,13 +1143,13 @@ namespace NarrativeEngine
                 const int timeoutSec = std::max(1, cfg.visitReturnHomeTimeoutSeconds);
                 const auto dist = senderRef->GetPosition().GetDistance(player->GetPosition());
                 const bool attached = senderRef->GetParentCell() ? senderRef->GetParentCell()->IsAttached() : true;
-                const auto startAt = g_returnHomeStartedAtRealSeconds.load();
-                const auto elapsed = startAt > 0.0 ? (RealSecondsNow() - startAt) : 0.0;
+                const auto startAt = g_returnHomeStartedAtNormalSec.load();
+                const auto now = NormalElapsedNow();
+                const auto elapsed = startAt > 0.0 ? (now - startAt) : 0.0;
                 const bool losToSender = CameraVisibility::IsAnyPartVisibleFromCamera(senderRef);
-                const auto now = RealSecondsNow();
-                const auto lastLog = g_lastDistanceLogRealSeconds.load();
+                const auto lastLog = g_lastDistanceLogNormalSec.load();
                 if (now - lastLog >= 5.0) {
-                    g_lastDistanceLogRealSeconds.store(now);
+                    g_lastDistanceLogNormalSec.store(now);
                     logger::info("NPCVisitBeat[RETURNHOME]: dist={:.0f}u (exit>={}), "
                                  "cell_attached={}, los={}, elapsed={:.1f}s (timeout={}s)",
                                  dist,
@@ -1344,6 +1391,38 @@ namespace NarrativeEngine
 
     TickResult NPCVisitBeat::Tick(TickMode mode, BeatState state)
     {
+        // Advance the mode-scoped accumulators that feed the stage-gate
+        // timers. Sample wall-clock on every Tick and credit the delta
+        // to whichever accumulator matches this Tick's mode — Normal
+        // ticks feed g_normalElapsedSec (the four "sender is actively
+        // working toward the player" gates); Combat ticks feed
+        // g_combatElapsedSec (the OnHold combat-stuck watchdog).
+        // Dialogue and Paused ticks freeze both, but must still refresh
+        // g_lastAccumulatorSampleRealSec so the first tick after
+        // returning to Normal/Combat doesn't retroactively credit the
+        // paused / dialogue interval.
+        {
+            const double nowReal = RealSecondsNow();
+            const double prevReal = g_lastAccumulatorSampleRealSec.exchange(nowReal, std::memory_order_acq_rel);
+            if (prevReal > 0.0) {
+                const double delta = nowReal - prevReal;
+                if (delta > 0.0) {
+                    if (mode == TickMode::Normal) {
+                        g_normalElapsedSec.fetch_add(delta, std::memory_order_acq_rel);
+                    } else if (mode == TickMode::Combat) {
+                        g_combatElapsedSec.fetch_add(delta, std::memory_order_acq_rel);
+                    }
+                }
+            }
+        }
+
+        // Advance VisitConclusionPoll's silence accumulator baseline
+        // for the same reason and on the same schedule — call on every
+        // Tick regardless of mode so its baseline stays fresh across
+        // non-Normal intervals. It's a no-op when the poll isn't
+        // armed (i.e., outside Discuss stage).
+        VisitConclusionPoll::TickAccumulator(mode);
+
         // Paused/Dialogue freeze the whole beat.
         if (mode == TickMode::Paused || mode == TickMode::Dialogue)
             return {};
