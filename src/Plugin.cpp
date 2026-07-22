@@ -8,6 +8,7 @@
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
 #include <Decorators.h>
+#include <EvalDispatch.h>
 #include <EventHistoryWriter.h>
 #include <HoldGrid.h>
 #include <LetterPool.h>
@@ -80,6 +81,12 @@ namespace NarrativeEngine
                 // Initialize just registers the module.
                 EventHistoryWriter::Initialize();
                 AsyncDispatch::Start();
+                // EvalDispatch is a second single-threaded worker
+                // dedicated to the Director's per-tick evaluation,
+                // so its multi-second sync LLM round-trip doesn't
+                // stall AsyncDispatch's cadenced 500 ms poll body.
+                // See EvalDispatch.h.
+                EvalDispatch::Start();
                 BeatRegistry::Initialize();
                 // BeatSystem's master poll starts here. Runs
                 // continuously on its own worker thread from now

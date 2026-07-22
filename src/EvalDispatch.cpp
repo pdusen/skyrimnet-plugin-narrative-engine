@@ -1,4 +1,4 @@
-#include <AsyncDispatch.h>
+#include <EvalDispatch.h>
 
 #include <logger.h>
 #include <ThreadRole.h>
@@ -10,7 +10,7 @@
 #include <thread>
 #include <utility>
 
-namespace NarrativeEngine::AsyncDispatch
+namespace NarrativeEngine::EvalDispatch
 {
     namespace
     {
@@ -24,11 +24,11 @@ namespace NarrativeEngine::AsyncDispatch
         void WorkerLoop()
         {
             // Declare this thread as Plugin for its entire lifetime.
-            // Runtime belt-and-braces beneath the compile-time token
-            // barrier; useful for observability and for the assertion
-            // in MainThread::Run.
+            // Matches AsyncDispatch's worker's role — MainThread::Run
+            // asserts against ThreadRole::Plugin, and both workers
+            // satisfy that.
             ScopedThreadRole roleGuard(ThreadRole::Plugin);
-            logger::info("AsyncDispatch: worker thread role installed (Plugin)");
+            logger::info("EvalDispatch: worker thread role installed (Plugin)");
 
             for (;;) {
                 std::function<void(const PluginThread::Token&)> task;
@@ -42,14 +42,14 @@ namespace NarrativeEngine::AsyncDispatch
                     g_queue.pop_front();
                 }
                 // Swallow exceptions so a single bad task can't kill
-                // the worker. Token construction lives inside
-                // PluginThread::detail::JobDispatcher.
+                // the worker. Token construction lives inside the
+                // shared PluginThread::detail::JobDispatcher.
                 try {
                     PluginThread::detail::JobDispatcher::Invoke(task);
                 } catch (const std::exception& e) {
-                    logger::error("AsyncDispatch worker: task threw exception: {}", e.what());
+                    logger::error("EvalDispatch worker: task threw exception: {}", e.what());
                 } catch (...) {
-                    logger::error("AsyncDispatch worker: task threw unknown exception");
+                    logger::error("EvalDispatch worker: task threw unknown exception");
                 }
             }
         }
@@ -64,7 +64,7 @@ namespace NarrativeEngine::AsyncDispatch
         g_shouldStop = false;
         g_running = true;
         g_worker = std::thread(WorkerLoop);
-        logger::info("AsyncDispatch: worker thread started");
+        logger::info("EvalDispatch: worker thread started");
     }
 
     void Stop()
@@ -82,7 +82,7 @@ namespace NarrativeEngine::AsyncDispatch
         }
         std::unique_lock lock(g_mutex);
         g_running = false;
-        logger::info("AsyncDispatch: worker thread stopped");
+        logger::info("EvalDispatch: worker thread stopped");
     }
 
     void EnqueueWork(std::function<void(const PluginThread::Token&)> work)
@@ -93,24 +93,11 @@ namespace NarrativeEngine::AsyncDispatch
         {
             std::unique_lock lock(g_mutex);
             if (!g_running) {
-                logger::warn("AsyncDispatch::EnqueueWork: worker not running; dropping task");
+                logger::warn("EvalDispatch::EnqueueWork: worker not running; dropping task");
                 return;
             }
             g_queue.push_back(std::move(work));
         }
         g_cv.notify_one();
     }
-
-    void MarshalToMainThread(std::function<void()> work)
-    {
-        if (!work) {
-            return;
-        }
-        auto* taskInterface = SKSE::GetTaskInterface();
-        if (!taskInterface) {
-            logger::error("AsyncDispatch::MarshalToMainThread: SKSE task interface unavailable; dropping task");
-            return;
-        }
-        taskInterface->AddTask(std::move(work));
-    }
-} // namespace NarrativeEngine::AsyncDispatch
+} // namespace NarrativeEngine::EvalDispatch

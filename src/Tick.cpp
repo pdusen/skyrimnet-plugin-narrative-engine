@@ -3,10 +3,10 @@
 #include <AsyncDispatch.h>
 #include <CombatEventLog.h>
 #include <EngineUtils.h>
+#include <EvalDispatch.h>
 #include <EvaluationPipeline.h>
 #include <EventHistoryWriter.h>
 #include <logger.h>
-#include <MainThread.h>
 #include <PhaseTracker.h>
 #include <PluginThread.h>
 #include <Settings.h>
@@ -138,39 +138,51 @@ namespace NarrativeEngine::Tick
                 return;
             }
 
-            // Time to fire. Reset the accumulator. (Subtract rather
-            // than zero so any overshoot rolls into the next interval
-            // — more accurate over long runs than discarding the
-            // slack.)
+            // Time to fire. If an evaluation is already in flight
+            // (previous tick's LLM still running), skip cleanly
+            // without touching the accumulator or the tick counter.
+            // The 500 ms poll re-checks every pass; as soon as the
+            // in-flight eval finishes, the next poll here will pass
+            // this check and fire promptly. This preserves "one tick
+            // per interval of unpaused play" even when the LLM
+            // takes longer than the interval — no back-to-back
+            // catch-up bursts.
+            if (EvaluationPipeline::IsEvaluationInFlight()) {
+                if (Settings::Get().debugMode) {
+                    logger::debug("Tick: skipping fire — previous evaluation still in flight");
+                }
+                return;
+            }
+
+            // Reset the accumulator. (Subtract rather than zero so
+            // any overshoot rolls into the next interval — more
+            // accurate over long runs than discarding the slack.)
             g_unpausedSecondsSinceLastTick -= intervalSec;
             ++g_tickCount;
             if (Settings::Get().debugMode) {
                 logger::debug("Tick: firing #{}", g_tickCount);
             }
 
-            // Both PhaseTracker::Tick and EvaluationPipeline::
-            // BeginEvaluation now run on the plugin thread.
-            // BeginEvaluation internally hops to main via
-            // MainThread::Run for BuildSnapshot's engine reads (one
-            // bundled hop per firing tick) and then does the prompt
-            // build + LLM fire inline on the plugin thread.
-            // BeatSystem::ConsiderBeat also runs on the plugin thread
-            // — its gate walk, beat-select LLM, and JSON parse are all
-            // off-main; only the finalize step (beat->OnStart plus
-            // ApplyDecision's DashboardUI push) hops back to main via
-            // MainThread::FireAndForget.
+            // PhaseTracker::Tick runs inline on this thread — cheap
+            // mutex-guarded sample. The Director evaluation, which
+            // contains the multi-second sync LLM round-trip, hands
+            // off to EvalDispatch's dedicated worker so this
+            // cadenced poll body keeps running every 500 ms even
+            // while the LLM is out.
             PhaseTracker::Tick(pt);
-            EvaluationPipeline::BeginEvaluation(pt);
+            EvalDispatch::EnqueueWork(
+                [](const PluginThread::Token& evalPt) { EvaluationPipeline::BeginEvaluation(evalPt); });
         }
 
         void DriverLoop()
         {
             // The driver thread is intentionally NOT marked as a
             // Plugin role thread. Its only responsibility is scheduling
-            // — enqueue one tick body onto the plugin thread every
-            // kPollInterval. All NarrativeEngine logic runs on the
-            // plugin thread (AsyncDispatch's worker) via that enqueue
-            // path.
+            // — enqueue one tick body onto AsyncDispatch's cadenced
+            // worker every kPollInterval. The tick body itself may
+            // hand off the Director evaluation to EvalDispatch's
+            // separate worker so a slow LLM there doesn't stall
+            // subsequent poll bodies on this queue.
             while (true) {
                 {
                     std::unique_lock lock(g_mutex);
