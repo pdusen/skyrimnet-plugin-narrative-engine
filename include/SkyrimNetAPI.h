@@ -36,6 +36,46 @@ namespace NarrativeEngine::SkyrimNetAPI
     // -1 if SkyrimNet is unavailable. Used by the dashboard's status pill.
     int GetVersion();
 
+    // Result of the synchronous SendCustomPromptToLLM overload below.
+    // On success, `response` holds the LLM's raw response body. On
+    // failure, `response` holds the error string SkyrimNet reported
+    // (or a wrapper-supplied one for the queue-full case).
+    struct LLMResult
+    {
+        bool ok = false;
+        std::string response;
+    };
+
+    // Synchronous LLM call. Blocks the plugin thread until SkyrimNet
+    // delivers its callback. Same underlying operation as the async
+    // overload below; caller sees a linear result instead of a nested
+    // callback lambda.
+    //
+    // Internally uses a foreign-thread callback that pokes a
+    // std::promise directly (bypassing AsyncDispatch — routing that
+    // step through AsyncDispatch would deadlock the plugin thread
+    // that's waiting on the future).
+    //
+    // Blocking cost: this holds the plugin thread for the full
+    // duration of the LLM call (typically several seconds). Only use
+    // from single-flighted contexts where the plugin thread has
+    // nothing useful to do concurrently — the tick's Director
+    // evaluation (guarded by EvaluationPipeline::g_inFlight) is the
+    // canonical example. In particular do NOT use from contexts where
+    // other plugin-thread work would meaningfully suffer from the
+    // stall.
+    //
+    // Shutdown note: if AsyncDispatch::Stop() is called while a caller
+    // is blocked here, shutdown waits for SkyrimNet to deliver its
+    // callback (success or failure) before proceeding. Acceptable in
+    // practice — SkyrimNet's own shutdown path fires pending callbacks
+    // with success=false — but noted so future callers understand the
+    // tradeoff.
+    LLMResult SendCustomPromptToLLM(const PluginThread::Token&,
+                                    const std::string& promptName,
+                                    const std::string& variant,
+                                    const std::string& contextJson);
+
     // Queues an async LLM call against the named SkyrimNet prompt template.
     //
     // SkyrimNet fires its callback on one of its own foreign worker
@@ -63,6 +103,35 @@ namespace NarrativeEngine::SkyrimNetAPI
         const std::string& variant,
         const std::string& contextJson,
         std::function<void(const PluginThread::Token&, std::string response, bool success)> callback);
+
+    // Lower-level variant whose callback fires on whatever foreign
+    // thread SkyrimNet delivers on — NOT bridged onto the plugin
+    // thread via AsyncDispatch::EnqueueWork.
+    //
+    // Used internally by the synchronous overload above (the promise
+    // wait would deadlock if the promise-set went through
+    // AsyncDispatch — the plugin thread waiting on the future can't
+    // dequeue the very job that would unblock it). Exposed publicly
+    // for any future primitive that needs the same "poke a promise /
+    // condvar from foreign thread" pattern.
+    //
+    // The callback body MUST be trivial and thread-agnostic — do NOT
+    // call any NarrativeEngine plugin function from it, do NOT touch
+    // engine state, do NOT hold locks. The only sanctioned use is
+    // poking a std::promise / std::condition_variable that a plugin-
+    // thread waiter is watching. Callers that need to run real logic
+    // in response to the LLM should use one of the two SendCustomPromptToLLM
+    // overloads above.
+    //
+    // Returns false if the underlying function pointer is null or
+    // the task failed to queue. The response C-string is copied
+    // into a std::string before being handed to the callback (the
+    // original is only valid for the duration of the SkyrimNet-side
+    // call).
+    bool SendCustomPromptToLLMForeign(const std::string& promptName,
+                                      const std::string& variant,
+                                      const std::string& contextJson,
+                                      std::function<void(std::string response, bool success)> foreignCallback);
 
     // Returns SkyrimNet's recent-events JSON (an array of event objects with
     // fields: type, text, gameTime, originatingActorName, targetActorName).

@@ -2,6 +2,8 @@
 
 #include <EventLogUtil.h>
 #include <logger.h>
+#include <MainThread.h>
+#include <MainThreadEngine.h>
 #include <PhaseTracker.h>
 #include <Settings.h>
 #include <SkyrimNetEvents.h>
@@ -131,20 +133,24 @@ namespace NarrativeEngine::WeatherEventLog
             return v < 0 ? 20.0 : static_cast<double>(v);
         }
 
-        // Derive the category tuple from a TESWeather*. Null → Other/
-        // non-stormy — treated as "no meaningful weather," a no-op diff
-        // against a previous null (Sky::currentWeather can transiently
-        // be null right after a save-load boundary).
-        WeatherCategory DeriveCategory(RE::TESWeather* w)
+        // Derive the category tuple from a plain SkySnapshot. Shared
+        // by the plugin-thread Poll path (which fetches the snapshot
+        // via MainThread::Run + MainThreadEngine::ReadCurrentSky) and
+        // the main-thread OnPostLoadGame seed path (which reads the
+        // engine directly via SampleCurrentCategoryOnMain).
+        //
+        // The weatherFlags == 0 case corresponds to "current weather
+        // pointer was null" — treated as Other/non-stormy, matching
+        // the original DeriveCategory's null-pointer path.
+        WeatherCategory DeriveCategoryFromSnapshot(const MainThreadEngine::SkySnapshot& snap)
         {
             WeatherCategory c;
-            if (!w) {
+            if (snap.currentWeatherFormID == 0) {
                 return c;
             }
             using Flag = RE::TESWeather::WeatherDataFlag;
-            const auto flags = w->data.flags.get();
-            const auto has = [flags](Flag f) {
-                return (static_cast<std::uint8_t>(flags) & static_cast<std::uint8_t>(f)) != 0;
+            const auto has = [flags = snap.weatherFlags](Flag f) {
+                return (flags & static_cast<std::uint8_t>(f)) != 0;
             };
             // Precipitation wins over pleasant/cloudy — a "cloudy rainy"
             // weather is still fundamentally rainy for narrative purposes.
@@ -173,52 +179,71 @@ namespace NarrativeEngine::WeatherEventLog
             // Threshold picked at 128 (midpoint of the uint8 range); tune
             // if in-game verification shows edge cases.
             if (c.primary == Primary::Rainy || c.primary == Primary::Snowy) {
-                const bool highWind = w->data.windSpeed >= 128;
-                const bool lightning = w->data.thunderLightningFrequency > 0;
+                const bool highWind = snap.windSpeed >= 128;
+                const bool lightning = snap.thunderLightningFrequency > 0;
                 c.stormy = highWind || lightning;
             }
             return c;
         }
 
-        // Category snapshot for the CURRENT sky state, main-thread. Null-
-        // returns treated as "no reading available" — caller should not
-        // diff on that cycle.
-        std::optional<WeatherCategory> SampleCurrentCategory()
+        // Plugin-thread wrapper — hops to main via MainThread::Run to
+        // fetch the sky snapshot, then derives the category from the
+        // plain data on the plugin thread. Returns nullopt when the sky
+        // isn't in Full mode (interior / dome-only), matching the
+        // original SampleCurrentCategory contract.
+        std::optional<WeatherCategory> SampleCurrentCategoryViaMain(const PluginThread::Token& pt)
         {
-            auto* sky = RE::Sky::GetSingleton();
+            const auto sky =
+                MainThread::Run(pt, [](const MainThread::Token& mt) { return MainThreadEngine::ReadCurrentSky(mt); });
             if (!sky) {
                 if (Settings::Get().debugMode) {
                     logger::debug("WeatherEventLog: SampleCurrentCategory: Sky singleton null");
                 }
                 return std::nullopt;
             }
-            // Only observe when the full outdoor sky is up. kInterior and
-            // kSkyDomeOnly (dungeon entrances that keep a dome without
-            // the full weather system) both skip.
-            if (sky->mode.get() != RE::Sky::Mode::kFull) {
+            if (sky->mode != MainThreadEngine::SkyMode::Full) {
                 if (Settings::Get().debugMode) {
-                    logger::debug("WeatherEventLog: SampleCurrentCategory: Sky mode={} (not kFull); skip",
-                                  static_cast<int>(sky->mode.get()));
+                    logger::debug("WeatherEventLog: SampleCurrentCategory: Sky mode={} (not Full); skip",
+                                  static_cast<int>(sky->mode));
                 }
                 return std::nullopt;
             }
-            auto* wthr = sky->currentWeather;
-            const WeatherCategory cat = DeriveCategory(wthr);
+            const WeatherCategory cat = DeriveCategoryFromSnapshot(*sky);
             if (Settings::Get().debugMode) {
-                const auto formId = wthr ? wthr->GetFormID() : 0u;
-                const auto rawFlags = wthr ? wthr->data.flags.underlying() : 0u;
-                const auto lightning = wthr ? wthr->data.thunderLightningFrequency : 0;
-                const auto wind = wthr ? wthr->data.windSpeed : 0u;
                 logger::debug("WeatherEventLog: SampleCurrentCategory: weatherFormID=0x{:08X} rawFlags=0x{:02X} "
                               "wind={} thunder={} -> primary={} stormy={}",
-                              formId,
-                              rawFlags,
-                              static_cast<unsigned>(wind),
-                              static_cast<int>(lightning),
+                              sky->currentWeatherFormID,
+                              sky->weatherFlags,
+                              static_cast<unsigned>(sky->windSpeed),
+                              static_cast<int>(sky->thunderLightningFrequency),
                               PrimaryName(cat.primary),
                               cat.stormy);
             }
             return cat;
+        }
+
+        // Main-thread variant used from OnPostLoadGame, which runs on
+        // main from the SKSE message handler and has no
+        // PluginThread::Token. Reads the engine directly, then
+        // funnels through the same DeriveCategoryFromSnapshot helper.
+        std::optional<WeatherCategory> SampleCurrentCategoryOnMain()
+        {
+            auto* sky = RE::Sky::GetSingleton();
+            if (!sky) {
+                return std::nullopt;
+            }
+            if (sky->mode.get() != RE::Sky::Mode::kFull) {
+                return std::nullopt;
+            }
+            MainThreadEngine::SkySnapshot snap;
+            snap.mode = MainThreadEngine::SkyMode::Full;
+            if (auto* w = sky->currentWeather) {
+                snap.currentWeatherFormID = w->GetFormID();
+                snap.weatherFlags = static_cast<std::uint8_t>(w->data.flags.underlying());
+                snap.windSpeed = w->data.windSpeed;
+                snap.thunderLightningFrequency = w->data.thunderLightningFrequency;
+            }
+            return DeriveCategoryFromSnapshot(snap);
         }
 
         void PushLocked(InternalEvent evt)
@@ -305,7 +330,7 @@ namespace NarrativeEngine::WeatherEventLog
 
     void OnPostLoadGame()
     {
-        auto sampled = SampleCurrentCategory();
+        auto sampled = SampleCurrentCategoryOnMain();
         std::scoped_lock lock(g_mutex);
         g_lastCategory = sampled; // may be nullopt (interior on load — first exterior Poll seeds)
         // Reset the pause-aware accumulators — the first ~30s of unpaused
@@ -337,33 +362,47 @@ namespace NarrativeEngine::WeatherEventLog
         std::erase_if(g_events, [cutoff](const InternalEvent& e) { return e.localTime < cutoff; });
     }
 
-    void Poll(double unpausedElapsedSeconds)
+    void Poll(const PluginThread::Token& pt, double unpausedElapsedSeconds)
     {
-        std::scoped_lock lock(g_mutex);
         const bool debug = Settings::Get().debugMode;
 
-        // Both accumulators only grow during unpaused play — Tick.cpp
-        // gates on !paused before calling us, and passes the wall-clock
-        // delta since the previous PollOnMainThread cycle. Paused cycles
-        // never reach here, so paused time never accumulates.
-        g_unpausedSecondsSinceLastCheck += unpausedElapsedSeconds;
-        g_unpausedSecondsSinceLastEmit += unpausedElapsedSeconds;
+        // Throttle gate first, under the mutex, so we don't pay for
+        // the main-thread hop until the accumulator crosses the
+        // configured interval.
+        {
+            std::scoped_lock lock(g_mutex);
 
-        // Throttle gate — cheap early-return until the accumulator
-        // crosses the configured interval.
-        const double intervalSec = PollIntervalSeconds();
-        if (g_unpausedSecondsSinceLastCheck < intervalSec) {
-            return;
-        }
-        // Subtract rather than zero so any overshoot rolls into the next
-        // window (matches how Tick handles its own tick interval —
-        // accurate over long runs).
-        g_unpausedSecondsSinceLastCheck -= intervalSec;
-        if (debug) {
-            logger::debug("WeatherEventLog: Poll: throttle cleared (crossed {:.1f}s of unpaused play)", intervalSec);
+            // Both accumulators only grow during unpaused play —
+            // Tick.cpp gates on !paused before calling us, and passes
+            // the wall-clock delta since the previous poll cycle.
+            // Paused cycles never reach here, so paused time never
+            // accumulates.
+            g_unpausedSecondsSinceLastCheck += unpausedElapsedSeconds;
+            g_unpausedSecondsSinceLastEmit += unpausedElapsedSeconds;
+
+            const double intervalSec = PollIntervalSeconds();
+            if (g_unpausedSecondsSinceLastCheck < intervalSec) {
+                return;
+            }
+            // Subtract rather than zero so any overshoot rolls into
+            // the next window (matches how Tick handles its own tick
+            // interval — accurate over long runs).
+            g_unpausedSecondsSinceLastCheck -= intervalSec;
+            if (debug) {
+                logger::debug("WeatherEventLog: Poll: throttle cleared (crossed {:.1f}s of unpaused play)",
+                              intervalSec);
+            }
         }
 
-        auto sampled = SampleCurrentCategory();
+        // Hop to main for the sky sample. Deliberately outside the
+        // mutex — MainThread::Run blocks the plugin thread until the
+        // main-thread lambda returns, so holding g_mutex across it
+        // would prevent GetRenderedTail (main-thread) and any future
+        // off-thread reader from making progress. The category diff
+        // + mutation re-takes the mutex below.
+        auto sampled = SampleCurrentCategoryViaMain(pt);
+
+        std::scoped_lock lock(g_mutex);
         if (!sampled) {
             // Interior / no sky. Leave g_lastCategory alone — when the
             // player exits back to exterior we'll diff against the last

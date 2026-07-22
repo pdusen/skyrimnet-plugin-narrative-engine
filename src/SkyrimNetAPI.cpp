@@ -8,6 +8,8 @@
 #include <AsyncDispatch.h>
 #include <logger.h>
 
+#include <future>
+#include <memory>
 #include <utility>
 
 namespace NarrativeEngine::SkyrimNetAPI
@@ -75,6 +77,77 @@ namespace NarrativeEngine::SkyrimNetAPI
             AsyncDispatch::EnqueueWork(
                 [cb, response = response ? std::string{response} : std::string{}, success = success != 0](
                     const PluginThread::Token& pt) { cb(pt, response, success); });
+        };
+
+        return ::PublicSendCustomPromptToLLM(
+            promptName.c_str(), variant.c_str(), contextJson.c_str(), std::move(adapted));
+    }
+
+    LLMResult SendCustomPromptToLLM(const PluginThread::Token&,
+                                    const std::string& promptName,
+                                    const std::string& variant,
+                                    const std::string& contextJson)
+    {
+        // shared_ptr rather than a stack-local promise so the
+        // lambda's copy of the reference keeps the promise alive
+        // even in the pathological case where SkyrimNet fires the
+        // callback after we've returned (e.g. queue-full path
+        // followed by a delayed delivery). Cheap; the shared_ptr
+        // dies as soon as the callback and the caller both drop
+        // their references.
+        auto promise = std::make_shared<std::promise<LLMResult>>();
+        auto future = promise->get_future();
+
+        const bool queued = SendCustomPromptToLLMForeign(
+            promptName, variant, contextJson, [promise](std::string response, bool success) {
+                LLMResult result;
+                result.ok = success;
+                result.response = std::move(response);
+                try {
+                    promise->set_value(std::move(result));
+                } catch (const std::future_error&) {
+                    // Already set — SkyrimNet fired the callback
+                    // twice (should not happen, but be defensive).
+                    // Silently drop the second delivery.
+                }
+            });
+
+        if (!queued) {
+            // SendCustomPromptToLLMForeign returned false — either
+            // SkyrimNet is unavailable or the queue rejected the
+            // task. Return a synthetic failure result. Do NOT
+            // block on the future — the callback will never fire.
+            return LLMResult{false, "SendCustomPromptToLLM queue full or SkyrimNet unavailable"};
+        }
+
+        // Blocks the plugin thread until the foreign-thread callback
+        // above pokes the promise.
+        return future.get();
+    }
+
+    bool SendCustomPromptToLLMForeign(const std::string& promptName,
+                                      const std::string& variant,
+                                      const std::string& contextJson,
+                                      std::function<void(std::string response, bool success)> foreignCallback)
+    {
+        if (!::PublicSendCustomPromptToLLM) {
+            return false;
+        }
+
+        // Deliberately NO AsyncDispatch::EnqueueWork bridge here —
+        // this variant exists specifically so the callback can fire
+        // on the foreign thread. See the header for why (used
+        // internally by the sync SendCustomPromptToLLM overload
+        // above; routing the promise-set through AsyncDispatch would
+        // deadlock).
+        //
+        // Response C-string is copied into std::string before being
+        // handed to the caller's callback; the original is only valid
+        // for the duration of the SkyrimNet-side call.
+        auto adapted = [cb = std::move(foreignCallback)](const char* response, int success) {
+            if (cb) {
+                cb(response ? std::string{response} : std::string{}, success != 0);
+            }
         };
 
         return ::PublicSendCustomPromptToLLM(

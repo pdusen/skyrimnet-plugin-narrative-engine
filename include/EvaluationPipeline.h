@@ -1,37 +1,47 @@
 #pragma once
 
 #include <DecisionLog.h>
+#include <PluginThread.h>
 #include <Snapshot.h>
 
 #include <string>
 
-// The Director's three-phase async evaluation pipeline.
+// The Director's async evaluation pipeline.
 //
-//   Phase A (main thread, this::BuildSnapshot)        — capture game state.
-//   Phase B (worker thread, this::BuildPromptContext) — assemble JSON context.
-//   Phase C (worker thread, SkyrimNetAPI::SendCustomPromptToLLM)
-//                                                     — fire the LLM call.
-//   Phase D (main thread, this::ParseDecision + ApplyDecision)
-//                                                     — parse, write log,
-//                                                       advance phase.
-//
-// Step 9 implements Phase A in full plus a debug-mode snapshot dump.
-// Phases B/C/D land in Steps 10/11/14; their declarations are present here
-// so the pipeline's surface area is stable from the start.
+//   Phases A + B + C (plugin thread, BeginEvaluation body)
+//     — capture game state (with a single MainThread::Run hop for
+//       the specific engine reads), build the JSON prompt context,
+//       fire the LLM call.
+//   Phase D (main thread, ParseDecision + ApplyDecision via BeatSystem's
+//           ConsiderBeat finalize chain)
+//     — parse, write log, advance phase. Still main-thread today
+//       because BeatSystem's downstream chain lives there; the audit-
+//       fix follow-on migration of BeatSystem will move it.
 namespace NarrativeEngine::EvaluationPipeline
 {
-    // Entry point — called by the tick driver on the main thread once per
-    // tick interval. Atomically guards against overlapping evaluations,
-    // builds the snapshot, and (Steps 10+) hands it off to the worker.
-    void BeginEvaluation();
+    // Entry point — called by the tick driver on the plugin thread
+    // once per tick interval. Atomically guards against overlapping
+    // evaluations, builds the snapshot (hopping to main for the
+    // specific engine reads), assembles the prompt context, and fires
+    // the LLM call.
+    void BeginEvaluation(const PluginThread::Token&);
 
     // True between BeginEvaluation taking the inFlight flag and the eventual
     // Phase D completion releasing it.
     bool IsEvaluationInFlight();
 
-    // Phase A — main thread. Captures every value-only field the snapshot
-    // needs from RE::*, PhaseTracker, DecisionLog, SkyrimNetAPI, AlphaCanon.
+    // Phase A — main-thread overload. Captures every value-only field
+    // the snapshot needs from RE::*, PhaseTracker, DecisionLog,
+    // SkyrimNetAPI, AlphaCanon. Called by BeatSystem's StartBeat /
+    // ForceDispatchBeat, which run on the main thread today.
     Snapshot BuildSnapshot();
+
+    // Phase A — plugin-thread overload. Same snapshot shape, but
+    // orchestrated for a plugin-thread caller: the thread-safe reads
+    // (PhaseTracker, DecisionLog, SkyrimNetAPI DLL fetch) run inline
+    // on the plugin thread, and a single MainThread::Run hop covers
+    // the engine reads (player + calendar + AlphaCanon).
+    Snapshot BuildSnapshot(const PluginThread::Token&);
 
     // Phase B — worker thread. Renders the snapshot into the JSON object
     // passed to SkyrimNet's prompt template. Stubbed for Step 9.

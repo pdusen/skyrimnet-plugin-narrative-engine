@@ -2,6 +2,7 @@
 
 #include <EventLogUtil.h>
 #include <logger.h>
+#include <MainThread.h>
 #include <PhaseTracker.h>
 #include <Region.h>
 #include <Settings.h>
@@ -58,6 +59,13 @@ namespace NarrativeEngine::TravelEventLog
             RE::FormID holdFormID = 0;
             std::string holdName;
             Region::Climate climate = Region::Climate::Unknown;
+
+            // Party names captured at the same instant as the
+            // location/hold data — bundled into the snapshot so a
+            // single main-thread hop covers everything the Poll
+            // body needs. Player first, then followers sorted by
+            // display name.
+            std::vector<std::string> partyNames;
         };
 
         struct InternalEvent
@@ -165,15 +173,13 @@ namespace NarrativeEngine::TravelEventLog
             return std::string(n);
         }
 
-        // Main-thread. Player display name first, then any alive nearby
-        // followers (IsPlayerTeammate() + within radius) sorted by
-        // display name for stability. Empty player name resolves to
-        // "The Player" as a defensive fallback — should never fire in
-        // practice.
-        std::vector<std::string> CollectParty()
+        // Main-thread helper — collect player display name + nearby
+        // alive followers (IsPlayerTeammate + within radius), sorted
+        // for stability. Called from BuildFreshSnapshot inside the
+        // MainThread::Run lambda, so it's always on main.
+        std::vector<std::string> CollectPartyOnMain(RE::PlayerCharacter* pc, float radius)
         {
             std::vector<std::string> out;
-            auto* pc = RE::PlayerCharacter::GetSingleton();
             std::string playerName = ActorDisplayName(pc);
             if (playerName.empty()) {
                 playerName = "The Player";
@@ -184,7 +190,6 @@ namespace NarrativeEngine::TravelEventLog
                 return out;
             }
             const RE::NiPoint3 playerPos = pc->GetPosition();
-            const float radius = FollowerRadiusUnits();
 
             std::vector<std::string> followers;
             auto* pl = RE::ProcessLists::GetSingleton();
@@ -214,10 +219,16 @@ namespace NarrativeEngine::TravelEventLog
             return out;
         }
 
-        // Fresh snapshot from live world state. Hold-region tracking is
-        // suppressed on interior cells (they often lack region data);
-        // callers should merge with g_lastSnapshot's hold fields to
-        // preserve last-known-hold across an interior visit.
+        // Fresh snapshot from live world state — location + hold +
+        // party, bundled together so a single main-thread hop covers
+        // everything the Poll body needs. Called inside a
+        // MainThread::Run lambda from Poll, and inline (main-thread)
+        // from OnPostLoadGame.
+        //
+        // Hold-region tracking is suppressed on interior cells (they
+        // often lack region data); callers merge with g_lastSnapshot's
+        // hold fields to preserve last-known-hold across an interior
+        // visit.
         TravelSnapshot BuildFreshSnapshot()
         {
             TravelSnapshot s;
@@ -248,6 +259,8 @@ namespace NarrativeEngine::TravelEventLog
             s.holdFormID = res.holdFormID;
             s.holdName = res.holdDisplayName;
             s.climate = res.climate;
+
+            s.partyNames = CollectPartyOnMain(pc, FollowerRadiusUnits());
 
             return s;
         }
@@ -305,6 +318,10 @@ namespace NarrativeEngine::TravelEventLog
         // Build an InternalEvent's from/to endpoint payload from the
         // two snapshots and stamp party + timestamps. Kind-agnostic —
         // caller sets `kind` after.
+        //
+        // Party names are taken from the `to` snapshot (captured in
+        // the same main-thread hop as the location/hold data), not
+        // re-collected here — so this function is plugin-thread safe.
         InternalEvent MakeEvent(const TravelSnapshot& from, const TravelSnapshot& to)
         {
             InternalEvent e;
@@ -323,7 +340,7 @@ namespace NarrativeEngine::TravelEventLog
             e.toHoldRegionID = to.holdFormID;
             e.toHoldName = to.holdName;
 
-            e.partyNames = CollectParty();
+            e.partyNames = to.partyNames;
             return e;
         }
     } // namespace
@@ -378,12 +395,18 @@ namespace NarrativeEngine::TravelEventLog
         std::erase_if(g_events, [cutoff](const InternalEvent& e) { return e.localTime < cutoff; });
     }
 
-    void Poll(double /*unpausedElapsedSeconds*/)
+    void Poll(const PluginThread::Token& pt, double /*unpausedElapsedSeconds*/)
     {
+        // Hop to main for the location/hold/party snapshot.
+        // Deliberately outside the mutex — MainThread::Run blocks the
+        // plugin thread until the main-thread lambda returns, so
+        // holding g_mutex across it would prevent GetRenderedTail
+        // (main-thread) from making progress. The diff + emit runs
+        // under the mutex below.
+        TravelSnapshot fresh = MainThread::Run(pt, [](const MainThread::Token&) { return BuildFreshSnapshot(); });
+
         std::scoped_lock lock(g_mutex);
         const bool debug = Settings::Get().debugMode;
-
-        TravelSnapshot fresh = BuildFreshSnapshot();
 
         // Preserve the last-known hold when the current location
         // doesn't resolve to one (unclassified dungeons, scripted

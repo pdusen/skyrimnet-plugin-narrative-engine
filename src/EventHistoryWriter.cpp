@@ -295,8 +295,12 @@ namespace NarrativeEngine::EventHistoryWriter
         logger::info("EventHistoryWriter: session {} ended, file closed", g_sessionCounter);
     }
 
-    void Poll(double unpausedElapsedSeconds)
+    void Poll(const PluginThread::Token&, double unpausedElapsedSeconds)
     {
+        // Runs entirely on the plugin thread — no engine touches. File
+        // I/O has no thread affinity, SkyrimNet's fetch API is safe
+        // from any thread, and each internal event-log's drain uses
+        // its own mutex.
         std::scoped_lock lock(g_mutex);
         if (!g_file.is_open()) {
             return; // no active session, or master switch off

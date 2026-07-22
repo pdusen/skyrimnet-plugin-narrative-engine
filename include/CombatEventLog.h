@@ -1,6 +1,7 @@
 #pragma once
 
 #include <EventLogUtil.h>
+#include <PluginThread.h>
 
 #include <nlohmann/json_fwd.hpp>
 
@@ -22,9 +23,11 @@ namespace SKSE
 // hit (any actor in range, including environmental damage sources),
 // collapse / regain_footing (any nearby actor entering / leaving bleedout).
 //
-// Threading: SKSE event sinks fire on non-main threads; the bleedout
-// recovery poll and the prune-on-phase-change call run on the main thread.
-// A single internal mutex protects every piece of state.
+// Threading: SKSE event sinks fire on foreign engine threads. Poll runs
+// on the plugin thread from Tick and reaches into main via
+// MainThread::Run to fetch the player combat state and the per-tracked-
+// actor bleedout snapshot. All internal state lives behind a single
+// mutex.
 namespace NarrativeEngine::CombatEventLog
 {
     // SKSE co-save record type ID. Frozen — changing it orphans every
@@ -44,7 +47,7 @@ namespace NarrativeEngine::CombatEventLog
     // player is currently in combat) or wipes the entire log (if not).
     void OnPhaseAdvanced();
 
-    // Main-thread poll driven by the Tick driver. Does two things:
+    // Plugin-thread poll driven by the Tick driver. Does two things:
     //   1. Detects player combat-state changes (IsInCombat flips) and emits
     //      combat_start / combat_end events. Done by polling rather than via
     //      TESCombatEvent because that event does not reliably fire for the
@@ -53,7 +56,12 @@ namespace NarrativeEngine::CombatEventLog
     //   2. Walks the "currently bleeding out" actor set; emits regain_footing
     //      for any that recovered within the distance gate, drops silently
     //      for any that died, despawned, or recovered out of range.
-    void Poll();
+    //
+    // Both use a single MainThread::Run hop to fetch (player combat
+    // state + display name) plus the per-tracked-actor state we need
+    // to make the decisions. The diff, emit, and ring-buffer mutation
+    // all run on the plugin thread against mutex-guarded state.
+    void Poll(const PluginThread::Token&);
 
     // Returns a JSON array of currently-retained internal events shaped
     // like SkyrimNet events:

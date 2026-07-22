@@ -1,5 +1,6 @@
 #include <PhaseTracker.h>
 
+#include <EngineUtils.h>
 #include <logger.h>
 #include <Settings.h>
 
@@ -70,9 +71,12 @@ namespace NarrativeEngine::PhaseTracker
             return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
         }
 
-        // Roll the elapsed wall-clock time since the last sample into the
-        // accumulator (subject to GameIsPaused), then reset the anchor.
-        // MUST be called with g_mutex held. Main thread only — touches RE::UI.
+        // Roll the elapsed wall-clock time since the last sample into
+        // the accumulator (subject to the paused-game gate), then reset
+        // the anchor. MUST be called with g_mutex held. Safe from any
+        // non-foreign thread — the paused-game gate goes through
+        // EngineUtils::IsGamePaused(), which is a stable-singleton +
+        // plain-bool read that CommonLibSSE-NG treats as safe off-main.
         void SampleLocked()
         {
             const auto now = SteadyClock::now();
@@ -82,7 +86,7 @@ namespace NarrativeEngine::PhaseTracker
             if (dt <= 0.0f) {
                 return;
             }
-            if (auto* ui = RE::UI::GetSingleton(); ui && ui->GameIsPaused()) {
+            if (EngineUtils::IsGamePaused()) {
                 return;
             }
             g_baseSeconds += dt;
@@ -244,11 +248,14 @@ namespace NarrativeEngine::PhaseTracker
         TravelEventLog::OnPhaseAdvanced();
     }
 
-    void Tick()
+    void Tick(const PluginThread::Token&)
     {
-        // Pause states (menus, console, dialogue) freeze the clock. The
-        // pause check is sampled at the moment of this call — exactly the
-        // same semantic as the rest of the engine's GameIsPaused gates.
+        // Pause states (menus, console, dialogue) freeze the clock.
+        // The pause check is sampled at the moment of this call —
+        // exactly the same semantic as the rest of the engine's
+        // GameIsPaused gates. Runs on the plugin thread from Tick.cpp;
+        // the pause check reaches directly into main via the stable-
+        // off-main IsGamePaused wrapper.
         std::scoped_lock lock(g_mutex);
         SampleLocked();
     }

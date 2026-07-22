@@ -8,6 +8,7 @@
 #include <DecisionLog.h>
 #include <LLMTextSanitizer.h>
 #include <logger.h>
+#include <MainThread.h>
 #include <PhaseTracker.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -48,6 +49,93 @@ namespace NarrativeEngine::EvaluationPipeline
                 out += s;
             }
             return out;
+        }
+
+        // Engine-derived fields the snapshot needs from the main
+        // thread. Split out so both BuildSnapshot overloads (main-
+        // thread caller and plugin-thread caller) can share one
+        // implementation of the actual engine reads.
+        struct EngineSnapshotFields
+        {
+            PlayerContext player; // engine-derived subset of PlayerContext
+            AlphaCanon::Signal alphaCanonMask = AlphaCanon::Signal::None;
+        };
+
+        // Read every engine-touching field the snapshot needs.
+        // Callers must be on the main thread. The plugin-thread
+        // BuildSnapshot overload calls this via MainThread::Run; the
+        // main-thread overload calls it directly.
+        EngineSnapshotFields ReadEngineSnapshotFieldsOnMain()
+        {
+            EngineSnapshotFields e;
+
+            if (auto* pc = RE::PlayerCharacter::GetSingleton()) {
+                e.player.formID = pc->GetFormID();
+
+                if (auto* loc = pc->GetCurrentLocation()) {
+                    e.player.locationFormID = loc->GetFormID();
+                    if (const char* name = loc->GetFullName(); name && *name) {
+                        e.player.locationName = name;
+                    }
+                }
+
+                if (auto* cell = pc->GetParentCell()) {
+                    e.player.cellFormID = cell->GetFormID();
+                    e.player.cellIsInterior = cell->IsInteriorCell();
+                    if (const char* name = cell->GetFullName(); name && *name) {
+                        e.player.cellName = name;
+                    }
+                }
+            }
+
+            if (auto* cal = RE::Calendar::GetSingleton()) {
+                e.player.gameDaysPassed = cal->GetDaysPassed();
+                e.player.timeOfDayHours = cal->GetHour();
+                // Convert days-since-epoch → seconds-since-epoch to
+                // match SkyrimNet's per-event gameTime field units.
+                // Used by FormatEventsText for "N units ago" relative
+                // timestamps.
+                e.player.gameTimeSeconds = static_cast<double>(cal->GetDaysPassed()) * 86400.0;
+            }
+
+            e.alphaCanonMask = AlphaCanon::EvaluateAll();
+            return e;
+        }
+
+        // Non-engine snapshot fields — the pieces that are thread-safe
+        // to read from either main or plugin thread. Shared between
+        // the two BuildSnapshot overloads.
+        void FillNonEngineSnapshotFields(Snapshot& s)
+        {
+            s.realTimeSec = NowUnixSeconds();
+
+            s.currentPhase = PhaseTracker::PhaseName(PhaseTracker::Get());
+            s.timeInPhaseSeconds = PhaseTracker::TimeInPhaseSeconds();
+            s.phaseEnteredAtRealTime = PhaseTracker::PhaseEnteredAtRealTime();
+
+            const int eventTail = std::max(0, Settings::Get().skyrimNetEventTailSizeForPrompt);
+            s.skyrimNetEventsJSON = SkyrimNetAPI::GetRecentEvents(0, eventTail, "");
+
+            const int decisionTail = std::max(0, Settings::Get().decisionLogTailSizeForPrompt);
+            s.decisionLogTail = DecisionLog::Tail(static_cast<std::size_t>(decisionTail));
+        }
+
+        // Merge the engine-derived fields into the target snapshot.
+        // Called after FillNonEngineSnapshotFields.
+        void MergeEngineFieldsInto(Snapshot& s, const EngineSnapshotFields& engine)
+        {
+            s.player.formID = engine.player.formID;
+            s.player.locationFormID = engine.player.locationFormID;
+            s.player.locationName = engine.player.locationName;
+            s.player.cellFormID = engine.player.cellFormID;
+            s.player.cellName = engine.player.cellName;
+            s.player.cellIsInterior = engine.player.cellIsInterior;
+            s.player.gameDaysPassed = engine.player.gameDaysPassed;
+            s.player.timeOfDayHours = engine.player.timeOfDayHours;
+            s.player.gameTimeSeconds = engine.player.gameTimeSeconds;
+
+            s.alphaCanonSignals = AlphaCanon::Names(engine.alphaCanonMask);
+            s.alphaCanonSignalBitmask = static_cast<std::uint32_t>(engine.alphaCanonMask);
         }
 
         // Single multi-line debug dump of a snapshot. Gated on debugMode by
@@ -122,71 +210,42 @@ namespace NarrativeEngine::EvaluationPipeline
 
     Snapshot BuildSnapshot()
     {
+        // Main-thread overload — used by BeatSystem::StartBeat and
+        // ForceDispatchBeat, which run on the main thread. Reads
+        // every field inline, no marshaling.
         const bool debug = Settings::Get().debugMode;
         if (debug)
-            logger::debug("BuildSnapshot: begin");
+            logger::debug("BuildSnapshot: begin (main-thread overload)");
 
         Snapshot s;
-        s.realTimeSec = NowUnixSeconds();
+        FillNonEngineSnapshotFields(s);
+        MergeEngineFieldsInto(s, ReadEngineSnapshotFieldsOnMain());
 
-        s.currentPhase = PhaseTracker::PhaseName(PhaseTracker::Get());
-        s.timeInPhaseSeconds = PhaseTracker::TimeInPhaseSeconds();
-        s.phaseEnteredAtRealTime = PhaseTracker::PhaseEnteredAtRealTime();
         if (debug)
-            logger::debug("BuildSnapshot: phase OK");
+            logger::debug("BuildSnapshot: main-thread overload complete");
+        return s;
+    }
 
-        const int eventTail = std::max(0, Settings::Get().skyrimNetEventTailSizeForPrompt);
-        s.skyrimNetEventsJSON = SkyrimNetAPI::GetRecentEvents(0, eventTail, "");
+    Snapshot BuildSnapshot(const PluginThread::Token& pt)
+    {
+        // Plugin-thread overload — used by BeginEvaluation. The non-
+        // engine reads (PhaseTracker, DecisionLog, SkyrimNetAPI DLL
+        // fetch) run inline on the plugin thread since they're all
+        // thread-safe; the engine reads (player + calendar + AlphaCanon)
+        // bundle into a single MainThread::Run hop.
+        const bool debug = Settings::Get().debugMode;
         if (debug)
-            logger::debug("BuildSnapshot: events OK ({}B)", s.skyrimNetEventsJSON.size());
+            logger::debug("BuildSnapshot: begin (plugin-thread overload)");
 
-        const int decisionTail = std::max(0, Settings::Get().decisionLogTailSizeForPrompt);
-        s.decisionLogTail = DecisionLog::Tail(static_cast<std::size_t>(decisionTail));
+        Snapshot s;
+        FillNonEngineSnapshotFields(s);
+
+        const auto engine =
+            MainThread::Run(pt, [](const MainThread::Token&) { return ReadEngineSnapshotFieldsOnMain(); });
+        MergeEngineFieldsInto(s, engine);
+
         if (debug)
-            logger::debug("BuildSnapshot: decisionTail OK");
-
-        if (auto* pc = RE::PlayerCharacter::GetSingleton()) {
-            s.player.formID = pc->GetFormID();
-            if (debug)
-                logger::debug("BuildSnapshot: pc OK");
-
-            if (auto* loc = pc->GetCurrentLocation()) {
-                s.player.locationFormID = loc->GetFormID();
-                if (const char* name = loc->GetFullName(); name && *name) {
-                    s.player.locationName = name;
-                }
-            }
-            if (debug)
-                logger::debug("BuildSnapshot: location OK");
-
-            if (auto* cell = pc->GetParentCell()) {
-                s.player.cellFormID = cell->GetFormID();
-                s.player.cellIsInterior = cell->IsInteriorCell();
-                if (const char* name = cell->GetFullName(); name && *name) {
-                    s.player.cellName = name;
-                }
-            }
-            if (debug)
-                logger::debug("BuildSnapshot: cell OK");
-        }
-
-        if (auto* cal = RE::Calendar::GetSingleton()) {
-            s.player.gameDaysPassed = cal->GetDaysPassed();
-            s.player.timeOfDayHours = cal->GetHour();
-            // Convert days-since-epoch → seconds-since-epoch to match
-            // SkyrimNet's per-event gameTime field units. Used by
-            // FormatEventsText for "N units ago" relative timestamps.
-            s.player.gameTimeSeconds = static_cast<double>(cal->GetDaysPassed()) * 86400.0;
-        }
-        if (debug)
-            logger::debug("BuildSnapshot: calendar OK");
-
-        const auto mask = AlphaCanon::EvaluateAll();
-        s.alphaCanonSignals = AlphaCanon::Names(mask);
-        s.alphaCanonSignalBitmask = static_cast<std::uint32_t>(mask);
-        if (debug)
-            logger::debug("BuildSnapshot: alphaCanon OK; returning");
-
+            logger::debug("BuildSnapshot: plugin-thread overload complete");
         return s;
     }
 
@@ -438,13 +497,13 @@ namespace NarrativeEngine::EvaluationPipeline
         }
     }
 
-    void BeginEvaluation()
+    void BeginEvaluation(const PluginThread::Token& pt)
     {
-        // Atomic guard: only one evaluation may be in flight at a time. If
-        // a previous one is still being processed when the next tick fires
-        // (LLM slow, worker backed up), this tick is silently dropped.
-        // The flag is released only after ApplyDecision (or an early-exit
-        // failure path) runs on the main thread, so two ticks can't see
+        // Atomic guard: only one evaluation may be in flight at a time.
+        // If a previous one is still being processed when the next tick
+        // fires (LLM slow, worker backed up), this tick is silently
+        // dropped. The flag is released only after ApplyDecision (or an
+        // early-exit failure path) runs, so two ticks can't see
         // overlapping in-flight state.
         bool expected = false;
         if (!g_inFlight.compare_exchange_strong(expected, true)) {
@@ -454,68 +513,63 @@ namespace NarrativeEngine::EvaluationPipeline
             return;
         }
 
-        Snapshot snapshot = BuildSnapshot();
+        // Phase A — snapshot on plugin thread, with a single main-
+        // thread hop for the engine reads.
+        Snapshot snapshot = BuildSnapshot(pt);
         if (Settings::Get().debugMode) {
             LogSnapshot(snapshot);
         }
 
-        // Phase B + C run on the worker thread. The snapshot is moved in
-        // so the worker carries it forward into the LLM callback (Phase D
-        // needs it for ParseDecision's pre-fill).
-        AsyncDispatch::EnqueueWork([snapshot = std::move(snapshot)](const PluginThread::Token&) mutable {
-            const std::string ctx = BuildPromptContext(snapshot);
-            if (Settings::Get().debugMode) {
-                logger::debug("BuildPromptContext: produced {}B", ctx.size());
-                logger::debug("BuildPromptContext: {}", ctx);
+        // Phase B — prompt context assembly. Pure JSON work on the
+        // plugin thread; no engine touches.
+        const std::string ctx = BuildPromptContext(snapshot);
+        if (Settings::Get().debugMode) {
+            logger::debug("BuildPromptContext: produced {}B", ctx.size());
+            logger::debug("BuildPromptContext: {}", ctx);
+        }
+
+        // Phase C — fire the LLM call synchronously. Blocks the
+        // plugin thread until SkyrimNet delivers its callback. See
+        // SkyrimNetAPI.h for the rationale on sync-blocking:
+        // BeginEvaluation is single-flighted via g_inFlight, so
+        // nothing useful runs on the plugin thread concurrently that
+        // would suffer from the wait.
+        //
+        // 2nd arg is the *variant* — a named LLM-config profile
+        // declared in statics/.../SkyrimNet/config/plugins/
+        // NarrativeEngine/manifest.yaml. Without a variant the call
+        // falls back to SkyrimNet's default Dialogue LLM, which is
+        // tuned for creative writing, not per-tick classification.
+        const auto result =
+            SkyrimNetAPI::SendCustomPromptToLLM(pt, "narrative_engine_story_eval", "narrative_engine_director", ctx);
+
+        if (Settings::Get().debugMode) {
+            logger::debug("LLM callback: success={} body={}B", result.ok, result.response.size());
+            if (!result.response.empty()) {
+                logger::debug("LLM response: {}", result.response);
             }
+        }
 
-            // Phase C — fire the LLM call. The callback fires on a
-            // SkyrimNet worker thread (NOT the main thread); it must
-            // marshal back to the main thread before touching engine state.
-            const bool queued = SkyrimNetAPI::SendCustomPromptToLLM(
-                // 2nd arg is the *variant* — a named LLM-config profile
-                // declared in statics/.../SkyrimNet/config/plugins/
-                // NarrativeEngine/manifest.yaml. Without a variant the call
-                // falls back to SkyrimNet's default Dialogue LLM, which is
-                // tuned for creative writing, not per-tick classification.
-                "narrative_engine_story_eval",
-                "narrative_engine_director",
-                ctx,
-                [snapshot =
-                     std::move(snapshot)](const PluginThread::Token&, std::string response, bool success) mutable {
-                    if (Settings::Get().debugMode) {
-                        logger::debug("LLM callback: success={} body={}B", success, response.size());
-                        if (!response.empty()) {
-                            logger::debug("LLM response: {}", response);
-                        }
-                    }
+        if (!result.ok) {
+            // SkyrimNet's failure path (or the sync wrapper's queue-
+            // full path) puts an error string in `result.response`.
+            logger::warn("EvaluationPipeline: LLM call failed: {}", result.response);
+            g_inFlight.store(false);
+            return;
+        }
 
-                    if (!success) {
-                        // SkyrimNet's failure path puts an error string in
-                        // `response`. Log + release inFlight on the main
-                        // thread so the next tick can run.
-                        logger::warn("EvaluationPipeline: LLM call failed: {}", response);
-                        AsyncDispatch::MarshalToMainThread([] { g_inFlight.store(false); });
-                        return;
-                    }
+        // Phase D parser — plugin thread, touches no engine state.
+        DecisionLog::DecisionRecord rec = ParseDecision(result.response, snapshot);
 
-                    // Phase D parser runs on this (SkyrimNet) thread — it
-                    // touches no engine state. The marshal hands snapshot
-                    // + rec to BeatSystem::ConsiderBeat, which takes
-                    // ownership and is responsible for calling
-                    // ApplyDecision (possibly after a deferred LLM round-
-                    // trip) and the finalizer exactly once.
-                    DecisionLog::DecisionRecord rec = ParseDecision(response, snapshot);
-                    AsyncDispatch::MarshalToMainThread([snapshot = std::move(snapshot),
-                                                        rec = std::move(rec)]() mutable {
-                        BeatSystem::ConsiderBeat(std::move(snapshot), std::move(rec), [] { g_inFlight.store(false); });
-                    });
-                });
-
-            if (!queued) {
-                logger::warn("EvaluationPipeline: SendCustomPromptToLLM returned false; dropping tick's evaluation");
-                AsyncDispatch::MarshalToMainThread([] { g_inFlight.store(false); });
-            }
+        // Phase D applier hand-off. BeatSystem::ConsiderBeat still
+        // runs on main today; the deprecated MarshalToMainThread path
+        // is preserved here until the follow-on phase moves
+        // BeatSystem's chain off main. ConsiderBeat takes ownership of
+        // snapshot + rec and is responsible for calling ApplyDecision
+        // (possibly after a deferred LLM round-trip) and the finalizer
+        // exactly once.
+        AsyncDispatch::MarshalToMainThread([snapshot = std::move(snapshot), rec = std::move(rec)]() mutable {
+            BeatSystem::ConsiderBeat(std::move(snapshot), std::move(rec), [] { g_inFlight.store(false); });
         });
     }
 } // namespace NarrativeEngine::EvaluationPipeline

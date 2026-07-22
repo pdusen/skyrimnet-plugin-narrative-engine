@@ -1,6 +1,7 @@
 #pragma once
 
 #include <EventLogUtil.h>
+#include <PluginThread.h>
 
 #include <nlohmann/json_fwd.hpp>
 
@@ -29,10 +30,10 @@ namespace SKSE
 // MQ206, DA02) are similarly left in the observation set — a story cue
 // like the Helgen sky IS an event we want the Director to see.
 //
-// Threading: Poll() runs on the main thread from Tick, so engine reads
-// (Sky, Calendar) are safe without marshaling. All state lives behind a
-// single internal mutex so a future off-thread caller doesn't race with
-// a mid-poll snapshot.
+// Threading: Poll() runs on the plugin thread from Tick and reaches
+// into main via MainThread::Run to fetch the sky snapshot. All internal
+// state lives behind a single mutex so the dashboard's main-thread
+// GetRenderedTail reads don't race with plugin-thread mutations.
 namespace NarrativeEngine::WeatherEventLog
 {
     // SKSE co-save record type ID. Frozen — changing it orphans every
@@ -54,20 +55,25 @@ namespace NarrativeEngine::WeatherEventLog
     // narrative context.
     void OnPhaseAdvanced();
 
-    // Main-thread poll driven by Tick's 500 ms loop. Internally
+    // Plugin-thread poll driven by Tick's 500 ms loop. Internally
     // throttles to iWeatherEventPollIntervalSeconds of *unpaused*
     // elapsed time — the caller (Tick.cpp) only calls Poll when the
     // game is unpaused, and passes the wall-clock delta since the
-    // previous PollOnMainThread cycle (~500ms during normal play).
-    // WeatherEventLog accumulates those deltas and does the actual
-    // sky sample once the accumulator crosses the interval. Weather
-    // updates on the order of tens of seconds, so per-Tick sampling
-    // would waste work without producing new signal.
+    // previous poll cycle (~500ms during normal play). WeatherEventLog
+    // accumulates those deltas and does the actual sky sample once the
+    // accumulator crosses the interval. Weather updates on the order
+    // of tens of seconds, so per-Tick sampling would waste work
+    // without producing new signal.
     //
-    // Suppressed when Sky::mode != kFull (interior — no visible sky).
+    // Sky sample runs on main via MainThread::Run + MainThreadEngine::
+    // ReadCurrentSky; the category derivation, diff, debounce, and
+    // ring-buffer mutation all run on the plugin thread against
+    // mutex-guarded state.
+    //
+    // Suppressed when Sky::mode != Full (interior — no visible sky).
     // Emits a weather_event on category-tuple change, subject to a
     // secondary inter-event debounce also measured in unpaused seconds.
-    void Poll(double unpausedElapsedSeconds);
+    void Poll(const PluginThread::Token&, double unpausedElapsedSeconds);
 
     // Returns a JSON array of currently-retained events shaped like
     // SkyrimNet events:

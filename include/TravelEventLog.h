@@ -1,6 +1,7 @@
 #pragma once
 
 #include <EventLogUtil.h>
+#include <PluginThread.h>
 
 #include <nlohmann/json_fwd.hpp>
 
@@ -33,8 +34,12 @@ namespace SKSE
 // hold-region tracking is preserved across the interior visit so the
 // re-emergence poll can still detect hold changes.
 //
-// Threading: Poll runs on the main thread from Tick. All state lives
-// behind an internal mutex.
+// Threading: Poll runs on the plugin thread from Tick and reaches into
+// main via MainThread::Run to fetch the location/hold snapshot. All
+// state lives behind an internal mutex so the dashboard's main-thread
+// GetRenderedTail reads don't race with plugin-thread mutations. Event
+// sinks (TESFastTravelEndEvent) run on foreign engine threads and
+// mutate their own mutex-guarded state independently of the poll body.
 namespace NarrativeEngine::TravelEventLog
 {
     // SKSE co-save record type ID. Frozen — changing it orphans every
@@ -59,14 +64,19 @@ namespace NarrativeEngine::TravelEventLog
     // narrative context.
     void OnPhaseAdvanced();
 
-    // Main-thread poll driven by Tick's 500 ms loop when the game is
-    // unpaused. No throttle — cell-load transitions can be transient
-    // and we want them all. `unpausedElapsedSeconds` is accepted for
-    // symmetry with the Tick-driven-accumulator pattern (see
-    // feedback_tick_driven_accumulators memory); currently unused
-    // because Travel has no cadenced work, but the signature keeps the
-    // door open for future timing gates.
-    void Poll(double unpausedElapsedSeconds);
+    // Plugin-thread poll driven by Tick's 500 ms loop when the game
+    // is unpaused. No throttle — cell-load transitions can be
+    // transient and we want them all. `unpausedElapsedSeconds` is
+    // accepted for symmetry with the Tick-driven-accumulator pattern
+    // (see feedback_tick_driven_accumulators memory); currently
+    // unused because Travel has no cadenced work, but the signature
+    // keeps the door open for future timing gates.
+    //
+    // The location/hold snapshot fetch runs on main via
+    // MainThread::Run; the diff, party collection dispatch, and
+    // ring-buffer mutation run on the plugin thread against
+    // mutex-guarded state.
+    void Poll(const PluginThread::Token&, double unpausedElapsedSeconds);
 
     // JSON array of currently-retained events, oldest-first. Step 6
     // ships this as an empty-array stub; Step 8 fills in the rendering

@@ -2,6 +2,7 @@
 
 #include <EventLogUtil.h>
 #include <logger.h>
+#include <MainThread.h>
 #include <Settings.h>
 #include <SkyrimNetEvents.h>
 
@@ -468,35 +469,99 @@ namespace NarrativeEngine::CombatEventLog
             return &s;
         }
 
-        // Player combat-state poll. Runs on the main thread under our mutex
-        // already held by the caller. Detects IsInCombat() flips and pushes
-        // combat_start / combat_end, updating g_currentEncounterStartRealTime
-        // to match.
-        void PollPlayerCombatLocked()
+        // Plain-data snapshot the plugin-thread Poll consumes. Filled
+        // in the single MainThread::Run hop that opens Poll(); every
+        // engine read the Poll body used to do inline is bundled here.
+        struct PollSnapshot
         {
+            // Player half — populated only when the player singleton
+            // resolved.
+            bool playerResolved = false;
+            bool playerInCombat = false;
+            std::string playerDisplayName;
+
+            // Per-tracked-actor half — one entry per FormID passed
+            // into the main-thread hop from g_bleedingOut. `exists`
+            // is false when the form failed to resolve (unloaded /
+            // despawned).
+            struct ActorState
+            {
+                RE::FormID formID = 0;
+                bool exists = false;
+                bool isDead = false;
+                bool isBleedingOut = false;
+                bool inRadius = false;
+            };
+            std::vector<ActorState> actors;
+        };
+
+        // Main-thread body — fills a PollSnapshot from live engine
+        // state. Called inside MainThread::Run from Poll. All engine
+        // touches are bundled here so the plugin-thread Poll body
+        // pays for exactly one main-thread hop per pass regardless
+        // of how many bleedout actors are being tracked.
+        PollSnapshot BuildPollSnapshotOnMain(const std::vector<RE::FormID>& trackedIds, float radius)
+        {
+            PollSnapshot s;
             auto* player = GetPlayer();
-            if (!player)
+            if (!player) {
+                return s;
+            }
+            s.playerResolved = true;
+            s.playerInCombat = player->IsInCombat();
+            s.playerDisplayName = ActorDisplayName(player);
+            if (s.playerDisplayName.empty()) {
+                s.playerDisplayName = "Player";
+            }
+
+            const RE::NiPoint3 playerPos = player->GetPosition();
+            s.actors.reserve(trackedIds.size());
+            for (auto fid : trackedIds) {
+                PollSnapshot::ActorState a;
+                a.formID = fid;
+                auto* form = RE::TESForm::LookupByID(fid);
+                auto* actor = form ? form->As<RE::Actor>() : nullptr;
+                if (!actor) {
+                    s.actors.push_back(a);
+                    continue;
+                }
+                a.exists = true;
+                a.isDead = actor->IsDead();
+                if (auto* state = actor->AsActorState()) {
+                    a.isBleedingOut = state->IsBleedingOut();
+                }
+                a.inRadius = actor->GetPosition().GetDistance(playerPos) <= radius;
+                s.actors.push_back(a);
+            }
+            return s;
+        }
+
+        // Plugin-thread combat-state diff. Consumes the pre-fetched
+        // snapshot and emits combat_start / combat_end on flip. Caller
+        // holds g_mutex.
+        void ProcessPlayerCombatLocked(const PollSnapshot& snap)
+        {
+            if (!snap.playerResolved) {
                 return;
-            const bool nowInCombat = player->IsInCombat();
-            if (nowInCombat == g_playerInCombatLast)
+            }
+            if (snap.playerInCombat == g_playerInCombatLast) {
                 return;
+            }
 
             InternalEvent e;
-            e.kind = nowInCombat ? Kind::CombatStart : Kind::CombatEnd;
+            e.kind = snap.playerInCombat ? Kind::CombatStart : Kind::CombatEnd;
             e.localTime = EventLogUtil::NowUnixSeconds();
             e.gameTime = EventLogUtil::NowGameTimeSeconds();
-            e.actorName = ActorDisplayName(player);
-            if (e.actorName.empty())
-                e.actorName = "Player";
+            e.actorName = snap.playerDisplayName;
             e.actorIsNamedActor = true;
 
-            if (nowInCombat) {
+            if (snap.playerInCombat) {
                 g_currentEncounterStartRealTime = e.localTime;
             } else {
                 g_currentEncounterStartRealTime = 0.0;
             }
             PushLocked(std::move(e));
-            g_playerInCombatLast = nowInCombat;
+            g_playerInCombatLast = snap.playerInCombat;
         }
     } // namespace
 
@@ -537,40 +602,70 @@ namespace NarrativeEngine::CombatEventLog
         }
     }
 
-    void Poll()
+    void Poll(const PluginThread::Token& pt)
     {
-        // Main thread: safe to call engine lookups / state queries.
+        const float radius = HitRadiusUnits();
+
+        // 1. Plugin-thread: snapshot the FormIDs we're currently
+        //    tracking, so the main-thread hop below knows which
+        //    actors to query. Held briefly under g_mutex.
+        std::vector<RE::FormID> trackedIds;
+        {
+            std::scoped_lock lock(g_mutex);
+            trackedIds.reserve(g_bleedingOut.size());
+            for (const auto& [fid, name] : g_bleedingOut) {
+                trackedIds.push_back(fid);
+            }
+        }
+
+        // 2. Main-thread hop: single Run for the player combat state
+        //    + per-tracked-actor liveness/bleedout/proximity. Bundled
+        //    into a plain-data PollSnapshot so the diff below runs
+        //    entirely on the plugin thread against mutex-guarded
+        //    state.
+        //
+        //    Deliberately outside g_mutex — MainThread::Run blocks the
+        //    plugin thread until the main-thread lambda returns, so
+        //    holding g_mutex across it would prevent main-thread
+        //    readers (GetRenderedTail) from making progress.
+        const auto snap = MainThread::Run(pt, [&trackedIds, radius](const MainThread::Token&) {
+            return BuildPollSnapshotOnMain(trackedIds, radius);
+        });
+
+        // 3. Plugin-thread: consume the snapshot, mutate g_bleedingOut,
+        //    emit events. Re-take g_mutex for the mutation phase.
         std::scoped_lock lock(g_mutex);
 
-        // 1. Player combat-state poll.
-        PollPlayerCombatLocked();
+        ProcessPlayerCombatLocked(snap);
 
-        // 2. Bleedout recovery walk.
-        const float radius = HitRadiusUnits();
         std::vector<std::string> recoveredNames;
-        for (auto it = g_bleedingOut.begin(); it != g_bleedingOut.end();) {
-            auto* form = RE::TESForm::LookupByID(it->first);
-            auto* actor = form ? form->As<RE::Actor>() : nullptr;
-            if (!actor) {
+        for (const auto& a : snap.actors) {
+            auto it = g_bleedingOut.find(a.formID);
+            if (it == g_bleedingOut.end()) {
+                // Sink dropped this entry between the snapshot and
+                // now — nothing to reconcile.
+                continue;
+            }
+            if (!a.exists) {
                 // Unloaded / despawned — no recovery to report.
-                it = g_bleedingOut.erase(it);
+                g_bleedingOut.erase(it);
                 continue;
             }
-            if (actor->IsDead()) {
+            if (a.isDead) {
                 // Death already in SkyrimNet's event log; drop silently.
-                it = g_bleedingOut.erase(it);
+                g_bleedingOut.erase(it);
                 continue;
             }
-            if (!actor->AsActorState()->IsBleedingOut()) {
-                if (WithinRadius(actor->GetPosition(), radius)) {
+            if (!a.isBleedingOut) {
+                if (a.inRadius) {
                     recoveredNames.push_back(it->second);
                 }
                 // Out-of-range recovery drops silently — player can't
                 // witness it, so it isn't narratively significant.
-                it = g_bleedingOut.erase(it);
+                g_bleedingOut.erase(it);
                 continue;
             }
-            ++it;
+            // Still bleeding out — leave in the set for the next Poll.
         }
         for (auto& n : recoveredNames) {
             EmitRegainFootingLocked(n);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <PluginThread.h>
+
 // EventHistoryWriter — Step 9 testing aid. A running, session-scoped
 // history log at Data/../SKSE/NarrativeEngine_EventHistory.log that
 // captures every emitted internal event (combat + weather + travel)
@@ -14,9 +16,11 @@
 // Not a cosave subsystem. Nothing here is persisted through the SKSE
 // serialization interface — the file itself is the persistence.
 //
-// Threading: Poll runs on the main thread from Tick. File I/O is
-// synchronous inside the flush path; short bursts of events fit in
-// the pending queues without back-pressure.
+// Threading: Poll runs on the plugin thread from Tick. No engine
+// touches at all — file I/O is thread-agnostic, SkyrimNet's fetch API
+// is safe from any thread, and the internal event-log drains are
+// mutex-guarded. The PluginThread::Token parameter is compile-time
+// proof of context; no runtime use.
 namespace NarrativeEngine::EventHistoryWriter
 {
     // Called at kDataLoaded. Reads settings and registers the module.
@@ -35,7 +39,7 @@ namespace NarrativeEngine::EventHistoryWriter
     // rotate this session's file into slot .1.
     void OnSessionEnd();
 
-    // Main-thread poll driven by Tick's 500 ms loop when unpaused.
+    // Plugin-thread poll driven by Tick's 500 ms loop when unpaused.
     // Uses the Tick-driven accumulator pattern
     // (feedback_tick_driven_accumulators) — every call adds the
     // caller-supplied unpausedElapsedSeconds to a threshold-oriented
@@ -45,5 +49,5 @@ namespace NarrativeEngine::EventHistoryWriter
     // events since the bookmark, sort the combined batch by
     // localTime, write to the file. No-op if no file is open (e.g.
     // player is on the main menu with no save loaded).
-    void Poll(double unpausedElapsedSeconds);
+    void Poll(const PluginThread::Token&, double unpausedElapsedSeconds);
 } // namespace NarrativeEngine::EventHistoryWriter

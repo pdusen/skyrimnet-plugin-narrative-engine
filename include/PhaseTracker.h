@@ -1,5 +1,7 @@
 #pragma once
 
+#include <PluginThread.h>
+
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -13,10 +15,13 @@ namespace SKSE
 // wall-clock time spent in it. Persists across save/load via the SKSE
 // co-save serialization interface.
 //
-// Threading: writers (Tick / AdvanceTo / Reset / OnLoad) run on the main
-// thread; readers (Get / TimeInPhaseSeconds) may be called from any thread,
-// including SkyrimNet's prompt-rendering thread once the Step 12 decorators
-// register. A small internal mutex makes that safe.
+// Threading: Tick now runs on the plugin thread (from Tick.cpp's poll
+// body). AdvanceTo / Reset / OnLoad still run on the main thread from
+// SKSE message handlers and beat state machines. Readers (Get /
+// TimeInPhaseSeconds / PhaseEnteredAtRealTime) may be called from any
+// thread. A small internal mutex makes all of this safe; the only
+// engine touch is a GameIsPaused check that CommonLibSSE-NG treats as
+// stable off-main.
 namespace NarrativeEngine::PhaseTracker
 {
     enum class Phase : std::uint8_t
@@ -77,8 +82,9 @@ namespace NarrativeEngine::PhaseTracker
     // Accumulated unpaused real-time seconds spent in the current phase, as
     // of the moment of the call. Internally samples the steady clock and
     // brings the accumulator up to "now" before returning, so callers always
-    // see a fresh value rather than the value as of the last Tick. Main
-    // thread only (calls RE::UI::GameIsPaused()).
+    // see a fresh value rather than the value as of the last Tick. Safe
+    // from any thread — the internal pause check uses EngineUtils::
+    // IsGamePaused()'s stable-off-main contract.
     float TimeInPhaseSeconds();
 
     // Unix-epoch real-wall-clock seconds at which the current phase was
@@ -103,10 +109,12 @@ namespace NarrativeEngine::PhaseTracker
     void Reset(Phase initial = Phase::Exposition);
 
     // Sample the steady clock and roll the elapsed time since the last
-    // sample into the accumulator — but only when the game is not paused
-    // (RE::UI::GameIsPaused() — true during menus, console, dialogue).
-    // Called periodically by the tick driver (Step 8) on the main thread.
-    void Tick();
+    // sample into the accumulator — but only when the game is not
+    // paused (EngineUtils::IsGamePaused() — true during menus, console,
+    // dialogue). Called from Tick.cpp's poll body on the plugin thread.
+    // The PluginThread::Token parameter is compile-time proof of
+    // context; no runtime use.
+    void Tick(const PluginThread::Token&);
 
     // SKSE serialization callbacks. OnLoad receives the per-record version
     // and length advanced past the header by the central OnLoad dispatcher
