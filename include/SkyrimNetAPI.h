@@ -1,5 +1,7 @@
 #pragma once
 
+#include <PluginThread.h>
+
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -35,17 +37,32 @@ namespace NarrativeEngine::SkyrimNetAPI
     int GetVersion();
 
     // Queues an async LLM call against the named SkyrimNet prompt template.
-    // The callback fires on a SkyrimNet worker thread — do NOT call RE::*
-    // functions from it. The const char* response from SkyrimNet is copied
-    // into the std::string passed to our callback (the original is only valid
-    // for the duration of the SkyrimNet-side call).
+    //
+    // SkyrimNet fires its callback on one of its own foreign worker
+    // threads. This wrapper does NOT invoke the caller-supplied callback
+    // there — instead, it captures the response into locals and
+    // enqueues the invocation onto the plugin thread via
+    // AsyncDispatch::EnqueueWork. By the time `callback` runs, it holds
+    // a PluginThread::Token and can freely call MainThread::Run for any
+    // engine work.
+    //
+    // The compile-time proof is worth naming explicitly: the callback's
+    // first parameter is a PluginThread::Token, so it is impossible to
+    // invoke `callback` from a thread that does not hold one. The only
+    // syntactically-legal call site is inside an EnqueueWork job — which
+    // is exactly where this wrapper puts it.
+    //
+    // The const char* response from SkyrimNet is copied into the
+    // std::string passed to our callback (the original is only valid for
+    // the duration of the SkyrimNet-side call).
     //
     // Returns false if the underlying function pointer is null or the task
     // failed to queue.
-    bool SendCustomPromptToLLM(const std::string& promptName,
-                               const std::string& variant,
-                               const std::string& contextJson,
-                               std::function<void(std::string response, bool success)> callback);
+    bool SendCustomPromptToLLM(
+        const std::string& promptName,
+        const std::string& variant,
+        const std::string& contextJson,
+        std::function<void(const PluginThread::Token&, std::string response, bool success)> callback);
 
     // Returns SkyrimNet's recent-events JSON (an array of event objects with
     // fields: type, text, gameTime, originatingActorName, targetActorName).

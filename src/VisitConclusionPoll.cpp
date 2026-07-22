@@ -501,7 +501,8 @@ namespace NarrativeEngine::VisitConclusionPoll
             kPromptName,
             kPromptVariant,
             promptCtxStr,
-            [callback = std::move(callback)](std::string response, bool success) mutable {
+            [callback = std::move(callback)](
+                const NarrativeEngine::PluginThread::Token&, std::string response, bool success) mutable {
                 if (!success) {
                     logger::warn("VisitConclusionPoll: LLM call failed: {}", response);
                     g_consecutivePollFailures.fetch_add(1);

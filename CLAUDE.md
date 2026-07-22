@@ -43,6 +43,26 @@ not defer to a later normalization step. See
 substitution table, the library-vs-manual rationale, and worked
 examples of how to identify which response fields need sanitizing.
 
+## Threading discipline: every plugin function takes a token
+
+NarrativeEngine has a strict three-role thread model (Main / Plugin /
+Foreign) with two unforgeable token types (`MainThread::Token`,
+`PluginThread::Token`) that gate every plugin function. Every function
+you add takes either a `MainThread::Token const&` (for engine-touching
+wrappers) or a `PluginThread::Token const&` (for everything else).
+
+Worker code that needs the main thread uses `MainThread::Run(pt, fn)`
+to block for a result, or `MainThread::FireAndForget(pt, fn)` to
+schedule fire-and-forget. Foreign-thread code (SkyrimNet callbacks,
+engine event sinks) enters plugin-thread land via
+`AsyncDispatch::EnqueueWork` — the sole plugin API that requires no
+token from the caller.
+
+The type system enforces the discipline: forbidden call patterns fail
+to compile. See [`docs/THREADING_MODEL.md`](docs/THREADING_MODEL.md)
+for the full rules, the wrapper pattern, the enforcement mechanisms,
+and the "what NOT to do" cheat sheet.
+
 ## Always run `format.ps1` after adding or modifying files
 
 After any batch of edits — code, docs, config, whatever — run `pwsh -File format.ps1` at the repo root

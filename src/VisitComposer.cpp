@@ -492,7 +492,8 @@ namespace NarrativeEngine::VisitComposer
             "narrative_engine_visit_compose",
             "narrative_engine_composer",
             promptCtxStr,
-            [callback = std::move(callback), minWords, maxWords](std::string response, bool success) mutable {
+            [callback = std::move(callback), minWords, maxWords](
+                const NarrativeEngine::PluginThread::Token&, std::string response, bool success) mutable {
                 if (!success) {
                     logger::warn("VisitComposer: LLM call failed: {}", response);
                     callback(std::nullopt);

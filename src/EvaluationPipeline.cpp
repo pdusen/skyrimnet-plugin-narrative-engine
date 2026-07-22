@@ -462,7 +462,7 @@ namespace NarrativeEngine::EvaluationPipeline
         // Phase B + C run on the worker thread. The snapshot is moved in
         // so the worker carries it forward into the LLM callback (Phase D
         // needs it for ParseDecision's pre-fill).
-        AsyncDispatch::EnqueueWork([snapshot = std::move(snapshot)]() mutable {
+        AsyncDispatch::EnqueueWork([snapshot = std::move(snapshot)](const PluginThread::Token&) mutable {
             const std::string ctx = BuildPromptContext(snapshot);
             if (Settings::Get().debugMode) {
                 logger::debug("BuildPromptContext: produced {}B", ctx.size());
@@ -481,7 +481,8 @@ namespace NarrativeEngine::EvaluationPipeline
                 "narrative_engine_story_eval",
                 "narrative_engine_director",
                 ctx,
-                [snapshot = std::move(snapshot)](std::string response, bool success) mutable {
+                [snapshot =
+                     std::move(snapshot)](const PluginThread::Token&, std::string response, bool success) mutable {
                     if (Settings::Get().debugMode) {
                         logger::debug("LLM callback: success={} body={}B", success, response.size());
                         if (!response.empty()) {

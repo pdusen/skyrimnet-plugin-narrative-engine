@@ -5,6 +5,7 @@
 // it from a second .cpp would cause multiple-definition link errors.
 #include <PublicAPI.h>
 
+#include <AsyncDispatch.h>
 #include <logger.h>
 
 #include <utility>
@@ -48,22 +49,32 @@ namespace NarrativeEngine::SkyrimNetAPI
         return ::PublicGetVersion();
     }
 
-    bool SendCustomPromptToLLM(const std::string& promptName,
-                               const std::string& variant,
-                               const std::string& contextJson,
-                               std::function<void(std::string response, bool success)> callback)
+    bool SendCustomPromptToLLM(
+        const std::string& promptName,
+        const std::string& variant,
+        const std::string& contextJson,
+        std::function<void(const PluginThread::Token&, std::string response, bool success)> callback)
     {
         if (!::PublicSendCustomPromptToLLM) {
             return false;
         }
 
-        // SkyrimNet's callback signature is `void(const char* response, int success)`
-        // where `response` is only valid for the duration of the call. Copy it
-        // into a std::string so our caller can safely outlive that scope.
+        // SkyrimNet's callback signature is `void(const char* response,
+        // int success)` where `response` is only valid for the duration
+        // of the call. This adapter runs on SkyrimNet's foreign worker
+        // thread — it has no PluginThread::Token, so the only thing it
+        // is compile-legal to do with the caller's callback is enqueue
+        // its invocation onto the plugin thread via
+        // AsyncDispatch::EnqueueWork. There is NO syntactically-valid
+        // path that invokes `cb` on the foreign thread; the type system
+        // enforces the discipline.
         auto adapted = [cb = std::move(callback)](const char* response, int success) {
-            if (cb) {
-                cb(response ? std::string{response} : std::string{}, success != 0);
+            if (!cb) {
+                return;
             }
+            AsyncDispatch::EnqueueWork(
+                [cb, response = response ? std::string{response} : std::string{}, success = success != 0](
+                    const PluginThread::Token& pt) { cb(pt, response, success); });
         };
 
         return ::PublicSendCustomPromptToLLM(

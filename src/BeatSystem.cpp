@@ -14,6 +14,7 @@
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
+#include <ThreadRole.h>
 #include <TravelEventLog.h>
 #include <VisitComposer.h>
 #include <WeatherEventLog.h>
@@ -197,7 +198,12 @@ namespace NarrativeEngine::BeatSystem
 
         void WorkerLoop()
         {
-            logger::info("BeatSystem: master poll worker thread started");
+            // Declare this thread as Plugin for its entire lifetime.
+            // Runtime belt-and-braces beneath the compile-time token
+            // barrier; useful for observability and for the assertion
+            // in MainThread::Run.
+            ScopedThreadRole roleGuard(ThreadRole::Plugin);
+            logger::info("BeatSystem: master poll worker thread started (role installed: Plugin)");
             const std::uint32_t intervalMs =
                 static_cast<std::uint32_t>(std::max(1, Settings::Get().beatSystemPollIntervalMs));
             const auto sleepDuration = std::chrono::milliseconds(intervalMs);
@@ -867,7 +873,7 @@ namespace NarrativeEngine::BeatSystem
                  candidateNames = std::move(candidateNames),
                  onFinalized = std::move(onFinalized),
                  direction,
-                 tensionDelta](std::string response, bool success) mutable {
+                 tensionDelta](const PluginThread::Token&, std::string response, bool success) mutable {
                     if (!success) {
                         AsyncDispatch::MarshalToMainThread([rec = std::move(rec),
                                                             onFinalized = std::move(onFinalized),

@@ -931,7 +931,7 @@ namespace NarrativeEngine::LetterComposer
             "narrative_engine_composer",
             promptCtxStr,
             [callback = std::move(callback), senderNpcFormID, senderName = std::move(senderName), minWords, maxWords](
-                std::string response, bool success) mutable {
+                const NarrativeEngine::PluginThread::Token&, std::string response, bool success) mutable {
                 if (!success) {
                     logger::warn("LetterComposer: LLM call failed: {}", response);
                     callback(std::nullopt);
