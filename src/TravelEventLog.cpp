@@ -2,7 +2,6 @@
 
 #include <EventLogUtil.h>
 #include <logger.h>
-#include <MainThread.h>
 #include <PhaseTracker.h>
 #include <Region.h>
 #include <Settings.h>
@@ -173,11 +172,24 @@ namespace NarrativeEngine::TravelEventLog
             return std::string(n);
         }
 
-        // Main-thread helper — collect player display name + nearby
-        // alive followers (IsPlayerTeammate + within radius), sorted
-        // for stability. Called from BuildFreshSnapshot inside the
-        // MainThread::Run lambda, so it's always on main.
-        std::vector<std::string> CollectPartyOnMain(RE::PlayerCharacter* pc, float radius)
+        // Collect player display name + nearby alive followers
+        // (IsPlayerTeammate + within radius), sorted for stability.
+        // Called from BuildFreshSnapshot.
+        //
+        // Off-main note: this iterates ProcessLists's high-actor
+        // list via ForEachHighActor. That's the one call in this
+        // file that isn't a plain "stable-singleton + accessor"
+        // read — it walks a live actor collection the engine
+        // mutates from the main thread. The audit's Finding 7
+        // fix-sketch treats it as off-main-safe by the same
+        // BeatSystem-worker precedent that covers the plain reads,
+        // and none of the accessors inside the loop (IsDead,
+        // IsPlayerTeammate, GetPosition, GetDisplayFullName) mutate
+        // engine state. If crashes are ever traced to this walk
+        // specifically, moving it back to a small MainThread::Run
+        // hop while leaving the rest of BuildFreshSnapshot off-main
+        // is the surgical fix.
+        std::vector<std::string> CollectParty(RE::PlayerCharacter* pc, float radius)
         {
             std::vector<std::string> out;
             std::string playerName = ActorDisplayName(pc);
@@ -220,10 +232,18 @@ namespace NarrativeEngine::TravelEventLog
         }
 
         // Fresh snapshot from live world state — location + hold +
-        // party, bundled together so a single main-thread hop covers
-        // everything the Poll body needs. Called inside a
-        // MainThread::Run lambda from Poll, and inline (main-thread)
-        // from OnPostLoadGame.
+        // party. Every read on this path is off-main-safe:
+        //   * PlayerCharacter::GetParentCell / GetCurrentLocation —
+        //     stable-singleton pointer walks
+        //   * Cell::IsInteriorCell, Location::GetFullName /
+        //     GetFormID — plain accessors
+        //   * Region::ForPlayer — HoldGrid hash lookup + BGSLocation
+        //     parent-chain walk (audit Finding 7 explicitly calls
+        //     out this shape as safe-off-main)
+        //   * CollectParty — see its off-main note above for the
+        //     ProcessLists::ForEachHighActor caveat.
+        // None of these calls mutate engine state. Called from Poll
+        // on the plugin thread and inline from OnPostLoadGame.
         //
         // Hold-region tracking is suppressed on interior cells (they
         // often lack region data); callers merge with g_lastSnapshot's
@@ -260,7 +280,7 @@ namespace NarrativeEngine::TravelEventLog
             s.holdName = res.holdDisplayName;
             s.climate = res.climate;
 
-            s.partyNames = CollectPartyOnMain(pc, FollowerRadiusUnits());
+            s.partyNames = CollectParty(pc, FollowerRadiusUnits());
 
             return s;
         }
@@ -397,13 +417,13 @@ namespace NarrativeEngine::TravelEventLog
 
     void Poll(const PluginThread::Token& pt, double /*unpausedElapsedSeconds*/)
     {
-        // Hop to main for the location/hold/party snapshot.
-        // Deliberately outside the mutex — MainThread::Run blocks the
-        // plugin thread until the main-thread lambda returns, so
-        // holding g_mutex across it would prevent GetRenderedTail
-        // (main-thread) from making progress. The diff + emit runs
-        // under the mutex below.
-        TravelSnapshot fresh = MainThread::Run(pt, [](const MainThread::Token&) { return BuildFreshSnapshot(); });
+        (void)pt;
+        // Build the location/hold/party snapshot on the plugin
+        // thread — every read is off-main-safe per
+        // BuildFreshSnapshot's contract above. Deliberately outside
+        // the mutex so GetRenderedTail readers aren't blocked while
+        // we run.
+        TravelSnapshot fresh = BuildFreshSnapshot();
 
         std::scoped_lock lock(g_mutex);
         const bool debug = Settings::Get().debugMode;

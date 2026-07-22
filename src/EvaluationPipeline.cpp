@@ -7,7 +7,6 @@
 #include <DecisionLog.h>
 #include <LLMTextSanitizer.h>
 #include <logger.h>
-#include <MainThread.h>
 #include <PhaseTracker.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -60,11 +59,19 @@ namespace NarrativeEngine::EvaluationPipeline
             AlphaCanon::Signal alphaCanonMask = AlphaCanon::Signal::None;
         };
 
-        // Read every engine-touching field the snapshot needs.
-        // Callers must be on the main thread. The plugin-thread
-        // BuildSnapshot overload calls this via MainThread::Run; the
-        // main-thread overload calls it directly.
-        EngineSnapshotFields ReadEngineSnapshotFieldsOnMain()
+        // Read every engine-touching field the snapshot needs. Safe
+        // from any thread. Every read here is a stable-singleton
+        // pointer walk + plain accessor:
+        //   * PlayerCharacter::GetCurrentLocation / GetParentCell —
+        //     pointer walks
+        //   * Location::GetFullName / GetFormID, Cell::IsInteriorCell
+        //     / GetFullName / GetFormID — plain accessors
+        //   * Calendar::GetDaysPassed / GetHour — plain accessors
+        //   * AlphaCanon::EvaluateAll — probes the same stable-
+        //     singleton bools BuildBeatSelectPrep already reads
+        //     off-main.
+        // None of these calls mutates engine state.
+        EngineSnapshotFields ReadEngineSnapshotFields()
         {
             EngineSnapshotFields e;
 
@@ -209,16 +216,17 @@ namespace NarrativeEngine::EvaluationPipeline
 
     Snapshot BuildSnapshot()
     {
-        // Main-thread overload — used by BeatSystem::StartBeat and
-        // ForceDispatchBeat, which run on the main thread. Reads
-        // every field inline, no marshaling.
+        // Kept as a main-thread-callable convenience overload for
+        // any future caller already on main. Same body as the
+        // plugin-thread overload below — every engine read is
+        // off-main-safe now (see ReadEngineSnapshotFields' contract).
         const bool debug = Settings::Get().debugMode;
         if (debug)
             logger::debug("BuildSnapshot: begin (main-thread overload)");
 
         Snapshot s;
         FillNonEngineSnapshotFields(s);
-        MergeEngineFieldsInto(s, ReadEngineSnapshotFieldsOnMain());
+        MergeEngineFieldsInto(s, ReadEngineSnapshotFields());
 
         if (debug)
             logger::debug("BuildSnapshot: main-thread overload complete");
@@ -227,21 +235,19 @@ namespace NarrativeEngine::EvaluationPipeline
 
     Snapshot BuildSnapshot(const PluginThread::Token& pt)
     {
-        // Plugin-thread overload — used by BeginEvaluation. The non-
-        // engine reads (PhaseTracker, DecisionLog, SkyrimNetAPI DLL
-        // fetch) run inline on the plugin thread since they're all
-        // thread-safe; the engine reads (player + calendar + AlphaCanon)
-        // bundle into a single MainThread::Run hop.
+        // Plugin-thread overload — used by BeginEvaluation. Every
+        // read runs inline on the plugin thread: the non-engine
+        // reads (PhaseTracker, DecisionLog, SkyrimNetAPI) are
+        // mutex-guarded / DLL-thread-safe, and the engine reads
+        // are off-main-safe per ReadEngineSnapshotFields' contract.
+        (void)pt;
         const bool debug = Settings::Get().debugMode;
         if (debug)
             logger::debug("BuildSnapshot: begin (plugin-thread overload)");
 
         Snapshot s;
         FillNonEngineSnapshotFields(s);
-
-        const auto engine =
-            MainThread::Run(pt, [](const MainThread::Token&) { return ReadEngineSnapshotFieldsOnMain(); });
-        MergeEngineFieldsInto(s, engine);
+        MergeEngineFieldsInto(s, ReadEngineSnapshotFields());
 
         if (debug)
             logger::debug("BuildSnapshot: plugin-thread overload complete");

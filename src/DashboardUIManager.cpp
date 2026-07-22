@@ -8,7 +8,6 @@
 #include <DecisionLog.h>
 #include <LetterPool.h>
 #include <logger.h>
-#include <MainThread.h>
 #include <PhaseTracker.h>
 #include <PrismaUI.h>
 #include <Settings.h>
@@ -845,10 +844,11 @@ namespace NarrativeEngine::DashboardUIManager
         // `text` synthesis + condensation the LLM prompt uses, so the
         // dashboard reads identically to what the Director sees).
         //
-        // currentGameTimeSeconds comes from the caller — RE::Calendar
-        // reads are main-thread-only and PushFullState bundles that
-        // read into a single MainThread::Run alongside the per-beat
-        // cooldown gather below.
+        // currentGameTimeSeconds comes from the caller — PushFullState
+        // reads it alongside the per-beat cooldowns just before
+        // invoking us. Kept as a parameter (rather than reading
+        // Calendar inline here) so this compose function is a pure
+        // data-in / string-out function that's easy to test.
         const double currentGameTimeSeconds = reads.currentGameTimeSeconds;
 
         const auto eventsJson = SkyrimNetAPI::GetRecentEvents(0, 20, "");
@@ -1086,26 +1086,25 @@ namespace NarrativeEngine::DashboardUIManager
         // (main from ToggleVisibility / MarshalToMainThread input
         // handlers, plugin from ApplyDecision) — either way we
         // enqueue onto the plugin thread and run the JSON build
-        // there. One bundled MainThread::Run hop covers RE::Calendar
-        // and per-beat IBeat::RemainingCooldownGameHours (the only
-        // engine-touching reads ComposeFullStateJSON needs); the rest
-        // of its reads (LetterPool, BeatRegistry, PhaseTracker,
-        // DecisionLog, VisitState, VisitConclusionPoll, SkyrimNetAPI
-        // event tail) are all mutex-guarded or DLL-thread-safe.
-        AsyncDispatch::EnqueueWork([](const PluginThread::Token& pt) {
-            const DashboardEngineReads reads = MainThread::Run(pt, [](const MainThread::Token&) {
-                DashboardEngineReads r;
-                if (auto* cal = RE::Calendar::GetSingleton()) {
-                    r.currentGameTimeSeconds = static_cast<double>(cal->GetDaysPassed()) * 86400.0;
+        // there. Every read the compose does is off-main-safe:
+        // Calendar accessors are stable-singleton reads,
+        // IBeat::RemainingCooldownGameHours on the shipped beats
+        // just reads a Calendar-derived elapsed value, and
+        // ComposeFullStateJSON's other reads (LetterPool,
+        // BeatRegistry, PhaseTracker, DecisionLog, VisitState,
+        // VisitConclusionPoll, SkyrimNetAPI event tail) are all
+        // mutex-guarded or DLL-thread-safe.
+        AsyncDispatch::EnqueueWork([](const PluginThread::Token&) {
+            DashboardEngineReads reads;
+            if (auto* cal = RE::Calendar::GetSingleton()) {
+                reads.currentGameTimeSeconds = static_cast<double>(cal->GetDaysPassed()) * 86400.0;
+            }
+            for (const auto& entry : BeatRegistry::All()) {
+                if (!entry.beat) {
+                    continue;
                 }
-                for (const auto& entry : BeatRegistry::All()) {
-                    if (!entry.beat) {
-                        continue;
-                    }
-                    r.beatCooldownHours.emplace(entry.name, entry.beat->RemainingCooldownGameHours());
-                }
-                return r;
-            });
+                reads.beatCooldownHours.emplace(entry.name, entry.beat->RemainingCooldownGameHours());
+            }
             const std::string json = ComposeFullStateJSON(reads);
             // PrismaUI_API::InvokeJS is documented as async on
             // PrismaUI's end — safe to call off main.
