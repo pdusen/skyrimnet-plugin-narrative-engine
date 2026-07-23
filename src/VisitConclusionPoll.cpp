@@ -406,15 +406,17 @@ namespace NarrativeEngine::VisitConclusionPoll
         // confirm non-Normal ticks aren't counted. Log only when the
         // accumulator crosses a whole-second boundary — TickAccumulator
         // fires every ~250 ms, so an every-call trace would produce
-        // four lines per second of silence and drown the log.
-        if (addedSilence > 0.0 && Settings::Get().debugMode) {
+        // four lines per second of silence. Gated on Settings::trace-
+        // Mode (peer of debugMode) so an ordinary debug session
+        // doesn't inherit the noise.
+        if (addedSilence > 0.0 && Settings::Get().traceMode) {
             const double prevSilence = g_silenceRealSeconds - addedSilence;
             const auto prevWhole = static_cast<std::uint64_t>(prevSilence);
             const auto nowWhole = static_cast<std::uint64_t>(g_silenceRealSeconds);
             if (nowWhole > prevWhole) {
                 const double silenceLimit =
                     static_cast<double>(std::max(0, Settings::Get().visitPollSilenceRealSeconds));
-                logger::debug("VisitConclusionPoll: silenceRealSec={:.1f}/{:.1f} (mode=Normal)",
+                logger::trace("VisitConclusionPoll: silenceRealSec={:.1f}/{:.1f} (mode=Normal)",
                               g_silenceRealSeconds,
                               silenceLimit);
             }

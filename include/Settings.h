@@ -47,6 +47,14 @@ namespace NarrativeEngine::Settings
     {
         // [General]
         bool debugMode = false;
+        // Enables per-tick / per-actor trace-level chatter that would
+        // drown the log if surfaced by debugMode alone (VisitConclusion-
+        // Poll's silence-accumulator tick, AliasWalkFilter's alias-by-
+        // alias walk output, HoldGrid's per-worldspace pruning report).
+        // Independent of debugMode — a run can have debug on and trace
+        // off, or vice versa. Logged via logger::trace, which spdlog
+        // is configured to pass through (see logger.h).
+        bool traceMode = false;
 
         // [Director]
         // TEMP: 30 for development iteration; ship default is 90.
@@ -370,6 +378,7 @@ namespace NarrativeEngine::Settings
     struct McmOverride
     {
         std::optional<bool> debugMode;
+        std::optional<bool> traceMode;
         std::optional<bool> tickEnabled;
         std::optional<int> tickIntervalSeconds;
         std::optional<int> minPhaseDurationSeconds;

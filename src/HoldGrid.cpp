@@ -509,17 +509,20 @@ namespace NarrativeEngine::HoldGrid
             ++worldSpaceProcessed;
 
             const char* wsEdid = ws->GetFormEditorID();
-            logger::info("HoldGrid: worldspace [0x{:08X}] '{}' — pruned {} isolated singleton(s), "
-                         "seeded {} cells, filled {} more (bounds X=[{},{}] Y=[{},{}])",
-                         wsID,
-                         (wsEdid && *wsEdid) ? wsEdid : "?",
-                         wsPrunedCount,
-                         wsSeedCount,
-                         wsFilledCount,
-                         minX,
-                         maxX,
-                         minY,
-                         maxY);
+            if (Settings::Get().traceMode) {
+                logger::trace("HoldGrid: worldspace [0x{:08X}] '{}' — pruned {} isolated "
+                              "singleton(s), seeded {} cells, filled {} more "
+                              "(bounds X=[{},{}] Y=[{},{}])",
+                              wsID,
+                              (wsEdid && *wsEdid) ? wsEdid : "?",
+                              wsPrunedCount,
+                              wsSeedCount,
+                              wsFilledCount,
+                              minX,
+                              maxX,
+                              minY,
+                              maxY);
+            }
 
             // Debug bitmap dump — one BMP per worldspace, showing the
             // partition + seed cells. Gated on the master switch so

@@ -1,6 +1,7 @@
 #include <AliasWalkFilter.h>
 
 #include <logger.h>
+#include <Settings.h>
 
 #include <RE/B/BGSBaseAlias.h>
 #include <RE/B/BGSScene.h>
@@ -187,8 +188,8 @@ namespace NarrativeEngine::AliasWalkFilter
             const std::string decoded = decodeFlags(alias);
 
             if (IsOwnQuest(quest)) {
-                if (debug) {
-                    logger::debug("AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
+                if (Settings::Get().traceMode) {
+                    logger::trace("AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
                                   "(id={}) flags=0x{:X}[{}] — SELF (our ESP), skip",
                                   i,
                                   qEid,
@@ -202,8 +203,8 @@ namespace NarrativeEngine::AliasWalkFilter
             }
 
             if (!IsForeignQuestRunning(quest)) {
-                if (debug) {
-                    logger::debug("AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
+                if (Settings::Get().traceMode) {
+                    logger::trace("AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
                                   "(id={}) flags=0x{:X}[{}] — quest not running, skip",
                                   i,
                                   qEid,
@@ -249,8 +250,8 @@ namespace NarrativeEngine::AliasWalkFilter
             // fill with kReserves blocks us just as thoroughly as a
             // package-dispensing one.
             if (aliasReserves) {
-                if (debug) {
-                    logger::debug("AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
+                if (Settings::Get().traceMode) {
+                    logger::trace("AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
                                   "(id={}) flags=0x{:X}[{}] — RESERVED (kReserves), skip "
                                   "candidate",
                                   i,
@@ -276,8 +277,8 @@ namespace NarrativeEngine::AliasWalkFilter
                 // may point at an NPC for a kill-target objective
                 // without giving them any behavior. Not a story-active
                 // signal on its own.
-                if (debug) {
-                    logger::debug("AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
+                if (Settings::Get().traceMode) {
+                    logger::trace("AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
                                   "(id={}) flags=0x{:X}[{}] — running, no instanced "
                                   "packages, skip",
                                   i,
@@ -294,8 +295,8 @@ namespace NarrativeEngine::AliasWalkFilter
             // Foreign, running, has an alias-supplied package for
             // this actor. That's a scripted-behavior fill — leave the
             // actor alone.
-            if (debug) {
-                logger::debug("AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
+            if (Settings::Get().traceMode) {
+                logger::trace("AliasWalkFilter:  [{}] quest='{}' (0x{:X}) alias='{}' "
                               "(id={}) flags=0x{:X}[{}] pkgs={} — STORY-ACTIVE",
                               i,
                               qEid,

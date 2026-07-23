@@ -38,6 +38,7 @@ namespace NarrativeEngine::Settings
         void ReadIniInto(CSimpleIniA& ini, Config& dst)
         {
             dst.debugMode = ini.GetBoolValue("General", "bDebugMode", dst.debugMode);
+            dst.traceMode = ini.GetBoolValue("General", "bTraceMode", dst.traceMode);
 
             dst.tickIntervalSeconds =
                 static_cast<int>(ini.GetLongValue("Director", "iTickIntervalSeconds", dst.tickIntervalSeconds));
@@ -251,6 +252,9 @@ namespace NarrativeEngine::Settings
         if (g_config.debugMode) {
             logger::info("Settings: debug mode ON");
         }
+        if (g_config.traceMode) {
+            logger::info("Settings: trace mode ON");
+        }
         logger::info("Settings: dashboard hotkey DXSC={} mods={}",
                      g_config.dashboardHotkeyDXSC,
                      static_cast<int>(g_config.dashboardHotkeyModifiers));
@@ -287,6 +291,11 @@ namespace NarrativeEngine::Settings
             ini.SetBoolValue("General", "bDebugMode", *mutations.debugMode);
             g_config.debugMode = *mutations.debugMode;
             logger::info("Settings: MCM override write: bDebugMode={}", *mutations.debugMode ? 1 : 0);
+        }
+        if (mutations.traceMode) {
+            ini.SetBoolValue("General", "bTraceMode", *mutations.traceMode);
+            g_config.traceMode = *mutations.traceMode;
+            logger::info("Settings: MCM override write: bTraceMode={}", *mutations.traceMode ? 1 : 0);
         }
         if (mutations.tickEnabled) {
             ini.SetBoolValue("Director", "bTickEnabled", *mutations.tickEnabled);
