@@ -25,7 +25,9 @@
 
 #include <atomic>
 #include <charconv>
+#include <filesystem>
 #include <string>
+#include <system_error>
 
 namespace NarrativeEngine::DashboardUIManager
 {
@@ -77,6 +79,14 @@ namespace NarrativeEngine::DashboardUIManager
                     return RE::BSEventNotifyControl::kContinue;
                 }
 
+                // Trace-mode gate: this sink fires on every input event
+                // that reaches the game (keyboard, mouse, gamepad), so a
+                // running log line per event would flood. Cache the flag
+                // once per ProcessEvent call and reuse below — the
+                // per-key TRACE lines only emit when the player has
+                // enabled bTraceMode in the ini.
+                const bool trace = Settings::Get().traceMode;
+
                 bool fire = false;
                 for (auto* e = *a_event; e; e = e->next) {
                     if (e->GetEventType() != RE::INPUT_EVENT_TYPE::kButton)
@@ -88,6 +98,25 @@ namespace NarrativeEngine::DashboardUIManager
                     const std::uint32_t dxsc = btn->GetIDCode();
                     if (dxsc == 0)
                         continue;
+                    if (trace) {
+                        // GetAsyncKeyState here is used purely for the
+                        // diagnostic — the actual match logic below reads
+                        // it too, but this trace line captures the state
+                        // seen the moment the button-down landed.
+                        const bool shift = (::GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+                        const bool ctrl = (::GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+                        const bool alt = (::GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+                        logger::trace("DashboardUIManager[trace]: button DOWN DXSC={} (shift={} ctrl={} alt={}) "
+                                      "capture_mode={} visible={} configured_hotkey_dxsc={} configured_mods=0x{:02X}",
+                                      dxsc,
+                                      shift ? 1 : 0,
+                                      ctrl ? 1 : 0,
+                                      alt ? 1 : 0,
+                                      g_hotkeyCaptureMode.load(std::memory_order_acquire) ? 1 : 0,
+                                      g_visible.load(std::memory_order_acquire) ? 1 : 0,
+                                      Settings::Get().dashboardHotkeyDXSC,
+                                      static_cast<int>(Settings::Get().dashboardHotkeyModifiers));
+                    }
 
                     // Hotkey-rebind capture mode. Consumes the next
                     // non-modifier keypress, writes the four MCM-INI
@@ -149,8 +178,14 @@ namespace NarrativeEngine::DashboardUIManager
                         break;
                     }
 
-                    if (static_cast<int>(dxsc) != Settings::Get().dashboardHotkeyDXSC)
+                    if (static_cast<int>(dxsc) != Settings::Get().dashboardHotkeyDXSC) {
+                        if (trace) {
+                            logger::trace("DashboardUIManager[trace]:  reject DXSC {} != configured {}",
+                                          dxsc,
+                                          Settings::Get().dashboardHotkeyDXSC);
+                        }
                         continue;
+                    }
 
                     // Modifier match is exact, not a superset. (F7+Shift is
                     // a different binding than plain F7.) The bitmask is
@@ -163,9 +198,22 @@ namespace NarrativeEngine::DashboardUIManager
                         actualMods |= Settings::kModCtrl;
                     if (::GetAsyncKeyState(VK_MENU) & 0x8000)
                         actualMods |= Settings::kModAlt;
-                    if (actualMods != Settings::Get().dashboardHotkeyModifiers)
+                    if (actualMods != Settings::Get().dashboardHotkeyModifiers) {
+                        if (trace) {
+                            logger::trace("DashboardUIManager[trace]:  reject DXSC {} matched but mods "
+                                          "0x{:02X} != configured 0x{:02X} (exact-match required)",
+                                          dxsc,
+                                          static_cast<int>(actualMods),
+                                          static_cast<int>(Settings::Get().dashboardHotkeyModifiers));
+                        }
                         continue;
+                    }
 
+                    if (trace) {
+                        logger::trace("DashboardUIManager[trace]:  MATCH DXSC={} mods=0x{:02X} — will attempt toggle",
+                                      dxsc,
+                                      static_cast<int>(actualMods));
+                    }
                     fire = true;
                     break;
                 }
@@ -187,7 +235,15 @@ namespace NarrativeEngine::DashboardUIManager
                     //     PrismaUI overlays, which don't pause the game.
                     if (!g_visible.load()) {
                         auto* ui = RE::UI::GetSingleton();
-                        if ((ui && ui->GameIsPaused()) || PrismaUI_API::HasAnyActiveFocus()) {
+                        const bool paused = ui && ui->GameIsPaused();
+                        const bool prismaFocus = PrismaUI_API::HasAnyActiveFocus();
+                        if (paused || prismaFocus) {
+                            if (trace) {
+                                logger::trace("DashboardUIManager[trace]:  MATCH suppressed by open-gate "
+                                              "(GameIsPaused={} PrismaHasAnyActiveFocus={})",
+                                              paused ? 1 : 0,
+                                              prismaFocus ? 1 : 0);
+                            }
                             fire = false;
                         }
                     }
@@ -689,9 +745,29 @@ namespace NarrativeEngine::DashboardUIManager
 
     void Initialize()
     {
+        logger::trace("DashboardUIManager[trace]: Initialize begin — PrismaUI available={}",
+                      PrismaUI_API::IsAvailable() ? 1 : 0);
         if (!PrismaUI_API::IsAvailable()) {
             logger::info("DashboardUIManager: PrismaUI absent; dashboard disabled");
+            logger::trace("DashboardUIManager[trace]: bailout — no PrismaUI. "
+                          "The dashboard hotkey WILL be inert for this session even if the input "
+                          "sink registers, because ToggleVisibility short-circuits on IsAvailable().");
             return;
+        }
+
+        // Explicit on-disk check for the html file so a broken install
+        // (missing dashboard folder under Data/PrismaUI/views/) is called
+        // out by name before we ask PrismaUI to CreateView on it.
+        {
+            std::error_code ec;
+            const std::filesystem::path viewsRoot{"Data/PrismaUI/views"};
+            const auto full = viewsRoot / kHtmlPath;
+            const auto abs = std::filesystem::absolute(full, ec);
+            const bool present = !ec && std::filesystem::exists(abs, ec);
+            logger::trace("DashboardUIManager[trace]: html probe rel='{}' abs='{}' exists={}",
+                          kHtmlPath,
+                          ec ? full.string() : abs.string(),
+                          present ? 1 : 0);
         }
 
         logger::info("DashboardUIManager: creating view from {}", kHtmlPath);
@@ -722,8 +798,13 @@ namespace NarrativeEngine::DashboardUIManager
         PrismaUI_API::RegisterJSListener(g_view, "ne_cancelHotkeyRebind", &OnCancelHotkeyRebind);
 
         // Hook input events for the hotkey.
-        if (auto* inputManager = RE::BSInputDeviceManager::GetSingleton()) {
+        auto* inputManager = RE::BSInputDeviceManager::GetSingleton();
+        logger::trace("DashboardUIManager[trace]: BSInputDeviceManager::GetSingleton() -> {}",
+                      inputManager ? "OK" : "NULL");
+        if (inputManager) {
             inputManager->AddEventSink<RE::InputEvent*>(GetHotkeySink());
+            logger::trace("DashboardUIManager[trace]: HotkeySink registered on input manager at {}",
+                          static_cast<const void*>(inputManager));
         } else {
             logger::warn("DashboardUIManager: BSInputDeviceManager unavailable; hotkey disabled");
         }
@@ -732,6 +813,14 @@ namespace NarrativeEngine::DashboardUIManager
         logger::info("DashboardUIManager: initialized (view created, hotkey DXSC={} mods={})",
                      cfg.dashboardHotkeyDXSC,
                      static_cast<int>(cfg.dashboardHotkeyModifiers));
+        logger::trace("DashboardUIManager[trace]: initialized summary — view_handle=0x{:X} hotkey=DXSC {} "
+                      "shift={} ctrl={} alt={} (rebind via dashboard Settings tab or MCM). "
+                      "Per-keypress trace of the input sink is gated on bTraceMode=1 in the ini.",
+                      static_cast<std::uint64_t>(g_view),
+                      cfg.dashboardHotkeyDXSC,
+                      (cfg.dashboardHotkeyModifiers & Settings::kModShift) ? 1 : 0,
+                      (cfg.dashboardHotkeyModifiers & Settings::kModCtrl) ? 1 : 0,
+                      (cfg.dashboardHotkeyModifiers & Settings::kModAlt) ? 1 : 0);
     }
 
     void Shutdown()
@@ -1115,8 +1204,13 @@ namespace NarrativeEngine::DashboardUIManager
     void ToggleVisibility()
     {
         if (!PrismaUI_API::IsAvailable() || g_view == PrismaUI_API::kInvalidView) {
+            logger::trace("DashboardUIManager[trace]: ToggleVisibility bailed (prisma_available={} view_valid={})",
+                          PrismaUI_API::IsAvailable() ? 1 : 0,
+                          g_view != PrismaUI_API::kInvalidView ? 1 : 0);
             return;
         }
+        logger::trace("DashboardUIManager[trace]: ToggleVisibility entered (currently visible={})",
+                      g_visible.load() ? 1 : 0);
         if (g_visible.load()) {
             // Unfocus before Hide — paired teardown matches IntelEngine's
             // working sequence. Show without Focus, Hide without Unfocus,

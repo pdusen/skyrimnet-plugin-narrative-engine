@@ -8,20 +8,48 @@
 
 #include <logger.h>
 
+#include <Windows.h>
+
+#include <filesystem>
+#include <system_error>
+
 namespace NarrativeEngine::PrismaUI_API
 {
     namespace
     {
         bool g_initialized = false;
         PRISMA_UI_API::IVPrismaUI1* g_api = nullptr;
+
+        // Diagnostic helper: reports whether PrismaUI.dll is loaded and,
+        // if so, where it was loaded from. Uses the same GetModuleHandle
+        // path RequestPluginAPI does internally so a divergence between
+        // "SKSE loaded the dll" and "our probe finds it" would show up.
+        void TraceDllPresence()
+        {
+            HMODULE mod = ::GetModuleHandleA("PrismaUI.dll");
+            if (!mod) {
+                logger::trace("PrismaUI[trace]: GetModuleHandle('PrismaUI.dll') -> NULL "
+                              "(SKSE has not loaded the DLL — soft dependency absent)");
+                return;
+            }
+            char path[MAX_PATH]{};
+            const DWORD n = ::GetModuleFileNameA(mod, path, static_cast<DWORD>(sizeof(path)));
+            logger::trace("PrismaUI[trace]: PrismaUI.dll loaded at {} (path='{}')",
+                          static_cast<const void*>(mod),
+                          n ? std::string{path, path + n} : std::string{"<GetModuleFileName failed>"});
+        }
     } // namespace
 
     bool Initialize()
     {
         if (g_initialized) {
+            logger::trace("PrismaUI[trace]: Initialize re-entered; returning cached g_api={}",
+                          static_cast<const void*>(g_api));
             return g_api != nullptr;
         }
         g_initialized = true;
+
+        TraceDllPresence();
 
         // PrismaUI is loaded by SKSE before kDataLoaded if it's installed, so
         // RequestPluginAPI's internal GetModuleHandle finds it without us
@@ -30,9 +58,12 @@ namespace NarrativeEngine::PrismaUI_API
 
         if (g_api) {
             logger::info("PrismaUI: loaded");
+            logger::trace("PrismaUI[trace]: IVPrismaUI1 interface obtained at {}", static_cast<const void*>(g_api));
         } else {
             // Info-level (not error) — PrismaUI is a runtime soft dependency.
             logger::info("PrismaUI: not found; dashboard disabled");
+            logger::trace("PrismaUI[trace]: RequestPluginAPI returned nullptr — "
+                          "either PrismaUI.dll is not present or its exported query rejected the version request");
         }
         return g_api != nullptr;
     }
@@ -50,9 +81,30 @@ namespace NarrativeEngine::PrismaUI_API
     {
         // IVPrismaUI1::CreateView(const char* htmlPath, OnDomReadyCallback = nullptr)
         if (!g_api) {
+            logger::trace("PrismaUI[trace]: CreateView('{}') rejected — g_api is null", htmlPath);
             return kInvalidView;
         }
-        return g_api->CreateView(htmlPath.c_str(), nullptr);
+        // Sanity-check that the HTML file the caller passed is actually
+        // present under Data/PrismaUI/views/ before we hand it to
+        // PrismaUI's DLL. PrismaUI resolves the path relative to that
+        // root (see kHtmlPath in DashboardUIManager.cpp) — the trace
+        // walks the same rules so the log tells you exactly what was
+        // looked up and whether it existed.
+        std::error_code ec;
+        const std::filesystem::path viewsRoot{"Data/PrismaUI/views"};
+        const auto full = viewsRoot / htmlPath;
+        const auto abs = std::filesystem::absolute(full, ec);
+        const bool present = !ec && std::filesystem::exists(abs, ec);
+        logger::trace("PrismaUI[trace]: CreateView probing html '{}' -> resolved abs='{}' exists={}",
+                      htmlPath,
+                      ec ? full.string() : abs.string(),
+                      present ? 1 : 0);
+        const ViewHandle handle = g_api->CreateView(htmlPath.c_str(), nullptr);
+        logger::trace("PrismaUI[trace]: CreateView('{}') returned handle=0x{:X} ({})",
+                      htmlPath,
+                      static_cast<std::uint64_t>(handle),
+                      handle == kInvalidView ? "INVALID" : "ok");
+        return handle;
     }
 
     void Destroy(ViewHandle view)
@@ -61,6 +113,7 @@ namespace NarrativeEngine::PrismaUI_API
         if (!g_api || view == kInvalidView) {
             return;
         }
+        logger::trace("PrismaUI[trace]: Destroy(handle=0x{:X})", static_cast<std::uint64_t>(view));
         g_api->Destroy(view);
     }
 
@@ -77,8 +130,12 @@ namespace NarrativeEngine::PrismaUI_API
     {
         // IVPrismaUI1::Show(PrismaView)
         if (!g_api || view == kInvalidView) {
+            logger::trace("PrismaUI[trace]: Show rejected (api={} view=0x{:X})",
+                          static_cast<const void*>(g_api),
+                          static_cast<std::uint64_t>(view));
             return;
         }
+        logger::trace("PrismaUI[trace]: Show(handle=0x{:X})", static_cast<std::uint64_t>(view));
         g_api->Show(view);
     }
 
@@ -86,8 +143,12 @@ namespace NarrativeEngine::PrismaUI_API
     {
         // IVPrismaUI1::Hide(PrismaView)
         if (!g_api || view == kInvalidView) {
+            logger::trace("PrismaUI[trace]: Hide rejected (api={} view=0x{:X})",
+                          static_cast<const void*>(g_api),
+                          static_cast<std::uint64_t>(view));
             return;
         }
+        logger::trace("PrismaUI[trace]: Hide(handle=0x{:X})", static_cast<std::uint64_t>(view));
         g_api->Hide(view);
     }
 
@@ -95,8 +156,15 @@ namespace NarrativeEngine::PrismaUI_API
     {
         // IVPrismaUI1::Focus(PrismaView, bool pauseGame, bool disableFocusMenu)
         if (!g_api || view == kInvalidView) {
+            logger::trace("PrismaUI[trace]: Focus rejected (api={} view=0x{:X})",
+                          static_cast<const void*>(g_api),
+                          static_cast<std::uint64_t>(view));
             return;
         }
+        logger::trace("PrismaUI[trace]: Focus(handle=0x{:X} pause={} disableFocusMenu={})",
+                      static_cast<std::uint64_t>(view),
+                      pauseGame ? 1 : 0,
+                      disableFocusMenu ? 1 : 0);
         g_api->Focus(view, pauseGame, disableFocusMenu);
     }
 
@@ -104,8 +172,12 @@ namespace NarrativeEngine::PrismaUI_API
     {
         // IVPrismaUI1::Unfocus(PrismaView)
         if (!g_api || view == kInvalidView) {
+            logger::trace("PrismaUI[trace]: Unfocus rejected (api={} view=0x{:X})",
+                          static_cast<const void*>(g_api),
+                          static_cast<std::uint64_t>(view));
             return;
         }
+        logger::trace("PrismaUI[trace]: Unfocus(handle=0x{:X})", static_cast<std::uint64_t>(view));
         g_api->Unfocus(view);
     }
 
@@ -149,8 +221,17 @@ namespace NarrativeEngine::PrismaUI_API
         // PRISMA_UI_API::JSListenerCallback (same signature); reinterpret is
         // used to keep upstream headers out of PrismaUI.h.
         if (!g_api || view == kInvalidView || !callback) {
+            logger::trace("PrismaUI[trace]: RegisterJSListener('{}') rejected "
+                          "(api={} view=0x{:X} cb={})",
+                          functionName,
+                          static_cast<const void*>(g_api),
+                          static_cast<std::uint64_t>(view),
+                          callback ? "ok" : "null");
             return;
         }
+        logger::trace("PrismaUI[trace]: RegisterJSListener('{}') on handle=0x{:X}",
+                      functionName,
+                      static_cast<std::uint64_t>(view));
         g_api->RegisterJSListener(
             view, functionName.c_str(), reinterpret_cast<PRISMA_UI_API::JSListenerCallback>(callback));
     }

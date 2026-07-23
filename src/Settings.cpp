@@ -4,6 +4,10 @@
 
 #include <SimpleIni.h>
 
+#include <chrono>
+#include <filesystem>
+#include <system_error>
+
 namespace NarrativeEngine::Settings
 {
     namespace
@@ -12,6 +16,49 @@ namespace NarrativeEngine::Settings
 
         constexpr const char* kPluginIniPath = "Data/SKSE/Plugins/NarrativeEngine.ini";
         constexpr const char* kMcmIniPath = "Data/MCM/Settings/NarrativeEngine.ini";
+        // Companion files that MCM Helper reads to populate the MCM page.
+        // Traced at load time so a missing / mis-installed MCM asset shows
+        // up in the plugin log without needing Papyrus.log or MCM Helper's
+        // own logs to diagnose the "MCM page doesn't appear" report.
+        constexpr const char* kMcmConfigJsonPath = "Data/MCM/Config/NarrativeEngine/config.json";
+        constexpr const char* kMcmHelperDllPath = "Data/SKSE/Plugins/MCMHelper.dll";
+
+        // Emit one trace line summarizing a file's presence on disk.
+        // Absolute path is resolved (so the log tells you EXACTLY where
+        // the plugin looked, past MO2 VFS quirks), then existence, size,
+        // and last-write time are logged. Missing files are logged
+        // explicitly rather than silently — the whole point is diagnosing
+        // "why isn't X being loaded?".
+        void TraceFilePresence(const char* label, const char* relPath)
+        {
+            std::error_code ec;
+            const std::filesystem::path rel{relPath};
+            const auto abs = std::filesystem::absolute(rel, ec);
+            const std::string absStr = ec ? std::string{relPath} : abs.string();
+            const bool exists = !ec && std::filesystem::exists(abs, ec);
+            if (!exists) {
+                logger::trace("Settings[trace]: {} MISSING at '{}' (rel='{}')", label, absStr, relPath);
+                return;
+            }
+            std::error_code szEc;
+            const auto sz = std::filesystem::file_size(abs, szEc);
+            std::error_code tsEc;
+            const auto lwt = std::filesystem::last_write_time(abs, tsEc);
+            // last_write_time is a file_clock time_point; convert to a
+            // wall-clock time_t for readable logging (portable-enough on
+            // MSVC where file_clock == system_clock for practical purposes).
+            std::time_t mtime = 0;
+            if (!tsEc) {
+                const auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                    lwt - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
+                mtime = std::chrono::system_clock::to_time_t(sctp);
+            }
+            logger::trace("Settings[trace]: {} present at '{}' (size={} bytes, mtime_epoch={})",
+                          label,
+                          absStr,
+                          szEc ? 0ull : static_cast<unsigned long long>(sz),
+                          static_cast<long long>(mtime));
+        }
 
         // Populate `dst` from every recognized key in `ini`.
         //
@@ -234,13 +281,33 @@ namespace NarrativeEngine::Settings
         // happen) produce a deterministic result rather than stacking values.
         g_config = Config{};
 
+        // Unconditional presence trace for the four MCM/dashboard files
+        // that most commonly cause "MCM doesn't appear" or "hotkey doesn't
+        // work" bug reports. spdlog is configured at trace level (see
+        // logger.h), so these fire regardless of the runtime traceMode gate
+        // — that gate is for per-tick chatter, not one-shot diagnostics.
+        TraceFilePresence("plugin INI", kPluginIniPath);
+        TraceFilePresence("MCM overrides INI", kMcmIniPath);
+        TraceFilePresence("MCM Helper config JSON", kMcmConfigJsonPath);
+        TraceFilePresence("MCM Helper DLL", kMcmHelperDllPath);
+
         CSimpleIniA plugin;
         plugin.SetUnicode();
-        if (plugin.LoadFile(kPluginIniPath) >= 0) {
+        const SI_Error pluginRc = plugin.LoadFile(kPluginIniPath);
+        if (pluginRc >= 0) {
             ReadIniInto(plugin, g_config);
             logger::info("Settings: loaded from {}", kPluginIniPath);
+            logger::trace("Settings[trace]: plugin INI parse ok (SimpleIni rc={}); "
+                          "post-load hotkey DXSC={} mods={} debugMode={} traceMode={}",
+                          static_cast<int>(pluginRc),
+                          g_config.dashboardHotkeyDXSC,
+                          static_cast<int>(g_config.dashboardHotkeyModifiers),
+                          g_config.debugMode ? 1 : 0,
+                          g_config.traceMode ? 1 : 0);
         } else {
             logger::info("Settings: no plugin INI at {}; using defaults", kPluginIniPath);
+            logger::trace("Settings[trace]: plugin INI load failed (SimpleIni rc={}); Config baseline retained",
+                          static_cast<int>(pluginRc));
         }
 
         // Apply the MCM Helper-written override on top of the plugin INI,
@@ -258,6 +325,21 @@ namespace NarrativeEngine::Settings
         logger::info("Settings: dashboard hotkey DXSC={} mods={}",
                      g_config.dashboardHotkeyDXSC,
                      static_cast<int>(g_config.dashboardHotkeyModifiers));
+        // Full post-cascade summary — the definitive "what the plugin
+        // actually thinks the settings are" line for diagnostics. If the
+        // player reports "I set X in the MCM but it isn't taking effect,"
+        // this is the line to check.
+        logger::trace("Settings[trace]: post-cascade final: hotkey_dxsc={} hotkey_mods=0x{:02X} "
+                      "(shift={} ctrl={} alt={}) debug={} trace={} tick_enabled={} tick_interval_s={}",
+                      g_config.dashboardHotkeyDXSC,
+                      static_cast<int>(g_config.dashboardHotkeyModifiers),
+                      (g_config.dashboardHotkeyModifiers & kModShift) ? 1 : 0,
+                      (g_config.dashboardHotkeyModifiers & kModCtrl) ? 1 : 0,
+                      (g_config.dashboardHotkeyModifiers & kModAlt) ? 1 : 0,
+                      g_config.debugMode ? 1 : 0,
+                      g_config.traceMode ? 1 : 0,
+                      g_config.tickEnabled ? 1 : 0,
+                      g_config.tickIntervalSeconds);
     }
 
     const Config& Get()
@@ -269,13 +351,49 @@ namespace NarrativeEngine::Settings
     {
         CSimpleIniA ini;
         ini.SetUnicode();
-        if (ini.LoadFile(kMcmIniPath) < 0) {
+        const SI_Error rc = ini.LoadFile(kMcmIniPath);
+        if (rc < 0) {
             // Fresh install, or player hasn't opened the MCM page yet.
-            // Leave the plugin-INI-loaded values in place.
+            // Leave the plugin-INI-loaded values in place. Explicit trace
+            // so this well-known "MCM never opened" state doesn't look
+            // like the same log as "MCM loaded but wrote nothing".
+            std::error_code ec;
+            const auto abs = std::filesystem::absolute(std::filesystem::path{kMcmIniPath}, ec);
+            logger::trace("Settings[trace]: ApplyMcmOverride NO-OP — file absent or unreadable "
+                          "(SimpleIni rc={}, abs='{}'). Corollary: the MCM page has never been "
+                          "opened successfully, or MCM Helper is not installed.",
+                          static_cast<int>(rc),
+                          ec ? std::string{kMcmIniPath} : abs.string());
             return;
         }
+        // Snapshot the values MCM-editable keys hold BEFORE the override
+        // pass so the trace can show what actually changed. Cheap to
+        // capture (a few ints and a bitmask) and pays off every time the
+        // MCM writes something.
+        const int prevDxsc = g_config.dashboardHotkeyDXSC;
+        const std::uint8_t prevMods = g_config.dashboardHotkeyModifiers;
+        const bool prevDebug = g_config.debugMode;
+        const bool prevTrace = g_config.traceMode;
+        const bool prevTick = g_config.tickEnabled;
+        const int prevInterval = g_config.tickIntervalSeconds;
+
         ReadIniInto(ini, g_config);
         logger::info("Settings: MCM overrides applied from {}", kMcmIniPath);
+        logger::trace("Settings[trace]: MCM override delta: "
+                      "hotkey_dxsc {}->{} hotkey_mods 0x{:02X}->0x{:02X} debug {}->{} "
+                      "trace {}->{} tick_enabled {}->{} tick_interval {}->{}",
+                      prevDxsc,
+                      g_config.dashboardHotkeyDXSC,
+                      static_cast<int>(prevMods),
+                      static_cast<int>(g_config.dashboardHotkeyModifiers),
+                      prevDebug ? 1 : 0,
+                      g_config.debugMode ? 1 : 0,
+                      prevTrace ? 1 : 0,
+                      g_config.traceMode ? 1 : 0,
+                      prevTick ? 1 : 0,
+                      g_config.tickEnabled ? 1 : 0,
+                      prevInterval,
+                      g_config.tickIntervalSeconds);
     }
 
     void WriteMcmOverride(const McmOverride& mutations)
