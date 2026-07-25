@@ -677,6 +677,24 @@ namespace NarrativeEngine::DashboardUIManager
                 });
         }
 
+        // Backs the Settings tab's Visit Compose Memory Cap slider.
+        void OnSetVisitComposeMemoryCap(const char* argument)
+        {
+            ApplyIntegerSliderSetting(
+                argument, "ne_setVisitComposeMemoryCap", 3, 20, [](Settings::McmOverride& mut, int v) {
+                    mut.visitComposeMemoryRenderCap = v;
+                });
+        }
+
+        // Backs the Settings tab's Visit Compose Dialogue Cap slider.
+        void OnSetVisitComposeDialogueCap(const char* argument)
+        {
+            ApplyIntegerSliderSetting(
+                argument, "ne_setVisitComposeDialogueCap", 5, 50, [](Settings::McmOverride& mut, int v) {
+                    mut.visitComposeDialogueRenderCap = v;
+                });
+        }
+
         // Backs the Settings tab's Story-Eval Recent Events Cap slider.
         void OnSetStoryEvalEventTailSize(const char* argument)
         {
@@ -867,6 +885,8 @@ namespace NarrativeEngine::DashboardUIManager
         PrismaUI_API::RegisterJSListener(g_view, "ne_cancelHotkeyRebind", &OnCancelHotkeyRebind);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setLetterComposeMemoryCap", &OnSetLetterComposeMemoryCap);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setLetterComposeDialogueCap", &OnSetLetterComposeDialogueCap);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setVisitComposeMemoryCap", &OnSetVisitComposeMemoryCap);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setVisitComposeDialogueCap", &OnSetVisitComposeDialogueCap);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setActionSelectEventCap", &OnSetActionSelectEventCap);
         PrismaUI_API::RegisterJSListener(
             g_view, "ne_setActionSelectLetterMemoryCap", &OnSetActionSelectLetterMemoryCap);
@@ -957,6 +977,8 @@ namespace NarrativeEngine::DashboardUIManager
                 {"action_select_visit_memory_render_cap", cfg.actionSelectVisitMemoryRenderCap},
                 {"story_eval_event_tail_size", cfg.skyrimNetEventTailSizeForPrompt},
                 {"story_eval_decision_log_tail_size", cfg.decisionLogTailSizeForPrompt},
+                {"visit_compose_memory_render_cap", cfg.visitComposeMemoryRenderCap},
+                {"visit_compose_dialogue_render_cap", cfg.visitComposeDialogueRenderCap},
             };
         }
 

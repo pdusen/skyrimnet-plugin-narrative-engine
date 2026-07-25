@@ -86,6 +86,10 @@ export interface SettingsTabState {
     // down to shrink the rendered prompt.
     letter_compose_memory_render_cap: number;
     letter_compose_dialogue_render_cap: number;
+    // Upper bounds on the visit compose prompt's content
+    // (narrative_engine_visit_compose.prompt).
+    visit_compose_memory_render_cap: number;
+    visit_compose_dialogue_render_cap: number;
     // Upper bounds on the beat-select prompt's content
     // (narrative_engine_action_select.prompt). Same
     // shrink-for-local-LLMs motivation as the compose caps.

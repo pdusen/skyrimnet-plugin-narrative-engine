@@ -320,6 +320,13 @@ namespace NarrativeEngine::Settings
         int visitMarkerMinDistanceUnits = 800;  // closest spawn marker may be
         int visitMarkerMaxDistanceUnits = 2500; // farthest spawn marker may be
 
+        // Compose-prompt content caps for narrative_engine_visit_compose.prompt.
+        // Same shrink-for-local-LLMs motivation as the letter-compose
+        // caps above. Only affects the visit compose prompt; the
+        // action-select visit candidate memory tail has its own knob.
+        int visitComposeMemoryRenderCap = 6;    // max sender_memories entries
+        int visitComposeDialogueRenderCap = 25; // max sender_recent_dialogue entries
+
         // Per-sender cooldown in *in-game hours* applied once a visit's
         // Salutation → Discuss transition fires (i.e., the sender actually
         // showed up and spoke to the player). Prevents the same NPC from
@@ -416,6 +423,8 @@ namespace NarrativeEngine::Settings
         std::optional<int> actionSelectVisitMemoryRenderCap;
         std::optional<int> skyrimNetEventTailSizeForPrompt;
         std::optional<int> decisionLogTailSizeForPrompt;
+        std::optional<int> visitComposeMemoryRenderCap;
+        std::optional<int> visitComposeDialogueRenderCap;
     };
 
     // Read the plugin INI, then apply any MCM-managed override, and

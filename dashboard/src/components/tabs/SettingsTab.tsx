@@ -21,6 +21,8 @@ declare global {
         ne_setActionSelectVisitMemoryCap?: (arg: string) => void;
         ne_setStoryEvalEventTailSize?: (arg: string) => void;
         ne_setStoryEvalDecisionLogTailSize?: (arg: string) => void;
+        ne_setVisitComposeMemoryCap?: (arg: string) => void;
+        ne_setVisitComposeDialogueCap?: (arg: string) => void;
     }
 }
 
@@ -124,6 +126,8 @@ export function SettingsTab({ state }: Props) {
     const onCommitActionSelectVisitMemoryCap = (v: number) => window.ne_setActionSelectVisitMemoryCap?.(String(v));
     const onCommitStoryEvalEventTail = (v: number) => window.ne_setStoryEvalEventTailSize?.(String(v));
     const onCommitStoryEvalDecisionLogTail = (v: number) => window.ne_setStoryEvalDecisionLogTailSize?.(String(v));
+    const onCommitVisitMemoryCap = (v: number) => window.ne_setVisitComposeMemoryCap?.(String(v));
+    const onCommitVisitDialogueCap = (v: number) => window.ne_setVisitComposeDialogueCap?.(String(v));
 
     return (
         <div className="tab-content settings-tab">
@@ -290,6 +294,36 @@ export function SettingsTab({ state }: Props) {
                         step={1}
                         unit=""
                         onCommit={onCommitLetterDialogueCap}
+                    />
+                </div>
+            </section>
+
+            <section className="panel">
+                <h2>Visit Compose Prompt Caps</h2>
+                <p className="settings-panel-hint">
+                    Bound how much sender context is rendered into the visit compose
+                    prompt. Same shape as the letter compose caps above.
+                </p>
+                <div className="settings-row">
+                    <span className="settings-row-label">Memories</span>
+                    <LiveSlider
+                        value={s.visit_compose_memory_render_cap}
+                        min={3}
+                        max={20}
+                        step={1}
+                        unit=""
+                        onCommit={onCommitVisitMemoryCap}
+                    />
+                </div>
+                <div className="settings-row">
+                    <span className="settings-row-label">Recent Dialogue Lines</span>
+                    <LiveSlider
+                        value={s.visit_compose_dialogue_render_cap}
+                        min={5}
+                        max={50}
+                        step={1}
+                        unit=""
+                        onCommit={onCommitVisitDialogueCap}
                     />
                 </div>
             </section>

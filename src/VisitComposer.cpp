@@ -128,19 +128,17 @@ namespace NarrativeEngine::VisitComposer
             return SenderCandidatePool::GetPlayerDisplayName();
         }
 
-        // How many recent player↔sender dialogue lines to request
-        // from SkyrimNet per compose call. Same bound the letter
-        // composer uses; more than this gets trimmed by the memory-
-        // age filter below anyway.
-        constexpr int kRecentDialogueCap = 25;
-
         // Pull the last N spoken exchanges between the player and
         // the chosen sender out of SkyrimNet. Returns a JSON array
         // of `{ speaker, text, gameTime }` objects. Empty on any
         // failure — the prompt template handles the empty case.
-        nlohmann::json FetchRecentDialogue(RE::FormID formId)
+        // Cap is the render cap for the visit compose prompt; more
+        // than this gets trimmed by the memory-age filter downstream
+        // anyway.
+        nlohmann::json FetchRecentDialogue(RE::FormID formId, int cap)
         {
-            const auto raw = SkyrimNetAPI::GetRecentDialogue(formId, kRecentDialogueCap);
+            const int safeCap = std::max(0, cap);
+            const auto raw = SkyrimNetAPI::GetRecentDialogue(formId, safeCap);
             auto parsed = nlohmann::json::parse(raw, nullptr, false);
             if (!parsed.is_array()) {
                 return nlohmann::json::array();
@@ -261,14 +259,14 @@ namespace NarrativeEngine::VisitComposer
         // fresh SenderCandidatePool build (the sender was already
         // vetted at action-select time; a stale filter mismatch is
         // acceptable at this point).
-        nlohmann::json FetchSenderMemoriesFresh(RE::FormID formId)
+        nlohmann::json FetchSenderMemoriesFresh(RE::FormID formId, int renderCap)
         {
             if (!SkyrimNetAPI::IsAvailable() || formId == 0) {
                 return nlohmann::json::array();
             }
             SenderCandidatePool::BuildOptions opts;
             opts.maxCandidates = 1;
-            opts.maxMemoriesPerCandidate = 6;
+            opts.maxMemoriesPerCandidate = std::max(0, renderCap);
             opts.memoryImportanceThreshold = static_cast<double>(Settings::Get().letterMemoryImportanceThreshold);
             opts.excludeDiaryEntries = false;
             opts.memoryFetchMultiplier = 4;
@@ -453,8 +451,11 @@ namespace NarrativeEngine::VisitComposer
             return;
         }
 
-        // Fresh memory pull for the picked sender.
-        const auto memories = FetchSenderMemoriesFresh(senderNpcFormID);
+        // Fresh memory pull for the picked sender. Render caps pulled
+        // from Settings so users on tight-context local LLMs can dial
+        // the compose prompt's payload down without editing code.
+        const auto& composeCfg = Settings::Get();
+        const auto memories = FetchSenderMemoriesFresh(senderNpcFormID, composeCfg.visitComposeMemoryRenderCap);
 
         // Most-recent player↔sender dialogue history. Gives the LLM
         // a running-continuity read on how the two of them talk to
@@ -463,7 +464,7 @@ namespace NarrativeEngine::VisitComposer
         // older than the oldest kept memory so the two sections
         // stay temporally coherent, then annotate each with a
         // human-friendly age label.
-        auto recentDialogue = FetchRecentDialogue(senderNpcFormID);
+        auto recentDialogue = FetchRecentDialogue(senderNpcFormID, composeCfg.visitComposeDialogueRenderCap);
         FilterDialogueByMemoryAge(recentDialogue, memories);
         AnnotateDialogueAges(recentDialogue);
 

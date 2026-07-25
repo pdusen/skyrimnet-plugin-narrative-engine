@@ -270,6 +270,13 @@ namespace NarrativeEngine::Settings
                 dst.skyrimNetEventTailSizeForPrompt = 5;
             if (dst.decisionLogTailSizeForPrompt < 3)
                 dst.decisionLogTailSizeForPrompt = 3;
+            // Floors for the visit compose caps. Same rationale as the
+            // letter-compose floors — memory 3 (default 6), dialogue
+            // 5 (default 25).
+            if (dst.visitComposeMemoryRenderCap < 3)
+                dst.visitComposeMemoryRenderCap = 3;
+            if (dst.visitComposeDialogueRenderCap < 5)
+                dst.visitComposeDialogueRenderCap = 5;
             dst.letterPoolSize = static_cast<int>(ini.GetLongValue("Beats", "iLetterPoolSize", dst.letterPoolSize));
             dst.letterDispatchVerifyDelaySeconds = static_cast<int>(
                 ini.GetLongValue("Beats", "iLetterDispatchVerifyDelaySeconds", dst.letterDispatchVerifyDelaySeconds));
@@ -298,6 +305,10 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("Beats", "iVisitMarkerMinDistanceUnits", dst.visitMarkerMinDistanceUnits));
             dst.visitMarkerMaxDistanceUnits = static_cast<int>(
                 ini.GetLongValue("Beats", "iVisitMarkerMaxDistanceUnits", dst.visitMarkerMaxDistanceUnits));
+            dst.visitComposeMemoryRenderCap = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitComposeMemoryRenderCap", dst.visitComposeMemoryRenderCap));
+            dst.visitComposeDialogueRenderCap = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitComposeDialogueRenderCap", dst.visitComposeDialogueRenderCap));
             dst.visitSenderCooldownGameHours = static_cast<int>(
                 ini.GetLongValue("Beats", "iVisitSenderCooldownGameHours", dst.visitSenderCooldownGameHours));
 
@@ -587,6 +598,18 @@ namespace NarrativeEngine::Settings
             g_config.decisionLogTailSizeForPrompt = *mutations.decisionLogTailSizeForPrompt;
             logger::info("Settings: MCM override write: iDecisionLogTailSizeForPrompt={}",
                          *mutations.decisionLogTailSizeForPrompt);
+        }
+        if (mutations.visitComposeMemoryRenderCap) {
+            ini.SetLongValue("Beats", "iVisitComposeMemoryRenderCap", *mutations.visitComposeMemoryRenderCap);
+            g_config.visitComposeMemoryRenderCap = *mutations.visitComposeMemoryRenderCap;
+            logger::info("Settings: MCM override write: iVisitComposeMemoryRenderCap={}",
+                         *mutations.visitComposeMemoryRenderCap);
+        }
+        if (mutations.visitComposeDialogueRenderCap) {
+            ini.SetLongValue("Beats", "iVisitComposeDialogueRenderCap", *mutations.visitComposeDialogueRenderCap);
+            g_config.visitComposeDialogueRenderCap = *mutations.visitComposeDialogueRenderCap;
+            logger::info("Settings: MCM override write: iVisitComposeDialogueRenderCap={}",
+                         *mutations.visitComposeDialogueRenderCap);
         }
         if (mutations.hotkeyShift || mutations.hotkeyCtrl || mutations.hotkeyAlt) {
             std::uint8_t mods = 0;
