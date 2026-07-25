@@ -23,10 +23,14 @@
 //             failure_reason.
 //   RUNNING — dispatches on quest stage each Normal-mode Tick:
 //               Stage 10 (Salutation) — approach-distance / timeout
-//               Stage 20 (Discuss)    — speech sampler + gate tick +
-//                                       poll fire + verdict handling
-//               Stage 25 (OnHold)     — combat-stuck timeout (Combat mode)
-//               Stage 27 (ReEngage)   — approach-distance / OnHold re-trip
+//               Stage 20 (Discuss)    — internal three-way substate cycle
+//                                       (Discussing / OnHold / ReEngage) that
+//                                       drives the speech sampler + conclusion
+//                                       poll while free, pauses on any-party
+//                                       combat (with combat-stuck watchdog),
+//                                       and re-fires the resumption narration
+//                                       on approach after combat clears — no
+//                                       quest-stage change during the cycle
 //               Stage 30 (Valediction)— closing narration + dwell
 //               Stage 50 (ReturnHome) — distance / LOS / cell / timeout
 //               Stage 60 / 200        — terminal → CLEANUP
@@ -51,10 +55,25 @@ namespace NarrativeEngine
     {
         // Resolve `_ne_VisitQuest`, `_ne_VisitSenderFaction`, the three
         // reference aliases (Sender, SpawnMarker, ReturnAnchor), and
-        // wire the DialogueMenu / combat / death sinks. Called at
-        // kDataLoaded after Settings::Load.
+        // wire the death sink. Called at kDataLoaded after
+        // Settings::Load.
         void Initialize();
     } // namespace NPCVisitBeat_Init
+
+    namespace NPCVisitBeat_Query
+    {
+        // The Discuss stage runs an internal three-way substate cycle
+        // (Discussing / OnHold / ReEngage) that the dashboard's phase
+        // display needs to distinguish. Not persisted; snapshot only.
+        enum class DiscussSubPhase : std::uint8_t
+        {
+            Discussing,
+            OnHold,
+            ReEngage,
+        };
+
+        DiscussSubPhase GetDiscussSubPhase();
+    } // namespace NPCVisitBeat_Query
 
     namespace NPCVisitBeat_Cooldowns
     {

@@ -3,6 +3,7 @@
 #include <logger.h>
 
 #include <SimpleIni.h>
+#include <spdlog/spdlog.h>
 
 #include <chrono>
 #include <filesystem>
@@ -22,6 +23,19 @@ namespace NarrativeEngine::Settings
         // own logs to diagnose the "MCM page doesn't appear" report.
         constexpr const char* kMcmConfigJsonPath = "Data/MCM/Config/NarrativeEngine/config.json";
         constexpr const char* kMcmHelperDllPath = "Data/SKSE/Plugins/MCMHelper.dll";
+
+        // Sync spdlog's level filter to the current traceMode setting.
+        // `logger.h::SetupLog` initializes at trace level (so startup
+        // probes always land), then this pulls the level down to debug
+        // whenever traceMode goes false — silencing both gated and
+        // ungated `logger::trace(...)` calls (e.g., MCMEventSink's
+        // per-ModCallback line, PrismaUI / DashboardUIManager sink
+        // chatter) without touching the callsites. Called from every
+        // path that can flip `g_config.traceMode`.
+        void ApplyLogLevelForTraceMode()
+        {
+            spdlog::set_level(g_config.traceMode ? spdlog::level::trace : spdlog::level::debug);
+        }
 
         // Emit one trace line summarizing a file's presence on disk.
         // Absolute path is resolved (so the log tells you EXACTLY where
@@ -281,11 +295,15 @@ namespace NarrativeEngine::Settings
         // happen) produce a deterministic result rather than stacking values.
         g_config = Config{};
 
-        // Unconditional presence trace for the four MCM/dashboard files
-        // that most commonly cause "MCM doesn't appear" or "hotkey doesn't
-        // work" bug reports. spdlog is configured at trace level (see
-        // logger.h), so these fire regardless of the runtime traceMode gate
-        // — that gate is for per-tick chatter, not one-shot diagnostics.
+        // Startup presence trace for the four MCM/dashboard files that
+        // most commonly cause "MCM doesn't appear" or "hotkey doesn't
+        // work" bug reports. spdlog is initialized at trace level in
+        // `logger.h::SetupLog` (which runs before this function), so
+        // these one-shot probes land in the log even on a cold boot
+        // where `bTraceMode=false`. The level is pulled down to `debug`
+        // at the end of this function via `ApplyLogLevelForTraceMode`,
+        // silencing subsequent trace chatter until the player flips
+        // traceMode on.
         TraceFilePresence("plugin INI", kPluginIniPath);
         TraceFilePresence("MCM overrides INI", kMcmIniPath);
         TraceFilePresence("MCM Helper config JSON", kMcmConfigJsonPath);
@@ -340,6 +358,7 @@ namespace NarrativeEngine::Settings
                       g_config.traceMode ? 1 : 0,
                       g_config.tickEnabled ? 1 : 0,
                       g_config.tickIntervalSeconds);
+        ApplyLogLevelForTraceMode();
     }
 
     const Config& Get()
@@ -394,6 +413,7 @@ namespace NarrativeEngine::Settings
                       g_config.tickEnabled ? 1 : 0,
                       prevInterval,
                       g_config.tickIntervalSeconds);
+        ApplyLogLevelForTraceMode();
     }
 
     void WriteMcmOverride(const McmOverride& mutations)
@@ -414,6 +434,7 @@ namespace NarrativeEngine::Settings
             ini.SetBoolValue("General", "bTraceMode", *mutations.traceMode);
             g_config.traceMode = *mutations.traceMode;
             logger::info("Settings: MCM override write: bTraceMode={}", *mutations.traceMode ? 1 : 0);
+            ApplyLogLevelForTraceMode();
         }
         if (mutations.tickEnabled) {
             ini.SetBoolValue("Director", "bTickEnabled", *mutations.tickEnabled);

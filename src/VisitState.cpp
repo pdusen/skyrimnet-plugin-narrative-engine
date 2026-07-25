@@ -1,6 +1,7 @@
 #include <VisitState.h>
 
 #include <logger.h>
+#include <NPCVisitBeat.h>
 
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
@@ -142,12 +143,20 @@ namespace NarrativeEngine::VisitState
         switch (stage) {
         case 10:
             return Mode::Salutation;
-        case 20:
-            return Mode::Discuss;
-        case 25:
-            return Mode::OnHold;
-        case 27:
-            return Mode::ReEngage;
+        case 20: {
+            // Discuss runs an internal three-way substate cycle. Ask the
+            // beat which substate we're in so the dashboard's phase
+            // display can distinguish Discussing / OnHold / ReEngage.
+            switch (NPCVisitBeat_Query::GetDiscussSubPhase()) {
+            case NPCVisitBeat_Query::DiscussSubPhase::OnHold:
+                return Mode::OnHold;
+            case NPCVisitBeat_Query::DiscussSubPhase::ReEngage:
+                return Mode::ReEngage;
+            case NPCVisitBeat_Query::DiscussSubPhase::Discussing:
+            default:
+                return Mode::Discuss;
+            }
+        }
         case 30:
             return Mode::Valediction;
         case 50:

@@ -24,9 +24,6 @@
 #include <RE/B/BGSRefAlias.h>
 #include <RE/B/BSFixedString.h>
 #include <RE/C/Calendar.h>
-#include <RE/D/DialogueMenu.h>
-#include <RE/M/MenuOpenCloseEvent.h>
-#include <RE/T/TESCombatEvent.h>
 #include <RE/T/TESDeathEvent.h>
 #include <RE/T/TESFaction.h>
 #include <RE/T/TESObjectCELL.h>
@@ -62,8 +59,6 @@ namespace NarrativeEngine
 
         constexpr std::uint32_t kStageSalutation = 10;
         constexpr std::uint32_t kStageDiscuss = 20;
-        constexpr std::uint32_t kStageOnHold = 25;
-        constexpr std::uint32_t kStageReEngage = 27;
         constexpr std::uint32_t kStageValediction = 30;
         constexpr std::uint32_t kStageReturnHome = 50;
         constexpr std::uint32_t kStageRollback = 60;
@@ -202,16 +197,15 @@ namespace NarrativeEngine
         std::atomic<double> g_lastSampledEventGameTime = 0.0;
         std::atomic<RE::FormID> g_discussSenderFormID = 0;
 
-        // One-shot latch for a "narration + SetStage(Discuss)" dispatch
-        // from Salutation or ReEngage. The Papyrus VM stage change is
-        // async, so a bare stage tick keeps re-firing the dispatch every
-        // ~1s until the stage lands, which turns the sender's opening /
-        // resumption narration into a spam loop. The latch is set the
-        // first time the dispatch fires and cleared automatically when
-        // the observed stage moves off the latching stage. While set,
-        // the tick emits a periodic warn (every 5s) and escalates to
-        // error at 30s to surface a stuck loop. Not persisted — resets
-        // on OnStart / OnRevert.
+        // One-shot latch for the Salutation "narration + SetStage(Discuss)"
+        // dispatch. The Papyrus VM stage change is async, so a bare stage
+        // tick would keep re-firing the dispatch every ~1s until the stage
+        // lands, which would turn the opening narration into a spam loop.
+        // The latch is set the first time the dispatch fires and cleared
+        // automatically when the observed stage moves off Salutation.
+        // While set, the tick emits a periodic warn (every 5s) and
+        // escalates to error at 30s to surface a stuck loop. Not
+        // persisted — resets on OnStart / OnRevert.
         struct StageTransitionLatch
         {
             std::atomic<bool> dispatched{false};
@@ -239,7 +233,28 @@ namespace NarrativeEngine
         };
 
         StageTransitionLatch g_salutationDiscussLatch;
-        StageTransitionLatch g_reengageDiscussLatch;
+
+        // Discuss sub-state machine. Cyclic and mostly one-directional:
+        //   Discussing --(hold trigger tripped)--------------> OnHold
+        //   OnHold     --(all hold triggers cleared)---------> ReEngage
+        //   ReEngage   --(sender within approach distance)---> Discussing
+        //                (fires resumption narration)
+        //   ReEngage   --(hold trigger re-tripped)-----------> OnHold
+        // The only backward transition permitted is ReEngage → OnHold on
+        // re-trip; Discussing cannot skip directly to ReEngage and OnHold
+        // cannot skip directly back to Discussing.
+        //
+        // Hold triggers: either-participant combat OR the player being in
+        // a vanilla dialogue menu (with anyone). Not persisted — resets
+        // to Discussing on OnStart / OnRevert. On save/reload mid-cycle,
+        // the next tick re-derives the correct substate from live state.
+        enum class DiscussSubPhase : std::uint8_t
+        {
+            Discussing,
+            OnHold,
+            ReEngage,
+        };
+        std::atomic<DiscussSubPhase> g_discussSubPhase = DiscussSubPhase::Discussing;
 
         // RUNNING tick cadence — one marshaled main-thread stage tick
         // every kRunningCheckEveryNTicks worker ticks (4 = ~1s at
@@ -276,7 +291,7 @@ namespace NarrativeEngine
             g_runningTickCount = 0;
             g_runningTaskInFlight.store(false, std::memory_order_release);
             g_salutationDiscussLatch.Reset();
-            g_reengageDiscussLatch.Reset();
+            g_discussSubPhase.store(DiscussSubPhase::Discussing, std::memory_order_release);
             {
                 std::scoped_lock lock(g_hardAbortReasonMutex);
                 g_hardAbortReason.clear();
@@ -296,11 +311,6 @@ namespace NarrativeEngine
         }
 
         // ---- Sender turn / event bookkeeping shared with sinks -----
-
-        bool ObservePlayerInDialogue()
-        {
-            return EngineUtils::IsPlayerInDialogue();
-        }
 
         bool ObserveAnyCombat()
         {
@@ -423,69 +433,6 @@ namespace NarrativeEngine
 
         // ---- Sinks (main-thread; fire stage transitions) -----------
 
-        struct DialogueMenuOnHoldSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent>
-        {
-            RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event,
-                                                  RE::BSTEventSource<RE::MenuOpenCloseEvent>* /*src*/) override
-            {
-                if (!a_event)
-                    return RE::BSEventNotifyControl::kContinue;
-                if (a_event->menuName != RE::DialogueMenu::MENU_NAME) {
-                    return RE::BSEventNotifyControl::kContinue;
-                }
-                if (!a_event->opening) {
-                    return RE::BSEventNotifyControl::kContinue;
-                }
-                if (!g_visitQuest)
-                    return RE::BSEventNotifyControl::kContinue;
-                const auto stage = g_visitQuest->GetCurrentStageID();
-                if (stage != static_cast<std::uint16_t>(kStageDiscuss)) {
-                    return RE::BSEventNotifyControl::kContinue;
-                }
-                logger::info("NPCVisitBeat[SINK]: DialogueMenu opened during Discuss — "
-                             "dispatching SetStage(OnHold)");
-                QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageOnHold);
-                return RE::BSEventNotifyControl::kContinue;
-            }
-        };
-
-        struct CombatOnHoldSink : public RE::BSTEventSink<RE::TESCombatEvent>
-        {
-            RE::BSEventNotifyControl ProcessEvent(const RE::TESCombatEvent* a_event,
-                                                  RE::BSTEventSource<RE::TESCombatEvent>* /*src*/) override
-            {
-                if (!a_event)
-                    return RE::BSEventNotifyControl::kContinue;
-                if (!g_visitQuest)
-                    return RE::BSEventNotifyControl::kContinue;
-                const auto stage = g_visitQuest->GetCurrentStageID();
-                if (stage != static_cast<std::uint16_t>(kStageDiscuss)) {
-                    return RE::BSEventNotifyControl::kContinue;
-                }
-                if (a_event->newState == RE::ACTOR_COMBAT_STATE::kNone) {
-                    return RE::BSEventNotifyControl::kContinue;
-                }
-                if (!a_event->actor)
-                    return RE::BSEventNotifyControl::kContinue;
-                auto* actor = a_event->actor->As<RE::Actor>();
-                if (!actor)
-                    return RE::BSEventNotifyControl::kContinue;
-                auto* player = RE::PlayerCharacter::GetSingleton();
-                auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
-                auto* senderActor = senderRef ? senderRef->As<RE::Actor>() : nullptr;
-                const bool isRelevant = (player && actor == player) || (senderActor && actor == senderActor);
-                if (!isRelevant)
-                    return RE::BSEventNotifyControl::kContinue;
-                const char* who = (actor == player) ? "player_combat" : "sender_combat";
-                logger::info("NPCVisitBeat[SINK]: {} entered combat during Discuss — "
-                             "dispatching SetStage(OnHold)",
-                             who);
-                g_onHoldCombatStartedAtCombatSec.store(CombatElapsedNow());
-                QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageOnHold);
-                return RE::BSEventNotifyControl::kContinue;
-            }
-        };
-
         struct VisitDeathSink : public RE::BSTEventSink<RE::TESDeathEvent>
         {
             RE::BSEventNotifyControl ProcessEvent(const RE::TESDeathEvent* a_event,
@@ -521,8 +468,6 @@ namespace NarrativeEngine
             }
         };
 
-        DialogueMenuOnHoldSink g_dialogueMenuSink;
-        CombatOnHoldSink g_combatSink;
         VisitDeathSink g_deathSink;
         std::atomic<bool> g_sinksRegistered = false;
 
@@ -530,18 +475,12 @@ namespace NarrativeEngine
         {
             if (g_sinksRegistered.exchange(true))
                 return;
-            if (auto* ui = RE::UI::GetSingleton()) {
-                ui->AddEventSink<RE::MenuOpenCloseEvent>(&g_dialogueMenuSink);
-                logger::info("NPCVisitBeat: MenuOpenCloseEvent sink registered "
-                             "(DialogueMenu -> OnHold)");
-            }
             if (auto* holder = RE::ScriptEventSourceHolder::GetSingleton()) {
-                holder->AddEventSink<RE::TESCombatEvent>(&g_combatSink);
                 holder->AddEventSink<RE::TESDeathEvent>(&g_deathSink);
-                logger::info("NPCVisitBeat: combat + death sinks registered");
+                logger::info("NPCVisitBeat: death sink registered");
             } else {
                 logger::warn("NPCVisitBeat: ScriptEventSourceHolder unavailable — "
-                             "combat / death sinks NOT registered");
+                             "death sink NOT registered");
             }
         }
 
@@ -1043,13 +982,10 @@ namespace NarrativeEngine
             const auto stage = g_visitQuest->GetCurrentStageID();
             const auto& cfg = Settings::Get();
 
-            // Clear stage-transition latches once we've moved off the
-            // latching stage — either the SetStage landed, or the stage
-            // moved elsewhere (e.g., ReEngage bounced back to OnHold).
+            // Clear the salutation latch once the SetStage(Discuss) has
+            // landed and we've moved off Salutation.
             if (stage != kStageSalutation)
                 g_salutationDiscussLatch.Reset();
-            if (stage != kStageReEngage)
-                g_reengageDiscussLatch.Reset();
 
             switch (stage) {
             case kStageSalutation: {
@@ -1120,93 +1056,114 @@ namespace NarrativeEngine
                 return;
             }
             case kStageDiscuss: {
-                if (mode != TickMode::Normal)
-                    return;
-                const auto senderFormID = g_discussSenderFormID.load();
-                if (SampleAndRegisterNewSpeechTurns(senderFormID)) {
-                    ResetIgnoreNudgeCounter();
-                }
-                if (VisitConclusionPoll::GateTick()) {
-                    logger::info("NPCVisitBeat[DISCUSS]: gate tripped — firing "
-                                 "conclusion poll");
-                    VisitConclusionPoll::FirePoll([](std::optional<VisitConclusionPoll::PollVerdict> v) {
-                        AsyncDispatch::MarshalToMainThread(
-                            [v = std::move(v)]() mutable { HandleVisitPollVerdict(std::move(v)); });
-                    });
-                }
-                return;
-            }
-            case kStageOnHold: {
-                const bool inDialogue = ObservePlayerInDialogue();
+                // Sub-state machine (all C++, non-persisted). See enum
+                // definition for the full transition table.
+                const auto subPhase = g_discussSubPhase.load(std::memory_order_acquire);
                 const bool inCombat = ObserveAnyCombat();
-                if (!inDialogue && !inCombat) {
-                    logger::info("NPCVisitBeat[ONHOLD]: triggers cleared — dispatching "
-                                 "SetStage(ReEngage)");
-                    QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageReEngage);
-                    g_onHoldCombatStartedAtCombatSec.store(0.0);
+                const bool inDialogue = EngineUtils::IsPlayerInDialogue();
+                const bool holdTripped = inCombat || inDialogue;
+
+                switch (subPhase) {
+                case DiscussSubPhase::Discussing: {
+                    if (holdTripped) {
+                        logger::info("NPCVisitBeat[DISCUSS/Discussing]: hold trigger "
+                                     "tripped (combat={}, dialogue={}) — transitioning "
+                                     "to OnHold",
+                                     inCombat,
+                                     inDialogue);
+                        g_discussSubPhase.store(DiscussSubPhase::OnHold, std::memory_order_release);
+                        if (inCombat) {
+                            g_onHoldCombatStartedAtCombatSec.store(CombatElapsedNow());
+                        }
+                        return;
+                    }
+                    if (mode != TickMode::Normal)
+                        return;
+                    const auto senderFormID = g_discussSenderFormID.load();
+                    if (SampleAndRegisterNewSpeechTurns(senderFormID)) {
+                        ResetIgnoreNudgeCounter();
+                    }
+                    if (VisitConclusionPoll::GateTick()) {
+                        logger::info("NPCVisitBeat[DISCUSS/Discussing]: gate tripped — "
+                                     "firing conclusion poll");
+                        VisitConclusionPoll::FirePoll([](std::optional<VisitConclusionPoll::PollVerdict> v) {
+                            AsyncDispatch::MarshalToMainThread(
+                                [v = std::move(v)]() mutable { HandleVisitPollVerdict(std::move(v)); });
+                        });
+                    }
                     return;
                 }
-                // Combat-stuck check runs under Combat mode.
-                if (mode == TickMode::Combat && inCombat) {
-                    const int combatMax = std::max(1, cfg.visitOnHoldCombatMaxSeconds);
-                    const auto combatStart = g_onHoldCombatStartedAtCombatSec.load();
-                    if (combatStart <= 0.0) {
-                        g_onHoldCombatStartedAtCombatSec.store(CombatElapsedNow());
-                    } else {
-                        const auto elapsed = CombatElapsedNow() - combatStart;
-                        if (elapsed >= static_cast<double>(combatMax)) {
-                            logger::warn("NPCVisitBeat[ONHOLD]: combat_stuck — elapsed "
-                                         "{:.1f}s >= {}s",
-                                         elapsed,
-                                         combatMax);
-                            HardAbortVisit("combat_stuck");
+                case DiscussSubPhase::OnHold: {
+                    if (!holdTripped) {
+                        logger::info("NPCVisitBeat[DISCUSS/OnHold]: hold triggers cleared "
+                                     "— transitioning to ReEngage");
+                        g_discussSubPhase.store(DiscussSubPhase::ReEngage, std::memory_order_release);
+                        g_onHoldCombatStartedAtCombatSec.store(0.0);
+                        g_lastDistanceLogNormalSec.store(0.0);
+                        return;
+                    }
+                    // Combat-stuck watchdog runs under Combat mode.
+                    if (mode == TickMode::Combat && inCombat) {
+                        const int combatMax = std::max(1, cfg.visitOnHoldCombatMaxSeconds);
+                        const auto combatStart = g_onHoldCombatStartedAtCombatSec.load();
+                        if (combatStart <= 0.0) {
+                            g_onHoldCombatStartedAtCombatSec.store(CombatElapsedNow());
+                        } else {
+                            const auto elapsed = CombatElapsedNow() - combatStart;
+                            if (elapsed >= static_cast<double>(combatMax)) {
+                                logger::warn("NPCVisitBeat[DISCUSS/OnHold]: combat_stuck — "
+                                             "elapsed {:.1f}s >= {}s",
+                                             elapsed,
+                                             combatMax);
+                                HardAbortVisit("combat_stuck");
+                            }
                         }
                     }
-                }
-                return;
-            }
-            case kStageReEngage: {
-                if (mode != TickMode::Normal)
-                    return;
-                if (g_reengageDiscussLatch.IsDispatched()) {
-                    LogPendingStageTransition("REENGAGE", kStageDiscuss, stage, g_reengageDiscussLatch);
                     return;
                 }
-                const bool inDialogue = ObservePlayerInDialogue();
-                const bool inCombat = ObserveAnyCombat();
-                if (inDialogue || inCombat) {
-                    logger::info("NPCVisitBeat[REENGAGE]: OnHold trigger re-tripped "
-                                 "(dialogue={}, combat={}) — returning to OnHold",
-                                 inDialogue,
-                                 inCombat);
-                    QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageOnHold);
-                    if (inCombat) {
-                        g_onHoldCombatStartedAtCombatSec.store(CombatElapsedNow());
+                case DiscussSubPhase::ReEngage: {
+                    if (holdTripped) {
+                        logger::info("NPCVisitBeat[DISCUSS/ReEngage]: hold trigger "
+                                     "re-tripped (combat={}, dialogue={}) — returning to "
+                                     "OnHold",
+                                     inCombat,
+                                     inDialogue);
+                        g_discussSubPhase.store(DiscussSubPhase::OnHold, std::memory_order_release);
+                        if (inCombat) {
+                            g_onHoldCombatStartedAtCombatSec.store(CombatElapsedNow());
+                        }
+                        return;
+                    }
+                    if (mode != TickMode::Normal)
+                        return;
+                    auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
+                    auto* player = RE::PlayerCharacter::GetSingleton();
+                    if (!senderRef || !player)
+                        return;
+                    const int approachDist = std::max(1, cfg.visitReEngageApproachDistanceUnits);
+                    const auto dist = senderRef->GetPosition().GetDistance(player->GetPosition());
+                    const auto now = NormalElapsedNow();
+                    const auto lastLog = g_lastDistanceLogNormalSec.load();
+                    if (now - lastLog >= 5.0) {
+                        g_lastDistanceLogNormalSec.store(now);
+                        logger::info("NPCVisitBeat[DISCUSS/ReEngage]: distance={:.0f}u "
+                                     "(threshold {}u)",
+                                     dist,
+                                     approachDist);
+                    }
+                    if (dist <= static_cast<float>(approachDist)) {
+                        logger::info("NPCVisitBeat[DISCUSS/ReEngage]: approach reached "
+                                     "({:.0f}u) — firing resumption narration and returning "
+                                     "to Discussing",
+                                     dist);
+                        const auto snap = VisitState::GetSnapshot();
+                        VMDispatchRunSenderNarration(g_visitQuest, snap.narrationText);
+                        VisitConclusionPoll::Arm(snap);
+                        g_discussSenderFormID.store(snap.senderFormID);
+                        g_discussSubPhase.store(DiscussSubPhase::Discussing, std::memory_order_release);
                     }
                     return;
                 }
-                auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
-                auto* player = RE::PlayerCharacter::GetSingleton();
-                if (!senderRef || !player)
-                    return;
-                const int approachDist = std::max(1, cfg.visitReEngageApproachDistanceUnits);
-                const auto dist = senderRef->GetPosition().GetDistance(player->GetPosition());
-                const auto now = NormalElapsedNow();
-                const auto lastLog = g_lastDistanceLogNormalSec.load();
-                if (now - lastLog >= 5.0) {
-                    g_lastDistanceLogNormalSec.store(now);
-                    logger::info("NPCVisitBeat[REENGAGE]: distance={:.0f}u (threshold {}u)", dist, approachDist);
-                }
-                if (dist <= static_cast<float>(approachDist)) {
-                    logger::info("NPCVisitBeat[REENGAGE]: approach reached ({:.0f}u) — "
-                                 "dispatching resumption narration + SetStage(Discuss)",
-                                 dist);
-                    const auto snap = VisitState::GetSnapshot();
-                    VMDispatchRunSenderNarration(g_visitQuest, snap.narrationText);
-                    QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageDiscuss);
-                    g_reengageDiscussLatch.MarkDispatched(now);
-                    VisitConclusionPoll::Arm(snap);
-                    g_discussSenderFormID.store(snap.senderFormID);
                 }
                 return;
             }
@@ -1560,8 +1517,8 @@ namespace NarrativeEngine
             if (g_terminalCleanupDone.load()) {
                 return {BeatState::CLEANUP};
             }
-            // Fire a stage-tick every N ticks. Combat mode is
-            // forwarded so Stage 25 (OnHold) can track combat-stuck.
+            // Fire a stage-tick every N ticks. Combat mode is forwarded
+            // so the Discuss/OnHold substate can drive combat-stuck.
             if (++g_runningTickCount >= kRunningCheckEveryNTicks) {
                 g_runningTickCount = 0;
                 if (!g_runningTaskInFlight.exchange(true, std::memory_order_acq_rel)) {
@@ -1620,6 +1577,27 @@ namespace NarrativeEngine
         VisitState::Reset();
         VisitState::SetComposingSender(false);
     }
+
+    // ---------------------------------------------------------------
+    // Query surface
+    // ---------------------------------------------------------------
+
+    namespace NPCVisitBeat_Query
+    {
+        DiscussSubPhase GetDiscussSubPhase()
+        {
+            using Internal = ::NarrativeEngine::DiscussSubPhase;
+            switch (g_discussSubPhase.load(std::memory_order_acquire)) {
+            case Internal::OnHold:
+                return DiscussSubPhase::OnHold;
+            case Internal::ReEngage:
+                return DiscussSubPhase::ReEngage;
+            case Internal::Discussing:
+            default:
+                return DiscussSubPhase::Discussing;
+            }
+        }
+    } // namespace NPCVisitBeat_Query
 
     // ---------------------------------------------------------------
     // Cooldowns + Persistence

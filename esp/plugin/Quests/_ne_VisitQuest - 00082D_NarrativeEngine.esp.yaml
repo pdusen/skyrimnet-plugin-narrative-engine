@@ -43,14 +43,6 @@ VirtualMachineAdapter:
     Unknown2: 1
     ScriptName: _ne__QF__ne_VisitQuest_0500FB2E
     FragmentName: Fragment_2
-  - Stage: 25
-    Unknown2: 1
-    ScriptName: _ne__QF__ne_VisitQuest_0500FB2E
-    FragmentName: Fragment_3
-  - Stage: 27
-    Unknown2: 1
-    ScriptName: _ne__QF__ne_VisitQuest_0500FB2E
-    FragmentName: Fragment_4
   - Stage: 30
     Unknown2: 1
     ScriptName: _ne__QF__ne_VisitQuest_0500FB2E
@@ -80,12 +72,6 @@ Stages:
   LogEntries:
   - Flags: []
 - Index: 20
-  LogEntries:
-  - Flags: []
-- Index: 25
-  LogEntries:
-  - Flags: []
-- Index: 27
   LogEntries:
   - Flags: []
 - Index: 30
