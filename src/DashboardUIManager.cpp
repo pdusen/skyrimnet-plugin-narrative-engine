@@ -608,10 +608,24 @@ namespace NarrativeEngine::DashboardUIManager
             });
         }
 
-        // Backs the Settings tab's Tick Interval slider. Payload is a
-        // bare integer string; clamped to the slider's [10, 600] range
-        // defensively so a browser-side glitch can't write a wild value.
-        void OnSetTickInterval(const char* argument)
+        // Shared implementation for the Settings-tab integer slider
+        // listeners. Every slider handler follows the exact same shape:
+        // parse the payload as a bare integer, clamp to a per-slider
+        // range (defensively — a browser-side glitch shouldn't ever be
+        // able to write a wild value into the INI), log receipt, then
+        // marshal to the main thread to author one field in an
+        // McmOverride and push fresh state back. The only per-handler
+        // variation is: the listener-name string used in log lines,
+        // the min / max clamp bounds, and which McmOverride field the
+        // clamped value lands in — factored into the `applyToOverride`
+        // function pointer. Kept as a plain function pointer (not
+        // std::function) so callers can supply capture-less lambdas
+        // that convert without heap allocation.
+        void ApplyIntegerSliderSetting(const char* argument,
+                                       const char* listenerName,
+                                       int minValue,
+                                       int maxValue,
+                                       void (*applyToOverride)(Settings::McmOverride&, int))
         {
             const std::string arg = argument ? argument : "";
             int value = 0;
@@ -619,235 +633,102 @@ namespace NarrativeEngine::DashboardUIManager
             const auto* last = arg.data() + arg.size();
             auto [ptr, ec] = std::from_chars(first, last, value);
             if (ec != std::errc{} || ptr != last) {
-                logger::warn("DashboardUIManager: ne_setTickInterval: malformed payload '{}'", arg);
+                logger::warn("DashboardUIManager: {}: malformed payload '{}'", listenerName, arg);
                 return;
             }
-            if (value < 10)
-                value = 10;
-            if (value > 600)
-                value = 600;
-            logger::info("DashboardUIManager: ne_setTickInterval({}) received", value);
-            AsyncDispatch::MarshalToMainThread([value] {
+            if (value < minValue)
+                value = minValue;
+            if (value > maxValue)
+                value = maxValue;
+            logger::info("DashboardUIManager: {}({}) received", listenerName, value);
+            AsyncDispatch::MarshalToMainThread([value, applyToOverride] {
                 Settings::McmOverride mut;
-                mut.tickIntervalSeconds = value;
+                applyToOverride(mut, value);
                 Settings::WriteMcmOverride(mut);
                 PushFullState();
+            });
+        }
+
+        // Backs the Settings tab's Tick Interval slider.
+        void OnSetTickInterval(const char* argument)
+        {
+            ApplyIntegerSliderSetting(argument, "ne_setTickInterval", 10, 600, [](Settings::McmOverride& mut, int v) {
+                mut.tickIntervalSeconds = v;
             });
         }
 
         // Backs the Settings tab's Letter Compose Memory Cap slider.
-        // Clamped to [3, 20] — the floor exists because a compose prompt
-        // with zero (or near-zero) memory context degrades letter quality
-        // sharply; 3 leaves the default of 6 with downward headroom. The
-        // upper bound is a hedge against a browser-side glitch, not a
-        // hard engine limit.
+        // Floor is 3 rather than 5 because the default is 6 — a smaller
+        // floor gives the slider downward headroom below the default.
         void OnSetLetterComposeMemoryCap(const char* argument)
         {
-            const std::string arg = argument ? argument : "";
-            int value = 0;
-            const auto* first = arg.data();
-            const auto* last = arg.data() + arg.size();
-            auto [ptr, ec] = std::from_chars(first, last, value);
-            if (ec != std::errc{} || ptr != last) {
-                logger::warn("DashboardUIManager: ne_setLetterComposeMemoryCap: malformed payload '{}'", arg);
-                return;
-            }
-            if (value < 3)
-                value = 3;
-            if (value > 20)
-                value = 20;
-            logger::info("DashboardUIManager: ne_setLetterComposeMemoryCap({}) received", value);
-            AsyncDispatch::MarshalToMainThread([value] {
-                Settings::McmOverride mut;
-                mut.letterComposeMemoryRenderCap = value;
-                Settings::WriteMcmOverride(mut);
-                PushFullState();
-            });
+            ApplyIntegerSliderSetting(
+                argument, "ne_setLetterComposeMemoryCap", 3, 20, [](Settings::McmOverride& mut, int v) {
+                    mut.letterComposeMemoryRenderCap = v;
+                });
         }
 
         // Backs the Settings tab's Letter Compose Dialogue Cap slider.
-        // Clamped to [5, 50] on the same rationale as the memory cap.
         void OnSetLetterComposeDialogueCap(const char* argument)
         {
-            const std::string arg = argument ? argument : "";
-            int value = 0;
-            const auto* first = arg.data();
-            const auto* last = arg.data() + arg.size();
-            auto [ptr, ec] = std::from_chars(first, last, value);
-            if (ec != std::errc{} || ptr != last) {
-                logger::warn("DashboardUIManager: ne_setLetterComposeDialogueCap: malformed payload '{}'", arg);
-                return;
-            }
-            if (value < 5)
-                value = 5;
-            if (value > 50)
-                value = 50;
-            logger::info("DashboardUIManager: ne_setLetterComposeDialogueCap({}) received", value);
-            AsyncDispatch::MarshalToMainThread([value] {
-                Settings::McmOverride mut;
-                mut.letterComposeDialogueRenderCap = value;
-                Settings::WriteMcmOverride(mut);
-                PushFullState();
-            });
+            ApplyIntegerSliderSetting(
+                argument, "ne_setLetterComposeDialogueCap", 5, 50, [](Settings::McmOverride& mut, int v) {
+                    mut.letterComposeDialogueRenderCap = v;
+                });
         }
 
         // Backs the Settings tab's Story-Eval Recent Events Cap slider.
-        // Clamped to [5, 100] — floor matches the ReadIniInto clamp.
         void OnSetStoryEvalEventTailSize(const char* argument)
         {
-            const std::string arg = argument ? argument : "";
-            int value = 0;
-            const auto* first = arg.data();
-            const auto* last = arg.data() + arg.size();
-            auto [ptr, ec] = std::from_chars(first, last, value);
-            if (ec != std::errc{} || ptr != last) {
-                logger::warn("DashboardUIManager: ne_setStoryEvalEventTailSize: malformed payload '{}'", arg);
-                return;
-            }
-            if (value < 5)
-                value = 5;
-            if (value > 100)
-                value = 100;
-            logger::info("DashboardUIManager: ne_setStoryEvalEventTailSize({}) received", value);
-            AsyncDispatch::MarshalToMainThread([value] {
-                Settings::McmOverride mut;
-                mut.skyrimNetEventTailSizeForPrompt = value;
-                Settings::WriteMcmOverride(mut);
-                PushFullState();
-            });
+            ApplyIntegerSliderSetting(
+                argument, "ne_setStoryEvalEventTailSize", 5, 100, [](Settings::McmOverride& mut, int v) {
+                    mut.skyrimNetEventTailSizeForPrompt = v;
+                });
         }
 
         // Backs the Settings tab's Story-Eval Decision-Log Tail slider.
-        // Clamped to [3, 30] — floor matches the ReadIniInto clamp.
         void OnSetStoryEvalDecisionLogTailSize(const char* argument)
         {
-            const std::string arg = argument ? argument : "";
-            int value = 0;
-            const auto* first = arg.data();
-            const auto* last = arg.data() + arg.size();
-            auto [ptr, ec] = std::from_chars(first, last, value);
-            if (ec != std::errc{} || ptr != last) {
-                logger::warn("DashboardUIManager: ne_setStoryEvalDecisionLogTailSize: malformed payload '{}'", arg);
-                return;
-            }
-            if (value < 3)
-                value = 3;
-            if (value > 30)
-                value = 30;
-            logger::info("DashboardUIManager: ne_setStoryEvalDecisionLogTailSize({}) received", value);
-            AsyncDispatch::MarshalToMainThread([value] {
-                Settings::McmOverride mut;
-                mut.decisionLogTailSizeForPrompt = value;
-                Settings::WriteMcmOverride(mut);
-                PushFullState();
-            });
+            ApplyIntegerSliderSetting(
+                argument, "ne_setStoryEvalDecisionLogTailSize", 3, 30, [](Settings::McmOverride& mut, int v) {
+                    mut.decisionLogTailSizeForPrompt = v;
+                });
         }
 
         // Backs the Settings tab's Action-Select Recent Events Cap slider.
-        // Clamped to [3, 30] — floor matches the ReadIniInto clamp; the
-        // upper bound is a hedge against a browser-side glitch, not a
-        // hard engine limit.
         void OnSetActionSelectEventCap(const char* argument)
         {
-            const std::string arg = argument ? argument : "";
-            int value = 0;
-            const auto* first = arg.data();
-            const auto* last = arg.data() + arg.size();
-            auto [ptr, ec] = std::from_chars(first, last, value);
-            if (ec != std::errc{} || ptr != last) {
-                logger::warn("DashboardUIManager: ne_setActionSelectEventCap: malformed payload '{}'", arg);
-                return;
-            }
-            if (value < 3)
-                value = 3;
-            if (value > 30)
-                value = 30;
-            logger::info("DashboardUIManager: ne_setActionSelectEventCap({}) received", value);
-            AsyncDispatch::MarshalToMainThread([value] {
-                Settings::McmOverride mut;
-                mut.actionSelectEventRenderCap = value;
-                Settings::WriteMcmOverride(mut);
-                PushFullState();
-            });
+            ApplyIntegerSliderSetting(
+                argument, "ne_setActionSelectEventCap", 3, 30, [](Settings::McmOverride& mut, int v) {
+                    mut.actionSelectEventRenderCap = v;
+                });
         }
 
         // Backs the Settings tab's Action-Select Letter Memory Cap slider.
-        // Clamped to [3, 15] — floor matches the ReadIniInto clamp.
         void OnSetActionSelectLetterMemoryCap(const char* argument)
         {
-            const std::string arg = argument ? argument : "";
-            int value = 0;
-            const auto* first = arg.data();
-            const auto* last = arg.data() + arg.size();
-            auto [ptr, ec] = std::from_chars(first, last, value);
-            if (ec != std::errc{} || ptr != last) {
-                logger::warn("DashboardUIManager: ne_setActionSelectLetterMemoryCap: malformed payload '{}'", arg);
-                return;
-            }
-            if (value < 3)
-                value = 3;
-            if (value > 15)
-                value = 15;
-            logger::info("DashboardUIManager: ne_setActionSelectLetterMemoryCap({}) received", value);
-            AsyncDispatch::MarshalToMainThread([value] {
-                Settings::McmOverride mut;
-                mut.actionSelectLetterMemoryRenderCap = value;
-                Settings::WriteMcmOverride(mut);
-                PushFullState();
-            });
+            ApplyIntegerSliderSetting(
+                argument, "ne_setActionSelectLetterMemoryCap", 3, 15, [](Settings::McmOverride& mut, int v) {
+                    mut.actionSelectLetterMemoryRenderCap = v;
+                });
         }
 
         // Backs the Settings tab's Action-Select Visit Memory Cap slider.
-        // Clamped to [3, 15] — floor matches the ReadIniInto clamp.
         void OnSetActionSelectVisitMemoryCap(const char* argument)
         {
-            const std::string arg = argument ? argument : "";
-            int value = 0;
-            const auto* first = arg.data();
-            const auto* last = arg.data() + arg.size();
-            auto [ptr, ec] = std::from_chars(first, last, value);
-            if (ec != std::errc{} || ptr != last) {
-                logger::warn("DashboardUIManager: ne_setActionSelectVisitMemoryCap: malformed payload '{}'", arg);
-                return;
-            }
-            if (value < 3)
-                value = 3;
-            if (value > 15)
-                value = 15;
-            logger::info("DashboardUIManager: ne_setActionSelectVisitMemoryCap({}) received", value);
-            AsyncDispatch::MarshalToMainThread([value] {
-                Settings::McmOverride mut;
-                mut.actionSelectVisitMemoryRenderCap = value;
-                Settings::WriteMcmOverride(mut);
-                PushFullState();
-            });
+            ApplyIntegerSliderSetting(
+                argument, "ne_setActionSelectVisitMemoryCap", 3, 15, [](Settings::McmOverride& mut, int v) {
+                    mut.actionSelectVisitMemoryRenderCap = v;
+                });
         }
 
-        // Backs the Settings tab's Minimum Phase Duration slider. Payload
-        // is a bare integer string, clamped to `[0, 600]`. Same shape as
-        // OnSetTickInterval — one integer, one INI write, one push.
+        // Backs the Settings tab's Minimum Phase Duration slider.
         void OnSetMinPhaseDuration(const char* argument)
         {
-            const std::string arg = argument ? argument : "";
-            int value = 0;
-            const auto* first = arg.data();
-            const auto* last = arg.data() + arg.size();
-            auto [ptr, ec] = std::from_chars(first, last, value);
-            if (ec != std::errc{} || ptr != last) {
-                logger::warn("DashboardUIManager: ne_setMinPhaseDuration: malformed payload '{}'", arg);
-                return;
-            }
-            if (value < 0)
-                value = 0;
-            if (value > 600)
-                value = 600;
-            logger::info("DashboardUIManager: ne_setMinPhaseDuration({}) received", value);
-            AsyncDispatch::MarshalToMainThread([value] {
-                Settings::McmOverride mut;
-                mut.minPhaseDurationSeconds = value;
-                Settings::WriteMcmOverride(mut);
-                PushFullState();
-            });
+            ApplyIntegerSliderSetting(
+                argument, "ne_setMinPhaseDuration", 0, 600, [](Settings::McmOverride& mut, int v) {
+                    mut.minPhaseDurationSeconds = v;
+                });
         }
 
         // Backs the Settings tab's five per-phase duration sliders.
