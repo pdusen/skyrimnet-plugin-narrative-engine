@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -98,6 +99,17 @@ namespace NarrativeEngine::SenderCandidatePool
         // memory tails (VisitComposer wants to allow this since visits
         // work from live actor context rather than a memory-driven brief).
         bool requireMemories = true;
+
+        // Optional per-candidate memory-watermark provider. Called with
+        // a candidate's FormID; the returned optional (if set) is the
+        // absolute game-hours cutoff *below which* that candidate's
+        // memories are excluded from their tail. Semantics: "this NPC
+        // was previously used as a sender for this beat; memories
+        // older than that use are ineligible to re-motivate a fresh
+        // beat with the same sender." See the per-beat watermark
+        // tables in NPCLetterBeat / NPCVisitBeat. When null / nullopt,
+        // no watermark filtering is applied.
+        std::function<std::optional<double>(RE::FormID)> memoryWatermarkProvider;
     };
 
     // Main-thread. Full pool build: engagement fetch + universal viability

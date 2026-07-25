@@ -37,6 +37,17 @@ namespace NarrativeEngine
         return elapsed < static_cast<double>(cooldownHours);
     }
 
+    std::optional<double> SenderCooldownTable::GetStampGameHours(RE::FormID senderFormID) const
+    {
+        if (senderFormID == 0)
+            return std::nullopt;
+        std::scoped_lock lock(mutex_);
+        auto it = stamps_.find(senderFormID);
+        if (it == stamps_.end())
+            return std::nullopt;
+        return it->second;
+    }
+
     void SenderCooldownTable::Clear()
     {
         std::scoped_lock lock(mutex_);

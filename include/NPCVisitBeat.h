@@ -6,6 +6,8 @@
 
 #include <RE/Skyrim.h>
 
+#include <optional>
+
 // NPCVisitBeat — the Narrative Beat System's face-to-face social beat.
 //
 // A known NPC (chosen by the beat-select LLM from the player's recent
@@ -84,10 +86,28 @@ namespace NarrativeEngine
         // do NOT stamp.
         void OnVisitCompleted(RE::FormID senderNpcFormID);
 
+        // Stamp the per-sender memory watermark at Valediction entry
+        // — the moment we know the beat has landed. Independent of
+        // OnVisitCompleted's cooldown stamp; the two solve different
+        // problems (cooldown throttles frequency; watermark filters
+        // memory eligibility). Rolled-back / hard-aborted visits
+        // deliberately do NOT stamp.
+        void OnVisitReachedValediction(RE::FormID senderNpcFormID);
+
         // Filter helper — returns true if this sender is currently
         // within their per-sender cooldown window. Called by
         // VisitComposer during candidate viability filtering.
         bool IsSenderOnCooldown(RE::FormID senderNpcFormID);
+
+        // Per-sender memory watermark accessor. Returns the absolute
+        // game-hours of this sender's last completed visit (Valediction
+        // entry), or nullopt if this sender has never visited through
+        // the beat. Used by SenderCandidatePool as a hard filter that
+        // drops memories predating the previous visit — prevents
+        // re-selecting the same sender to visit about the same memory
+        // a second time. Independent of IsSenderOnCooldown, which
+        // decays; the watermark does not.
+        std::optional<double> GetSenderMemoryWatermarkGameHours(RE::FormID senderNpcFormID);
     } // namespace NPCVisitBeat_Cooldowns
 
     namespace NPCVisitBeat_Persistence

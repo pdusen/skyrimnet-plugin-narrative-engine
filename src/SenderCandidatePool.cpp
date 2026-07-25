@@ -1,6 +1,7 @@
 #include <SenderCandidatePool.h>
 
 #include <AliasWalkFilter.h>
+#include <EngineUtils.h>
 #include <LLMTextSanitizer.h>
 #include <logger.h>
 #include <Settings.h>
@@ -43,11 +44,21 @@ namespace NarrativeEngine::SenderCandidatePool
         // ascending age_hours (newest first), truncate to
         // maxMemoriesPerCandidate, then reverse for
         // oldest-to-newest presentation.
-        nlohmann::json FilterAndShapeMemories(nlohmann::json raw, const BuildOptions& opts)
+        //
+        // `watermarkGameHours` (if set) is the per-candidate memory
+        // watermark: memories whose absolute game-hours fall AT OR
+        // BELOW the watermark are dropped. Absolute time is derived
+        // as `nowGameHours - age_hours`; `nowGameHours` is captured
+        // once per call rather than per-memory.
+        nlohmann::json FilterAndShapeMemories(nlohmann::json raw,
+                                              const BuildOptions& opts,
+                                              std::optional<double> watermarkGameHours)
         {
             if (!raw.is_array()) {
                 return nlohmann::json::array();
             }
+
+            const double nowGameHours = watermarkGameHours.has_value() ? EngineUtils::GetCurrentGameHours() : 0.0;
 
             auto trimmed = nlohmann::json::array();
             for (auto& m : raw) {
@@ -74,6 +85,21 @@ namespace NarrativeEngine::SenderCandidatePool
                 }
                 if (importance < opts.memoryImportanceThreshold) {
                     continue;
+                }
+
+                // Per-sender memory-watermark filter. Drops memories
+                // whose absolute game-hours predate the watermark —
+                // used to exclude memories that were already the
+                // subject of an earlier beat with this sender.
+                if (watermarkGameHours.has_value()) {
+                    double ageHours = 0.0;
+                    if (auto it = m.find("age_hours"); it != m.end() && it->is_number()) {
+                        ageHours = it->get<double>();
+                    }
+                    const double absoluteGameHours = nowGameHours - ageHours;
+                    if (absoluteGameHours <= *watermarkGameHours) {
+                        continue;
+                    }
                 }
 
                 nlohmann::json out = nlohmann::json::object();
@@ -116,7 +142,10 @@ namespace NarrativeEngine::SenderCandidatePool
 
         // Fetch a candidate's memory tail from SkyrimNet, then run it
         // through FilterAndShapeMemories. Returns an empty array on any
-        // failure or when SkyrimNet reports nothing for this actor.
+        // failure or when SkyrimNet reports nothing for this actor. The
+        // per-sender watermark (if the caller supplied a provider) is
+        // resolved here so FilterAndShapeMemories stays a pure shape
+        // over its inputs.
         nlohmann::json FetchAndShapeMemories(RE::FormID formId, const std::string& playerName, const BuildOptions& opts)
         {
             const int fetchCap = std::max(1, opts.maxMemoriesPerCandidate * std::max(1, opts.memoryFetchMultiplier));
@@ -126,7 +155,11 @@ namespace NarrativeEngine::SenderCandidatePool
             if (parsed.is_discarded() || !parsed.is_array()) {
                 return nlohmann::json::array();
             }
-            return FilterAndShapeMemories(std::move(parsed), opts);
+            std::optional<double> watermark;
+            if (opts.memoryWatermarkProvider) {
+                watermark = opts.memoryWatermarkProvider(formId);
+            }
+            return FilterAndShapeMemories(std::move(parsed), opts, watermark);
         }
 
         // Common walker: fetches engagement, then for each entry runs the

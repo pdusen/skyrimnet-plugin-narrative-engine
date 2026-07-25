@@ -158,6 +158,20 @@ namespace NarrativeEngine
         double g_lastDispatchGameHours = 0.0;
         SenderCooldownTable g_senderCooldowns;
 
+        // Per-sender memory watermark. Stamped when a letter to that
+        // sender is delivered (recorded AFTER the delivery memory is
+        // written to SkyrimNet so that memory itself falls below the
+        // watermark on subsequent candidate builds). Used by the
+        // SenderCandidatePool memory filter to exclude memories that
+        // predate the previous letter — prevents "Faralda's already
+        // written about that" duplicate-topic follow-ups.
+        //
+        // Storage shape is identical to the cooldown table, so we
+        // reuse SenderCooldownTable purely for its map + persistence
+        // machinery. The `IsOnCooldown` semantics on this instance are
+        // unused; callers go through GetStampGameHours() instead.
+        SenderCooldownTable g_senderMemoryWatermarks;
+
         // -----------------------------------------------------------------
         // Session state (not persisted; reset by OnStart / OnRevert)
         //
@@ -887,26 +901,49 @@ namespace NarrativeEngine
             if (senderNpcFormID == 0)
                 return;
             g_senderCooldowns.Stamp(senderNpcFormID);
-            logger::info("NPCLetterBeat: per-sender cooldown stamp set for 0x{:08X}", senderNpcFormID);
+            // LetterPool::MarkDelivered runs FireMemoryWrite *before*
+            // calling this function, so the watermark stamp lands
+            // strictly after the delivery memory's own timestamp. The
+            // candidate-pool filter drops memories whose absolute
+            // game-hours fall at or below the watermark, so the
+            // delivery memory itself is filtered out of the sender's
+            // memory tail on the next letter-beat candidate build —
+            // "I sent Faralda a letter" doesn't become fresh
+            // ammunition for another letter to Faralda.
+            g_senderMemoryWatermarks.Stamp(senderNpcFormID);
+            logger::info("NPCLetterBeat: per-sender cooldown + memory watermark stamped for 0x{:08X}", senderNpcFormID);
         }
 
         bool IsSenderOnCooldown(RE::FormID senderNpcFormID)
         {
             return g_senderCooldowns.IsOnCooldown(senderNpcFormID, Settings::Get().letterSenderCooldownGameHours);
         }
+
+        std::optional<double> GetSenderMemoryWatermarkGameHours(RE::FormID senderNpcFormID)
+        {
+            return g_senderMemoryWatermarks.GetStampGameHours(senderNpcFormID);
+        }
     } // namespace NPCLetterBeat_Cooldowns
 
     // ---------------------------------------------------------------------
-    // Cosave — 'NBLP' record, version 1.
-    // Layout:
+    // Cosave — 'NBLP' record.
+    // Layout (v2, current):
     //   double lastDispatchGameHours
-    //   u32    senderStampCount
-    //   [FormID(u32) + stamp(double)] * senderStampCount
+    //   u32    senderCooldownCount
+    //   [FormID(u32) + stamp(double)] * senderCooldownCount
+    //   u32    senderMemoryWatermarkCount
+    //   [FormID(u32) + stamp(double)] * senderMemoryWatermarkCount
+    // Layout (v1, legacy — accepted on load, promoted to v2 in memory):
+    //   double lastDispatchGameHours
+    //   u32    senderCooldownCount
+    //   [FormID(u32) + stamp(double)] * senderCooldownCount
+    // v1 loads leave the watermark table empty; the first delivery of
+    // each sender on the loaded save re-arms the filter from there.
     // ---------------------------------------------------------------------
 
     namespace NPCLetterBeat_Persistence
     {
-        constexpr std::uint32_t kRecordVersion = 1;
+        constexpr std::uint32_t kRecordVersion = 2;
 
         void OnSave(SKSE::SerializationInterface* intfc)
         {
@@ -923,13 +960,14 @@ namespace NarrativeEngine
             }
             intfc->WriteRecordData(lastDispatch);
             g_senderCooldowns.Serialize(intfc);
+            g_senderMemoryWatermarks.Serialize(intfc);
         }
 
         void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length)
         {
             if (!intfc)
                 return;
-            if (version != kRecordVersion) {
+            if (version != 1 && version != kRecordVersion) {
                 logger::warn("NPCLetterBeat::OnLoad: unknown version {} (length={}); "
                              "clearing cooldown state",
                              version,
@@ -950,13 +988,26 @@ namespace NarrativeEngine
                     std::scoped_lock lock(g_cooldownMutex);
                     g_lastDispatchGameHours = 0.0;
                 }
+                g_senderMemoryWatermarks.Clear();
                 return;
+            }
+            // Watermark table was added in v2. Older saves have no
+            // trailing bytes; skip the read and leave the in-memory
+            // table empty.
+            if (version >= 2) {
+                if (!g_senderMemoryWatermarks.Deserialize(intfc)) {
+                    logger::error("NPCLetterBeat::OnLoad: sender-memory-watermark deserialize failed; cleared");
+                    g_senderMemoryWatermarks.Clear();
+                }
+            } else {
+                g_senderMemoryWatermarks.Clear();
             }
             {
                 std::scoped_lock lock(g_cooldownMutex);
                 g_lastDispatchGameHours = lastDispatch;
             }
-            logger::info("NPCLetterBeat::OnLoad: restored lastDispatchGameHours={:.2f}", lastDispatch);
+            logger::info(
+                "NPCLetterBeat::OnLoad: restored lastDispatchGameHours={:.2f} (record v{})", lastDispatch, version);
         }
 
         void OnRevert()
@@ -966,6 +1017,7 @@ namespace NarrativeEngine
                 g_lastDispatchGameHours = 0.0;
             }
             g_senderCooldowns.Clear();
+            g_senderMemoryWatermarks.Clear();
         }
     } // namespace NPCLetterBeat_Persistence
 } // namespace NarrativeEngine

@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 // NPCLetterBeat — the Narrative Beat System's Either-polarity "someone
 // writes to you" beat. Composes a letter via LetterComposer, then hands
@@ -107,6 +108,16 @@ namespace NarrativeEngine
         // within their per-sender cooldown window. Called by
         // LetterComposer during candidate filtering.
         bool IsSenderOnCooldown(RE::FormID senderNpcFormID);
+
+        // Per-sender memory watermark accessor. Returns the absolute
+        // game-hours at which the previous letter to this sender was
+        // delivered, or nullopt if this sender has never received a
+        // letter through the beat. Used by SenderCandidatePool as a
+        // hard filter that drops memories predating the previous
+        // delivery — prevents re-selecting the same sender to write
+        // about the same memory a second time. Independent of
+        // IsSenderOnCooldown, which decays; the watermark does not.
+        std::optional<double> GetSenderMemoryWatermarkGameHours(RE::FormID senderNpcFormID);
     } // namespace NPCLetterBeat_Cooldowns
 
     namespace NPCLetterBeat_Persistence

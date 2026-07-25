@@ -272,6 +272,13 @@ namespace NarrativeEngine::VisitComposer
             opts.memoryFetchMultiplier = 4;
             opts.shuffleResult = false;
             opts.requireMemories = false;
+            // Same per-sender memory watermark as the action-select
+            // candidate build, so the compose prompt only sees
+            // memories from after the previous visit landed. Without
+            // this, the visit brief would echo prior-visit topics.
+            opts.memoryWatermarkProvider = [](RE::FormID id) {
+                return NPCVisitBeat_Cooldowns::GetSenderMemoryWatermarkGameHours(id);
+            };
             opts.extraViabilityFilter = [formId](RE::Actor* actor, std::string* skipReasonOut) -> bool {
                 if (!actor) {
                     if (skipReasonOut)
@@ -351,11 +358,16 @@ namespace NarrativeEngine::VisitComposer
         opts.excludeDiaryEntries = false; // brief benefits from diary-style memories
         opts.memoryFetchMultiplier = 4;
         opts.shuffleResult = true;
-        // Visits keep senders whose memory tail is thin — live
-        // actor context and the composer's briefing carry the
-        // narrative weight, unlike letters where the letter body
-        // depends on concrete memory anchors.
-        opts.requireMemories = false;
+        // Visits require at least one memory to reach the action-
+        // select prompt: with the per-sender memory watermark filter
+        // in place, an NPC whose entire memory tail predates their
+        // last visit has no legitimate topic to motivate a fresh
+        // visit. Dropping them from the candidate list is the
+        // intended outcome.
+        opts.requireMemories = true;
+        opts.memoryWatermarkProvider = [](RE::FormID id) {
+            return NPCVisitBeat_Cooldowns::GetSenderMemoryWatermarkGameHours(id);
+        };
         opts.extraViabilityFilter = &VisitViabilityFilter;
 
         auto raw = SenderCandidatePool::Build(opts);

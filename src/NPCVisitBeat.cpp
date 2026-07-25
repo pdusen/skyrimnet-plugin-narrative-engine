@@ -152,6 +152,17 @@ namespace NarrativeEngine
         // Per-sender cooldowns — persisted via NPCVisitBeat_Persistence 'NBVS'.
         SenderCooldownTable g_senderCooldowns;
 
+        // Per-sender memory watermark. Stamped at Valediction entry
+        // (the moment we know the visit's beat has landed). The
+        // SenderCandidatePool memory filter drops any memories whose
+        // absolute game-hours are at or below this stamp — used to
+        // exclude prior memories from re-motivating a follow-up visit
+        // with the same sender about the same topic. Same storage
+        // shape as the cooldown table; reused purely for its map +
+        // persistence machinery. Callers use GetStampGameHours()
+        // instead of IsOnCooldown().
+        SenderCooldownTable g_senderMemoryWatermarks;
+
         // ---- Session state (not persisted; reset by OnStart / OnRevert)
         //
         // The beat's COMPOSE arm runs through a sub-state machine driven
@@ -646,6 +657,15 @@ namespace NarrativeEngine
             if (!g_visitQuest)
                 return;
             const auto snap = VisitState::GetSnapshot();
+            // Watermark the sender's memory pool at Valediction entry.
+            // Any dialogue-turn memories from this visit's Discuss
+            // phase have absolute game-hours strictly less than this
+            // stamp, so they filter out of the sender's memory tail on
+            // subsequent visit-beat candidate builds — the same
+            // sender can't be re-picked to visit about a topic they
+            // already visited about. Deliberately AFTER the guard
+            // above so rolled-back / hard-aborted visits don't stamp.
+            NPCVisitBeat_Cooldowns::OnVisitReachedValediction(snap.senderFormID);
             logger::info("NPCVisitBeat: Valediction entry (nudge_count={}, "
                          "closing_already_spoken={})",
                          snap.ignoreNudgeCount,
@@ -1631,15 +1651,43 @@ namespace NarrativeEngine
             logger::info("NPCVisitBeat: per-sender cooldown stamp set for 0x{:08X}", senderNpcFormID);
         }
 
+        void OnVisitReachedValediction(RE::FormID senderNpcFormID)
+        {
+            if (senderNpcFormID == 0)
+                return;
+            g_senderMemoryWatermarks.Stamp(senderNpcFormID);
+            logger::info("NPCVisitBeat: per-sender memory watermark stamped at Valediction for 0x{:08X}",
+                         senderNpcFormID);
+        }
+
         bool IsSenderOnCooldown(RE::FormID senderNpcFormID)
         {
             return g_senderCooldowns.IsOnCooldown(senderNpcFormID, Settings::Get().visitSenderCooldownGameHours);
         }
+
+        std::optional<double> GetSenderMemoryWatermarkGameHours(RE::FormID senderNpcFormID)
+        {
+            return g_senderMemoryWatermarks.GetStampGameHours(senderNpcFormID);
+        }
     } // namespace NPCVisitBeat_Cooldowns
+
+    // ---------------------------------------------------------------
+    // Cosave — 'NBVS' record.
+    // Layout (v2, current):
+    //   u32    senderCooldownCount
+    //   [FormID(u32) + stamp(double)] * senderCooldownCount
+    //   u32    senderMemoryWatermarkCount
+    //   [FormID(u32) + stamp(double)] * senderMemoryWatermarkCount
+    // Layout (v1, legacy — accepted on load):
+    //   u32    senderCooldownCount
+    //   [FormID(u32) + stamp(double)] * senderCooldownCount
+    // v1 loads leave the watermark table empty; the first Valediction
+    // reached on the loaded save re-arms the filter from there.
+    // ---------------------------------------------------------------
 
     namespace NPCVisitBeat_Persistence
     {
-        constexpr std::uint32_t kRecordVersion = 1;
+        constexpr std::uint32_t kRecordVersion = 2;
 
         void OnSave(SKSE::SerializationInterface* intfc)
         {
@@ -1650,13 +1698,14 @@ namespace NarrativeEngine
                 return;
             }
             g_senderCooldowns.Serialize(intfc);
+            g_senderMemoryWatermarks.Serialize(intfc);
         }
 
         void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length)
         {
             if (!intfc)
                 return;
-            if (version != kRecordVersion) {
+            if (version != 1 && version != kRecordVersion) {
                 logger::warn("NPCVisitBeat::OnLoad: unknown version {} (length={}); "
                              "clearing cooldown state",
                              version,
@@ -1667,14 +1716,27 @@ namespace NarrativeEngine
             if (!g_senderCooldowns.Deserialize(intfc)) {
                 logger::error("NPCVisitBeat::OnLoad: sender-cooldown deserialize failed; "
                               "cleared");
+                g_senderMemoryWatermarks.Clear();
                 return;
             }
-            logger::info("NPCVisitBeat::OnLoad: restored per-sender cooldowns");
+            // Watermark table was added in v2; older saves have no
+            // trailing bytes so we skip the read and leave the table
+            // empty.
+            if (version >= 2) {
+                if (!g_senderMemoryWatermarks.Deserialize(intfc)) {
+                    logger::error("NPCVisitBeat::OnLoad: sender-memory-watermark deserialize failed; cleared");
+                    g_senderMemoryWatermarks.Clear();
+                }
+            } else {
+                g_senderMemoryWatermarks.Clear();
+            }
+            logger::info("NPCVisitBeat::OnLoad: restored per-sender cooldowns (record v{})", version);
         }
 
         void OnRevert()
         {
             g_senderCooldowns.Clear();
+            g_senderMemoryWatermarks.Clear();
         }
     } // namespace NPCVisitBeat_Persistence
 } // namespace NarrativeEngine

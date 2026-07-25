@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 
 #include <RE/T/TESForm.h>
@@ -50,6 +51,15 @@ namespace NarrativeEngine
         // (cooldown disabled) and `senderFormID == 0` both return
         // false without touching storage.
         bool IsOnCooldown(RE::FormID senderFormID, int cooldownHours) const;
+
+        // Return the raw game-hours stamp for `senderFormID`, or
+        // nullopt if this sender has never been stamped. Used by the
+        // memory-watermark filtering path — semantics are "memories
+        // recorded before this game-hours value should be excluded
+        // from the sender's memory tail" (a hard filter, distinct
+        // from IsOnCooldown's decaying-window semantics). Table is
+        // reused for that role rather than duplicating storage.
+        std::optional<double> GetStampGameHours(RE::FormID senderFormID) const;
 
         void Clear();
 
