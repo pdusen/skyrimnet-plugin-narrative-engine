@@ -202,6 +202,45 @@ namespace NarrativeEngine
         std::atomic<double> g_lastSampledEventGameTime = 0.0;
         std::atomic<RE::FormID> g_discussSenderFormID = 0;
 
+        // One-shot latch for a "narration + SetStage(Discuss)" dispatch
+        // from Salutation or ReEngage. The Papyrus VM stage change is
+        // async, so a bare stage tick keeps re-firing the dispatch every
+        // ~1s until the stage lands, which turns the sender's opening /
+        // resumption narration into a spam loop. The latch is set the
+        // first time the dispatch fires and cleared automatically when
+        // the observed stage moves off the latching stage. While set,
+        // the tick emits a periodic warn (every 5s) and escalates to
+        // error at 30s to surface a stuck loop. Not persisted — resets
+        // on OnStart / OnRevert.
+        struct StageTransitionLatch
+        {
+            std::atomic<bool> dispatched{false};
+            std::atomic<double> dispatchedAtNormalSec{0.0};
+            std::atomic<double> lastWarningAtNormalSec{0.0};
+
+            void Reset()
+            {
+                dispatched.store(false, std::memory_order_release);
+                dispatchedAtNormalSec.store(0.0, std::memory_order_release);
+                lastWarningAtNormalSec.store(0.0, std::memory_order_release);
+            }
+
+            bool IsDispatched() const
+            {
+                return dispatched.load(std::memory_order_acquire);
+            }
+
+            void MarkDispatched(double nowNormalSec)
+            {
+                dispatched.store(true, std::memory_order_release);
+                dispatchedAtNormalSec.store(nowNormalSec, std::memory_order_release);
+                lastWarningAtNormalSec.store(nowNormalSec, std::memory_order_release);
+            }
+        };
+
+        StageTransitionLatch g_salutationDiscussLatch;
+        StageTransitionLatch g_reengageDiscussLatch;
+
         // RUNNING tick cadence — one marshaled main-thread stage tick
         // every kRunningCheckEveryNTicks worker ticks (4 = ~1s at
         // 250ms).
@@ -236,6 +275,8 @@ namespace NarrativeEngine
             g_discussSenderFormID.store(0, std::memory_order_release);
             g_runningTickCount = 0;
             g_runningTaskInFlight.store(false, std::memory_order_release);
+            g_salutationDiscussLatch.Reset();
+            g_reengageDiscussLatch.Reset();
             {
                 std::scoped_lock lock(g_hardAbortReasonMutex);
                 g_hardAbortReason.clear();
@@ -952,6 +993,43 @@ namespace NarrativeEngine
 
         // ---- RUNNING stage-tick (main thread; called every ~1s) ----
 
+        // Emit a periodic warn/error while a stage-transition dispatch
+        // is still waiting for the Papyrus VM to land. Called from a
+        // stage handler AFTER it has already fired its transition
+        // dispatch. Warn every 5s of Normal-mode time, escalating to
+        // error at 30s.
+        void LogPendingStageTransition(const char* stageName,
+                                       std::uint32_t expectedStageAfter,
+                                       std::uint32_t currentStageID,
+                                       StageTransitionLatch& latch)
+        {
+            const auto now = NormalElapsedNow();
+            const auto lastWarn = latch.lastWarningAtNormalSec.load();
+            if (now - lastWarn < 5.0)
+                return;
+            const auto dispatchedAt = latch.dispatchedAtNormalSec.load();
+            const auto elapsed = dispatchedAt > 0.0 ? (now - dispatchedAt) : 0.0;
+            latch.lastWarningAtNormalSec.store(now, std::memory_order_release);
+            if (elapsed >= 30.0) {
+                logger::error("NPCVisitBeat[{}]: SetStage({}) dispatched {:.1f}s ago "
+                              "(Normal-mode) but quest stage is still {} — Papyrus "
+                              "VM stage change has not landed; suppressing repeat "
+                              "dispatch to avoid narration spam loop",
+                              stageName,
+                              expectedStageAfter,
+                              elapsed,
+                              currentStageID);
+            } else {
+                logger::warn("NPCVisitBeat[{}]: SetStage({}) dispatched {:.1f}s ago "
+                             "(Normal-mode) but quest stage is still {} — waiting "
+                             "for Papyrus VM (suppressing repeat dispatch)",
+                             stageName,
+                             expectedStageAfter,
+                             elapsed,
+                             currentStageID);
+            }
+        }
+
         void MainThreadRunningTick(TickMode mode)
         {
             g_runningTaskInFlight.store(false, std::memory_order_release);
@@ -965,10 +1043,22 @@ namespace NarrativeEngine
             const auto stage = g_visitQuest->GetCurrentStageID();
             const auto& cfg = Settings::Get();
 
+            // Clear stage-transition latches once we've moved off the
+            // latching stage — either the SetStage landed, or the stage
+            // moved elsewhere (e.g., ReEngage bounced back to OnHold).
+            if (stage != kStageSalutation)
+                g_salutationDiscussLatch.Reset();
+            if (stage != kStageReEngage)
+                g_reengageDiscussLatch.Reset();
+
             switch (stage) {
             case kStageSalutation: {
                 if (mode != TickMode::Normal)
                     return;
+                if (g_salutationDiscussLatch.IsDispatched()) {
+                    LogPendingStageTransition("SALUTATION", kStageDiscuss, stage, g_salutationDiscussLatch);
+                    return;
+                }
                 auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
                 auto* player = RE::PlayerCharacter::GetSingleton();
                 if (!senderRef || !player)
@@ -998,6 +1088,7 @@ namespace NarrativeEngine
                     const auto snap = VisitState::GetSnapshot();
                     VMDispatchRunSenderNarration(g_visitQuest, snap.narrationText);
                     QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageDiscuss);
+                    g_salutationDiscussLatch.MarkDispatched(now);
                     VisitConclusionPoll::Arm(snap);
                     g_discussSenderFormID.store(snap.senderFormID);
                     // Initialize the speech sampler cursor to now
@@ -1077,6 +1168,10 @@ namespace NarrativeEngine
             case kStageReEngage: {
                 if (mode != TickMode::Normal)
                     return;
+                if (g_reengageDiscussLatch.IsDispatched()) {
+                    LogPendingStageTransition("REENGAGE", kStageDiscuss, stage, g_reengageDiscussLatch);
+                    return;
+                }
                 const bool inDialogue = ObservePlayerInDialogue();
                 const bool inCombat = ObserveAnyCombat();
                 if (inDialogue || inCombat) {
@@ -1109,6 +1204,7 @@ namespace NarrativeEngine
                     const auto snap = VisitState::GetSnapshot();
                     VMDispatchRunSenderNarration(g_visitQuest, snap.narrationText);
                     QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageDiscuss);
+                    g_reengageDiscussLatch.MarkDispatched(now);
                     VisitConclusionPoll::Arm(snap);
                     g_discussSenderFormID.store(snap.senderFormID);
                 }
