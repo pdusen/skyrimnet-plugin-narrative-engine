@@ -37,7 +37,6 @@ namespace NarrativeEngine::LetterComposer
         // path (FetchSenderMemories, called after the sender is
         // pre-chosen and needs a fresh tail with diaries enabled).
         constexpr int kCandidateRenderCap = 12;
-        constexpr int kPerCandidateMemoryCap = 6;
 
         // How many memories to actually request from SkyrimNet per
         // candidate. SkyrimNet's `PublicGetMemoriesForActor` has no
@@ -552,10 +551,11 @@ namespace NarrativeEngine::LetterComposer
         // options (importance threshold, diary-exclude) and the letter-
         // specific extra viability rules (currently-loaded / walking-
         // distance / sender-cooldown).
+        const auto& cfg = Settings::Get();
         SenderCandidatePool::BuildOptions opts;
         opts.maxCandidates = kCandidateRenderCap;
-        opts.maxMemoriesPerCandidate = kPerCandidateMemoryCap;
-        opts.memoryImportanceThreshold = static_cast<double>(Settings::Get().letterMemoryImportanceThreshold);
+        opts.maxMemoriesPerCandidate = cfg.actionSelectLetterMemoryRenderCap;
+        opts.memoryImportanceThreshold = static_cast<double>(cfg.letterMemoryImportanceThreshold);
         opts.excludeDiaryEntries = true; // action-select tail
         opts.memoryFetchMultiplier = kMemoryFetchMultiplier;
         opts.shuffleResult = true;

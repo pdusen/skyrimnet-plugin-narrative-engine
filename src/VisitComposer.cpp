@@ -346,7 +346,7 @@ namespace NarrativeEngine::VisitComposer
 
         SenderCandidatePool::BuildOptions opts;
         opts.maxCandidates = 12;
-        opts.maxMemoriesPerCandidate = 6;
+        opts.maxMemoriesPerCandidate = cfg.actionSelectVisitMemoryRenderCap;
         // Reuse the letter's importance floor for memory quality —
         // separate visit-specific floor isn't worth wiring up.
         opts.memoryImportanceThreshold = static_cast<double>(cfg.letterMemoryImportanceThreshold);

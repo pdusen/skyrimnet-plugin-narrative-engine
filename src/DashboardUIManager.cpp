@@ -691,6 +691,86 @@ namespace NarrativeEngine::DashboardUIManager
             });
         }
 
+        // Backs the Settings tab's Action-Select Recent Events Cap slider.
+        // Clamped to [3, 30] — floor matches the ReadIniInto clamp; the
+        // upper bound is a hedge against a browser-side glitch, not a
+        // hard engine limit.
+        void OnSetActionSelectEventCap(const char* argument)
+        {
+            const std::string arg = argument ? argument : "";
+            int value = 0;
+            const auto* first = arg.data();
+            const auto* last = arg.data() + arg.size();
+            auto [ptr, ec] = std::from_chars(first, last, value);
+            if (ec != std::errc{} || ptr != last) {
+                logger::warn("DashboardUIManager: ne_setActionSelectEventCap: malformed payload '{}'", arg);
+                return;
+            }
+            if (value < 3)
+                value = 3;
+            if (value > 30)
+                value = 30;
+            logger::info("DashboardUIManager: ne_setActionSelectEventCap({}) received", value);
+            AsyncDispatch::MarshalToMainThread([value] {
+                Settings::McmOverride mut;
+                mut.actionSelectEventRenderCap = value;
+                Settings::WriteMcmOverride(mut);
+                PushFullState();
+            });
+        }
+
+        // Backs the Settings tab's Action-Select Letter Memory Cap slider.
+        // Clamped to [3, 15] — floor matches the ReadIniInto clamp.
+        void OnSetActionSelectLetterMemoryCap(const char* argument)
+        {
+            const std::string arg = argument ? argument : "";
+            int value = 0;
+            const auto* first = arg.data();
+            const auto* last = arg.data() + arg.size();
+            auto [ptr, ec] = std::from_chars(first, last, value);
+            if (ec != std::errc{} || ptr != last) {
+                logger::warn("DashboardUIManager: ne_setActionSelectLetterMemoryCap: malformed payload '{}'", arg);
+                return;
+            }
+            if (value < 3)
+                value = 3;
+            if (value > 15)
+                value = 15;
+            logger::info("DashboardUIManager: ne_setActionSelectLetterMemoryCap({}) received", value);
+            AsyncDispatch::MarshalToMainThread([value] {
+                Settings::McmOverride mut;
+                mut.actionSelectLetterMemoryRenderCap = value;
+                Settings::WriteMcmOverride(mut);
+                PushFullState();
+            });
+        }
+
+        // Backs the Settings tab's Action-Select Visit Memory Cap slider.
+        // Clamped to [3, 15] — floor matches the ReadIniInto clamp.
+        void OnSetActionSelectVisitMemoryCap(const char* argument)
+        {
+            const std::string arg = argument ? argument : "";
+            int value = 0;
+            const auto* first = arg.data();
+            const auto* last = arg.data() + arg.size();
+            auto [ptr, ec] = std::from_chars(first, last, value);
+            if (ec != std::errc{} || ptr != last) {
+                logger::warn("DashboardUIManager: ne_setActionSelectVisitMemoryCap: malformed payload '{}'", arg);
+                return;
+            }
+            if (value < 3)
+                value = 3;
+            if (value > 15)
+                value = 15;
+            logger::info("DashboardUIManager: ne_setActionSelectVisitMemoryCap({}) received", value);
+            AsyncDispatch::MarshalToMainThread([value] {
+                Settings::McmOverride mut;
+                mut.actionSelectVisitMemoryRenderCap = value;
+                Settings::WriteMcmOverride(mut);
+                PushFullState();
+            });
+        }
+
         // Backs the Settings tab's Minimum Phase Duration slider. Payload
         // is a bare integer string, clamped to `[0, 600]`. Same shape as
         // OnSetTickInterval — one integer, one INI write, one push.
@@ -854,6 +934,10 @@ namespace NarrativeEngine::DashboardUIManager
         PrismaUI_API::RegisterJSListener(g_view, "ne_cancelHotkeyRebind", &OnCancelHotkeyRebind);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setLetterComposeMemoryCap", &OnSetLetterComposeMemoryCap);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setLetterComposeDialogueCap", &OnSetLetterComposeDialogueCap);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setActionSelectEventCap", &OnSetActionSelectEventCap);
+        PrismaUI_API::RegisterJSListener(
+            g_view, "ne_setActionSelectLetterMemoryCap", &OnSetActionSelectLetterMemoryCap);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setActionSelectVisitMemoryCap", &OnSetActionSelectVisitMemoryCap);
 
         // Hook input events for the hotkey.
         auto* inputManager = RE::BSInputDeviceManager::GetSingleton();
@@ -932,6 +1016,9 @@ namespace NarrativeEngine::DashboardUIManager
                  }},
                 {"letter_compose_memory_render_cap", cfg.letterComposeMemoryRenderCap},
                 {"letter_compose_dialogue_render_cap", cfg.letterComposeDialogueRenderCap},
+                {"action_select_event_render_cap", cfg.actionSelectEventRenderCap},
+                {"action_select_letter_memory_render_cap", cfg.actionSelectLetterMemoryRenderCap},
+                {"action_select_visit_memory_render_cap", cfg.actionSelectVisitMemoryRenderCap},
             };
         }
 

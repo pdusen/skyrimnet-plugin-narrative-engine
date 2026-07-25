@@ -269,8 +269,18 @@ namespace NarrativeEngine::Settings
         // these down to shrink the rendered prompt. The candidate-pool
         // memory tail (which drives the beat-select prompt, not the
         // compose prompt) uses its own fixed cap and is not affected.
-        int letterComposeMemoryRenderCap = 6;          // max sender.memories entries
-        int letterComposeDialogueRenderCap = 25;       // max sender.recent_dialogue entries
+        int letterComposeMemoryRenderCap = 6;    // max sender.memories entries
+        int letterComposeDialogueRenderCap = 25; // max sender.recent_dialogue entries
+
+        // Action-select prompt content caps — bound how much rendered
+        // context lands in narrative_engine_action_select.prompt (the
+        // beat-select prompt that picks which action fires). Same
+        // motivation as the compose caps above: shrink the rendered
+        // prompt for tight-context local LLMs.
+        int actionSelectEventRenderCap = 10;       // max recent_events entries
+        int actionSelectLetterMemoryRenderCap = 6; // memories per letter sender candidate
+        int actionSelectVisitMemoryRenderCap = 6;  // memories per visit sender candidate
+
         int letterPoolSize = 20;                       // informational; ESP defines the actual 20 forms
         int letterDispatchVerifyDelaySeconds = 5;      // grace window before RUNNING gives up on the courier handoff
         int letterPendingDeliveryTimeoutSeconds = 600; // load-time demotion gate for stuck PendingDelivery slots
@@ -401,6 +411,9 @@ namespace NarrativeEngine::Settings
         std::optional<bool> hotkeyAlt;
         std::optional<int> letterComposeMemoryRenderCap;
         std::optional<int> letterComposeDialogueRenderCap;
+        std::optional<int> actionSelectEventRenderCap;
+        std::optional<int> actionSelectLetterMemoryRenderCap;
+        std::optional<int> actionSelectVisitMemoryRenderCap;
     };
 
     // Read the plugin INI, then apply any MCM-managed override, and

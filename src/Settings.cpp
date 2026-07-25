@@ -233,6 +233,12 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("Beats", "iLetterComposeMemoryRenderCap", dst.letterComposeMemoryRenderCap));
             dst.letterComposeDialogueRenderCap = static_cast<int>(
                 ini.GetLongValue("Beats", "iLetterComposeDialogueRenderCap", dst.letterComposeDialogueRenderCap));
+            dst.actionSelectEventRenderCap = static_cast<int>(
+                ini.GetLongValue("Beats", "iActionSelectEventRenderCap", dst.actionSelectEventRenderCap));
+            dst.actionSelectLetterMemoryRenderCap = static_cast<int>(
+                ini.GetLongValue("Beats", "iActionSelectLetterMemoryRenderCap", dst.actionSelectLetterMemoryRenderCap));
+            dst.actionSelectVisitMemoryRenderCap = static_cast<int>(
+                ini.GetLongValue("Beats", "iActionSelectVisitMemoryRenderCap", dst.actionSelectVisitMemoryRenderCap));
             // Enforce per-setting floors on the compose caps regardless
             // of source (plugin INI, MCM override, or a hand-edited file
             // that bypassed the dashboard sliders). Sub-floor values
@@ -244,6 +250,16 @@ namespace NarrativeEngine::Settings
                 dst.letterComposeMemoryRenderCap = 3;
             if (dst.letterComposeDialogueRenderCap < 5)
                 dst.letterComposeDialogueRenderCap = 5;
+            // Same floor discipline for the action-select caps. Event
+            // floor is 3 (default 10). Letter/visit memory floors are
+            // 3 (default 6) — matches the compose-side letter memory
+            // floor for consistency.
+            if (dst.actionSelectEventRenderCap < 3)
+                dst.actionSelectEventRenderCap = 3;
+            if (dst.actionSelectLetterMemoryRenderCap < 3)
+                dst.actionSelectLetterMemoryRenderCap = 3;
+            if (dst.actionSelectVisitMemoryRenderCap < 3)
+                dst.actionSelectVisitMemoryRenderCap = 3;
             dst.letterPoolSize = static_cast<int>(ini.GetLongValue("Beats", "iLetterPoolSize", dst.letterPoolSize));
             dst.letterDispatchVerifyDelaySeconds = static_cast<int>(
                 ini.GetLongValue("Beats", "iLetterDispatchVerifyDelaySeconds", dst.letterDispatchVerifyDelaySeconds));
@@ -529,6 +545,25 @@ namespace NarrativeEngine::Settings
             g_config.letterComposeDialogueRenderCap = *mutations.letterComposeDialogueRenderCap;
             logger::info("Settings: MCM override write: iLetterComposeDialogueRenderCap={}",
                          *mutations.letterComposeDialogueRenderCap);
+        }
+        if (mutations.actionSelectEventRenderCap) {
+            ini.SetLongValue("Beats", "iActionSelectEventRenderCap", *mutations.actionSelectEventRenderCap);
+            g_config.actionSelectEventRenderCap = *mutations.actionSelectEventRenderCap;
+            logger::info("Settings: MCM override write: iActionSelectEventRenderCap={}",
+                         *mutations.actionSelectEventRenderCap);
+        }
+        if (mutations.actionSelectLetterMemoryRenderCap) {
+            ini.SetLongValue(
+                "Beats", "iActionSelectLetterMemoryRenderCap", *mutations.actionSelectLetterMemoryRenderCap);
+            g_config.actionSelectLetterMemoryRenderCap = *mutations.actionSelectLetterMemoryRenderCap;
+            logger::info("Settings: MCM override write: iActionSelectLetterMemoryRenderCap={}",
+                         *mutations.actionSelectLetterMemoryRenderCap);
+        }
+        if (mutations.actionSelectVisitMemoryRenderCap) {
+            ini.SetLongValue("Beats", "iActionSelectVisitMemoryRenderCap", *mutations.actionSelectVisitMemoryRenderCap);
+            g_config.actionSelectVisitMemoryRenderCap = *mutations.actionSelectVisitMemoryRenderCap;
+            logger::info("Settings: MCM override write: iActionSelectVisitMemoryRenderCap={}",
+                         *mutations.actionSelectVisitMemoryRenderCap);
         }
         if (mutations.hotkeyShift || mutations.hotkeyCtrl || mutations.hotkeyAlt) {
             std::uint8_t mods = 0;

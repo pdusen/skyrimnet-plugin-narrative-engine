@@ -83,9 +83,15 @@ export interface SettingsTabState {
     // Upper bounds on how much sender context renders into the letter
     // compose prompt (narrative_engine_letter_compose.prompt). Users
     // running local LLMs against a tight context window can dial these
-    // down to shrink the rendered prompt. 0 renders an empty section.
+    // down to shrink the rendered prompt.
     letter_compose_memory_render_cap: number;
     letter_compose_dialogue_render_cap: number;
+    // Upper bounds on the beat-select prompt's content
+    // (narrative_engine_action_select.prompt). Same
+    // shrink-for-local-LLMs motivation as the compose caps.
+    action_select_event_render_cap: number;
+    action_select_letter_memory_render_cap: number;
+    action_select_visit_memory_render_cap: number;
 }
 
 // Visit tab payload — populated by the C++ DashboardUIManager per

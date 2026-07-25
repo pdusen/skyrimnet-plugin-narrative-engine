@@ -16,6 +16,9 @@ declare global {
         ne_cancelHotkeyRebind?: (arg: string) => void;
         ne_setLetterComposeMemoryCap?: (arg: string) => void;
         ne_setLetterComposeDialogueCap?: (arg: string) => void;
+        ne_setActionSelectEventCap?: (arg: string) => void;
+        ne_setActionSelectLetterMemoryCap?: (arg: string) => void;
+        ne_setActionSelectVisitMemoryCap?: (arg: string) => void;
     }
 }
 
@@ -114,6 +117,9 @@ export function SettingsTab({ state }: Props) {
     };
     const onCommitLetterMemoryCap = (v: number) => window.ne_setLetterComposeMemoryCap?.(String(v));
     const onCommitLetterDialogueCap = (v: number) => window.ne_setLetterComposeDialogueCap?.(String(v));
+    const onCommitActionSelectEventCap = (v: number) => window.ne_setActionSelectEventCap?.(String(v));
+    const onCommitActionSelectLetterMemoryCap = (v: number) => window.ne_setActionSelectLetterMemoryCap?.(String(v));
+    const onCommitActionSelectVisitMemoryCap = (v: number) => window.ne_setActionSelectVisitMemoryCap?.(String(v));
 
     return (
         <div className="tab-content settings-tab">
@@ -179,6 +185,48 @@ export function SettingsTab({ state }: Props) {
                         />
                     </div>
                 ))}
+            </section>
+
+            <section className="panel">
+                <h2>Action Select Prompt Caps</h2>
+                <p className="settings-panel-hint">
+                    Bound how much rendered context lands in the beat-select prompt
+                    (which picks which action fires). Lower these if your LLM's context
+                    window is tight.
+                </p>
+                <div className="settings-row">
+                    <span className="settings-row-label">Recent Events</span>
+                    <LiveSlider
+                        value={s.action_select_event_render_cap}
+                        min={3}
+                        max={30}
+                        step={1}
+                        unit=""
+                        onCommit={onCommitActionSelectEventCap}
+                    />
+                </div>
+                <div className="settings-row">
+                    <span className="settings-row-label">Letter Sender Memories</span>
+                    <LiveSlider
+                        value={s.action_select_letter_memory_render_cap}
+                        min={3}
+                        max={15}
+                        step={1}
+                        unit=""
+                        onCommit={onCommitActionSelectLetterMemoryCap}
+                    />
+                </div>
+                <div className="settings-row">
+                    <span className="settings-row-label">Visit Sender Memories</span>
+                    <LiveSlider
+                        value={s.action_select_visit_memory_render_cap}
+                        min={3}
+                        max={15}
+                        step={1}
+                        unit=""
+                        onCommit={onCommitActionSelectVisitMemoryCap}
+                    />
+                </div>
             </section>
 
             <section className="panel">

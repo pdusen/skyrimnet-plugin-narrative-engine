@@ -666,7 +666,10 @@ namespace NarrativeEngine::BeatSystem
         // renamed to `_beat_select` yet. Renaming there would only
         // require a file rename plus one string-constant flip on the
         // SkyrimNetAPI::SendCustomPromptToLLM call below.
-        constexpr std::size_t kBeatSelectEventTailSize = 10;
+        //
+        // Recent-events tail size is read from Settings so users on
+        // tight-context local LLMs can dial it down; the floor is
+        // enforced on the read path (Settings::ReadIniInto).
 
         std::string BuildBeatSelectPromptContext(
             const Snapshot& snapshot,
@@ -736,8 +739,10 @@ namespace NarrativeEngine::BeatSystem
                     TravelEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
                     snapshot.player.gameTimeSeconds);
 
-                if (merged.is_array() && merged.size() > kBeatSelectEventTailSize) {
-                    const std::size_t skipFront = merged.size() - kBeatSelectEventTailSize;
+                const auto eventTailSize =
+                    static_cast<std::size_t>(std::max(1, Settings::Get().actionSelectEventRenderCap));
+                if (merged.is_array() && merged.size() > eventTailSize) {
+                    const std::size_t skipFront = merged.size() - eventTailSize;
                     merged.erase(merged.begin(), merged.begin() + skipFront);
                 }
                 ctx["recent_events"] = std::move(merged);
