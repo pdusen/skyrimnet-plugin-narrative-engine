@@ -272,13 +272,13 @@ namespace NarrativeEngine::VisitComposer
             opts.memoryFetchMultiplier = 4;
             opts.shuffleResult = false;
             opts.requireMemories = false;
-            // Same per-sender memory watermark as the action-select
-            // candidate build, so the compose prompt only sees
-            // memories from after the previous visit landed. Without
-            // this, the visit brief would echo prior-visit topics.
-            opts.memoryWatermarkProvider = [](RE::FormID id) {
-                return NPCVisitBeat_Cooldowns::GetSenderMemoryWatermarkGameHours(id);
-            };
+            // NOTE: no per-sender watermark filter here. The pool-side
+            // watermark on the action-select build already guaranteed
+            // this sender's `parameter_justification` isn't rooted in
+            // a pre-watermark memory, and the visit compose prompt
+            // treats that justification as the authoritative topic
+            // seed. Leaving the full tail intact so the composer has
+            // maximum voice / tone context.
             opts.extraViabilityFilter = [formId](RE::Actor* actor, std::string* skipReasonOut) -> bool {
                 if (!actor) {
                     if (skipReasonOut)

@@ -1,6 +1,5 @@
 #include <LetterComposer.h>
 
-#include <EngineUtils.h>
 #include <EvaluationPipeline.h>
 #include <LLMTextSanitizer.h>
 #include <logger.h>
@@ -429,14 +428,18 @@ namespace NarrativeEngine::LetterComposer
 
             const double threshold = static_cast<double>(Settings::Get().letterMemoryImportanceThreshold);
 
-            // Per-sender memory watermark. Set to the game-hours at
-            // which this sender's previous letter was delivered;
-            // memories older than that stamp are dropped so a
-            // second letter to the same sender doesn't rehash the
-            // same subject. Nullopt on senders who have never had a
-            // letter delivered — the filter is skipped in that case.
-            const auto watermark = NPCLetterBeat_Cooldowns::GetSenderMemoryWatermarkGameHours(formId);
-            const double nowGameHours = watermark.has_value() ? EngineUtils::GetCurrentGameHours() : 0.0;
+            // NOTE: no per-sender watermark filter here. The pool-side
+            // filter (in SenderCandidatePool, via
+            // NPCLetterBeat_Cooldowns::GetSenderMemoryWatermarkGameHours)
+            // already ensured the action-select LLM couldn't pick this
+            // sender for a topic rooted in a pre-watermark memory. The
+            // resulting action-select `parameter_justification` is the
+            // authoritative topic seed and is threaded into the
+            // compose prompt directly, so the compose LLM has no
+            // reason to re-derive a topic from the memory tail. The
+            // full memory tail is left intact here so the compose
+            // prompt has all available voice / tone / register context
+            // for the letter's phrasing.
 
             // Collect ALL above-threshold survivors first; do not
             // short-circuit at the render cap here. We select the
@@ -448,7 +451,6 @@ namespace NarrativeEngine::LetterComposer
             auto trimmed = nlohmann::json::array();
             int droppedBelowThreshold = 0;
             int droppedDiary = 0;
-            int droppedBelowWatermark = 0;
             for (auto& m : raw) {
                 if (!m.is_object())
                     continue;
@@ -481,21 +483,6 @@ namespace NarrativeEngine::LetterComposer
                 if (importance < threshold) {
                     ++droppedBelowThreshold;
                     continue;
-                }
-
-                // Per-sender memory watermark filter: drop memories
-                // whose absolute game-hours predate the previous
-                // letter delivery to this sender.
-                if (watermark.has_value()) {
-                    double ageHours = 0.0;
-                    if (auto it = m.find("age_hours"); it != m.end() && it->is_number()) {
-                        ageHours = it->get<double>();
-                    }
-                    const double absoluteGameHours = nowGameHours - ageHours;
-                    if (absoluteGameHours <= *watermark) {
-                        ++droppedBelowWatermark;
-                        continue;
-                    }
                 }
 
                 nlohmann::json out = nlohmann::json::object();
@@ -554,18 +541,15 @@ namespace NarrativeEngine::LetterComposer
             // Reverse to oldest-first for the LLM's chronological read.
             std::reverse(trimmed.begin(), trimmed.end());
 
-            if ((droppedBelowThreshold > 0 || droppedBeyondCap > 0 || droppedDiary > 0 || droppedBelowWatermark > 0)
-                && Settings::Get().debugMode) {
+            if ((droppedBelowThreshold > 0 || droppedBeyondCap > 0 || droppedDiary > 0) && Settings::Get().debugMode) {
                 logger::debug("LetterComposer: sender 0x{:X} — memories kept={}, "
                               "dropped diary={}, dropped below threshold {:.2f}={}, "
-                              "dropped below prior-delivery watermark={}, "
                               "dropped as older than the most-recent {}={}",
                               formId,
                               trimmed.size(),
                               droppedDiary,
                               threshold,
                               droppedBelowThreshold,
-                              droppedBelowWatermark,
                               safeRenderCap,
                               droppedBeyondCap);
             }
@@ -662,7 +646,8 @@ namespace NarrativeEngine::LetterComposer
                                                  const std::string& senderName,
                                                  RE::FormID senderFormID,
                                                  const nlohmann::json& senderMemories,
-                                                 const nlohmann::json& recentDialogue)
+                                                 const nlohmann::json& recentDialogue,
+                                                 const std::string& parameterJustification)
         {
             const auto& cfg = Settings::Get();
 
@@ -676,6 +661,7 @@ namespace NarrativeEngine::LetterComposer
             root["max_words"] = cfg.letterContentMaxWords;
 
             root["player_name"] = playerName;
+            root["parameter_justification"] = parameterJustification;
 
             char idBuf[16];
             std::snprintf(idBuf, sizeof(idBuf), "0x%X", senderFormID);
@@ -858,6 +844,7 @@ namespace NarrativeEngine::LetterComposer
     void Compose(const BeatContext& ctx,
                  UrgencyHint urgencyHint,
                  RE::FormID senderNpcFormID,
+                 std::string parameterJustification,
                  std::function<void(std::optional<LetterComposition>)> callback)
     {
         if (!callback)
@@ -933,8 +920,14 @@ namespace NarrativeEngine::LetterComposer
         FilterDialogueByMemoryAge(recentDialogue, memories);
         AnnotateDialogueAges(recentDialogue);
 
-        const auto promptCtx = BuildComposePromptContext(
-            ctx, urgencyHint, playerName, senderName, senderNpcFormID, memories, recentDialogue);
+        const auto promptCtx = BuildComposePromptContext(ctx,
+                                                         urgencyHint,
+                                                         playerName,
+                                                         senderName,
+                                                         senderNpcFormID,
+                                                         memories,
+                                                         recentDialogue,
+                                                         parameterJustification);
         const auto promptCtxStr = promptCtx.dump();
         if (Settings::Get().debugMode) {
             logger::debug("LetterComposer: prompt context: {}", promptCtxStr);

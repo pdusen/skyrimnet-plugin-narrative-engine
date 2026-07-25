@@ -101,6 +101,7 @@ namespace NarrativeEngine::LetterComposer
     void Compose(const BeatContext& ctx,
                  UrgencyHint urgencyHint,
                  RE::FormID senderNpcFormID,
+                 std::string parameterJustification,
                  std::function<void(std::optional<LetterComposition>)> callback);
 
     // -----------------------------------------------------------------
