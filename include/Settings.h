@@ -320,9 +320,9 @@ namespace NarrativeEngine::Settings
         // has time to generate the opening line while the sender is still
         // closing the last stretch — otherwise the sender arrives at the
         // player and stands there silently while the response streams in.
-        int visitSalutationApproachDistanceUnits = 900;
-        // Distance for the ReEngage resumption line to fire (slightly larger
-        // than Salutation to give the sender room to catch up).
+        int visitSalutationApproachDistanceUnits = 1000;
+        // Distance for the ReEngage resumption line to fire. Defaults to
+        // the same value as Salutation but tunable independently.
         int visitReEngageApproachDistanceUnits = 1000;
         // Wall-clock cadence (seconds) at which C++ evaluates the three
         // cheap-signal gates that decide whether to fire the natural-conclusion

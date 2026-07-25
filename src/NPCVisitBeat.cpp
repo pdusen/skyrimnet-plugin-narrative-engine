@@ -1157,7 +1157,25 @@ namespace NarrativeEngine
                                      "to Discussing",
                                      dist);
                         const auto snap = VisitState::GetSnapshot();
-                        VMDispatchRunSenderNarration(g_visitQuest, snap.narrationText);
+                        // Build a fresh resumption line rather than
+                        // replaying the composed opener (which would
+                        // narrate the sender arriving all over again).
+                        std::string senderName;
+                        if (auto* senderActor = senderRef->As<RE::Actor>()) {
+                            if (const auto* n = senderActor->GetName())
+                                senderName = n;
+                        }
+                        if (senderName.empty())
+                            senderName = "the sender";
+                        std::string playerName;
+                        if (const auto* n = player->GetName())
+                            playerName = n;
+                        if (playerName.empty())
+                            playerName = "the player";
+                        const std::string resumptionNarration =
+                            "Now that the interruption has ended, " + senderName + " turns back to " + playerName
+                            + " to try and resume their discussion where it left off.";
+                        VMDispatchRunSenderNarration(g_visitQuest, resumptionNarration);
                         VisitConclusionPoll::Arm(snap);
                         g_discussSenderFormID.store(snap.senderFormID);
                         g_discussSubPhase.store(DiscussSubPhase::Discussing, std::memory_order_release);
