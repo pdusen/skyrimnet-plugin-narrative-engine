@@ -414,6 +414,8 @@ namespace NarrativeEngine::Settings
         std::optional<int> actionSelectEventRenderCap;
         std::optional<int> actionSelectLetterMemoryRenderCap;
         std::optional<int> actionSelectVisitMemoryRenderCap;
+        std::optional<int> skyrimNetEventTailSizeForPrompt;
+        std::optional<int> decisionLogTailSizeForPrompt;
     };
 
     // Read the plugin INI, then apply any MCM-managed override, and

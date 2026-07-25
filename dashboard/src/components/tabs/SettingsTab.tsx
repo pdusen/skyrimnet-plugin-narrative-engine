@@ -19,6 +19,8 @@ declare global {
         ne_setActionSelectEventCap?: (arg: string) => void;
         ne_setActionSelectLetterMemoryCap?: (arg: string) => void;
         ne_setActionSelectVisitMemoryCap?: (arg: string) => void;
+        ne_setStoryEvalEventTailSize?: (arg: string) => void;
+        ne_setStoryEvalDecisionLogTailSize?: (arg: string) => void;
     }
 }
 
@@ -120,6 +122,8 @@ export function SettingsTab({ state }: Props) {
     const onCommitActionSelectEventCap = (v: number) => window.ne_setActionSelectEventCap?.(String(v));
     const onCommitActionSelectLetterMemoryCap = (v: number) => window.ne_setActionSelectLetterMemoryCap?.(String(v));
     const onCommitActionSelectVisitMemoryCap = (v: number) => window.ne_setActionSelectVisitMemoryCap?.(String(v));
+    const onCommitStoryEvalEventTail = (v: number) => window.ne_setStoryEvalEventTailSize?.(String(v));
+    const onCommitStoryEvalDecisionLogTail = (v: number) => window.ne_setStoryEvalDecisionLogTailSize?.(String(v));
 
     return (
         <div className="tab-content settings-tab">
@@ -185,6 +189,36 @@ export function SettingsTab({ state }: Props) {
                         />
                     </div>
                 ))}
+            </section>
+
+            <section className="panel">
+                <h2>Story Eval Prompt Caps</h2>
+                <p className="settings-panel-hint">
+                    Bound how much rendered context lands in the per-tick tension-score
+                    prompt. Lower these if your LLM's context window is tight.
+                </p>
+                <div className="settings-row">
+                    <span className="settings-row-label">Recent Events</span>
+                    <LiveSlider
+                        value={s.story_eval_event_tail_size}
+                        min={5}
+                        max={100}
+                        step={1}
+                        unit=""
+                        onCommit={onCommitStoryEvalEventTail}
+                    />
+                </div>
+                <div className="settings-row">
+                    <span className="settings-row-label">Decision Log Tail</span>
+                    <LiveSlider
+                        value={s.story_eval_decision_log_tail_size}
+                        min={3}
+                        max={30}
+                        step={1}
+                        unit=""
+                        onCommit={onCommitStoryEvalDecisionLogTail}
+                    />
+                </div>
             </section>
 
             <section className="panel">

@@ -691,6 +691,58 @@ namespace NarrativeEngine::DashboardUIManager
             });
         }
 
+        // Backs the Settings tab's Story-Eval Recent Events Cap slider.
+        // Clamped to [5, 100] — floor matches the ReadIniInto clamp.
+        void OnSetStoryEvalEventTailSize(const char* argument)
+        {
+            const std::string arg = argument ? argument : "";
+            int value = 0;
+            const auto* first = arg.data();
+            const auto* last = arg.data() + arg.size();
+            auto [ptr, ec] = std::from_chars(first, last, value);
+            if (ec != std::errc{} || ptr != last) {
+                logger::warn("DashboardUIManager: ne_setStoryEvalEventTailSize: malformed payload '{}'", arg);
+                return;
+            }
+            if (value < 5)
+                value = 5;
+            if (value > 100)
+                value = 100;
+            logger::info("DashboardUIManager: ne_setStoryEvalEventTailSize({}) received", value);
+            AsyncDispatch::MarshalToMainThread([value] {
+                Settings::McmOverride mut;
+                mut.skyrimNetEventTailSizeForPrompt = value;
+                Settings::WriteMcmOverride(mut);
+                PushFullState();
+            });
+        }
+
+        // Backs the Settings tab's Story-Eval Decision-Log Tail slider.
+        // Clamped to [3, 30] — floor matches the ReadIniInto clamp.
+        void OnSetStoryEvalDecisionLogTailSize(const char* argument)
+        {
+            const std::string arg = argument ? argument : "";
+            int value = 0;
+            const auto* first = arg.data();
+            const auto* last = arg.data() + arg.size();
+            auto [ptr, ec] = std::from_chars(first, last, value);
+            if (ec != std::errc{} || ptr != last) {
+                logger::warn("DashboardUIManager: ne_setStoryEvalDecisionLogTailSize: malformed payload '{}'", arg);
+                return;
+            }
+            if (value < 3)
+                value = 3;
+            if (value > 30)
+                value = 30;
+            logger::info("DashboardUIManager: ne_setStoryEvalDecisionLogTailSize({}) received", value);
+            AsyncDispatch::MarshalToMainThread([value] {
+                Settings::McmOverride mut;
+                mut.decisionLogTailSizeForPrompt = value;
+                Settings::WriteMcmOverride(mut);
+                PushFullState();
+            });
+        }
+
         // Backs the Settings tab's Action-Select Recent Events Cap slider.
         // Clamped to [3, 30] — floor matches the ReadIniInto clamp; the
         // upper bound is a hedge against a browser-side glitch, not a
@@ -938,6 +990,9 @@ namespace NarrativeEngine::DashboardUIManager
         PrismaUI_API::RegisterJSListener(
             g_view, "ne_setActionSelectLetterMemoryCap", &OnSetActionSelectLetterMemoryCap);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setActionSelectVisitMemoryCap", &OnSetActionSelectVisitMemoryCap);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setStoryEvalEventTailSize", &OnSetStoryEvalEventTailSize);
+        PrismaUI_API::RegisterJSListener(
+            g_view, "ne_setStoryEvalDecisionLogTailSize", &OnSetStoryEvalDecisionLogTailSize);
 
         // Hook input events for the hotkey.
         auto* inputManager = RE::BSInputDeviceManager::GetSingleton();
@@ -1019,6 +1074,8 @@ namespace NarrativeEngine::DashboardUIManager
                 {"action_select_event_render_cap", cfg.actionSelectEventRenderCap},
                 {"action_select_letter_memory_render_cap", cfg.actionSelectLetterMemoryRenderCap},
                 {"action_select_visit_memory_render_cap", cfg.actionSelectVisitMemoryRenderCap},
+                {"story_eval_event_tail_size", cfg.skyrimNetEventTailSizeForPrompt},
+                {"story_eval_decision_log_tail_size", cfg.decisionLogTailSizeForPrompt},
             };
         }
 

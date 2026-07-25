@@ -92,6 +92,10 @@ export interface SettingsTabState {
     action_select_event_render_cap: number;
     action_select_letter_memory_render_cap: number;
     action_select_visit_memory_render_cap: number;
+    // Upper bounds on the story-eval (per-tick tension score) prompt's
+    // content (narrative_engine_story_eval.prompt).
+    story_eval_event_tail_size: number;
+    story_eval_decision_log_tail_size: number;
 }
 
 // Visit tab payload — populated by the C++ DashboardUIManager per

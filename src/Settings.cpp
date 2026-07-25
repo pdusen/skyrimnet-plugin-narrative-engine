@@ -260,6 +260,16 @@ namespace NarrativeEngine::Settings
                 dst.actionSelectLetterMemoryRenderCap = 3;
             if (dst.actionSelectVisitMemoryRenderCap < 3)
                 dst.actionSelectVisitMemoryRenderCap = 3;
+            // Floors for the story-eval prompt tails. Recent-events
+            // floor is 5 (default 40) — the tension evaluator leans
+            // hard on very recent world state, so dropping too low
+            // starves it. Decision-log tail floor is 3 (default 10) —
+            // the LLM benefits from a few of its own recent judgements
+            // for continuity.
+            if (dst.skyrimNetEventTailSizeForPrompt < 5)
+                dst.skyrimNetEventTailSizeForPrompt = 5;
+            if (dst.decisionLogTailSizeForPrompt < 3)
+                dst.decisionLogTailSizeForPrompt = 3;
             dst.letterPoolSize = static_cast<int>(ini.GetLongValue("Beats", "iLetterPoolSize", dst.letterPoolSize));
             dst.letterDispatchVerifyDelaySeconds = static_cast<int>(
                 ini.GetLongValue("Beats", "iLetterDispatchVerifyDelaySeconds", dst.letterDispatchVerifyDelaySeconds));
@@ -564,6 +574,19 @@ namespace NarrativeEngine::Settings
             g_config.actionSelectVisitMemoryRenderCap = *mutations.actionSelectVisitMemoryRenderCap;
             logger::info("Settings: MCM override write: iActionSelectVisitMemoryRenderCap={}",
                          *mutations.actionSelectVisitMemoryRenderCap);
+        }
+        if (mutations.skyrimNetEventTailSizeForPrompt) {
+            ini.SetLongValue(
+                "Director", "iSkyrimNetEventTailSizeForPrompt", *mutations.skyrimNetEventTailSizeForPrompt);
+            g_config.skyrimNetEventTailSizeForPrompt = *mutations.skyrimNetEventTailSizeForPrompt;
+            logger::info("Settings: MCM override write: iSkyrimNetEventTailSizeForPrompt={}",
+                         *mutations.skyrimNetEventTailSizeForPrompt);
+        }
+        if (mutations.decisionLogTailSizeForPrompt) {
+            ini.SetLongValue("Director", "iDecisionLogTailSizeForPrompt", *mutations.decisionLogTailSizeForPrompt);
+            g_config.decisionLogTailSizeForPrompt = *mutations.decisionLogTailSizeForPrompt;
+            logger::info("Settings: MCM override write: iDecisionLogTailSizeForPrompt={}",
+                         *mutations.decisionLogTailSizeForPrompt);
         }
         if (mutations.hotkeyShift || mutations.hotkeyCtrl || mutations.hotkeyAlt) {
             std::uint8_t mods = 0;
