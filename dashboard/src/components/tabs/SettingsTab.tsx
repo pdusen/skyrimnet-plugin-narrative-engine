@@ -14,6 +14,8 @@ declare global {
         ne_setPhaseIdealDuration?: (arg: string) => void;
         ne_beginHotkeyRebind?: (arg: string) => void;
         ne_cancelHotkeyRebind?: (arg: string) => void;
+        ne_setLetterComposeMemoryCap?: (arg: string) => void;
+        ne_setLetterComposeDialogueCap?: (arg: string) => void;
     }
 }
 
@@ -110,6 +112,8 @@ export function SettingsTab({ state }: Props) {
     const onCommitPhase = (phase: string, seconds: number) => {
         window.ne_setPhaseIdealDuration?.(JSON.stringify({ phase, seconds }));
     };
+    const onCommitLetterMemoryCap = (v: number) => window.ne_setLetterComposeMemoryCap?.(String(v));
+    const onCommitLetterDialogueCap = (v: number) => window.ne_setLetterComposeDialogueCap?.(String(v));
 
     return (
         <div className="tab-content settings-tab">
@@ -175,6 +179,37 @@ export function SettingsTab({ state }: Props) {
                         />
                     </div>
                 ))}
+            </section>
+
+            <section className="panel">
+                <h2>Letter Compose Prompt Caps</h2>
+                <p className="settings-panel-hint">
+                    Bound how much sender context is rendered into the letter compose
+                    prompt. Lower these if your LLM's context window is tight; 0 renders
+                    an empty section.
+                </p>
+                <div className="settings-row">
+                    <span className="settings-row-label">Memories</span>
+                    <LiveSlider
+                        value={s.letter_compose_memory_render_cap}
+                        min={3}
+                        max={20}
+                        step={1}
+                        unit=""
+                        onCommit={onCommitLetterMemoryCap}
+                    />
+                </div>
+                <div className="settings-row">
+                    <span className="settings-row-label">Recent Dialogue Lines</span>
+                    <LiveSlider
+                        value={s.letter_compose_dialogue_render_cap}
+                        min={5}
+                        max={50}
+                        step={1}
+                        unit=""
+                        onCommit={onCommitLetterDialogueCap}
+                    />
+                </div>
             </section>
         </div>
     );

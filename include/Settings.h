@@ -263,6 +263,14 @@ namespace NarrativeEngine::Settings
         // "what should they say?" call see only memories that carried
         // real weight when they happened.
         float letterMemoryImportanceThreshold = 0.4f;
+        // Compose-prompt content caps — bound how much sender context
+        // renders into narrative_engine_letter_compose.prompt. Users
+        // running local LLMs against a tight context window can dial
+        // these down to shrink the rendered prompt. The candidate-pool
+        // memory tail (which drives the beat-select prompt, not the
+        // compose prompt) uses its own fixed cap and is not affected.
+        int letterComposeMemoryRenderCap = 6;          // max sender.memories entries
+        int letterComposeDialogueRenderCap = 25;       // max sender.recent_dialogue entries
         int letterPoolSize = 20;                       // informational; ESP defines the actual 20 forms
         int letterDispatchVerifyDelaySeconds = 5;      // grace window before RUNNING gives up on the courier handoff
         int letterPendingDeliveryTimeoutSeconds = 600; // load-time demotion gate for stuck PendingDelivery slots
@@ -391,6 +399,8 @@ namespace NarrativeEngine::Settings
         std::optional<bool> hotkeyShift;
         std::optional<bool> hotkeyCtrl;
         std::optional<bool> hotkeyAlt;
+        std::optional<int> letterComposeMemoryRenderCap;
+        std::optional<int> letterComposeDialogueRenderCap;
     };
 
     // Read the plugin INI, then apply any MCM-managed override, and

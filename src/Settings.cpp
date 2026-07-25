@@ -229,6 +229,21 @@ namespace NarrativeEngine::Settings
                 static_cast<int>(ini.GetLongValue("Beats", "iLetterContentMaxWords", dst.letterContentMaxWords));
             dst.letterMemoryImportanceThreshold = static_cast<float>(
                 ini.GetDoubleValue("Beats", "fLetterMemoryImportanceThreshold", dst.letterMemoryImportanceThreshold));
+            dst.letterComposeMemoryRenderCap = static_cast<int>(
+                ini.GetLongValue("Beats", "iLetterComposeMemoryRenderCap", dst.letterComposeMemoryRenderCap));
+            dst.letterComposeDialogueRenderCap = static_cast<int>(
+                ini.GetLongValue("Beats", "iLetterComposeDialogueRenderCap", dst.letterComposeDialogueRenderCap));
+            // Enforce per-setting floors on the compose caps regardless
+            // of source (plugin INI, MCM override, or a hand-edited file
+            // that bypassed the dashboard sliders). Sub-floor values
+            // produce threadbare letters — the compose prompt loses
+            // enough context that the LLM fabricates instead of drawing
+            // on real sender history. Memory floor is 3 (default is 6);
+            // dialogue floor is 5 (default is 25).
+            if (dst.letterComposeMemoryRenderCap < 3)
+                dst.letterComposeMemoryRenderCap = 3;
+            if (dst.letterComposeDialogueRenderCap < 5)
+                dst.letterComposeDialogueRenderCap = 5;
             dst.letterPoolSize = static_cast<int>(ini.GetLongValue("Beats", "iLetterPoolSize", dst.letterPoolSize));
             dst.letterDispatchVerifyDelaySeconds = static_cast<int>(
                 ini.GetLongValue("Beats", "iLetterDispatchVerifyDelaySeconds", dst.letterDispatchVerifyDelaySeconds));
@@ -502,6 +517,18 @@ namespace NarrativeEngine::Settings
         if (mutations.hotkeyAlt) {
             ini.SetBoolValue("Dashboard", "bHotkeyAlt", *mutations.hotkeyAlt);
             logger::info("Settings: MCM override write: bHotkeyAlt={}", *mutations.hotkeyAlt ? 1 : 0);
+        }
+        if (mutations.letterComposeMemoryRenderCap) {
+            ini.SetLongValue("Beats", "iLetterComposeMemoryRenderCap", *mutations.letterComposeMemoryRenderCap);
+            g_config.letterComposeMemoryRenderCap = *mutations.letterComposeMemoryRenderCap;
+            logger::info("Settings: MCM override write: iLetterComposeMemoryRenderCap={}",
+                         *mutations.letterComposeMemoryRenderCap);
+        }
+        if (mutations.letterComposeDialogueRenderCap) {
+            ini.SetLongValue("Beats", "iLetterComposeDialogueRenderCap", *mutations.letterComposeDialogueRenderCap);
+            g_config.letterComposeDialogueRenderCap = *mutations.letterComposeDialogueRenderCap;
+            logger::info("Settings: MCM override write: iLetterComposeDialogueRenderCap={}",
+                         *mutations.letterComposeDialogueRenderCap);
         }
         if (mutations.hotkeyShift || mutations.hotkeyCtrl || mutations.hotkeyAlt) {
             std::uint8_t mods = 0;

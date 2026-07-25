@@ -80,6 +80,12 @@ export interface SettingsTabState {
         falling_action: number;
         resolution: number;
     };
+    // Upper bounds on how much sender context renders into the letter
+    // compose prompt (narrative_engine_letter_compose.prompt). Users
+    // running local LLMs against a tight context window can dial these
+    // down to shrink the rendered prompt. 0 renders an empty section.
+    letter_compose_memory_render_cap: number;
+    letter_compose_dialogue_render_cap: number;
 }
 
 // Visit tab payload — populated by the C++ DashboardUIManager per

@@ -43,23 +43,13 @@ namespace NarrativeEngine::LetterComposer
         // candidate. SkyrimNet's `PublicGetMemoriesForActor` has no
         // server-side importance filter — it only accepts a maxCount
         // and a semantic-search bias query — so we over-fetch and
-        // filter client-side, then truncate to kPerCandidateMemoryCap.
+        // filter client-side, then truncate to the final render cap.
         // The multiplier is a heuristic: at threshold 0.4, most
         // memories in a live actor's tail pass, so 4× gives us
         // headroom without paying much in wasted work when the
         // threshold is loose. If someone raises the threshold hard
         // via INI, they may see shorter tails — that's expected.
         constexpr int kMemoryFetchMultiplier = 4;
-        constexpr int kMemoryFetchCap = kPerCandidateMemoryCap * kMemoryFetchMultiplier;
-
-        // How many recent player↔sender dialogue exchanges to include
-        // in the compose prompt. SkyrimNet returns them oldest-first
-        // and caps at whatever we pass. 25 gives the LLM a fuller
-        // running-continuity read on voice / vocabulary / recent
-        // topics; entries older than the oldest kept memory are
-        // filtered out downstream, so the cap acts as an upper bound,
-        // not a target.
-        constexpr int kRecentDialogueCap = 25;
 
         // Valid mood set. The LLM must return one of these; otherwise
         // we treat the response as a validation failure.
@@ -248,9 +238,12 @@ namespace NarrativeEngine::LetterComposer
         // form text fields are sanitized per project rule. Returns an
         // empty array on any failure or when SkyrimNet has no dialogue
         // on file.
-        nlohmann::json FetchRecentDialogue(RE::FormID formId)
+        nlohmann::json FetchRecentDialogue(RE::FormID formId, int cap)
         {
-            const auto raw = SkyrimNetAPI::GetRecentDialogue(formId, kRecentDialogueCap);
+            // Guard against a nonsense negative setting; SkyrimNet
+            // would clamp anyway but we keep the fetch bounded here.
+            const int safeCap = std::max(0, cap);
+            const auto raw = SkyrimNetAPI::GetRecentDialogue(formId, safeCap);
             auto parsed = nlohmann::json::parse(raw, nullptr, false);
             if (!parsed.is_array()) {
                 return nlohmann::json::array();
@@ -417,13 +410,18 @@ namespace NarrativeEngine::LetterComposer
             }
         }
 
-        nlohmann::json FetchSenderMemories(RE::FormID formId, const std::string& playerName, bool includeDiaries)
+        nlohmann::json FetchSenderMemories(RE::FormID formId,
+                                           const std::string& playerName,
+                                           bool includeDiaries,
+                                           int renderCap)
         {
             // Over-fetch so client-side importance filtering leaves us
-            // with roughly kPerCandidateMemoryCap survivors even when
-            // the tail of the semantic-search result set has a few
-            // low-importance entries. See kMemoryFetchMultiplier above.
-            const auto memoriesJson = SkyrimNetAPI::GetMemoriesForActor(formId, kMemoryFetchCap, playerName);
+            // with roughly `renderCap` survivors even when the tail of
+            // the semantic-search result set has a few low-importance
+            // entries. See kMemoryFetchMultiplier above.
+            const int safeRenderCap = std::max(0, renderCap);
+            const int fetchCap = safeRenderCap * kMemoryFetchMultiplier;
+            const auto memoriesJson = SkyrimNetAPI::GetMemoriesForActor(formId, fetchCap, playerName);
             auto raw = nlohmann::json::parse(memoriesJson, nullptr, false);
             if (!raw.is_array()) {
                 return nlohmann::json::array();
@@ -523,9 +521,9 @@ namespace NarrativeEngine::LetterComposer
             // the most-relevant N. The `break at cap` shortcut in the
             // collection loop would have given the wrong semantics.
             int droppedBeyondCap = 0;
-            if (static_cast<int>(trimmed.size()) > kPerCandidateMemoryCap) {
-                droppedBeyondCap = static_cast<int>(trimmed.size()) - kPerCandidateMemoryCap;
-                trimmed.erase(trimmed.begin() + kPerCandidateMemoryCap, trimmed.end());
+            if (static_cast<int>(trimmed.size()) > safeRenderCap) {
+                droppedBeyondCap = static_cast<int>(trimmed.size()) - safeRenderCap;
+                trimmed.erase(trimmed.begin() + safeRenderCap, trimmed.end());
             }
 
             // Reverse to oldest-first for the LLM's chronological read.
@@ -540,7 +538,7 @@ namespace NarrativeEngine::LetterComposer
                               droppedDiary,
                               threshold,
                               droppedBelowThreshold,
-                              kPerCandidateMemoryCap,
+                              safeRenderCap,
                               droppedBeyondCap);
             }
             return trimmed;
@@ -880,8 +878,14 @@ namespace NarrativeEngine::LetterComposer
 
         // Fresh memories at compose time — captures any SkyrimNet
         // events generated between action-select and compose (the
-        // round-trip is seconds, not zero).
-        const auto memories = FetchSenderMemories(senderNpcFormID, playerName, /*includeDiaries=*/true);
+        // round-trip is seconds, not zero). Render caps are pulled
+        // from Settings so users on tight-context local LLMs can dial
+        // the compose prompt's payload down without editing code.
+        const auto& composeCfg = Settings::Get();
+        const auto memories = FetchSenderMemories(senderNpcFormID,
+                                                  playerName,
+                                                  /*includeDiaries=*/true,
+                                                  composeCfg.letterComposeMemoryRenderCap);
 
         // Most-recent player↔sender dialogue history. Gives the LLM a
         // running-continuity read on how the two of them talk to each
@@ -893,7 +897,7 @@ namespace NarrativeEngine::LetterComposer
         // tail only reaches back N hours, a dialogue line from earlier
         // than that would reference events the LLM has no memory
         // context for, and would read as sudden past-life inserts.
-        auto recentDialogue = FetchRecentDialogue(senderNpcFormID);
+        auto recentDialogue = FetchRecentDialogue(senderNpcFormID, composeCfg.letterComposeDialogueRenderCap);
         FilterDialogueByMemoryAge(recentDialogue, memories);
         AnnotateDialogueAges(recentDialogue);
 

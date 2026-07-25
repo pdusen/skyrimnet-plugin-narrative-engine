@@ -744,6 +744,14 @@ body {
     min-width: 160px;
 }
 
+.settings-panel-hint {
+    color: #8a8e96;
+    font-size: 12px;
+    font-style: italic;
+    margin: 0 0 12px 0;
+    line-height: 1.4;
+}
+
 .settings-hotkey-display {
     color: #a8b0bd;
     font-family: 'Consolas', 'Menlo', monospace;

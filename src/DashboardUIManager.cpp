@@ -635,6 +635,62 @@ namespace NarrativeEngine::DashboardUIManager
             });
         }
 
+        // Backs the Settings tab's Letter Compose Memory Cap slider.
+        // Clamped to [3, 20] — the floor exists because a compose prompt
+        // with zero (or near-zero) memory context degrades letter quality
+        // sharply; 3 leaves the default of 6 with downward headroom. The
+        // upper bound is a hedge against a browser-side glitch, not a
+        // hard engine limit.
+        void OnSetLetterComposeMemoryCap(const char* argument)
+        {
+            const std::string arg = argument ? argument : "";
+            int value = 0;
+            const auto* first = arg.data();
+            const auto* last = arg.data() + arg.size();
+            auto [ptr, ec] = std::from_chars(first, last, value);
+            if (ec != std::errc{} || ptr != last) {
+                logger::warn("DashboardUIManager: ne_setLetterComposeMemoryCap: malformed payload '{}'", arg);
+                return;
+            }
+            if (value < 3)
+                value = 3;
+            if (value > 20)
+                value = 20;
+            logger::info("DashboardUIManager: ne_setLetterComposeMemoryCap({}) received", value);
+            AsyncDispatch::MarshalToMainThread([value] {
+                Settings::McmOverride mut;
+                mut.letterComposeMemoryRenderCap = value;
+                Settings::WriteMcmOverride(mut);
+                PushFullState();
+            });
+        }
+
+        // Backs the Settings tab's Letter Compose Dialogue Cap slider.
+        // Clamped to [5, 50] on the same rationale as the memory cap.
+        void OnSetLetterComposeDialogueCap(const char* argument)
+        {
+            const std::string arg = argument ? argument : "";
+            int value = 0;
+            const auto* first = arg.data();
+            const auto* last = arg.data() + arg.size();
+            auto [ptr, ec] = std::from_chars(first, last, value);
+            if (ec != std::errc{} || ptr != last) {
+                logger::warn("DashboardUIManager: ne_setLetterComposeDialogueCap: malformed payload '{}'", arg);
+                return;
+            }
+            if (value < 5)
+                value = 5;
+            if (value > 50)
+                value = 50;
+            logger::info("DashboardUIManager: ne_setLetterComposeDialogueCap({}) received", value);
+            AsyncDispatch::MarshalToMainThread([value] {
+                Settings::McmOverride mut;
+                mut.letterComposeDialogueRenderCap = value;
+                Settings::WriteMcmOverride(mut);
+                PushFullState();
+            });
+        }
+
         // Backs the Settings tab's Minimum Phase Duration slider. Payload
         // is a bare integer string, clamped to `[0, 600]`. Same shape as
         // OnSetTickInterval — one integer, one INI write, one push.
@@ -796,6 +852,8 @@ namespace NarrativeEngine::DashboardUIManager
         PrismaUI_API::RegisterJSListener(g_view, "ne_setPhaseIdealDuration", &OnSetPhaseIdealDuration);
         PrismaUI_API::RegisterJSListener(g_view, "ne_beginHotkeyRebind", &OnBeginHotkeyRebind);
         PrismaUI_API::RegisterJSListener(g_view, "ne_cancelHotkeyRebind", &OnCancelHotkeyRebind);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setLetterComposeMemoryCap", &OnSetLetterComposeMemoryCap);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setLetterComposeDialogueCap", &OnSetLetterComposeDialogueCap);
 
         // Hook input events for the hotkey.
         auto* inputManager = RE::BSInputDeviceManager::GetSingleton();
@@ -872,6 +930,8 @@ namespace NarrativeEngine::DashboardUIManager
                      {"falling_action", cfg.idealDurationFallingAction},
                      {"resolution", cfg.idealDurationResolution},
                  }},
+                {"letter_compose_memory_render_cap", cfg.letterComposeMemoryRenderCap},
+                {"letter_compose_dialogue_render_cap", cfg.letterComposeDialogueRenderCap},
             };
         }
 
