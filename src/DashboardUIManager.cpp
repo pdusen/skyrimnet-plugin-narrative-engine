@@ -695,6 +695,15 @@ namespace NarrativeEngine::DashboardUIManager
                 });
         }
 
+        // Backs the Settings tab's Visit Conclusion Poll Recent Lines slider.
+        void OnSetVisitConclusionPollRecentLinesCap(const char* argument)
+        {
+            ApplyIntegerSliderSetting(
+                argument, "ne_setVisitConclusionPollRecentLinesCap", 3, 20, [](Settings::McmOverride& mut, int v) {
+                    mut.visitConclusionPollRecentLinesRenderCap = v;
+                });
+        }
+
         // Backs the Settings tab's Story-Eval Recent Events Cap slider.
         void OnSetStoryEvalEventTailSize(const char* argument)
         {
@@ -887,6 +896,8 @@ namespace NarrativeEngine::DashboardUIManager
         PrismaUI_API::RegisterJSListener(g_view, "ne_setLetterComposeDialogueCap", &OnSetLetterComposeDialogueCap);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setVisitComposeMemoryCap", &OnSetVisitComposeMemoryCap);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setVisitComposeDialogueCap", &OnSetVisitComposeDialogueCap);
+        PrismaUI_API::RegisterJSListener(
+            g_view, "ne_setVisitConclusionPollRecentLinesCap", &OnSetVisitConclusionPollRecentLinesCap);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setActionSelectEventCap", &OnSetActionSelectEventCap);
         PrismaUI_API::RegisterJSListener(
             g_view, "ne_setActionSelectLetterMemoryCap", &OnSetActionSelectLetterMemoryCap);
@@ -979,6 +990,7 @@ namespace NarrativeEngine::DashboardUIManager
                 {"story_eval_decision_log_tail_size", cfg.decisionLogTailSizeForPrompt},
                 {"visit_compose_memory_render_cap", cfg.visitComposeMemoryRenderCap},
                 {"visit_compose_dialogue_render_cap", cfg.visitComposeDialogueRenderCap},
+                {"visit_conclusion_poll_recent_lines_render_cap", cfg.visitConclusionPollRecentLinesRenderCap},
             };
         }
 

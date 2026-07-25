@@ -34,10 +34,9 @@ namespace NarrativeEngine::VisitConclusionPoll
         constexpr const char* kPromptName = "narrative_engine_visit_conclusion_poll";
         constexpr const char* kPromptVariant = "narrative_engine_director";
 
-        // Recent-lines sample size passed to the poll prompt. Small
-        // enough to keep tokens cheap but large enough that a poll
-        // near threshold sees the full recent exchange.
-        constexpr int kRecentLinesSampleCount = 8;
+        // Recent-lines sample size is pulled from Settings so users on
+        // tight-context local LLMs can dial it down; the floor is
+        // enforced on the read path in Settings::ReadIniInto.
 
         // ---- State (main-thread mutation; poll callback marshals
         // back to main before touching). --------------------------
@@ -172,10 +171,11 @@ namespace NarrativeEngine::VisitConclusionPoll
             if (!SkyrimNetAPI::IsAvailable())
                 return arr;
 
-            // Overfetch — we need to cap the LLM prompt to
-            // kRecentLinesSampleCount lines but want headroom to
-            // filter out pre-Discuss chatter first.
-            const int fetchCap = std::max(kRecentLinesSampleCount * 4, 16);
+            // Overfetch — we need to cap the LLM prompt to the
+            // configured render cap but want headroom to filter out
+            // pre-Discuss chatter first.
+            const int recentLinesCap = std::max(1, Settings::Get().visitConclusionPollRecentLinesRenderCap);
+            const int fetchCap = std::max(recentLinesCap * 4, 16);
             const auto raw = SkyrimNetAPI::GetRecentDialogue(senderFormID, fetchCap);
             auto parsed = nlohmann::json::parse(raw, nullptr, false);
             if (parsed.is_discarded() || !parsed.is_array()) {
@@ -211,7 +211,7 @@ namespace NarrativeEngine::VisitConclusionPoll
 
             // Chronological (oldest-first) is SkyrimNet's guarantee
             // for GetRecentDialogue. Walk once to filter, then take
-            // the tail (most-recent kRecentLinesSampleCount) so the
+            // the tail (most-recent recentLinesCap entries) so the
             // prompt sees the newest exchanges even when there's a
             // long backlog.
             nlohmann::json filtered = nlohmann::json::array();
@@ -297,10 +297,10 @@ namespace NarrativeEngine::VisitConclusionPoll
                 filtered.push_back(std::move(line));
             }
 
-            // Take the last kRecentLinesSampleCount entries so the
-            // prompt sees the newest exchange, preserving oldest-
-            // first order within the slice.
-            const std::size_t keep = static_cast<std::size_t>(std::max(1, kRecentLinesSampleCount));
+            // Take the last recentLinesCap entries so the prompt sees
+            // the newest exchange, preserving oldest-first order
+            // within the slice.
+            const std::size_t keep = static_cast<std::size_t>(recentLinesCap);
             const std::size_t start = filtered.size() > keep ? filtered.size() - keep : 0;
             for (std::size_t i = start; i < filtered.size(); ++i) {
                 arr.push_back(std::move(filtered[i]));

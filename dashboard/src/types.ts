@@ -100,6 +100,9 @@ export interface SettingsTabState {
     // content (narrative_engine_story_eval.prompt).
     story_eval_event_tail_size: number;
     story_eval_decision_log_tail_size: number;
+    // Cap on the recent-lines block in the per-poll visit-conclusion
+    // LLM check (narrative_engine_visit_conclusion_poll.prompt).
+    visit_conclusion_poll_recent_lines_render_cap: number;
 }
 
 // Visit tab payload — populated by the C++ DashboardUIManager per

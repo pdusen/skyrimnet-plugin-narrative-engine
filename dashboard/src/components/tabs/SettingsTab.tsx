@@ -23,6 +23,7 @@ declare global {
         ne_setStoryEvalDecisionLogTailSize?: (arg: string) => void;
         ne_setVisitComposeMemoryCap?: (arg: string) => void;
         ne_setVisitComposeDialogueCap?: (arg: string) => void;
+        ne_setVisitConclusionPollRecentLinesCap?: (arg: string) => void;
     }
 }
 
@@ -128,6 +129,8 @@ export function SettingsTab({ state }: Props) {
     const onCommitStoryEvalDecisionLogTail = (v: number) => window.ne_setStoryEvalDecisionLogTailSize?.(String(v));
     const onCommitVisitMemoryCap = (v: number) => window.ne_setVisitComposeMemoryCap?.(String(v));
     const onCommitVisitDialogueCap = (v: number) => window.ne_setVisitComposeDialogueCap?.(String(v));
+    const onCommitVisitConclusionPollRecentLinesCap = (v: number) =>
+        window.ne_setVisitConclusionPollRecentLinesCap?.(String(v));
 
     return (
         <div className="tab-content settings-tab">
@@ -324,6 +327,17 @@ export function SettingsTab({ state }: Props) {
                         step={1}
                         unit=""
                         onCommit={onCommitVisitDialogueCap}
+                    />
+                </div>
+                <div className="settings-row">
+                    <span className="settings-row-label">Conclusion Poll Recent Lines</span>
+                    <LiveSlider
+                        value={s.visit_conclusion_poll_recent_lines_render_cap}
+                        min={3}
+                        max={20}
+                        step={1}
+                        unit=""
+                        onCommit={onCommitVisitConclusionPollRecentLinesCap}
                     />
                 </div>
             </section>

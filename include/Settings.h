@@ -327,6 +327,15 @@ namespace NarrativeEngine::Settings
         int visitComposeMemoryRenderCap = 6;    // max sender_memories entries
         int visitComposeDialogueRenderCap = 25; // max sender_recent_dialogue entries
 
+        // Cap on the `recent_lines` block in
+        // narrative_engine_visit_conclusion_poll.prompt — how many
+        // most-recent sender/player exchanges are shown to the LLM
+        // when it judges whether the ongoing visit has concluded.
+        // The oldest-newest slice is taken from the tail of the
+        // filtered dialogue history, so lowering this narrows the
+        // window without losing chronology.
+        int visitConclusionPollRecentLinesRenderCap = 8;
+
         // Per-sender cooldown in *in-game hours* applied once a visit's
         // Salutation → Discuss transition fires (i.e., the sender actually
         // showed up and spoke to the player). Prevents the same NPC from
@@ -425,6 +434,7 @@ namespace NarrativeEngine::Settings
         std::optional<int> decisionLogTailSizeForPrompt;
         std::optional<int> visitComposeMemoryRenderCap;
         std::optional<int> visitComposeDialogueRenderCap;
+        std::optional<int> visitConclusionPollRecentLinesRenderCap;
     };
 
     // Read the plugin INI, then apply any MCM-managed override, and

@@ -277,6 +277,11 @@ namespace NarrativeEngine::Settings
                 dst.visitComposeMemoryRenderCap = 3;
             if (dst.visitComposeDialogueRenderCap < 5)
                 dst.visitComposeDialogueRenderCap = 5;
+            // Visit-conclusion poll floor is 3 (default 8) — below that
+            // the poll can't see enough back-and-forth to distinguish
+            // "just delivered opener" from "beat has landed."
+            if (dst.visitConclusionPollRecentLinesRenderCap < 3)
+                dst.visitConclusionPollRecentLinesRenderCap = 3;
             dst.letterPoolSize = static_cast<int>(ini.GetLongValue("Beats", "iLetterPoolSize", dst.letterPoolSize));
             dst.letterDispatchVerifyDelaySeconds = static_cast<int>(
                 ini.GetLongValue("Beats", "iLetterDispatchVerifyDelaySeconds", dst.letterDispatchVerifyDelaySeconds));
@@ -309,6 +314,8 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("Beats", "iVisitComposeMemoryRenderCap", dst.visitComposeMemoryRenderCap));
             dst.visitComposeDialogueRenderCap = static_cast<int>(
                 ini.GetLongValue("Beats", "iVisitComposeDialogueRenderCap", dst.visitComposeDialogueRenderCap));
+            dst.visitConclusionPollRecentLinesRenderCap = static_cast<int>(ini.GetLongValue(
+                "Beats", "iVisitConclusionPollRecentLinesRenderCap", dst.visitConclusionPollRecentLinesRenderCap));
             dst.visitSenderCooldownGameHours = static_cast<int>(
                 ini.GetLongValue("Beats", "iVisitSenderCooldownGameHours", dst.visitSenderCooldownGameHours));
 
@@ -610,6 +617,14 @@ namespace NarrativeEngine::Settings
             g_config.visitComposeDialogueRenderCap = *mutations.visitComposeDialogueRenderCap;
             logger::info("Settings: MCM override write: iVisitComposeDialogueRenderCap={}",
                          *mutations.visitComposeDialogueRenderCap);
+        }
+        if (mutations.visitConclusionPollRecentLinesRenderCap) {
+            ini.SetLongValue("Beats",
+                             "iVisitConclusionPollRecentLinesRenderCap",
+                             *mutations.visitConclusionPollRecentLinesRenderCap);
+            g_config.visitConclusionPollRecentLinesRenderCap = *mutations.visitConclusionPollRecentLinesRenderCap;
+            logger::info("Settings: MCM override write: iVisitConclusionPollRecentLinesRenderCap={}",
+                         *mutations.visitConclusionPollRecentLinesRenderCap);
         }
         if (mutations.hotkeyShift || mutations.hotkeyCtrl || mutations.hotkeyAlt) {
             std::uint8_t mods = 0;
