@@ -49,8 +49,8 @@ namespace NarrativeEngine
         BeatPolarity Polarity() const override;
         bool IsAvailable(const BeatContext& ctx) const override;
         void OnStart(const BeatContext& ctx, const nlohmann::json& parameters) override;
-        TickResult Tick(TickMode mode, BeatState state) override;
-        void Abort() override;
+        TickResult Tick(const PluginThread::Token& pt, TickMode mode, BeatState state) override;
+        void Abort(const MainThread::Token& mt) override;
     };
 
     namespace NPCVisitBeat_Init

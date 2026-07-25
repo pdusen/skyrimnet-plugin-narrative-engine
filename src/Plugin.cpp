@@ -4,6 +4,7 @@
 #include <AsyncDispatch.h>
 #include <BeatRegistry.h>
 #include <BeatSystem.h>
+#include <BeatWorkDispatch.h>
 #include <CombatEventLog.h>
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
@@ -169,17 +170,11 @@ namespace NarrativeEngine
                 // Initialize just registers the module.
                 EventHistoryWriter::Initialize();
                 AsyncDispatch::Start();
-                // EvalDispatch is a second single-threaded worker
-                // dedicated to the Director's per-tick evaluation,
-                // so its multi-second sync LLM round-trip doesn't
-                // stall AsyncDispatch's cadenced 500 ms poll body.
-                // See EvalDispatch.h.
                 EvalDispatch::Start();
+                // Must start before BeatSystem::Initialize — the poll
+                // starts enqueuing here as soon as a beat is running.
+                BeatWorkDispatch::Start();
                 BeatRegistry::Initialize();
-                // BeatSystem's master poll starts here. Runs
-                // continuously on its own worker thread from now
-                // until plugin unload; the top-level state stays at
-                // NO_BEAT_RUNNING until a beat gets dispatched.
                 BeatSystem::Initialize();
                 BeatRegistry::Register(std::make_unique<AmbushBeat>());
                 BeatRegistry::Register(std::make_unique<NPCLetterBeat>());

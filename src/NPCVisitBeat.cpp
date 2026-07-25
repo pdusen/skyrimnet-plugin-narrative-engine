@@ -8,6 +8,7 @@
 #include <FactionDesignationUtils.h>
 #include <LocationKeywords.h>
 #include <logger.h>
+#include <MainThread.h>
 #include <QuestUtils.h>
 #include <SenderCandidatePool.h>
 #include <SenderCooldownTable.h>
@@ -820,134 +821,137 @@ namespace NarrativeEngine
             g_terminalCleanupDone.store(true);
         }
 
-        // ---- Compose main-thread tasks -----------------------------
+        void FireComposeLLM(const PluginThread::Token&);
+        void DispatchQuest(const PluginThread::Token&);
 
-        void MainThreadFireComposeLLM();
-        void MainThreadDispatchQuest();
-
-        void MainThreadFireComposeLLM()
+        void FireComposeLLM(const PluginThread::Token& pt)
         {
-            RE::FormID senderFormID = 0;
-            VisitComposer::UrgencyHint urgency = VisitComposer::UrgencyHint::Medium;
-            std::string justification;
-            {
-                std::scoped_lock lock(g_sessionMutex);
-                senderFormID = g_paramSenderFormID;
-                urgency = g_paramUrgency;
-                justification = g_paramJustification;
-            }
-            BeatContext composeCtx;
-            composeCtx.desiredDirection = PhaseTracker::Direction::Raise;
-            composeCtx.tensionDelta = 0;
-            VisitComposer::Compose(composeCtx,
-                                   urgency,
-                                   senderFormID,
-                                   std::move(justification),
-                                   [](std::optional<VisitComposer::VisitBriefing> briefing) {
-                                       AsyncDispatch::MarshalToMainThread([briefing = std::move(briefing)]() mutable {
-                                           if (!briefing) {
-                                               SetSubPhase(ComposeSubPhase::Failed, "compose_llm_failed");
-                                               return;
-                                           }
-                                           // Store composition on the VisitState
-                                           // snapshot; the dispatch task will read it.
-                                           VisitState::Snapshot snap;
-                                           {
-                                               std::scoped_lock lock(g_sessionMutex);
-                                               snap.senderFormID = g_paramSenderFormID;
-                                           }
-                                           snap.briefingText = briefing->briefing;
-                                           snap.narrationText = briefing->narration;
-                                           snap.topicTag = briefing->topicTag;
-                                           snap.mood = briefing->mood;
-                                           snap.dispatchedAtRealSeconds = RealSecondsNow();
-                                           VisitState::SetSnapshot(snap);
-                                           SetSubPhase(ComposeSubPhase::LLMResultReady);
+            MainThread::FireAndForget(pt, [](const MainThread::Token&) {
+                RE::FormID senderFormID = 0;
+                VisitComposer::UrgencyHint urgency = VisitComposer::UrgencyHint::Medium;
+                std::string justification;
+                {
+                    std::scoped_lock lock(g_sessionMutex);
+                    senderFormID = g_paramSenderFormID;
+                    urgency = g_paramUrgency;
+                    justification = g_paramJustification;
+                }
+                BeatContext composeCtx;
+                composeCtx.desiredDirection = PhaseTracker::Direction::Raise;
+                composeCtx.tensionDelta = 0;
+                VisitComposer::Compose(composeCtx,
+                                       urgency,
+                                       senderFormID,
+                                       std::move(justification),
+                                       [](std::optional<VisitComposer::VisitBriefing> briefing) {
+                                           AsyncDispatch::MarshalToMainThread(
+                                               [briefing = std::move(briefing)]() mutable {
+                                                   if (!briefing) {
+                                                       SetSubPhase(ComposeSubPhase::Failed, "compose_llm_failed");
+                                                       return;
+                                                   }
+                                                   // Store composition on the VisitState
+                                                   // snapshot; the dispatch task will read it.
+                                                   VisitState::Snapshot snap;
+                                                   {
+                                                       std::scoped_lock lock(g_sessionMutex);
+                                                       snap.senderFormID = g_paramSenderFormID;
+                                                   }
+                                                   snap.briefingText = briefing->briefing;
+                                                   snap.narrationText = briefing->narration;
+                                                   snap.topicTag = briefing->topicTag;
+                                                   snap.mood = briefing->mood;
+                                                   snap.dispatchedAtRealSeconds = RealSecondsNow();
+                                                   VisitState::SetSnapshot(snap);
+                                                   SetSubPhase(ComposeSubPhase::LLMResultReady);
+                                               });
                                        });
-                                   });
+            });
         }
 
-        void MainThreadDispatchQuest()
+        void DispatchQuest(const PluginThread::Token& pt)
         {
-            auto snap = VisitState::GetSnapshot();
-            if (snap.senderFormID == 0) {
-                SetSubPhase(ComposeSubPhase::Failed, "no_composition_at_dispatch");
-                return;
-            }
-            std::string liveResolveReason;
-            RE::Actor* sender = BeatParamHelpers::ResolveLiveSenderActor(snap.senderFormID, &liveResolveReason);
-            if (!sender) {
-                g_subPhase.Fail(ComposeSubPhase::Failed, std::move(liveResolveReason));
-                return;
-            }
+            MainThread::FireAndForget(pt, [](const MainThread::Token&) {
+                auto snap = VisitState::GetSnapshot();
+                if (snap.senderFormID == 0) {
+                    SetSubPhase(ComposeSubPhase::Failed, "no_composition_at_dispatch");
+                    return;
+                }
+                std::string liveResolveReason;
+                RE::Actor* sender = BeatParamHelpers::ResolveLiveSenderActor(snap.senderFormID, &liveResolveReason);
+                if (!sender) {
+                    g_subPhase.Fail(ComposeSubPhase::Failed, std::move(liveResolveReason));
+                    return;
+                }
 
-            // Snapshot pre-dispatch pose so ReturnHome can teleport back.
-            snap.returnPosition = sender->GetPosition();
-            snap.returnAngleZ = sender->GetAngleZ();
-            if (auto* parentCell = sender->GetParentCell()) {
-                snap.returnCellFormID = parentCell->GetFormID();
-            }
-            snap.ignoreNudgeCount = 0;
-            snap.consecutivePollFailures = 0;
-            VisitState::SetSnapshot(snap);
-            logger::info("NPCVisitBeat: snapshotted sender at ({:.1f},{:.1f},{:.1f}) in "
-                         "cell 0x{:08X}",
-                         snap.returnPosition.x,
-                         snap.returnPosition.y,
-                         snap.returnPosition.z,
-                         snap.returnCellFormID);
+                // Snapshot pre-dispatch pose so ReturnHome can teleport back.
+                snap.returnPosition = sender->GetPosition();
+                snap.returnAngleZ = sender->GetAngleZ();
+                if (auto* parentCell = sender->GetParentCell()) {
+                    snap.returnCellFormID = parentCell->GetFormID();
+                }
+                snap.ignoreNudgeCount = 0;
+                snap.consecutivePollFailures = 0;
+                VisitState::SetSnapshot(snap);
+                logger::info("NPCVisitBeat: snapshotted sender at ({:.1f},{:.1f},{:.1f}) in "
+                             "cell 0x{:08X}",
+                             snap.returnPosition.x,
+                             snap.returnPosition.y,
+                             snap.returnPosition.z,
+                             snap.returnCellFormID);
 
-            PromoteSenderToDesignated(sender);
+                PromoteSenderToDesignated(sender);
 
-            bool engineResult = false;
-            const bool callOk = g_visitQuest->EnsureQuestStarted(engineResult, /*a_startNow=*/true);
-            if (!callOk || !engineResult) {
-                const bool senderFilled = g_senderAlias && g_senderAlias->GetReference() != nullptr;
-                const bool spawnFilled = g_spawnMarkerAlias && g_spawnMarkerAlias->GetReference() != nullptr;
-                const bool anchorFilled = g_returnAnchorAlias && g_returnAnchorAlias->GetReference() != nullptr;
-                logger::warn("NPCVisitBeat: EnsureQuestStarted failed (callOk={}, "
-                             "engineResult={}) alias_state after failure: Sender_filled={} "
-                             "SpawnMarker_filled={} ReturnAnchor_filled={} — demoting and "
-                             "rolling back",
-                             callOk,
-                             engineResult,
-                             senderFilled,
-                             spawnFilled,
-                             anchorFilled);
-                DemoteSenderToCandidate(sender);
-                SetSubPhase(ComposeSubPhase::Failed, "ensure_quest_started_failed");
-                return;
-            }
-            const RE::FormID senderAliasFilledID =
-                (g_senderAlias && g_senderAlias->GetReference()) ? g_senderAlias->GetReference()->GetFormID() : 0u;
-            const RE::FormID spawnMarkerFilledID = (g_spawnMarkerAlias && g_spawnMarkerAlias->GetReference())
-                                                       ? g_spawnMarkerAlias->GetReference()->GetFormID()
-                                                       : 0u;
-            const RE::FormID returnAnchorFilledID = (g_returnAnchorAlias && g_returnAnchorAlias->GetReference())
-                                                        ? g_returnAnchorAlias->GetReference()->GetFormID()
-                                                        : 0u;
-            snap.returnAnchorFormID = returnAnchorFilledID;
-            VisitState::SetSnapshot(snap);
-            logger::info("NPCVisitBeat: EnsureQuestStarted ok — Sender=0x{:08X}, "
-                         "SpawnMarker=0x{:08X}, ReturnAnchor=0x{:08X}",
-                         senderAliasFilledID,
-                         spawnMarkerFilledID,
-                         returnAnchorFilledID);
-            if (senderAliasFilledID == 0 || returnAnchorFilledID == 0) {
-                logger::warn("NPCVisitBeat: EnsureQuestStarted reported success but a "
-                             "required alias is unfilled (Sender=0x{:08X}, "
-                             "ReturnAnchor=0x{:08X}) — rolling back",
+                bool engineResult = false;
+                const bool callOk = g_visitQuest->EnsureQuestStarted(engineResult, /*a_startNow=*/true);
+                if (!callOk || !engineResult) {
+                    const bool senderFilled = g_senderAlias && g_senderAlias->GetReference() != nullptr;
+                    const bool spawnFilled = g_spawnMarkerAlias && g_spawnMarkerAlias->GetReference() != nullptr;
+                    const bool anchorFilled = g_returnAnchorAlias && g_returnAnchorAlias->GetReference() != nullptr;
+                    logger::warn("NPCVisitBeat: EnsureQuestStarted failed (callOk={}, "
+                                 "engineResult={}) alias_state after failure: Sender_filled={} "
+                                 "SpawnMarker_filled={} ReturnAnchor_filled={} — demoting and "
+                                 "rolling back",
+                                 callOk,
+                                 engineResult,
+                                 senderFilled,
+                                 spawnFilled,
+                                 anchorFilled);
+                    DemoteSenderToCandidate(sender);
+                    SetSubPhase(ComposeSubPhase::Failed, "ensure_quest_started_failed");
+                    return;
+                }
+                const RE::FormID senderAliasFilledID =
+                    (g_senderAlias && g_senderAlias->GetReference()) ? g_senderAlias->GetReference()->GetFormID() : 0u;
+                const RE::FormID spawnMarkerFilledID = (g_spawnMarkerAlias && g_spawnMarkerAlias->GetReference())
+                                                           ? g_spawnMarkerAlias->GetReference()->GetFormID()
+                                                           : 0u;
+                const RE::FormID returnAnchorFilledID = (g_returnAnchorAlias && g_returnAnchorAlias->GetReference())
+                                                            ? g_returnAnchorAlias->GetReference()->GetFormID()
+                                                            : 0u;
+                snap.returnAnchorFormID = returnAnchorFilledID;
+                VisitState::SetSnapshot(snap);
+                logger::info("NPCVisitBeat: EnsureQuestStarted ok — Sender=0x{:08X}, "
+                             "SpawnMarker=0x{:08X}, ReturnAnchor=0x{:08X}",
                              senderAliasFilledID,
+                             spawnMarkerFilledID,
                              returnAnchorFilledID);
-                DemoteSenderToCandidate(sender);
-                QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
-                SetSubPhase(ComposeSubPhase::Failed, "ensure_quest_started_unfilled_alias");
-                return;
-            }
-            g_salutationEnteredAtNormalSec.store(NormalElapsedNow());
-            g_lastDistanceLogNormalSec.store(0.0);
-            VisitState::SetComposingSender(false);
-            SetSubPhase(ComposeSubPhase::Succeeded);
+                if (senderAliasFilledID == 0 || returnAnchorFilledID == 0) {
+                    logger::warn("NPCVisitBeat: EnsureQuestStarted reported success but a "
+                                 "required alias is unfilled (Sender=0x{:08X}, "
+                                 "ReturnAnchor=0x{:08X}) — rolling back",
+                                 senderAliasFilledID,
+                                 returnAnchorFilledID);
+                    DemoteSenderToCandidate(sender);
+                    QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
+                    SetSubPhase(ComposeSubPhase::Failed, "ensure_quest_started_unfilled_alias");
+                    return;
+                }
+                g_salutationEnteredAtNormalSec.store(NormalElapsedNow());
+                g_lastDistanceLogNormalSec.store(0.0);
+                VisitState::SetComposingSender(false);
+                SetSubPhase(ComposeSubPhase::Succeeded);
+            });
         }
 
         // ---- RUNNING stage-tick (main thread; called every ~1s) ----
@@ -989,313 +993,317 @@ namespace NarrativeEngine
             }
         }
 
-        void MainThreadRunningTick(TickMode mode)
+        void RunningTick(const PluginThread::Token& pt, TickMode mode)
         {
-            g_runningTaskInFlight.store(false, std::memory_order_release);
-            if (!g_visitQuest)
-                return;
-            if (g_hardAbortFired.load())
-                return;
-            if (CheckHardAbortConditions())
-                return;
-
-            const auto stage = g_visitQuest->GetCurrentStageID();
-            const auto& cfg = Settings::Get();
-
-            // Clear the salutation latch once the SetStage(Discuss) has
-            // landed and we've moved off Salutation.
-            if (stage != kStageSalutation)
-                g_salutationDiscussLatch.Reset();
-
-            switch (stage) {
-            case kStageSalutation: {
-                if (mode != TickMode::Normal)
+            MainThread::FireAndForget(pt, [mode](const MainThread::Token&) {
+                g_runningTaskInFlight.store(false, std::memory_order_release);
+                if (!g_visitQuest)
                     return;
-                if (g_salutationDiscussLatch.IsDispatched()) {
-                    LogPendingStageTransition("SALUTATION", kStageDiscuss, stage, g_salutationDiscussLatch);
+                if (g_hardAbortFired.load())
                     return;
-                }
-                auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
-                auto* player = RE::PlayerCharacter::GetSingleton();
-                if (!senderRef || !player)
+                if (CheckHardAbortConditions())
                     return;
-                const int approachDist = std::max(1, cfg.visitSalutationApproachDistanceUnits);
-                const int timeoutSec = std::max(1, cfg.visitApproachTimeoutSeconds);
-                const auto dist = senderRef->GetPosition().GetDistance(player->GetPosition());
-                const auto now = NormalElapsedNow();
-                const auto enteredAt = g_salutationEnteredAtNormalSec.load();
-                const auto elapsed = enteredAt > 0.0 ? (now - enteredAt) : 0.0;
-                const auto lastLog = g_lastDistanceLogNormalSec.load();
-                if (now - lastLog >= 5.0) {
-                    g_lastDistanceLogNormalSec.store(now);
-                    logger::info("NPCVisitBeat[SALUTATION]: elapsed={:.1f}s, "
-                                 "sender-to-player distance={:.0f}u (timeout at {}s, "
-                                 "approach<={}u)",
-                                 elapsed,
-                                 dist,
-                                 timeoutSec,
-                                 approachDist);
-                }
-                if (dist <= static_cast<float>(approachDist)) {
-                    logger::info("NPCVisitBeat[SALUTATION]: approach reached "
-                                 "({:.0f}u) — firing opening line and advancing to "
-                                 "Discuss",
-                                 dist);
-                    const auto snap = VisitState::GetSnapshot();
-                    VMDispatchRunSenderNarration(g_visitQuest, snap.narrationText);
-                    QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageDiscuss);
-                    g_salutationDiscussLatch.MarkDispatched(now);
-                    VisitConclusionPoll::Arm(snap);
-                    g_discussSenderFormID.store(snap.senderFormID);
-                    // Initialize the speech sampler cursor to now
-                    // so we don't count pre-Salutation dialogue.
-                    if (auto* cal = RE::Calendar::GetSingleton()) {
-                        g_lastSampledEventGameTime.store(static_cast<double>(cal->GetHoursPassed()) * 3600.0);
-                    }
-                    NPCVisitBeat_Cooldowns::OnVisitCompleted(snap.senderFormID);
-                    return;
-                }
-                if (elapsed >= static_cast<double>(timeoutSec)) {
-                    logger::warn("NPCVisitBeat[SALUTATION]: timeout at {:.1f}s (limit "
-                                 "{}s) — rolling back",
-                                 elapsed,
-                                 timeoutSec);
-                    auto* anchorRef = g_returnAnchorAlias ? g_returnAnchorAlias->GetReference() : nullptr;
-                    auto* senderActor = senderRef->As<RE::Actor>();
-                    if (senderActor && anchorRef) {
-                        senderActor->MoveTo(anchorRef);
-                        senderActor->data.angle.z = VisitState::GetSnapshot().returnAngleZ;
-                    }
-                    if (senderActor)
-                        DemoteSenderToCandidate(senderActor);
-                    QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
-                    VisitConclusionPoll::Disarm();
-                    PushRolledBackHistory(senderActor);
-                    g_terminalCleanupDone.store(true);
-                }
-                return;
-            }
-            case kStageDiscuss: {
-                // Sub-state machine (all C++, non-persisted). See enum
-                // definition for the full transition table.
-                const auto subPhase = g_discussSubPhase.load(std::memory_order_acquire);
-                const bool inCombat = ObserveAnyCombat();
-                const bool inDialogue = EngineUtils::IsPlayerInDialogue();
-                const bool holdTripped = inCombat || inDialogue;
 
-                switch (subPhase) {
-                case DiscussSubPhase::Discussing: {
-                    if (holdTripped) {
-                        logger::info("NPCVisitBeat[DISCUSS/Discussing]: hold trigger "
-                                     "tripped (combat={}, dialogue={}) — transitioning "
-                                     "to OnHold",
-                                     inCombat,
-                                     inDialogue);
-                        g_discussSubPhase.store(DiscussSubPhase::OnHold, std::memory_order_release);
-                        if (inCombat) {
-                            g_onHoldCombatStartedAtCombatSec.store(CombatElapsedNow());
-                        }
-                        return;
-                    }
+                const auto stage = g_visitQuest->GetCurrentStageID();
+                const auto& cfg = Settings::Get();
+
+                // Clear the salutation latch once the SetStage(Discuss) has
+                // landed and we've moved off Salutation.
+                if (stage != kStageSalutation)
+                    g_salutationDiscussLatch.Reset();
+
+                switch (stage) {
+                case kStageSalutation: {
                     if (mode != TickMode::Normal)
                         return;
-                    const auto senderFormID = g_discussSenderFormID.load();
-                    if (SampleAndRegisterNewSpeechTurns(senderFormID)) {
-                        ResetIgnoreNudgeCounter();
+                    if (g_salutationDiscussLatch.IsDispatched()) {
+                        LogPendingStageTransition("SALUTATION", kStageDiscuss, stage, g_salutationDiscussLatch);
+                        return;
                     }
-                    if (VisitConclusionPoll::GateTick()) {
-                        logger::info("NPCVisitBeat[DISCUSS/Discussing]: gate tripped — "
-                                     "firing conclusion poll");
-                        VisitConclusionPoll::FirePoll([](std::optional<VisitConclusionPoll::PollVerdict> v) {
-                            AsyncDispatch::MarshalToMainThread(
-                                [v = std::move(v)]() mutable { HandleVisitPollVerdict(std::move(v)); });
-                        });
+                    auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
+                    auto* player = RE::PlayerCharacter::GetSingleton();
+                    if (!senderRef || !player)
+                        return;
+                    const int approachDist = std::max(1, cfg.visitSalutationApproachDistanceUnits);
+                    const int timeoutSec = std::max(1, cfg.visitApproachTimeoutSeconds);
+                    const auto dist = senderRef->GetPosition().GetDistance(player->GetPosition());
+                    const auto now = NormalElapsedNow();
+                    const auto enteredAt = g_salutationEnteredAtNormalSec.load();
+                    const auto elapsed = enteredAt > 0.0 ? (now - enteredAt) : 0.0;
+                    const auto lastLog = g_lastDistanceLogNormalSec.load();
+                    if (now - lastLog >= 5.0) {
+                        g_lastDistanceLogNormalSec.store(now);
+                        logger::info("NPCVisitBeat[SALUTATION]: elapsed={:.1f}s, "
+                                     "sender-to-player distance={:.0f}u (timeout at {}s, "
+                                     "approach<={}u)",
+                                     elapsed,
+                                     dist,
+                                     timeoutSec,
+                                     approachDist);
+                    }
+                    if (dist <= static_cast<float>(approachDist)) {
+                        logger::info("NPCVisitBeat[SALUTATION]: approach reached "
+                                     "({:.0f}u) — firing opening line and advancing to "
+                                     "Discuss",
+                                     dist);
+                        const auto snap = VisitState::GetSnapshot();
+                        VMDispatchRunSenderNarration(g_visitQuest, snap.narrationText);
+                        QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageDiscuss);
+                        g_salutationDiscussLatch.MarkDispatched(now);
+                        VisitConclusionPoll::Arm(snap);
+                        g_discussSenderFormID.store(snap.senderFormID);
+                        // Initialize the speech sampler cursor to now
+                        // so we don't count pre-Salutation dialogue.
+                        if (auto* cal = RE::Calendar::GetSingleton()) {
+                            g_lastSampledEventGameTime.store(static_cast<double>(cal->GetHoursPassed()) * 3600.0);
+                        }
+                        NPCVisitBeat_Cooldowns::OnVisitCompleted(snap.senderFormID);
+                        return;
+                    }
+                    if (elapsed >= static_cast<double>(timeoutSec)) {
+                        logger::warn("NPCVisitBeat[SALUTATION]: timeout at {:.1f}s (limit "
+                                     "{}s) — rolling back",
+                                     elapsed,
+                                     timeoutSec);
+                        auto* anchorRef = g_returnAnchorAlias ? g_returnAnchorAlias->GetReference() : nullptr;
+                        auto* senderActor = senderRef->As<RE::Actor>();
+                        if (senderActor && anchorRef) {
+                            senderActor->MoveTo(anchorRef);
+                            senderActor->data.angle.z = VisitState::GetSnapshot().returnAngleZ;
+                        }
+                        if (senderActor)
+                            DemoteSenderToCandidate(senderActor);
+                        QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
+                        VisitConclusionPoll::Disarm();
+                        PushRolledBackHistory(senderActor);
+                        g_terminalCleanupDone.store(true);
                     }
                     return;
                 }
-                case DiscussSubPhase::OnHold: {
-                    if (!holdTripped) {
-                        logger::info("NPCVisitBeat[DISCUSS/OnHold]: hold triggers cleared "
-                                     "— transitioning to ReEngage");
-                        g_discussSubPhase.store(DiscussSubPhase::ReEngage, std::memory_order_release);
-                        g_onHoldCombatStartedAtCombatSec.store(0.0);
-                        g_lastDistanceLogNormalSec.store(0.0);
+                case kStageDiscuss: {
+                    // Sub-state machine (all C++, non-persisted). See enum
+                    // definition for the full transition table.
+                    const auto subPhase = g_discussSubPhase.load(std::memory_order_acquire);
+                    const bool inCombat = ObserveAnyCombat();
+                    const bool inDialogue = EngineUtils::IsPlayerInDialogue();
+                    const bool holdTripped = inCombat || inDialogue;
+
+                    switch (subPhase) {
+                    case DiscussSubPhase::Discussing: {
+                        if (holdTripped) {
+                            logger::info("NPCVisitBeat[DISCUSS/Discussing]: hold trigger "
+                                         "tripped (combat={}, dialogue={}) — transitioning "
+                                         "to OnHold",
+                                         inCombat,
+                                         inDialogue);
+                            g_discussSubPhase.store(DiscussSubPhase::OnHold, std::memory_order_release);
+                            if (inCombat) {
+                                g_onHoldCombatStartedAtCombatSec.store(CombatElapsedNow());
+                            }
+                            return;
+                        }
+                        if (mode != TickMode::Normal)
+                            return;
+                        const auto senderFormID = g_discussSenderFormID.load();
+                        if (SampleAndRegisterNewSpeechTurns(senderFormID)) {
+                            ResetIgnoreNudgeCounter();
+                        }
+                        if (VisitConclusionPoll::GateTick()) {
+                            logger::info("NPCVisitBeat[DISCUSS/Discussing]: gate tripped — "
+                                         "firing conclusion poll");
+                            VisitConclusionPoll::FirePoll([](std::optional<VisitConclusionPoll::PollVerdict> v) {
+                                AsyncDispatch::MarshalToMainThread(
+                                    [v = std::move(v)]() mutable { HandleVisitPollVerdict(std::move(v)); });
+                            });
+                        }
                         return;
                     }
-                    // Combat-stuck watchdog runs under Combat mode.
-                    if (mode == TickMode::Combat && inCombat) {
-                        const int combatMax = std::max(1, cfg.visitOnHoldCombatMaxSeconds);
-                        const auto combatStart = g_onHoldCombatStartedAtCombatSec.load();
-                        if (combatStart <= 0.0) {
-                            g_onHoldCombatStartedAtCombatSec.store(CombatElapsedNow());
-                        } else {
-                            const auto elapsed = CombatElapsedNow() - combatStart;
-                            if (elapsed >= static_cast<double>(combatMax)) {
-                                logger::warn("NPCVisitBeat[DISCUSS/OnHold]: combat_stuck — "
-                                             "elapsed {:.1f}s >= {}s",
-                                             elapsed,
-                                             combatMax);
-                                HardAbortVisit("combat_stuck");
+                    case DiscussSubPhase::OnHold: {
+                        if (!holdTripped) {
+                            logger::info("NPCVisitBeat[DISCUSS/OnHold]: hold triggers cleared "
+                                         "— transitioning to ReEngage");
+                            g_discussSubPhase.store(DiscussSubPhase::ReEngage, std::memory_order_release);
+                            g_onHoldCombatStartedAtCombatSec.store(0.0);
+                            g_lastDistanceLogNormalSec.store(0.0);
+                            return;
+                        }
+                        // Combat-stuck watchdog runs under Combat mode.
+                        if (mode == TickMode::Combat && inCombat) {
+                            const int combatMax = std::max(1, cfg.visitOnHoldCombatMaxSeconds);
+                            const auto combatStart = g_onHoldCombatStartedAtCombatSec.load();
+                            if (combatStart <= 0.0) {
+                                g_onHoldCombatStartedAtCombatSec.store(CombatElapsedNow());
+                            } else {
+                                const auto elapsed = CombatElapsedNow() - combatStart;
+                                if (elapsed >= static_cast<double>(combatMax)) {
+                                    logger::warn("NPCVisitBeat[DISCUSS/OnHold]: combat_stuck — "
+                                                 "elapsed {:.1f}s >= {}s",
+                                                 elapsed,
+                                                 combatMax);
+                                    HardAbortVisit("combat_stuck");
+                                }
                             }
                         }
+                        return;
                     }
-                    return;
-                }
-                case DiscussSubPhase::ReEngage: {
-                    if (holdTripped) {
-                        logger::info("NPCVisitBeat[DISCUSS/ReEngage]: hold trigger "
-                                     "re-tripped (combat={}, dialogue={}) — returning to "
-                                     "OnHold",
-                                     inCombat,
-                                     inDialogue);
-                        g_discussSubPhase.store(DiscussSubPhase::OnHold, std::memory_order_release);
-                        if (inCombat) {
-                            g_onHoldCombatStartedAtCombatSec.store(CombatElapsedNow());
+                    case DiscussSubPhase::ReEngage: {
+                        if (holdTripped) {
+                            logger::info("NPCVisitBeat[DISCUSS/ReEngage]: hold trigger "
+                                         "re-tripped (combat={}, dialogue={}) — returning to "
+                                         "OnHold",
+                                         inCombat,
+                                         inDialogue);
+                            g_discussSubPhase.store(DiscussSubPhase::OnHold, std::memory_order_release);
+                            if (inCombat) {
+                                g_onHoldCombatStartedAtCombatSec.store(CombatElapsedNow());
+                            }
+                            return;
+                        }
+                        if (mode != TickMode::Normal)
+                            return;
+                        auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
+                        auto* player = RE::PlayerCharacter::GetSingleton();
+                        if (!senderRef || !player)
+                            return;
+                        const int approachDist = std::max(1, cfg.visitReEngageApproachDistanceUnits);
+                        const auto dist = senderRef->GetPosition().GetDistance(player->GetPosition());
+                        const auto now = NormalElapsedNow();
+                        const auto lastLog = g_lastDistanceLogNormalSec.load();
+                        if (now - lastLog >= 5.0) {
+                            g_lastDistanceLogNormalSec.store(now);
+                            logger::info("NPCVisitBeat[DISCUSS/ReEngage]: distance={:.0f}u "
+                                         "(threshold {}u)",
+                                         dist,
+                                         approachDist);
+                        }
+                        if (dist <= static_cast<float>(approachDist)) {
+                            logger::info("NPCVisitBeat[DISCUSS/ReEngage]: approach reached "
+                                         "({:.0f}u) — firing resumption narration and returning "
+                                         "to Discussing",
+                                         dist);
+                            const auto snap = VisitState::GetSnapshot();
+                            // Build a fresh resumption line rather than
+                            // replaying the composed opener (which would
+                            // narrate the sender arriving all over again).
+                            std::string senderName;
+                            if (auto* senderActor = senderRef->As<RE::Actor>()) {
+                                if (const auto* n = senderActor->GetName())
+                                    senderName = n;
+                            }
+                            if (senderName.empty())
+                                senderName = "the sender";
+                            std::string playerName;
+                            if (const auto* n = player->GetName())
+                                playerName = n;
+                            if (playerName.empty())
+                                playerName = "the player";
+                            const std::string resumptionNarration =
+                                "Now that the interruption has ended, " + senderName + " turns back to " + playerName
+                                + " to try and resume their discussion where it left off.";
+                            VMDispatchRunSenderNarration(g_visitQuest, resumptionNarration);
+                            VisitConclusionPoll::Arm(snap);
+                            g_discussSenderFormID.store(snap.senderFormID);
+                            g_discussSubPhase.store(DiscussSubPhase::Discussing, std::memory_order_release);
                         }
                         return;
                     }
+                    }
+                    return;
+                }
+                case kStageValediction: {
+                    if (mode != TickMode::Normal)
+                        return;
+                    const auto enteredAt = g_valedictionEnteredAtNormalSec.load();
+                    if (enteredAt <= 0.0)
+                        return;
+                    const int dwellSec = std::max(1, cfg.visitValedictionDwellSeconds);
+                    const auto elapsed = NormalElapsedNow() - enteredAt;
+                    if (elapsed >= static_cast<double>(dwellSec)) {
+                        logger::info("NPCVisitBeat[VALEDICTION]: dwell expired ({:.1f}s "
+                                     ">= {}s) — advancing to ReturnHome",
+                                     elapsed,
+                                     dwellSec);
+                        QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageReturnHome);
+                        g_returnHomeStartedAtNormalSec.store(NormalElapsedNow());
+                    }
+                    return;
+                }
+                case kStageReturnHome: {
                     if (mode != TickMode::Normal)
                         return;
                     auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
                     auto* player = RE::PlayerCharacter::GetSingleton();
                     if (!senderRef || !player)
                         return;
-                    const int approachDist = std::max(1, cfg.visitReEngageApproachDistanceUnits);
+                    const int exitDist = std::max(1, cfg.visitReturnHomeExitDistanceUnits);
+                    const int timeoutSec = std::max(1, cfg.visitReturnHomeTimeoutSeconds);
                     const auto dist = senderRef->GetPosition().GetDistance(player->GetPosition());
+                    const bool attached = senderRef->GetParentCell() ? senderRef->GetParentCell()->IsAttached() : true;
+                    const auto startAt = g_returnHomeStartedAtNormalSec.load();
                     const auto now = NormalElapsedNow();
+                    const auto elapsed = startAt > 0.0 ? (now - startAt) : 0.0;
+                    const bool losToSender = CameraVisibility::IsAnyPartVisibleFromCamera(senderRef);
                     const auto lastLog = g_lastDistanceLogNormalSec.load();
                     if (now - lastLog >= 5.0) {
                         g_lastDistanceLogNormalSec.store(now);
-                        logger::info("NPCVisitBeat[DISCUSS/ReEngage]: distance={:.0f}u "
-                                     "(threshold {}u)",
+                        logger::info("NPCVisitBeat[RETURNHOME]: dist={:.0f}u (exit>={}), "
+                                     "cell_attached={}, los={}, elapsed={:.1f}s (timeout={}s)",
                                      dist,
-                                     approachDist);
+                                     exitDist,
+                                     attached,
+                                     losToSender,
+                                     elapsed,
+                                     timeoutSec);
                     }
-                    if (dist <= static_cast<float>(approachDist)) {
-                        logger::info("NPCVisitBeat[DISCUSS/ReEngage]: approach reached "
-                                     "({:.0f}u) — firing resumption narration and returning "
-                                     "to Discussing",
-                                     dist);
-                        const auto snap = VisitState::GetSnapshot();
-                        // Build a fresh resumption line rather than
-                        // replaying the composed opener (which would
-                        // narrate the sender arriving all over again).
-                        std::string senderName;
-                        if (auto* senderActor = senderRef->As<RE::Actor>()) {
-                            if (const auto* n = senderActor->GetName())
-                                senderName = n;
-                        }
-                        if (senderName.empty())
-                            senderName = "the sender";
-                        std::string playerName;
-                        if (const auto* n = player->GetName())
-                            playerName = n;
-                        if (playerName.empty())
-                            playerName = "the player";
-                        const std::string resumptionNarration =
-                            "Now that the interruption has ended, " + senderName + " turns back to " + playerName
-                            + " to try and resume their discussion where it left off.";
-                        VMDispatchRunSenderNarration(g_visitQuest, resumptionNarration);
-                        VisitConclusionPoll::Arm(snap);
-                        g_discussSenderFormID.store(snap.senderFormID);
-                        g_discussSubPhase.store(DiscussSubPhase::Discussing, std::memory_order_release);
+                    if (dist >= static_cast<float>(exitDist)) {
+                        RunReturnHomeShutdown("distance");
+                        return;
+                    }
+                    if (!attached) {
+                        RunReturnHomeShutdown("cell-unloaded");
+                        return;
+                    }
+                    if (!losToSender && dist >= 2000.0f) {
+                        RunReturnHomeShutdown("los-lost");
+                        return;
+                    }
+                    if (elapsed >= static_cast<double>(timeoutSec)) {
+                        RunReturnHomeShutdown("timeout");
+                        return;
                     }
                     return;
                 }
-                }
-                return;
-            }
-            case kStageValediction: {
-                if (mode != TickMode::Normal)
+                case kStageRollback:
+                case kStageShutdown:
+                    // Terminal — cleanup handles the wait.
                     return;
-                const auto enteredAt = g_valedictionEnteredAtNormalSec.load();
-                if (enteredAt <= 0.0)
-                    return;
-                const int dwellSec = std::max(1, cfg.visitValedictionDwellSeconds);
-                const auto elapsed = NormalElapsedNow() - enteredAt;
-                if (elapsed >= static_cast<double>(dwellSec)) {
-                    logger::info("NPCVisitBeat[VALEDICTION]: dwell expired ({:.1f}s "
-                                 ">= {}s) — advancing to ReturnHome",
-                                 elapsed,
-                                 dwellSec);
-                    QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageReturnHome);
-                    g_returnHomeStartedAtNormalSec.store(NormalElapsedNow());
-                }
-                return;
-            }
-            case kStageReturnHome: {
-                if (mode != TickMode::Normal)
-                    return;
-                auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
-                auto* player = RE::PlayerCharacter::GetSingleton();
-                if (!senderRef || !player)
-                    return;
-                const int exitDist = std::max(1, cfg.visitReturnHomeExitDistanceUnits);
-                const int timeoutSec = std::max(1, cfg.visitReturnHomeTimeoutSeconds);
-                const auto dist = senderRef->GetPosition().GetDistance(player->GetPosition());
-                const bool attached = senderRef->GetParentCell() ? senderRef->GetParentCell()->IsAttached() : true;
-                const auto startAt = g_returnHomeStartedAtNormalSec.load();
-                const auto now = NormalElapsedNow();
-                const auto elapsed = startAt > 0.0 ? (now - startAt) : 0.0;
-                const bool losToSender = CameraVisibility::IsAnyPartVisibleFromCamera(senderRef);
-                const auto lastLog = g_lastDistanceLogNormalSec.load();
-                if (now - lastLog >= 5.0) {
-                    g_lastDistanceLogNormalSec.store(now);
-                    logger::info("NPCVisitBeat[RETURNHOME]: dist={:.0f}u (exit>={}), "
-                                 "cell_attached={}, los={}, elapsed={:.1f}s (timeout={}s)",
-                                 dist,
-                                 exitDist,
-                                 attached,
-                                 losToSender,
-                                 elapsed,
-                                 timeoutSec);
-                }
-                if (dist >= static_cast<float>(exitDist)) {
-                    RunReturnHomeShutdown("distance");
+                default:
                     return;
                 }
-                if (!attached) {
-                    RunReturnHomeShutdown("cell-unloaded");
-                    return;
-                }
-                if (!losToSender && dist >= 2000.0f) {
-                    RunReturnHomeShutdown("los-lost");
-                    return;
-                }
-                if (elapsed >= static_cast<double>(timeoutSec)) {
-                    RunReturnHomeShutdown("timeout");
-                    return;
-                }
-                return;
-            }
-            case kStageRollback:
-            case kStageShutdown:
-                // Terminal — cleanup handles the wait.
-                return;
-            default:
-                return;
-            }
+            });
         }
 
-        void MainThreadCleanup()
+        void Cleanup(const PluginThread::Token& pt)
         {
-            // If cleanup wasn't already triggered by a rollback / abort
-            // path, run the terminal shutdown chain now — this covers
-            // the "COMPOSE failed before any stage was set" case where
-            // no other path has cleared state.
-            if (!g_visitQuest) {
+            MainThread::FireAndForget(pt, [](const MainThread::Token&) {
+                // If cleanup wasn't already triggered by a rollback / abort
+                // path, run the terminal shutdown chain now — this covers
+                // the "COMPOSE failed before any stage was set" case where
+                // no other path has cleared state.
+                if (!g_visitQuest) {
+                    VisitState::Reset();
+                    return;
+                }
+                const auto stage = g_visitQuest->GetCurrentStageID();
+                if (stage != 0 && stage != kStageShutdown && stage != kStageRollback) {
+                    // Force it into rollback so the Papyrus Shutdown
+                    // fragment tears down alias fills. Guarded so we don't
+                    // double-drive a stage that's already terminal.
+                    QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
+                }
+                // Give Papyrus a beat, then clear VisitState.
                 VisitState::Reset();
-                return;
-            }
-            const auto stage = g_visitQuest->GetCurrentStageID();
-            if (stage != 0 && stage != kStageShutdown && stage != kStageRollback) {
-                // Force it into rollback so the Papyrus Shutdown
-                // fragment tears down alias fills. Guarded so we don't
-                // double-drive a stage that's already terminal.
-                QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
-            }
-            // Give Papyrus a beat, then clear VisitState.
-            VisitState::Reset();
+            });
         }
     } // namespace
 
@@ -1480,7 +1488,7 @@ namespace NarrativeEngine
                                                                       : "medium");
     }
 
-    TickResult NPCVisitBeat::Tick(TickMode mode, BeatState state)
+    TickResult NPCVisitBeat::Tick(const PluginThread::Token& pt, TickMode mode, BeatState state)
     {
         // Advance the mode-scoped accumulators that feed the stage-gate
         // timers. Sample wall-clock on every Tick and credit the delta
@@ -1526,13 +1534,13 @@ namespace NarrativeEngine
             switch (sub) {
             case ComposeSubPhase::Start:
                 SetSubPhase(ComposeSubPhase::ComposingLLM);
-                AsyncDispatch::MarshalToMainThread(&MainThreadFireComposeLLM);
+                FireComposeLLM(pt);
                 return {};
             case ComposeSubPhase::ComposingLLM:
                 return {};
             case ComposeSubPhase::LLMResultReady:
                 SetSubPhase(ComposeSubPhase::Dispatching);
-                AsyncDispatch::MarshalToMainThread(&MainThreadDispatchQuest);
+                DispatchQuest(pt);
                 return {};
             case ComposeSubPhase::Dispatching:
                 return {};
@@ -1560,7 +1568,7 @@ namespace NarrativeEngine
             if (++g_runningTickCount >= kRunningCheckEveryNTicks) {
                 g_runningTickCount = 0;
                 if (!g_runningTaskInFlight.exchange(true, std::memory_order_acq_rel)) {
-                    AsyncDispatch::MarshalToMainThread([mode]() { MainThreadRunningTick(mode); });
+                    RunningTick(pt, mode);
                 }
             }
             return {};
@@ -1582,7 +1590,7 @@ namespace NarrativeEngine
                 // and the quest isn't running, we can exit
                 // immediately.
                 if (stage != kStageShutdown && stage != kStageRollback && !g_terminalCleanupDone.load()) {
-                    AsyncDispatch::MarshalToMainThread(&MainThreadCleanup);
+                    Cleanup(pt);
                     g_terminalCleanupDone.store(true);
                 }
             } else {
@@ -1599,10 +1607,12 @@ namespace NarrativeEngine
         }
     }
 
-    void NPCVisitBeat::Abort()
+    void NPCVisitBeat::Abort(const MainThread::Token& /*mt*/)
     {
         logger::warn("NPCVisitBeat: Abort() invoked — running terminal cleanup");
         // HardAbortVisit teleports the sender home (if alive), demotes
+        // them from the marker faction, dispatches kStageShutdown on the
+        // visit quest,
         // them from the marker faction, dispatches kStageShutdown on the
         // visit quest, pushes an Aborted history entry, and sets the
         // terminal-cleanup latch. Idempotent — a second call after the

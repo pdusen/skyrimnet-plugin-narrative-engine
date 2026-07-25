@@ -3,6 +3,7 @@
 #include <AlphaCanon.h>
 #include <AsyncDispatch.h>
 #include <BeatRegistry.h>
+#include <BeatWorkDispatch.h>
 #include <CombatEventLog.h>
 #include <DecisionLog.h>
 #include <EngineUtils.h>
@@ -65,10 +66,34 @@ namespace NarrativeEngine::BeatSystem
         constexpr std::size_t kRecentlyFiredCap = 32;
 
         // ----- Worker thread lifecycle ------------------------------------
+        //
+        // g_worker is the master poll thread. Every intervalMs it wakes,
+        // mints a PluginThread::Token via the shared JobDispatcher, and
+        // runs RunOneTick inline. RunOneTick stays short: state read +
+        // mode compute + single-flight-guarded enqueue onto
+        // BeatWorkDispatch when a beat->Tick is due. beat->Tick runs on
+        // BeatWorkDispatch's worker so it can block on MainThread::Run
+        // without stalling this cadence.
+        //
+        // No separate driver thread — Tick.cpp needs one because
+        // AsyncDispatch is a shared queue where cadence would be
+        // subject to whatever else is queued; RunOneTick has no such
+        // contention (the tick body is not enqueued onto a shared
+        // queue), so the poll body runs directly on this thread.
 
         std::atomic<bool> g_stopRequested{false};
         std::thread g_worker;
         bool g_running = false;
+
+        // Single-flight guard for beat->Tick execution on
+        // BeatWorkDispatch. RunOneTick sets it before enqueuing;
+        // the work-dispatch lambda clears it after beat->Tick returns
+        // and the transition has been applied. If a subsequent
+        // RunOneTick fires while this is still set, it skips the beat
+        // dispatch cleanly — no queue pile-up, no back-to-back
+        // catch-up bursts, same shape as EvaluationPipeline::
+        // IsEvaluationInFlight guarding the Director eval enqueue.
+        std::atomic<bool> g_beatTickInFlight{false};
 
         // Gate-derived TickMode. The three underlying reads live in
         // EngineUtils so other subsystems (e.g. beats' own Tick logic
@@ -117,9 +142,30 @@ namespace NarrativeEngine::BeatSystem
             return "?";
         }
 
-        // ----- Master poll body -------------------------------------------
+        void ApplyBeatTickTransition(const std::string& runningName, const TickResult& result)
+        {
+            if (!result.transitionTo.has_value()) {
+                return;
+            }
+            const BeatState nextState = *result.transitionTo;
+            std::scoped_lock lock(g_stateMutex);
+            // Discard if a StartBeat / AbortRunningBeat / Shutdown
+            // raced us on another thread.
+            if (g_topLevelState == TopLevelState::BEAT_RUNNING && g_runningBeatName == runningName) {
+                g_runningBeatCurrentState = nextState;
+                if (nextState == BeatState::NOT_RUNNING) {
+                    logger::info("BeatSystem: '{}' returned to "
+                                 "NOT_RUNNING; releasing top-level slot",
+                                 runningName);
+                    g_topLevelState = TopLevelState::NO_BEAT_RUNNING;
+                    g_runningBeatName.clear();
+                    g_runningBeatCurrentState = BeatState::NOT_RUNNING;
+                    g_globalCooldownMs = 0;
+                }
+            }
+        }
 
-        void RunOneTick(std::uint32_t intervalMs)
+        void RunOneTick(const PluginThread::Token& /*pt*/, std::uint32_t intervalMs)
         {
             const TickMode mode = ComputeTickMode();
 
@@ -148,63 +194,48 @@ namespace NarrativeEngine::BeatSystem
                 }
             }
 
-            // BEAT_RUNNING dispatch — happens outside the mutex so beat
-            // Tick can freely marshal to main thread without lock
-            // inversion risks.
-            if (topState == TopLevelState::BEAT_RUNNING) {
-                IBeat* beat = BeatRegistry::Find(runningName);
-                if (!beat) {
-                    logger::warn("BeatSystem: BEAT_RUNNING with name '{}' but "
-                                 "registry has no match; forcing NO_BEAT_RUNNING",
-                                 runningName);
-                    std::scoped_lock lock(g_stateMutex);
-                    g_topLevelState = TopLevelState::NO_BEAT_RUNNING;
-                    g_runningBeatName.clear();
-                    g_runningBeatCurrentState = BeatState::NOT_RUNNING;
-                    g_globalCooldownMs = 0;
-                    return;
-                }
-
-                TickResult result;
-                try {
-                    result = beat->Tick(mode, runningState);
-                } catch (const std::exception& e) {
-                    logger::error("BeatSystem: '{}' Tick threw: {}", runningName, e.what());
-                    result = {};
-                } catch (...) {
-                    logger::error("BeatSystem: '{}' Tick threw unknown exception", runningName);
-                    result = {};
-                }
-
-                if (result.transitionTo.has_value()) {
-                    const BeatState nextState = *result.transitionTo;
-                    std::scoped_lock lock(g_stateMutex);
-                    // Guard against a stale write racing a StartBeat /
-                    // Shutdown flip on another thread.
-                    if (g_topLevelState == TopLevelState::BEAT_RUNNING && g_runningBeatName == runningName) {
-                        g_runningBeatCurrentState = nextState;
-                        if (nextState == BeatState::NOT_RUNNING) {
-                            logger::info("BeatSystem: '{}' returned to "
-                                         "NOT_RUNNING; releasing top-level slot",
-                                         runningName);
-                            g_topLevelState = TopLevelState::NO_BEAT_RUNNING;
-                            g_runningBeatName.clear();
-                            g_runningBeatCurrentState = BeatState::NOT_RUNNING;
-                            g_globalCooldownMs = 0;
-                        }
-                    }
-                }
+            if (topState != TopLevelState::BEAT_RUNNING) {
+                return;
             }
+
+            IBeat* beat = BeatRegistry::Find(runningName);
+            if (!beat) {
+                logger::warn("BeatSystem: BEAT_RUNNING with name '{}' but "
+                             "registry has no match; forcing NO_BEAT_RUNNING",
+                             runningName);
+                std::scoped_lock lock(g_stateMutex);
+                g_topLevelState = TopLevelState::NO_BEAT_RUNNING;
+                g_runningBeatName.clear();
+                g_runningBeatCurrentState = BeatState::NOT_RUNNING;
+                g_globalCooldownMs = 0;
+                return;
+            }
+
+            if (g_beatTickInFlight.exchange(true, std::memory_order_acq_rel)) {
+                return;
+            }
+
+            BeatWorkDispatch::EnqueueWork(
+                [beat, name = runningName, mode, runningState](const PluginThread::Token& workPt) {
+                    TickResult result;
+                    try {
+                        result = beat->Tick(workPt, mode, runningState);
+                    } catch (const std::exception& e) {
+                        logger::error("BeatSystem: '{}' Tick threw: {}", name, e.what());
+                        result = {};
+                    } catch (...) {
+                        logger::error("BeatSystem: '{}' Tick threw unknown exception", name);
+                        result = {};
+                    }
+                    ApplyBeatTickTransition(name, result);
+                    g_beatTickInFlight.store(false, std::memory_order_release);
+                });
         }
 
         void WorkerLoop()
         {
-            // Declare this thread as Plugin for its entire lifetime.
-            // Runtime belt-and-braces beneath the compile-time token
-            // barrier; useful for observability and for the assertion
-            // in MainThread::Run.
             ScopedThreadRole roleGuard(ThreadRole::Plugin);
-            logger::info("BeatSystem: master poll worker thread started (role installed: Plugin)");
+            logger::info("BeatSystem: master poll worker thread started");
             const std::uint32_t intervalMs =
                 static_cast<std::uint32_t>(std::max(1, Settings::Get().beatSystemPollIntervalMs));
             const auto sleepDuration = std::chrono::milliseconds(intervalMs);
@@ -222,7 +253,8 @@ namespace NarrativeEngine::BeatSystem
                     break;
 
                 try {
-                    RunOneTick(intervalMs);
+                    PluginThread::detail::JobDispatcher::Invoke(
+                        [intervalMs](const PluginThread::Token& pt) { RunOneTick(pt, intervalMs); });
                 } catch (const std::exception& e) {
                     logger::error("BeatSystem: tick threw: {}", e.what());
                 } catch (...) {
@@ -289,6 +321,7 @@ namespace NarrativeEngine::BeatSystem
             return;
         }
         g_stopRequested.store(false, std::memory_order_release);
+        g_beatTickInFlight.store(false, std::memory_order_release);
         g_running = true;
         g_worker = std::thread(WorkerLoop);
     }
@@ -1413,7 +1446,7 @@ namespace NarrativeEngine::BeatSystem
                               "force-dispatch ");
         });
     }
-    bool AbortRunningBeat()
+    bool AbortRunningBeat(const MainThread::Token& mt)
     {
         std::string runningName;
         {
@@ -1429,7 +1462,7 @@ namespace NarrativeEngine::BeatSystem
         if (beat) {
             logger::warn("BeatSystem::AbortRunningBeat: aborting '{}'", runningName);
             try {
-                beat->Abort();
+                beat->Abort(mt);
             } catch (const std::exception& e) {
                 logger::error("BeatSystem::AbortRunningBeat: '{}' Abort threw: {}; "
                               "continuing to force NO_BEAT_RUNNING",

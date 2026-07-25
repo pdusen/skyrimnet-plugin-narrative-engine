@@ -1,19 +1,18 @@
 #include <AmbushBeat.h>
 
-#include <AsyncDispatch.h>
-#include <BeatUtils.h>
 #include <EngineUtils.h>
 #include <JsonUtils.h>
 #include <LocationKeywords.h>
 #include <logger.h>
+#include <MainThread.h>
 #include <Settings.h>
 
 #include <RE/Skyrim.h>
 
 #include <nlohmann/json.hpp>
 
-#include <atomic>
 #include <mutex>
+#include <optional>
 #include <string>
 
 namespace NarrativeEngine
@@ -23,45 +22,21 @@ namespace NarrativeEngine
         constexpr const char* kQuestEditorID = "_ne_BanditAmbushQuest";
         constexpr std::uint32_t kRecordVersion = 1;
 
-        // How often (in poll ticks) to check the quest's IsCompleted()
-        // bit while RUNNING. Every 20 ticks = 5s at the 250ms poll
-        // cadence — fast enough to feel responsive, slow enough to
-        // keep marshal traffic negligible.
+        // 20 ticks = 5s at the 250ms poll cadence.
         constexpr int kCompletionCheckEveryNTicks = 20;
 
-        // -------------------------------------------------------------
-        // Persistent state (cosave-backed)
-        // -------------------------------------------------------------
-
+        // Persistent (cosave-backed).
         std::mutex g_mutex;
         double g_lastCompletionGameHours = 0.0;
 
-        // -------------------------------------------------------------
-        // Session-only state (not persisted; reset by OnStart /
-        // OnRevert). Tick reads them from the worker thread; marshaled
-        // main-thread tasks write them. Atomics for the boolean
-        // handoffs; a small helper mutex for strings.
-        // -------------------------------------------------------------
-
-        std::atomic<bool> g_composeTaskFired{false};
-        std::atomic<bool> g_composeOutcomeReady{false};
-        std::atomic<bool> g_composeSucceeded{false};
-
+        // Session-only; reset by OnStart / OnRevert.
         int g_ticksSinceLastCompletionCheck = 0;
-        std::atomic<bool> g_completionTaskInFlight{false};
-        std::atomic<bool> g_completionOutcomeReady{false};
-        std::atomic<bool> g_completionDetected{false};
-
-        BeatUtils::CleanupLatch g_cleanupLatch;
+        bool g_composeOk = false;
 
         std::mutex g_sessionMutex;
         std::string g_failureReason;
         int g_resolvedBanditCount = 0;
         int g_resolvedSpawnDistance = 0;
-
-        // -------------------------------------------------------------
-        // Helpers
-        // -------------------------------------------------------------
 
         RE::TESQuest* LookupAmbushQuest()
         {
@@ -71,79 +46,48 @@ namespace NarrativeEngine
 
         void ResetSessionState()
         {
-            g_composeTaskFired.store(false, std::memory_order_release);
-            g_composeOutcomeReady.store(false, std::memory_order_release);
-            g_composeSucceeded.store(false, std::memory_order_release);
-
             g_ticksSinceLastCompletionCheck = 0;
-            g_completionTaskInFlight.store(false, std::memory_order_release);
-            g_completionOutcomeReady.store(false, std::memory_order_release);
-            g_completionDetected.store(false, std::memory_order_release);
-
-            g_cleanupLatch.Reset();
-
+            g_composeOk = false;
             std::scoped_lock lock(g_sessionMutex);
             g_failureReason.clear();
         }
 
-        // -------------------------------------------------------------
-        // Main-thread tasks (marshaled from Tick)
-        // -------------------------------------------------------------
-
-        void MainThreadStartQuest()
+        // Returns nullopt on success, else a failure_reason string.
+        std::optional<std::string> StartQuest(const PluginThread::Token& pt, int banditCount, int spawnDistance)
         {
-            auto* quest = LookupAmbushQuest();
-            if (!quest) {
-                logger::warn("AmbushBeat: quest '{}' not found by EditorID", kQuestEditorID);
-                {
-                    std::scoped_lock lock(g_sessionMutex);
-                    g_failureReason = "quest_not_found";
+            return MainThread::Run(pt, [banditCount, spawnDistance](const MainThread::Token&) {
+                auto* quest = LookupAmbushQuest();
+                if (!quest) {
+                    logger::warn("AmbushBeat: quest '{}' not found by EditorID", kQuestEditorID);
+                    return std::optional<std::string>{"quest_not_found"};
                 }
-                g_composeSucceeded.store(false, std::memory_order_release);
-                g_composeOutcomeReady.store(true, std::memory_order_release);
-                return;
-            }
 
-            int banditCount = 0;
-            int spawnDistance = 0;
-            {
-                std::scoped_lock lock(g_sessionMutex);
-                banditCount = g_resolvedBanditCount;
-                spawnDistance = g_resolvedSpawnDistance;
-            }
+                logger::info("AmbushBeat: starting '{}' (banditCount={} spawnDistance={})",
+                             kQuestEditorID,
+                             banditCount,
+                             spawnDistance);
 
-            logger::info("AmbushBeat: starting '{}' (banditCount={} spawnDistance={})",
-                         kQuestEditorID,
-                         banditCount,
-                         spawnDistance);
-
-            bool engineResult = false;
-            const bool callOk = quest->EnsureQuestStarted(engineResult, true);
-            const bool ok = callOk && engineResult;
-            if (!ok) {
-                logger::warn("AmbushBeat: EnsureQuestStarted failed (callOk={} engineResult={})", callOk, engineResult);
-                std::scoped_lock lock(g_sessionMutex);
-                g_failureReason = "ensure_quest_started_failed";
-            }
-            g_composeSucceeded.store(ok, std::memory_order_release);
-            g_composeOutcomeReady.store(true, std::memory_order_release);
+                bool engineResult = false;
+                const bool callOk = quest->EnsureQuestStarted(engineResult, true);
+                if (!callOk || !engineResult) {
+                    logger::warn(
+                        "AmbushBeat: EnsureQuestStarted failed (callOk={} engineResult={})", callOk, engineResult);
+                    return std::optional<std::string>{"ensure_quest_started_failed"};
+                }
+                return std::optional<std::string>{};
+            });
         }
 
-        void MainThreadCheckCompletion()
+        // A missing quest counts as completed so we don't spin.
+        bool CheckCompletion(const PluginThread::Token& pt)
         {
-            auto* quest = LookupAmbushQuest();
-            if (!quest) {
-                // ESP gone mid-flight — treat as completed so we
-                // proceed to cleanup rather than spin.
-                g_completionDetected.store(true, std::memory_order_release);
-            } else {
-                g_completionDetected.store(quest->IsCompleted(), std::memory_order_release);
-            }
-            g_completionOutcomeReady.store(true, std::memory_order_release);
-            g_completionTaskInFlight.store(false, std::memory_order_release);
+            return MainThread::Run(pt, [](const MainThread::Token&) {
+                auto* quest = LookupAmbushQuest();
+                return quest ? quest->IsCompleted() : true;
+            });
         }
 
-        void MainThreadCleanup()
+        void Cleanup(const MainThread::Token&)
         {
             auto* quest = LookupAmbushQuest();
             if (quest) {
@@ -152,19 +96,11 @@ namespace NarrativeEngine
                 quest->Reset();
                 quest->SetEnabled(false);
             }
-            // Stamp the per-beat cooldown only on a real completion,
-            // not a compose failure. The distinction: compose failure
-            // leaves g_composeSucceeded=false; a completed encounter
-            // has it true.
-            if (g_composeSucceeded.load(std::memory_order_acquire)) {
-                const double now = EngineUtils::GetCurrentGameHours();
-                {
-                    std::scoped_lock lock(g_mutex);
-                    g_lastCompletionGameHours = now;
-                }
-                logger::info("AmbushBeat: per-beat cooldown stamped at gameHours={:.2f}", now);
-            }
-            g_cleanupLatch.MarkComplete();
+        }
+
+        void Cleanup(const PluginThread::Token& pt)
+        {
+            MainThread::Run(pt, [](const MainThread::Token& mt) { Cleanup(mt); });
         }
     } // namespace
 
@@ -282,7 +218,7 @@ namespace NarrativeEngine
         logger::info("AmbushBeat::OnStart: resolved banditCount={} spawnDistance={}", banditCount, spawnDistance);
     }
 
-    TickResult AmbushBeat::Tick(TickMode mode, BeatState state)
+    TickResult AmbushBeat::Tick(const PluginThread::Token& pt, TickMode mode, BeatState state)
     {
         // Freeze under any non-Normal gate.
         if (mode != TickMode::Normal)
@@ -290,54 +226,54 @@ namespace NarrativeEngine
 
         switch (state) {
         case BeatState::COMPOSE: {
-            if (g_composeOutcomeReady.load(std::memory_order_acquire)) {
-                const bool ok = g_composeSucceeded.load(std::memory_order_acquire);
-                if (ok) {
-                    logger::info("AmbushBeat: COMPOSE succeeded; advancing to RUNNING");
-                    g_ticksSinceLastCompletionCheck = 0;
-                    return {BeatState::RUNNING};
-                } else {
-                    std::string reason;
-                    {
-                        std::scoped_lock lock(g_sessionMutex);
-                        reason = g_failureReason;
-                    }
-                    logger::warn("AmbushBeat: COMPOSE failed ({}); advancing to CLEANUP", reason);
-                    return {BeatState::CLEANUP};
+            int banditCount = 0;
+            int spawnDistance = 0;
+            {
+                std::scoped_lock lock(g_sessionMutex);
+                banditCount = g_resolvedBanditCount;
+                spawnDistance = g_resolvedSpawnDistance;
+            }
+            const auto failure = StartQuest(pt, banditCount, spawnDistance);
+            if (failure) {
+                {
+                    std::scoped_lock lock(g_sessionMutex);
+                    g_failureReason = *failure;
                 }
+                logger::warn("AmbushBeat: COMPOSE failed ({}); advancing to CLEANUP", *failure);
+                g_composeOk = false;
+                return {BeatState::CLEANUP};
             }
-            if (!g_composeTaskFired.exchange(true, std::memory_order_acq_rel)) {
-                AsyncDispatch::MarshalToMainThread(&MainThreadStartQuest);
-            }
-            return {};
+            logger::info("AmbushBeat: COMPOSE succeeded; advancing to RUNNING");
+            g_composeOk = true;
+            g_ticksSinceLastCompletionCheck = 0;
+            return {BeatState::RUNNING};
         }
 
         case BeatState::RUNNING: {
-            if (g_completionOutcomeReady.load(std::memory_order_acquire)) {
-                // Consume the outcome regardless — next check will
-                // fire a new task if this one said not-yet.
-                const bool done = g_completionDetected.load(std::memory_order_acquire);
-                g_completionOutcomeReady.store(false, std::memory_order_release);
-                if (done) {
-                    logger::info("AmbushBeat: RUNNING detected completion; advancing to CLEANUP");
-                    return {BeatState::CLEANUP};
-                }
+            if (++g_ticksSinceLastCompletionCheck < kCompletionCheckEveryNTicks) {
+                return {};
             }
-            if (++g_ticksSinceLastCompletionCheck >= kCompletionCheckEveryNTicks) {
-                g_ticksSinceLastCompletionCheck = 0;
-                if (!g_completionTaskInFlight.exchange(true, std::memory_order_acq_rel)) {
-                    AsyncDispatch::MarshalToMainThread(&MainThreadCheckCompletion);
-                }
+            g_ticksSinceLastCompletionCheck = 0;
+            if (CheckCompletion(pt)) {
+                logger::info("AmbushBeat: RUNNING detected completion; advancing to CLEANUP");
+                return {BeatState::CLEANUP};
             }
             return {};
         }
 
         case BeatState::CLEANUP: {
-            if (g_cleanupLatch.Poll(&MainThreadCleanup)) {
-                logger::info("AmbushBeat: CLEANUP done; returning to NOT_RUNNING");
-                return {BeatState::NOT_RUNNING};
+            Cleanup(pt);
+            // Cooldown stamp only on real completion, not compose failure.
+            if (g_composeOk) {
+                const double now = EngineUtils::GetCurrentGameHours();
+                {
+                    std::scoped_lock lock(g_mutex);
+                    g_lastCompletionGameHours = now;
+                }
+                logger::info("AmbushBeat: per-beat cooldown stamped at gameHours={:.2f}", now);
             }
-            return {};
+            logger::info("AmbushBeat: CLEANUP done; returning to NOT_RUNNING");
+            return {BeatState::NOT_RUNNING};
         }
 
         case BeatState::NOT_RUNNING:
@@ -346,23 +282,16 @@ namespace NarrativeEngine
         }
     }
 
-    void AmbushBeat::Abort()
+    void AmbushBeat::Abort(const MainThread::Token& mt)
     {
         logger::warn("AmbushBeat: Abort() invoked — running terminal cleanup");
-        // Force cleanup to run down the failure path (do not stamp the
-        // per-beat completion cooldown). MainThreadCleanup is safe to
-        // call synchronously on the main thread; it handles Stop/Reset
-        // /SetEnabled on the quest and marks the cleanup latch complete.
-        g_composeSucceeded.store(false, std::memory_order_release);
-        MainThreadCleanup();
+        // Run the failure branch — no cooldown stamp.
+        g_composeOk = false;
+        Cleanup(mt);
         ResetSessionState();
     }
 
-    // -----------------------------------------------------------------
-    // Cosave — 'NBAM' record, version 1.
-    // Layout: double lastCompletionGameHours
-    // -----------------------------------------------------------------
-
+    // Cosave 'NBAM' v1: double lastCompletionGameHours.
     namespace AmbushBeat_Persistence
     {
         void OnSave(SKSE::SerializationInterface* intfc)

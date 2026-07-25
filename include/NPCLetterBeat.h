@@ -37,9 +37,9 @@ namespace NarrativeEngine
         BeatPolarity Polarity() const override;
         bool IsAvailable(const BeatContext& ctx) const override;
         void OnStart(const BeatContext& ctx, const nlohmann::json& parameters) override;
-        TickResult Tick(TickMode mode, BeatState state) override;
+        TickResult Tick(const PluginThread::Token& pt, TickMode mode, BeatState state) override;
         double RemainingCooldownGameHours() const override;
-        void Abort() override;
+        void Abort(const MainThread::Token& mt) override;
     };
 
     namespace NPCLetterBeat_Init

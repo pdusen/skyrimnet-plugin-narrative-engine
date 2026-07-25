@@ -5,8 +5,14 @@
 #include <string>
 
 #include <PhaseTracker.h>
+#include <PluginThread.h>
 
 #include <nlohmann/json_fwd.hpp>
+
+namespace NarrativeEngine::MainThread
+{
+    class Token;
+}
 
 namespace RE
 {
@@ -148,20 +154,16 @@ namespace NarrativeEngine
         // OnStart.
         virtual void OnStart(const BeatContext& ctx, const nlohmann::json& parameters) = 0;
 
-        // The beat's whole per-poll lifecycle. Called by BeatSystem's
-        // master poll every N ms (default 250) while this beat is the
-        // running beat. Runs on the master poll's worker thread —
-        // engine reads that aren't safe off-thread must be marshaled
-        // to the main thread via AsyncDispatch::MarshalToMainThread.
-        // `state` is the beat's current BeatState as read from cosave;
-        // `mode` is the master poll's gate reading for this tick.
-        // Returns a TickResult that may request a state transition;
-        // the master poll applies it.
+        // Called every beatSystemPollIntervalMs while this beat is
+        // running. May block on MainThread::Run — BeatSystem single-
+        // flights this call so a slow Tick can't pile up follow-ons.
+        // Returning a transition in TickResult tells the master poll
+        // to advance the beat's cosave-recorded BeatState.
         //
         // Implementations should exit early under Paused / Dialogue
-        // (and typically Combat) unless the beat specifically wants to
-        // do something under that mode.
-        virtual TickResult Tick(TickMode mode, BeatState state) = 0;
+        // (and typically Combat) unless the beat has specific behavior
+        // for that mode.
+        virtual TickResult Tick(const PluginThread::Token& pt, TickMode mode, BeatState state) = 0;
 
         // In-game hours remaining before this beat's own per-beat
         // cooldown expires. Zero means "no cooldown active" / "can fire
@@ -175,16 +177,12 @@ namespace NarrativeEngine
             return 0.0;
         }
 
-        // Force this beat to terminal cleanup immediately, regardless
-        // of sub-phase. Called on the main thread by
-        // BeatSystem::AbortRunningBeat in response to the dashboard's
-        // Abort button. Must synchronously unwind any world-side
-        // effects the beat has installed (quest stages, alias fills,
-        // faction promotions, spawned refs, event sinks) and reset
-        // internal session state so a subsequent StartBeat can run
-        // cleanly. Does NOT roll back memories already written to
-        // SkyrimNet or narrations already spoken by NPCs — those are
-        // considered "already happened."
-        virtual void Abort() = 0;
+        // Force this beat to terminal cleanup immediately. Must
+        // synchronously unwind installed world-side effects (quest
+        // stages, alias fills, faction promotions, spawned refs, event
+        // sinks) and reset internal session state so a subsequent
+        // StartBeat runs cleanly. Does NOT roll back already-written
+        // memories or already-spoken narrations.
+        virtual void Abort(const MainThread::Token& mt) = 0;
     };
 } // namespace NarrativeEngine

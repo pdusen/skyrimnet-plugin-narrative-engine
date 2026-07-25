@@ -8,6 +8,7 @@
 #include <DecisionLog.h>
 #include <LetterPool.h>
 #include <logger.h>
+#include <MainThread.h>
 #include <PhaseTracker.h>
 #include <PrismaUI.h>
 #include <Settings.h>
@@ -582,15 +583,15 @@ namespace NarrativeEngine::DashboardUIManager
         }
 
         // Backs the Dispatch tab's Abort button (after confirmation).
-        // Marshals to main and delegates to BeatSystem::AbortRunningBeat.
-        // No argument. Safe if the button somehow fires when no beat is
-        // in flight — the backend no-ops in that case.
+        // No-ops backend-side if no beat is in flight.
         void OnAbortRunningBeat(const char* /*argument*/)
         {
             logger::info("DashboardUIManager: ne_abortRunningBeat received");
-            AsyncDispatch::MarshalToMainThread([] {
-                BeatSystem::AbortRunningBeat();
-                PushFullState();
+            AsyncDispatch::EnqueueWork([](const PluginThread::Token& pt) {
+                MainThread::FireAndForget(pt, [](const MainThread::Token& mt) {
+                    BeatSystem::AbortRunningBeat(mt);
+                    PushFullState();
+                });
             });
         }
 
