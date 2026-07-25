@@ -17,10 +17,4 @@ namespace NarrativeEngine::AsyncDispatch
     void Stop();
 
     void EnqueueWork(std::function<void(const PluginThread::Token&)> work);
-
-    // Deprecated: prefer MainThread::FireAndForget once you hold a
-    // PluginThread::Token.
-    [[deprecated(
-        "Use MainThread::FireAndForget after obtaining a PluginThread::Token via AsyncDispatch::EnqueueWork.")]]
-    void MarshalToMainThread(std::function<void()> work);
 } // namespace NarrativeEngine::AsyncDispatch

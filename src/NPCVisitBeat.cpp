@@ -821,52 +821,48 @@ namespace NarrativeEngine
             g_terminalCleanupDone.store(true);
         }
 
-        void FireComposeLLM(const PluginThread::Token&);
+        void FireComposeLLM();
         void DispatchQuest(const PluginThread::Token&);
 
-        void FireComposeLLM(const PluginThread::Token& pt)
+        void FireComposeLLM()
         {
-            MainThread::FireAndForget(pt, [](const MainThread::Token&) {
-                RE::FormID senderFormID = 0;
-                VisitComposer::UrgencyHint urgency = VisitComposer::UrgencyHint::Medium;
-                std::string justification;
-                {
-                    std::scoped_lock lock(g_sessionMutex);
-                    senderFormID = g_paramSenderFormID;
-                    urgency = g_paramUrgency;
-                    justification = g_paramJustification;
-                }
-                BeatContext composeCtx;
-                composeCtx.desiredDirection = PhaseTracker::Direction::Raise;
-                composeCtx.tensionDelta = 0;
-                VisitComposer::Compose(composeCtx,
-                                       urgency,
-                                       senderFormID,
-                                       std::move(justification),
-                                       [](std::optional<VisitComposer::VisitBriefing> briefing) {
-                                           AsyncDispatch::MarshalToMainThread(
-                                               [briefing = std::move(briefing)]() mutable {
-                                                   if (!briefing) {
-                                                       SetSubPhase(ComposeSubPhase::Failed, "compose_llm_failed");
-                                                       return;
-                                                   }
-                                                   // Store composition on the VisitState
-                                                   // snapshot; the dispatch task will read it.
-                                                   VisitState::Snapshot snap;
-                                                   {
-                                                       std::scoped_lock lock(g_sessionMutex);
-                                                       snap.senderFormID = g_paramSenderFormID;
-                                                   }
-                                                   snap.briefingText = briefing->briefing;
-                                                   snap.narrationText = briefing->narration;
-                                                   snap.topicTag = briefing->topicTag;
-                                                   snap.mood = briefing->mood;
-                                                   snap.dispatchedAtRealSeconds = RealSecondsNow();
-                                                   VisitState::SetSnapshot(snap);
-                                                   SetSubPhase(ComposeSubPhase::LLMResultReady);
-                                               });
-                                       });
-            });
+            RE::FormID senderFormID = 0;
+            VisitComposer::UrgencyHint urgency = VisitComposer::UrgencyHint::Medium;
+            std::string justification;
+            {
+                std::scoped_lock lock(g_sessionMutex);
+                senderFormID = g_paramSenderFormID;
+                urgency = g_paramUrgency;
+                justification = g_paramJustification;
+            }
+            BeatContext composeCtx;
+            composeCtx.desiredDirection = PhaseTracker::Direction::Raise;
+            composeCtx.tensionDelta = 0;
+            // SkyrimNetAPI's async adapter routes the completion callback
+            // through AsyncDispatch::EnqueueWork before invoking it, so
+            // the body below runs on the plugin thread.
+            VisitComposer::Compose(composeCtx,
+                                   urgency,
+                                   senderFormID,
+                                   std::move(justification),
+                                   [](std::optional<VisitComposer::VisitBriefing> briefing) {
+                                       if (!briefing) {
+                                           SetSubPhase(ComposeSubPhase::Failed, "compose_llm_failed");
+                                           return;
+                                       }
+                                       VisitState::Snapshot snap;
+                                       {
+                                           std::scoped_lock lock(g_sessionMutex);
+                                           snap.senderFormID = g_paramSenderFormID;
+                                       }
+                                       snap.briefingText = briefing->briefing;
+                                       snap.narrationText = briefing->narration;
+                                       snap.topicTag = briefing->topicTag;
+                                       snap.mood = briefing->mood;
+                                       snap.dispatchedAtRealSeconds = RealSecondsNow();
+                                       VisitState::SetSnapshot(snap);
+                                       SetSubPhase(ComposeSubPhase::LLMResultReady);
+                                   });
         }
 
         void DispatchQuest(const PluginThread::Token& pt)
@@ -1112,8 +1108,11 @@ namespace NarrativeEngine
                             logger::info("NPCVisitBeat[DISCUSS/Discussing]: gate tripped — "
                                          "firing conclusion poll");
                             VisitConclusionPoll::FirePoll([](std::optional<VisitConclusionPoll::PollVerdict> v) {
-                                AsyncDispatch::MarshalToMainThread(
-                                    [v = std::move(v)]() mutable { HandleVisitPollVerdict(std::move(v)); });
+                                AsyncDispatch::EnqueueWork([v = std::move(v)](const PluginThread::Token& pt) mutable {
+                                    MainThread::FireAndForget(pt, [v = std::move(v)](const MainThread::Token&) mutable {
+                                        HandleVisitPollVerdict(std::move(v));
+                                    });
+                                });
                             });
                         }
                         return;
@@ -1534,7 +1533,7 @@ namespace NarrativeEngine
             switch (sub) {
             case ComposeSubPhase::Start:
                 SetSubPhase(ComposeSubPhase::ComposingLLM);
-                FireComposeLLM(pt);
+                FireComposeLLM();
                 return {};
             case ComposeSubPhase::ComposingLLM:
                 return {};

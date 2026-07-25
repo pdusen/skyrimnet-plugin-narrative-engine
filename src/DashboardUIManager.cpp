@@ -135,7 +135,9 @@ namespace NarrativeEngine::DashboardUIManager
                         if (dxsc == kDIK_ESCAPE) {
                             g_hotkeyCaptureMode.store(false, std::memory_order_release);
                             logger::info("DashboardUIManager: hotkey rebind cancelled (ESC)");
-                            AsyncDispatch::MarshalToMainThread([] { PushFullState(); });
+                            AsyncDispatch::EnqueueWork([](const PluginThread::Token& pt) {
+                                MainThread::FireAndForget(pt, [](const MainThread::Token&) { PushFullState(); });
+                            });
                             return RE::BSEventNotifyControl::kContinue;
                         }
                         const bool shift = (::GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
@@ -148,14 +150,16 @@ namespace NarrativeEngine::DashboardUIManager
                                      shift ? 1 : 0,
                                      ctrl ? 1 : 0,
                                      alt ? 1 : 0);
-                        AsyncDispatch::MarshalToMainThread([capturedDxsc, shift, ctrl, alt] {
-                            Settings::McmOverride mut;
-                            mut.dashboardHotkeyDXSC = capturedDxsc;
-                            mut.hotkeyShift = shift;
-                            mut.hotkeyCtrl = ctrl;
-                            mut.hotkeyAlt = alt;
-                            Settings::WriteMcmOverride(mut);
-                            PushFullState();
+                        AsyncDispatch::EnqueueWork([capturedDxsc, shift, ctrl, alt](const PluginThread::Token& pt) {
+                            MainThread::FireAndForget(pt, [capturedDxsc, shift, ctrl, alt](const MainThread::Token&) {
+                                Settings::McmOverride mut;
+                                mut.dashboardHotkeyDXSC = capturedDxsc;
+                                mut.hotkeyShift = shift;
+                                mut.hotkeyCtrl = ctrl;
+                                mut.hotkeyAlt = alt;
+                                Settings::WriteMcmOverride(mut);
+                                PushFullState();
+                            });
                         });
                         return RE::BSEventNotifyControl::kContinue;
                     }
@@ -251,7 +255,9 @@ namespace NarrativeEngine::DashboardUIManager
                 }
 
                 if (fire) {
-                    AsyncDispatch::MarshalToMainThread([] { ToggleVisibility(); });
+                    AsyncDispatch::EnqueueWork([](const PluginThread::Token& pt) {
+                        MainThread::FireAndForget(pt, [](const MainThread::Token&) { ToggleVisibility(); });
+                    });
                 }
                 return RE::BSEventNotifyControl::kContinue;
             }
@@ -502,17 +508,18 @@ namespace NarrativeEngine::DashboardUIManager
         {
             const bool enabled = ParseBoolArg(argument);
             logger::info("DashboardUIManager: ne_setTickEnabled({}) received", enabled ? "true" : "false");
-            AsyncDispatch::MarshalToMainThread([enabled] {
-                Tick::SetEnabled(enabled);
-                // Persist so the toggle survives reboot. Phase 08 change:
-                // pre-Phase 08 this was session-only. Both dashboard mount
-                // points (Dispatch and Settings tabs) flow through this
-                // handler, so the write happens once regardless of which
-                // surface the player toggled.
-                Settings::McmOverride mut;
-                mut.tickEnabled = enabled;
-                Settings::WriteMcmOverride(mut);
-                PushFullState();
+            AsyncDispatch::EnqueueWork([enabled](const PluginThread::Token& pt) {
+                MainThread::FireAndForget(pt, [enabled](const MainThread::Token&) {
+                    Tick::SetEnabled(enabled);
+                    // Persist so the toggle survives reboot. Both dashboard
+                    // mount points (Dispatch and Settings tabs) flow through
+                    // this handler, so the write happens once regardless of
+                    // which surface the player toggled.
+                    Settings::McmOverride mut;
+                    mut.tickEnabled = enabled;
+                    Settings::WriteMcmOverride(mut);
+                    PushFullState();
+                });
             });
         }
 
@@ -540,9 +547,11 @@ namespace NarrativeEngine::DashboardUIManager
                 return;
             }
             logger::info("DashboardUIManager: ne_setActionEnabled(name='{}', enabled={}) received", name, enabled);
-            AsyncDispatch::MarshalToMainThread([name = std::move(name), enabled]() mutable {
-                BeatRegistry::SetEnabled(name, enabled);
-                PushFullState();
+            AsyncDispatch::EnqueueWork([name = std::move(name), enabled](const PluginThread::Token& pt) mutable {
+                MainThread::FireAndForget(pt, [name = std::move(name), enabled](const MainThread::Token&) {
+                    BeatRegistry::SetEnabled(name, enabled);
+                    PushFullState();
+                });
             });
         }
 
@@ -552,11 +561,13 @@ namespace NarrativeEngine::DashboardUIManager
         {
             const bool enabled = ParseBoolArg(argument);
             logger::info("DashboardUIManager: ne_setAllActionsEnabled({}) received", enabled ? "true" : "false");
-            AsyncDispatch::MarshalToMainThread([enabled] {
-                for (const auto& entry : BeatRegistry::All()) {
-                    BeatRegistry::SetEnabled(entry.name, enabled);
-                }
-                PushFullState();
+            AsyncDispatch::EnqueueWork([enabled](const PluginThread::Token& pt) {
+                MainThread::FireAndForget(pt, [enabled](const MainThread::Token&) {
+                    for (const auto& entry : BeatRegistry::All()) {
+                        BeatRegistry::SetEnabled(entry.name, enabled);
+                    }
+                    PushFullState();
+                });
             });
         }
 
@@ -574,11 +585,13 @@ namespace NarrativeEngine::DashboardUIManager
                 return;
             }
             logger::info("DashboardUIManager: ne_dispatchAction('{}') received", name);
-            AsyncDispatch::MarshalToMainThread([name]() mutable {
-                BeatSystem::ForceDispatchBeat(name);
-                // Push once now so the dashboard reflects the "in-
-                // flight" state within a frame.
-                PushFullState();
+            AsyncDispatch::EnqueueWork([name = std::move(name)](const PluginThread::Token& pt) mutable {
+                MainThread::FireAndForget(pt, [name = std::move(name)](const MainThread::Token&) {
+                    BeatSystem::ForceDispatchBeat(name);
+                    // Push once now so the dashboard reflects the
+                    // "in-flight" state within a frame.
+                    PushFullState();
+                });
             });
         }
 
@@ -601,11 +614,13 @@ namespace NarrativeEngine::DashboardUIManager
         {
             const bool enabled = ParseBoolArg(argument);
             logger::info("DashboardUIManager: ne_setDebugMode({}) received", enabled ? "true" : "false");
-            AsyncDispatch::MarshalToMainThread([enabled] {
-                Settings::McmOverride mut;
-                mut.debugMode = enabled;
-                Settings::WriteMcmOverride(mut);
-                PushFullState();
+            AsyncDispatch::EnqueueWork([enabled](const PluginThread::Token& pt) {
+                MainThread::FireAndForget(pt, [enabled](const MainThread::Token&) {
+                    Settings::McmOverride mut;
+                    mut.debugMode = enabled;
+                    Settings::WriteMcmOverride(mut);
+                    PushFullState();
+                });
             });
         }
 
@@ -642,11 +657,13 @@ namespace NarrativeEngine::DashboardUIManager
             if (value > maxValue)
                 value = maxValue;
             logger::info("DashboardUIManager: {}({}) received", listenerName, value);
-            AsyncDispatch::MarshalToMainThread([value, applyToOverride] {
-                Settings::McmOverride mut;
-                applyToOverride(mut, value);
-                Settings::WriteMcmOverride(mut);
-                PushFullState();
+            AsyncDispatch::EnqueueWork([value, applyToOverride](const PluginThread::Token& pt) {
+                MainThread::FireAndForget(pt, [value, applyToOverride](const MainThread::Token&) {
+                    Settings::McmOverride mut;
+                    applyToOverride(mut, value);
+                    Settings::WriteMcmOverride(mut);
+                    PushFullState();
+                });
             });
         }
 
@@ -804,9 +821,11 @@ namespace NarrativeEngine::DashboardUIManager
             }
             logger::info(
                 "DashboardUIManager: ne_setPhaseIdealDuration(phase='{}', seconds={}) received", phase, seconds);
-            AsyncDispatch::MarshalToMainThread([mut = std::move(mut)]() mutable {
-                Settings::WriteMcmOverride(mut);
-                PushFullState();
+            AsyncDispatch::EnqueueWork([mut = std::move(mut)](const PluginThread::Token& pt) mutable {
+                MainThread::FireAndForget(pt, [mut = std::move(mut)](const MainThread::Token&) {
+                    Settings::WriteMcmOverride(mut);
+                    PushFullState();
+                });
             });
         }
 
@@ -817,9 +836,11 @@ namespace NarrativeEngine::DashboardUIManager
         void OnBeginHotkeyRebind(const char* /*argument*/)
         {
             logger::info("DashboardUIManager: hotkey rebind capture armed");
-            AsyncDispatch::MarshalToMainThread([] {
-                g_hotkeyCaptureMode.store(true, std::memory_order_release);
-                PushFullState();
+            AsyncDispatch::EnqueueWork([](const PluginThread::Token& pt) {
+                MainThread::FireAndForget(pt, [](const MainThread::Token&) {
+                    g_hotkeyCaptureMode.store(true, std::memory_order_release);
+                    PushFullState();
+                });
             });
         }
 
@@ -828,14 +849,16 @@ namespace NarrativeEngine::DashboardUIManager
         // the input sink) this is a no-op. No argument.
         void OnCancelHotkeyRebind(const char* /*argument*/)
         {
-            AsyncDispatch::MarshalToMainThread([] {
-                const bool was = g_hotkeyCaptureMode.exchange(false, std::memory_order_acq_rel);
-                if (was) {
-                    logger::info("DashboardUIManager: hotkey rebind cancelled (Cancel button)");
-                } else {
-                    logger::debug("DashboardUIManager: ne_cancelHotkeyRebind: capture already inactive");
-                }
-                PushFullState();
+            AsyncDispatch::EnqueueWork([](const PluginThread::Token& pt) {
+                MainThread::FireAndForget(pt, [](const MainThread::Token&) {
+                    const bool was = g_hotkeyCaptureMode.exchange(false, std::memory_order_acq_rel);
+                    if (was) {
+                        logger::info("DashboardUIManager: hotkey rebind cancelled (Cancel button)");
+                    } else {
+                        logger::debug("DashboardUIManager: ne_cancelHotkeyRebind: capture already inactive");
+                    }
+                    PushFullState();
+                });
             });
         }
     } // namespace
@@ -1292,13 +1315,13 @@ namespace NarrativeEngine::DashboardUIManager
         }
 
         // Move the compose off main. The caller may be on any thread
-        // (main from ToggleVisibility / MarshalToMainThread input
-        // handlers, plugin from ApplyDecision) — either way we
-        // enqueue onto the plugin thread and run the JSON build
-        // there. Every read the compose does is off-main-safe:
-        // Calendar accessors are stable-singleton reads,
-        // IBeat::RemainingCooldownGameHours on the shipped beats
-        // just reads a Calendar-derived elapsed value, and
+        // (main from ToggleVisibility / input handlers, plugin from
+        // ApplyDecision) — either way we enqueue onto the plugin
+        // thread and run the JSON build there. Every read the
+        // compose does is off-main-safe: Calendar accessors are
+        // stable-singleton reads, IBeat::RemainingCooldownGameHours
+        // on the shipped beats just reads a Calendar-derived
+        // elapsed value, and
         // ComposeFullStateJSON's other reads (LetterPool,
         // BeatRegistry, PhaseTracker, DecisionLog, VisitState,
         // VisitConclusionPoll, SkyrimNetAPI event tail) are all

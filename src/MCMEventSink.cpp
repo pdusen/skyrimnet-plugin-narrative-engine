@@ -2,6 +2,7 @@
 
 #include <AsyncDispatch.h>
 #include <logger.h>
+#include <MainThread.h>
 #include <Settings.h>
 
 #include <atomic>
@@ -40,20 +41,22 @@ namespace NarrativeEngine::MCMEventSink
                     return RE::BSEventNotifyControl::kContinue;
                 }
 
-                AsyncDispatch::MarshalToMainThread([] {
-                    const auto& before = Settings::Get();
-                    const int prevDxsc = before.dashboardHotkeyDXSC;
-                    const std::uint8_t prevMods = before.dashboardHotkeyModifiers;
-                    Settings::ApplyMcmOverride();
-                    const auto& cfg = Settings::Get();
-                    logger::info("MCMEventSink: dashboard hotkey rebound DXSC={} mods={}",
-                                 cfg.dashboardHotkeyDXSC,
-                                 static_cast<int>(cfg.dashboardHotkeyModifiers));
-                    logger::trace("MCMEventSink[trace]: post-apply hotkey DXSC {}->{} mods 0x{:02X}->0x{:02X}",
-                                  prevDxsc,
-                                  cfg.dashboardHotkeyDXSC,
-                                  static_cast<int>(prevMods),
-                                  static_cast<int>(cfg.dashboardHotkeyModifiers));
+                AsyncDispatch::EnqueueWork([](const PluginThread::Token& pt) {
+                    MainThread::FireAndForget(pt, [](const MainThread::Token&) {
+                        const auto& before = Settings::Get();
+                        const int prevDxsc = before.dashboardHotkeyDXSC;
+                        const std::uint8_t prevMods = before.dashboardHotkeyModifiers;
+                        Settings::ApplyMcmOverride();
+                        const auto& cfg = Settings::Get();
+                        logger::info("MCMEventSink: dashboard hotkey rebound DXSC={} mods={}",
+                                     cfg.dashboardHotkeyDXSC,
+                                     static_cast<int>(cfg.dashboardHotkeyModifiers));
+                        logger::trace("MCMEventSink[trace]: post-apply hotkey DXSC {}->{} mods 0x{:02X}->0x{:02X}",
+                                      prevDxsc,
+                                      cfg.dashboardHotkeyDXSC,
+                                      static_cast<int>(prevMods),
+                                      static_cast<int>(cfg.dashboardHotkeyModifiers));
+                    });
                 });
 
                 return RE::BSEventNotifyControl::kContinue;

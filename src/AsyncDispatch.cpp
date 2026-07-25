@@ -93,17 +93,4 @@ namespace NarrativeEngine::AsyncDispatch
         }
         g_cv.notify_one();
     }
-
-    void MarshalToMainThread(std::function<void()> work)
-    {
-        if (!work) {
-            return;
-        }
-        auto* taskInterface = SKSE::GetTaskInterface();
-        if (!taskInterface) {
-            logger::error("AsyncDispatch::MarshalToMainThread: SKSE task interface unavailable; dropping task");
-            return;
-        }
-        taskInterface->AddTask(std::move(work));
-    }
 } // namespace NarrativeEngine::AsyncDispatch

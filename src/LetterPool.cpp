@@ -2,6 +2,7 @@
 
 #include <CourierUtils.h>
 #include <logger.h>
+#include <MainThread.h>
 #include <NPCLetterBeat.h>
 #include <QuestUtils.h>
 #include <Settings.h>
@@ -1334,48 +1335,52 @@ namespace NarrativeEngine::LetterPool
                 const auto playerID =
                     RE::PlayerCharacter::GetSingleton() ? RE::PlayerCharacter::GetSingleton()->GetFormID() : 0u;
 
-                AsyncDispatch::MarshalToMainThread([slotIdx, oldContainer, newContainer, baseObj, playerID] {
-                    // Any → player: courier delivery (or any other
-                    // arrival into the player's inventory). The
-                    // MarkDelivered guard no-ops if the slot isn't
-                    // PendingDelivery, so other transitions are safe.
-                    if (newContainer == playerID && oldContainer != playerID) {
-                        MarkDelivered(static_cast<std::size_t>(slotIdx));
-                        return;
-                    }
+                AsyncDispatch::EnqueueWork(
+                    [slotIdx, oldContainer, newContainer, baseObj, playerID](const PluginThread::Token& pt) {
+                        MainThread::FireAndForget(
+                            pt, [slotIdx, oldContainer, newContainer, baseObj, playerID](const MainThread::Token&) {
+                                // Any → player: courier delivery (or any other
+                                // arrival into the player's inventory).
+                                // MarkDelivered no-ops if the slot isn't
+                                // PendingDelivery.
+                                if (newContainer == playerID && oldContainer != playerID) {
+                                    MarkDelivered(static_cast<std::size_t>(slotIdx));
+                                    return;
+                                }
 
-                    // Player → other container: discard (sold,
-                    // given, transferred).
-                    if (oldContainer == playerID && newContainer != 0 && newContainer != playerID) {
-                        auto* form = RE::TESForm::LookupByID(newContainer);
-                        auto* ref = form ? form->AsReference() : nullptr;
-                        MarkDiscardedToContainer(static_cast<std::size_t>(slotIdx), ref);
-                        return;
-                    }
+                                // Player → other container: discard (sold,
+                                // given, transferred).
+                                if (oldContainer == playerID && newContainer != 0 && newContainer != playerID) {
+                                    auto* form = RE::TESForm::LookupByID(newContainer);
+                                    auto* ref = form ? form->AsReference() : nullptr;
+                                    MarkDiscardedToContainer(static_cast<std::size_t>(slotIdx), ref);
+                                    return;
+                                }
 
-                    // Player → world (drop). newContainer == 0;
-                    // look up the dropped REFR in the player's
-                    // current cell so the recycle can disable it.
-                    if (oldContainer == playerID && newContainer == 0) {
-                        RE::TESObjectREFR* worldRef = nullptr;
-                        if (auto* player = RE::PlayerCharacter::GetSingleton()) {
-                            if (auto* cell = player->GetParentCell()) {
-                                cell->ForEachReference([&](RE::TESObjectREFR* r) {
-                                    if (!worldRef && r && r->GetBaseObject()
-                                        && r->GetBaseObject()->GetFormID() == baseObj) {
-                                        worldRef = r;
-                                        return RE::BSContainer::ForEachResult::kStop;
+                                // Player → world (drop). Look up the dropped
+                                // REFR in the player's current cell so recycle
+                                // can disable it.
+                                if (oldContainer == playerID && newContainer == 0) {
+                                    RE::TESObjectREFR* worldRef = nullptr;
+                                    if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+                                        if (auto* cell = player->GetParentCell()) {
+                                            cell->ForEachReference([&](RE::TESObjectREFR* r) {
+                                                if (!worldRef && r && r->GetBaseObject()
+                                                    && r->GetBaseObject()->GetFormID() == baseObj) {
+                                                    worldRef = r;
+                                                    return RE::BSContainer::ForEachResult::kStop;
+                                                }
+                                                return RE::BSContainer::ForEachResult::kContinue;
+                                            });
+                                        }
                                     }
-                                    return RE::BSContainer::ForEachResult::kContinue;
-                                });
-                            }
-                        }
-                        MarkDroppedToCell(static_cast<std::size_t>(slotIdx), worldRef);
-                        return;
-                    }
-                    // Other transitions (NPC↔NPC, world→world) —
-                    // ignore.
-                });
+                                    MarkDroppedToCell(static_cast<std::size_t>(slotIdx), worldRef);
+                                    return;
+                                }
+                                // Other transitions (NPC↔NPC, world→world) —
+                                // ignore.
+                            });
+                    });
                 return RE::BSEventNotifyControl::kContinue;
             }
         };
@@ -1702,126 +1707,130 @@ namespace NarrativeEngine::LetterPool
             // in. Each call is idempotent and no-ops on an unfilled
             // alias, an already-stopped quest, or an unavailable VM, so
             // it's safe if the timing lands slightly off.
-            AsyncDispatch::MarshalToMainThread([orphans = std::move(pendingDeliveryOrphans),
-                                                freeBooks = std::move(freeSlotBooks)]() {
-                // Phase 1: release orphaned PendingDelivery letters
-                // from the courier + delete their REFRs + shut down
-                // their per-slot delivery quests.
-                for (auto i : orphans) {
-                    logger::info("LetterPool::OnLoad: releasing orphaned PendingDelivery "
-                                 "letter for slot {} (courier release + REFR delete + "
-                                 "per-slot quest shutdown)",
-                                 i);
-                    NPCLetterBeat_QuestControl::ReleaseLetterFromCourier(i);
-                    NPCLetterBeat_QuestControl::DeleteLetterRef(i);
-                    NPCLetterBeat_QuestControl::ShutdownSlotQuestSync(i);
-                }
-
-                // Phase 2: safety sweep — for each Free-slot Book
-                // form, remove any lingering copies from the
-                // player's inventory and the vanilla WICourier
-                // container. Free slots are supposed to have no
-                // live REFRs; anything found here is stale.
-                auto* player = RE::PlayerCharacter::GetSingleton();
-                auto* courierContainer = CourierUtils::GetCourierContainerRef();
-                auto* courierQuest = CourierUtils::ResolveCourierQuest();
-                for (const auto& [i, bookFormID] : freeBooks) {
-                    auto* book = LookupBook(bookFormID);
-                    if (!book)
-                        continue;
-                    if (player) {
-                        const auto count = player->GetItemCount(book);
-                        if (count > 0) {
-                            logger::warn("LetterPool::OnLoad: sweep — Free slot {} "
-                                         "(book=0x{:08X}) had {} stale cop{} in "
-                                         "player inventory; removing",
-                                         i,
-                                         bookFormID,
-                                         count,
-                                         count == 1 ? "y" : "ies");
-                            player->RemoveItem(book,
-                                               std::numeric_limits<std::int32_t>::max(),
-                                               RE::ITEM_REMOVE_REASON::kRemove,
-                                               nullptr,
-                                               nullptr);
+            AsyncDispatch::EnqueueWork([orphans = std::move(pendingDeliveryOrphans),
+                                        freeBooks = std::move(freeSlotBooks)](const PluginThread::Token& pt) mutable {
+                MainThread::FireAndForget(
+                    pt, [orphans = std::move(orphans), freeBooks = std::move(freeBooks)](const MainThread::Token&) {
+                        // Phase 1: release orphaned PendingDelivery letters
+                        // from the courier + delete their REFRs + shut down
+                        // their per-slot delivery quests.
+                        for (auto i : orphans) {
+                            logger::info("LetterPool::OnLoad: releasing orphaned PendingDelivery "
+                                         "letter for slot {} (courier release + REFR delete + "
+                                         "per-slot quest shutdown)",
+                                         i);
+                            NPCLetterBeat_QuestControl::ReleaseLetterFromCourier(i);
+                            NPCLetterBeat_QuestControl::DeleteLetterRef(i);
+                            NPCLetterBeat_QuestControl::ShutdownSlotQuestSync(i);
                         }
-                    }
-                    if (courierContainer) {
-                        // Filter the container's inventory to this
-                        // one Book form; walk the entry's extraLists
-                        // to pull out each specific persistent REFR
-                        // via ExtraReferenceHandle. We can't just
-                        // call container->RemoveItem(book, …) here
-                        // because the vanilla courier system tracks
-                        // per-REFR delivery state through
-                        // WICourierItemCount, and its
-                        // WICourierScript.removeRefFromContainer
-                        // function is the only path that decrements
-                        // that global correctly.
-                        auto inv =
-                            courierContainer->GetInventory([book](RE::TESBoundObject& obj) { return &obj == book; });
-                        const auto invIt = inv.find(book);
-                        if (invIt != inv.end() && invIt->second.first > 0) {
-                            const auto count = invIt->second.first;
-                            std::vector<RE::TESObjectREFR*> refsToRelease;
-                            auto& entryData = invIt->second.second;
-                            if (entryData && entryData->extraLists) {
-                                for (auto* xList : *entryData->extraLists) {
-                                    if (!xList)
-                                        continue;
-                                    auto* extraRef = xList->GetByType<RE::ExtraReferenceHandle>();
-                                    if (!extraRef)
-                                        continue;
-                                    auto refPtr = extraRef->containerRef.get();
-                                    if (refPtr)
-                                        refsToRelease.push_back(refPtr.get());
+
+                        // Phase 2: safety sweep — for each Free-slot Book
+                        // form, remove any lingering copies from the
+                        // player's inventory and the vanilla WICourier
+                        // container. Free slots are supposed to have no
+                        // live REFRs; anything found here is stale.
+                        auto* player = RE::PlayerCharacter::GetSingleton();
+                        auto* courierContainer = CourierUtils::GetCourierContainerRef();
+                        auto* courierQuest = CourierUtils::ResolveCourierQuest();
+                        for (const auto& [i, bookFormID] : freeBooks) {
+                            auto* book = LookupBook(bookFormID);
+                            if (!book)
+                                continue;
+                            if (player) {
+                                const auto count = player->GetItemCount(book);
+                                if (count > 0) {
+                                    logger::warn("LetterPool::OnLoad: sweep — Free slot {} "
+                                                 "(book=0x{:08X}) had {} stale cop{} in "
+                                                 "player inventory; removing",
+                                                 i,
+                                                 bookFormID,
+                                                 count,
+                                                 count == 1 ? "y" : "ies");
+                                    player->RemoveItem(book,
+                                                       std::numeric_limits<std::int32_t>::max(),
+                                                       RE::ITEM_REMOVE_REASON::kRemove,
+                                                       nullptr,
+                                                       nullptr);
                                 }
                             }
-                            logger::warn("LetterPool::OnLoad: sweep — Free slot {} "
-                                         "(book=0x{:08X}) had {} stale cop{} in "
-                                         "WICourier container ({} specific REFR{} "
-                                         "resolved)",
-                                         i,
-                                         bookFormID,
-                                         count,
-                                         count == 1 ? "y" : "ies",
-                                         refsToRelease.size(),
-                                         refsToRelease.size() == 1 ? "" : "s");
-                            if (courierQuest) {
-                                for (auto* ref : refsToRelease) {
-                                    constexpr bool giveToPlayer = false;
-                                    const bool queued = QuestUtils::VMDispatchOnQuest(courierQuest,
-                                                                                      "WICourierScript"sv,
-                                                                                      "removeRefFromContainer"sv,
-                                                                                      ref,
-                                                                                      giveToPlayer);
-                                    if (queued) {
-                                        logger::info("LetterPool::OnLoad: sweep — dispatched "
-                                                     "WICourierScript.removeRefFromContainer "
-                                                     "for REFR 0x{:08X} (slot {}, book=0x{:08X})",
-                                                     ref->GetFormID(),
-                                                     i,
-                                                     bookFormID);
+                            if (courierContainer) {
+                                // Filter the container's inventory to this
+                                // one Book form; walk the entry's extraLists
+                                // to pull out each specific persistent REFR
+                                // via ExtraReferenceHandle. We can't just
+                                // call container->RemoveItem(book, …) here
+                                // because the vanilla courier system tracks
+                                // per-REFR delivery state through
+                                // WICourierItemCount, and its
+                                // WICourierScript.removeRefFromContainer
+                                // function is the only path that decrements
+                                // that global correctly.
+                                auto inv = courierContainer->GetInventory(
+                                    [book](RE::TESBoundObject& obj) { return &obj == book; });
+                                const auto invIt = inv.find(book);
+                                if (invIt != inv.end() && invIt->second.first > 0) {
+                                    const auto count = invIt->second.first;
+                                    std::vector<RE::TESObjectREFR*> refsToRelease;
+                                    auto& entryData = invIt->second.second;
+                                    if (entryData && entryData->extraLists) {
+                                        for (auto* xList : *entryData->extraLists) {
+                                            if (!xList)
+                                                continue;
+                                            auto* extraRef = xList->GetByType<RE::ExtraReferenceHandle>();
+                                            if (!extraRef)
+                                                continue;
+                                            auto refPtr = extraRef->containerRef.get();
+                                            if (refPtr)
+                                                refsToRelease.push_back(refPtr.get());
+                                        }
+                                    }
+                                    logger::warn("LetterPool::OnLoad: sweep — Free slot {} "
+                                                 "(book=0x{:08X}) had {} stale cop{} in "
+                                                 "WICourier container ({} specific REFR{} "
+                                                 "resolved)",
+                                                 i,
+                                                 bookFormID,
+                                                 count,
+                                                 count == 1 ? "y" : "ies",
+                                                 refsToRelease.size(),
+                                                 refsToRelease.size() == 1 ? "" : "s");
+                                    if (courierQuest) {
+                                        for (auto* ref : refsToRelease) {
+                                            constexpr bool giveToPlayer = false;
+                                            const bool queued =
+                                                QuestUtils::VMDispatchOnQuest(courierQuest,
+                                                                              "WICourierScript"sv,
+                                                                              "removeRefFromContainer"sv,
+                                                                              ref,
+                                                                              giveToPlayer);
+                                            if (queued) {
+                                                logger::info("LetterPool::OnLoad: sweep — dispatched "
+                                                             "WICourierScript.removeRefFromContainer "
+                                                             "for REFR 0x{:08X} (slot {}, book=0x{:08X})",
+                                                             ref->GetFormID(),
+                                                             i,
+                                                             bookFormID);
+                                            } else {
+                                                logger::warn("LetterPool::OnLoad: sweep — "
+                                                             "WICourierScript.removeRefFromContainer "
+                                                             "VM dispatch failed for REFR 0x{:08X} "
+                                                             "(slot {}, book=0x{:08X})",
+                                                             ref->GetFormID(),
+                                                             i,
+                                                             bookFormID);
+                                            }
+                                        }
                                     } else {
-                                        logger::warn("LetterPool::OnLoad: sweep — "
-                                                     "WICourierScript.removeRefFromContainer "
-                                                     "VM dispatch failed for REFR 0x{:08X} "
-                                                     "(slot {}, book=0x{:08X})",
-                                                     ref->GetFormID(),
-                                                     i,
-                                                     bookFormID);
+                                        logger::warn("LetterPool::OnLoad: sweep — WICourier quest "
+                                                     "unresolved; leaving stale copies of book "
+                                                     "0x{:08X} in courier container (slot {})",
+                                                     bookFormID,
+                                                     i);
                                     }
                                 }
-                            } else {
-                                logger::warn("LetterPool::OnLoad: sweep — WICourier quest "
-                                             "unresolved; leaving stale copies of book "
-                                             "0x{:08X} in courier container (slot {})",
-                                             bookFormID,
-                                             i);
                             }
                         }
-                    }
-                }
+                    });
             });
         }
     }

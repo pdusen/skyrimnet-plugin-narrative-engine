@@ -231,7 +231,6 @@ namespace NarrativeEngine
         int g_runningTickCount = 0;
         constexpr int kRunningCheckEveryNTicks = 4; // ~1s
 
-        BeatUtils::CleanupLatch g_cleanupLatch;
         // Which CLEANUP path to run — set once at the COMPOSE/RUNNING →
         // CLEANUP transition.
         std::atomic<bool> g_cleanupWasSuccess{false};
@@ -251,7 +250,6 @@ namespace NarrativeEngine
                 g_runningTickCount = 0;
             }
             g_subPhase.Reset();
-            g_cleanupLatch.Reset();
             g_cleanupWasSuccess.store(false, std::memory_order_release);
         }
 
@@ -269,40 +267,38 @@ namespace NarrativeEngine
             g_subPhaseTickCount = 0;
         }
 
-        void FireComposeLLM(const PluginThread::Token& pt)
+        void FireComposeLLM()
         {
-            MainThread::FireAndForget(pt, [](const MainThread::Token&) {
-                RE::FormID senderFormID = 0;
-                BeatParamHelpers::UrgencyHint urgency = BeatParamHelpers::UrgencyHint::Medium;
-                std::string justification;
-                {
-                    std::scoped_lock lock(g_sessionMutex);
-                    senderFormID = g_paramSenderFormID;
-                    urgency = g_paramUrgency;
-                    justification = g_paramJustification;
-                }
+            RE::FormID senderFormID = 0;
+            BeatParamHelpers::UrgencyHint urgency = BeatParamHelpers::UrgencyHint::Medium;
+            std::string justification;
+            {
+                std::scoped_lock lock(g_sessionMutex);
+                senderFormID = g_paramSenderFormID;
+                urgency = g_paramUrgency;
+                justification = g_paramJustification;
+            }
 
-                // LetterComposer only reads desiredDirection + tensionDelta.
-                BeatContext composeCtx;
-                composeCtx.desiredDirection = PhaseTracker::Direction::Raise;
-                composeCtx.tensionDelta = 0;
+            // LetterComposer only reads desiredDirection + tensionDelta.
+            BeatContext composeCtx;
+            composeCtx.desiredDirection = PhaseTracker::Direction::Raise;
+            composeCtx.tensionDelta = 0;
 
-                LetterComposer::Compose(composeCtx,
-                                        urgency,
-                                        senderFormID,
-                                        std::move(justification),
-                                        [](std::optional<LetterComposer::LetterComposition> comp) {
-                                            AsyncDispatch::MarshalToMainThread([comp = std::move(comp)]() mutable {
-                                                if (comp) {
-                                                    std::scoped_lock lock(g_sessionMutex);
-                                                    g_composition = std::move(comp);
-                                                }
-                                                SetSubPhase(comp ? ComposeSubPhase::LLMResultReady
-                                                                 : ComposeSubPhase::Failed,
-                                                            comp ? nullptr : "compose_llm_failed");
-                                            });
-                                        });
-            });
+            // SkyrimNetAPI's async adapter routes the completion callback
+            // through AsyncDispatch::EnqueueWork before invoking it, so
+            // the body below runs on the plugin thread.
+            LetterComposer::Compose(composeCtx,
+                                    urgency,
+                                    senderFormID,
+                                    std::move(justification),
+                                    [](std::optional<LetterComposer::LetterComposition> comp) {
+                                        if (comp) {
+                                            std::scoped_lock lock(g_sessionMutex);
+                                            g_composition = std::move(comp);
+                                        }
+                                        SetSubPhase(comp ? ComposeSubPhase::LLMResultReady : ComposeSubPhase::Failed,
+                                                    comp ? nullptr : "compose_llm_failed");
+                                    });
         }
 
         void DispatchQuest(const PluginThread::Token& pt)
@@ -512,8 +508,6 @@ namespace NarrativeEngine
             } else if (!success) {
                 logger::warn("NPCLetterBeat: cleanup with no allocated slot (reason='{}')", reason);
             }
-
-            g_cleanupLatch.MarkComplete();
         }
 
         void Cleanup(const PluginThread::Token& pt)
@@ -709,7 +703,7 @@ namespace NarrativeEngine
             switch (sub) {
             case ComposeSubPhase::Start: {
                 SetSubPhase(ComposeSubPhase::ComposingLLM);
-                FireComposeLLM(pt);
+                FireComposeLLM();
                 return {};
             }
             case ComposeSubPhase::ComposingLLM: {

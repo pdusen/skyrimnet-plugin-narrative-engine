@@ -1417,16 +1417,10 @@ namespace NarrativeEngine::BeatSystem
                      letterSenderCandidates.size(),
                      visitSenderCandidates.size());
 
-        // Empty finalizer — force-dispatch runs outside the normal
+        // No finalizer — force-dispatch runs outside the normal
         // evaluation loop, so there's no g_inFlight guard to release.
-        //
-        // Hop onto the plugin thread for the LLM round-trip.
-        // ForceDispatchBeat's front-half runs on main today (dashboard
-        // -> MarshalToMainThread -> here), so we enqueue the LLM firing
-        // + finalize chain instead of calling FireBeatSelectLLM
-        // directly. This mirrors the ConsiderBeat migration: the LLM
-        // wait is off-main; only StartBeat's OnStart hop returns to
-        // main via MainThread::FireAndForget inside FireBeatSelectLLM.
+        // Enqueue onto the plugin thread so the sync LLM round-trip
+        // in FireBeatSelectLLM doesn't stall the main thread.
         AsyncDispatch::EnqueueWork([snapshot = std::move(snapshot),
                                     rec = std::move(rec),
                                     candidates = std::move(candidates),
