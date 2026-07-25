@@ -93,6 +93,28 @@ namespace NarrativeEngine::LetterPool
         std::atomic<bool> g_menuSinkRegistered = false;
         std::atomic<bool> g_containerSinkRegistered = false;
 
+        // Reset the runtime allocation / timing fields on a slot so
+        // it's eligible to be re-populated, WITHOUT clearing the cached
+        // content strings (body, senderLabel, topicTag, mood, tags).
+        // The content is deliberately preserved so the render hooks
+        // (TESDescription::GetDescription, BookMenu::OpenBookMenu) can
+        // still substitute coherent text for any stale letter REFR that
+        // slipped past our cleanup and is still floating around in a
+        // container, a follower's inventory, or the world — instead of
+        // falling through to the ESP's "(placeholder - should never
+        // display)" body. The next PopulateSlot() call overwrites all
+        // the content strings unconditionally, so nothing stale leaks
+        // forward. Caller must hold g_mutex.
+        void ResetSlotToFreeLocked(Slot& slot)
+        {
+            slot.state = State::Free;
+            slot.senderNpcFormID = 0;
+            slot.deliveredAt = 0.0;
+            slot.readAt = 0.0;
+            // Deliberately NOT cleared: body, senderLabel, topicTag,
+            // mood, tags — see comment above.
+        }
+
         // Resolve a Book FormID to its pool slot index, or -1 if not
         // pooled. Caller must hold g_mutex.
         int FindSlotByFormIDLocked(RE::FormID formID)
@@ -649,16 +671,11 @@ namespace NarrativeEngine::LetterPool
         const auto priorState = slot.state;
 
         // Preserve bookFormID (it's a resolved-form pointer to the ESP
-        // record, not slot-specific runtime state); clear everything else.
-        slot.state = State::Free;
-        slot.body.clear();
-        slot.senderLabel.clear();
-        slot.senderNpcFormID = 0;
-        slot.topicTag.clear();
-        slot.mood.clear();
-        slot.tags.clear();
-        slot.deliveredAt = 0.0;
-        slot.readAt = 0.0;
+        // record, not slot-specific runtime state) and the cached
+        // content strings (so the render hooks can still substitute
+        // for stale letter REFRs that slipped past cleanup); reset
+        // only the state + allocation-timing fields.
+        ResetSlotToFreeLocked(slot);
 
         logger::debug("LetterPool: slot {} freed (was {})", slotIndex, StateName(priorState));
     }
@@ -672,15 +689,7 @@ namespace NarrativeEngine::LetterPool
         std::scoped_lock lock(g_mutex);
         auto& slot = g_slots[slotIndex];
         const auto priorState = slot.state;
-        slot.state = State::Free;
-        slot.body.clear();
-        slot.senderLabel.clear();
-        slot.senderNpcFormID = 0;
-        slot.topicTag.clear();
-        slot.mood.clear();
-        slot.tags.clear();
-        slot.deliveredAt = 0.0;
-        slot.readAt = 0.0;
+        ResetSlotToFreeLocked(slot);
         logger::info(
             "LetterPool: slot {} aborted (was {}; dispatch never landed in world)", slotIndex, StateName(priorState));
     }
@@ -789,10 +798,13 @@ namespace NarrativeEngine::LetterPool
                     a_out = body.c_str();
                     return;
                 }
-                // Pool form with no cached body (slot in Free state
-                // before population, or after Free). Fall through so
-                // the player sees the ESP placeholder rather than an
-                // empty page.
+                // Pool form with no cached body — only happens for a
+                // slot that has never been populated in this session
+                // (never-Free before first PopulateSlot). Post-Free
+                // slots keep their body cached (see
+                // ResetSlotToFreeLocked) precisely so stale REFRs
+                // don't hit this fall-through. Falls through to the
+                // ESP placeholder as a last resort.
             }
             g_origGetDescription(self, a_out, a_parent, a_fieldType);
         }
@@ -1148,19 +1160,15 @@ namespace NarrativeEngine::LetterPool
                 }
             }
 
-            // Clear slot fields, reset state to Free.
+            // Reset state so the slot is eligible for re-allocation;
+            // keep the cached content strings so the render hooks can
+            // still substitute for any stale REFR our eviction sweep
+            // may have missed (unloaded-follower inventory, non-actor
+            // container the sweep doesn't walk, etc.).
             std::scoped_lock lock(g_mutex);
             auto& slot = g_slots[slotIndex];
             const auto priorState = slot.state;
-            slot.state = State::Free;
-            slot.body.clear();
-            slot.senderLabel.clear();
-            slot.senderNpcFormID = 0;
-            slot.topicTag.clear();
-            slot.mood.clear();
-            slot.tags.clear();
-            slot.deliveredAt = 0.0;
-            slot.readAt = 0.0;
+            ResetSlotToFreeLocked(slot);
             if (Settings::Get().letterPoolEvictionLogVerbosity >= 1) {
                 logger::info("LetterPool: slot {} recycled (was {})", slotIndex, StateName(priorState));
             }
@@ -1426,15 +1434,13 @@ namespace NarrativeEngine::LetterPool
         {
             auto& slot = g_slots[i];
             const auto priorState = slot.state;
-            slot.state = State::Free;
-            slot.body.clear();
-            slot.senderLabel.clear();
-            slot.senderNpcFormID = 0;
-            slot.topicTag.clear();
-            slot.mood.clear();
-            slot.tags.clear();
-            slot.deliveredAt = 0.0;
-            slot.readAt = 0.0;
+            // Reset only state + allocation fields; keep the cached
+            // content strings so if a stale REFR from the pre-demotion
+            // slot is still floating around (e.g. courier hand-off
+            // that landed after the timeout gate), the render hooks
+            // still substitute coherent text instead of the ESP
+            // placeholder.
+            ResetSlotToFreeLocked(slot);
             logger::warn(
                 "LetterPool::OnLoad: slot {} demoted to Free (was {}; reason: {})", i, StateName(priorState), reason);
         }
@@ -1593,13 +1599,15 @@ namespace NarrativeEngine::LetterPool
         // pulled back from the vanilla WICourier container and the
         // per-slot delivery quest torn down. Without that, the courier
         // is still carrying a REFR to the pool's Book form and will
-        // eventually hand it to the player as an empty shell: the
-        // demotion cleared the slot's cached body/senderLabel, and the
-        // base form's fullName was reset to the ESP placeholder when
-        // the plugin reloaded at kDataLoaded. Collect the indices here
-        // under the lock and marshal the engine-touching cleanup to
-        // the main thread after OnLoad returns, so the world / VM have
-        // finished streaming in.
+        // eventually hand it to the player. The cached body / sender
+        // label are deliberately preserved through demotion (see
+        // ResetSlotToFreeLocked) so the render hooks still substitute
+        // if the letter reaches the player before this cleanup runs;
+        // the courier release + REFR delete below is still the
+        // authoritative removal path. Collect the indices here under
+        // the lock and marshal the engine-touching cleanup to the main
+        // thread after OnLoad returns, so the world / VM have finished
+        // streaming in.
         std::vector<std::size_t> pendingDeliveryOrphans;
         {
             std::scoped_lock lock(g_mutex);
