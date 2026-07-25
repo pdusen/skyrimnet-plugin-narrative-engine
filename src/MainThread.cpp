@@ -12,11 +12,8 @@ namespace NarrativeEngine::MainThread
 {
     namespace detail
     {
-        // Sole legitimate invoker of a FireAndForget lambda with a
-        // freshly-constructed Token. Token is deleted-copy /
-        // deleted-move, so it can only exist as a local in a friend
-        // context; the dispatcher constructs it in-place here and hands
-        // it into the caller's lambda by reference-that-cannot-escape.
+        // Sole legitimate construction site for a Token in the
+        // FireAndForget path.
         struct FireAndForgetDispatcher
         {
             static void Invoke(const std::function<void(const Token&)>& fn)
@@ -40,13 +37,7 @@ namespace NarrativeEngine::MainThread
         }
 
         taskInterface->AddTask([fn = std::move(fn)]() mutable {
-            // Install the Main role marker for the duration of the
-            // task. Runtime belt-and-braces — the compile-time barrier
-            // via PluginThread::Token is the primary enforcement, but
-            // the marker is useful for observability and for the fast-
-            // path assertion in MainThread::Run.
             ScopedThreadRole roleGuard(ThreadRole::Main);
-
             try {
                 detail::FireAndForgetDispatcher::Invoke(fn);
             } catch (const std::exception& e) {

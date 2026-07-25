@@ -28,11 +28,9 @@ namespace NarrativeEngine::EvaluationPipeline
     {
         std::atomic<bool> g_inFlight = false;
 
-        // Unix-epoch seconds. Used as the canonical timestamp on every
-        // DecisionRecord so the dashboard can order entries correctly
-        // across save/load boundaries. (A per-process steady-clock anchor
-        // resets every session, which made loaded records from a prior
-        // session bury a fresh decision whose anchor was just initialized.)
+        // Unix-epoch seconds. The canonical DecisionRecord timestamp so
+        // dashboard ordering survives save/load (a per-process steady-
+        // clock anchor would reset every session).
         double NowUnixSeconds()
         {
             return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -49,28 +47,15 @@ namespace NarrativeEngine::EvaluationPipeline
             return out;
         }
 
-        // Engine-derived fields the snapshot needs from the main
-        // thread. Split out so both BuildSnapshot overloads (main-
-        // thread caller and plugin-thread caller) can share one
-        // implementation of the actual engine reads.
+        // Shared by both BuildSnapshot overloads.
         struct EngineSnapshotFields
         {
-            PlayerContext player; // engine-derived subset of PlayerContext
+            PlayerContext player;
             AlphaCanon::Signal alphaCanonMask = AlphaCanon::Signal::None;
         };
 
-        // Read every engine-touching field the snapshot needs. Safe
-        // from any thread. Every read here is a stable-singleton
-        // pointer walk + plain accessor:
-        //   * PlayerCharacter::GetCurrentLocation / GetParentCell —
-        //     pointer walks
-        //   * Location::GetFullName / GetFormID, Cell::IsInteriorCell
-        //     / GetFullName / GetFormID — plain accessors
-        //   * Calendar::GetDaysPassed / GetHour — plain accessors
-        //   * AlphaCanon::EvaluateAll — probes the same stable-
-        //     singleton bools BuildBeatSelectPrep already reads
-        //     off-main.
-        // None of these calls mutates engine state.
+        // Off-main-safe: stable-singleton pointer walks + plain
+        // accessors, no engine mutation.
         EngineSnapshotFields ReadEngineSnapshotFields()
         {
             EngineSnapshotFields e;
@@ -97,10 +82,8 @@ namespace NarrativeEngine::EvaluationPipeline
             if (auto* cal = RE::Calendar::GetSingleton()) {
                 e.player.gameDaysPassed = cal->GetDaysPassed();
                 e.player.timeOfDayHours = cal->GetHour();
-                // Convert days-since-epoch → seconds-since-epoch to
-                // match SkyrimNet's per-event gameTime field units.
-                // Used by FormatEventsText for "N units ago" relative
-                // timestamps.
+                // Seconds-since-epoch matches SkyrimNet's per-event
+                // gameTime field; FormatEventsText uses it for "N ago".
                 e.player.gameTimeSeconds = static_cast<double>(cal->GetDaysPassed()) * 86400.0;
             }
 
@@ -108,9 +91,6 @@ namespace NarrativeEngine::EvaluationPipeline
             return e;
         }
 
-        // Non-engine snapshot fields — the pieces that are thread-safe
-        // to read from either main or plugin thread. Shared between
-        // the two BuildSnapshot overloads.
         void FillNonEngineSnapshotFields(Snapshot& s)
         {
             s.realTimeSec = NowUnixSeconds();
@@ -126,8 +106,6 @@ namespace NarrativeEngine::EvaluationPipeline
             s.decisionLogTail = DecisionLog::Tail(static_cast<std::size_t>(decisionTail));
         }
 
-        // Merge the engine-derived fields into the target snapshot.
-        // Called after FillNonEngineSnapshotFields.
         void MergeEngineFieldsInto(Snapshot& s, const EngineSnapshotFields& engine)
         {
             s.player.formID = engine.player.formID;
@@ -144,8 +122,6 @@ namespace NarrativeEngine::EvaluationPipeline
             s.alphaCanonSignalBitmask = static_cast<std::uint32_t>(engine.alphaCanonMask);
         }
 
-        // Single multi-line debug dump of a snapshot. Gated on debugMode by
-        // the caller.
         void LogSnapshot(const Snapshot& s)
         {
             logger::debug("Snapshot: realTimeSec={:.2f} phase={} timeInPhase={:.2f}s",
@@ -216,10 +192,6 @@ namespace NarrativeEngine::EvaluationPipeline
 
     Snapshot BuildSnapshot()
     {
-        // Kept as a main-thread-callable convenience overload for
-        // any future caller already on main. Same body as the
-        // plugin-thread overload below — every engine read is
-        // off-main-safe now (see ReadEngineSnapshotFields' contract).
         const bool debug = Settings::Get().debugMode;
         if (debug)
             logger::debug("BuildSnapshot: begin (main-thread overload)");
@@ -235,11 +207,6 @@ namespace NarrativeEngine::EvaluationPipeline
 
     Snapshot BuildSnapshot(const PluginThread::Token& pt)
     {
-        // Plugin-thread overload — used by BeginEvaluation. Every
-        // read runs inline on the plugin thread: the non-engine
-        // reads (PhaseTracker, DecisionLog, SkyrimNetAPI) are
-        // mutex-guarded / DLL-thread-safe, and the engine reads
-        // are off-main-safe per ReadEngineSnapshotFields' contract.
         (void)pt;
         const bool debug = Settings::Get().debugMode;
         if (debug)
@@ -259,37 +226,23 @@ namespace NarrativeEngine::EvaluationPipeline
         nlohmann::json ctx;
         ctx["current_phase"] = snapshot.currentPhase;
         ctx["time_in_phase_seconds"] = snapshot.timeInPhaseSeconds;
-        // No `next_phase` in the prompt context — phase advancement is no
-        // longer the LLM's call. The system applies per-phase thresholds
-        // (PhaseTracker::EvaluateAdvance) to the returned tension score.
 
-        // recent_events: pass SkyrimNet's event array through, but REVERSE
-        // it. SkyrimNet returns events newest-first; the prompt template
-        // renders them in array order and labels the section "(newest last)".
-        // Reversing here makes the data order match the label, and puts the
-        // most recent events at the end of the rendered list — where LLMs
-        // typically attend more. On parse failure or non-array, fall back to
-        // an empty array and warn.
+        // SkyrimNet returns events newest-first; the prompt template
+        // renders them in array order and labels the section "(newest
+        // last)", so we reverse to match the label and put the newest
+        // events where LLMs attend more.
         {
             auto parsed = nlohmann::json::parse(snapshot.skyrimNetEventsJSON,
                                                 /*cb=*/nullptr,
                                                 /*allow_exceptions=*/false);
             if (parsed.is_array()) {
-                // Filter to events that occurred during the current phase.
-                // Events from prior phases have already been "consumed" by
-                // whichever past decision drove the previous advance — if
-                // we leave them in, the LLM keeps re-justifying advances
-                // against the same set of events tick after tick, walking
-                // the phase cycle on idle time alone.
+                // Drop events from prior phases so idle-time doesn't
+                // re-justify the same advance tick after tick.
                 //
-                // Filter on `evt.localTime` (Unix-epoch real seconds), not
-                // `evt.gameTime`: SkyrimNet's gameTime field is time-of-day
-                // in seconds [0..86400), which can't be compared against a
-                // cumulative cutoff once a session crosses a day. localTime
-                // is monotonic real seconds, immune to that and to the
-                // stale-Calendar race we hit at kNewGame (the engine's
-                // GetDaysPassed can briefly return the previous session's
-                // value before the new world finishes initializing).
+                // Filter on `evt.localTime` (Unix-epoch real seconds) not
+                // `evt.gameTime`: the latter is time-of-day [0..86400)
+                // and can't be compared against a cumulative cutoff
+                // once a session crosses a day.
                 const double cutoff = snapshot.phaseEnteredAtRealTime;
                 if (cutoff > 0.0) {
                     nlohmann::json filtered = nlohmann::json::array();
@@ -306,22 +259,14 @@ namespace NarrativeEngine::EvaluationPipeline
 
                 std::reverse(parsed.begin(), parsed.end());
 
-                // SkyrimNet events have a `type` discriminator and an
-                // arbitrary `data` payload that varies by type. The prompt
-                // template can't reasonably branch on every shape, so we
-                // synthesize a human-readable `evt.text` here. The template
-                // then just renders `{{ evt.text }}` per event. Passing the
-                // snapshot's current game time lets each event line carry a
-                // "N units ago" relative timestamp.
+                // Synthesize `evt.text` per event so the template just
+                // renders `{{ evt.text }}`; each line carries a "N ago"
+                // relative timestamp from gameTimeSeconds.
                 SkyrimNetEvents::FormatEventsText(parsed, snapshot.player.gameTimeSeconds);
 
-                // Drop events with no usable text (FormatEventsText's
-                // "(no data)" last-resort case — typically third-party
-                // event types whose `data` field is missing entirely).
-                // Sending them to the LLM is pure noise. We log each
-                // dropped event so the unrecognized `type` surfaces in
-                // logs and we can add a renderer for it if it turns out
-                // to be narratively meaningful.
+                // Drop unrecognized event types (FormatEventsText's
+                // "(no data)" last-resort case). Log each so the type
+                // surfaces and we can add a renderer if needed.
                 {
                     static constexpr std::string_view kNoData = "(no data)";
                     nlohmann::json kept = nlohmann::json::array();
@@ -342,10 +287,9 @@ namespace NarrativeEngine::EvaluationPipeline
                     parsed = std::move(kept);
                 }
 
-                // Merge in NarrativeEngine's internal event tails (combat
-                // from Phase 02, weather from Phase 09). Both tails are
-                // already phase-pruned in memory, so no extra filter pass
-                // is needed. BuildMergedTimeline sorts by localTime and
+                // Merge in NarrativeEngine's internal event tails
+                // (combat, weather, travel). Already phase-pruned in
+                // memory; BuildMergedTimeline sorts by localTime and
                 // condenses runs of hit events.
                 ctx["recent_events"] = SkyrimNetEvents::BuildMergedTimeline(
                     std::move(parsed),
@@ -359,8 +303,8 @@ namespace NarrativeEngine::EvaluationPipeline
                 } else if (!parsed.is_discarded()) {
                     logger::warn("BuildPromptContext: recent_events JSON wasn't an array; using internal-only tail");
                 }
-                // Even with no SkyrimNet events, we still want our
-                // internal event tails to reach the prompt.
+                // Internal event tails still flow through even with no
+                // SkyrimNet events.
                 ctx["recent_events"] = SkyrimNetEvents::BuildMergedTimeline(
                     nlohmann::json::array(),
                     CombatEventLog::GetRenderedTail(snapshot.player.gameTimeSeconds),
@@ -389,9 +333,9 @@ namespace NarrativeEngine::EvaluationPipeline
             ctx["decision_log_tail"] = std::move(tail);
         }
 
-        // player_context. Form IDs go out as "0x........" strings — the
-        // LLM treats them as opaque identifiers, and hex matches how the
-        // rest of the modding tool chain renders them.
+        // Form IDs go out as "0x........" strings to match the rest of
+        // the modding tool chain. No game-time field — the template
+        // uses SkyrimNet's built-in `{{ gameTime }}` decorator.
         {
             char formIdHex[16];
             std::snprintf(formIdHex, sizeof(formIdHex), "0x%08X", snapshot.player.formID);
@@ -400,10 +344,6 @@ namespace NarrativeEngine::EvaluationPipeline
                 {"location_name", snapshot.player.locationName},
                 {"cell_name", snapshot.player.cellName},
                 {"cell_is_interior", snapshot.player.cellIsInterior},
-                // No game-time field — the prompt template renders the
-                // current time via SkyrimNet's built-in `{{ gameTime }}`
-                // decorator, so we don't need to push it through the
-                // context JSON ourselves.
             };
         }
 
@@ -414,17 +354,14 @@ namespace NarrativeEngine::EvaluationPipeline
 
     DecisionLog::DecisionRecord ParseDecision(const std::string& jsonResponse, const Snapshot& snapshot)
     {
-        // Pre-seed the record from the snapshot so even a total parse
-        // failure produces a valid, dashboard-displayable record (we still
-        // know the time, phase, and alpha-canon snapshot regardless of
-        // what the LLM said).
+        // Pre-seed from the snapshot so a parse failure still produces
+        // a dashboard-displayable record. beatSelected is set later by
+        // ConsiderBeat's beat-select callback.
         DecisionLog::DecisionRecord r;
         r.realTimeSec = snapshot.realTimeSec;
         r.gameDaysPassed = snapshot.player.gameDaysPassed;
         r.currentPhase = PhaseTracker::PhaseFromName(snapshot.currentPhase).value_or(PhaseTracker::Phase::Exposition);
         r.alphaCanonActiveSignals = snapshot.alphaCanonSignalBitmask;
-        // beatSelected stays empty at this point — the Director's
-        // beat-select LLM callback populates it later in ConsiderBeat.
 
         const std::string body = StripMarkdownFences(jsonResponse);
         const auto parsed = nlohmann::json::parse(body,
@@ -448,20 +385,13 @@ namespace NarrativeEngine::EvaluationPipeline
             r.tensionScore = static_cast<std::uint32_t>(clamped);
         }
 
-        // System-side phase advancement: compare the LLM's tension score
-        // against the per-current-phase threshold, gated by the minimum
-        // dwell floor. The LLM no longer votes on this directly — it just
-        // scores tension, and the thresholds capture the dramatic shape of
-        // each transition (rises into Exposition/Climax, drops out of
-        // Climax/FallingAction). The dwell floor prevents a single
-        // borderline tension score early in a phase from immediately
-        // advancing on the next tick.
+        // Advancement is system-side: per-phase tension threshold gated
+        // by min dwell floor. The dwell floor prevents a borderline
+        // score early in a phase from immediately advancing.
         r.advancedToPhase = PhaseTracker::EvaluateAdvance(r.currentPhase, r.tensionScore, snapshot.timeInPhaseSeconds);
 
-        // narrative_note — sanitize LLM-returned Unicode noise (smart quotes,
-        // em-dashes, ellipsis, NBSPs, etc.) per docs/LLM_RESPONSE_HANDLING.md,
-        // then clamp to 200 chars. Sanitization happens BEFORE the clamp so
-        // the truncation lands on a well-defined byte boundary.
+        // Sanitize BEFORE the clamp so truncation lands on a well-
+        // defined byte boundary (see docs/LLM_RESPONSE_HANDLING.md).
         if (auto it = parsed.find("narrative_note"); it != parsed.end() && it->is_string()) {
             std::string note = LLMTextSanitizer::Sanitize(it->get<std::string>());
             if (note.size() > 200) {
@@ -475,25 +405,13 @@ namespace NarrativeEngine::EvaluationPipeline
 
     void ApplyDecision(const PluginThread::Token&, const DecisionLog::DecisionRecord& record)
     {
-        // Append first so the next tick's snapshot sees this decision in
-        // its `decisionLogTail`. The `ne_narrative_tension` decorator
-        // (Step 12) will read this record's tensionScore on the very next
-        // NPC bio render. DecisionLog::Append is mutex-guarded — safe
-        // from the plugin thread.
+        // Append first so the next tick's snapshot sees this decision.
         DecisionLog::Append(record);
 
-        // Phase advance, if any. AdvanceTo zeroes time-in-phase and
-        // notifies event logs; all of that is mutex-guarded. The
-        // `ne_narrative_phase` decorator will see the new phase on the
-        // next bio render.
         if (record.advancedToPhase) {
             PhaseTracker::AdvanceTo(*record.advancedToPhase);
         }
 
-        // Push the fresh DirectorState to the PrismaUI dashboard view.
-        // PushFullState is safe from any thread — it early-outs when
-        // hidden and moves the compose off the caller's thread via
-        // AsyncDispatch, so we pay no compose cost here.
         DashboardUIManager::PushFullState();
 
         if (Settings::Get().debugMode) {
@@ -506,12 +424,8 @@ namespace NarrativeEngine::EvaluationPipeline
 
     void BeginEvaluation(const PluginThread::Token& pt)
     {
-        // Atomic guard: only one evaluation may be in flight at a time.
-        // If a previous one is still being processed when the next tick
-        // fires (LLM slow, worker backed up), this tick is silently
-        // dropped. The flag is released only after ApplyDecision (or an
-        // early-exit failure path) runs, so two ticks can't see
-        // overlapping in-flight state.
+        // Drop this tick if the previous evaluation is still running;
+        // the flag releases in ApplyDecision or the failure path.
         bool expected = false;
         if (!g_inFlight.compare_exchange_strong(expected, true)) {
             if (Settings::Get().debugMode) {
@@ -520,33 +434,21 @@ namespace NarrativeEngine::EvaluationPipeline
             return;
         }
 
-        // Phase A — snapshot on plugin thread, with a single main-
-        // thread hop for the engine reads.
         Snapshot snapshot = BuildSnapshot(pt);
         if (Settings::Get().debugMode) {
             LogSnapshot(snapshot);
         }
 
-        // Phase B — prompt context assembly. Pure JSON work on the
-        // plugin thread; no engine touches.
         const std::string ctx = BuildPromptContext(snapshot);
         if (Settings::Get().debugMode) {
             logger::debug("BuildPromptContext: produced {}B", ctx.size());
             logger::debug("BuildPromptContext: {}", ctx);
         }
 
-        // Phase C — fire the LLM call synchronously. Blocks the
-        // plugin thread until SkyrimNet delivers its callback. See
-        // SkyrimNetAPI.h for the rationale on sync-blocking:
-        // BeginEvaluation is single-flighted via g_inFlight, so
-        // nothing useful runs on the plugin thread concurrently that
-        // would suffer from the wait.
-        //
-        // 2nd arg is the *variant* — a named LLM-config profile
-        // declared in statics/.../SkyrimNet/config/plugins/
-        // NarrativeEngine/manifest.yaml. Without a variant the call
-        // falls back to SkyrimNet's default Dialogue LLM, which is
-        // tuned for creative writing, not per-tick classification.
+        // The variant "narrative_engine_director" selects an LLM
+        // config profile from the NarrativeEngine manifest; without it
+        // SkyrimNet falls back to its default Dialogue LLM, which is
+        // tuned for creative writing rather than per-tick classification.
         const auto result =
             SkyrimNetAPI::SendCustomPromptToLLM(pt, "narrative_engine_story_eval", "narrative_engine_director", ctx);
 
@@ -558,23 +460,15 @@ namespace NarrativeEngine::EvaluationPipeline
         }
 
         if (!result.ok) {
-            // SkyrimNet's failure path (or the sync wrapper's queue-
-            // full path) puts an error string in `result.response`.
             logger::warn("EvaluationPipeline: LLM call failed: {}", result.response);
             g_inFlight.store(false);
             return;
         }
 
-        // Phase D parser — plugin thread, touches no engine state.
         DecisionLog::DecisionRecord rec = ParseDecision(result.response, snapshot);
 
-        // Phase D applier hand-off. ConsiderBeat now runs on the
-        // plugin thread — its own gate walk, LLM round-trip, and JSON
-        // parse are all thread-safe; only the finalize step (which
-        // calls beat->OnStart per IBeat's main-thread contract) hops
-        // back to main via MainThread::FireAndForget. ConsiderBeat
-        // takes ownership of snapshot + rec and is responsible for
-        // calling ApplyDecision and the finalizer exactly once.
+        // ConsiderBeat takes ownership and is responsible for calling
+        // ApplyDecision and the finalizer exactly once.
         BeatSystem::ConsiderBeat(pt, std::move(snapshot), std::move(rec), [] { g_inFlight.store(false); });
     }
 } // namespace NarrativeEngine::EvaluationPipeline

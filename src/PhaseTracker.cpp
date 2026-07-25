@@ -71,12 +71,8 @@ namespace NarrativeEngine::PhaseTracker
             return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
         }
 
-        // Roll the elapsed wall-clock time since the last sample into
-        // the accumulator (subject to the paused-game gate), then reset
-        // the anchor. MUST be called with g_mutex held. Safe from any
-        // non-foreign thread — the paused-game gate goes through
-        // EngineUtils::IsGamePaused(), which is a stable-singleton +
-        // plain-bool read that CommonLibSSE-NG treats as safe off-main.
+        // Roll elapsed wall-clock into the accumulator (skipped when
+        // paused) and reset the anchor. Caller holds g_mutex.
         void SampleLocked()
         {
             const auto now = SteadyClock::now();

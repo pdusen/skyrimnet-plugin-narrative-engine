@@ -172,23 +172,11 @@ namespace NarrativeEngine::TravelEventLog
             return std::string(n);
         }
 
-        // Collect player display name + nearby alive followers
-        // (IsPlayerTeammate + within radius), sorted for stability.
-        // Called from BuildFreshSnapshot.
-        //
-        // Off-main note: this iterates ProcessLists's high-actor
-        // list via ForEachHighActor. That's the one call in this
-        // file that isn't a plain "stable-singleton + accessor"
-        // read — it walks a live actor collection the engine
-        // mutates from the main thread. The audit's Finding 7
-        // fix-sketch treats it as off-main-safe by the same
-        // BeatSystem-worker precedent that covers the plain reads,
-        // and none of the accessors inside the loop (IsDead,
-        // IsPlayerTeammate, GetPosition, GetDisplayFullName) mutate
-        // engine state. If crashes are ever traced to this walk
-        // specifically, moving it back to a small MainThread::Run
-        // hop while leaving the rest of BuildFreshSnapshot off-main
-        // is the surgical fix.
+        // Player + nearby alive followers (IsPlayerTeammate, within
+        // radius). Sorted for stability. Iterates ProcessLists's
+        // high-actor list off-main per audit Finding 7; if that walk
+        // ever crashes, move it into a MainThread::Run hop and leave
+        // the rest of BuildFreshSnapshot off-main.
         std::vector<std::string> CollectParty(RE::PlayerCharacter* pc, float radius)
         {
             std::vector<std::string> out;
@@ -231,19 +219,8 @@ namespace NarrativeEngine::TravelEventLog
             return out;
         }
 
-        // Fresh snapshot from live world state — location + hold +
-        // party. Every read on this path is off-main-safe:
-        //   * PlayerCharacter::GetParentCell / GetCurrentLocation —
-        //     stable-singleton pointer walks
-        //   * Cell::IsInteriorCell, Location::GetFullName /
-        //     GetFormID — plain accessors
-        //   * Region::ForPlayer — HoldGrid hash lookup + BGSLocation
-        //     parent-chain walk (audit Finding 7 explicitly calls
-        //     out this shape as safe-off-main)
-        //   * CollectParty — see its off-main note above for the
-        //     ProcessLists::ForEachHighActor caveat.
-        // None of these calls mutate engine state. Called from Poll
-        // on the plugin thread and inline from OnPostLoadGame.
+        // Off-main-safe: pointer walks + plain accessors, plus the
+        // ProcessLists walk in CollectParty (see its note).
         //
         // Hold-region tracking is suppressed on interior cells (they
         // often lack region data); callers merge with g_lastSnapshot's
@@ -418,11 +395,8 @@ namespace NarrativeEngine::TravelEventLog
     void Poll(const PluginThread::Token& pt, double /*unpausedElapsedSeconds*/)
     {
         (void)pt;
-        // Build the location/hold/party snapshot on the plugin
-        // thread — every read is off-main-safe per
-        // BuildFreshSnapshot's contract above. Deliberately outside
-        // the mutex so GetRenderedTail readers aren't blocked while
-        // we run.
+        // Outside the mutex so GetRenderedTail isn't blocked; the diff
+        // + mutation below re-takes it.
         TravelSnapshot fresh = BuildFreshSnapshot();
 
         std::scoped_lock lock(g_mutex);

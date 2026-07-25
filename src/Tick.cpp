@@ -24,71 +24,31 @@ namespace NarrativeEngine::Tick
 {
     namespace
     {
-        // Driver-thread synchronization.
         std::mutex g_mutex;
         std::condition_variable g_cv;
         std::thread g_thread;
         bool g_running = false;
         bool g_shouldStop = false;
 
-        // Plugin-thread accumulator state. Read and written only on the
-        // plugin thread (AsyncDispatch's single worker), so no
-        // synchronization needed beyond AsyncDispatch's queue mutex —
-        // that mutex's acquire/release around the enqueue/dequeue pair
-        // establishes the happens-before edge these plain-typed
-        // globals depend on.
-        //
-        // Re-seeded on the first plugin-thread pass after each Start()
-        // via `g_needsFirstTickInit` below, rather than seeded on the
-        // main-thread caller of Start() — writing them from Start()
-        // (main) and reading them from the plugin thread would need
-        // additional synchronization we don't need to pay for.
+        // Plugin-thread-only; AsyncDispatch's queue mutex provides the
+        // happens-before edge across successive tick jobs.
         std::chrono::steady_clock::time_point g_lastSampleTime;
         double g_unpausedSecondsSinceLastTick = 0.0;
         int g_tickCount = 0;
 
-        // Set true by Start(), cleared on the first PollOnPluginThread
-        // pass afterward. Ensures the accumulator anchor is seeded on
-        // the plugin thread rather than the main-thread caller of
-        // Start(), so no cross-thread visibility guarantee is required
-        // on the accumulator globals themselves. Access ordering is
-        // safe via the chain: Start()'s mutex acquire → thread
-        // creation → driver thread's AsyncDispatch enqueue → worker's
-        // dequeue.
+        // First plugin-thread pass after Start() seeds g_lastSampleTime
+        // on the plugin thread so we don't need cross-thread visibility
+        // on the accumulator globals.
         bool g_needsFirstTickInit = true;
 
-        // How often to sample the pause state. 500ms is a comfortable
-        // tradeoff: brisk enough that resuming after a long pause kicks
-        // the next tick within half a second, slow enough that the
-        // enqueue overhead is negligible (~2 plugin-thread tasks per
-        // second).
         constexpr std::chrono::milliseconds kPollInterval{500};
 
-        // Runtime killswitch. When false, PollOnPluginThread returns
-        // early after consuming the elapsed sample. Set from any
-        // thread via SetEnabled (dashboard JS listener marshals from
-        // the PrismaUI worker thread).
         std::atomic<bool> g_enabled{true};
 
-        // Plugin-thread poll body — sample wall-clock elapsed since
-        // the last poll, accumulate it only when the engine isn't
-        // paused, and fire the tick when the unpaused accumulator
-        // crosses the configured interval. All the accumulator state
-        // lives in plugin-thread-only globals so no locking is
-        // required here.
-        //
-        // The two pieces of work that genuinely need the main thread
-        // (event-log polls and the PhaseTracker::Tick +
-        // EvaluationPipeline::BeginEvaluation duo) marshal via
-        // MainThread::FireAndForget — we don't need a return value
-        // and don't want to block the plugin thread waiting for
-        // them.
+        // Accumulate wall-clock elapsed while unpaused; fire the tick
+        // when the accumulator crosses tickIntervalSeconds.
         void PollOnPluginThread(const PluginThread::Token& pt)
         {
-            // First pass after each Start() — seed the accumulator
-            // anchor on the plugin thread and skip the rest of the
-            // body. The interval doesn't start counting until the
-            // second pass.
             if (g_needsFirstTickInit) {
                 g_lastSampleTime = std::chrono::steady_clock::now();
                 g_unpausedSecondsSinceLastTick = 0.0;
@@ -101,33 +61,17 @@ namespace NarrativeEngine::Tick
             const double elapsedSec = std::chrono::duration<double>(now - g_lastSampleTime).count();
             g_lastSampleTime = now;
 
-            // Pause check. EngineUtils::IsGamePaused() without a token
-            // is documented as "safe from any thread" — CommonLibSSE-NG
-            // treats the UI singleton pointer + GameIsPaused bool read
-            // as stable off-main, and BeatSystem's worker already
-            // relies on the same guarantee. Doing this hop from the
-            // plugin thread saves a MainThread::Run round trip on the
-            // hot poll path.
             if (EngineUtils::IsGamePaused()) {
                 return;
             }
 
-            // Event-log polls now run on the plugin thread. Each
-            // hops to main internally via MainThread::Run only for
-            // its specific engine touches (Combat's player+bleedout
-            // snapshot, Weather's sky read, Travel's location+hold+
-            // party snapshot); EventHistoryWriter has no engine
-            // touches at all and runs fully off main. This is the
-            // audit-fix landing for findings 3 and 6.
             CombatEventLog::Poll(pt);
             WeatherEventLog::Poll(pt, elapsedSec);
             TravelEventLog::Poll(pt, elapsedSec);
             EventHistoryWriter::Poll(pt, elapsedSec);
 
-            // Killswitch — when the dashboard's debug toggle is off,
-            // we consume the elapsed sample above (so re-enabling
-            // doesn't credit disabled time) but skip the Director
-            // evaluation cadence below.
+            // Consume the elapsed sample above so a subsequent
+            // re-enable doesn't credit disabled time.
             if (!g_enabled.load(std::memory_order_acquire)) {
                 return;
             }
@@ -138,15 +82,8 @@ namespace NarrativeEngine::Tick
                 return;
             }
 
-            // Time to fire. If an evaluation is already in flight
-            // (previous tick's LLM still running), skip cleanly
-            // without touching the accumulator or the tick counter.
-            // The 500 ms poll re-checks every pass; as soon as the
-            // in-flight eval finishes, the next poll here will pass
-            // this check and fire promptly. This preserves "one tick
-            // per interval of unpaused play" even when the LLM
-            // takes longer than the interval — no back-to-back
-            // catch-up bursts.
+            // Skip if the previous tick's LLM is still running so we
+            // don't queue a catch-up burst.
             if (EvaluationPipeline::IsEvaluationInFlight()) {
                 if (Settings::Get().debugMode) {
                     logger::debug("Tick: skipping fire — previous evaluation still in flight");
@@ -154,35 +91,24 @@ namespace NarrativeEngine::Tick
                 return;
             }
 
-            // Reset the accumulator. (Subtract rather than zero so
-            // any overshoot rolls into the next interval — more
-            // accurate over long runs than discarding the slack.)
+            // Subtract rather than zero so any overshoot rolls into
+            // the next interval.
             g_unpausedSecondsSinceLastTick -= intervalSec;
             ++g_tickCount;
             if (Settings::Get().debugMode) {
                 logger::debug("Tick: firing #{}", g_tickCount);
             }
 
-            // PhaseTracker::Tick runs inline on this thread — cheap
-            // mutex-guarded sample. The Director evaluation, which
-            // contains the multi-second sync LLM round-trip, hands
-            // off to EvalDispatch's dedicated worker so this
-            // cadenced poll body keeps running every 500 ms even
-            // while the LLM is out.
+            // BeginEvaluation blocks on the LLM for seconds; run it on
+            // EvalDispatch so the cadenced poll here keeps ticking.
             PhaseTracker::Tick(pt);
             EvalDispatch::EnqueueWork(
                 [](const PluginThread::Token& evalPt) { EvaluationPipeline::BeginEvaluation(evalPt); });
         }
 
+        // Driver thread is NOT a plugin-role thread — schedule-only.
         void DriverLoop()
         {
-            // The driver thread is intentionally NOT marked as a
-            // Plugin role thread. Its only responsibility is scheduling
-            // — enqueue one tick body onto AsyncDispatch's cadenced
-            // worker every kPollInterval. The tick body itself may
-            // hand off the Director evaluation to EvalDispatch's
-            // separate worker so a slow LLM there doesn't stall
-            // subsequent poll bodies on this queue.
             while (true) {
                 {
                     std::unique_lock lock(g_mutex);
@@ -202,17 +128,7 @@ namespace NarrativeEngine::Tick
         if (g_running) {
             return;
         }
-        // Signal the plugin thread's first PollOnPluginThread pass to
-        // re-seed the accumulator anchor. Writing this flag on the
-        // main-thread Start() caller is safe: Start()'s mutex acquire
-        // → std::thread creation → driver's AsyncDispatch enqueue →
-        // worker's dequeue is a full happens-before chain.
         g_needsFirstTickInit = true;
-
-        // Seed the runtime killswitch from Config before the worker
-        // starts polling. tickEnabled is populated by Settings::Load's
-        // cascade — plugin INI supplies the author default, MCM INI
-        // overrides if the player has toggled it and rebooted.
         g_enabled.store(Settings::Get().tickEnabled, std::memory_order_release);
 
         g_shouldStop = false;

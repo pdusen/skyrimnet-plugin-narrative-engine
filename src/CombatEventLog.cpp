@@ -468,26 +468,16 @@ namespace NarrativeEngine::CombatEventLog
             return &s;
         }
 
-        // Plain-data snapshot the plugin-thread Poll consumes. Filled
-        // by BuildPollSnapshot, which reads engine state directly on
-        // the plugin thread (see that function's off-main-safety
-        // contract).
         struct PollSnapshot
         {
-            // Player half — populated only when the player singleton
-            // resolved.
             bool playerResolved = false;
             bool playerInCombat = false;
             std::string playerDisplayName;
 
-            // Per-tracked-actor half — one entry per FormID passed
-            // into the main-thread hop from g_bleedingOut. `exists`
-            // is false when the form failed to resolve (unloaded /
-            // despawned).
             struct ActorState
             {
                 RE::FormID formID = 0;
-                bool exists = false;
+                bool exists = false; // false when the form failed to resolve
                 bool isDead = false;
                 bool isBleedingOut = false;
                 bool inRadius = false;
@@ -495,17 +485,8 @@ namespace NarrativeEngine::CombatEventLog
             std::vector<ActorState> actors;
         };
 
-        // Fills a PollSnapshot from live engine state. Every read
-        // here is a stable-singleton pointer + plain accessor of
-        // exactly the shape BeatSystem's worker reads off-main via
-        // EngineUtils, and none of them mutates engine state:
-        //   * PlayerCharacter::IsInCombat / GetPosition — plain reads
-        //   * TESForm::LookupByID — global form-registry hash lookup
-        //     (audit Finding 1's AliasWalkFilter path already uses
-        //     this off-main under the same precedent)
-        //   * Actor::IsDead / AsActorState()::IsBleedingOut /
-        //     GetPosition — plain reads
-        // Safe to call from the plugin thread.
+        // Off-main-safe: stable-singleton pointer walks + plain
+        // accessors, no engine mutation.
         PollSnapshot BuildPollSnapshot(const std::vector<RE::FormID>& trackedIds, float radius)
         {
             PollSnapshot s;
@@ -612,9 +593,6 @@ namespace NarrativeEngine::CombatEventLog
     {
         const float radius = HitRadiusUnits();
 
-        // 1. Plugin-thread: snapshot the FormIDs we're currently
-        //    tracking, so the main-thread hop below knows which
-        //    actors to query. Held briefly under g_mutex.
         std::vector<RE::FormID> trackedIds;
         {
             std::scoped_lock lock(g_mutex);
@@ -624,15 +602,11 @@ namespace NarrativeEngine::CombatEventLog
             }
         }
 
-        // 2. Build the poll snapshot on the plugin thread — every
-        //    read inside is off-main-safe (see BuildPollSnapshot's
-        //    contract above). Deliberately outside g_mutex so
-        //    GetRenderedTail readers aren't blocked while we run.
+        // BuildPollSnapshot runs outside g_mutex so GetRenderedTail
+        // readers aren't blocked while we walk the tracked actors.
         (void)pt;
         const auto snap = BuildPollSnapshot(trackedIds, radius);
 
-        // 3. Plugin-thread: consume the snapshot, mutate g_bleedingOut,
-        //    emit events. Re-take g_mutex for the mutation phase.
         std::scoped_lock lock(g_mutex);
 
         ProcessPlayerCombatLocked(snap);

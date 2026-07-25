@@ -37,6 +37,7 @@ namespace NarrativeEngine::BeatWorkDispatch
                     task = std::move(g_queue.front());
                     g_queue.pop_front();
                 }
+                // Swallow exceptions so a bad task can't kill the worker.
                 try {
                     PluginThread::detail::JobDispatcher::Invoke(task);
                 } catch (const std::exception& e) {

@@ -183,15 +183,9 @@ namespace NarrativeEngine::WeatherEventLog
             return c;
         }
 
-        // Sample the current sky category. Every read here is a
-        // stable-singleton pointer walk + plain accessor (Sky::mode,
-        // TESWeather::data flags / windSpeed / thunderLightningFrequency)
-        // and none of them mutates engine state, so this is safe
-        // from any thread. Called from Poll on the plugin thread and
-        // from OnPostLoadGame on main.
-        //
-        // Returns nullopt when the sky singleton is null or the mode
-        // isn't Full (interior / dome-only cases).
+        // Off-main-safe: pointer walks + plain accessors, no engine
+        // mutation. Returns nullopt for interior / dome-only cases
+        // (sky singleton null or mode != Full).
         std::optional<WeatherCategory> SampleCurrentCategory()
         {
             auto* sky = RE::Sky::GetSingleton();
@@ -379,11 +373,8 @@ namespace NarrativeEngine::WeatherEventLog
         }
 
         (void)pt;
-        // Sample the sky on the plugin thread — every read is
-        // off-main-safe per SampleCurrentCategory's contract.
-        // Deliberately outside the mutex so GetRenderedTail readers
-        // aren't blocked while we run. The category diff + mutation
-        // re-takes the mutex below.
+        // Outside the mutex so GetRenderedTail isn't blocked; the
+        // diff + mutation below re-takes it.
         auto sampled = SampleCurrentCategory();
 
         std::scoped_lock lock(g_mutex);

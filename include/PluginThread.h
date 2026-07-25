@@ -2,36 +2,19 @@
 
 #include <functional>
 
-// Zero-sized proof-of-plugin-thread. Every NarrativeEngine plugin
-// function that is not itself a sanctioned foreign entry point
-// (AsyncDispatch::EnqueueWork or EvalDispatch::EnqueueWork) takes
-// either a PluginThread::Token or a MainThread::Token as an argument.
-// Foreign-thread code, holding neither, is structurally locked out
-// of the plugin surface.
-//
-// The Token is unforgeable outside the shared JobDispatcher below.
-// The only way for code to hold one is to be inside a lambda passed
-// to one of the sanctioned dispatchers (AsyncDispatch::EnqueueWork
-// runs its lambda on the cadenced short-work worker; EvalDispatch::
-// EnqueueWork runs its lambda on the Director-evaluation worker so
-// long-running LLM waits don't stall the cadenced queue). Both
-// workers construct their token through the shared dispatcher below.
+// Zero-sized proof-of-plugin-thread. See docs/THREADING_MODEL.md for
+// the full contract. Unforgeable outside JobDispatcher; the only way
+// to hold one is to be inside a lambda passed to a sanctioned
+// dispatcher (AsyncDispatch / EvalDispatch / BeatWorkDispatch / the
+// BeatSystem master poll).
 namespace NarrativeEngine::PluginThread
 {
     class Token;
 
     namespace detail
     {
-        // Sole legitimate invoker of a plugin-thread job. Each
-        // dispatcher (AsyncDispatch's cadenced worker, EvalDispatch's
-        // long-work worker) hands the caller's std::function into
-        // Invoke, which constructs a fresh Token in its own stack
-        // frame and passes it into the lambda by const-reference.
-        // Token's copy/move are deleted so the reference cannot
-        // escape the callee.
-        //
-        // Header-only so both workers can call it without the
-        // definition living in one particular translation unit.
+        // Header-only so every plugin worker can invoke it without
+        // depending on one particular translation unit.
         struct JobDispatcher
         {
             static inline void Invoke(const std::function<void(const Token&)>& job);
@@ -41,8 +24,8 @@ namespace NarrativeEngine::PluginThread
     class Token
     {
     public:
-        // Non-copyable, non-movable — same reasoning as
-        // MainThread::Token.
+        // Non-copyable / non-movable so the reference the dispatcher
+        // hands out cannot escape the callee.
         Token(const Token&) = delete;
         Token& operator=(const Token&) = delete;
         Token(Token&&) = delete;

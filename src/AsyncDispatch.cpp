@@ -23,12 +23,8 @@ namespace NarrativeEngine::AsyncDispatch
 
         void WorkerLoop()
         {
-            // Declare this thread as Plugin for its entire lifetime.
-            // Runtime belt-and-braces beneath the compile-time token
-            // barrier; useful for observability and for the assertion
-            // in MainThread::Run.
             ScopedThreadRole roleGuard(ThreadRole::Plugin);
-            logger::info("AsyncDispatch: worker thread role installed (Plugin)");
+            logger::info("AsyncDispatch: worker thread started");
 
             for (;;) {
                 std::function<void(const PluginThread::Token&)> task;
@@ -41,9 +37,7 @@ namespace NarrativeEngine::AsyncDispatch
                     task = std::move(g_queue.front());
                     g_queue.pop_front();
                 }
-                // Swallow exceptions so a single bad task can't kill
-                // the worker. Token construction lives inside
-                // PluginThread::detail::JobDispatcher.
+                // Swallow exceptions so a bad task can't kill the worker.
                 try {
                     PluginThread::detail::JobDispatcher::Invoke(task);
                 } catch (const std::exception& e) {

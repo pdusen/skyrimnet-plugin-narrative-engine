@@ -1,31 +1,19 @@
 #pragma once
 
-// Wall-clock tick driver for the Director.
-//
-// Runs a dedicated `std::thread` that sleeps for
-// `Settings::tickIntervalSeconds`, wakes, and marshals
-// `PhaseTracker::Tick(dt)` and `EvaluationPipeline::BeginEvaluation()`
-// onto the main thread via the AsyncDispatch helper. Real-time, not
-// game-time: pauses inside the engine (menus, console, dialogue) are
-// handled by the main-thread poll itself, which drops the dt when
-// `GameIsPaused()` is true.
+// Real-time tick driver for the Director. Paused-game intervals are
+// dropped by the poll body itself (via GameIsPaused()).
 namespace NarrativeEngine::Tick
 {
-    // Start the tick driver thread. Idempotent. Call from kPostLoadGame
-    // and kNewGame (i.e. only when there's a real game in progress).
+    // Idempotent. Call from kPostLoadGame and kNewGame.
     void Start();
 
-    // Signal the tick thread to exit and join it. Idempotent. Call from
-    // kPreLoadGame so an in-flight tick can't fire during deserialization.
+    // Idempotent. Call from kPreLoadGame to keep an in-flight tick from
+    // firing during deserialization.
     void Stop();
 
-    // Runtime killswitch for the tick's main-thread poll. When
-    // disabled, PollOnMainThread stops accumulating time and stops
-    // firing PhaseTracker / EvaluationPipeline; the CombatEventLog poll
-    // still runs so its edge-detection stays truthful across a disabled
-    // span. Used by the dashboard debug toggle to suspend all timed
-    // Director behavior while diagnosing specific subsystems in
-    // isolation. Defaults to true. Thread-safe.
+    // Suspends PhaseTracker + EvaluationPipeline firings; event-log
+    // polls keep running so their edge-detection stays truthful across
+    // the disabled span. Defaults to true. Thread-safe.
     void SetEnabled(bool enabled);
     bool IsEnabled();
 } // namespace NarrativeEngine::Tick

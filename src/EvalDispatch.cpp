@@ -23,12 +23,8 @@ namespace NarrativeEngine::EvalDispatch
 
         void WorkerLoop()
         {
-            // Declare this thread as Plugin for its entire lifetime.
-            // Matches AsyncDispatch's worker's role — MainThread::Run
-            // asserts against ThreadRole::Plugin, and both workers
-            // satisfy that.
             ScopedThreadRole roleGuard(ThreadRole::Plugin);
-            logger::info("EvalDispatch: worker thread role installed (Plugin)");
+            logger::info("EvalDispatch: worker thread started");
 
             for (;;) {
                 std::function<void(const PluginThread::Token&)> task;
@@ -41,9 +37,6 @@ namespace NarrativeEngine::EvalDispatch
                     task = std::move(g_queue.front());
                     g_queue.pop_front();
                 }
-                // Swallow exceptions so a single bad task can't kill
-                // the worker. Token construction lives inside the
-                // shared PluginThread::detail::JobDispatcher.
                 try {
                     PluginThread::detail::JobDispatcher::Invoke(task);
                 } catch (const std::exception& e) {
