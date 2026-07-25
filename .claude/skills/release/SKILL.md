@@ -139,7 +139,8 @@ an empty "Fixes" header just to keep the template):
 
 - <bullet per change the player can see or interact with in-game or in the
   dashboard: new beats, dashboard controls, tunables that shift Director
-  behavior, event sources feeding the LLM's context, MCM entries, etc.>
+  behavior, event sources feeding the LLM's context, MCM entries, Major
+  performance improvements, etc.>
 
 ## What's New — Internals and Debug Aids
 
