@@ -7,6 +7,7 @@
 #include <CombatEventLog.h>
 #include <DecisionLog.h>
 #include <EngineUtils.h>
+#include <EvalDispatch.h>
 #include <EvaluationPipeline.h>
 #include <LetterComposer.h>
 #include <LLMTextSanitizer.h>
@@ -1417,17 +1418,21 @@ namespace NarrativeEngine::BeatSystem
                      letterSenderCandidates.size(),
                      visitSenderCandidates.size());
 
-        // No finalizer — force-dispatch runs outside the normal
-        // evaluation loop, so there's no g_inFlight guard to release.
-        // Enqueue onto the plugin thread so the sync LLM round-trip
-        // in FireBeatSelectLLM doesn't stall the main thread.
-        AsyncDispatch::EnqueueWork([snapshot = std::move(snapshot),
-                                    rec = std::move(rec),
-                                    candidates = std::move(candidates),
-                                    letterSenderCandidates = std::move(letterSenderCandidates),
-                                    visitSenderCandidates = std::move(visitSenderCandidates),
-                                    direction,
-                                    tensionDelta](const PluginThread::Token& pt) mutable {
+        // Route the sync LLM through EvalDispatch (not AsyncDispatch)
+        // so it doesn't monopolize the shared worker that PrismaUI
+        // callbacks and engine event sinks use — a 5-10s LLM wait on
+        // AsyncDispatch would freeze the dashboard for that duration.
+        // Matches ConsiderBeat's path, which lands on EvalDispatch via
+        // Tick::PollOnPluginThread. No finalizer — force-dispatch runs
+        // outside the normal evaluation loop, so there's no g_inFlight
+        // guard to release.
+        EvalDispatch::EnqueueWork([snapshot = std::move(snapshot),
+                                   rec = std::move(rec),
+                                   candidates = std::move(candidates),
+                                   letterSenderCandidates = std::move(letterSenderCandidates),
+                                   visitSenderCandidates = std::move(visitSenderCandidates),
+                                   direction,
+                                   tensionDelta](const PluginThread::Token& pt) mutable {
             FireBeatSelectLLM(pt,
                               std::move(snapshot),
                               std::move(rec),
