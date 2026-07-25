@@ -24,7 +24,6 @@ namespace NarrativeEngine::AsyncDispatch
         void WorkerLoop()
         {
             ScopedThreadRole roleGuard(ThreadRole::Plugin);
-            logger::info("AsyncDispatch: worker thread started");
 
             for (;;) {
                 std::function<void(const PluginThread::Token&)> task;

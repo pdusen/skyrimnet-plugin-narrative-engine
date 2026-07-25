@@ -397,51 +397,47 @@ namespace NarrativeEngine
             });
         }
 
-        void CheckSenderFill(const PluginThread::Token& pt)
+        void CheckSenderFill()
         {
-            MainThread::FireAndForget(pt, [](const MainThread::Token&) {
-                int slotIndex = -1;
-                {
-                    std::scoped_lock lock(g_sessionMutex);
-                    slotIndex = g_inFlightSlot;
-                }
-                if (slotIndex < 0) {
-                    SetSubPhase(ComposeSubPhase::Failed, "no_in_flight_slot");
-                    return;
-                }
-                auto* senderAlias = g_perSlotSenderAlias[slotIndex];
-                if (senderAlias && senderAlias->GetReference()) {
-                    logger::info("NPCLetterBeat: slot {} Sender alias filled; polling for "
-                                 "LetterRef fill",
-                                 slotIndex);
-                    SetSubPhase(ComposeSubPhase::PollingLetterRef);
-                }
-                // else: still empty; sub-phase counter continues to tick
-            });
+            int slotIndex = -1;
+            {
+                std::scoped_lock lock(g_sessionMutex);
+                slotIndex = g_inFlightSlot;
+            }
+            if (slotIndex < 0) {
+                SetSubPhase(ComposeSubPhase::Failed, "no_in_flight_slot");
+                return;
+            }
+            auto* senderAlias = g_perSlotSenderAlias[slotIndex];
+            if (senderAlias && senderAlias->GetReference()) {
+                logger::info("NPCLetterBeat: slot {} Sender alias filled; polling for "
+                             "LetterRef fill",
+                             slotIndex);
+                SetSubPhase(ComposeSubPhase::PollingLetterRef);
+            }
+            // else: still empty; sub-phase counter continues to tick
         }
 
-        void CheckLetterRefFill(const PluginThread::Token& pt)
+        void CheckLetterRefFill()
         {
-            MainThread::FireAndForget(pt, [](const MainThread::Token&) {
-                int slotIndex = -1;
-                {
-                    std::scoped_lock lock(g_sessionMutex);
-                    slotIndex = g_inFlightSlot;
-                }
-                if (slotIndex < 0) {
-                    SetSubPhase(ComposeSubPhase::Failed, "no_in_flight_slot");
-                    return;
-                }
-                auto* letterRefAlias = g_perSlotLetterRefAlias[slotIndex];
-                if (letterRefAlias && letterRefAlias->GetReference()) {
-                    auto* ref = letterRefAlias->GetReference();
-                    logger::info("NPCLetterBeat: slot {} LetterRef filled (REFR=0x{:08X}); "
-                                 "COMPOSE succeeded, advancing to RUNNING",
-                                 slotIndex,
-                                 ref ? ref->GetFormID() : 0u);
-                    SetSubPhase(ComposeSubPhase::Succeeded);
-                }
-            });
+            int slotIndex = -1;
+            {
+                std::scoped_lock lock(g_sessionMutex);
+                slotIndex = g_inFlightSlot;
+            }
+            if (slotIndex < 0) {
+                SetSubPhase(ComposeSubPhase::Failed, "no_in_flight_slot");
+                return;
+            }
+            auto* letterRefAlias = g_perSlotLetterRefAlias[slotIndex];
+            if (letterRefAlias && letterRefAlias->GetReference()) {
+                auto* ref = letterRefAlias->GetReference();
+                logger::info("NPCLetterBeat: slot {} LetterRef filled (REFR=0x{:08X}); "
+                             "COMPOSE succeeded, advancing to RUNNING",
+                             slotIndex,
+                             ref ? ref->GetFormID() : 0u);
+                SetSubPhase(ComposeSubPhase::Succeeded);
+            }
         }
 
         // RUNNING arm check — is the letter in the courier's container yet?
@@ -739,7 +735,7 @@ namespace NarrativeEngine
                     return {};
                 }
                 if ((ticks % kSubPhaseCheckEveryNTicks) == 0) {
-                    CheckSenderFill(pt);
+                    CheckSenderFill();
                 }
                 return {};
             }
@@ -754,7 +750,7 @@ namespace NarrativeEngine
                     return {};
                 }
                 if ((ticks % kSubPhaseCheckEveryNTicks) == 0) {
-                    CheckLetterRefFill(pt);
+                    CheckLetterRefFill();
                 }
                 return {};
             }

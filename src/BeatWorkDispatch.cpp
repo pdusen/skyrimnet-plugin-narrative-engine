@@ -24,7 +24,6 @@ namespace NarrativeEngine::BeatWorkDispatch
         void WorkerLoop()
         {
             ScopedThreadRole roleGuard(ThreadRole::Plugin);
-            logger::info("BeatWorkDispatch: worker thread started");
 
             for (;;) {
                 std::function<void(const PluginThread::Token&)> task;

@@ -79,12 +79,10 @@ namespace NarrativeEngine
         }
 
         // A missing quest counts as completed so we don't spin.
-        bool CheckCompletion(const PluginThread::Token& pt)
+        bool CheckCompletion()
         {
-            return MainThread::Run(pt, [](const MainThread::Token&) {
-                auto* quest = LookupAmbushQuest();
-                return quest ? quest->IsCompleted() : true;
-            });
+            auto* quest = LookupAmbushQuest();
+            return quest ? quest->IsCompleted() : true;
         }
 
         void Cleanup(const MainThread::Token&)
@@ -254,7 +252,7 @@ namespace NarrativeEngine
                 return {};
             }
             g_ticksSinceLastCompletionCheck = 0;
-            if (CheckCompletion(pt)) {
+            if (CheckCompletion()) {
                 logger::info("AmbushBeat: RUNNING detected completion; advancing to CLEANUP");
                 return {BeatState::CLEANUP};
             }
