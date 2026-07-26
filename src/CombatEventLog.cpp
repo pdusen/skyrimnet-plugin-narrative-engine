@@ -359,14 +359,16 @@ namespace NarrativeEngine::CombatEventLog
         // hits and bleedout were captured fine but combat_start/end never
         // appeared. We poll player->IsInCombat() in Poll() instead.
 
-        // Debug-log dump of a raw TESHitEvent as delivered by the engine,
+        // Trace-mode dump of a raw TESHitEvent as delivered by the engine,
         // including the resolved source-form type / editor ID / hostile
         // flag so testers can identify buff-spell "hits" (non-hostile
         // MagicItem sources) that shouldn't be treated as attacks.
-        // Temporarily debug-level (rather than trace-gated) while we
-        // investigate a specific false-attack report.
-        void DebugLogHitEvent(const RE::TESHitEvent& evt)
+        void TraceHitEvent(const RE::TESHitEvent& evt)
         {
+            if (!Settings::Get().traceMode) {
+                return;
+            }
+
             auto refDesc = [](RE::TESObjectREFR* ref) -> std::string {
                 if (!ref)
                     return "<null>";
@@ -426,7 +428,7 @@ namespace NarrativeEngine::CombatEventLog
                 }
             }
 
-            logger::debug(
+            logger::trace(
                 "CombatEventLog HitSink recv: target=[{}] cause=[{}] source=[{}] projectile=[{}] flags=0x{:02X}",
                 refDesc(evt.target.get()),
                 refDesc(evt.cause.get()),
@@ -444,7 +446,7 @@ namespace NarrativeEngine::CombatEventLog
                     return RE::BSEventNotifyControl::kContinue;
                 }
 
-                DebugLogHitEvent(*a_event);
+                TraceHitEvent(*a_event);
 
                 auto* targetActor = a_event->target->As<RE::Actor>();
                 if (!targetActor) {
