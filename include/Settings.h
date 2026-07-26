@@ -137,6 +137,17 @@ namespace NarrativeEngine::Settings
         // [CombatEvents]
         int combatEventsHitRadiusUnits = 6000; // ~90 ft; distance gate for hit / collapse capture
         int combatEventsMaxStored = 256;       // ring-buffer cap on retained internal combat events
+        // Semicolon-separated list of spell / magic-item names whose
+        // TESHitEvent captures are discarded on receipt. Matches the
+        // source form's Full Name (case-insensitive; leading/trailing
+        // whitespace on each entry is trimmed). Motivating case:
+        // Requiem's "Aura of Courage" (edid REQ_Cloak_GuardOfficer)
+        // is a cloak buff that hops between allied guards; the engine
+        // fires TESHitEvent for each hop, and our capture reads it as
+        // "Longstig attacks Brurid" because cause is the officer and
+        // target is the ally. The parsed set lives in Settings.cpp;
+        // membership is queried via Settings::IsSpellNameBlocked.
+        std::string spellNameBlocklist;
 
         // [WeatherEvents]
         // Ring-buffer cap on retained internal weather events.
@@ -456,6 +467,13 @@ namespace NarrativeEngine::Settings
     // silently if the MCM INI is absent (fresh install where the
     // player has never opened the page).
     void ApplyMcmOverride();
+
+    // Case-insensitive membership check against the parsed spell-name
+    // blocklist derived from Config::spellNameBlocklist. Empty
+    // blocklist always returns false. The underlying set is rebuilt
+    // by Load / ApplyMcmOverride and read-only afterward, so this is
+    // safe to call from any thread (including engine sink threads).
+    bool IsSpellNameBlocked(std::string_view spellName);
 
     // Write a subset of Config fields to the MCM INI at
     // Data/MCM/Settings/NarrativeEngine.ini. Reads the current file

@@ -7,13 +7,21 @@
 
 #include <chrono>
 #include <filesystem>
+#include <string_view>
 #include <system_error>
+#include <unordered_set>
 
 namespace NarrativeEngine::Settings
 {
     namespace
     {
         Config g_config{};
+
+        // Parsed form of Config::spellNameBlocklist. Rebuilt by
+        // RebuildSpellNameBlocklistSet after every Load / ApplyMcmOverride;
+        // read-only outside that path so lookups from engine sink threads
+        // (CombatEventLog HitSink) don't need locking.
+        std::unordered_set<std::string> g_spellNameBlocklistSet;
 
         constexpr const char* kPluginIniPath = "Data/SKSE/Plugins/NarrativeEngine.ini";
         constexpr const char* kMcmIniPath = "Data/MCM/Settings/NarrativeEngine.ini";
@@ -23,6 +31,52 @@ namespace NarrativeEngine::Settings
         // own logs to diagnose the "MCM page doesn't appear" report.
         constexpr const char* kMcmConfigJsonPath = "Data/MCM/Config/NarrativeEngine/config.json";
         constexpr const char* kMcmHelperDllPath = "Data/SKSE/Plugins/MCMHelper.dll";
+
+        std::string ToLowerCopy(std::string_view s)
+        {
+            std::string r;
+            r.reserve(s.size());
+            for (char c : s) {
+                r += (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+            }
+            return r;
+        }
+
+        std::string_view TrimAsciiSpace(std::string_view s)
+        {
+            std::size_t start = 0;
+            while (start < s.size() && (s[start] == ' ' || s[start] == '\t')) {
+                ++start;
+            }
+            std::size_t end = s.size();
+            while (end > start && (s[end - 1] == ' ' || s[end - 1] == '\t')) {
+                --end;
+            }
+            return s.substr(start, end - start);
+        }
+
+        // Split Config::spellNameBlocklist on ';', trim each piece,
+        // lowercase it, and repopulate g_spellNameBlocklistSet. Called
+        // after every path that mutates g_config.spellNameBlocklist.
+        void RebuildSpellNameBlocklistSet()
+        {
+            g_spellNameBlocklistSet.clear();
+            std::string_view raw{g_config.spellNameBlocklist};
+            std::size_t pos = 0;
+            while (pos <= raw.size()) {
+                const auto sep = raw.find(';', pos);
+                const auto end = (sep == std::string_view::npos) ? raw.size() : sep;
+                const std::string_view piece = TrimAsciiSpace(raw.substr(pos, end - pos));
+                if (!piece.empty()) {
+                    g_spellNameBlocklistSet.insert(ToLowerCopy(piece));
+                }
+                if (sep == std::string_view::npos) {
+                    break;
+                }
+                pos = sep + 1;
+            }
+            logger::info("Settings: spell-name blocklist has {} entries", g_spellNameBlocklistSet.size());
+        }
 
         // Sync spdlog's level filter to the current traceMode setting.
         // `logger.h::SetupLog` initializes at trace level (so startup
@@ -180,6 +234,8 @@ namespace NarrativeEngine::Settings
                 static_cast<int>(ini.GetLongValue("CombatEvents", "iHitRadiusUnits", dst.combatEventsHitRadiusUnits));
             dst.combatEventsMaxStored =
                 static_cast<int>(ini.GetLongValue("CombatEvents", "iMaxStored", dst.combatEventsMaxStored));
+            dst.spellNameBlocklist =
+                ini.GetValue("CombatEvents", "sSpellNameBlocklist", dst.spellNameBlocklist.c_str());
 
             dst.weatherEventsMaxStored = static_cast<int>(
                 ini.GetLongValue("WeatherEvents", "iWeatherEventsMaxStored", dst.weatherEventsMaxStored));
@@ -418,6 +474,7 @@ namespace NarrativeEngine::Settings
                       g_config.tickEnabled ? 1 : 0,
                       g_config.tickIntervalSeconds);
         ApplyLogLevelForTraceMode();
+        RebuildSpellNameBlocklistSet();
     }
 
     const Config& Get()
@@ -473,6 +530,15 @@ namespace NarrativeEngine::Settings
                       prevInterval,
                       g_config.tickIntervalSeconds);
         ApplyLogLevelForTraceMode();
+        RebuildSpellNameBlocklistSet();
+    }
+
+    bool IsSpellNameBlocked(std::string_view spellName)
+    {
+        if (g_spellNameBlocklistSet.empty() || spellName.empty()) {
+            return false;
+        }
+        return g_spellNameBlocklistSet.contains(ToLowerCopy(spellName));
     }
 
     void WriteMcmOverride(const McmOverride& mutations)

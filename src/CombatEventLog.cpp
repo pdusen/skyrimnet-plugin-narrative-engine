@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <format>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -358,6 +359,82 @@ namespace NarrativeEngine::CombatEventLog
         // hits and bleedout were captured fine but combat_start/end never
         // appeared. We poll player->IsInCombat() in Poll() instead.
 
+        // Debug-log dump of a raw TESHitEvent as delivered by the engine,
+        // including the resolved source-form type / editor ID / hostile
+        // flag so testers can identify buff-spell "hits" (non-hostile
+        // MagicItem sources) that shouldn't be treated as attacks.
+        // Temporarily debug-level (rather than trace-gated) while we
+        // investigate a specific false-attack report.
+        void DebugLogHitEvent(const RE::TESHitEvent& evt)
+        {
+            auto refDesc = [](RE::TESObjectREFR* ref) -> std::string {
+                if (!ref)
+                    return "<null>";
+                std::string s = std::format("id={:08X}", ref->GetFormID());
+                if (const char* n = ref->GetDisplayFullName(); n && *n) {
+                    s += " name='";
+                    s += n;
+                    s += "'";
+                }
+                return s;
+            };
+
+            std::string sourceDesc = "<none>";
+            if (evt.source != 0) {
+                sourceDesc = std::format("{:08X}", evt.source);
+                if (auto* form = RE::TESForm::LookupByID(evt.source)) {
+                    const char* typeName = "other";
+                    std::string extra;
+                    if (auto* spell = form->As<RE::SpellItem>()) {
+                        typeName = "spell";
+                        extra = std::string(" hostile=") + (spell->IsHostile() ? "1" : "0");
+                    } else if (auto* magic = form->As<RE::MagicItem>()) {
+                        typeName = "magic";
+                        extra = std::string(" hostile=") + (magic->IsHostile() ? "1" : "0");
+                    } else if (form->As<RE::TESObjectWEAP>()) {
+                        typeName = "weapon";
+                    } else if (form->As<RE::BGSExplosion>()) {
+                        typeName = "explosion";
+                    } else if (form->As<RE::TESObjectACTI>()) {
+                        typeName = "activator";
+                    }
+                    sourceDesc += " type=";
+                    sourceDesc += typeName;
+                    if (const char* fn = form->GetName(); fn && *fn) {
+                        sourceDesc += " name='";
+                        sourceDesc += fn;
+                        sourceDesc += "'";
+                    }
+                    if (const char* edid = form->GetFormEditorID(); edid && *edid) {
+                        sourceDesc += " edid=";
+                        sourceDesc += edid;
+                    }
+                    sourceDesc += extra;
+                } else {
+                    sourceDesc += " <unresolved>";
+                }
+            }
+
+            std::string projectileDesc = "<none>";
+            if (evt.projectile != 0) {
+                projectileDesc = std::format("{:08X}", evt.projectile);
+                if (auto* form = RE::TESForm::LookupByID(evt.projectile)) {
+                    if (const char* edid = form->GetFormEditorID(); edid && *edid) {
+                        projectileDesc += " edid=";
+                        projectileDesc += edid;
+                    }
+                }
+            }
+
+            logger::debug(
+                "CombatEventLog HitSink recv: target=[{}] cause=[{}] source=[{}] projectile=[{}] flags=0x{:02X}",
+                refDesc(evt.target.get()),
+                refDesc(evt.cause.get()),
+                sourceDesc,
+                projectileDesc,
+                static_cast<unsigned>(evt.flags.underlying()));
+        }
+
         struct HitSink : public RE::BSTEventSink<RE::TESHitEvent>
         {
             RE::BSEventNotifyControl ProcessEvent(const RE::TESHitEvent* a_event,
@@ -366,6 +443,9 @@ namespace NarrativeEngine::CombatEventLog
                 if (!a_event || !a_event->target) {
                     return RE::BSEventNotifyControl::kContinue;
                 }
+
+                DebugLogHitEvent(*a_event);
+
                 auto* targetActor = a_event->target->As<RE::Actor>();
                 if (!targetActor) {
                     return RE::BSEventNotifyControl::kContinue;
@@ -380,6 +460,23 @@ namespace NarrativeEngine::CombatEventLog
                 // have null causes and should pass through.
                 if (a_event->cause && a_event->cause.get() == a_event->target.get()) {
                     return RE::BSEventNotifyControl::kContinue;
+                }
+
+                // Author-configured spell-name blocklist. Buff / aura /
+                // cloak spells that hop between actors fire TESHitEvent
+                // like damage; if the source form's Full Name matches
+                // an entry, drop the event outright so it never enters
+                // the combat log. Case-insensitive match; see
+                // Settings::IsSpellNameBlocked.
+                if (a_event->source != 0) {
+                    if (auto* form = RE::TESForm::LookupByID(a_event->source)) {
+                        if (auto* magic = form->As<RE::MagicItem>()) {
+                            if (const char* n = magic->GetFullName(); n && *n && Settings::IsSpellNameBlocked(n)) {
+                                logger::debug("CombatEventLog HitSink: dropped by spell-name blocklist '{}'", n);
+                                return RE::BSEventNotifyControl::kContinue;
+                            }
+                        }
+                    }
                 }
 
                 const float radius = HitRadiusUnits();
