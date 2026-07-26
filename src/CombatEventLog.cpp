@@ -462,17 +462,40 @@ namespace NarrativeEngine::CombatEventLog
                     return RE::BSEventNotifyControl::kContinue;
                 }
 
-                // Author-configured spell-name blocklist. Buff / aura /
-                // cloak spells that hop between actors fire TESHitEvent
-                // like damage; if the source form's Full Name matches
-                // an entry, drop the event outright so it never enters
-                // the combat log. Case-insensitive match; see
-                // Settings::IsSpellNameBlocked.
+                // Magic-source filters. Both need the source form
+                // resolved as a MagicItem, so the lookup is shared.
                 if (a_event->source != 0) {
                     if (auto* form = RE::TESForm::LookupByID(a_event->source)) {
                         if (auto* magic = form->As<RE::MagicItem>()) {
+                            // Author-configured spell-name blocklist.
+                            // Buff / aura / cloak spells that hop
+                            // between actors fire TESHitEvent like
+                            // damage; if the source form's Full Name
+                            // matches an entry, drop outright.
+                            // Case-insensitive; see
+                            // Settings::IsSpellNameBlocked.
                             if (const char* n = magic->GetFullName(); n && *n && Settings::IsSpellNameBlocked(n)) {
                                 logger::debug("CombatEventLog HitSink: dropped by spell-name blocklist '{}'", n);
+                                return RE::BSEventNotifyControl::kContinue;
+                            }
+                            // TODO(temporary): drop every non-hostile
+                            // magic source. This filters out friendly
+                            // buffs / auras / heals that fire
+                            // TESHitEvent alongside real attacks.
+                            // Long-term we DO want these events — a
+                            // healer casting Fast Healing on an ally
+                            // is narratively meaningful — but the
+                            // current rendering pipeline
+                            // (SkyrimNetEvents::RenderCondensedBody)
+                            // only knows how to say "A attacks B" /
+                            // "A strikes B", which reads wrong for a
+                            // heal or a buff. Removing this branch
+                            // requires teaching the renderer to
+                            // distinguish support / heal / attack
+                            // effects and pick verbs accordingly.
+                            if (!magic->IsHostile()) {
+                                logger::debug("CombatEventLog HitSink: dropped non-hostile magic source {:08X}",
+                                              a_event->source);
                                 return RE::BSEventNotifyControl::kContinue;
                             }
                         }
