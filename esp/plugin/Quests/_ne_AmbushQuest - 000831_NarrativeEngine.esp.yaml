@@ -1,0 +1,186 @@
+FormKey: 000831:NarrativeEngine.esp
+VersionControl: 13569
+EditorID: _ne_AmbushQuest
+VirtualMachineAdapter:
+  Scripts:
+  - Name: _ne__QF__ne_AmbushQuest_05005931
+    Properties:
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_Attacker01
+      Object: 000831:NarrativeEngine.esp
+      Alias: 1
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_Attacker02
+      Object: 000831:NarrativeEngine.esp
+      Alias: 2
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_Attacker03
+      Object: 000831:NarrativeEngine.esp
+      Alias: 3
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_Attacker04
+      Object: 000831:NarrativeEngine.esp
+      Alias: 4
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_Attacker05
+      Object: 000831:NarrativeEngine.esp
+      Alias: 5
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_Attacker06
+      Object: 000831:NarrativeEngine.esp
+      Alias: 6
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_Attacker07
+      Object: 000831:NarrativeEngine.esp
+      Alias: 7
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_Attacker08
+      Object: 000831:NarrativeEngine.esp
+      Alias: 8
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Alias_PlayerRef
+      Object: 000831:NarrativeEngine.esp
+      Alias: 0
+  - Name: _ne_AmbushQuest
+    Properties:
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Attacker01
+      Object: 000831:NarrativeEngine.esp
+      Alias: 1
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Attacker02
+      Object: 000831:NarrativeEngine.esp
+      Alias: 2
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Attacker03
+      Object: 000831:NarrativeEngine.esp
+      Alias: 3
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Attacker04
+      Object: 000831:NarrativeEngine.esp
+      Alias: 4
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Attacker05
+      Object: 000831:NarrativeEngine.esp
+      Alias: 5
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Attacker06
+      Object: 000831:NarrativeEngine.esp
+      Alias: 6
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Attacker07
+      Object: 000831:NarrativeEngine.esp
+      Alias: 7
+    - MutagenObjectType: ScriptObjectProperty
+      Name: Attacker08
+      Object: 000831:NarrativeEngine.esp
+      Alias: 8
+    - MutagenObjectType: ScriptObjectProperty
+      Name: PlayerRef
+      Object: 000831:NarrativeEngine.esp
+      Alias: 0
+  FileName: _ne__QF__ne_AmbushQuest_05005931
+  Fragments:
+  - Unknown2: 1
+    ScriptName: _ne__QF__ne_AmbushQuest_05005931
+    FragmentName: Fragment_0
+  - Stage: 10
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_AmbushQuest_05005931
+    FragmentName: Fragment_2
+  - Stage: 20
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_AmbushQuest_05005931
+    FragmentName: Fragment_4
+  - Stage: 200
+    Unknown2: 1
+    ScriptName: _ne__QF__ne_AmbushQuest_05005931
+    FragmentName: Fragment_6
+Flags:
+- AllowRepeatedStages
+Priority: 90
+Stages:
+- Flags:
+  - StartUpStage
+  LogEntries:
+  - Flags: []
+- Index: 10
+  LogEntries:
+  - Flags: []
+- Index: 20
+  LogEntries:
+  - Flags: []
+- Index: 200
+  LogEntries:
+  - Flags:
+    - CompleteQuest
+NextAliasID: 9
+Aliases:
+- Name: PlayerRef
+  Flags: []
+  ForcedReference: 000014:Skyrim.esm
+  VoiceTypes: Null
+- ID: 1
+  Name: Attacker01
+  Flags:
+  - Optional
+  - AllowDead
+  PackageData:
+  - 000832:NarrativeEngine.esp
+  VoiceTypes: Null
+- ID: 2
+  Name: Attacker02
+  Flags:
+  - Optional
+  - AllowDead
+  PackageData:
+  - 000832:NarrativeEngine.esp
+  VoiceTypes: Null
+- ID: 3
+  Name: Attacker03
+  Flags:
+  - Optional
+  - AllowDead
+  PackageData:
+  - 000832:NarrativeEngine.esp
+  VoiceTypes: Null
+- ID: 4
+  Name: Attacker04
+  Flags:
+  - Optional
+  - AllowDead
+  PackageData:
+  - 000832:NarrativeEngine.esp
+  VoiceTypes: Null
+- ID: 5
+  Name: Attacker05
+  Flags:
+  - Optional
+  - AllowDead
+  PackageData:
+  - 000832:NarrativeEngine.esp
+  VoiceTypes: Null
+- ID: 6
+  Name: Attacker06
+  Flags:
+  - Optional
+  - AllowDead
+  PackageData:
+  - 000832:NarrativeEngine.esp
+  VoiceTypes: Null
+- ID: 7
+  Name: Attacker07
+  Flags:
+  - Optional
+  - AllowDead
+  PackageData:
+  - 000832:NarrativeEngine.esp
+  VoiceTypes: Null
+- ID: 8
+  Name: Attacker08
+  Flags:
+  - Optional
+  - AllowDead
+  PackageData:
+  - 000832:NarrativeEngine.esp
+  VoiceTypes: Null

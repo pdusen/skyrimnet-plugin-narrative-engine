@@ -50,14 +50,21 @@ staged to protect existing testers' saves:
 
 - `src/AmbushBeat.cpp`, `include/AmbushBeat.h`, all `Plugin.cpp` wiring, the `BeatRegistry` enable gate, and
   every `ambush*` field in `Settings` / `NarrativeEngine.ini` — deleted.
-- `_ne_AmbushSpawnMarkerTypeList` (`000801`) and `_ne_BanditAmbushTravel` (`000802`) — records deleted.
+- `_ne_BanditAmbushTravel` (`000802`) — record deleted.
 - `_ne_BanditAmbushQuest` (`000800`) — **kept** as a stage-only shell (stages 0/10/200, no aliases, no scripts,
   no fragments). Keeping the record means a save's ChangeForm for that FormID still resolves to a real form
   instead of being discarded on load.
 - All three `.psc` files deleted; `build.ps1` gained a prune pass so their orphaned `.pex` no longer ship.
+- `_ne_AmbushSpawnMarkerTypeList` (`000801`) — deleted, then **restored** once it turned out `_ne_VisitQuest`'s
+  `SpawnMarker` alias depended on it. Despite the ambush-flavored EditorID the list was shared by both beats,
+  and deleting it left that alias's first fill condition (`IsInList <list> == 1`) pointing at nothing. Because
+  the alias is not flagged `Optional`, it could never fill and `EnsureQuestStarted` failed outright — NPC Visit
+  was dead on every build between the removal commit and the restore. The record is back at `000801` with its
+  original 32 entries and a beat-neutral EditorID, `_ne_SpawnMarkerTypeList`.
 
-**`000800`, `000801`, and `000802` are retired.** This phase allocates fresh FormIDs starting at `000831`. A
-save holding a ChangeForm for a retired FormID must never later find a different record type sitting there.
+**`000800` and `000802` are retired.** This phase allocates fresh FormIDs starting at `000831`. A save holding
+a ChangeForm for a retired FormID must never later find a different record type sitting there. `000801` is not
+retired — it holds the same record, with the same contents, that it always held.
 
 ---
 
@@ -765,7 +772,7 @@ step Claude implements may still need a running game to confirm.
 
 ### Step 1 — Creation Kit content: quest, aliases, package, script
 
-- [ ] Complete
+- [X] Complete
 
 **[USER]**
 
