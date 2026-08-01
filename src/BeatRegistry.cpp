@@ -31,8 +31,6 @@ namespace NarrativeEngine::BeatRegistry
         bool InitialEnabledFromSettings(const std::string& name)
         {
             const auto& cfg = Settings::Get();
-            if (name == "ambush")
-                return cfg.enableAmbush;
             if (name == "npc_letter")
                 return cfg.enableNpcLetter;
             if (name == "npc_visit")

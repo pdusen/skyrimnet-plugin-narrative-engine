@@ -177,10 +177,9 @@ namespace NarrativeEngine
         // Session state (not persisted; reset by OnStart / OnRevert)
         //
         // The beat runs its COMPOSE arm through a sub-state machine driven
-        // by atomic flags flipped from marshaled main-thread tasks. The
-        // structure mirrors AmbushBeat's compose/complete/cleanup atomics
-        // but adds sub-phase enum to track the multi-step letter-dispatch
-        // chain (Compose LLM -> allocate + populate -> promote sender +
+        // by atomic flags flipped from marshaled main-thread tasks, plus a
+        // sub-phase enum tracking the multi-step letter-dispatch chain
+        // (Compose LLM -> allocate + populate -> promote sender +
         // EnsureQuestStarted -> poll Sender fill -> poll LetterRef fill).
         // -----------------------------------------------------------------
 

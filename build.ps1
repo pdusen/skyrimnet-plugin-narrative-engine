@@ -22,6 +22,17 @@
 #
 # Each invocation pays the dev-shell load cost (~1-2 s) and the configure
 # step's cmake/vcpkg cost on first run; subsequent builds reuse the cache.
+#
+# `build` / `rebuild` also prune orphaned Papyrus output. CMake's
+# compile_papyrus target invokes PapyrusCompiler.exe with `-all`, which only
+# ever *writes* .pex files into <mod-folder>/Scripts/ — it never removes the
+# output of a .psc that has since been deleted. Since package.ps1 zips the
+# deployed mod folder wholesale, an orphaned .pex would ship in the release
+# and, worse, could override a same-named vanilla or third-party script. So
+# after a successful build we delete any .pex in the deployed Scripts folder
+# with no matching .psc under esp/Source/Scripts/ (basename match — the
+# compiler names output after the Scriptname declaration, which matches the
+# filename for every script in this project).
 
 [CmdletBinding()]
 param(
@@ -90,6 +101,44 @@ function Invoke-Build {
     Write-Host "==> cmake --build $buildDir" -ForegroundColor Cyan
     cmake --build $buildDir
     if ($LASTEXITCODE -ne 0) { throw "Build failed (exit $LASTEXITCODE)." }
+    Invoke-PapyrusPrune
+}
+
+# Delete .pex files in the deployed mod folder that no longer have a
+# corresponding .psc source. See the header comment for why this is needed.
+function Invoke-PapyrusPrune {
+    $modsRoot = $env:SKYRIM_MODS_FOLDER
+    if (-not $modsRoot) { return }
+
+    $deployedScripts = Join-Path $modsRoot 'NarrativeEngine/Scripts'
+    if (-not (Test-Path -LiteralPath $deployedScripts -PathType Container)) { return }
+
+    $sourceScripts = Join-Path $PSScriptRoot 'esp/Source/Scripts'
+    $sourceNames = @(
+        Get-ChildItem -LiteralPath $sourceScripts -Filter '*.psc' -File -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.BaseName }
+    )
+
+    # Refuse to prune against an empty source list. If esp/Source/Scripts/ is
+    # missing or misresolved, every deployed .pex would look orphaned and we'd
+    # wipe the whole Scripts folder. A project with genuinely zero .psc files
+    # has nothing to deploy anyway, so skipping costs nothing.
+    if ($sourceNames.Count -eq 0) {
+        Write-Warning "Papyrus prune: no .psc sources found under $sourceScripts; skipping prune."
+        return
+    }
+
+    $orphans = @(
+        Get-ChildItem -LiteralPath $deployedScripts -Filter '*.pex' -File -ErrorAction SilentlyContinue |
+            Where-Object { $sourceNames -notcontains $_.BaseName }
+    )
+    if ($orphans.Count -eq 0) { return }
+
+    Write-Host "==> pruning $($orphans.Count) orphaned .pex from $deployedScripts" -ForegroundColor Cyan
+    foreach ($orphan in $orphans) {
+        Write-Host "    removed $($orphan.Name)" -ForegroundColor DarkGray
+        Remove-Item -LiteralPath $orphan.FullName -Force
+    }
 }
 
 function Invoke-Clean {

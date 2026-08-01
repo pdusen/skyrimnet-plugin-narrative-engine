@@ -243,25 +243,7 @@ namespace NarrativeEngine::Settings
         // these, but runtime changes don't write back to INI — reload
         // the game and the INI value wins again. Debug testing aid, not
         // a persistent config surface.
-        bool enableAmbush = true;
         bool enableNpcLetter = true;
-
-        // AmbushBeat parameter defaults + clamps. The LLM may supply
-        // bandit_count and spawn_distance_units in its beat-select
-        // response; the beat validates against these bounds and falls
-        // back to the default when the supplied value is out of range
-        // or missing.
-        int ambushDefaultBanditCount = 3;
-        int ambushDefaultSpawnDistanceUnits = 2000;
-        int ambushMinBanditCount = 2;
-        int ambushMaxBanditCount = 4;
-        int ambushMinSpawnDistanceUnits = 1500;
-        int ambushMaxSpawnDistanceUnits = 3000;
-        // Per-action cooldown in *in-game hours* applied after a
-        // successful ambush completion (the global
-        // iBeatCooldownSeconds also applies on top of this). 0
-        // disables. Persists via the beat's own co-save record.
-        int ambushPerBeatCooldownGameHours = 24;
 
         // NPCLetterBeat / LetterPool content + dispatch knobs. See
         // PHASE_04_LETTER_POOL_AND_NPC_LETTER_ACTION.md.
@@ -300,8 +282,7 @@ namespace NarrativeEngine::Settings
         // successfully reaches the vanilla courier container.
         // Independent of the global iBeatCooldownSeconds real-time
         // cooldown, which still applies on top. 0 disables. Persists
-        // via the beat's own co-save record. See notes on
-        // ambushPerBeatCooldownGameHours for the same pattern.
+        // via the beat's own co-save record.
         int letterBeatCooldownGameHours = 24;
 
         // Per-sender cooldown in *in-game hours* applied after the

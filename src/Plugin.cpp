@@ -1,6 +1,5 @@
 #include <Plugin.h>
 
-#include <AmbushBeat.h>
 #include <AsyncDispatch.h>
 #include <BeatRegistry.h>
 #include <BeatSystem.h>
@@ -176,7 +175,6 @@ namespace NarrativeEngine
                 BeatWorkDispatch::Start();
                 BeatRegistry::Initialize();
                 BeatSystem::Initialize();
-                BeatRegistry::Register(std::make_unique<AmbushBeat>());
                 BeatRegistry::Register(std::make_unique<NPCLetterBeat>());
                 if (Settings::Get().enableNpcVisit) {
                     BeatRegistry::Register(std::make_unique<NPCVisitBeat>());
@@ -216,7 +214,6 @@ namespace NarrativeEngine
                 WeatherEventLog::OnRevert();
                 TravelEventLog::OnRevert();
                 BeatSystem::OnRevert();
-                AmbushBeat_Persistence::OnRevert();
                 NPCLetterBeat_Persistence::OnRevert();
                 NPCVisitBeat_Persistence::OnRevert();
                 VisitState::OnRevert();
@@ -251,7 +248,6 @@ namespace NarrativeEngine
                 WeatherEventLog::OnRevert();
                 TravelEventLog::OnRevert();
                 BeatSystem::OnRevert();
-                AmbushBeat_Persistence::OnRevert();
                 NPCLetterBeat_Persistence::OnRevert();
                 NPCVisitBeat_Persistence::OnRevert();
                 VisitState::OnRevert();
@@ -289,7 +285,6 @@ namespace NarrativeEngine
             WeatherEventLog::OnSave(intfc);
             TravelEventLog::OnSave(intfc);
             BeatSystem::OnSave(intfc);
-            AmbushBeat_Persistence::OnSave(intfc);
             NPCLetterBeat_Persistence::OnSave(intfc);
             NPCVisitBeat_Persistence::OnSave(intfc);
             LetterPool::OnSave(intfc);
@@ -327,9 +322,6 @@ namespace NarrativeEngine
                 case BeatSystem::kRecordTypeId:
                     BeatSystem::OnLoad(intfc, version, length);
                     break;
-                case AmbushBeat_Persistence::kRecordTypeId:
-                    AmbushBeat_Persistence::OnLoad(intfc, version, length);
-                    break;
                 case NPCLetterBeat_Persistence::kRecordTypeId:
                     NPCLetterBeat_Persistence::OnLoad(intfc, version, length);
                     break;
@@ -364,7 +356,6 @@ namespace NarrativeEngine
             WeatherEventLog::OnRevert();
             TravelEventLog::OnRevert();
             BeatSystem::OnRevert();
-            AmbushBeat_Persistence::OnRevert();
             NPCLetterBeat_Persistence::OnRevert();
             NPCVisitBeat_Persistence::OnRevert();
             LetterPool::OnRevert();

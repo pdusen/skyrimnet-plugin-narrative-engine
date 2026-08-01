@@ -45,8 +45,6 @@ dispatch:
   written in their voice, about something that actually happened between you.
 - **NPC Visit** — an NPC travels to your location, opens a spoken exchange in their own words, and departs when
   the conversation reaches a natural close.
-- **Ambush** — bandits assemble along your path, sized and positioned by the model based on where the story
-  currently sits and what tone fits.
 
 Each beat's specifics — who, why, what topic, what mood, how far away — are authored by the LLM from the actual
 state of your game, not drawn from a static list. NarrativeEngine also ships an in-game dashboard (bound to a

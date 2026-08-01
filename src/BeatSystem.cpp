@@ -1272,7 +1272,7 @@ namespace NarrativeEngine::BeatSystem
         // Shared body for StartBeat / FinalizeWithLLMResponse. Runs on
         // the plugin thread: BeatRegistry::Find and the g_stateMutex
         // flip are mutex-guarded; the beat->OnStart implementations
-        // that exist today (AmbushBeat, NPCLetterBeat, NPCVisitBeat)
+        // that exist today (NPCLetterBeat, NPCVisitBeat)
         // do only param parse + session-state reset behind their own
         // mutexes / atomics — no engine reads or mutations. See
         // IBeat::OnStart's contract.

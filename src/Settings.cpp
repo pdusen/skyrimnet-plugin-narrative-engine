@@ -261,23 +261,7 @@ namespace NarrativeEngine::Settings
             dst.travelFollowerRadiusUnits = static_cast<int>(
                 ini.GetLongValue("TravelEvents", "iTravelFollowerRadiusUnits", dst.travelFollowerRadiusUnits));
 
-            dst.enableAmbush = ini.GetBoolValue("Beats", "bEnableAmbush", dst.enableAmbush);
             dst.enableNpcLetter = ini.GetBoolValue("Beats", "bEnableNpcLetter", dst.enableNpcLetter);
-
-            dst.ambushDefaultBanditCount =
-                static_cast<int>(ini.GetLongValue("Beats", "iAmbushDefaultBanditCount", dst.ambushDefaultBanditCount));
-            dst.ambushDefaultSpawnDistanceUnits = static_cast<int>(
-                ini.GetLongValue("Beats", "iAmbushDefaultSpawnDistanceUnits", dst.ambushDefaultSpawnDistanceUnits));
-            dst.ambushMinBanditCount =
-                static_cast<int>(ini.GetLongValue("Beats", "iAmbushMinBanditCount", dst.ambushMinBanditCount));
-            dst.ambushMaxBanditCount =
-                static_cast<int>(ini.GetLongValue("Beats", "iAmbushMaxBanditCount", dst.ambushMaxBanditCount));
-            dst.ambushMinSpawnDistanceUnits = static_cast<int>(
-                ini.GetLongValue("Beats", "iAmbushMinSpawnDistanceUnits", dst.ambushMinSpawnDistanceUnits));
-            dst.ambushMaxSpawnDistanceUnits = static_cast<int>(
-                ini.GetLongValue("Beats", "iAmbushMaxSpawnDistanceUnits", dst.ambushMaxSpawnDistanceUnits));
-            dst.ambushPerBeatCooldownGameHours = static_cast<int>(
-                ini.GetLongValue("Beats", "iAmbushPerBeatCooldownGameHours", dst.ambushPerBeatCooldownGameHours));
 
             dst.letterContentMinWords =
                 static_cast<int>(ini.GetLongValue("Beats", "iLetterContentMinWords", dst.letterContentMinWords));
