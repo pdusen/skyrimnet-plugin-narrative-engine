@@ -1,11 +1,11 @@
-location_editor_id,climate_enum,notes
-WhiterunHoldLocation,Tundra,candidate — verify against xEdit
-FalkreathHoldLocation,Pine,candidate — verify against xEdit
-HjaalmarchHoldLocation,Marsh,candidate — verify against xEdit
-WinterholdHoldLocation,Snow,candidate — verify against xEdit
-PaleHoldLocation,Snow,candidate — verify against xEdit
-ReachHoldLocation,Reach,candidate — verify against xEdit
-RiftHoldLocation,Rift,candidate — verify against xEdit
-HaafingarHoldLocation,Coast,candidate — verify against xEdit
-EastmarchHoldLocation,Volcanic,candidate — verify against xEdit
-DLC2SolstheimLocation,Solstheim,candidate — verify against xEdit
+location_editor_id,climate_enum,form_id,notes
+WhiterunHoldLocation,Tundra,016772:Skyrim.esm,verified against spriggit-output
+FalkreathHoldLocation,Pine,01676F:Skyrim.esm,verified against spriggit-output
+HjaalmarchHoldLocation,Marsh,01676E:Skyrim.esm,verified against spriggit-output
+WinterholdHoldLocation,Snow,01676B:Skyrim.esm,verified against spriggit-output
+PaleHoldLocation,Snow,01676D:Skyrim.esm,verified against spriggit-output
+ReachHoldLocation,Reach,016769:Skyrim.esm,verified against spriggit-output
+RiftHoldLocation,Rift,01676C:Skyrim.esm,verified against spriggit-output
+HaafingarHoldLocation,Coast,016770:Skyrim.esm,verified against spriggit-output
+EastmarchHoldLocation,Volcanic,01676A:Skyrim.esm,verified against spriggit-output
+DLC2SolstheimLocation,Solstheim,016E2A:Dragonborn.esm,verified against spriggit-output
