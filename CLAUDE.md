@@ -63,6 +63,20 @@ to compile. See [`docs/THREADING_MODEL.md`](docs/THREADING_MODEL.md)
 for the full rules, the wrapper pattern, the enforcement mechanisms,
 and the "what NOT to do" cheat sheet.
 
+## Vanilla Skyrim records: look them up, never guess
+
+Every record in retail Skyrim SE + all three DLC is exported locally as a Spriggit YAML tree at
+`C:\Projects\spriggit-output\` (one folder per master: `Skyrim`, `Update`, `Dawnguard`, `HearthFires`,
+`Dragonborn`). Any question of the form "does this EditorID exist?", "what's the FormID of X?", "what flags
+/ conditions / faction memberships does that vanilla record have?" is answerable by reading files there.
+
+Never answer from memory and never invent an EditorID or FormID for a vanilla record — look it up. When a
+recollection about vanilla content conflicts with that tree, the tree wins.
+
+See [`docs/VANILLA_RECORD_REFERENCE.md`](docs/VANILLA_RECORD_REFERENCE.md) for the folder layout, the record
+file format, efficient search recipes (Glob by EditorID; scope Grep to one record-type folder; the files are
+CRLF so `$` anchors silently fail), and what the export is *not* authoritative for.
+
 ## Always run `format.ps1` after adding or modifying files
 
 After any batch of edits — code, docs, config, whatever — run `pwsh -File format.ps1` at the repo root

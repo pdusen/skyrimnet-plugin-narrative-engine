@@ -51,6 +51,9 @@ buffer, save-scum recovery, single source of truth.
 - `docs/prior-art/` is the IntelEngine reference library — extend it (don't rewrite it) if new learnings come in about IntelEngine.
 - The IntelEngine repos at `C:\Projects\IntelEngine-NativePlugin\` and `C:\Projects\IntelEngine-GamePlugin\` are
   **read-only reference**.
+- `C:\Projects\spriggit-output\` is a Spriggit YAML export of every vanilla Skyrim SE + DLC master — **read-only
+  reference**, and the authority on what records exist in the retail game. See
+  [`docs/VANILLA_RECORD_REFERENCE.md`](VANILLA_RECORD_REFERENCE.md).
 
 ## C++ source layout
 
