@@ -183,22 +183,18 @@ namespace NarrativeEngine
                 BeatWorkDispatch::Start();
                 BeatRegistry::Initialize();
                 BeatSystem::Initialize();
+                // Every beat registers unconditionally. Its bEnableXxx
+                // setting seeds the registry entry's enabled flag (see
+                // BeatRegistry::Register), and AvailableMatching already
+                // skips disabled entries — so skipping registration
+                // outright would be a redundant second gate with a nasty
+                // side effect: a disabled beat wouldn't appear in the
+                // dashboard's Dispatch tab at all, leaving no way to
+                // turn it back on now that those toggles persist.
                 BeatRegistry::Register(std::make_unique<NPCLetterBeat>());
-                if (Settings::Get().enableNpcVisit) {
-                    BeatRegistry::Register(std::make_unique<NPCVisitBeat>());
-                } else {
-                    logger::info("Plugin: NPCVisitBeat disabled via bEnableNpcVisit=false");
-                }
-                // AmbushBeat_Init resolves _ne_AmbushQuest and its nine
-                // aliases. Runs regardless of the enable gate so a
-                // runtime dashboard toggle has resolved pointers to work
-                // with; registration itself is what the gate controls.
+                BeatRegistry::Register(std::make_unique<NPCVisitBeat>());
                 AmbushBeat_Init::Initialize();
-                if (Settings::Get().enableAmbush) {
-                    BeatRegistry::Register(std::make_unique<AmbushBeat>());
-                } else {
-                    logger::info("Plugin: AmbushBeat disabled via bEnableAmbush=false");
-                }
+                BeatRegistry::Register(std::make_unique<AmbushBeat>());
                 // Resolve the 20 _ne_PooledLetterNN EditorIDs to Book
                 // FormIDs. Must run AFTER kDataLoaded fires the rest
                 // of the registry chain because TESForm lookups by
@@ -221,9 +217,10 @@ namespace NarrativeEngine
                 // LetterPool::Initialize (the per-slot quest cache
                 // is keyed against LetterPool slot indices).
                 NPCLetterBeat_Init::Initialize();
-                if (Settings::Get().enableNpcVisit) {
-                    NPCVisitBeat_Init::Initialize();
-                }
+                // Unconditional for the same reason as registration: a
+                // beat toggled back on at runtime needs its forms
+                // already resolved.
+                NPCVisitBeat_Init::Initialize();
                 break;
             case SKSE::MessagingInterface::kNewGame:
                 logger::info("OnMessage: kNewGame");

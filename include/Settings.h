@@ -523,4 +523,28 @@ namespace NarrativeEngine::Settings
     // INI. Safe to call from the main thread only (SimpleIni is
     // single-threaded).
     void WriteMcmOverride(const McmOverride& mutations);
+
+    // Per-beat enable flags, addressed by the beat's `IBeat::Name()`.
+    //
+    // These are not part of McmOverride because the callers that need
+    // them only have a beat NAME — the dashboard's Dispatch tab hands
+    // back `{"name":"npc_visit","enabled":false}`, with no way to pick
+    // the right struct field. Both functions share one internal
+    // name-to-key table so the read path (BeatRegistry's initial state)
+    // and the write path (dashboard toggles) cannot drift apart. They
+    // did drift: per-beat checkboxes mutated BeatRegistry in memory and
+    // were never persisted, so they silently reset on every load while
+    // the tick killswitch beside them survived.
+    //
+    // A new beat needs one row in that table and nothing else.
+
+    // Current enabled state for `beatName`, or `fallback` when the beat
+    // has no registered enable key.
+    bool GetBeatEnabled(std::string_view beatName, bool fallback);
+
+    // Persist `enabled` for `beatName` to the MCM override INI and
+    // update the in-memory Config. Returns false (and logs) for a beat
+    // with no registered enable key. Main thread only, same as
+    // WriteMcmOverride.
+    bool WriteBeatEnabledOverride(std::string_view beatName, bool enabled);
 } // namespace NarrativeEngine::Settings

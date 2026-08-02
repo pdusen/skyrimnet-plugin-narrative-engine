@@ -26,21 +26,17 @@ namespace NarrativeEngine::BeatRegistry
         std::mutex g_mutex;
         std::vector<std::unique_ptr<Entry>> g_entries;
 
-        // Seed enabled state from Settings by beat name. Runtime toggles
-        // don't write back; the INI is the source of truth on each boot.
+        // Seed enabled state from Settings by beat name, through the
+        // same table Settings::WriteBeatEnabledOverride writes to, so a
+        // dashboard toggle and the next boot's initial state can't
+        // disagree.
+        //
+        // A beat with no row in that table defaults to enabled and its
+        // dashboard toggle won't survive a reload — the write path logs
+        // a warning naming it.
         bool InitialEnabledFromSettings(const std::string& name)
         {
-            const auto& cfg = Settings::Get();
-            if (name == "npc_letter")
-                return cfg.enableNpcLetter;
-            if (name == "npc_visit")
-                return cfg.enableNpcVisit;
-            if (name == "ambush")
-                return cfg.enableAmbush;
-            // Unknown beat — default enabled. Any new beat added to the
-            // registry gets a matching bEnableXxx INI key + Settings
-            // wiring; until then, "true" is the safe default.
-            return true;
+            return Settings::GetBeatEnabled(name, /*fallback=*/true);
         }
 
         // Linear-scan lookup; the registry has a handful of entries so

@@ -773,4 +773,64 @@ namespace NarrativeEngine::Settings
             logger::warn("Settings: failed to save MCM override to {}", kMcmIniPath);
         }
     }
+
+    namespace
+    {
+        // The one place a beat's name, its INI key, and its Config field
+        // are tied together. Adding a beat means adding a row here —
+        // and nothing else.
+        struct BeatEnableEntry
+        {
+            std::string_view beatName;
+            const char* iniKey;
+            bool Config::* field;
+        };
+
+        constexpr BeatEnableEntry kBeatEnableTable[] = {
+            {"npc_letter", "bEnableNpcLetter", &Config::enableNpcLetter},
+            {"npc_visit", "bEnableNpcVisit", &Config::enableNpcVisit},
+            {"ambush", "bEnableAmbush", &Config::enableAmbush},
+        };
+
+        const BeatEnableEntry* FindBeatEnableEntry(std::string_view beatName)
+        {
+            for (const auto& e : kBeatEnableTable) {
+                if (e.beatName == beatName) {
+                    return &e;
+                }
+            }
+            return nullptr;
+        }
+    } // namespace
+
+    bool GetBeatEnabled(std::string_view beatName, bool fallback)
+    {
+        if (const auto* entry = FindBeatEnableEntry(beatName)) {
+            return g_config.*(entry->field);
+        }
+        return fallback;
+    }
+
+    bool WriteBeatEnabledOverride(std::string_view beatName, bool enabled)
+    {
+        const auto* entry = FindBeatEnableEntry(beatName);
+        if (!entry) {
+            logger::warn("Settings: no enable key registered for beat '{}'; toggle will not persist",
+                         std::string{beatName});
+            return false;
+        }
+
+        CSimpleIniA ini;
+        ini.SetUnicode();
+        (void)ini.LoadFile(kMcmIniPath);
+        ini.SetBoolValue("Beats", entry->iniKey, enabled);
+        if (ini.SaveFile(kMcmIniPath) < 0) {
+            logger::warn("Settings: failed to save MCM override to {}", kMcmIniPath);
+            return false;
+        }
+
+        g_config.*(entry->field) = enabled;
+        logger::info("Settings: MCM override write: {}={}", entry->iniKey, enabled ? 1 : 0);
+        return true;
+    }
 } // namespace NarrativeEngine::Settings

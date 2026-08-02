@@ -550,6 +550,9 @@ namespace NarrativeEngine::DashboardUIManager
             AsyncDispatch::EnqueueWork([name = std::move(name), enabled](const PluginThread::Token& pt) mutable {
                 MainThread::FireAndForget(pt, [name = std::move(name), enabled](const MainThread::Token&) {
                     BeatRegistry::SetEnabled(name, enabled);
+                    // Persist, so the toggle survives a reload the same
+                    // way the tick killswitch above it does.
+                    Settings::WriteBeatEnabledOverride(name, enabled);
                     PushFullState();
                 });
             });
@@ -565,6 +568,7 @@ namespace NarrativeEngine::DashboardUIManager
                 MainThread::FireAndForget(pt, [enabled](const MainThread::Token&) {
                     for (const auto& entry : BeatRegistry::All()) {
                         BeatRegistry::SetEnabled(entry.name, enabled);
+                        Settings::WriteBeatEnabledOverride(entry.name, enabled);
                     }
                     PushFullState();
                 });
