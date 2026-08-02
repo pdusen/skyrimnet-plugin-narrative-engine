@@ -190,14 +190,14 @@ namespace NarrativeEngine::WeatherEventLog
         {
             auto* sky = RE::Sky::GetSingleton();
             if (!sky) {
-                if (Settings::Get().debugMode) {
-                    logger::debug("WeatherEventLog: SampleCurrentCategory: Sky singleton null");
+                if (Settings::Get().traceMode) {
+                    logger::trace("WeatherEventLog: SampleCurrentCategory: Sky singleton null");
                 }
                 return std::nullopt;
             }
             if (sky->mode.get() != RE::Sky::Mode::kFull) {
-                if (Settings::Get().debugMode) {
-                    logger::debug("WeatherEventLog: SampleCurrentCategory: Sky mode={} (not Full); skip",
+                if (Settings::Get().traceMode) {
+                    logger::trace("WeatherEventLog: SampleCurrentCategory: Sky mode={} (not Full); skip",
                                   static_cast<int>(sky->mode.get()));
                 }
                 return std::nullopt;
@@ -211,8 +211,8 @@ namespace NarrativeEngine::WeatherEventLog
                 snap.thunderLightningFrequency = w->data.thunderLightningFrequency;
             }
             const WeatherCategory cat = DeriveCategoryFromSnapshot(snap);
-            if (Settings::Get().debugMode) {
-                logger::debug("WeatherEventLog: SampleCurrentCategory: weatherFormID=0x{:08X} rawFlags=0x{:02X} "
+            if (Settings::Get().traceMode) {
+                logger::trace("WeatherEventLog: SampleCurrentCategory: weatherFormID=0x{:08X} rawFlags=0x{:02X} "
                               "wind={} thunder={} -> primary={} stormy={}",
                               snap.currentWeatherFormID,
                               snap.weatherFlags,
@@ -343,6 +343,10 @@ namespace NarrativeEngine::WeatherEventLog
     void Poll(const PluginThread::Token& pt, double unpausedElapsedSeconds)
     {
         const bool debug = Settings::Get().debugMode;
+        // Per-poll chatter (a cycle ran, the sample was unchanged) is
+        // trace, not debug — it fires every interval forever and buries
+        // the lines that mark an actual transition.
+        const bool trace = Settings::Get().traceMode;
 
         // Throttle gate first, under the mutex, so we don't pay for
         // the main-thread hop until the accumulator crosses the
@@ -366,8 +370,8 @@ namespace NarrativeEngine::WeatherEventLog
             // the next window (matches how Tick handles its own tick
             // interval — accurate over long runs).
             g_unpausedSecondsSinceLastCheck -= intervalSec;
-            if (debug) {
-                logger::debug("WeatherEventLog: Poll: throttle cleared (crossed {:.1f}s of unpaused play)",
+            if (trace) {
+                logger::trace("WeatherEventLog: Poll: throttle cleared (crossed {:.1f}s of unpaused play)",
                               intervalSec);
             }
         }
@@ -399,8 +403,8 @@ namespace NarrativeEngine::WeatherEventLog
         }
 
         if (*sampled == *g_lastCategory) {
-            if (debug) {
-                logger::debug("WeatherEventLog: Poll: no change (primary={} stormy={})",
+            if (trace) {
+                logger::trace("WeatherEventLog: Poll: no change (primary={} stormy={})",
                               PrimaryName(sampled->primary),
                               sampled->stormy);
             }
