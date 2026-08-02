@@ -68,8 +68,19 @@
 // The MainThread::Token overloads exist for callers already inside a
 // Run / FireAndForget lambda, following the EngineUtils convention;
 // they do not indicate a requirement.
+namespace SKSE
+{
+    class SerializationInterface;
+}
+
 namespace NarrativeEngine::AmbushAttackerGroups
 {
+    // Default for a group's `CooldownGameHours` when the key is absent.
+    // Long enough that the same faction doesn't feel like it's stalking
+    // the player, short enough that a group isn't effectively retired
+    // after one use.
+    inline constexpr int kDefaultGroupCooldownHours = 24;
+
     // Comparison operator for the predicate-shaped eligibility keys
     // (RequireGlobal, RequireQuestStage).
     enum class CompareOp : std::uint8_t
@@ -192,6 +203,12 @@ namespace NarrativeEngine::AmbushAttackerGroups
         // `Enabled = yes` would be near-impossible to diagnose.
         bool enabled = true;
 
+        // In-game hours this group sits out after being used. Stamped
+        // when an ambush actually spawns, not when one is merely
+        // considered, so a failed compose doesn't retire the group.
+        // 0 disables the cooldown for this group.
+        int cooldownGameHours = kDefaultGroupCooldownHours;
+
         Roster roster;
         Eligibility eligibility;
     };
@@ -204,7 +221,11 @@ namespace NarrativeEngine::AmbushAttackerGroups
     {
         RE::Actor* player = nullptr;
         RE::FormID holdFormID = 0;
+        // Hour of day, 0-24, for RequireGameHour windows.
         float gameHour = 0.0f;
+        // Absolute game-hours since the calendar epoch, for per-group
+        // cooldowns. Distinct from gameHour above — that one wraps.
+        double nowGameHours = 0.0;
         std::uint16_t playerLevel = 0;
     };
 
@@ -258,4 +279,25 @@ namespace NarrativeEngine::AmbushAttackerGroups
     // availability gate.
     std::size_t EnabledGroupCount();
     std::size_t TotalGroupCount();
+
+    // ---- Per-group cooldowns -------------------------------------
+    //
+    // Keyed by group id rather than by index, so the table survives the
+    // user reordering, adding, or removing groups between sessions. An
+    // id that no longer exists in the file is simply never consulted.
+
+    // Record `id` as used, as of now. Called when an ambush actually
+    // spawns — a failed compose must not retire the group.
+    void StampGroupUsed(std::string_view id);
+
+    // In-game hours left before `id` is usable again; 0 when it is
+    // ready now, has no cooldown configured, or is unknown.
+    double RemainingCooldownGameHours(std::string_view id);
+
+    // Cosave hooks, driven by AmbushBeat_Persistence. Layout:
+    //     u32 count
+    //     [u32 idLen + idLen chars + double stamp] * count
+    void SerializeCooldowns(SKSE::SerializationInterface* intfc);
+    bool DeserializeCooldowns(SKSE::SerializationInterface* intfc);
+    void ClearCooldowns();
 } // namespace NarrativeEngine::AmbushAttackerGroups

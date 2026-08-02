@@ -1,8 +1,11 @@
 #include <AmbushAttackerGroups.h>
 
+#include <EngineUtils.h>
 #include <logger.h>
 #include <Region.h>
 #include <Settings.h>
+
+#include <SKSE/SKSE.h>
 
 #include <SimpleIni.h>
 
@@ -11,7 +14,9 @@
 #include <charconv>
 #include <cstdlib>
 #include <filesystem>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace NarrativeEngine::AmbushAttackerGroups
@@ -26,6 +31,13 @@ namespace NarrativeEngine::AmbushAttackerGroups
         // Load() and Load() replaces it wholesale.
         std::vector<Group> g_groups;
         std::size_t g_enabledCount = 0;
+
+        // Group id -> absolute game-hours when it was last used. Keyed
+        // by id so it survives the user reordering or editing the file
+        // between sessions. Guarded because the cosave hooks and the
+        // eligibility path can run on different threads.
+        std::mutex g_cooldownMutex;
+        std::unordered_map<std::string, double> g_cooldownStamps;
 
         // --- small string helpers -------------------------------------------
 
@@ -238,6 +250,7 @@ namespace NarrativeEngine::AmbushAttackerGroups
         {
             static const std::unordered_set<std::string> kKnown = {
                 "enabled",
+                "cooldowngamehours",
                 "displayname",
                 "flavor",
                 "lineform",
@@ -329,6 +342,19 @@ namespace NarrativeEngine::AmbushAttackerGroups
                     return false;
                 }
                 out.enabled = enabled;
+            }
+
+            // --- Cooldown ------------------------------------------------
+            if (const auto vals = ValuesFor(ini, sectionName, "CooldownGameHours"); !vals.empty()) {
+                int hours = 0;
+                if (!ParseInt(vals.back(), hours) || hours < 0) {
+                    logger::warn("AttackerGroups: skipping '{}': CooldownGameHours = '{}' is not a "
+                                 "non-negative integer.",
+                                 id,
+                                 vals.back());
+                    return false;
+                }
+                out.cooldownGameHours = hours;
             }
 
             // --- Display / flavor ---------------------------------------
@@ -644,6 +670,23 @@ namespace NarrativeEngine::AmbushAttackerGroups
 
         // --- eligibility evaluation -----------------------------------------
 
+        // True when `group` was used recently enough to still be sitting
+        // out. Takes the cooldown mutex itself; the name carries the
+        // "Locked" suffix only to flag that callers must not already
+        // hold it.
+        bool IsGroupOnCooldown(const Group& group, double nowGameHours)
+        {
+            if (group.cooldownGameHours <= 0) {
+                return false;
+            }
+            std::scoped_lock lock(g_cooldownMutex);
+            const auto it = g_cooldownStamps.find(group.id);
+            if (it == g_cooldownStamps.end()) {
+                return false;
+            }
+            return (nowGameHours - it->second) < static_cast<double>(group.cooldownGameHours);
+        }
+
         bool EvaluateEligibility(const Group& group, const EligibilityContext& ctx)
         {
             const auto& e = group.eligibility;
@@ -883,6 +926,7 @@ namespace NarrativeEngine::AmbushAttackerGroups
         if (auto* calendar = RE::Calendar::GetSingleton()) {
             ctx.gameHour = calendar->GetHour();
         }
+        ctx.nowGameHours = EngineUtils::GetCurrentGameHours();
         if (ctx.player) {
             ctx.playerLevel = ctx.player->GetLevel();
         }
@@ -893,10 +937,19 @@ namespace NarrativeEngine::AmbushAttackerGroups
     {
         std::vector<const Group*> out;
         out.reserve(g_groups.size());
+        int onCooldown = 0;
         for (const auto& g : g_groups) {
-            if (g.enabled && EvaluateEligibility(g, ctx)) {
-                out.push_back(&g);
+            if (!g.enabled || !EvaluateEligibility(g, ctx)) {
+                continue;
             }
+            // Cooldown last: a group excluded for being recently used is
+            // worth counting separately from one that was never eligible
+            // here in the first place.
+            if (IsGroupOnCooldown(g, ctx.nowGameHours)) {
+                ++onCooldown;
+                continue;
+            }
+            out.push_back(&g);
         }
 
         if (Settings::Get().debugMode) {
@@ -907,9 +960,11 @@ namespace NarrativeEngine::AmbushAttackerGroups
                 }
                 ids += g->id;
             }
-            logger::debug("AttackerGroups: {} eligible [{}] (hold=0x{:08X}, hour={:.2f}, level={})",
+            logger::debug("AttackerGroups: {} eligible [{}] ({} on cooldown) (hold=0x{:08X}, hour={:.2f}, "
+                          "level={})",
                           out.size(),
                           ids,
+                          onCooldown,
                           ctx.holdFormID,
                           ctx.gameHour,
                           ctx.playerLevel);
@@ -1001,5 +1056,113 @@ namespace NarrativeEngine::AmbushAttackerGroups
     std::size_t TotalGroupCount()
     {
         return g_groups.size();
+    }
+
+    void StampGroupUsed(std::string_view id)
+    {
+        if (id.empty()) {
+            return;
+        }
+        const double now = EngineUtils::GetCurrentGameHours();
+        {
+            std::scoped_lock lock(g_cooldownMutex);
+            g_cooldownStamps[std::string{id}] = now;
+        }
+        logger::info("AttackerGroups: '{}' stamped used at {:.2f} game hours", std::string{id}, now);
+    }
+
+    double RemainingCooldownGameHours(std::string_view id)
+    {
+        const Group* group = nullptr;
+        for (const auto& g : g_groups) {
+            if (g.id == id) {
+                group = &g;
+                break;
+            }
+        }
+        if (!group || group->cooldownGameHours <= 0) {
+            return 0.0;
+        }
+
+        double stamp = 0.0;
+        {
+            std::scoped_lock lock(g_cooldownMutex);
+            const auto it = g_cooldownStamps.find(std::string{id});
+            if (it == g_cooldownStamps.end()) {
+                return 0.0;
+            }
+            stamp = it->second;
+        }
+        const double remaining =
+            static_cast<double>(group->cooldownGameHours) - (EngineUtils::GetCurrentGameHours() - stamp);
+        return remaining > 0.0 ? remaining : 0.0;
+    }
+
+    void SerializeCooldowns(SKSE::SerializationInterface* intfc)
+    {
+        if (!intfc) {
+            return;
+        }
+        std::scoped_lock lock(g_cooldownMutex);
+        const auto count = static_cast<std::uint32_t>(g_cooldownStamps.size());
+        intfc->WriteRecordData(count);
+        for (const auto& [id, stamp] : g_cooldownStamps) {
+            const auto len = static_cast<std::uint32_t>(id.size());
+            intfc->WriteRecordData(len);
+            if (len > 0) {
+                intfc->WriteRecordData(id.data(), len);
+            }
+            intfc->WriteRecordData(stamp);
+        }
+    }
+
+    bool DeserializeCooldowns(SKSE::SerializationInterface* intfc)
+    {
+        if (!intfc) {
+            return false;
+        }
+        std::uint32_t count = 0;
+        if (intfc->ReadRecordData(count) != sizeof(count)) {
+            return false;
+        }
+        // Sanity bound: the group file would have to be absurd to
+        // exceed this, and a corrupt length shouldn't allocate wildly.
+        if (count > 4096) {
+            return false;
+        }
+
+        std::unordered_map<std::string, double> loaded;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            std::uint32_t len = 0;
+            if (intfc->ReadRecordData(len) != sizeof(len) || len > 1024) {
+                return false;
+            }
+            std::string id;
+            if (len > 0) {
+                id.resize(len);
+                if (intfc->ReadRecordData(id.data(), len) != len) {
+                    return false;
+                }
+            }
+            double stamp = 0.0;
+            if (intfc->ReadRecordData(stamp) != sizeof(stamp)) {
+                return false;
+            }
+            if (!id.empty()) {
+                loaded.emplace(std::move(id), stamp);
+            }
+        }
+
+        {
+            std::scoped_lock lock(g_cooldownMutex);
+            g_cooldownStamps = std::move(loaded);
+        }
+        return true;
+    }
+
+    void ClearCooldowns()
+    {
+        std::scoped_lock lock(g_cooldownMutex);
+        g_cooldownStamps.clear();
     }
 } // namespace NarrativeEngine::AmbushAttackerGroups

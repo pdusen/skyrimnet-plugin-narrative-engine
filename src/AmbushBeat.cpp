@@ -892,6 +892,20 @@ namespace NarrativeEngine
                 }
                 g_composeSucceeded.store(true, std::memory_order_release);
                 logger::info("AmbushBeat: armed {} of {} attacker(s); COMPOSE complete", armed, expected);
+
+                // Put this group on its cooldown. Stamped here rather
+                // than at OnStart or CLEANUP because this is the first
+                // point where attackers demonstrably exist in the world
+                // — a compose that failed anywhere earlier must not
+                // retire the group it was going to use.
+                {
+                    std::string usedGroup;
+                    {
+                        std::scoped_lock lock(g_stateMutex);
+                        usedGroup = g_activeGroupId;
+                    }
+                    AmbushAttackerGroups::StampGroupUsed(usedGroup);
+                }
                 {
                     std::scoped_lock lock(g_stateMutex);
                     g_activeCount = armed;
@@ -1320,7 +1334,10 @@ namespace NarrativeEngine
 
     namespace AmbushBeat_Persistence
     {
-        constexpr std::uint32_t kRecordVersion = 1;
+        // v2 appended the per-group cooldown table. v1 records still
+        // load; they simply carry no cooldowns, which reads as "every
+        // group is ready" — the safe direction for a one-time upgrade.
+        constexpr std::uint32_t kRecordVersion = 2;
 
         void OnSave(SKSE::SerializationInterface* intfc)
         {
@@ -1352,6 +1369,10 @@ namespace NarrativeEngine
             if (len > 0) {
                 intfc->WriteRecordData(groupId.data(), len);
             }
+
+            // Per-group cooldowns live with the group table but ride in
+            // this beat's record — they're beat state, not config.
+            AmbushAttackerGroups::SerializeCooldowns(intfc);
         }
 
         void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length)
@@ -1359,7 +1380,7 @@ namespace NarrativeEngine
             if (!intfc) {
                 return;
             }
-            if (version != kRecordVersion) {
+            if (version != 1 && version != kRecordVersion) {
                 logger::warn("AmbushBeat::OnLoad: unknown version {} (length={}); clearing", version, length);
                 OnRevert();
                 return;
@@ -1370,14 +1391,33 @@ namespace NarrativeEngine
                 OnRevert();
                 return;
             }
+
+            // Read the id length separately from the id: a failure here
+            // leaves the stream misaligned, so the cooldown table that
+            // follows must not be attempted.
             std::uint32_t len = 0;
             std::string groupId;
-            if (intfc->ReadRecordData(len) == sizeof(len) && len > 0 && len < 4096) {
-                groupId.resize(len);
-                if (intfc->ReadRecordData(groupId.data(), len) != len) {
-                    groupId.clear();
+            bool streamOk = intfc->ReadRecordData(len) == sizeof(len);
+            if (streamOk && len > 0) {
+                if (len < 4096) {
+                    groupId.resize(len);
+                    streamOk = intfc->ReadRecordData(groupId.data(), len) == len;
+                    if (!streamOk) {
+                        groupId.clear();
+                    }
+                } else {
+                    streamOk = false;
                 }
             }
+
+            AmbushAttackerGroups::ClearCooldowns();
+            if (version >= 2 && streamOk) {
+                if (!AmbushAttackerGroups::DeserializeCooldowns(intfc)) {
+                    logger::error("AmbushBeat::OnLoad: per-group cooldown deserialize failed; cleared");
+                    AmbushAttackerGroups::ClearCooldowns();
+                }
+            }
+
             {
                 std::scoped_lock lock(g_cooldownMutex);
                 g_lastCompletionGameHours = last;
@@ -1386,7 +1426,10 @@ namespace NarrativeEngine
                 std::scoped_lock lock(g_stateMutex);
                 g_activeGroupId = groupId;
             }
-            logger::info("AmbushBeat::OnLoad: restored lastCompletionGameHours={:.2f}, group='{}'", last, groupId);
+            logger::info("AmbushBeat::OnLoad: restored lastCompletionGameHours={:.2f}, group='{}' (record v{})",
+                         last,
+                         groupId,
+                         version);
         }
 
         void OnRevert()
@@ -1395,6 +1438,7 @@ namespace NarrativeEngine
                 std::scoped_lock lock(g_cooldownMutex);
                 g_lastCompletionGameHours = 0.0;
             }
+            AmbushAttackerGroups::ClearCooldowns();
             ResetSessionState();
         }
     } // namespace AmbushBeat_Persistence

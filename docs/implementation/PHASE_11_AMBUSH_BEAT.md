@@ -161,13 +161,13 @@ confirm. This is the same verify-after-dispatch shape `NPCVisitBeat` already use
 Standard four-state `IBeat` lifecycle. COMPOSE is multi-step and runs as a sub-state machine, mirroring
 `NPCLetterBeat`'s structure:
 
-| Sub-phase          | Work                                                                              |
-| ------------------ | --------------------------------------------------------------------------------- |
-| `SelectingPoints`  | Resolve group + count; run `AmbushSpawnPoints::Find`. Failure → CLEANUP.           |
-| `StartingQuest`    | `EnsureQuestStarted`; quest self-advances stage 0 → 10.                            |
-| `Spawning`         | `CreateReferenceAtLocation` per attacker; VM-dispatch `FillAttackerSlot(i, ref)`.  |
-| `VerifyingFill`    | Read back `BGSRefAlias::GetReference()` on slots `0..N-1`. All present → proceed.  |
-| `Arming`           | `SetActorValue(kAggression, 0)`, `EvaluatePackage()` per attacker; stage 10 → 20.  |
+| Sub-phase         | Work                                                                              |
+| ----------------- | --------------------------------------------------------------------------------- |
+| `SelectingPoints` | Resolve group + count; run `AmbushSpawnPoints::Find`. Failure → CLEANUP.          |
+| `StartingQuest`   | `EnsureQuestStarted`; quest self-advances stage 0 → 10.                           |
+| `Spawning`        | `CreateReferenceAtLocation` per attacker; VM-dispatch `FillAttackerSlot(i, ref)`. |
+| `VerifyingFill`   | Read back `BGSRefAlias::GetReference()` on slots `0..N-1`. All present → proceed. |
+| `Arming`          | `SetActorValue(kAggression, 0)`, `EvaluatePackage()` per attacker; stage 10 → 20. |
 
 RUNNING polls at the same 5 s cadence the old beat used (20 ticks at the 250 ms master poll). Each poll walks
 the filled alias slots and classifies each attacker as alive / dead / gone. Three completion routes:
@@ -268,19 +268,33 @@ RequireGlobal = CWPlayerAllegiance = 1
 
 **Eligibility vocabulary**, all optional and AND-ed together:
 
-| Key                                              | Matches against                                     |
-| ------------------------------------------------ | --------------------------------------------------- |
-| `RequireHold` / `ForbidHold`                      | `Region::ForPlayer().holdFormID`                     |
-| `RequirePlayerInFaction` / `ForbidPlayerInFaction` | `Actor::IsInFaction` on the player                  |
-| `RequirePlayerKeyword` / `ForbidPlayerKeyword`    | `Actor::HasKeyword` on the player                    |
-| `RequireQuestComplete` / `ForbidQuestComplete`    | `TESQuest::IsCompleted()`                            |
-| `RequireQuestStage` / `ForbidQuestStage`          | `TESQuest::GetCurrentStageID()`                      |
-| `RequireGlobal`                                   | `TESGlobal::value`                                   |
-| `RequireGameHour`                                 | `RE::Calendar::GetHour()`                            |
-| `MinPlayerLevel` / `MaxPlayerLevel`               | `Actor::GetLevel()`                                  |
+| Key                                                | Matches against                    |
+| -------------------------------------------------- | ---------------------------------- |
+| `RequireHold` / `ForbidHold`                       | `Region::ForPlayer().holdFormID`   |
+| `RequirePlayerInFaction` / `ForbidPlayerInFaction` | `Actor::IsInFaction` on the player |
+| `RequirePlayerKeyword` / `ForbidPlayerKeyword`     | `Actor::HasKeyword` on the player  |
+| `RequireQuestComplete` / `ForbidQuestComplete`     | `TESQuest::IsCompleted()`          |
+| `RequireQuestStage` / `ForbidQuestStage`           | `TESQuest::GetCurrentStageID()`    |
+| `RequireGlobal`                                    | `TESGlobal::value`                 |
+| `RequireGameHour`                                  | `RE::Calendar::GetHour()`          |
+| `MinPlayerLevel` / `MaxPlayerLevel`                | `Actor::GetLevel()`                |
 
 Unknown keys log a warning and are ignored, so a group file written for a later build never hard-fails an
 earlier plugin.
+
+**`CooldownGameHours`** is a per-group cooldown, defaulting to
+`kDefaultGroupCooldownHours` (24). A group is stamped when an ambush using it **actually spawns** — at `Arming`,
+the first point where attackers demonstrably exist in the world — so a compose that fails anywhere earlier never
+costs a group its turn. While cooling down the group is filtered out of `EligibleGroups`, which means the
+Director never sees it rather than being asked to avoid it. `0` disables the cooldown for that group.
+
+This is orthogonal to `iAmbushPerBeatCooldownGameHours`, and the two stack: the beat-level one governs how often
+*any* ambush fires, this one how often a *particular* group can be the one that does.
+
+Stamps are keyed by group id, not by index, so the table survives the user reordering, adding, or removing
+groups between sessions; an id that no longer exists is simply never consulted. They ride in the `'NAMB'` cosave
+record, which went to **version 2** to carry them. Version 1 records still load and simply arrive with no
+cooldowns — every group reads as ready, which is the safe direction for a one-time upgrade.
 
 **`Enabled`** is a master switch, not an eligibility key: `Enabled = false` keeps a group's configuration
 intact but removes it from consideration entirely. Every shipped group sets it explicitly to `true` so the
@@ -626,11 +640,11 @@ dispatch from inside an inn now fails cleanly by name rather than spawning bandi
 
 Three tiers, in preference order:
 
-| Tier | Condition | Ranked by |
-| --- | --- | --- |
-| 1 | Covered, forward arc | Placement score |
-| 2 | Covered, rear | Placement score |
-| 3 | **Uncovered** — nothing covered anywhere | Nearest the rear azimuth, then **farthest** |
+| Tier | Condition                                | Ranked by                                   |
+| ---- | ---------------------------------------- | ------------------------------------------- |
+| 1    | Covered, forward arc                     | Placement score                             |
+| 2    | Covered, rear                            | Placement score                             |
+| 3    | **Uncovered** — nothing covered anywhere | Nearest the rear azimuth, then **farthest** |
 
 Tier 3 exists so an open plain can't make ambushes impossible. Failing the cover gate is not elimination: the
 point has already cleared every other gate, so it is somewhere an attacker can legitimately stand, and it is
@@ -662,11 +676,11 @@ score = (1 - facingDot) / 2                                  // 0 dead ahead, 0.
 Equal weighting is the whole design: neither axis is a mere tiebreaker for the other. Worked examples against
 the shipped 2000–5000 band:
 
-| Candidate | Angle cost | Distance cost | Score |
-| --- | --- | --- | --- |
-| Dead ahead @ 2000 | 0.000 | 0.000 | **0.000** |
-| Square right @ 2000 | 0.500 | 0.000 | **0.500** |
-| Dead ahead @ 4000 | 0.000 | 0.667 | **0.667** |
+| Candidate           | Angle cost | Distance cost | Score     |
+| ------------------- | ---------- | ------------- | --------- |
+| Dead ahead @ 2000   | 0.000      | 0.000         | **0.000** |
+| Square right @ 2000 | 0.500      | 0.000         | **0.500** |
+| Dead ahead @ 4000   | 0.000      | 0.667         | **0.667** |
 
 So dead-ahead beats square-to-the-side at equal distance, but square-to-the-side up close beats dead-ahead two
 thousand units further out. An earlier version treated the whole forward arc as equally good and used distance
@@ -781,26 +795,26 @@ which it lies.
 All new records are owned by `NarrativeEngine.esp` and must fall inside the ESL range `[0x000800..0x000FFF]`
 that `check-esl-formids.ps1` enforces. Highest currently allocated is `000830` (`_ne_MCMQuest`).
 
-| Record                | Type | FormID   | Notes                                          |
-| --------------------- | ---- | -------- | ---------------------------------------------- |
-| `_ne_AmbushQuest`     | QUST | `000831` | Nine aliases, three stages, one script         |
-| `_ne_AmbushApproach`  | PACK | `000832` | Travel-to-`PlayerRef`, run speed, weapon drawn  |
+| Record               | Type | FormID   | Notes                                          |
+| -------------------- | ---- | -------- | ---------------------------------------------- |
+| `_ne_AmbushQuest`    | QUST | `000831` | Nine aliases, three stages, one script         |
+| `_ne_AmbushApproach` | PACK | `000832` | Travel-to-`PlayerRef`, run speed, weapon drawn |
 
 ### Quest stages
 
-| Stage | Flags         | Meaning                                                      |
-| ----- | ------------- | ------------------------------------------------------------ |
-| 0     | Startup Stage | Quest started. Fragment: `SetStage(10)`.                     |
-| 10    | —             | Spawning. C++ creates references and force-fills the aliases. |
-| 20    | —             | Engaged. Fill verified; attackers armed and approaching.      |
-| 200   | Complete Quest | Terminal. Set by C++ during CLEANUP.                         |
+| Stage | Flags          | Meaning                                                       |
+| ----- | -------------- | ------------------------------------------------------------- |
+| 0     | Startup Stage  | Quest started. Fragment: `SetStage(10)`.                      |
+| 10    | —              | Spawning. C++ creates references and force-fills the aliases. |
+| 20    | —              | Engaged. Fill verified; attackers armed and approaching.      |
+| 200   | Complete Quest | Terminal. Set by C++ during CLEANUP.                          |
 
 ### Aliases
 
-| Alias                 | ID   | Fill                     | Flags      | Packages             |
-| --------------------- | ---- | ------------------------ | ---------- | -------------------- |
-| `PlayerRef`           | 0    | Forced → `000014:Skyrim` | —          | —                    |
-| `Attacker01`…`Attacker08` | 1–8 | none                 | `Optional` | `_ne_AmbushApproach` |
+| Alias                     | ID  | Fill                     | Flags      | Packages             |
+| ------------------------- | --- | ------------------------ | ---------- | -------------------- |
+| `PlayerRef`               | 0   | Forced → `000014:Skyrim` | —          | —                    |
+| `Attacker01`…`Attacker08` | 1–8 | none                     | `Optional` | `_ne_AmbushApproach` |
 
 Eight slots is the hard ceiling on attacker count; `iAmbushMaxAttackerCount` is clamped to it at settings-read
 time so a hand-edited INI can't request slot 9. Adding slots later is a copy-paste in the YAML plus a
@@ -818,19 +832,19 @@ underlying engine call has no CommonLibSSE-NG binding.
 New `[Beats]` keys. The old `iAmbush*BanditCount` names are **not** reused — the roster is no longer
 bandit-specific, and the old keys were deleted with the old beat, so there is no back-compat obligation.
 
-| Key                               | Default | Meaning                                                      |
-| --------------------------------- | ------- | ------------------------------------------------------------ |
-| `bEnableAmbush`                   | `true`  | Registry enable gate.                                        |
-| `iAmbushDefaultAttackerCount`     | `3`     | Used when the Director omits or out-ranges `attacker_count`.  |
-| `iAmbushMinAttackerCount`         | `2`     | Lower clamp.                                                 |
-| `iAmbushMaxAttackerCount`         | `6`     | Upper clamp, itself clamped to the eight authored slots.      |
-| `iAmbushDefaultSpawnDistanceUnits` | `2000` | Starting radius. Not Director-selectable — see below.         |
-| `iAmbushMinSpawnDistanceUnits`    | `2000`  | Hard floor; the search never goes below it.                  |
-| `iAmbushMaxSpawnDistanceUnits`    | `5000`  | Ceiling the search widens toward.                            |
-| `iAmbushEngageDistanceUnits`      | `1500`  | Approach → hostile handoff range.                            |
-| `iAmbushAbandonDistanceUnits`     | `8000`  | All survivors beyond this → abandoned.                       |
-| `iAmbushMaxDurationSeconds`       | `600`   | Unpaused real-time cap on RUNNING.                           |
-| `iAmbushPerBeatCooldownGameHours` | `24`    | In-game-hour cooldown after a completed or abandoned ambush.  |
+| Key                                | Default | Meaning                                                      |
+| ---------------------------------- | ------- | ------------------------------------------------------------ |
+| `bEnableAmbush`                    | `true`  | Registry enable gate.                                        |
+| `iAmbushDefaultAttackerCount`      | `3`     | Used when the Director omits or out-ranges `attacker_count`. |
+| `iAmbushMinAttackerCount`          | `2`     | Lower clamp.                                                 |
+| `iAmbushMaxAttackerCount`          | `6`     | Upper clamp, itself clamped to the eight authored slots.     |
+| `iAmbushDefaultSpawnDistanceUnits` | `2000`  | Starting radius. Not Director-selectable — see below.        |
+| `iAmbushMinSpawnDistanceUnits`     | `2000`  | Hard floor; the search never goes below it.                  |
+| `iAmbushMaxSpawnDistanceUnits`     | `5000`  | Ceiling the search widens toward.                            |
+| `iAmbushEngageDistanceUnits`       | `1500`  | Approach → hostile handoff range.                            |
+| `iAmbushAbandonDistanceUnits`      | `8000`  | All survivors beyond this → abandoned.                       |
+| `iAmbushMaxDurationSeconds`        | `600`   | Unpaused real-time cap on RUNNING.                           |
+| `iAmbushPerBeatCooldownGameHours`  | `24`    | In-game-hour cooldown after a completed or abandoned ambush. |
 
 ---
 
