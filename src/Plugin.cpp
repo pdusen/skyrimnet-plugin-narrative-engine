@@ -1,5 +1,7 @@
 #include <Plugin.h>
 
+#include <AmbushAttackerGroups.h>
+#include <AmbushBeat.h>
 #include <AsyncDispatch.h>
 #include <BeatRegistry.h>
 #include <BeatSystem.h>
@@ -161,6 +163,12 @@ namespace NarrativeEngine
                 // Region::ForPlayer can use it as a fast-path from the
                 // very first Poll. ~10s of ms on vanilla data.
                 HoldGrid::Initialize();
+                // AttackerGroups parses the user-editable ambush group
+                // table. Must run AFTER HoldGrid::Initialize because its
+                // hold validation resolves BGSLocations by EditorID, and
+                // because a group's RequireHold is ultimately compared
+                // against the grid's answer.
+                AmbushAttackerGroups::Load();
                 // TravelEventLog: registers TESFastTravelEndEvent sink
                 // in Step 7. Tick drives the location-diff Poll.
                 TravelEventLog::Initialize();
@@ -180,6 +188,16 @@ namespace NarrativeEngine
                     BeatRegistry::Register(std::make_unique<NPCVisitBeat>());
                 } else {
                     logger::info("Plugin: NPCVisitBeat disabled via bEnableNpcVisit=false");
+                }
+                // AmbushBeat_Init resolves _ne_AmbushQuest and its nine
+                // aliases. Runs regardless of the enable gate so a
+                // runtime dashboard toggle has resolved pointers to work
+                // with; registration itself is what the gate controls.
+                AmbushBeat_Init::Initialize();
+                if (Settings::Get().enableAmbush) {
+                    BeatRegistry::Register(std::make_unique<AmbushBeat>());
+                } else {
+                    logger::info("Plugin: AmbushBeat disabled via bEnableAmbush=false");
                 }
                 // Resolve the 20 _ne_PooledLetterNN EditorIDs to Book
                 // FormIDs. Must run AFTER kDataLoaded fires the rest
@@ -216,6 +234,7 @@ namespace NarrativeEngine
                 BeatSystem::OnRevert();
                 NPCLetterBeat_Persistence::OnRevert();
                 NPCVisitBeat_Persistence::OnRevert();
+                AmbushBeat_Persistence::OnRevert();
                 VisitState::OnRevert();
                 PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
                 // Rotate the history log for the new session BEFORE
@@ -250,6 +269,7 @@ namespace NarrativeEngine
                 BeatSystem::OnRevert();
                 NPCLetterBeat_Persistence::OnRevert();
                 NPCVisitBeat_Persistence::OnRevert();
+                AmbushBeat_Persistence::OnRevert();
                 VisitState::OnRevert();
                 PhaseTracker::Reset();
                 break;
@@ -287,6 +307,7 @@ namespace NarrativeEngine
             BeatSystem::OnSave(intfc);
             NPCLetterBeat_Persistence::OnSave(intfc);
             NPCVisitBeat_Persistence::OnSave(intfc);
+            AmbushBeat_Persistence::OnSave(intfc);
             LetterPool::OnSave(intfc);
             VisitState::OnSave(intfc);
             // Future subsystems append their OnSave calls here.
@@ -328,6 +349,9 @@ namespace NarrativeEngine
                 case NPCVisitBeat_Persistence::kRecordTypeId:
                     NPCVisitBeat_Persistence::OnLoad(intfc, version, length);
                     break;
+                case AmbushBeat_Persistence::kRecordTypeId:
+                    AmbushBeat_Persistence::OnLoad(intfc, version, length);
+                    break;
                 case LetterPool::kRecordTypeId:
                     LetterPool::OnLoad(intfc, version, length);
                     break;
@@ -358,6 +382,7 @@ namespace NarrativeEngine
             BeatSystem::OnRevert();
             NPCLetterBeat_Persistence::OnRevert();
             NPCVisitBeat_Persistence::OnRevert();
+            AmbushBeat_Persistence::OnRevert();
             LetterPool::OnRevert();
             VisitState::OnRevert();
             // Future subsystems append their OnRevert calls here.

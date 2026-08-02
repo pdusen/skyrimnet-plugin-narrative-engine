@@ -34,6 +34,15 @@
 // the specific keys the dashboard UI edits.
 namespace NarrativeEngine::Settings
 {
+    // Number of Attacker0N reference aliases authored on _ne_AmbushQuest
+    // (000831). This is a hard ceiling on how many attackers an ambush
+    // can field: every spawned reference is held in an alias, so slot N
+    // simply doesn't exist beyond this. ReadIniInto clamps
+    // ambushMaxAttackerCount to it, and AmbushBeat indexes slots against
+    // it, so the ESP and the code can't drift apart silently. Raising it
+    // means authoring more aliases in the quest YAML first.
+    inline constexpr int kAmbushAttackerSlotCount = 8;
+
     // Bitmask values for the dashboard hotkey's modifier keys. Bit
     // assignment matches SkyUI convention so the value _ne_MCM.psc packs
     // into the "_ne_DashboardHotkeyChanged" ModEvent can be consumed
@@ -392,6 +401,54 @@ namespace NarrativeEngine::Settings
         // Enable toggle for the visit beat; runtime dashboard toggles
         // don't write back to INI.
         bool enableNpcVisit = true;
+
+        // --- AmbushBeat ---
+
+        // [Beats]
+        // Enable toggle for the ambush beat; runtime dashboard toggles
+        // don't write back to INI.
+        bool enableAmbush = true;
+
+        // Attacker count. The Director picks a count; these bound it.
+        // The max is itself clamped on the read path to
+        // kAmbushAttackerSlotCount, the number of Attacker0N aliases
+        // actually authored on _ne_AmbushQuest — a hand-edited INI must
+        // not be able to request a slot the ESP doesn't have.
+        int ambushDefaultAttackerCount = 3;
+        int ambushMinAttackerCount = 2;
+        int ambushMaxAttackerCount = 6;
+
+        // The band the spawn-point search works within. Not
+        // Director-selectable: the search starts at the default and
+        // widens toward the max looking for cover, clamped to this band
+        // throughout. Below the min an ambush is visibly conjured;
+        // above the max it is too far off to read as one.
+        int ambushDefaultSpawnDistanceUnits = 2000;
+        int ambushMinSpawnDistanceUnits = 2000;
+        int ambushMaxSpawnDistanceUnits = 5000;
+
+        // Approach-to-hostile handoff range. Attackers travel with
+        // aggression 0 until they close to within this distance, then
+        // flip to aggression 2 and start combat. Keeping the handoff
+        // late means the approach package isn't fighting combat AI for
+        // control the whole way in.
+        int ambushEngageDistanceUnits = 1500;
+
+        // Every surviving attacker beyond this distance ends the beat as
+        // abandoned — the player outran it. Needs real clearance above
+        // ambushMaxSpawnDistanceUnits, or an encounter that spawned at
+        // the far end of the band abandons itself the moment the player
+        // keeps walking.
+        int ambushAbandonDistanceUnits = 8000;
+
+        // Outer cap on RUNNING, in *unpaused real* seconds accumulated
+        // from the tick argument (never a wall-clock timer of its own).
+        int ambushMaxDurationSeconds = 600;
+
+        // In-game-hour cooldown stamped after a completed or abandoned
+        // ambush. Not stamped when COMPOSE fails, so a failed spawn
+        // doesn't burn a day.
+        int ambushPerBeatCooldownGameHours = 24;
     };
 
     // Narrow mutation surface for WriteMcmOverride. One optional per

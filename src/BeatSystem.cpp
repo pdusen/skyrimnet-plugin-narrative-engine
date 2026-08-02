@@ -1,6 +1,7 @@
 #include <BeatSystem.h>
 
 #include <AlphaCanon.h>
+#include <AmbushAttackerGroups.h>
 #include <AsyncDispatch.h>
 #include <BeatRegistry.h>
 #include <BeatWorkDispatch.h>
@@ -711,7 +712,9 @@ namespace NarrativeEngine::BeatSystem
             PhaseTracker::Direction direction,
             int tensionDelta,
             const std::vector<LetterComposer::SenderCandidate>& letterSenderCandidates,
-            const std::vector<VisitComposer::SenderCandidate>& visitSenderCandidates)
+            const std::vector<VisitComposer::SenderCandidate>& visitSenderCandidates,
+            const std::vector<AmbushAttackerGroups::GroupSummary>& ambushAttackerCandidates,
+            const std::string& playerName)
         {
             nlohmann::json ctx;
             ctx["desired_direction"] = (direction == PhaseTracker::Direction::Raise) ? "raise" : "lower";
@@ -724,6 +727,19 @@ namespace NarrativeEngine::BeatSystem
                 visitSenderCandidates.empty() ? nlohmann::json::array()
                                               : VisitComposer::SerializeSenderCandidates(visitSenderCandidates);
 
+            // The attacker menu the Director picks `attacker_group`
+            // from. Flat {id, display_name, flavor} — the flavor line is
+            // what the LLM actually reasons about when deciding whether
+            // a group fits the moment.
+            nlohmann::json serializedAmbushCandidates = nlohmann::json::array();
+            for (const auto& g : ambushAttackerCandidates) {
+                serializedAmbushCandidates.push_back({
+                    {"id", g.id},
+                    {"display_name", g.displayName},
+                    {"flavor", g.flavor},
+                });
+            }
+
             nlohmann::json candArr = nlohmann::json::array();
             for (auto* b : candidates) {
                 if (!b)
@@ -735,12 +751,15 @@ namespace NarrativeEngine::BeatSystem
                      (b->Name() == "npc_letter") ? serializedLetterCandidates : nlohmann::json::array()},
                     {"visit_sender_candidates",
                      (b->Name() == "npc_visit") ? serializedVisitCandidates : nlohmann::json::array()},
+                    {"ambush_attacker_candidates",
+                     (b->Name() == "ambush") ? serializedAmbushCandidates : nlohmann::json::array()},
                 };
                 candArr.push_back(std::move(cj));
             }
             ctx["candidates"] = std::move(candArr);
 
             ctx["player_context"] = {
+                {"player_name", playerName},
                 {"location_name", snapshot.player.locationName},
                 {"cell_name", snapshot.player.cellName},
                 {"cell_is_interior", snapshot.player.cellIsInterior},
@@ -926,8 +945,34 @@ namespace NarrativeEngine::BeatSystem
                                FinalizedCallback onFinalized,
                                const char* logPrefix)
         {
-            const std::string promptCtx = BuildBeatSelectPromptContext(
-                snapshot, candidates, direction, tensionDelta, letterSenderCandidates, visitSenderCandidates);
+            std::string playerName;
+            if (auto* pc = RE::PlayerCharacter::GetSingleton()) {
+                if (const char* dn = pc->GetDisplayFullName()) {
+                    playerName = dn;
+                }
+            }
+
+            // Eligibility is the same read shape the per-beat
+            // IsAvailable path already performs off-main: stable
+            // singleton pointers, Region::ForPlayer (which
+            // TravelEventLog::Poll also calls from the plugin thread),
+            // Calendar, and plain flag / value loads on factions,
+            // keywords, quests and globals. No hop needed.
+            std::vector<AmbushAttackerGroups::GroupSummary> ambushAttackerCandidates;
+            const bool ambushPresent =
+                std::any_of(candidates.begin(), candidates.end(), [](IBeat* b) { return b && b->Name() == "ambush"; });
+            if (ambushPresent) {
+                ambushAttackerCandidates = AmbushAttackerGroups::EligibleGroupSummaries();
+            }
+
+            const std::string promptCtx = BuildBeatSelectPromptContext(snapshot,
+                                                                       candidates,
+                                                                       direction,
+                                                                       tensionDelta,
+                                                                       letterSenderCandidates,
+                                                                       visitSenderCandidates,
+                                                                       ambushAttackerCandidates,
+                                                                       playerName);
             if (Settings::Get().debugMode) {
                 logger::debug("BeatSystem: {}beat-select prompt context: {}", logPrefix, promptCtx);
             }

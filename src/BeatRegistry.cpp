@@ -35,6 +35,8 @@ namespace NarrativeEngine::BeatRegistry
                 return cfg.enableNpcLetter;
             if (name == "npc_visit")
                 return cfg.enableNpcVisit;
+            if (name == "ambush")
+                return cfg.enableAmbush;
             // Unknown beat — default enabled. Any new beat added to the
             // registry gets a matching bEnableXxx INI key + Settings
             // wiring; until then, "true" is the safe default.

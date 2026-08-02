@@ -7,6 +7,7 @@
 #include <RE/B/bhkPickData.h>
 #include <RE/B/bhkWorld.h>
 #include <RE/B/BSFixedString.h>
+#include <RE/C/CollisionLayers.h>
 #include <RE/N/NiAVObject.h>
 #include <RE/N/NiBound.h>
 #include <RE/N/NiPoint3.h>
@@ -158,6 +159,11 @@ namespace NarrativeEngine::CameraVisibility
             RE::bhkPickData pd;
             pd.rayInput.from = RE::hkVector4(from.x * scale, from.y * scale, from.z * scale, 0.0f);
             pd.rayInput.to = RE::hkVector4(to.x * scale, to.y * scale, to.z * scale, 0.0f);
+            // Cast on the engine's own line-of-sight layer. Left at the
+            // default 0 (kUnidentified) the ray collides by whatever
+            // rules layer 0 happens to carry, which is not the question
+            // being asked and produced spurious "blocked" results.
+            pd.rayInput.filterInfo = static_cast<std::uint32_t>(RE::COL_LAYER::kLOS);
             // Default rayOutput fields are initialized to "no hit"
             // (rootCollidable=nullptr, hitFraction=1.0). We rely on
             // that: a no-hit result correctly reads as "reached."
@@ -253,5 +259,57 @@ namespace NarrativeEngine::CameraVisibility
         }
 
         return reachedCount > 0;
+    }
+
+    bool IsPositionBehindCover(const RE::NiPoint3& worldPos, float bodyHeightUnits, float coverRadiusUnits)
+    {
+        RE::NiPoint3 cameraPos;
+        if (!GetCameraWorldPos(cameraPos)) {
+            return false; // no camera, no way to prove cover
+        }
+
+        const float dx = worldPos.x - cameraPos.x;
+        const float dy = worldPos.y - cameraPos.y;
+        const float dz = worldPos.z - cameraPos.z;
+        const float distSq = dx * dx + dy * dy + dz * dz;
+        if (distSq < kMinDistanceFloor * kMinDistanceFloor) {
+            // Too close to raycast meaningfully — a ray this short can
+            // start inside nearby geometry and report nonsense. Nothing
+            // this close counts as covered.
+            return false;
+        }
+
+        // Lateral axis: horizontal, perpendicular to the line of sight.
+        // Offsetting along it widens the test from a line to a
+        // silhouette, which is what stops a narrow object from passing
+        // as cover for a body several times its width.
+        const float horizLen = std::sqrt(dx * dx + dy * dy);
+        if (horizLen < 1e-3f) {
+            return false; // directly overhead; no meaningful silhouette
+        }
+        const float rightX = -dy / horizLen;
+        const float rightY = dx / horizLen;
+
+        const float h = bodyHeightUnits > 0.0f ? bodyHeightUnits : 128.0f;
+        const float r = coverRadiusUnits > 0.0f ? coverRadiusUnits : 0.0f;
+
+        // 3 heights x 3 lateral offsets. Every one of the nine has to be
+        // blocked; a single clear line means the player can see the spot.
+        constexpr float kHeightFractions[] = {0.1f, 0.5f, 0.9f};
+        const float lateralOffsets[] = {-r, 0.0f, r};
+
+        for (const float hf : kHeightFractions) {
+            for (const float lat : lateralOffsets) {
+                const RE::NiPoint3 probe{
+                    worldPos.x + rightX * lat,
+                    worldPos.y + rightY * lat,
+                    worldPos.z + h * hf,
+                };
+                if (RaycastReachedEndpoint(cameraPos, probe)) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 } // namespace NarrativeEngine::CameraVisibility

@@ -111,7 +111,7 @@ retired — it holds the same record, with the same contents, that it always hel
   groups ship as separate entries. Unknown keys are ignored rather than erroring, so adding keys later is
   backward-compatible; the vocabulary grew twice during design for exactly that reason.
 - **Reward / loot shaping.** Attackers carry whatever their leveled lists give them.
-- **Ambushes in interiors.** `IsAvailable` gates on `playerInInterior`, as before.
+- **Ambushes anywhere but the open road and wilderness.** See **Where ambushes may happen** below.
 - **Reactive difficulty scaling** beyond what the vanilla leveled lists already do.
 - **Any change to `Region`, `HoldGrid`, `LocationKeywords`, or `CameraVisibility`.** All four are consumed
   as-is.
@@ -578,19 +578,130 @@ lists stay hostile regardless, which is what an ambush needs.
 - **Creature packs** (wolves, trolls, ice wraiths) — buildable, but "a faction ambushes you" and "wildlife
   attacks you" are different narrative beats, and the second one vanilla already delivers constantly.
 
+### Where ambushes may happen
+
+Ambushes fire **outdoors, on the road or in open wilderness, and nowhere else.** Three hard exclusions:
+
+- **Any interior cell.** The beat spawns a travelling approach from thousands of units away; interiors have
+  neither the room nor the sightlines.
+- **Locations marked Safe** (`LocationKeywords::IsSafe`) — towns, farms, inns, guild halls. Guards on patrol
+  and NPCs with schedules already own those cells, and an ambush there reads as nonsense.
+- **Locations marked Dangerous** (`LocationKeywords::IsDangerous`) — dungeons, bandit camps, lairs. Vanilla
+  already populates them with combat; layering a Director-issued fight on top stacks into gauntlets.
+
+Both keyword predicates walk the `BGSLocation::parentLoc` chain, so a child location inherits its parent's
+classification the way vanilla quest conditions read it.
+
+**Enforced twice, deliberately.** `AmbushLocationBlocker` is the single shared predicate behind both gates so
+they cannot drift apart:
+
+1. **Before the LLM request** — in `IsAvailable`, so `ambush` never enters the candidate list and the Director
+   is never offered a beat it couldn't legally run.
+2. **At compose time** — the first thing `TickCompose` does, before any group resolution or spawning. A
+   beat-select round trip takes seconds, and the player can walk into a cave or through a town gate inside that
+   window. Failure here is a clean COMPOSE failure with `failure_reason` of `interior`, `safe_location`, or
+   `dangerous_location`, and no cooldown stamp.
+
+Neither gate marshals to the main thread. Both read a stable singleton pointer, a `constexpr` member load
+(`GetParentCell`), a flag, and a `parentLoc` walk over cached keyword pointers — the same shape `IsAvailable`
+already performs off-main, sanctioned by `docs/MAIN_THREAD_STUTTER_AUDIT.md`.
+
+The second gate is also what covers **force-dispatch**, which deliberately bypasses `IsAvailable` — a debug
+dispatch from inside an inn now fails cleanly by name rather than spawning bandits into the common room.
+
 ### Spawn point selection
 
 `AmbushSpawnPoints::Find(player, distanceUnits, count)` returns a ranked list of world positions, or empty.
 
-1. **Sample.** 16 azimuths evenly spaced around the player at the requested radius. If the requested radius
-   yields nothing, retry at ±25% and then ±50%, widening before giving up.
-2. **Validate** each candidate, cheapest gate first: exterior worldspace; cell loaded; ground height resolvable;
-   navmesh-reachable and on the same navmesh island as the player (so attackers can actually path in); not
-   visible from the camera.
-3. **Rank** survivors: out-of-view first, then behind the player's facing, then by how close the actual
-   distance lands to the requested distance.
-4. **Cluster.** Take the winner and jitter `count` positions around it within a small radius so attackers
-   don't stack on one point.
+1. **Sample.** 16 azimuths evenly spaced around the player at the current radius. Radii widen through
+   ×1, ×1.25, ×1.5, ×2, ×2.5, each clamped into `[iAmbushMinSpawnDistanceUnits, iAmbushMaxSpawnDistanceUnits]`
+   — a band of 2000–5000 units by default. Widening only: the minimum is a hard floor, so a narrowing step
+   would just clamp back onto the first ring and re-sample it.
+2. **Validate** each candidate, cheapest gate first: cell loaded; exterior; ground height resolvable; not
+   underwater; on navmesh; not visible from the camera.
+3. **Rank** survivors: **forward arc before rear** as a hard tier, then by a combined placement score
+   within each tier — see **Placement scoring** below.
+4. **Cluster.** Take the winner and jitter `count` positions around it within `kClusterRadiusUnits` so
+   attackers don't stack on one point.
+
+Three tiers, in preference order:
+
+| Tier | Condition | Ranked by |
+| --- | --- | --- |
+| 1 | Covered, forward arc | Placement score |
+| 2 | Covered, rear | Placement score |
+| 3 | **Uncovered** — nothing covered anywhere | Nearest the rear azimuth, then **farthest** |
+
+Tier 3 exists so an open plain can't make ambushes impossible. Failing the cover gate is not elimination: the
+point has already cleared every other gate, so it is somewhere an attacker can legitimately stand, and it is
+kept as a last resort. Only a point with no standable ground at all is discarded outright.
+
+Note that tier 3 **inverts** the arc preference. With no cover to hide behind, the only thing left is the
+player's own back, so the ranking becomes "closest to directly behind, then as far away as possible". Those two
+keys compose naturally: every ring samples the same azimuths, so the rear-most azimuth ties across radii and
+the distance key picks the outermost of them.
+
+`Find` now returns empty only when there is nowhere standable at all — not merely nowhere hidden. The debug
+line reports `arc=forward`, `arc=rear-fallback`, or `arc=uncovered-fallback` so which tier was used is
+visible, and tier 3 additionally logs at `info` since it means the terrain gave us nothing to work with.
+
+**The forward arc is the point of the beat.** An ambush should be walked *into* — somewhere ahead of the player
+or square to either side. Anything in the rear hemisphere is a **fallback**, taken only when the forward arc has
+nothing sufficiently hidden.
+
+#### Placement scoring
+
+Within a tier, candidates are ranked by a single cost, lower being better, with **angle and distance weighted
+equally**:
+
+```text
+score = (1 - facingDot) / 2                                  // 0 dead ahead, 0.5 side, 1 behind
+      + clamp((distance - minSpawn) / (maxSpawn - minSpawn))  // 0 near end of band, 1 far end
+```
+
+Equal weighting is the whole design: neither axis is a mere tiebreaker for the other. Worked examples against
+the shipped 2000–5000 band:
+
+| Candidate | Angle cost | Distance cost | Score |
+| --- | --- | --- | --- |
+| Dead ahead @ 2000 | 0.000 | 0.000 | **0.000** |
+| Square right @ 2000 | 0.500 | 0.000 | **0.500** |
+| Dead ahead @ 4000 | 0.000 | 0.667 | **0.667** |
+
+So dead-ahead beats square-to-the-side at equal distance, but square-to-the-side up close beats dead-ahead two
+thousand units further out. An earlier version treated the whole forward arc as equally good and used distance
+only to break ties, which made a distant head-on spot outrank a near one off to the side.
+
+That priority also drives when the search stops widening. Rear-hemisphere hits alone are *not* enough to stop
+on — the search keeps widening while only fallbacks have been found, because a larger ring may still have cover
+in front. Survivors accumulate across radii, so nothing found on the way is discarded; only a forward hit ends
+the search early. The debug line reports `arc=forward` or `arc=rear-fallback` so which happened is visible.
+
+The cover gate carries much more weight under this ordering than it did when the search preferred the rear:
+positions in front of the player are usually *in view*, so "in front but hidden behind something" is the
+genuinely scarce combination the search is hunting for.
+
+#### The cover gate
+
+`CameraVisibility::IsPositionBehindCover(pos, bodyHeight, coverRadius)` — a deliberately stricter and
+differently-shaped question than `IsAnyPartVisibleFromCamera`, which judges an existing actor:
+
+- **Silhouette, not a line.** Nine rays: three heights × three lateral offsets, offset perpendicular to the
+  line of sight. A single vertical column can be blocked by a fencepost while the body is plainly visible
+  either side of it.
+- **Widened to the cluster.** The lateral offsets span `kClusterRadiusUnits`, so the test asks whether the
+  whole group would be hidden. One attacker standing clear of the rock the others are behind is the same
+  failure as no cover at all.
+- **Every ray must be blocked.** One clear line means the player can see the spot.
+- **Fails toward "not covered."** If the camera can't be resolved, or the position is inside the raycast
+  minimum distance, the answer is no. This is the *opposite* fail direction from
+  `IsAnyPartVisibleFromCamera`, and it has to be: there, a wrong answer costs a teleport the player might
+  notice; here it lets them watch attackers materialize in front of them.
+
+`filterInfo` on the pick is set to `COL_LAYER::kLOS`, the layer the engine uses for its own sight checks.
+Leaving it at the default `0` (`kUnidentified`) casts against whatever rules layer 0 happens to carry — which
+is not the question being asked, and is the likeliest explanation for the field report of attackers spawning in
+plain view with only 4 of 32 candidates rejected as visible.
 
 `CameraVisibility::IsAnyPartVisibleFromCamera` is the visibility gate — it exists precisely because
 `Actor::HasLineOfSight` also gates on the player's FOV cone and returns false whenever the camera happens to
@@ -603,18 +714,41 @@ ground-height raycast plus a post-spawn settle check, with the position rejected
 
 ### Cleanup ordering
 
-**Delete before stopping.** The aliases are what anchor the spawned references as persistent; once the quest
-stops and the aliases clear, we lose the handle. So CLEANUP is strictly:
+**The quest teardown is deferred to the next dispatch.** The aliases are what anchor the spawned references as
+persistent, so stopping the quest releases them and the engine reaps the corpses on the spot. An earlier version
+of this design stopped and reset the quest at the end of the encounter and expected the corpses to survive it;
+they did not, and the player couldn't loot anything they'd just killed.
+
+So the encounter's own CLEANUP does not stop the quest at all:
 
 1. Walk alias slots `0..7`, collect every filled reference.
 2. For each **surviving** attacker: `Disable()` then `SetDelete(true)`.
-3. Leave **corpses** in place. They carry the encounter's loot, and deleting a body the player is mid-way
-   through looting is worse than leaving a dynamic reference for the engine's own cell-reset to reap.
-4. `SetStage(200)` (marked Complete Quest), then `Stop()`, then `Reset()`.
+3. Leave **corpses** in place, still held by their aliases. That is what keeps them lootable.
+4. `SetStage(200)` (marked Complete Quest) — but **no** `Stop()` and **no** `Reset()`. The quest stays open,
+   parked at its terminal stage, holding the bodies.
 5. Stamp the per-beat cooldown — **only** when COMPOSE succeeded, so a failed compose doesn't burn 24 in-game
    hours.
 
-`Abort()` runs the same sequence minus the cooldown stamp, synchronously on the main thread.
+The deferred half runs in COMPOSE's `StartingQuest` sub-phase, immediately before `EnsureQuestStarted`:
+`RetireQuest` deletes whatever is still in the aliases, then `Stop()` and `Reset()`. By then the player has had
+the full cooldown — 24 in-game hours by default — to loot and move on.
+
+`RetireQuest` reads the **aliases**, not the in-memory created-reference list, precisely because it may be
+running after a save/load: the aliases persist with the quest, the in-memory list does not. It is idempotent, so
+the first ambush of a save calls it against a never-started quest harmlessly.
+
+Two consequences worth stating:
+
+- **`IsAvailable` must not treat a non-zero stage as "busy."** The quest sits at stage 200 between encounters,
+  so only the genuinely in-flight stages (10 and 20) block. Reading "any non-zero stage" as busy would let the
+  beat fire exactly once per save.
+- **The quest stays running between ambushes.** It carries no `Name` and its stage log entries have no text, so
+  it never surfaces in the player's journal. The cost is up to eight persistent references held until the next
+  ambush, which is bounded and deliberate.
+
+`Abort()` is the exception: it runs CLEANUP *and* `RetireQuest` immediately, corpses included. Its contract is
+that the world-side effects are gone when it returns, and an aborted encounter isn't one the player earned loot
+from.
 
 ---
 
@@ -690,11 +824,11 @@ bandit-specific, and the old keys were deleted with the old beat, so there is no
 | `iAmbushDefaultAttackerCount`     | `3`     | Used when the Director omits or out-ranges `attacker_count`.  |
 | `iAmbushMinAttackerCount`         | `2`     | Lower clamp.                                                 |
 | `iAmbushMaxAttackerCount`         | `6`     | Upper clamp, itself clamped to the eight authored slots.      |
-| `iAmbushDefaultSpawnDistanceUnits` | `2000` | Used when the Director omits or out-ranges `spawn_distance_units`. |
-| `iAmbushMinSpawnDistanceUnits`    | `1500`  | Lower clamp.                                                 |
-| `iAmbushMaxSpawnDistanceUnits`    | `3500`  | Upper clamp.                                                 |
+| `iAmbushDefaultSpawnDistanceUnits` | `2000` | Starting radius. Not Director-selectable — see below.         |
+| `iAmbushMinSpawnDistanceUnits`    | `2000`  | Hard floor; the search never goes below it.                  |
+| `iAmbushMaxSpawnDistanceUnits`    | `5000`  | Ceiling the search widens toward.                            |
 | `iAmbushEngageDistanceUnits`      | `1500`  | Approach → hostile handoff range.                            |
-| `iAmbushAbandonDistanceUnits`     | `6000`  | All survivors beyond this → abandoned.                       |
+| `iAmbushAbandonDistanceUnits`     | `8000`  | All survivors beyond this → abandoned.                       |
 | `iAmbushMaxDurationSeconds`       | `600`   | Unpaused real-time cap on RUNNING.                           |
 | `iAmbushPerBeatCooldownGameHours` | `24`    | In-game-hour cooldown after a completed or abandoned ambush.  |
 
@@ -726,11 +860,48 @@ Parameters the Director returns for this beat:
 
 - `attacker_group` — REQUIRED, string, must match an `id` from `ambush_attacker_candidates`.
 - `attacker_count` — REQUIRED, integer, clamped to the configured range.
-- `spawn_distance_units` — OPTIONAL, integer, clamped to the configured range.
+- `narration_prose` — REQUIRED, string. One to three sentences of in-world prose naming WHO is attacking and
+  WHAT their grievance is. Surfaced as silent narration once the fight starts — see **Encounter narration**.
 
-`attacker_group` is a free-form LLM-returned string and routes through `LLMTextSanitizer::Sanitize` at the
-extraction site per `docs/LLM_RESPONSE_HANDLING.md`, then is re-validated against the eligible set as it stood
-at `OnStart` — not at prompt-build time.
+**Spawn distance is deliberately not a parameter.** It was one originally, and the Director was uniformly bad
+at it: across three test encounters it asked for 256, 128, and 256 units — two to four metres. Those clamped up
+to `iAmbushMinSpawnDistanceUnits`, so the practical effect of offering the knob was that every ambush spawned
+at the *minimum* distance rather than the configured default. Where attackers appear is staging, not narrative
+judgement, and the model has no useful view of the terrain it would be reasoning about. It reads straight from
+`iAmbushDefaultSpawnDistanceUnits` now, and `Description()` tells the Director not to send anything else.
+
+`attacker_group` and `narration_prose` are both free-form LLM-returned strings and route through
+`LLMTextSanitizer::Sanitize` at the extraction site per `docs/LLM_RESPONSE_HANDLING.md`. `attacker_group` is
+additionally re-validated against the eligible set as it stood at `OnStart` — not at prompt-build time.
+
+These are declared in `Description()` rather than in the prompt template, because the template's `parameters`
+field is explicitly free-form and states that "the chosen action validates its own parameter shape". The
+per-beat description is the only place a beat's parameter schema is expressed.
+
+Note this is a **separate** field from the response's global `parameter_justification`, which stays as it is
+and continues to feed the letter and visit composers. That one is Director-frame reasoning about the choice;
+`narration_prose` is in-world prose about the event, and the two want different voices.
+
+### Encounter narration
+
+The Director is told to name the player rather than reach for "the player" or an epithet like "the intruder",
+and `player_context.player_name` was added to the beat-select prompt so it has the name to hand instead of
+having to mine it out of the recent-events text. `Description()` points at that field explicitly.
+
+`narration_prose` is held from `OnStart` and submitted exactly once, as a silent scene event, **when the player
+themselves enters combat**. Not at spawn, and not when the attackers engage: the prose says who is jumping the
+player and why, so it should land when the fight is real to them rather than while a group is still jogging
+over a hill.
+
+The check runs on every RUNNING tick rather than inside the 5-second poll gate — it costs one
+`EngineUtils::IsPlayerInCombat()` bool read, and the log entry should be roughly contemporaneous with the fight
+starting. A latch makes it fire once per encounter however combat starts and stops, and an empty prose value
+latches without dispatching.
+
+Delivery is `_ne_AmbushQuest.RunAmbushNarration`, mirroring `_ne_VisitQuest`'s Valediction silent scene event:
+`SkyrimNetApi.RegisterPersistentEvent(content, originator, player)` with the lead attacker as originator, so the
+memory system associates the event with whoever actually jumped the player. It goes through Papyrus because
+`RegisterPersistentEvent` has no native binding — the native `SkyrimNetAPI` surface has no equivalent.
 
 `Description()` is rewritten. The old text promised "leveled bandits (up to six)" and would be lying about both
 halves.
@@ -912,7 +1083,7 @@ session in the phase — nothing after this step opens the Creation Kit.
 
 ### Step 2 — Settings + INI surface
 
-- [ ] Complete
+- [X] Complete
 
 **[CLAUDE]**
 
@@ -948,7 +1119,7 @@ never have to touch `Settings` again.
 
 ### Step 3 — `AmbushAttackerGroups`: group-file loader, validation, and eligibility
 
-- [ ] Complete
+- [X] Complete (Claude's half; user in-game verification outstanding)
 
 **[CLAUDE]**
 
@@ -1072,7 +1243,7 @@ With `bDebugMode=true` and a save handy:
 
 ### Step 4 — `AmbushSpawnPoints` module
 
-- [ ] Complete
+- [X] Complete
 
 **[CLAUDE]**
 
@@ -1098,7 +1269,7 @@ the step that resolves the navmesh open question.
 **Specifics:**
 
 - Main-thread only. Every call reads engine state.
-- Widen the radius before giving up, never narrow below `iAmbushMinSpawnDistanceUnits` — spawning closer than
+- Widen the radius before giving up, never below `iAmbushMinSpawnDistanceUnits` — spawning closer than
   the configured floor is worse than not spawning.
 - Failure returns empty and is not an error; the caller turns it into a clean COMPOSE failure.
 
@@ -1112,7 +1283,7 @@ the step that resolves the navmesh open question.
 
 ### Step 5 — `AmbushBeat` skeleton, registration, persistence, and single-attacker spike
 
-- [ ] Complete
+- [X] Complete (Claude's half; user in-game verification outstanding)
 
 **[CLAUDE]**
 
@@ -1126,8 +1297,8 @@ resolves two open engine questions before Step 6 builds the real flow on top.
 **Sub-tasks:**
 
 1. `AmbushBeat` implementing `IBeat`: `Name()` = `"ambush"`, `Polarity()` = `Raise`, `IsAvailable` gating on
-   `playerInInterior`, `LocationKeywords::IsSafe`, quest-not-in-flight, per-beat cooldown, and a non-empty
-   eligible group set. `Description()` stays a short placeholder until Step 8.
+   the location rules (see **Where ambushes may happen**), quest-not-in-flight, per-beat cooldown, and a
+   non-empty eligible group set. `Description()` stays a short placeholder until Step 8.
 2. `'NAMB'` cosave record per the **Persistence** section, with `OnSave` / `OnLoad` / `OnRevert`. Wire all
    three into `src/Plugin.cpp` alongside the other beats' records. **Do not reuse `'NBAM'`.**
 3. Register the beat in `Plugin.cpp` and add the `bEnableAmbush` gate to `BeatRegistry.cpp`.
@@ -1180,7 +1351,7 @@ With `bDebugMode=true`, in exterior wilderness:
 
 ### Step 6 — Full COMPOSE: group selection, N attackers, fill verification
 
-- [ ] Complete
+- [X] Complete (Claude's half; user in-game verification outstanding)
 
 **[CLAUDE]**
 
@@ -1191,9 +1362,10 @@ at the Director's chosen size, with clean failure on every path.
 
 **Sub-tasks:**
 
-1. `OnStart` parses and clamps `attacker_count` and `spawn_distance_units` via `JsonUtils::ClampParameterInt`,
-   and extracts `attacker_group` through `LLMTextSanitizer::Sanitize`. Store to session state under the
-   existing mutex; no engine access in `OnStart` per `IBeat`'s contract.
+1. `OnStart` parses and clamps `attacker_count` via `JsonUtils::ClampParameterInt`, and extracts
+   `attacker_group` through `LLMTextSanitizer::Sanitize`. Spawn distance is read from settings, not from the
+   parameters. Store to session state under the existing mutex; no engine access in `OnStart` per `IBeat`'s
+   contract.
 2. `SelectingPoints` re-validates the sanitized group id against `AmbushAttackerGroups::EligibleGroups()` as it
    stands **now**, not as it stood at prompt-build time. Unknown or no-longer-eligible id falls back to
    `bandits` with a `logger::warn`. Then `AmbushSpawnPoints::Find(player, distance, count)`.
@@ -1233,7 +1405,7 @@ at the Director's chosen size, with clean failure on every path.
 
 ### Step 7 — RUNNING and CLEANUP: engagement, completion, abandonment, self-validation
 
-- [ ] Complete
+- [X] Complete (Claude's half; user in-game verification outstanding)
 
 **[CLAUDE]**
 
@@ -1288,7 +1460,7 @@ recovery path.
 
 ### Step 8 — Prompt integration and beat description
 
-- [ ] Complete
+- [X] Complete (Claude's half; user in-game verification outstanding)
 
 **[CLAUDE]**
 
@@ -1414,3 +1586,255 @@ Phase 11 is complete when:
 
 *Populated after implementation completes, mirroring Phase 09's practice. The four open engine questions'
 answers land here, along with any modules, settings, or design shifts that arrived beyond the numbered plan.*
+
+### Open engine questions — status
+
+**Q3 (Mutagen's output for a fill-rule-less `Optional` alias) — ANSWERED.** Each `Attacker0N` alias serializes
+with exactly `ID`, `Name`, `Flags: [Optional, AllowDead]`, `PackageData: [000832]`, and `VoiceTypes: Null`. There
+is no `CreateReferenceToObject`, no `ForcedReference`, and no `Conditions` block — Mutagen simply emits nothing
+for the absent fill rule, which is the shape we wanted. A deserialize → serialize round-trip through Spriggit
+returns the record byte-identical, so the CK's own save doesn't reintroduce a fill rule. Whether the *engine*
+then treats it as empty rather than fill-failed is the half that still needs a running game.
+
+**Q1 (leveled-list resolution) — ANSWERED: NO.** `CreateReferenceAtLocation` does **not** roll a
+`TESLevCharacter` base. It type-checks (LVLN derives `TESBoundObject`), returns a valid handle, and produces a
+reference whose base object is still the leveled list — so the reference never becomes an `Actor`. The documented
+fallback is now the implementation: `ResolveLeveledCharacter` calls `TESLeveledList::CalculateCurrentFormList`
+(the engine's own resolver, so list flags / chance-none / level filtering behave natively) and passes the
+resulting `TESNPC*` as the base, recursing for nested lists with a depth cap.
+
+Found on the first in-game test, and the way it presented is worth knowing:
+`BGSRefAlias::GetReference()` returns the placeholder while `GetActorReference()` returns null, so the alias
+reads as *filled* to every population check while every `Actor`-typed read of the same slot yields nothing. The
+beat armed nothing, logged `armed 3 attacker(s); COMPOSE complete`, and completed the encounter on the first
+RUNNING poll with all three slots classified as gone — five seconds, no warnings, no attackers. Written up under
+`docs/engine-findings/` as `createreferenceatlocation-does-not-resolve-leveled-lists.md`.
+
+**Q2 (`AllowDead` alias retention) — STILL OPEN.** It needs an attacker to actually die, which the Q1 bug
+prevented. The RUNNING poll distinguishes "dead" (alias still resolves, actor `IsDead`) from "gone" (alias no
+longer resolves) and treats both as down, so the beat completes either way; the log line says which happened.
+
+**Q4 (navmesh reachability) — ANSWERED, with a caveat.** CommonLibSSE-NG exposes no callable navmesh query at
+all; every navmesh header is data-layout only with zero `REL::Relocation` bindings. It *does* expose the raw
+triangle data via `cell->GetRuntimeData().navMeshes`, so `AmbushSpawnPoints::IsOnNavmesh` answers **containment**
+directly with a barycentric point-in-triangle test rather than falling back to the planned ground-height
+raycast. **Connectivity** — "is that the same navmesh island the player is on?" — is deliberately not
+implemented; it needs a triangle-graph BFS across portals and cells, and abandon-by-timeout covers the same
+failure more cheaply. The post-spawn settle check specified alongside the raycast fallback **is** implemented,
+as COMPOSE's `Settling` sub-phase — see below. Written up in
+[`navmesh-queries-in-commonlibsse-ng.md`](../engine-findings/navmesh-queries-in-commonlibsse-ng.md).
+
+One assumption inside that gate is still unverified: vertex coordinates are taken to be world-space. If they are
+actually cell-local, the symptom is unmistakable — the spawn search logs `noNavmesh=16` at every radius and no
+ambush ever spawns.
+
+### Test 2: alias fills timed out — reference arguments don't survive the VM dispatch
+
+With leveled resolution fixed, the spawn succeeded and every alias fill failed: `0/3 attacker aliases filled
+after 20 ticks`, `failure_reason='alias_fill_timeout'`. The plugin log had nothing else to say, because
+`VMDispatchOnQuest` is fire-and-forget and returns true for *queued*, not for *succeeded*. The cause was only
+visible in `Papyrus.0.log`:
+
+```text
+Error: alias Attacker01 on quest _ne_AmbushQuest (FE0E7831):
+       Cannot force the alias's reference to a None reference.
+```
+
+Passing the spawned `TESObjectREFR*` directly into `MakeFunctionArguments` produces an argument that is **not
+`None`** on the script side but **unpacks to null** inside `ForceRefTo`'s native — so the script's own
+`akRef == None` guard passed and the native failed on the next line. `FillAttackerSlot` now takes an `int`
+FormID and resolves it itself via SKSE's `Game.GetFormEx` (not `Game.GetForm` — dynamically-created references
+live at `0xFF......` and need the full 32-bit range). That removes the handle-packing step and moves resolution
+to VM-execution time. Written up under `docs/engine-findings/` as `passing-references-to-papyrus-from-cpp.md`.
+
+Note this needed **no Creation Kit work**: `.psc` files compile through `build.ps1` via `PapyrusCompiler.exe`,
+and a function's parameter types aren't recorded in the quest's VMAD — only the script name and its properties
+are, and neither changed.
+
+A `spawned slot N ref=… base=… '<EditorID>'` line was added at the creation site, so the C++ side now records
+what it handed over independently of whether the VM does anything with it.
+
+### Test 4: it worked, then ate the corpses
+
+The fourth run spawned three bandits, fought them, and completed correctly — and every body vanished the moment
+the beat cleaned up, so there was nothing to loot.
+
+Worth recording that this was **not** a stray delete. `DeleteCreatedRefs` skips dead actors, and the log proves
+the guard held: it only logs when it actually deleted something, and the successful run's cleanup emitted the
+cooldown line with no deletion line at all. The corpses were reaped by the engine as a consequence of
+`Stop()` / `Reset()` releasing the aliases — the same alias-held persistence the original cleanup ordering
+relied on for its "delete before stopping" rule. Leaving corpses and resetting the quest were mutually
+exclusive as written.
+
+Fixed by deferring the quest teardown to the next dispatch — see **Cleanup ordering** above for the full shape.
+
+### Test 5: three encounters, and the beat freezing itself out of its own fight
+
+Three encounters in three holds all worked end to end (bandits at Embershard, Forsworn in the Reach, vampires in
+Haafingar). Three defects surfaced, and two of them turned out to be the same defect.
+
+**Attackers arriving late and scattered — one root cause.** `Tick` froze on any non-`Normal` `TickMode`,
+matching the social beats. But an ambush *creates* combat, so the beat's own spawn flipped the mode within a
+second and froze its own COMPOSE mid-flight: 31 seconds in the Forsworn encounter, **59** in the vampire one.
+Throughout that window the attackers existed but were unarmed — carrying their base aggression and running
+their own combat AI instead of the approach package. That is both "they didn't come at me" and "they were
+spread out", from a single cause.
+
+`AmbushBeat::Tick` now freezes **only** on `Paused`. Combat and Dialogue proceed: once references exist in the
+world, half-built state is worse than finishing setup at an awkward moment. This is a deliberate divergence
+from the letter and visit beats, which are social beats where pausing for combat is correct.
+
+Aggression is now also zeroed at **spawn** rather than at `Arming`, closing the window where a freshly-created
+attacker fights on its own initiative. `Arming` re-applies it; doing it twice costs nothing.
+
+**Spawning in water.** Skyrim's navmesh covers plenty of lake and river bed, so containment happily accepted a
+spot under water and the attacker spawned swimming. There is now a water gate in the search, plus `IsInWater()`
+folded into the post-spawn settle check as positive evidence.
+
+Worth recording the API choice: `TESObjectCELL::GetWaterHeight` returns a **bool** for whether water exists at
+all, while the `TES`-level overload returns a bare float with a sentinel for "no water". Using the latter would
+have been a trap — plenty of Skyrim terrain sits at large negative Z (the vampire encounter's winning point was
+at `z = -14020`), so a misread sentinel would have rejected every candidate in low-lying areas.
+
+**Cluster spread.** `kClusterRadiusUnits` reduced 220 → 150. Note this was probably the *smaller* contributor:
+most of the observed scatter is explained by the 31-59 second unarmed window above, during which the attackers
+wandered under their own AI. Worth re-judging after a run with the freeze fixed.
+
+### Test 6: the Director should never have had a say in spawn distance
+
+`spawn_distance_units` was offered to the Director as an optional parameter. It returned 256, 128, and 256
+across three encounters — two to four metres, i.e. materializing on top of the player. `ClampParameterInt`
+raised each to the `iAmbushMinSpawnDistanceUnits` floor, so the parameter's only real effect was to override
+the configured default of 2000 with the minimum of 1500 on every single dispatch. A knob whose entire
+observable behavior was "always pick the worst legal value" is worse than no knob.
+
+Removed: `OnStart` reads `iAmbushDefaultSpawnDistanceUnits` directly, `Description()` simply no longer lists
+the parameter, and a stray `spawn_distance_units` in a response is ignored with a debug line so prompt drift
+stays visible.
+
+The prompt says nothing about the removal, deliberately. An initial version added "do not send any others — in
+particular, where the attackers appear is not yours to choose", which is worse than silence: it spends tokens
+describing a capability the schema never offered, and names the exact thing you don't want the model reaching
+for. The right way to withhold an option from an LLM is to not list it.
+
+The general lesson is worth keeping: an LLM parameter is only worth offering when the model has information the
+code doesn't. It knows who should attack and roughly how many, because those are narrative judgements grounded
+in the context it was given. It knows nothing about terrain, sightlines, or what 128 game units looks like.
+
+### Test 7: spawn placement reprioritised
+
+The original ranking preferred the **rear** hemisphere, on the theory that attackers should come from behind.
+In play that reads wrong: the player never sees them coming, and an encounter that materialises at your back is
+harder to distinguish from a bug than from an ambush. Reversed — the forward arc (ahead through square to
+either side) is now the preferred placement, with the rear kept as an explicit fallback.
+
+Three coupled changes:
+
+- **Ranking** sorts forward-arc before rear, then by distance closeness. No preference *within* the forward
+  arc: dead ahead and perpendicular are equally good.
+- **Early exit** now requires a *forward* hit. Previously the search stopped at the first radius yielding any
+  survivor, which under the new ordering would frequently lock in a rear fallback while a wider ring had cover
+  in front. Survivors accumulate across radii so nothing is wasted.
+- **Band widened** to 2000–5000 (from 1500–3500), with every radius clamped into it and the multiplier ladder
+  extended to ×2 and ×2.5 to actually reach the top of the band. The narrowing ×0.75 step was dropped: with the
+  minimum as a hard floor it only ever clamped back onto the first ring.
+
+Knock-on: `iAmbushAbandonDistanceUnits` raised 6000 → 8000. At the old value an encounter spawning at the far
+end of the new band would have had just 1000 units of slack and could abandon itself as soon as the player kept
+walking.
+
+The visibility gate is doing much more work under this ordering — positions in front of the player are usually
+in view, so "in front but hidden" is a genuinely scarce combination. Expect a higher share of `visible=` in the
+gate tally, and expect the rear fallback to be exercised in open terrain with no cover.
+
+### Test 8: attackers spawning in plain view
+
+Bandits spawned fully exposed in a spot that had usable cover available. The gate tally is the tell:
+
+```text
+sampled=32 noCell=0 interior=0 noGround=0 underwater=5 noNavmesh=15 visible=4 survived=8
+```
+
+Only 4 of the 12 candidates that reached the visibility gate were rejected. Eight passed as "hidden" while
+standing in the open, so the gate was answering the wrong question rather than answering it too leniently.
+
+Three causes, fixed together:
+
+1. **`bhkPickData::rayInput.filterInfo` was left at its default `0`** (`kUnidentified`). The ray collided by
+   whatever rules layer 0 carries instead of the sight rules, producing spurious blocked results — a spurious
+   block reads as cover. Now set to `COL_LAYER::kLOS`. This is the likeliest primary cause, and it also
+   silently affected `IsAnyPartVisibleFromCamera`, where the `HasLineOfSight` positive short-circuit had been
+   masking it.
+2. **A single vertical column of three rays** was too thin a sample to establish cover for a body, let alone a
+   group. Replaced with a nine-ray silhouette widened to the cluster radius — see **The cover gate** above.
+3. **Angular resolution too coarse to find cover.** At 2500 units, 16 spokes leave ~980 units of arc between
+   samples while a boulder's shadow is a few hundred wide, so the search stepped over usable pockets. Raised
+   to 32.
+
+The old `IsPositionVisibleFromCamera` is gone rather than left alongside; it had exactly one caller and its
+fail-toward-"hidden" direction was wrong for that caller.
+
+**A cover-less fallback tier was added immediately afterwards.** The first cut of this change made an open
+plain produce `survived=0` and a clean `no_spawn_point` failure — correct by the letter of "must be behind
+cover", wrong in practice, because it meant whole regions where ambushes could never happen at all. Tier 3
+above closes that: uncovered points are retained rather than discarded, and used only when nothing covered
+exists anywhere. See **Spawn point selection**.
+
+### Post-test hardening
+
+The first in-game test exposed three diagnostic and control-flow holes that, together, turned a hard failure
+into a run that logged nothing but success lines. All three are fixed, and they generalize past this phase:
+
+- **The per-slot fill diagnostic was gated on the thing it was diagnosing.** It was written as
+  `if (auto* actor = AttackerInSlot(i)) { log(...); }`, so when the Actor cast failed — the exact case that went
+  wrong — it printed nothing. It now logs every filled slot unconditionally, reporting the raw ref, the base
+  FormID, the base's `GetFormType()`, and an explicit `isActor` flag.
+- **`Arming` logged the intended count rather than the achieved one.** `armed {expected}` was printed by a
+  compose that armed zero attackers. It now reports `armed {n} of {expected}`, fails with `nothing_armed` when
+  `n == 0`, and narrows `g_activeCount` to what it actually armed.
+- **The settle check read "found nothing to check" as "nothing wrong."** `checked == 0` with `expected > 0` now
+  fails with `no_attacker_resolved` instead of falling through to `Arming`.
+
+`VerifyingFill` additionally hard-fails with `spawned_ref_not_actor` when slots are filled with references that
+aren't actors, rather than letting a non-actor roster reach RUNNING.
+
+### Arrivals beyond the numbered plan
+
+- **A `Settling` COMPOSE sub-phase**, between `VerifyingFill` and `Arming`. The design put the post-spawn settle
+  check in Step 5 as half of the raycast fallback; it is worth keeping even though navmesh containment replaced
+  the raycast, because containment answers a question about a *point* and this answers one about an *actor*.
+  After the aliases fill, the beat waits `kSettleWaitSeconds` (1.5 s, accumulated from the tick argument, never
+  a timer of its own) and then compares each attacker's resting position against the position it was created at.
+  More than `kMaxSettleDriftUnits` (300) of vertical drift, or a resting position that fails `IsOnNavmesh`,
+  counts as unsettled — that is the actor that fell through the world, slid off a ledge the containment test
+  couldn't see, or was ejected out of a rock.
+  Unsettled attackers are relocated **once**, onto the search winner's position (the best-validated point we
+  have), then re-checked after another settle window. The retry is latched so a position that keeps reading
+  unsettled can't loop COMPOSE. After the retry, a *partial* failure proceeds to `Arming` with a warning — those
+  actors are standing on the winning point, which passed every gate, so the check is likelier wrong than the
+  ground is — while a *total* failure fails COMPOSE with `settle_failed`, since nobody settling anywhere is a
+  systematic signal rather than bad luck.
+  One API note worth keeping: `Actor` overrides `TESObjectREFR::SetPosition` with a second
+  `a_updateCharController` parameter. It must be `true`, or the character controller stays behind and the actor
+  walks back to where it was.
+- **`CameraVisibility::IsPositionVisibleFromCamera(worldPos, probeHeightUnits)`** — a new overload. Step 4
+  specified `IsAnyPartVisibleFromCamera` for the visibility gate, but that takes a `TESObjectREFR*` and the spawn
+  search evaluates candidate positions *before* anything exists at them. The new overload probes a three-point
+  vertical column (feet / torso / head) at the bare position instead of walking a skeleton, and shares the
+  existing camera resolution and raycast helpers.
+- **`AmbushAttackerGroups::EligibleGroupSummaries(MainThread::Token)`** — a plain-data flattening of the eligible
+  set, added because `BuildBeatSelectPromptContext` runs on the *plugin* thread while eligibility evaluation is
+  main-thread. Returning `{id, displayName, flavor}` strings rather than `const Group*` keeps engine-owned
+  pointers from escaping to a worker thread, per `docs/THREADING_MODEL.md`.
+- **The ambush menu is gathered inside `FireBeatSelectLLM`**, not in `BuildBeatSelectPrep` as the letter and
+  visit collectors are. `FireBeatSelectLLM` already holds a `PluginThread::Token`, so one `MainThread::Run` there
+  serves both `ConsiderBeat` and `ForceDispatchBeat`; collecting in the prep would have meant duplicating the
+  marshalling, since `ForceDispatchBeat` takes no token at all.
+- **`RequireGlobal` repeats AND rather than OR.** The design doc states this, but it is worth restating as the
+  one exception to "repeating a key ORs its values": every other key names an entity on a single shared
+  dimension, so repeats are alternatives, while each `RequireGlobal` is a whole predicate over a *different*
+  variable. `Forbid*` keys are "none of these may match" regardless.
+- **Additional settings clamps.** Beyond the specified attacker-count ceiling, `ReadIniInto` now also orders the
+  min/default/max triples for both count and distance, and raises `iAmbushAbandonDistanceUnits` above
+  `iAmbushMaxSpawnDistanceUnits` when a hand-edited INI inverts them — otherwise an ambush abandons itself on the
+  tick after it spawns.

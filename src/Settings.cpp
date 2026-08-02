@@ -385,6 +385,82 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("Beats", "iVisitReturnHomeExitDistanceUnits", dst.visitReturnHomeExitDistanceUnits));
             dst.visitReturnHomeTimeoutSeconds = static_cast<int>(
                 ini.GetLongValue("Beats", "iVisitReturnHomeTimeoutSeconds", dst.visitReturnHomeTimeoutSeconds));
+
+            // --- AmbushBeat ---
+
+            dst.enableAmbush = ini.GetBoolValue("Beats", "bEnableAmbush", dst.enableAmbush);
+
+            dst.ambushDefaultAttackerCount = static_cast<int>(
+                ini.GetLongValue("Beats", "iAmbushDefaultAttackerCount", dst.ambushDefaultAttackerCount));
+            dst.ambushMinAttackerCount =
+                static_cast<int>(ini.GetLongValue("Beats", "iAmbushMinAttackerCount", dst.ambushMinAttackerCount));
+            dst.ambushMaxAttackerCount =
+                static_cast<int>(ini.GetLongValue("Beats", "iAmbushMaxAttackerCount", dst.ambushMaxAttackerCount));
+
+            dst.ambushDefaultSpawnDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iAmbushDefaultSpawnDistanceUnits", dst.ambushDefaultSpawnDistanceUnits));
+            dst.ambushMinSpawnDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iAmbushMinSpawnDistanceUnits", dst.ambushMinSpawnDistanceUnits));
+            dst.ambushMaxSpawnDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iAmbushMaxSpawnDistanceUnits", dst.ambushMaxSpawnDistanceUnits));
+
+            dst.ambushEngageDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iAmbushEngageDistanceUnits", dst.ambushEngageDistanceUnits));
+            dst.ambushAbandonDistanceUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iAmbushAbandonDistanceUnits", dst.ambushAbandonDistanceUnits));
+            dst.ambushMaxDurationSeconds =
+                static_cast<int>(ini.GetLongValue("Beats", "iAmbushMaxDurationSeconds", dst.ambushMaxDurationSeconds));
+            dst.ambushPerBeatCooldownGameHours = static_cast<int>(
+                ini.GetLongValue("Beats", "iAmbushPerBeatCooldownGameHours", dst.ambushPerBeatCooldownGameHours));
+
+            // Ambush clamps, applied on the read path rather than at use
+            // sites so every consumer sees a coherent range (the same
+            // discipline the compose-cap floors above follow).
+            //
+            // The attacker-count ceiling is the load-bearing one: eight
+            // Attacker0N aliases exist on _ne_AmbushQuest, so a request
+            // for nine has nowhere to go. Clamp to the authored slot
+            // count and shout, because an INI asking for more than the
+            // ESP can hold is an author error worth seeing.
+            if (dst.ambushMaxAttackerCount > kAmbushAttackerSlotCount) {
+                logger::warn("Settings: iAmbushMaxAttackerCount={} exceeds the {} authored attacker "
+                             "alias slots on _ne_AmbushQuest; clamping to {}.",
+                             dst.ambushMaxAttackerCount,
+                             kAmbushAttackerSlotCount,
+                             kAmbushAttackerSlotCount);
+                dst.ambushMaxAttackerCount = kAmbushAttackerSlotCount;
+            }
+            if (dst.ambushMinAttackerCount < 1)
+                dst.ambushMinAttackerCount = 1;
+            if (dst.ambushMaxAttackerCount < dst.ambushMinAttackerCount)
+                dst.ambushMaxAttackerCount = dst.ambushMinAttackerCount;
+            if (dst.ambushDefaultAttackerCount < dst.ambushMinAttackerCount)
+                dst.ambushDefaultAttackerCount = dst.ambushMinAttackerCount;
+            if (dst.ambushDefaultAttackerCount > dst.ambushMaxAttackerCount)
+                dst.ambushDefaultAttackerCount = dst.ambushMaxAttackerCount;
+
+            // Distance band. A zero or negative floor would let the
+            // spawn search place attackers on top of the player, which
+            // reads as a teleport rather than an ambush.
+            if (dst.ambushMinSpawnDistanceUnits < 1)
+                dst.ambushMinSpawnDistanceUnits = 1;
+            if (dst.ambushMaxSpawnDistanceUnits < dst.ambushMinSpawnDistanceUnits)
+                dst.ambushMaxSpawnDistanceUnits = dst.ambushMinSpawnDistanceUnits;
+            if (dst.ambushDefaultSpawnDistanceUnits < dst.ambushMinSpawnDistanceUnits)
+                dst.ambushDefaultSpawnDistanceUnits = dst.ambushMinSpawnDistanceUnits;
+            if (dst.ambushDefaultSpawnDistanceUnits > dst.ambushMaxSpawnDistanceUnits)
+                dst.ambushDefaultSpawnDistanceUnits = dst.ambushMaxSpawnDistanceUnits;
+
+            // Abandon distance below the spawn distance would abandon the
+            // beat on the tick after it spawns.
+            if (dst.ambushAbandonDistanceUnits <= dst.ambushMaxSpawnDistanceUnits)
+                dst.ambushAbandonDistanceUnits = dst.ambushMaxSpawnDistanceUnits + 1;
+            if (dst.ambushEngageDistanceUnits < 1)
+                dst.ambushEngageDistanceUnits = 1;
+            if (dst.ambushMaxDurationSeconds < 1)
+                dst.ambushMaxDurationSeconds = 1;
+            if (dst.ambushPerBeatCooldownGameHours < 0)
+                dst.ambushPerBeatCooldownGameHours = 0;
         }
     } // namespace
 

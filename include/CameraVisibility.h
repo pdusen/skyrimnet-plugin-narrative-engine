@@ -58,4 +58,29 @@ namespace NarrativeEngine::CameraVisibility
     // caller's other checks (distance floor, timeout backstop)
     // ensure the visit still resolves.
     bool IsAnyPartVisibleFromCamera(RE::TESObjectREFR* target);
+
+    // "Is a group standing here solidly behind cover, right now?"
+    //
+    // Asked of a bare world position rather than a reference, because
+    // AmbushSpawnPoints has to judge a spawn point BEFORE anything
+    // exists there. Deliberately a stricter and differently-shaped
+    // question than IsAnyPartVisibleFromCamera:
+    //
+    //   * It samples a SILHOUETTE — a grid across the body's width and
+    //     height, laterally offset perpendicular to the view — rather
+    //     than one vertical line. A line down the centre can be blocked
+    //     by a fencepost while the body is plainly visible either side.
+    //   * `coverRadiusUnits` widens that silhouette to cover the whole
+    //     spawn cluster, not just its centre point, so one attacker
+    //     isn't left standing in the open beside a hidden group.
+    //   * Every ray must be blocked. Any single clear line means the
+    //     player can see the spot and it is rejected.
+    //   * It fails toward NOT covered. If the camera can't be resolved
+    //     or the pick can't run, the answer is "no cover" — the
+    //     opposite of IsAnyPartVisibleFromCamera's fail direction,
+    //     because here a wrong "yes" is what lets the player watch
+    //     attackers materialize in front of them.
+    //
+    // `bodyHeightUnits` is a nominal humanoid height (~128u).
+    bool IsPositionBehindCover(const RE::NiPoint3& worldPos, float bodyHeightUnits, float coverRadiusUnits);
 } // namespace NarrativeEngine::CameraVisibility

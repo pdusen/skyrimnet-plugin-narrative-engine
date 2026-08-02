@@ -22,13 +22,24 @@ ReferenceAlias Property PlayerRef  Auto
 ; CommonLibSSE-NG binding. Everything else this beat needs is native C++.
 
 ; ReferenceAlias.ForceRefTo has no native binding.
-Function FillAttackerSlot(int aiIndex, ObjectReference akRef)
+;
+; Takes a FormID rather than an ObjectReference because a reference
+; passed from C++ arrives non-None but unpacks to null inside ForceRefTo.
+; Game.GetFormEx (SKSE) rather than Game.GetForm: dynamically-created
+; references live at 0xFF...... and need the full 32-bit range.
+Function FillAttackerSlot(int aiIndex, int aiFormID)
     ReferenceAlias slot = GetAttackerSlot(aiIndex)
-    if slot == None || akRef == None
+    if slot == None
         Debug.Trace("[_ne_AmbushQuest] FillAttackerSlot: bad index " + aiIndex)
         return
     endif
+    ObjectReference akRef = Game.GetFormEx(aiFormID) as ObjectReference
+    if akRef == None
+        Debug.Trace("[_ne_AmbushQuest] FillAttackerSlot: slot " + aiIndex + " form " + aiFormID + " did not resolve to an ObjectReference")
+        return
+    endif
     slot.ForceRefTo(akRef)
+    Debug.Trace("[_ne_AmbushQuest] FillAttackerSlot: slot " + aiIndex + " forced to " + akRef)
 EndFunction
 
 ; Actor.StartCombat has no native binding.
@@ -43,6 +54,19 @@ Function EngageAttacker(int aiIndex)
         return
     endif
     attacker.StartCombat(player)
+EndFunction
+
+; SkyrimNetApi.RegisterPersistentEvent has no native binding.
+;
+; Records the encounter in SkyrimNet's event log without prompting
+; anyone to speak — same shape as _ne_VisitQuest's silent scene event.
+; Attributed to the lead attacker so the memory system associates it
+; with whoever actually jumped the player.
+Function RunAmbushNarration(String content)
+    Actor originator = Attacker01.GetActorReference()
+    Actor player = PlayerRef.GetActorReference()
+    int result = SkyrimNetApi.RegisterPersistentEvent(content, originator, player)
+    Debug.Trace("[_ne_AmbushQuest] RunAmbushNarration: RegisterPersistentEvent returned " + result)
 EndFunction
 
 ReferenceAlias Function GetAttackerSlot(int aiIndex)

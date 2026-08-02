@@ -56,6 +56,11 @@ before or after the object.
 **{{ desired_direction }}** tension by approximately {{ tension_delta }}/100.
 
 ## Where the player is
+{% if length(player_context.player_name) > 0 -%}
+- Name: **{{ player_context.player_name }}** — refer to the player by this
+  name in any in-fiction prose you write, never as "the player" or an
+  epithet like "the intruder".
+{% endif -%}
 {% if length(player_context.location_name) > 0 -%}
 - Location: {{ player_context.location_name }}
 {% endif -%}
@@ -109,6 +114,23 @@ needs to land face-to-face.
             {%- for mem in s.memories %}
 - [{{ mem.type }}, {{ mem.age_hours }}h ago{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
             {%- endfor %}
+        {% endfor -%}
+    {% endif %}
+    {%- if length(cand.ambush_attacker_candidates) > 0 %}
+#### Eligible attacker groups
+
+If you pick this action, choose ONE group below and include its `id` as
+`attacker_group` inside `parameters`. You MUST use one of these exact
+ids — this list is already filtered to the groups that make sense for
+where the player is and what they have done, so anything else will be
+rejected.
+
+Pick the group whose presence the current moment best explains. A group
+with a specific grievance against this player is nearly always a better
+story than generic opportunists.
+
+        {%- for g in cand.ambush_attacker_candidates %}
+- `{{ g.id }}` — **{{ g.display_name }}**: {{ g.flavor }}
         {% endfor -%}
     {% endif %}
 {% endfor -%}
