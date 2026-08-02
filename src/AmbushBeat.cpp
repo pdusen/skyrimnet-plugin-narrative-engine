@@ -55,11 +55,11 @@ namespace NarrativeEngine
         // beat only needs to look every few seconds.
         constexpr double kRunningPollSeconds = 5.0;
 
-        // The engage check runs far tighter than that, because at a run
-        // an attacker covers well over a thousand units in five seconds
-        // — sampled on the completion cadence, the first look that sees
-        // them inside the engage radius routinely has them on top of the
-        // player already. Costs nothing once the group has engaged.
+        // The engage check runs far tighter than that: at a run an
+        // attacker covers well over a thousand units in five seconds, so
+        // sampling on the completion cadence would first notice them
+        // inside the engage radius when they are already on top of the
+        // player. Costs nothing once the group has engaged.
         constexpr double kEngageCheckSeconds = 0.5;
 
         // Ticks VerifyingFill waits for the VM to run the queued
@@ -232,8 +232,8 @@ namespace NarrativeEngine
         }
 
         // Every COMPOSE failure funnels through here so the log always
-        // names a specific cause. "The ambush didn't happen" with no
-        // reason attached is the diagnostic hole the old beat had.
+        // names a specific cause — "the ambush didn't happen" with no
+        // reason attached is not a diagnosable report.
         TickResult FailCompose(std::string_view failureReason)
         {
             logger::warn("AmbushBeat: COMPOSE failed — failure_reason='{}'", failureReason);
@@ -918,7 +918,6 @@ namespace NarrativeEngine
                     return n;
                 });
 
-                // Report what was actually armed, not what was hoped for.
                 if (armed == 0) {
                     MainThread::Run(pt, [](const MainThread::Token&) {
                         DeleteCreatedRefs("nothing armed");
@@ -970,10 +969,9 @@ namespace NarrativeEngine
         // with the player.
         //
         // Whole-group rather than per-attacker because the group arrives
-        // strung out. Waiting for each member's own crossing meant the
-        // stragglers approached a fight that had already started, and the
-        // player's combat state hung on whichever single attacker
-        // happened to be in front.
+        // strung out. On each member's own crossing, stragglers would
+        // approach a fight that had already started and the player's
+        // combat state would hang on whichever attacker was in front.
         //
         // The scan runs here on the plugin thread — alias reads,
         // GetPosition and IsDead are all off-main-safe per
@@ -1028,13 +1026,11 @@ namespace NarrativeEngine
         {
             const auto& cfg = Settings::Get();
 
-            // Stale-state self-validation, once per load. The new beat
-            // registers under the same name the old one used, so
-            // BeatSystem::OnLoad's "unknown beat -> reset to idle"
-            // recovery no longer fires for it: a tester updating from
-            // the pre-removal build can restore BEAT_RUNNING/RUNNING
-            // with no world state behind it. This is also the recovery
-            // path after a crash or a forced abort.
+            // Stale-state self-validation, once per load. BeatSystem's
+            // "unknown beat -> reset to idle" recovery does not fire for
+            // a beat that is still registered, so a cosave can restore
+            // BEAT_RUNNING/RUNNING with no world state behind it. This
+            // is also the recovery path after a crash or a forced abort.
             if (!g_staleCheckDone.exchange(true, std::memory_order_acq_rel)) {
                 const bool sane = MainThread::Run(pt, [](const MainThread::Token&) {
                     if (!g_ambushQuest || g_ambushQuest->GetCurrentStageID() != kStageEngaged) {
@@ -1084,9 +1080,8 @@ namespace NarrativeEngine
                 }
             }
 
-            // Tick-driven accumulator, per feedback_tick_driven_accumulators:
-            // no wall-clock timer of this beat's own. The master poll's
-            // interval is the unit of time here.
+            // Tick-driven accumulator: no wall-clock timer of this beat's
+            // own. The master poll's interval is the unit of time here.
             const double pollInterval = static_cast<double>(Settings::Get().beatSystemPollIntervalMs) / 1000.0;
             const double elapsed =
                 g_runningElapsedSeconds.fetch_add(pollInterval, std::memory_order_acq_rel) + pollInterval;
@@ -1117,10 +1112,10 @@ namespace NarrativeEngine
             }
 
             // Escort clock advances every tick, ahead of the completion
-            // poll's gate, so its cadence is StuckRecovery's setting
-            // rather than a side effect of this beat's much slower poll
-            // interval. The clock itself is plugin-thread arithmetic —
-            // only the check that it gates costs a main-thread hop.
+            // poll's gate, so its cadence is StuckRecovery's own setting
+            // and not a multiple of this beat's much slower poll. The
+            // clock is plugin-thread arithmetic — only the check it
+            // gates costs a main-thread hop.
             StuckRecovery::Options escortOpts;
             escortOpts.movementThresholdUnits = static_cast<float>(cfg.stuckRecoveryMovementThresholdUnits);
             escortOpts.checkIntervalSeconds = static_cast<double>(cfg.stuckRecoveryCheckIntervalSeconds);
@@ -1137,9 +1132,8 @@ namespace NarrativeEngine
                         if (!actor || actor->IsDead()) {
                             continue;
                         }
-                        // The player is the goal — it is what every
-                        // attacker is walking toward. StuckRecovery logs
-                        // each warp itself, so nothing is counted here.
+                        // StuckRecovery logs each warp itself, so
+                        // nothing is counted here.
                         g_escort.Update(mt, actor, playerPos, escortOpts);
                     }
                     return 0;
@@ -1310,9 +1304,9 @@ namespace NarrativeEngine
         // runs before candidates are gathered — so by the time this is
         // reached, an in-flight stage can only be LEFTOVER: the player
         // died mid-encounter and reloaded a save from before it, or the
-        // session crashed. Treating that as busy made the beat
-        // permanently unavailable for the rest of the session, because
-        // nothing outside COMPOSE ever winds the stage back. COMPOSE's
+        // session crashed. Treating that as busy would make the beat
+        // permanently unavailable for the rest of the session, since
+        // nothing outside COMPOSE winds the stage back. COMPOSE's
         // StartingQuest opens with RetireQuest for exactly this case.
         if (Settings::Get().debugMode) {
             if (const auto stage = g_ambushQuest->GetCurrentStageID();

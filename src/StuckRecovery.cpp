@@ -39,15 +39,12 @@ namespace NarrativeEngine::StuckRecovery
         constexpr int kCloseInNudgeAzimuths = 6;
 
         // Extra height added to a close-in destination, on top of the
-        // ground clearance IsStandable already applies.
-        //
-        // Close-in steps land on a bare line toward the goal, chosen
-        // without any of the vetting the fallback positions had, so they
-        // are the likeliest of all our placements to sit inside a rock
-        // or a tree trunk. Dropping the actor from above it instead
-        // lets physics settle it ON the obstruction; being briefly
-        // airborne is recoverable, being inside geometry is what we are
-        // trying to escape.
+        // ground clearance IsStandable already applies. Close-in steps
+        // land on a bare line toward the goal with none of the vetting
+        // the fallbacks had, so they are the likeliest of our placements
+        // to sit inside a rock or a tree trunk. Being briefly airborne
+        // is recoverable; being inside geometry is what we are trying to
+        // escape.
         constexpr float kCloseInLiftUnits = 100.0f;
 
         constexpr float kPi = 3.14159265358979323846f;
@@ -87,7 +84,6 @@ namespace NarrativeEngine::StuckRecovery
             if (u < 0.0f || v < 0.0f || (u + v) > 1.0f) {
                 return false;
             }
-            // Barycentric interpolation of the vertex heights.
             zOut = a.z + u * (c.z - a.z) + v * (b.z - a.z);
             return true;
         }
@@ -300,9 +296,8 @@ namespace NarrativeEngine::StuckRecovery
         const float goalDist = pos.GetDistance(goal);
 
         // Fighting. Not our business at any range — see the header. The
-        // baseline is still advanced so that if combat ends and the
-        // actor goes back to travelling, the next check measures from
-        // where it actually is.
+        // baseline is still advanced so that if combat ends, the next
+        // check measures from where the actor actually is.
         if (actor->IsInCombat()) {
             track.lastPos = pos;
             outcome.action = Action::Moving;
@@ -333,9 +328,7 @@ namespace NarrativeEngine::StuckRecovery
             return outcome;
         }
 
-        // Step 1 — the caller's unused-but-validated positions. These
-        // are the good option: vetted by a real spawn search and far
-        // enough away to be genuinely different terrain.
+        // Step 1 — the caller's unused-but-validated positions.
         if (m_nextFallback < m_fallbacks.size()) {
             const auto dest = m_fallbacks[m_nextFallback++];
             WarpTo(token, actor, dest);

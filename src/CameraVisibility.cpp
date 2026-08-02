@@ -159,10 +159,10 @@ namespace NarrativeEngine::CameraVisibility
             RE::bhkPickData pd;
             pd.rayInput.from = RE::hkVector4(from.x * scale, from.y * scale, from.z * scale, 0.0f);
             pd.rayInput.to = RE::hkVector4(to.x * scale, to.y * scale, to.z * scale, 0.0f);
-            // Cast on the engine's own line-of-sight layer. Left at the
+            // Cast on the engine's own line-of-sight layer. At the
             // default 0 (kUnidentified) the ray collides by whatever
-            // rules layer 0 happens to carry, which is not the question
-            // being asked and produced spurious "blocked" results.
+            // rules layer 0 carries, which is not the question being
+            // asked and yields spurious "blocked" results.
             pd.rayInput.filterInfo = static_cast<std::uint32_t>(RE::COL_LAYER::kLOS);
             // Default rayOutput fields are initialized to "no hit"
             // (rootCollidable=nullptr, hitFraction=1.0). We rely on

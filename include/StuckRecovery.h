@@ -18,28 +18,15 @@
 // leave the actor unable to travel: the search validates a POSITION,
 // while the engine moves a COLLISION CAPSULE along a route, and the two
 // diverge wherever geometry the navmesh nominally covers can't actually
-// be walked. Observed failures include an attacker embedded in a
-// boulder with its head poking out, and a whole group beached on a
-// shallow waterfall — neither of which the spawn search could have
-// predicted, and neither of which ever reached the player.
+// be walked.
 //
-// == Why this replaced a local-search approach ==
-//
-// The first version tried to reason its way out: detect off-navmesh or
-// no-progress, then hunt for a nearby valid spot and nudge the actor
-// onto it. It failed in practice for a reason worth recording. "Valid
-// ground near an actor stuck in bad terrain" is overwhelmingly MORE BAD
-// TERRAIN — the search kept finding technically-standable spots a body
-// width away, inside the same feature, and the actor stayed stuck. No
-// amount of widening the local search fixed that, because the premise
-// was wrong: proximity to a trap is not a useful criterion.
-//
-// This version doesn't search. The caller already ran a real spawn
-// search and validated more positions than it used, so recovery just
-// works down that list. Those runner-up positions were vetted by the
-// same gates as the winner and are far enough away to be genuinely
-// different terrain, which is exactly the property local search
-// couldn't provide.
+// This module does not search for a way out. Hunting for valid ground
+// near a stuck actor is a trap of its own: "valid ground near bad
+// terrain" is overwhelmingly more of the same bad terrain, a body width
+// away and inside the same feature. Proximity to a trap is not a useful
+// criterion. Instead the caller hands over the runner-up positions its
+// spawn search already validated — vetted by the same gates as the
+// winner, and far enough off to be genuinely different ground.
 //
 // == The escalation ==
 //
@@ -58,40 +45,31 @@
 //      Report it and stop — there is nowhere left to put it that isn't
 //      on top of the player.
 //
-// Actors within `arrivedDistanceUnits` of the goal are never touched.
-// They have got where they were going, and standing still at that range
-// means fighting, not stuck.
-//
-// Neither is an actor IN COMBAT, at any range. This is the load-bearing
-// exclusion. Combat AI does not walk in straight lines: it circles,
+// Actors within `arrivedDistanceUnits` of the goal are never touched,
+// and neither is one IN COMBAT, at any range. That second exclusion is
+// load-bearing. Combat AI does not walk in straight lines: it circles,
 // holds position to shoot, backs off, and — when its target is too far
-// away to perceive — searches, which looks exactly like being stuck. A
-// warp on top of that destroys whatever the combat AI was doing and the
-// actor searches again, so the next check warps it again. That loop was
-// observed in the wild: three attackers warped four times in sixteen
-// seconds, every one of them mid-fight, none of them stuck.
+// away to perceive — searches, which is indistinguishable from being
+// stuck. A warp on top of that destroys whatever the combat AI was
+// doing, so the actor searches again and the next check warps it again.
 //
-// The rule is therefore: this module supervises the WALK IN. Once an
-// actor is fighting, it belongs to the combat AI, and an attacker that
-// cannot reach the player from there is the caller's abandon timeout to
-// deal with.
+// This module therefore supervises the WALK IN only. Once an actor is
+// fighting it belongs to the combat AI, and one that still cannot reach
+// the player is the caller's abandon timeout to deal with.
 //
 // == Threading ==
 //
 // Anything that touches an actor is main thread, and says so by taking a
 // MainThread::Token. The one exception is Escort::DueForCheck, which is
 // the check CLOCK: pure arithmetic over a double, called from the
-// caller's tick on the plugin thread. Keeping it out of the main-thread
-// hop is the whole reason it is a separate call — otherwise a beat
-// ticking at 250 ms would marshal a task every tick just to find out
-// that six seconds hadn't passed yet.
+// caller's tick on the plugin thread so that waiting costs no
+// main-thread hops.
 //
 // Elapsed time is always passed in from the caller's tick accumulator;
 // this module never reads a clock.
 namespace NarrativeEngine::StuckRecovery
 {
-    // Nominal humanoid height, exported for callers sizing cover probes
-    // against the same body the spawn search assumes.
+    // Nominal humanoid height.
     inline constexpr float kActorHeightUnits = 128.0f;
 
     // Lift applied to a grounded position so an actor placed there
@@ -103,12 +81,9 @@ namespace NarrativeEngine::StuckRecovery
     {
         // Movement below this between two checks counts as stalled. Read
         // together with checkIntervalSeconds: the pair is really one
-        // setting, "slower than this counts as stopped".
-        //
-        // Callers that expose tuning should override both from config —
-        // the ambush reads iStuckRecoveryMovementThresholdUnits and
-        // iStuckRecoveryCheckIntervalSeconds. These defaults exist so
-        // the module is usable without any.
+        // setting, "slower than this counts as stopped". Callers that
+        // expose tuning override both from config; these defaults exist
+        // so the module is usable without any.
         float movementThresholdUnits = 100.0f;
 
         // Gap between position checks. Long enough that an actor which
@@ -157,9 +132,8 @@ namespace NarrativeEngine::StuckRecovery
 
     // ---- Placement primitives ---------------------------------------
     //
-    // Shared with the spawn searches: the same "can an actor stand here"
-    // question is asked of spawn candidates and of recovery positions,
-    // and one copy of the navmesh triangle walk is enough.
+    // Shared with the spawn searches, which ask the same "can an actor
+    // stand here" question of their candidates.
 
     // True when `pos` sits on navmesh — i.e. an actor placed there is on
     // ground the pathing system knows about. False when the position's
@@ -214,15 +188,8 @@ namespace NarrativeEngine::StuckRecovery
 
         // PLUGIN THREAD. Advance the check clock and report whether a
         // check is now due; callers hop to the main thread and call
-        // Update per actor only when this returns true.
-        //
-        // Split out from Update precisely so the waiting is free. The
-        // clock is one addition and one comparison against
-        // checkIntervalSeconds — no engine access, nothing that needs
-        // the main thread — and folding it into Update would have meant
-        // marshalling a main-thread task every tick just to decide not
-        // to do anything, which at a 250 ms tick is ~24 wasted hops per
-        // check.
+        // Update per actor only when this returns true. Split out from
+        // Update so that waiting costs no main-thread hops.
         //
         // One clock for the whole group rather than one per actor: a
         // warp only ever happens during a check, so an actor that was
@@ -234,7 +201,6 @@ namespace NarrativeEngine::StuckRecovery
         // so a recycled FormID can't inherit a spent fallback cursor.
         void Forget(RE::FormID actorId);
 
-        // Drop everything, including the fallback list.
         void Clear();
 
         // MAIN THREAD. Evaluate one actor and move it if it has

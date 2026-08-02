@@ -24,33 +24,26 @@ namespace NarrativeEngine::AmbushSpawnPoints
         // Radius multipliers, tried in order. Widening only — the
         // configured minimum is a hard floor, so a narrowing step would
         // just clamp back onto the first radius and re-sample the same
-        // ring. Every radius is clamped into
-        // [ambushMin.., ambushMax..] before use.
+        // ring. Every radius is clamped into [ambushMin.., ambushMax..]
+        // before use.
         //
-        // Spaced 500 units apart against the 2500-unit band floor —
-        // 2500, 3000, 3500, 4500, 5500 — rather than the round
-        // multiples they started as. The near ring answers most
-        // searches, and at the old 2000 the walk in was over in three
-        // and a half seconds, which is too fast to read as an approach
-        // and left nothing else time to work.
+        // Spaced 500 units apart against the 2500-unit band floor:
+        // 2500, 3000, 3500, 4500, 5500. Much nearer than that and the
+        // walk in is over too fast to read as an approach.
         constexpr float kRadiusMultipliers[] = {1.0f, 1.2f, 1.4f, 1.8f, 2.2f};
 
         // Azimuths sampled per ring, parallel to kRadiusMultipliers.
         //
         // Angular resolution is what decides whether the search can FIND
         // cover, and what it is looking for — the shadow behind a
-        // boulder — is a fixed width in world units, not in degrees. One
-        // azimuth count for every ring therefore over-samples the near
-        // ring and under-samples the far one: at a flat 32 the gap
-        // between samples runs 491 units at 2500 out to 1080 at 5500, wide
-        // enough by the outer rings to step straight over most cover.
-        // Scaling the count with the radius holds that gap near 400
-        // units throughout.
+        // boulder — is a fixed width in world units, not in degrees. So
+        // the count scales with the radius, holding the arc between
+        // samples near 400 units on every ring instead of letting it
+        // stretch wide enough to step over most cover on the outer ones.
         //
-        // Worst case is 240 samples against a flat 160, but only the
-        // open-plain case pays it: the search stops at the first ring
-        // yielding a covered spot in the forward arc, and ring 0 — the
-        // one that answers most searches — is unchanged at 32.
+        // Worst case is 240 samples, but only the open-plain case pays
+        // it: the search stops at the first ring that yields a covered
+        // spot in the forward arc with enough runner-ups behind it.
         constexpr int kAzimuthSamples[] = {32, 40, 48, 56, 64};
         static_assert(std::size(kAzimuthSamples) == std::size(kRadiusMultipliers));
 
@@ -62,9 +55,8 @@ namespace NarrativeEngine::AmbushSpawnPoints
         constexpr float kClusterRadiusUnits = 150.0f;
 
         // Navmesh containment, water, and ground clearance all live in
-        // StuckRecovery — the same primitives answer "can an actor stand
-        // here" for a spawn candidate and for a rescue candidate, and
-        // one copy of the navmesh triangle walk is enough.
+        // StuckRecovery, which asks the same "can an actor stand here"
+        // question of its own rescue candidates.
         using StuckRecovery::kGroundClearanceUnits;
 
         // Runner-up spawn points kept for recovery, and how far apart
@@ -80,21 +72,18 @@ namespace NarrativeEngine::AmbushSpawnPoints
         //
         // This is a REACHABILITY proxy, not an aesthetic one. The navmesh
         // gate answers containment only, so a ledge partway up a cliff is
-        // "on navmesh" and still has no walkable route down — attackers
-        // spawned there mill about until the beat abandons itself. There
-        // is no connectivity query to ask (see the module header), so the
-        // stand-in is elevation: unreachable ground is almost always a
-        // long way up or down.
+        // "on navmesh" and still has no walkable route down. With no
+        // connectivity query to ask (see the module header), elevation is
+        // the stand-in: unreachable ground is almost always a long way up
+        // or down. Symmetric, because a gorge floor is as unreachable as
+        // a ledge.
         //
-        // Absolute rather than a slope ratio. A ratio scales the vertical
-        // budget with horizontal distance, which is backwards — the outer
-        // rings would get the loosest allowance, and they are the ones
-        // most likely to reach across a valley onto something
-        // disconnected. At the band's 2500-5500 span this cap is
-        // equivalent to a slope limit of 22 degrees at the near ring and
+        // Absolute rather than a slope ratio, which would scale the
+        // vertical budget with horizontal distance — backwards, since the
+        // outer rings are the ones most likely to reach across a valley
+        // onto something disconnected. Across the 2500-5500 band this
+        // works out to a slope limit of 22 degrees at the near ring and
         // 10 at the far one.
-        //
-        // Symmetric because a gorge floor is as unreachable as a ledge.
         constexpr float kMaxElevationDeltaUnits = 1000.0f;
 
         using StuckRecovery::IsOnNavmesh;
@@ -132,9 +121,8 @@ namespace NarrativeEngine::AmbushSpawnPoints
             }
         };
 
-        // Per-search diagnostics. A failed search MUST be able to say
-        // which gate killed it — that is the single most useful log
-        // line in this beat, and without it "no ambush happened" is
+        // Per-search diagnostics, so a failed search can say which gate
+        // killed it. Without that, "no ambush happened" is
         // indistinguishable from "the Director didn't pick one".
         struct GateTally
         {
@@ -340,21 +328,16 @@ namespace NarrativeEngine::AmbushSpawnPoints
                 c.score = angleCost + distCost;
 
                 // Gate 7 — solidly behind cover. Last because it is by
-                // far the most expensive (nine Havok raycasts).
+                // far the most expensive (nine Havok raycasts). The
+                // silhouette is widened by the cluster radius so this
+                // asks whether the whole group would be hidden, not just
+                // the point at its centre.
                 //
-                // The silhouette is widened by the cluster radius, so
-                // this asks whether the whole group would be hidden,
-                // not just the point at its centre. Attackers ring out
-                // to kClusterRadiusUnits, and one of them standing
-                // clear of the rock the others are behind is the same
-                // failure as no cover at all.
-                //
-                // Failing here is NOT elimination: the point has already
-                // passed every other gate, so it is somewhere an
-                // attacker can legitimately stand. It is kept as a
-                // last-resort candidate for the open-plain case, where
-                // no cover exists anywhere and declining to spawn at all
-                // would be the worse answer.
+                // Failing here is NOT elimination. The point passed every
+                // other gate, so an attacker can legitimately stand on
+                // it; it is kept for the open-plain case, where no cover
+                // exists anywhere and declining to spawn would be the
+                // worse answer.
                 if (!CameraVisibility::IsPositionBehindCover(probe, kActorHeightUnits, kClusterRadiusUnits)) {
                     ++tally.rejectedVisible;
                     uncovered.push_back(c);
@@ -374,14 +357,13 @@ namespace NarrativeEngine::AmbushSpawnPoints
             // so nothing found so far is thrown away.
             //
             // The fallback count is the second condition because those
-            // positions are StuckRecovery's entire supply, and stopping
-            // at the first covered spot routinely left one or two — a
-            // near ring's survivors are all clustered together, so they
-            // collapse to a single option under the separation rule.
-            // Widening costs a few milliseconds and cannot cost us the
-            // winner: extra rings only ever add candidates that score
-            // WORSE than a forward one already found, so the ranking
-            // front is fixed once haveForward is true.
+            // positions are StuckRecovery's entire supply, and one ring's
+            // survivors tend to be clustered tightly enough to collapse
+            // to a single option under the separation rule. Widening
+            // costs a few milliseconds and cannot cost us the winner:
+            // extra rings only ever add candidates that score WORSE than
+            // a forward one already found, so the ranking front is fixed
+            // once haveForward is true.
             const bool haveForward =
                 std::any_of(survivors.begin(), survivors.end(), [](const Candidate& c) { return c.IsForward(); });
             if (haveForward) {
@@ -393,23 +375,6 @@ namespace NarrativeEngine::AmbushSpawnPoints
             }
         }
 
-        // Last resort: nothing covered anywhere, but standable ground
-        // exists. An open plain has no cover by definition, and refusing
-        // to spawn at all there would mean whole regions where ambushes
-        // simply never happen. Spawn anyway, as far out of the way as
-        // the terrain allows.
-        //
-        // Note this tier prefers the REAR, inverting the covered tiers'
-        // preference. Without cover, the only thing left to hide behind
-        // is the player's own back, so the ranking becomes: closest to
-        // the azimuth directly behind, then farthest away.
-        //
-        // Rings no longer share an azimuth set, so the rear-most sample
-        // of each ring lands at a slightly different angle. The spread is
-        // bounded by the coarsest ring's half-step (5.625 degrees at 32
-        // azimuths, or 0.005 of facingDot), which stays inside the
-        // comparator's 0.01 tolerance — so those samples still tie on
-        // angle and the distance key still picks the outermost.
         // Ring loop only — the clustering below adds its own per-attacker
         // navmesh checks, so the two are reported separately.
         const double searchMs = msSince(startedAt);
@@ -444,6 +409,22 @@ namespace NarrativeEngine::AmbushSpawnPoints
                          tally.sampled,
                          searchMs,
                          tally.Describe());
+            // Last resort: nothing covered anywhere, but standable ground
+            // exists. An open plain has no cover by definition, and
+            // refusing to spawn would mean whole regions where ambushes
+            // never happen.
+            //
+            // This tier prefers the REAR, inverting the covered tiers.
+            // Without cover the only thing left to hide behind is the
+            // player's own back, so the ranking is: closest to the
+            // azimuth directly behind, then farthest away.
+            //
+            // Each ring has its own azimuth count, so their rear-most
+            // samples land at slightly different angles. The spread is
+            // bounded by the coarsest ring's half-step (5.625 degrees at
+            // 32 azimuths, or 0.005 of facingDot) and so stays inside the
+            // tolerance below — those samples still tie on angle, and the
+            // distance key still picks the outermost.
             std::sort(pool.begin(), pool.end(), [](const Candidate& a, const Candidate& b) {
                 if (std::fabs(a.facingDot - b.facingDot) > 0.01f) {
                     return a.facingDot < b.facingDot; // -1 is directly behind

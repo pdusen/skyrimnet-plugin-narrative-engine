@@ -16,22 +16,9 @@
 // package, and turns hostile at short range. See
 // PHASE_11_AMBUSH_BEAT.md for the design.
 //
-// == What the previous implementation got wrong ==
+// == Why the spawned references live in aliases ==
 //
-// The old beat hung everything off a Find-Matching-Reference alias
-// (`SpawnMarker`) gated on five stacked conditions, with all six
-// attacker aliases set to "Create Reference to Object → At: SpawnMarker".
-// When SpawnMarker failed to fill — which is most of the open
-// wilderness, since it needed an approved marker type already placed
-// nearby — every attacker alias failed with it, and the beat wedged in
-// RUNNING waiting for OnDeath events from actors that were never
-// created. This version searches geometry directly and force-fills the
-// aliases from C++, so there is no fill rule left to fail.
-//
-// == Why aliases at all, then ==
-//
-// Spawned references still live in quest aliases rather than being
-// tracked by FormID in the cosave, for three reasons: alias-held
+// Rather than being tracked by FormID in the cosave: alias-held
 // references are persistent and survive cell reset; the alias carries
 // `_ne_AmbushApproach` in its PackageData so the engine instances the
 // approach package per attacker with no extra work; and cleanup is a
@@ -44,18 +31,26 @@
 // == Lifecycle ==
 //
 //   COMPOSE — sub-state machine:
+//               Start           — re-check the location
 //               SelectingPoints — resolve group + count, find spawn points
-//               StartingQuest   — EnsureQuestStarted (quest self-advances 0 → 10)
-//               Spawning        — CreateReferenceAtLocation + VM-dispatch fills
+//               StartingQuest   — retire the last encounter, EnsureQuestStarted
+//                                 (quest self-advances 0 → 10)
+//               Spawning        — PlaceObjectAtMe + VM-dispatch alias fills
 //               VerifyingFill   — read the aliases back on a LATER tick
-//               Arming          — aggression 0, EvaluatePackage, stage 10 → 20
+//               Settling        — let physics resolve, relocate anyone who
+//                                 landed badly
+//               Arming          — aggression 0, EvaluatePackage, start the
+//                                 escort, stage 10 → 20
 //             Any failure → CLEANUP with a specific failure_reason and NO
 //             cooldown stamp.
-//   RUNNING — 5 s poll. Classifies each attacker alive / dead / gone,
-//             drives the engage handoff at close range, and ends on
-//             all-dead, outrun, or timeout.
-//   CLEANUP — delete survivors (never corpses), stage 200, Stop, Reset,
-//             stamp the cooldown only if COMPOSE actually succeeded.
+//   RUNNING — the engage handoff at close range, escort checks for
+//             attackers that aren't travelling, and a 5 s poll that
+//             classifies each attacker alive / dead / gone and ends the
+//             beat on all-dead, outrun, or timeout.
+//   CLEANUP — delete survivors (never corpses), stage 200, stamp the
+//             cooldown only if COMPOSE actually succeeded. The quest is
+//             deliberately left running to hold the corpses in their
+//             aliases; the next dispatch retires it.
 namespace NarrativeEngine
 {
     class AmbushBeat : public IBeat
@@ -81,15 +76,10 @@ namespace NarrativeEngine
 
     namespace AmbushBeat_Persistence
     {
-        // Per-beat cosave record.
-        //
-        // Deliberately NOT the old beat's 'NBAM'. The new beat registers
-        // under the same name the old one used ("ambush"), so
-        // BeatSystem::OnLoad's "unknown beat → reset to idle" recovery
-        // will no longer fire for it. A stale 'NBAM' payload from a
-        // pre-removal save must therefore hit Plugin.cpp's default arm
-        // and be skipped with a warning, rather than being misread as
-        // this record's shape. 'NBAM' is permanently retired.
+        // Per-beat cosave record. 'NBAM' is retired and must never be
+        // reused here: a payload under that id has a different shape,
+        // and it needs to keep falling through to Plugin.cpp's default
+        // arm to be skipped with a warning.
         inline constexpr std::uint32_t kRecordTypeId = 'NAMB';
 
         void OnSave(SKSE::SerializationInterface* intfc);

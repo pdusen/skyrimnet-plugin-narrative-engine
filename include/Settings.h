@@ -247,11 +247,11 @@ namespace NarrativeEngine::Settings
         int travelFollowerRadiusUnits = 4000;
 
         // [Beats]
-        // Per-beat enable defaults seeded into BeatRegistry at Register
-        // time. Dashboard Dispatch tab surfaces runtime toggles for
-        // these, but runtime changes don't write back to INI — reload
-        // the game and the INI value wins again. Debug testing aid, not
-        // a persistent config surface.
+        // Per-beat enable flags, seeded into BeatRegistry at Register
+        // time and toggled at runtime from the dashboard's Dispatch tab.
+        // Toggles persist: they route through
+        // WriteBeatEnabledOverride, which authors the MCM INI and
+        // updates the field here.
         bool enableNpcLetter = true;
 
         // NPCLetterBeat / LetterPool content + dispatch knobs. See
@@ -398,15 +398,13 @@ namespace NarrativeEngine::Settings
         // after this many seconds, teleport anyway.
         int visitReturnHomeTimeoutSeconds = 300;
 
-        // Enable toggle for the visit beat; runtime dashboard toggles
-        // don't write back to INI.
+        // Enable toggle for the visit beat. See enableNpcLetter.
         bool enableNpcVisit = true;
 
         // --- AmbushBeat ---
 
         // [Beats]
-        // Enable toggle for the ambush beat; runtime dashboard toggles
-        // don't write back to INI.
+        // Enable toggle for the ambush beat. See enableNpcLetter.
         bool enableAmbush = true;
 
         // Attacker count. The Director picks a count; these bound it.
@@ -538,10 +536,7 @@ namespace NarrativeEngine::Settings
     // back `{"name":"npc_visit","enabled":false}`, with no way to pick
     // the right struct field. Both functions share one internal
     // name-to-key table so the read path (BeatRegistry's initial state)
-    // and the write path (dashboard toggles) cannot drift apart. They
-    // did drift: per-beat checkboxes mutated BeatRegistry in memory and
-    // were never persisted, so they silently reset on every load while
-    // the tick killswitch beside them survived.
+    // and the write path (dashboard toggles) cannot drift apart.
     //
     // A new beat needs one row in that table and nothing else.
 

@@ -18,8 +18,8 @@ ReferenceAlias Property Attacker08  Auto
 
 ReferenceAlias Property PlayerRef  Auto
 
-; Both functions below exist only because the underlying engine call has no
-; CommonLibSSE-NG binding. Everything else this beat needs is native C++.
+; The three functions below exist only because the underlying engine call has
+; no CommonLibSSE-NG binding. Everything else this beat needs is native C++.
 
 ; ReferenceAlias.ForceRefTo has no native binding.
 ;

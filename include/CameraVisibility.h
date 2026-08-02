@@ -63,23 +63,20 @@ namespace NarrativeEngine::CameraVisibility
     //
     // Asked of a bare world position rather than a reference, because
     // AmbushSpawnPoints has to judge a spawn point BEFORE anything
-    // exists there. Deliberately a stricter and differently-shaped
-    // question than IsAnyPartVisibleFromCamera:
+    // exists there. Deliberately stricter than
+    // IsAnyPartVisibleFromCamera, and shaped differently:
     //
     //   * It samples a SILHOUETTE — a grid across the body's width and
     //     height, laterally offset perpendicular to the view — rather
-    //     than one vertical line. A line down the centre can be blocked
-    //     by a fencepost while the body is plainly visible either side.
-    //   * `coverRadiusUnits` widens that silhouette to cover the whole
-    //     spawn cluster, not just its centre point, so one attacker
-    //     isn't left standing in the open beside a hidden group.
-    //   * Every ray must be blocked. Any single clear line means the
-    //     player can see the spot and it is rejected.
-    //   * It fails toward NOT covered. If the camera can't be resolved
-    //     or the pick can't run, the answer is "no cover" — the
-    //     opposite of IsAnyPartVisibleFromCamera's fail direction,
-    //     because here a wrong "yes" is what lets the player watch
-    //     attackers materialize in front of them.
+    //     than one vertical line, which a fencepost can block while the
+    //     body is plainly visible either side of it.
+    //   * `coverRadiusUnits` widens that silhouette to the whole spawn
+    //     cluster, so one attacker isn't left standing in the open
+    //     beside a hidden group.
+    //   * Every ray must be blocked; one clear line rejects the spot.
+    //   * It fails toward NOT covered — the opposite of
+    //     IsAnyPartVisibleFromCamera, because here a wrong "yes" lets
+    //     the player watch attackers materialize in front of them.
     //
     // `bodyHeightUnits` is a nominal humanoid height (~128u).
     bool IsPositionBehindCover(const RE::NiPoint3& worldPos, float bodyHeightUnits, float coverRadiusUnits);
