@@ -52,9 +52,14 @@
 // What that does NOT answer is CONNECTIVITY — whether the navmesh under
 // the candidate is the same island the player stands on. An attacker
 // spawned on an unreachable ledge is on navmesh and still can't path to
-// you. The backstop for that is the post-spawn settle check in the beat
-// itself plus the abandon-by-timeout route, not anything this module can
-// see.
+// you. The backstops for that are the elevation gate below, the
+// post-spawn settle check in the beat itself, StuckRecovery's polling,
+// and the abandon-by-timeout route — not anything this module can see.
+//
+// The containment test itself, along with the water and ground-height
+// primitives, lives in StuckRecovery: the same "can an actor stand
+// here" question is asked of spawn candidates and of rescue candidates,
+// and one copy of the navmesh triangle walk is enough.
 //
 // Threading: main thread only. Every call reads engine state.
 namespace NarrativeEngine::AmbushSpawnPoints
@@ -63,24 +68,37 @@ namespace NarrativeEngine::AmbushSpawnPoints
     // probe column and for lifting spawn points clear of the ground.
     inline constexpr float kActorHeightUnits = 128.0f;
 
-    // `count` positions clustered around the best candidate found near
-    // `distanceUnits` from `player`, or empty if the search failed at
-    // every radius tried. Order is not meaningful — callers assign them
-    // to attackers arbitrarily.
-    //
-    // `distanceUnits` is the requested radius; the search may return
-    // points meaningfully nearer or farther if the requested band is
-    // unusable, but never nearer than Settings' configured floor.
-    std::vector<RE::NiPoint3> Find(RE::Actor* player, int distanceUnits, int count);
-    std::vector<RE::NiPoint3> Find(const MainThread::Token&, RE::Actor* player, int distanceUnits, int count);
+    struct Result
+    {
+        // `count` positions clustered around the winning candidate.
+        // Order is not meaningful — callers assign them to actors
+        // arbitrarily. Empty when the search failed at every radius.
+        std::vector<RE::NiPoint3> spawnPoints;
 
-    // True when `pos` sits on navmesh — i.e. an actor placed there is on
-    // ground the pathing system knows about. Exposed separately because
-    // the beat re-checks it after spawning, where an actor exists and
-    // its settled position can be tested rather than the requested one.
-    //
-    // Returns false when the position's cell isn't loaded or carries no
-    // navmesh at all. Note the caveat in the module comment: this is
-    // containment, not connectivity.
-    bool IsOnNavmesh(const RE::NiPoint3& pos);
+        // Runner-up winners: candidates that cleared every gate but lost
+        // the ranking, best-first, each well separated from the winner
+        // and from each other.
+        //
+        // These exist for StuckRecovery. An actor that can't travel from
+        // where it was placed needs somewhere GENUINELY DIFFERENT to go,
+        // and hunting for valid ground near a stuck actor mostly finds
+        // more of the terrain that trapped it. The runner-ups are
+        // already vetted by the same gates as the winner and are far
+        // enough away to be a real alternative, so recovery works down
+        // this list instead of searching.
+        std::vector<RE::NiPoint3> fallbacks;
+
+        bool Ok() const
+        {
+            return !spawnPoints.empty();
+        }
+    };
+
+    // Search near `distanceUnits` from `player`. That is the requested
+    // radius; the search may return points meaningfully nearer or
+    // farther if the requested band is unusable, but never nearer than
+    // Settings' configured floor.
+    Result Find(RE::Actor* player, int distanceUnits, int count);
+    Result Find(const MainThread::Token&, RE::Actor* player, int distanceUnits, int count);
+
 } // namespace NarrativeEngine::AmbushSpawnPoints

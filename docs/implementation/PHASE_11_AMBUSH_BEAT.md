@@ -627,12 +627,45 @@ dispatch from inside an inn now fails cleanly by name rather than spawning bandi
 
 `AmbushSpawnPoints::Find(player, distanceUnits, count)` returns a ranked list of world positions, or empty.
 
-1. **Sample.** 16 azimuths evenly spaced around the player at the current radius. Radii widen through
+1. **Sample.** Azimuths evenly spaced around the player at the current radius. Radii widen through
    ×1, ×1.25, ×1.5, ×2, ×2.5, each clamped into `[iAmbushMinSpawnDistanceUnits, iAmbushMaxSpawnDistanceUnits]`
-   — a band of 2000–5000 units by default. Widening only: the minimum is a hard floor, so a narrowing step
+   — a band of 2500–5500 units by default. Widening only: the minimum is a hard floor, so a narrowing step
    would just clamp back onto the first ring and re-sample it.
-2. **Validate** each candidate, cheapest gate first: cell loaded; exterior; ground height resolvable; not
-   underwater; on navmesh; not visible from the camera.
+
+   Widening stops once the forward arc has yielded a covered spot **and** the ranked pool holds enough
+   separated runner-ups to stock `Result::fallbacks`. The second condition exists because those runner-ups are
+   StuckRecovery's entire supply, and stopping at the first covered spot routinely left one or two: a single
+   ring's survivors sit close together, so they collapse to one option under the 800-unit separation rule.
+   Extra rings cost a few milliseconds and cannot cost us the winner — they only ever add candidates scoring
+   worse than a forward one already found, so the front of the ranking is fixed the moment `haveForward` is
+   true. The stop condition calls the same `SelectFallbacks` the final result does, so the loop can't stop on
+   an estimate that the real selection then fails to meet.
+
+   The azimuth count rises with the ring — 32, 40, 48, 56, 64. Cover is a fixed width in world units, not in
+   degrees, so a flat count over-samples the near ring and under-samples the far one: at 32 everywhere the gap
+   between samples runs 491 units at 2500 out to 1080 at 5500, wide enough by the outer rings to step over most
+   cover. Scaling with the radius holds that gap near 400 units throughout. Worst case is 240 samples against a
+   flat 160, but only the open-plain case pays it — the search stops at the first ring yielding a covered spot
+   in the forward arc, and ring 0 is unchanged at 32.
+2. **Validate** each candidate, cheapest gate first: cell loaded; exterior; ground height resolvable; within
+   `kMaxElevationDeltaUnits` of the player's elevation; not underwater; on navmesh; solidly behind cover.
+
+   The elevation gate is a **reachability proxy**, not an aesthetic one. The navmesh gate answers containment
+   only, so a ledge partway up a cliff reads as valid ground and still has no walkable route down — attackers
+   spawned there mill about until the beat abandons itself, which is exactly what a Forsworn ambush did from a
+   point 5000 units out and several thousand up. With no connectivity query available, elevation is the
+   stand-in: unreachable ground is almost always a long way up or down.
+
+   It is an absolute cap (1000 units, symmetric — a gorge floor is as unreachable as a ledge) rather than a
+   slope ratio. A ratio scales the vertical budget with horizontal distance, which is backwards: the outer
+   rings would get the loosest allowance, and they are the ones most likely to reach across a valley onto
+   something disconnected. Across the 2500–5500 band this cap is equivalent to a slope limit of 22° at the
+   near ring and 11° at the far one. It runs ahead of the navmesh scan and the raycasts because it is a
+   subtraction, so in mountainous terrain it also cuts search time.
+
+   Note what it does **not** catch: average elevation says nothing about the worst point on the route. A
+   200-unit cliff band halfway along passes, and a walkable switchback can be steep in a straight line. This
+   gate handles the large-Z failures, not reachability in general.
 3. **Rank** survivors: **forward arc before rear** as a hard tier, then by a combined placement score
    within each tier — see **Placement scoring** below.
 4. **Cluster.** Take the winner and jitter `count` positions around it within `kClusterRadiusUnits` so
@@ -652,12 +685,19 @@ kept as a last resort. Only a point with no standable ground at all is discarded
 
 Note that tier 3 **inverts** the arc preference. With no cover to hide behind, the only thing left is the
 player's own back, so the ranking becomes "closest to directly behind, then as far away as possible". Those two
-keys compose naturally: every ring samples the same azimuths, so the rear-most azimuth ties across radii and
-the distance key picks the outermost of them.
+keys compose naturally. Rings no longer share an azimuth set, so each ring's rear-most sample lands at a
+slightly different angle, but the spread is bounded by the coarsest ring's half-step (5.625° at 32 azimuths,
+or 0.005 of `facingDot`) — inside the comparator's 0.01 tolerance, so those samples still tie on angle and the
+distance key still picks the outermost.
 
 `Find` now returns empty only when there is nowhere standable at all — not merely nowhere hidden. The debug
 line reports `arc=forward`, `arc=rear-fallback`, or `arc=uncovered-fallback` so which tier was used is
 visible, and tier 3 additionally logs at `info` since it means the terrain gave us nothing to work with.
+
+The whole search runs in one main-thread block, so its cost lands on the player as a hitch. Every outcome
+therefore reports elapsed time: `search=` covers the ring loop, `total=` adds the per-attacker clustering
+checks, and `radii tried:` now reads `radius/azimuths` per ring so sample count is visible alongside the
+timing. The open-plain case — every ring sampled, no early exit — is the one to watch.
 
 **The forward arc is the point of the beat.** An ambush should be walked *into* — somewhere ahead of the player
 or square to either side. Anything in the rear hemisphere is a **fallback**, taken only when the forward arc has
@@ -674,7 +714,7 @@ score = (1 - facingDot) / 2                                  // 0 dead ahead, 0.
 ```
 
 Equal weighting is the whole design: neither axis is a mere tiebreaker for the other. Worked examples against
-the shipped 2000–5000 band:
+the shipped 2500–5500 band:
 
 | Candidate           | Angle cost | Distance cost | Score     |
 | ------------------- | ---------- | ------------- | --------- |
@@ -1709,6 +1749,63 @@ Worth recording the API choice: `TESObjectCELL::GetWaterHeight` returns a **bool
 all, while the `TES`-level overload returns a bare float with a sentinel for "no water". Using the latter would
 have been a trap — plenty of Skyrim terrain sits at large negative Z (the vampire encounter's winning point was
 at `z = -14020`), so a misread sentinel would have rejected every candidate in low-lying areas.
+
+**Attackers wedged in geometry.** A bandit spawned with its head poking out of a boulder and the rest of its
+body inside, never reached the player, and could only be resolved by killing it where it stood. The settle
+check *saw* it — `offMesh=true` on two of three attackers, twice, across the relocation retry — and proceeded
+anyway on the reasoning that after a retry the check is likelier wrong than the ground is. That reasoning holds
+for drift; it does not hold for an actor with no navmesh under it.
+
+The cause is the same position-versus-capsule gap behind the water case: the search validates a POSITION, the
+engine settles a COLLISION CAPSULE, and the two diverge wherever a mesh overhangs the ground the point was
+measured against. No pre-spawn gate can close that, so the fix is post-spawn detection and repair.
+
+That lives in [`StuckRecovery`](../../include/StuckRecovery.h), a standalone module rather than beat-local
+code — any beat that places actors inherits the same failure.
+
+Two designs were tried. The first one **searched**: detect off-navmesh or no-progress, then hunt widening rings
+around the actor for a valid spot and move it there. It did not work, and the reason is worth recording,
+because it is not obvious up front. **Valid ground near an actor stuck in bad terrain is overwhelmingly more
+bad terrain.** The search kept finding technically-standable spots a body width away, inside the same feature,
+and the actor stayed stuck. Widening the rings, scoring the azimuths, biasing toward the player, escalating the
+radius per attempt — none of it helped, because the premise was wrong. Proximity to a trap is not a useful
+criterion for escaping it.
+
+(Two implementation bugs made the first version look even worse than the idea deserved: returning the first
+valid hit rather than the best meant azimuth 0 won essentially always, so every rescue moved the actor exactly
+`+128, 0` — seven times running across four actors in one log — and preferring hidden spots actively favoured
+the clutter that had trapped them, since an actor inside a rock is behind cover in every direction.)
+
+The second design does not search. The caller has already run a real spawn search and validated more positions
+than it used, so recovery works down that list instead. Those runner-ups were vetted by the same gates as the
+winner and are far enough apart to be genuinely different terrain — exactly the property a local search could
+not supply.
+
+The escalation:
+
+1. Every `checkIntervalSeconds`, compare the actor's position to where it was at the last check. Moved at least
+   `movementThresholdUnits`? It is travelling; leave it alone. The threshold is set against what a walking
+   actor covers in an interval, not against idle jitter — an actor shuffling against the rock it is caught on
+   has not made progress.
+2. Stalled? Warp it to the next unused runner-up and restart the clock.
+3. Runner-ups exhausted? Warp it `closeInStepUnits` nearer the goal along the line it would have walked,
+   repeatedly, until it starts moving on its own. Those destinations get an extra 100 units of height on top of
+   the usual ground clearance: they are picked off a bare line with none of the vetting the runner-ups had, so
+   they are the likeliest of all our placements to sit inside a rock or a tree trunk. Dropping the actor in
+   from above lets physics settle it **on** the obstruction. Briefly airborne is recoverable; inside geometry
+   is the thing we are trying to escape.
+4. Inside `minGoalDistanceUnits` and still stalled? Stranded — logged, and left alone.
+
+Actors within `arrivedDistanceUnits` of the goal are never touched. That is what keeps the escort from warping
+someone mid-melee: stillness at that range is fighting, not being trapped, and expressing it this way means the
+module needs no knowledge of the beat's combat state.
+
+The runner-ups come from `AmbushSpawnPoints::Result::fallbacks` — see **Spawn point selection** above for how
+they are chosen and why the widening loop keeps going until it has enough of them.
+
+The navmesh containment test, the water check, and ground resolution moved into `StuckRecovery` as part of
+this — the same "can an actor stand here" question is asked of spawn candidates and recovery positions, and one
+copy of the triangle walk is enough. `AmbushSpawnPoints` now delegates all three.
 
 **Cluster spread.** `kClusterRadiusUnits` reduced 220 → 150. Note this was probably the *smaller* contributor:
 most of the observed scatter is explained by the 31-59 second unarmed window above, during which the attackers

@@ -423,9 +423,9 @@ namespace NarrativeEngine::Settings
         // widens toward the max looking for cover, clamped to this band
         // throughout. Below the min an ambush is visibly conjured;
         // above the max it is too far off to read as one.
-        int ambushDefaultSpawnDistanceUnits = 2000;
-        int ambushMinSpawnDistanceUnits = 2000;
-        int ambushMaxSpawnDistanceUnits = 5000;
+        int ambushDefaultSpawnDistanceUnits = 2500;
+        int ambushMinSpawnDistanceUnits = 2500;
+        int ambushMaxSpawnDistanceUnits = 5500;
 
         // Approach-to-hostile handoff range. Attackers travel with
         // aggression 0 until they close to within this distance, then
@@ -449,6 +449,13 @@ namespace NarrativeEngine::Settings
         // ambush. Not stamped when COMPOSE fails, so a failed spawn
         // doesn't burn a day.
         int ambushPerBeatCooldownGameHours = 24;
+
+        // StuckRecovery tuning. Read together — the pair is really one
+        // setting, "slower than this counts as stopped". Terrain and
+        // creature speeds vary enough between load orders that these
+        // want to be tunable without a rebuild.
+        int stuckRecoveryMovementThresholdUnits = 100;
+        int stuckRecoveryCheckIntervalSeconds = 4;
     };
 
     // Narrow mutation surface for WriteMcmOverride. One optional per

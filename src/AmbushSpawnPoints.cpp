@@ -3,6 +3,7 @@
 #include <CameraVisibility.h>
 #include <logger.h>
 #include <Settings.h>
+#include <StuckRecovery.h>
 
 #include <RE/B/BSNavmesh.h>
 #include <RE/N/NavMesh.h>
@@ -10,28 +11,48 @@
 #include <RE/T/TESObjectCELL.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstddef>
+#include <iterator>
 #include <string>
 
 namespace NarrativeEngine::AmbushSpawnPoints
 {
     namespace
     {
-        // Azimuths sampled per radius. Angular resolution is what
-        // decides whether the search can FIND cover: the shadow behind a
-        // boulder at 2500 units is only a few hundred units of arc wide,
-        // and 16 spokes leaves ~980 units between samples — enough to
-        // step straight over it. 32 halves that. The cost is paid once
-        // per ambush, and the search stops as soon as the forward arc
-        // yields a covered spot.
-        constexpr int kAzimuthSamples = 32;
-
         // Radius multipliers, tried in order. Widening only — the
         // configured minimum is a hard floor, so a narrowing step would
         // just clamp back onto the first radius and re-sample the same
         // ring. Every radius is clamped into
         // [ambushMin.., ambushMax..] before use.
-        constexpr float kRadiusMultipliers[] = {1.0f, 1.25f, 1.5f, 2.0f, 2.5f};
+        //
+        // Spaced 500 units apart against the 2500-unit band floor —
+        // 2500, 3000, 3500, 4500, 5500 — rather than the round
+        // multiples they started as. The near ring answers most
+        // searches, and at the old 2000 the walk in was over in three
+        // and a half seconds, which is too fast to read as an approach
+        // and left nothing else time to work.
+        constexpr float kRadiusMultipliers[] = {1.0f, 1.2f, 1.4f, 1.8f, 2.2f};
+
+        // Azimuths sampled per ring, parallel to kRadiusMultipliers.
+        //
+        // Angular resolution is what decides whether the search can FIND
+        // cover, and what it is looking for — the shadow behind a
+        // boulder — is a fixed width in world units, not in degrees. One
+        // azimuth count for every ring therefore over-samples the near
+        // ring and under-samples the far one: at a flat 32 the gap
+        // between samples runs 491 units at 2500 out to 1080 at 5500, wide
+        // enough by the outer rings to step straight over most cover.
+        // Scaling the count with the radius holds that gap near 400
+        // units throughout.
+        //
+        // Worst case is 240 samples against a flat 160, but only the
+        // open-plain case pays it: the search stops at the first ring
+        // yielding a covered spot in the forward arc, and ring 0 — the
+        // one that answers most searches — is unchanged at 32.
+        constexpr int kAzimuthSamples[] = {32, 40, 48, 56, 64};
+        static_assert(std::size(kAzimuthSamples) == std::size(kRadiusMultipliers));
 
         // How far attackers are spread around the winning point.
         // Tight enough to read as one group arriving together, loose
@@ -40,45 +61,44 @@ namespace NarrativeEngine::AmbushSpawnPoints
         // four sits ~200 units between neighbours.
         constexpr float kClusterRadiusUnits = 150.0f;
 
-        // Vertical tolerance for the navmesh containment test. A point
-        // counts as on-mesh if it is within this many units above or
-        // below the triangle's interpolated surface. Generous enough to
-        // absorb the difference between the land-height query and the
-        // navmesh's own surface (they disagree by a few units routinely
-        // on sloped terrain), tight enough not to match a mesh on the
-        // floor below when standing on a bridge.
-        constexpr float kNavmeshZToleranceUnits = 96.0f;
+        // Navmesh containment, water, and ground clearance all live in
+        // StuckRecovery — the same primitives answer "can an actor stand
+        // here" for a spawn candidate and for a rescue candidate, and
+        // one copy of the navmesh triangle walk is enough.
+        using StuckRecovery::kGroundClearanceUnits;
 
-        // Lift applied to a validated ground position before handing it
-        // out, so the spawned actor starts just above the surface and
-        // settles down rather than starting embedded and being pushed
-        // out sideways.
-        constexpr float kGroundClearanceUnits = 8.0f;
+        // Runner-up spawn points kept for recovery, and how far apart
+        // they have to be to count as distinct options. The separation
+        // is generous because the whole value of a fallback is that it
+        // is somewhere ELSE — terrain that failed to let an actor travel
+        // does not improve a few hundred units along.
+        constexpr std::size_t kMaxFallbacks = 6;
+        constexpr float kFallbackSeparationUnits = 800.0f;
 
-        // How far below the water surface the ground has to be before a
-        // point counts as submerged. A small tolerance rather than zero
-        // because shoreline terrain and the water plane meet within a
-        // few units of each other, and rejecting the entire waterline
-        // would carve usable beach out of the search for no reason.
-        constexpr float kWaterDepthToleranceUnits = 24.0f;
-
-        // True when `pos` sits under the local water surface.
+        // Largest elevation difference from the player a candidate may
+        // have, in either direction.
         //
-        // Cell overload, not the TES one: it returns a bool for whether
-        // water exists at all, rather than a sentinel height. Plenty of
-        // Skyrim terrain sits at large negative Z, where a misread
-        // sentinel would reject every candidate.
-        bool IsUnderwater(RE::TESObjectCELL* cell, const RE::NiPoint3& pos, float groundZ)
-        {
-            if (!cell) {
-                return false;
-            }
-            float waterZ = 0.0f;
-            if (!cell->GetWaterHeight(pos, waterZ)) {
-                return false; // no water in this cell
-            }
-            return groundZ < waterZ - kWaterDepthToleranceUnits;
-        }
+        // This is a REACHABILITY proxy, not an aesthetic one. The navmesh
+        // gate answers containment only, so a ledge partway up a cliff is
+        // "on navmesh" and still has no walkable route down — attackers
+        // spawned there mill about until the beat abandons itself. There
+        // is no connectivity query to ask (see the module header), so the
+        // stand-in is elevation: unreachable ground is almost always a
+        // long way up or down.
+        //
+        // Absolute rather than a slope ratio. A ratio scales the vertical
+        // budget with horizontal distance, which is backwards — the outer
+        // rings would get the loosest allowance, and they are the ones
+        // most likely to reach across a valley onto something
+        // disconnected. At the band's 2500-5500 span this cap is
+        // equivalent to a slope limit of 22 degrees at the near ring and
+        // 10 at the far one.
+        //
+        // Symmetric because a gorge floor is as unreachable as a ledge.
+        constexpr float kMaxElevationDeltaUnits = 1000.0f;
+
+        using StuckRecovery::IsOnNavmesh;
+        using StuckRecovery::IsUnderwater;
 
         struct Candidate
         {
@@ -122,6 +142,7 @@ namespace NarrativeEngine::AmbushSpawnPoints
             int rejectedNoCell = 0;
             int rejectedInterior = 0;
             int rejectedNoGround = 0;
+            int rejectedElevation = 0;
             int rejectedUnderwater = 0;
             int rejectedNoNavmesh = 0;
             int rejectedVisible = 0;
@@ -131,107 +152,63 @@ namespace NarrativeEngine::AmbushSpawnPoints
             {
                 return "sampled=" + std::to_string(sampled) + " noCell=" + std::to_string(rejectedNoCell) + " interior="
                        + std::to_string(rejectedInterior) + " noGround=" + std::to_string(rejectedNoGround)
-                       + " underwater=" + std::to_string(rejectedUnderwater)
-                       + " noNavmesh=" + std::to_string(rejectedNoNavmesh)
+                       + " elevation=" + std::to_string(rejectedElevation) + " underwater="
+                       + std::to_string(rejectedUnderwater) + " noNavmesh=" + std::to_string(rejectedNoNavmesh)
                        + " visible=" + std::to_string(rejectedVisible) + " survived=" + std::to_string(survived);
             }
         };
 
-        // Barycentric point-in-triangle on the XY projection. Returns
-        // the interpolated Z at (px, py) when inside.
-        bool PointInTriangleXY(float px,
-                               float py,
-                               const RE::NiPoint3& a,
-                               const RE::NiPoint3& b,
-                               const RE::NiPoint3& c,
-                               float& zOut)
+        // Ranking for covered candidates: forward arc before rear as a
+        // hard tier, then by the combined angle-and-distance score
+        // within each tier.
+        void RankCovered(std::vector<Candidate>& pool)
         {
-            const float v0x = c.x - a.x;
-            const float v0y = c.y - a.y;
-            const float v1x = b.x - a.x;
-            const float v1y = b.y - a.y;
-            const float v2x = px - a.x;
-            const float v2y = py - a.y;
+            std::sort(pool.begin(), pool.end(), [](const Candidate& a, const Candidate& b) {
+                if (a.IsForward() != b.IsForward()) {
+                    return a.IsForward();
+                }
+                return a.score < b.score;
+            });
+        }
 
-            const float dot00 = v0x * v0x + v0y * v0y;
-            const float dot01 = v0x * v1x + v0y * v1y;
-            const float dot02 = v0x * v2x + v0y * v2y;
-            const float dot11 = v1x * v1x + v1y * v1y;
-            const float dot12 = v1x * v2x + v1y * v2y;
-
-            const float denom = dot00 * dot11 - dot01 * dot01;
-            if (std::fabs(denom) < 1e-6f) {
-                // Degenerate (zero-area) triangle — navmeshes do
-                // contain a few. Nothing can be inside it.
-                return false;
+        // Runner-up positions from a RANKED pool: everything after the
+        // winner that is far enough from it, and from everything already
+        // taken, to be a genuinely different piece of terrain.
+        //
+        // Shared between the widening loop's stop condition and the
+        // final result, so "how many fallbacks do we have" is answered
+        // the same way in both places — an approximation in the loop
+        // would let it stop early and come up short.
+        std::vector<RE::NiPoint3> SelectFallbacks(const std::vector<Candidate>& ranked)
+        {
+            std::vector<RE::NiPoint3> out;
+            if (ranked.empty()) {
+                return out;
             }
-            const float inv = 1.0f / denom;
-            const float u = (dot11 * dot02 - dot01 * dot12) * inv;
-            const float v = (dot00 * dot12 - dot01 * dot02) * inv;
-
-            if (u < 0.0f || v < 0.0f || (u + v) > 1.0f) {
-                return false;
+            out.reserve(kMaxFallbacks);
+            const auto& winner = ranked.front().pos;
+            for (std::size_t i = 1; i < ranked.size() && out.size() < kMaxFallbacks; ++i) {
+                const auto& p = ranked[i].pos;
+                if (p.GetDistance(winner) < kFallbackSeparationUnits) {
+                    continue;
+                }
+                const bool tooClose = std::any_of(out.begin(), out.end(), [&p](const RE::NiPoint3& kept) {
+                    return p.GetDistance(kept) < kFallbackSeparationUnits;
+                });
+                if (!tooClose) {
+                    out.push_back(p);
+                }
             }
-            // Barycentric interpolation of the vertex heights.
-            zOut = a.z + u * (c.z - a.z) + v * (b.z - a.z);
-            return true;
+            return out;
         }
     } // namespace
 
-    bool IsOnNavmesh(const RE::NiPoint3& pos)
+    Result Find(RE::Actor* player, int distanceUnits, int count)
     {
-        auto* tes = RE::TES::GetSingleton();
-        if (!tes) {
-            return false;
-        }
-        auto* cell = tes->GetCell(pos);
-        if (!cell) {
-            return false;
-        }
-
-        // navMeshes lives in the cell's RUNTIME_DATA block, whose
-        // offset moved in 1.6.629 — GetRuntimeData() resolves the right
-        // one for the running build.
-        auto* navMeshes = cell->GetRuntimeData().navMeshes;
-        if (!navMeshes) {
-            // A loaded exterior cell with no navmesh array at all is
-            // rare but real (some ocean / border cells). Nothing to
-            // stand on as far as pathing is concerned.
-            return false;
-        }
-
-        for (const auto& meshPtr : navMeshes->navMeshes) {
-            auto* mesh = meshPtr.get();
-            if (!mesh) {
-                continue;
-            }
-            const auto& verts = mesh->vertices;
-            const auto& tris = mesh->triangles;
-            for (const auto& tri : tris) {
-                const auto i0 = tri.vertices[0];
-                const auto i1 = tri.vertices[1];
-                const auto i2 = tri.vertices[2];
-                if (i0 >= verts.size() || i1 >= verts.size() || i2 >= verts.size()) {
-                    continue;
-                }
-                float surfaceZ = 0.0f;
-                if (!PointInTriangleXY(
-                        pos.x, pos.y, verts[i0].location, verts[i1].location, verts[i2].location, surfaceZ)) {
-                    continue;
-                }
-                if (std::fabs(surfaceZ - pos.z) <= kNavmeshZToleranceUnits) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    std::vector<RE::NiPoint3> Find(RE::Actor* player, int distanceUnits, int count)
-    {
-        std::vector<RE::NiPoint3> out;
+        Result result;
+        auto& out = result.spawnPoints;
         if (!player || count <= 0) {
-            return out;
+            return result;
         }
 
         const auto& cfg = Settings::Get();
@@ -240,8 +217,16 @@ namespace NarrativeEngine::AmbushSpawnPoints
         auto* tes = RE::TES::GetSingleton();
         if (!tes) {
             logger::warn("AmbushSpawnPoints: no TES singleton; cannot search.");
-            return out;
+            return result;
         }
+
+        // Instrumentation only. The whole search is one main-thread
+        // block, so its cost is a hitch the player feels directly —
+        // worth knowing before anyone widens the sampling further.
+        const auto startedAt = std::chrono::steady_clock::now();
+        const auto msSince = [](std::chrono::steady_clock::time_point from) {
+            return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - from).count();
+        };
 
         const auto playerPos = player->GetPosition();
         const float playerAngleZ = player->GetAngleZ();
@@ -264,23 +249,26 @@ namespace NarrativeEngine::AmbushSpawnPoints
         std::string radiiTried;
         float lastRadius = -1.0f;
 
-        for (const float mult : kRadiusMultipliers) {
+        for (std::size_t ring = 0; ring < std::size(kRadiusMultipliers); ++ring) {
             // Clamp into the configured band. Below the floor an ambush
             // is visibly conjured; above the ceiling it is too far away
             // to read as one.
-            const float radius = std::clamp(requested * mult, floorDistance, ceilDistance);
+            const float radius = std::clamp(requested * kRadiusMultipliers[ring], floorDistance, ceilDistance);
             if (radius == lastRadius) {
                 continue; // clamping collapsed this step onto the last
             }
             lastRadius = radius;
+            const int azimuths = kAzimuthSamples[ring];
             if (!radiiTried.empty()) {
                 radiiTried += ", ";
             }
             radiiTried += std::to_string(static_cast<int>(radius));
+            radiiTried += "/";
+            radiiTried += std::to_string(azimuths);
 
-            for (int i = 0; i < kAzimuthSamples; ++i) {
+            for (int i = 0; i < azimuths; ++i) {
                 const float theta =
-                    (2.0f * 3.14159265358979323846f * static_cast<float>(i)) / static_cast<float>(kAzimuthSamples);
+                    (2.0f * 3.14159265358979323846f * static_cast<float>(i)) / static_cast<float>(azimuths);
                 RE::NiPoint3 probe{
                     playerPos.x + radius * std::cos(theta), playerPos.y + radius * std::sin(theta), playerPos.z};
                 ++tally.sampled;
@@ -310,7 +298,17 @@ namespace NarrativeEngine::AmbushSpawnPoints
                 }
                 probe.z = groundZ + kGroundClearanceUnits;
 
-                // Gate 4 — not underwater. Navmesh covers lake and
+                // Gate 4 — roughly on the player's level. Ahead of the
+                // two expensive gates below because it is a subtraction,
+                // and in mountainous terrain it culls candidates that
+                // would otherwise pay for a navmesh scan and nine
+                // raycasts before being ranked as unreachable anyway.
+                if (std::fabs(probe.z - playerPos.z) > kMaxElevationDeltaUnits) {
+                    ++tally.rejectedElevation;
+                    continue;
+                }
+
+                // Gate 5 — not underwater. Navmesh covers lake and
                 // river bed, so containment alone accepts a spot under
                 // water and the attacker spawns swimming.
                 if (IsUnderwater(cell, probe, groundZ)) {
@@ -318,7 +316,7 @@ namespace NarrativeEngine::AmbushSpawnPoints
                     continue;
                 }
 
-                // Gate 5 — standable. See the header's note on why this
+                // Gate 6 — standable. See the header's note on why this
                 // is containment rather than reachability.
                 if (!IsOnNavmesh(probe)) {
                     ++tally.rejectedNoNavmesh;
@@ -341,7 +339,7 @@ namespace NarrativeEngine::AmbushSpawnPoints
                 const float distCost = std::clamp((actual - floorDistance) / bandSpan, 0.0f, 1.0f);
                 c.score = angleCost + distCost;
 
-                // Gate 6 — solidly behind cover. Last because it is by
+                // Gate 7 — solidly behind cover. Last because it is by
                 // far the most expensive (nine Havok raycasts).
                 //
                 // The silhouette is widened by the cluster radius, so
@@ -367,15 +365,31 @@ namespace NarrativeEngine::AmbushSpawnPoints
                 ++tally.survived;
             }
 
-            // Stop widening once the forward arc has yielded something.
+            // Stop widening once the forward arc has yielded something
+            // AND there are enough separated runner-ups behind it.
+            //
             // Rear-hemisphere hits alone are NOT enough to stop on:
             // they're the fallback, and a wider ring may still have a
             // hidden spot in front. Survivors accumulate across radii,
             // so nothing found so far is thrown away.
+            //
+            // The fallback count is the second condition because those
+            // positions are StuckRecovery's entire supply, and stopping
+            // at the first covered spot routinely left one or two — a
+            // near ring's survivors are all clustered together, so they
+            // collapse to a single option under the separation rule.
+            // Widening costs a few milliseconds and cannot cost us the
+            // winner: extra rings only ever add candidates that score
+            // WORSE than a forward one already found, so the ranking
+            // front is fixed once haveForward is true.
             const bool haveForward =
                 std::any_of(survivors.begin(), survivors.end(), [](const Candidate& c) { return c.IsForward(); });
             if (haveForward) {
-                break;
+                auto ranked = survivors;
+                RankCovered(ranked);
+                if (SelectFallbacks(ranked).size() >= kMaxFallbacks) {
+                    break;
+                }
             }
         }
 
@@ -388,10 +402,18 @@ namespace NarrativeEngine::AmbushSpawnPoints
         // Note this tier prefers the REAR, inverting the covered tiers'
         // preference. Without cover, the only thing left to hide behind
         // is the player's own back, so the ranking becomes: closest to
-        // the azimuth directly behind, then farthest away. Those two
-        // keys compose naturally — every ring samples the same azimuths,
-        // so the rear-most azimuth ties across radii and the distance
-        // key picks the outermost of them.
+        // the azimuth directly behind, then farthest away.
+        //
+        // Rings no longer share an azimuth set, so the rear-most sample
+        // of each ring lands at a slightly different angle. The spread is
+        // bounded by the coarsest ring's half-step (5.625 degrees at 32
+        // azimuths, or 0.005 of facingDot), which stays inside the
+        // comparator's 0.01 tolerance — so those samples still tie on
+        // angle and the distance key still picks the outermost.
+        // Ring loop only — the clustering below adds its own per-attacker
+        // navmesh checks, so the two are reported separately.
+        const double searchMs = msSince(startedAt);
+
         const bool usingFallback = survivors.empty();
         std::vector<Candidate>& pool = usingFallback ? uncovered : survivors;
 
@@ -399,18 +421,28 @@ namespace NarrativeEngine::AmbushSpawnPoints
             // Genuinely nowhere to stand — not even uncovered ground.
             // The caller turns this into a clean COMPOSE failure; the
             // tally says which gate did the killing.
-            logger::info("AmbushSpawnPoints: no usable point near {}u (radii tried: {}). Gates: {}",
+            logger::info("AmbushSpawnPoints: no usable point near {}u of player ({:.0f},{:.0f},{:.0f}) "
+                         "(radii tried: {}) in {:.1f}ms. Gates: {}",
                          distanceUnits,
+                         playerPos.x,
+                         playerPos.y,
+                         playerPos.z,
                          radiiTried,
+                         searchMs,
                          tally.Describe());
-            return out;
+            return result;
         }
 
         if (usingFallback) {
-            logger::info("AmbushSpawnPoints: no covered point near {}u after {} samples — falling back to "
-                         "the most distant point nearest the player's rear. Gates: {}",
+            logger::info("AmbushSpawnPoints: no covered point near {}u of player ({:.0f},{:.0f},{:.0f}) after "
+                         "{} samples in {:.1f}ms — falling back to the most distant point nearest the "
+                         "player's rear. Gates: {}",
                          distanceUnits,
+                         playerPos.x,
+                         playerPos.y,
+                         playerPos.z,
                          tally.sampled,
+                         searchMs,
                          tally.Describe());
             std::sort(pool.begin(), pool.end(), [](const Candidate& a, const Candidate& b) {
                 if (std::fabs(a.facingDot - b.facingDot) > 0.01f) {
@@ -419,17 +451,16 @@ namespace NarrativeEngine::AmbushSpawnPoints
                 return a.actualDistance > b.actualDistance; // farthest first
             });
         } else {
-            // Rank: forward arc before rear as a hard tier, then by the
-            // combined angle-and-distance score within each tier.
-            std::sort(pool.begin(), pool.end(), [](const Candidate& a, const Candidate& b) {
-                if (a.IsForward() != b.IsForward()) {
-                    return a.IsForward();
-                }
-                return a.score < b.score;
-            });
+            RankCovered(pool);
         }
 
         const Candidate& winner = pool.front();
+
+        // Runner-ups, for StuckRecovery. Separation is the whole point:
+        // two candidates fifty units apart are one option, not two, and
+        // an actor that can't travel from the winner won't fare better
+        // fifty units along.
+        result.fallbacks = SelectFallbacks(pool);
 
         // Cluster: ring the winner so attackers arrive as a group
         // rather than stacked on one coordinate. Each jittered point is
@@ -449,10 +480,12 @@ namespace NarrativeEngine::AmbushSpawnPoints
             float groundZ = 0.0f;
             if (tes->GetLandHeight(p, groundZ)) {
                 p.z = groundZ + kGroundClearanceUnits;
-                // Same water gate: a dry winning point says nothing
-                // about a jittered point 150 units away.
+                // Same water and elevation gates: a dry, on-level winning
+                // point says nothing about a jittered point 150 units
+                // away, which is easily enough to step off a ledge.
                 auto* pCell = tes->GetCell(p);
-                if (!IsUnderwater(pCell, p, groundZ) && IsOnNavmesh(p)) {
+                if (std::fabs(p.z - playerPos.z) <= kMaxElevationDeltaUnits && !IsUnderwater(pCell, p, groundZ)
+                    && IsOnNavmesh(p)) {
                     out.push_back(p);
                     continue;
                 }
@@ -461,27 +494,35 @@ namespace NarrativeEngine::AmbushSpawnPoints
         }
 
         if (debug) {
-            logger::debug("AmbushSpawnPoints: requested {}u x{} -> winner ({:.0f},{:.0f},{:.0f}) "
-                          "dist={:.0f} facingDot={:.2f} score={:.2f} arc={} (radii tried: {}). Gates: {}",
+            logger::debug("AmbushSpawnPoints: requested {}u x{} from player ({:.0f},{:.0f},{:.0f}) -> "
+                          "winner ({:.0f},{:.0f},{:.0f}) dist={:.0f} dz={:.0f} facingDot={:.2f} score={:.2f} "
+                          "arc={} fallbacks={} (radii tried: {}) search={:.1f}ms total={:.1f}ms. Gates: {}",
                           distanceUnits,
                           count,
+                          playerPos.x,
+                          playerPos.y,
+                          playerPos.z,
                           winner.pos.x,
                           winner.pos.y,
                           winner.pos.z,
                           winner.actualDistance,
+                          winner.pos.z - playerPos.z,
                           winner.facingDot,
                           winner.score,
                           usingFallback        ? "uncovered-fallback"
                           : winner.IsForward() ? "forward"
                                                : "rear-fallback",
+                          result.fallbacks.size(),
                           radiiTried,
+                          searchMs,
+                          msSince(startedAt),
                           tally.Describe());
         }
 
-        return out;
+        return result;
     }
 
-    std::vector<RE::NiPoint3> Find(const MainThread::Token&, RE::Actor* player, int distanceUnits, int count)
+    Result Find(const MainThread::Token&, RE::Actor* player, int distanceUnits, int count)
     {
         return Find(player, distanceUnits, count);
     }

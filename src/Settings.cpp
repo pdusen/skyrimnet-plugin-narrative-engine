@@ -412,6 +412,10 @@ namespace NarrativeEngine::Settings
                 static_cast<int>(ini.GetLongValue("Beats", "iAmbushMaxDurationSeconds", dst.ambushMaxDurationSeconds));
             dst.ambushPerBeatCooldownGameHours = static_cast<int>(
                 ini.GetLongValue("Beats", "iAmbushPerBeatCooldownGameHours", dst.ambushPerBeatCooldownGameHours));
+            dst.stuckRecoveryMovementThresholdUnits = static_cast<int>(ini.GetLongValue(
+                "Beats", "iStuckRecoveryMovementThresholdUnits", dst.stuckRecoveryMovementThresholdUnits));
+            dst.stuckRecoveryCheckIntervalSeconds = static_cast<int>(
+                ini.GetLongValue("Beats", "iStuckRecoveryCheckIntervalSeconds", dst.stuckRecoveryCheckIntervalSeconds));
 
             // Ambush clamps, applied on the read path rather than at use
             // sites so every consumer sees a coherent range (the same
@@ -457,6 +461,12 @@ namespace NarrativeEngine::Settings
                 dst.ambushAbandonDistanceUnits = dst.ambushMaxSpawnDistanceUnits + 1;
             if (dst.ambushEngageDistanceUnits < 1)
                 dst.ambushEngageDistanceUnits = 1;
+            // A zero or negative threshold would make every actor read as
+            // moving; a zero interval would run the check every tick.
+            if (dst.stuckRecoveryMovementThresholdUnits < 1)
+                dst.stuckRecoveryMovementThresholdUnits = 1;
+            if (dst.stuckRecoveryCheckIntervalSeconds < 1)
+                dst.stuckRecoveryCheckIntervalSeconds = 1;
             if (dst.ambushMaxDurationSeconds < 1)
                 dst.ambushMaxDurationSeconds = 1;
             if (dst.ambushPerBeatCooldownGameHours < 0)

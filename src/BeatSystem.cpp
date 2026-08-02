@@ -56,8 +56,13 @@ namespace NarrativeEngine::BeatSystem
         // When a beat fires, its name + real-time is pushed to
         // g_recentlyFired. ConsiderBeat's candidate filter drops any
         // name still inside Settings::Get().beatRepetitionWindowSeconds.
-        // Not persisted — the window is short enough (default 300s) that
-        // a reload wipes it without visible consequence.
+        //
+        // Not persisted, and cleared by OnRevert — which runs at
+        // kPreLoadGame, so it is genuinely empty on every load. The ring
+        // is measured in real time, so without that clear a beat that
+        // fired in a timeline the player then abandoned would keep
+        // suppressing itself in the reloaded one for the rest of the
+        // window.
         struct RecentlyFired
         {
             std::string name;
@@ -521,12 +526,21 @@ namespace NarrativeEngine::BeatSystem
 
     void OnRevert()
     {
-        std::scoped_lock lock(g_stateMutex);
-        g_topLevelState = TopLevelState::NO_BEAT_RUNNING;
-        g_runningBeatName.clear();
-        g_globalCooldownMs = 0;
-        g_runningBeatStartedAt = 0.0;
-        g_runningBeatCurrentState = BeatState::NOT_RUNNING;
+        {
+            std::scoped_lock lock(g_stateMutex);
+            g_topLevelState = TopLevelState::NO_BEAT_RUNNING;
+            g_runningBeatName.clear();
+            g_globalCooldownMs = 0;
+            g_runningBeatStartedAt = 0.0;
+            g_runningBeatCurrentState = BeatState::NOT_RUNNING;
+        }
+        // Separate acquire rather than a nested lock — the two mutexes
+        // are never held together anywhere else, and this is the only
+        // place that would establish an order between them.
+        {
+            std::scoped_lock lock(g_recentMutex);
+            g_recentlyFired.clear();
+        }
     }
 
     // -----------------------------------------------------------------

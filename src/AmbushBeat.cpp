@@ -11,6 +11,7 @@
 #include <MainThread.h>
 #include <QuestUtils.h>
 #include <Settings.h>
+#include <StuckRecovery.h>
 
 #include <nlohmann/json.hpp>
 
@@ -53,6 +54,13 @@ namespace NarrativeEngine
         // RUNNING poll cadence. The master poll runs at 250 ms; this
         // beat only needs to look every few seconds.
         constexpr double kRunningPollSeconds = 5.0;
+
+        // The engage check runs far tighter than that, because at a run
+        // an attacker covers well over a thousand units in five seconds
+        // — sampled on the completion cadence, the first look that sees
+        // them inside the engage radius routinely has them on top of the
+        // player already. Costs nothing once the group has engaged.
+        constexpr double kEngageCheckSeconds = 0.5;
 
         // Ticks VerifyingFill waits for the VM to run the queued
         // FillAttackerSlot calls. VMDispatchOnQuest only reports that a
@@ -124,9 +132,18 @@ namespace NarrativeEngine
         // per encounter no matter how combat starts and stops.
         std::atomic<bool> g_narrationFired{false};
 
-        // Per-slot engage latch, so the handoff fires once per attacker
-        // rather than every poll.
-        std::array<std::atomic<bool>, kSlotCount> g_slotEngaged{};
+        // Group-wide engage latch. The handoff is all-or-nothing: the
+        // first attacker to close on the player turns the whole group
+        // hostile, so the trailing half isn't still walking with
+        // aggression 0 while the leader is already swinging.
+        std::atomic<bool> g_groupEngaged{false};
+        std::atomic<double> g_engageCheckAccumulator{0.0};
+
+        // Moves attackers that aren't travelling. Its clock ticks on the
+        // plugin thread; everything that touches an actor happens inside
+        // a MainThread::Run. The two never overlap — the hop blocks the
+        // plugin thread that would otherwise be advancing the clock.
+        StuckRecovery::Escort g_escort{"ambush"};
 
         // References created this attempt, so a partial spawn can be
         // torn down before the aliases are filled — otherwise a failure
@@ -135,6 +152,9 @@ namespace NarrativeEngine
 
         // Carried between COMPOSE sub-phases. Guarded by g_stateMutex.
         std::vector<RE::NiPoint3> g_spawnPoints;
+        // Validated-but-unused points from the same search, handed to
+        // the escort so a stalled attacker has somewhere real to go.
+        std::vector<RE::NiPoint3> g_spawnFallbacks;
         std::vector<RE::TESLevCharacter*> g_roster;
 
         // ---- Cooldown -----------------------------------------------
@@ -156,6 +176,7 @@ namespace NarrativeEngine
                 g_activeCount = 0;
                 g_createdRefs.clear();
                 g_spawnPoints.clear();
+                g_spawnFallbacks.clear();
                 g_roster.clear();
             }
             g_subPhase.store(ComposeSubPhase::Start, std::memory_order_release);
@@ -167,9 +188,11 @@ namespace NarrativeEngine
             g_composeSucceeded.store(false, std::memory_order_release);
             g_staleCheckDone.store(false, std::memory_order_release);
             g_narrationFired.store(false, std::memory_order_release);
-            for (auto& e : g_slotEngaged) {
-                e.store(false, std::memory_order_release);
-            }
+            g_groupEngaged.store(false, std::memory_order_release);
+            g_engageCheckAccumulator.store(0.0, std::memory_order_release);
+            // Fallback cursors are per-encounter; a fresh group must
+            // not inherit a spent one through a recycled FormID.
+            g_escort.Clear();
         }
 
         void SetSubPhase(ComposeSubPhase next, std::string_view reason = {})
@@ -466,8 +489,8 @@ namespace NarrativeEngine
                     }
 
                     auto* player = RE::PlayerCharacter::GetSingleton();
-                    auto points = AmbushSpawnPoints::Find(mt, player, spawnDistanceUnits, requestedCount);
-                    if (points.empty()) {
+                    auto found = AmbushSpawnPoints::Find(mt, player, spawnDistanceUnits, requestedCount);
+                    if (!found.Ok()) {
                         return o;
                     }
 
@@ -475,7 +498,7 @@ namespace NarrativeEngine
                     // asked for; the roster follows the points, not the
                     // request. Log both so the Director's effect stays
                     // traceable.
-                    o.count = static_cast<int>(points.size());
+                    o.count = static_cast<int>(found.spawnPoints.size());
                     auto roster = AmbushAttackerGroups::ComposeRoster(*group, o.count);
                     if (roster.empty()) {
                         return o;
@@ -483,7 +506,8 @@ namespace NarrativeEngine
 
                     {
                         std::scoped_lock lock(g_stateMutex);
-                        g_spawnPoints = std::move(points);
+                        g_spawnPoints = std::move(found.spawnPoints);
+                        g_spawnFallbacks = std::move(found.fallbacks);
                         g_roster = std::move(roster);
                         g_activeGroupId = o.groupId;
                         g_activeCount = o.count;
@@ -780,7 +804,7 @@ namespace NarrativeEngine
                                                ? intended[static_cast<std::size_t>(i)]
                                                : fallback;
                         const bool drifted = std::fabs(now.z - want.z) > kMaxSettleDriftUnits;
-                        const bool offMesh = !AmbushSpawnPoints::IsOnNavmesh(now);
+                        const bool offMesh = !StuckRecovery::IsOnNavmesh(now);
                         // Positive evidence, unlike a pre-spawn height
                         // comparison: catches shoreline and shallow-river
                         // cases the search's water gate misses.
@@ -858,11 +882,19 @@ namespace NarrativeEngine
 
             case ComposeSubPhase::Arming: {
                 int expected = 0;
+                std::vector<RE::NiPoint3> fallbacks;
                 {
                     std::scoped_lock lock(g_stateMutex);
                     expected = g_activeCount;
+                    fallbacks = g_spawnFallbacks;
                 }
-                const int armed = MainThread::Run(pt, [expected](const MainThread::Token&) {
+                const int armed = MainThread::Run(pt, [expected, &fallbacks](const MainThread::Token&) {
+                    // Escort starts here, at the same moment the
+                    // travel packages do: everything before this is
+                    // COMPOSE placing actors, and an actor that
+                    // hasn't been told to walk yet isn't stuck.
+                    g_escort.Begin(std::move(fallbacks));
+
                     int n = 0;
                     for (int i = 0; i < expected && i < kSlotCount; ++i) {
                         auto* actor = AttackerInSlot(i);
@@ -874,6 +906,10 @@ namespace NarrativeEngine
                         // hostility happens at close range in RUNNING.
                         actor->AsActorValueOwner()->SetActorValue(RE::ActorValue::kAggression, 0.0f);
                         actor->EvaluatePackage();
+                        // Baseline is where it actually IS, not where
+                        // it was asked to spawn — physics has already
+                        // had its say by now.
+                        g_escort.Track(actor, actor->GetPosition());
                         ++n;
                     }
                     if (g_ambushQuest) {
@@ -920,6 +956,73 @@ namespace NarrativeEngine
         }
 
         // ---- RUNNING -------------------------------------------------
+
+        // Which attacker tripped the handoff, and at what range. slot is
+        // -1 while nobody has closed yet.
+        struct EngageTrigger
+        {
+            int slot = -1;
+            float dist = 0.0f;
+        };
+
+        // The moment ANY attacker is inside the engage radius, every
+        // surviving attacker goes to aggression 2 and is put into combat
+        // with the player.
+        //
+        // Whole-group rather than per-attacker because the group arrives
+        // strung out. Waiting for each member's own crossing meant the
+        // stragglers approached a fight that had already started, and the
+        // player's combat state hung on whichever single attacker
+        // happened to be in front.
+        //
+        // The scan runs here on the plugin thread — alias reads,
+        // GetPosition and IsDead are all off-main-safe per
+        // docs/MAIN_THREAD_STUTTER_AUDIT.md. Only the two mutations need
+        // the main thread, and neither returns anything worth waiting
+        // for, so each attacker gets its own FireAndForget. The slot
+        // index is captured rather than the actor pointer: the task runs
+        // later, so it re-resolves through the alias.
+        EngageTrigger TryEngageGroup(const PluginThread::Token& pt, int expected, float engageDist)
+        {
+            EngageTrigger trigger;
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (!player) {
+                return trigger;
+            }
+            const auto playerPos = player->GetPosition();
+
+            for (int i = 0; i < expected && i < kSlotCount; ++i) {
+                auto* actor = AttackerInSlot(i);
+                if (!actor || actor->IsDead()) {
+                    continue;
+                }
+                const float dist = actor->GetPosition().GetDistance(playerPos);
+                if (dist <= engageDist) {
+                    trigger.slot = i;
+                    trigger.dist = dist;
+                    break;
+                }
+            }
+            if (trigger.slot < 0) {
+                return trigger;
+            }
+
+            for (int i = 0; i < expected && i < kSlotCount; ++i) {
+                MainThread::FireAndForget(pt, [i](const MainThread::Token&) {
+                    auto* actor = AttackerInSlot(i);
+                    if (!actor || actor->IsDead()) {
+                        return;
+                    }
+                    actor->AsActorValueOwner()->SetActorValue(RE::ActorValue::kAggression, 2.0f);
+                    // Actor::StartCombat has no CommonLibSSE-NG binding —
+                    // only StopCombat is exposed — so this one stays a VM
+                    // call out to _ne_AmbushQuest.EngageAttacker.
+                    QuestUtils::VMDispatchOnQuest(
+                        g_ambushQuest, kQuestScriptName, "EngageAttacker", static_cast<std::int32_t>(i));
+                });
+            }
+            return trigger;
+        }
 
         TickResult TickRunning(const PluginThread::Token& pt)
         {
@@ -989,6 +1092,60 @@ namespace NarrativeEngine
                 g_runningElapsedSeconds.fetch_add(pollInterval, std::memory_order_acq_rel) + pollInterval;
             const double sinceLastPoll =
                 g_runningPollAccumulator.fetch_add(pollInterval, std::memory_order_acq_rel) + pollInterval;
+
+            int expected = 0;
+            {
+                std::scoped_lock lock(g_stateMutex);
+                expected = g_activeCount;
+            }
+
+            if (!g_groupEngaged.load(std::memory_order_acquire)) {
+                const double sinceEngageCheck =
+                    g_engageCheckAccumulator.fetch_add(pollInterval, std::memory_order_acq_rel) + pollInterval;
+                if (sinceEngageCheck >= kEngageCheckSeconds) {
+                    g_engageCheckAccumulator.store(0.0, std::memory_order_release);
+                    const auto trigger =
+                        TryEngageGroup(pt, expected, static_cast<float>(cfg.ambushEngageDistanceUnits));
+                    if (trigger.slot >= 0) {
+                        g_groupEngaged.store(true, std::memory_order_release);
+                        logger::info("AmbushBeat: slot {} closed to {:.0f}u — engaged all {} attacker(s)",
+                                     trigger.slot,
+                                     trigger.dist,
+                                     expected);
+                    }
+                }
+            }
+
+            // Escort clock advances every tick, ahead of the completion
+            // poll's gate, so its cadence is StuckRecovery's setting
+            // rather than a side effect of this beat's much slower poll
+            // interval. The clock itself is plugin-thread arithmetic —
+            // only the check that it gates costs a main-thread hop.
+            StuckRecovery::Options escortOpts;
+            escortOpts.movementThresholdUnits = static_cast<float>(cfg.stuckRecoveryMovementThresholdUnits);
+            escortOpts.checkIntervalSeconds = static_cast<double>(cfg.stuckRecoveryCheckIntervalSeconds);
+
+            if (g_escort.DueForCheck(pollInterval, escortOpts)) {
+                MainThread::Run(pt, [expected, &escortOpts](const MainThread::Token& mt) {
+                    auto* player = RE::PlayerCharacter::GetSingleton();
+                    if (!player) {
+                        return 0;
+                    }
+                    const auto playerPos = player->GetPosition();
+                    for (int i = 0; i < expected && i < kSlotCount; ++i) {
+                        auto* actor = AttackerInSlot(i);
+                        if (!actor || actor->IsDead()) {
+                            continue;
+                        }
+                        // The player is the goal — it is what every
+                        // attacker is walking toward. StuckRecovery logs
+                        // each warp itself, so nothing is counted here.
+                        g_escort.Update(mt, actor, playerPos, escortOpts);
+                    }
+                    return 0;
+                });
+            }
+
             if (sinceLastPoll < kRunningPollSeconds) {
                 return {};
             }
@@ -997,12 +1154,6 @@ namespace NarrativeEngine
             if (elapsed >= static_cast<double>(cfg.ambushMaxDurationSeconds)) {
                 logger::info("AmbushBeat: abandoned by timeout after {:.0f}s", elapsed);
                 return TickResult{BeatState::CLEANUP};
-            }
-
-            int expected = 0;
-            {
-                std::scoped_lock lock(g_stateMutex);
-                expected = g_activeCount;
             }
 
             struct PollResult
@@ -1029,6 +1180,9 @@ namespace NarrativeEngine
                     // not stall the all-dead check forever.
                     if (!ref || !actor || actor->IsDead()) {
                         ++r.deadOrGone;
+                        if (actor) {
+                            g_escort.Forget(actor->GetFormID());
+                        }
                         continue;
                     }
                     ++r.alive;
@@ -1041,18 +1195,6 @@ namespace NarrativeEngine
 
                     if (dist > static_cast<float>(cfg.ambushAbandonDistanceUnits)) {
                         ++r.beyondAbandon;
-                    }
-
-                    // Engage handoff, once per attacker.
-                    if (dist <= static_cast<float>(cfg.ambushEngageDistanceUnits)) {
-                        auto& latch = g_slotEngaged[static_cast<std::size_t>(i)];
-                        if (!latch.exchange(true, std::memory_order_acq_rel)) {
-                            actor->AsActorValueOwner()->SetActorValue(RE::ActorValue::kAggression, 2.0f);
-                            // StartCombat has no native binding either.
-                            QuestUtils::VMDispatchOnQuest(
-                                g_ambushQuest, kQuestScriptName, "EngageAttacker", static_cast<std::int32_t>(i));
-                            logger::info("AmbushBeat: slot {} engaging at {:.0f}u", i, dist);
-                        }
                     }
                 }
                 return r;
@@ -1163,13 +1305,22 @@ namespace NarrativeEngine
         if (AmbushLocationBlocker(ctx.playerInInterior, pc ? pc->GetCurrentLocation() : nullptr)) {
             return false;
         }
-        // Never stack a second ambush on a live one. Only the in-flight
-        // stages block — the quest is parked at kStageComplete between
-        // encounters, so treating any non-zero stage as busy would let
-        // the beat fire once per save. (IsRunning is unusable here: it
-        // shares a bit with IsEnabled.)
-        if (const auto stage = g_ambushQuest->GetCurrentStageID(); stage == kStageSpawning || stage == kStageEngaged) {
-            return false;
+        // Deliberately no check on the quest stage here. A live ambush is
+        // already blocked upstream by BeatSystem's in_flight gate, which
+        // runs before candidates are gathered — so by the time this is
+        // reached, an in-flight stage can only be LEFTOVER: the player
+        // died mid-encounter and reloaded a save from before it, or the
+        // session crashed. Treating that as busy made the beat
+        // permanently unavailable for the rest of the session, because
+        // nothing outside COMPOSE ever winds the stage back. COMPOSE's
+        // StartingQuest opens with RetireQuest for exactly this case.
+        if (Settings::Get().debugMode) {
+            if (const auto stage = g_ambushQuest->GetCurrentStageID();
+                stage == kStageSpawning || stage == kStageEngaged) {
+                logger::debug("AmbushBeat: quest left at stage {} by a previous session — "
+                              "COMPOSE will retire it before starting",
+                              stage);
+            }
         }
         if (RemainingCooldownGameHours() > 0.0) {
             return false;
