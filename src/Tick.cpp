@@ -6,6 +6,7 @@
 #include <EvalDispatch.h>
 #include <EvaluationPipeline.h>
 #include <EventHistoryWriter.h>
+#include <FineRoads.h>
 #include <logger.h>
 #include <PhaseTracker.h>
 #include <PluginThread.h>
@@ -69,6 +70,7 @@ namespace NarrativeEngine::Tick
             WeatherEventLog::Poll(pt, elapsedSec);
             TravelEventLog::Poll(pt, elapsedSec);
             EventHistoryWriter::Poll(pt, elapsedSec);
+            FineRoads::Poll(pt, elapsedSec);
 
             // Consume the elapsed sample above so a subsequent
             // re-enable doesn't credit disabled time.

@@ -12,6 +12,7 @@
 #include <Decorators.h>
 #include <EvalDispatch.h>
 #include <EventHistoryWriter.h>
+#include <FineRoads.h>
 #include <HoldGrid.h>
 #include <LetterPool.h>
 #include <logger.h>
@@ -24,6 +25,7 @@
 #include <SkyrimNetAPI.h>
 #include <Tick.h>
 #include <TravelEventLog.h>
+#include <TravelGraph.h>
 #include <VisitState.h>
 #include <WeatherEventLog.h>
 
@@ -163,6 +165,17 @@ namespace NarrativeEngine
                 // Region::ForPlayer can use it as a fast-path from the
                 // very first Poll. ~10s of ms on vanilla data.
                 HoldGrid::Initialize();
+                // TravelGraph: experimental road graph reconstructed
+                // from the NAVI record's precomputed preferred-path
+                // chains. Diagnostic only — nothing consumes it yet.
+                // Independent of HoldGrid; ordered after it purely to
+                // keep the two world-geometry builds adjacent in the
+                // log.
+                TravelGraph::Initialize();
+                // FineRoads: high-resolution local road graph built from
+                // navmesh triangle flags as cells load. Tick drives the
+                // grid poll; Initialize only registers the module.
+                FineRoads::Initialize();
                 // AttackerGroups parses the user-editable ambush group
                 // table. Must run AFTER HoldGrid::Initialize because its
                 // hold validation resolves BGSLocations by EditorID, and

@@ -211,6 +211,60 @@ namespace NarrativeEngine::Settings
         int holdGridPruneMaxClusterSize = 3;
         int holdGridPruneIsolationRadius = 5;
 
+        // [TravelGraph]
+        // EXPERIMENTAL. Builds a road graph at kDataLoaded from the NAVI
+        // record's precomputed preferred-path chains — the same data the
+        // engine uses to move actors travelling outside the loaded cell
+        // grid. Nothing consumes the graph yet; this is a diagnostic to
+        // establish whether that data is an accurate road network.
+        bool travelGraphEnabled = true;
+        // Debug: after the graph builds, dump one 24-bit BMP per
+        // worldspace to the SKSE log directory. Nodes are black, edges
+        // gray, empty space white. Worldspaces with no nodes are
+        // skipped. Overwrites existing files each session.
+        bool travelGraphDebugBitmap = true;
+        // World units per bitmap pixel. Lower = larger, more detailed
+        // image. 256 puts a 4096-unit cell at 16 pixels and renders
+        // Tamriel at roughly 1330x820. Automatically raised if it would
+        // produce an image over 4096px on a side.
+        int travelGraphBitmapUnitsPerPixel = 256;
+        // Diagnostic: log runner-up offsets from the BSNavmeshInfo
+        // layout calibration. Calibration itself always runs — the graph
+        // needs it, since only ~15% of navmeshes have a resident NavMesh
+        // form and the rest can only be positioned by reading the info
+        // struct. This just controls how much detail it reports.
+        bool travelGraphLogCalibration = false;
+
+        // [FineRoads]
+        // EXPERIMENTAL. High-resolution road graph for the loaded cell
+        // grid, extracted from kPreferred-flagged navmesh triangles.
+        // Complements TravelGraph, which only carries the long-distance
+        // skeleton and has no spurs. Nothing consumes it yet.
+        bool fineRoadsEnabled = true;
+        // Rescans are normally event-driven: cell-loaded, load-game, and
+        // fast-travel-end sinks flag the graph and the next tick picks it
+        // up. This is only a backstop, in unpaused seconds. It exists
+        // because cell UNLOADS have no event of their own — an unload
+        // unaccompanied by any load would otherwise leave stale cells in
+        // the active set indefinitely.
+        //
+        // It may well be dead weight: the grid shifts as a unit, so an
+        // unload almost always arrives with a load whose event triggers
+        // the rescan anyway. Kept because the failure it guards against
+        // is silent (a stale active set serves points in cells that are
+        // no longer loaded) and the cost of keeping it is one grid scan
+        // every few minutes. If the log never shows a backstop-triggered
+        // rescan finding a changed set, it can be dropped outright.
+        int fineRoadsBackstopSeconds = 180;
+        // Debug: dump the active local graph to a BMP in the SKSE log
+        // directory whenever it changes. Road nodes red, frontier nodes
+        // (where the road leaves loaded cells) blue, edges gray.
+        bool fineRoadsDebugBitmap = true;
+        // World units per pixel for that bitmap. Much finer than
+        // TravelGraph's, since this covers ~5x5 cells rather than a
+        // whole worldspace.
+        int fineRoadsBitmapUnitsPerPixel = 16;
+
         // [EventHistory]
         // Testing aid: writes every emitted internal event plus
         // SkyrimNet's own event stream to a rotating session-scoped

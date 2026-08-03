@@ -1,5 +1,6 @@
 #include <HoldGrid.h>
 
+#include <BmpWriter.h>
 #include <logger.h>
 #include <Settings.h>
 
@@ -12,7 +13,6 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
-#include <fstream>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -66,12 +66,7 @@ namespace NarrativeEngine::HoldGrid
 
         // -------- Debug bitmap ---------------------------------------
 
-        struct RGB
-        {
-            std::uint8_t r;
-            std::uint8_t g;
-            std::uint8_t b;
-        };
+        using RGB = Bmp::RGB;
 
         // Curated distinct palette assigned to holds in FormID-sorted
         // order (deterministic across runs). Beyond kPalette.size()
@@ -99,80 +94,6 @@ namespace NarrativeEngine::HoldGrid
                 static_cast<std::uint8_t>(((id * 4055993439u) >> 16) & 0xFF),
                 static_cast<std::uint8_t>(((id * 3266489917u) >> 16) & 0xFF),
             };
-        }
-
-        // Minimal 24-bit uncompressed BMP writer. Rows are bottom-up
-        // in the file, padded to 4-byte boundaries. Writes width x
-        // height pixels sampled via `pixelAt(pixelX, pixelY)`.
-        // pixelY=0 is the TOP of the image; the writer flips
-        // internally for BMP's bottom-up convention.
-        template <class PixelFn>
-        bool WriteBmp24(const std::filesystem::path& path, int width, int height, PixelFn pixelAt)
-        {
-            if (width <= 0 || height <= 0) {
-                return false;
-            }
-            const int rowSize = ((width * 3 + 3) / 4) * 4;
-            const std::uint32_t pixelDataSize =
-                static_cast<std::uint32_t>(rowSize) * static_cast<std::uint32_t>(height);
-            const std::uint32_t fileSize = 14 + 40 + pixelDataSize;
-
-            std::ofstream out(path, std::ios::binary | std::ios::trunc);
-            if (!out.is_open()) {
-                return false;
-            }
-
-            auto writeU16 = [&](std::uint16_t v) {
-                std::uint8_t bytes[2] = {
-                    static_cast<std::uint8_t>(v & 0xFF),
-                    static_cast<std::uint8_t>((v >> 8) & 0xFF),
-                };
-                out.write(reinterpret_cast<const char*>(bytes), 2);
-            };
-            auto writeU32 = [&](std::uint32_t v) {
-                std::uint8_t bytes[4] = {
-                    static_cast<std::uint8_t>(v & 0xFF),
-                    static_cast<std::uint8_t>((v >> 8) & 0xFF),
-                    static_cast<std::uint8_t>((v >> 16) & 0xFF),
-                    static_cast<std::uint8_t>((v >> 24) & 0xFF),
-                };
-                out.write(reinterpret_cast<const char*>(bytes), 4);
-            };
-            auto writeS32 = [&](std::int32_t v) { writeU32(static_cast<std::uint32_t>(v)); };
-
-            // BITMAPFILEHEADER (14 bytes)
-            writeU16(0x4D42); // 'BM'
-            writeU32(fileSize);
-            writeU16(0);
-            writeU16(0);
-            writeU32(54);
-            // BITMAPINFOHEADER (40 bytes)
-            writeU32(40);
-            writeS32(width);
-            writeS32(height); // positive = bottom-up rows
-            writeU16(1);
-            writeU16(24);
-            writeU32(0); // BI_RGB
-            writeU32(pixelDataSize);
-            writeS32(2835); // 72 DPI in pixels/meter
-            writeS32(2835);
-            writeU32(0);
-            writeU32(0);
-
-            // Pixel rows: file row 0 = bottom = image y = (height-1).
-            std::vector<std::uint8_t> row(static_cast<std::size_t>(rowSize), 0);
-            for (int fileRow = 0; fileRow < height; ++fileRow) {
-                const int imageY = height - 1 - fileRow;
-                for (int x = 0; x < width; ++x) {
-                    const RGB c = pixelAt(x, imageY);
-                    // BMP pixel byte order is BGR.
-                    row[static_cast<std::size_t>(x) * 3 + 0] = c.b;
-                    row[static_cast<std::size_t>(x) * 3 + 1] = c.g;
-                    row[static_cast<std::size_t>(x) * 3 + 2] = c.r;
-                }
-                out.write(reinterpret_cast<const char*>(row.data()), rowSize);
-            }
-            return out.good();
         }
 
         // Write one BMP for this worldspace showing the fill partition.
@@ -254,7 +175,7 @@ namespace NarrativeEngine::HoldGrid
             const std::string wsName = (wsEdid && *wsEdid) ? wsEdid : "unknown";
             const auto path = *logsFolder / ("NarrativeEngine_HoldGrid_" + wsName + ".bmp");
 
-            if (WriteBmp24(path, width, height, pixelAt)) {
+            if (Bmp::Write24(path, width, height, pixelAt)) {
                 logger::info("HoldGrid: wrote bitmap '{}' ({}x{})", path.string(), width, height);
             } else {
                 logger::warn("HoldGrid: failed to write bitmap '{}'", path.string());

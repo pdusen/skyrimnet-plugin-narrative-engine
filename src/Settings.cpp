@@ -250,6 +250,21 @@ namespace NarrativeEngine::Settings
             dst.holdGridPruneIsolationRadius = static_cast<int>(
                 ini.GetLongValue("HoldGrid", "iHoldGridPruneIsolationRadius", dst.holdGridPruneIsolationRadius));
 
+            dst.travelGraphEnabled = ini.GetBoolValue("TravelGraph", "bTravelGraphEnabled", dst.travelGraphEnabled);
+            dst.travelGraphDebugBitmap =
+                ini.GetBoolValue("TravelGraph", "bTravelGraphDebugBitmap", dst.travelGraphDebugBitmap);
+            dst.travelGraphBitmapUnitsPerPixel = static_cast<int>(
+                ini.GetLongValue("TravelGraph", "iTravelGraphBitmapUnitsPerPixel", dst.travelGraphBitmapUnitsPerPixel));
+            dst.travelGraphLogCalibration =
+                ini.GetBoolValue("TravelGraph", "bTravelGraphLogCalibration", dst.travelGraphLogCalibration);
+
+            dst.fineRoadsEnabled = ini.GetBoolValue("FineRoads", "bFineRoadsEnabled", dst.fineRoadsEnabled);
+            dst.fineRoadsBackstopSeconds = static_cast<int>(
+                ini.GetLongValue("FineRoads", "iFineRoadsBackstopSeconds", dst.fineRoadsBackstopSeconds));
+            dst.fineRoadsDebugBitmap = ini.GetBoolValue("FineRoads", "bFineRoadsDebugBitmap", dst.fineRoadsDebugBitmap);
+            dst.fineRoadsBitmapUnitsPerPixel = static_cast<int>(
+                ini.GetLongValue("FineRoads", "iFineRoadsBitmapUnitsPerPixel", dst.fineRoadsBitmapUnitsPerPixel));
+
             dst.eventHistoryEnabled = ini.GetBoolValue("EventHistory", "bEventHistoryEnabled", dst.eventHistoryEnabled);
             dst.eventHistoryFlushIntervalSeconds = static_cast<int>(ini.GetLongValue(
                 "EventHistory", "iEventHistoryFlushIntervalSeconds", dst.eventHistoryFlushIntervalSeconds));
