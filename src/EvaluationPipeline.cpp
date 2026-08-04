@@ -63,6 +63,10 @@ namespace NarrativeEngine::EvaluationPipeline
             if (auto* pc = RE::PlayerCharacter::GetSingleton()) {
                 e.player.formID = pc->GetFormID();
 
+                if (const char* dn = pc->GetDisplayFullName(); dn && *dn) {
+                    e.player.name = dn;
+                }
+
                 if (auto* loc = pc->GetCurrentLocation()) {
                     e.player.locationFormID = loc->GetFormID();
                     if (const char* name = loc->GetFullName(); name && *name) {
@@ -109,6 +113,7 @@ namespace NarrativeEngine::EvaluationPipeline
         void MergeEngineFieldsInto(Snapshot& s, const EngineSnapshotFields& engine)
         {
             s.player.formID = engine.player.formID;
+            s.player.name = engine.player.name;
             s.player.locationFormID = engine.player.locationFormID;
             s.player.locationName = engine.player.locationName;
             s.player.cellFormID = engine.player.cellFormID;
@@ -262,7 +267,7 @@ namespace NarrativeEngine::EvaluationPipeline
                 // Synthesize `evt.text` per event so the template just
                 // renders `{{ evt.text }}`; each line carries a "N ago"
                 // relative timestamp from gameTimeSeconds.
-                SkyrimNetEvents::FormatEventsText(parsed, snapshot.player.gameTimeSeconds);
+                SkyrimNetEvents::FormatEventsText(parsed, snapshot.player.gameTimeSeconds, snapshot.player.name);
 
                 // Drop unrecognized event types (FormatEventsText's
                 // "(no data)" last-resort case). Log each so the type

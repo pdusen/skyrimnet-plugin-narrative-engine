@@ -16,11 +16,19 @@
 // Not a cosave subsystem. Nothing here is persisted through the SKSE
 // serialization interface — the file itself is the persistence.
 //
-// Threading: Poll runs on the plugin thread from Tick. No engine
-// touches at all — file I/O is thread-agnostic, SkyrimNet's fetch API
-// is safe from any thread, and the internal event-log drains are
-// mutex-guarded. The PluginThread::Token parameter is compile-time
-// proof of context; no runtime use.
+// Threading: Poll runs on the plugin thread from Tick. File I/O is
+// thread-agnostic, SkyrimNet's fetch API is safe from any thread, and
+// the internal event-log drains are mutex-guarded. The
+// PluginThread::Token parameter is compile-time proof of context; no
+// runtime use.
+//
+// One engine touch, added deliberately: each flush reads the player's
+// display name off the `RE::PlayerCharacter` singleton so rendered
+// `book_read` lines can name the reader. That's the same stable-
+// singleton read BeatSystem and DashboardUIManager already perform from
+// the plugin thread — a singleton pointer walk plus a `const char*`
+// fetch, no engine mutation and nothing that outlives the call. It runs
+// once per flush (every few seconds), not once per event.
 namespace NarrativeEngine::EventHistoryWriter
 {
     // Called at kDataLoaded. Reads settings and registers the module.

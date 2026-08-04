@@ -14,7 +14,12 @@ namespace NarrativeEngine
 {
     struct PlayerContext
     {
-        std::uint32_t formID = 0;         // player.GetFormID()
+        std::uint32_t formID = 0; // player.GetFormID()
+        // player.GetDisplayFullName() — the character's name as the player
+        // chose it, so event lines can say who did a thing rather than "the
+        // player". Empty if the name isn't available yet (e.g. a snapshot
+        // taken before character creation finishes).
+        std::string name;
         std::uint32_t locationFormID = 0; // 0 if wilderness / no current location
         std::string locationName;
         std::uint32_t cellFormID = 0;

@@ -130,7 +130,8 @@ namespace NarrativeEngine::EventHistoryWriter
                 return;
             }
             g_file << "# NarrativeEngine event history log (session " << g_sessionCounter << ")\n"
-                   << "# Format: [<in-game timestamp>] <source>/<kind>: <text>\n\n";
+                   << "# Format: [<in-game timestamp>] <source>/<kind>: <text>\n"
+                   << "#         multi-line <text> continues on indented lines\n\n";
             g_file.flush();
             logger::info("EventHistoryWriter: opened '{}' for session {}", path.string(), g_sessionCounter);
         }
@@ -160,7 +161,14 @@ namespace NarrativeEngine::EventHistoryWriter
             // in-place. We give it `0` as currentGameTimeSeconds so the
             // "[N ago]" prefix collapses to "just now" — we don't use
             // that prefix here; we prepend our own in-game timestamp.
-            SkyrimNetEvents::FormatEventsText(parsed, 0.0);
+            std::string playerName;
+            if (auto* pc = RE::PlayerCharacter::GetSingleton()) {
+                if (const char* dn = pc->GetDisplayFullName(); dn && *dn) {
+                    playerName = dn;
+                }
+            }
+
+            SkyrimNetEvents::FormatEventsText(parsed, 0.0, playerName);
 
             double newestKept = g_lastSkyrimNetLocalTime;
 
@@ -208,6 +216,25 @@ namespace NarrativeEngine::EventHistoryWriter
             return out;
         }
 
+        // The log's contract is one record per line, so a body that spans
+        // lines (only book_read does today, once its markup is rendered to
+        // plain text) gets its continuations indented. A reader still sees
+        // where each record starts, and `grep '^\['` still enumerates them.
+        std::string IndentContinuationLines(const std::string& body)
+        {
+            if (body.find('\n') == std::string::npos) {
+                return body;
+            }
+            std::string out;
+            out.reserve(body.size() + 32);
+            for (const char c : body) {
+                out.push_back(c);
+                if (c == '\n')
+                    out.append("    ");
+            }
+            return out;
+        }
+
         // Drain all sources, sort, write. Caller holds g_mutex.
         void FlushLocked()
         {
@@ -247,7 +274,7 @@ namespace NarrativeEngine::EventHistoryWriter
                 batch.begin(), batch.end(), [](const auto& a, const auto& b) { return a.localTime < b.localTime; });
 
             for (const auto& e : batch) {
-                g_file << e.inGameTimestamp << ' ' << e.sourceKind << ": " << e.body << '\n';
+                g_file << e.inGameTimestamp << ' ' << e.sourceKind << ": " << IndentContinuationLines(e.body) << '\n';
             }
             g_file.flush();
         }

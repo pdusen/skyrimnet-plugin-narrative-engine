@@ -1092,7 +1092,7 @@ namespace NarrativeEngine::DashboardUIManager
         nlohmann::json skyrimSide = nlohmann::json::array();
         if (parsed.is_array()) {
             std::reverse(parsed.begin(), parsed.end());
-            SkyrimNetEvents::FormatEventsText(parsed, currentGameTimeSeconds);
+            SkyrimNetEvents::FormatEventsText(parsed, currentGameTimeSeconds, reads.playerName);
             skyrimSide = std::move(parsed);
         }
         j["recent_events"] =
@@ -1334,6 +1334,11 @@ namespace NarrativeEngine::DashboardUIManager
             DashboardEngineReads reads;
             if (auto* cal = RE::Calendar::GetSingleton()) {
                 reads.currentGameTimeSeconds = static_cast<double>(cal->GetDaysPassed()) * 86400.0;
+            }
+            if (auto* pc = RE::PlayerCharacter::GetSingleton()) {
+                if (const char* dn = pc->GetDisplayFullName(); dn && *dn) {
+                    reads.playerName = dn;
+                }
             }
             for (const auto& entry : BeatRegistry::All()) {
                 if (!entry.beat) {

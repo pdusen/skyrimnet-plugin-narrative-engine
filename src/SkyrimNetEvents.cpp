@@ -1,5 +1,7 @@
 #include <SkyrimNetEvents.h>
 
+#include <BookTextRenderer.h>
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -50,13 +52,26 @@ namespace NarrativeEngine::SkyrimNetEvents
         return std::to_string(w) + (w == 1 ? " week" : " weeks");
     }
 
-    void FormatEventsText(nlohmann::json& events, double currentGameTimeSeconds)
+    void FormatEventsText(nlohmann::json& events, double currentGameTimeSeconds, std::string_view playerName)
     {
         for (auto& evt : events) {
             if (!evt.is_object())
                 continue;
 
             const std::string type = evt.value("type", std::string{});
+
+            // Normalize the book body before anything reads `data`, so both
+            // the synthesized `text` below and the event object we hand back
+            // to the caller are free of the raw markup.
+            if (type == "book_read") {
+                if (auto dataIt = evt.find("data"); dataIt != evt.end() && dataIt->is_object()) {
+                    if (auto textIt = dataIt->find("book_text"); textIt != dataIt->end() && textIt->is_string()) {
+                        std::string rendered =
+                            BookTextRenderer::RenderToPlainText(textIt->get_ref<const std::string&>());
+                        *textIt = std::move(rendered);
+                    }
+                }
+            }
 
             const nlohmann::json* data = nullptr;
             if (auto it = evt.find("data"); it != evt.end() && it->is_object()) {
@@ -97,6 +112,26 @@ namespace NarrativeEngine::SkyrimNetEvents
                 text = str("killer") + " killed " + str("victim");
             } else if (type == "persistent_generic") {
                 text = str("line");
+            } else if (type == "book_read") {
+                // Given its own branch rather than the JSON-dump fallback
+                // below: that fallback is what put ~20KB of tag soup into a
+                // Director prompt and blew the request. SkyrimNet carries
+                // three name-ish fields; `book_title` is the in-fiction one,
+                // `book_name` the record's display name (usually identical),
+                // and the EditorID is a last resort so a nameless book still
+                // reads as something rather than "a book".
+                std::string title = str("book_title");
+                if (title.empty())
+                    title = str("book_name");
+                if (title.empty())
+                    title = str("book_editor_id");
+
+                const std::string reader = playerName.empty() ? std::string("The player") : std::string(playerName);
+                text = title.empty() ? (reader + " read a book") : (reader + " read \"" + title + "\"");
+
+                if (const std::string body = str("book_text"); !body.empty()) {
+                    text += ":\n" + body;
+                }
             } else {
                 // Unknown discriminator. Many third-party SkyrimNet plugins
                 // (e.g. SeverActions' "follower_left") emit events whose

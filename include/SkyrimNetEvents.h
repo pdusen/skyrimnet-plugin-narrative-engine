@@ -3,6 +3,7 @@
 #include <nlohmann/json_fwd.hpp>
 
 #include <string>
+#include <string_view>
 
 // Shared helpers for rendering SkyrimNet's per-event JSON into a form the
 // LLM prompt and the dashboard both consume. The C++-side synthesizes a
@@ -29,7 +30,22 @@ namespace NarrativeEngine::SkyrimNetEvents
     // `gameTime` field). Unknown types fall back to dumping `data` verbatim
     // so the consumer at least sees the raw content. Defensive against
     // missing fields and non-object entries.
-    void FormatEventsText(nlohmann::json& events, double currentGameTimeSeconds);
+    //
+    // `book_read` events are additionally normalized in place: `data
+    // .book_text` is rewritten to its rendered plain-text form (see
+    // BookTextRenderer). That mutation matters independently of the
+    // synthesized `text` — the whole event object is serialized into the
+    // prompt context, so leaving the raw markup on `data` would ship it
+    // across the API boundary even though no template renders it.
+    //
+    // `playerName` names the reader in the rendered `book_read` line
+    // ("Maxxor read \"The Lusty Argonian Maid\""). SkyrimNet's payload
+    // carries no actor field — the event fires off the book menu, which only
+    // the player opens — so the caller supplies the name rather than this
+    // module reaching for `RE::PlayerCharacter` and dragging an engine
+    // dependency into what is otherwise a pure JSON transform. Empty falls
+    // back to "The player".
+    void FormatEventsText(nlohmann::json& events, double currentGameTimeSeconds, std::string_view playerName);
 
     // Merges the SkyrimNet event tail with each internal-source tail
     // (combat + weather + travel), sorts the union ascending by

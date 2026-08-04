@@ -796,7 +796,7 @@ namespace NarrativeEngine::BeatSystem
                         filtered.push_back(std::move(evt));
                     }
                     std::reverse(filtered.begin(), filtered.end());
-                    SkyrimNetEvents::FormatEventsText(filtered, snapshot.player.gameTimeSeconds);
+                    SkyrimNetEvents::FormatEventsText(filtered, snapshot.player.gameTimeSeconds, playerName);
                     skyrimSide = std::move(filtered);
                 }
                 auto merged = SkyrimNetEvents::BuildMergedTimeline(

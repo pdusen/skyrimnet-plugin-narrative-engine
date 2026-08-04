@@ -26,6 +26,9 @@ namespace NarrativeEngine::DashboardUIManager
         // Used for the `recent_events` merged-timeline "relative-time"
         // rendering.
         double currentGameTimeSeconds = 0.0;
+        // Player's display name, used to name the reader on rendered
+        // `book_read` event lines. Empty falls back to "The player".
+        std::string playerName;
         // Per-beat remaining-cooldown-hours keyed by beat name. Absent
         // entries fall back to 0.0 in the JSON.
         std::unordered_map<std::string, double> beatCooldownHours;
