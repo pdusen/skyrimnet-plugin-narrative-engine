@@ -1,0 +1,118 @@
+#pragma once
+
+#include <cstdint>
+#include <string_view>
+
+#include <GossipGraph.h>
+#include <PluginThread.h>
+
+#include <RE/Skyrim.h>
+
+// GossipLog — a dedicated trace of the rumor mill, and nothing else.
+//
+// Writes to Data/../SKSE/NarrativeEngine_Gossip.log, session-scoped and
+// rotated five deep, following the EventHistoryWriter pattern. Unlike
+// EventHistoryWriter it owns its own spdlog sink rather than borrowing
+// the default one, so nothing it writes reaches NarrativeEngine.log and
+// nothing from elsewhere reaches it.
+//
+// It is gated on bGossipLogEnabled ALONE — deliberately not on
+// bDebugMode. The whole point is to be able to run a long validation
+// session with a quiet main log and a complete gossip trace.
+//
+// The format is designed to be analysable rather than merely verbose.
+// Every TELL line names the CHANNEL the transmission travelled by, and
+// hold crossings are flagged inline, because channel attribution is what
+// established that organisations rather than families move rumors
+// between holds. A run can be assessed from the BURNOUT lines alone.
+//
+// Threading: every emitter is callable from the plugin thread and takes
+// no engine locks. Names come from GossipGraph's cached strings, never
+// from a live RE:: pointer. Internally mutex-guarded, so the ordering of
+// concurrent emitters is consistent even though only one worker drives
+// the simulation today.
+namespace NarrativeEngine::GossipLog
+{
+    // Registers the module and reads settings. Does NOT touch the
+    // filesystem — the file lifecycle is scoped to save-game sessions.
+    void Initialize();
+
+    // kNewGame / kPostLoadGame. Rotates the previous five files and
+    // opens a fresh one. No-op when logging is disabled.
+    void OnSessionStart();
+
+    // kPreLoadGame. Writes the closing census, flushes, closes.
+    void OnSessionEnd();
+
+    // Tick-driven flush, so a crash loses at most one interval of lines
+    // rather than the whole session's tail.
+    void Poll(const PluginThread::Token&, double unpausedElapsedSeconds);
+
+    // True when a file is open and lines will actually land.
+    bool IsActive();
+
+    // --- emitters -----------------------------------------------------
+
+    // A rumor enters the world. `slice` is the seeder's stratification
+    // label ("large-settlement", "low-notability", ...) or empty for a
+    // rumor that arrived any other way.
+    void Seed(std::uint32_t rumorId,
+              float notability,
+              RE::FormID originNpc,
+              RE::FormID settlement,
+              std::string_view slice);
+
+    // One successful transmission. `via` is the specific channel that best
+    // explains the contact; `tier` is the proximity tier the pair share.
+    // Both are logged because they diverge constantly -- most vanilla
+    // relationship edges are between housemates, so collapsing them made
+    // household traffic look like a sixth of what it actually is.
+    void Tell(std::uint32_t rumorId,
+              std::uint32_t generation,
+              float notability,
+              RE::FormID from,
+              RE::FormID to,
+              GossipGraph::Channel via,
+              GossipGraph::Channel tier,
+              RE::FormID viaFaction,
+              RE::FormID location,
+              RE::FormID fromHold,
+              RE::FormID toHold);
+
+    // A conversation that landed on somebody who already knows — either
+    // still infectious or recovered and immune. These are the wasted
+    // opportunities that bring an outbreak to a halt, so a run where
+    // almost nothing is wasted means nothing is saturating anywhere.
+    // `remaining` is how many conversations are left in this step.
+    void Wasted(std::uint32_t rumorId, RE::FormID from, RE::FormID to, int remaining);
+
+    // A carrier stops transmitting and becomes permanently immune.
+    // `reason` is one of "recovered" (the infectious period elapsed —
+    // the normal case), "age", "dead", or "no-contacts".
+    void Retire(std::uint32_t rumorId, RE::FormID npc, std::string_view reason);
+
+    // A rumor's last carrier retired. Carries the whole per-rumor
+    // summary so a validation run can be assessed from these lines
+    // alone.
+    struct BurnoutStats
+    {
+        std::size_t reach = 0;
+        std::uint32_t depth = 0;
+        std::size_t holds = 0;
+        std::size_t settlements = 0;
+        double days = 0.0;
+        std::size_t transmissions = 0;
+        std::size_t wasted = 0;
+    };
+    void Burnout(std::uint32_t rumorId, const BurnoutStats& stats);
+
+    // Free-form note line, for anything that does not fit the shapes
+    // above: queue-depth warnings, seeder summaries, catch-up drains,
+    // and the end-of-session census.
+    //
+    // The census is written by GossipSim rather than here, so that this
+    // module never has to know the simulation's types. Plugin.cpp orders
+    // GossipSim::OnSessionEnd before GossipLog::OnSessionEnd for exactly
+    // that reason.
+    void Note(std::string_view text);
+} // namespace NarrativeEngine::GossipLog

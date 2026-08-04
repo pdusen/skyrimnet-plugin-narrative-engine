@@ -269,6 +269,58 @@ namespace NarrativeEngine::Settings
             dst.eventHistoryFlushIntervalSeconds = static_cast<int>(ini.GetLongValue(
                 "EventHistory", "iEventHistoryFlushIntervalSeconds", dst.eventHistoryFlushIntervalSeconds));
 
+            dst.gossipEnabled = ini.GetBoolValue("Gossip", "bGossipEnabled", dst.gossipEnabled);
+            dst.gossipLogEnabled = ini.GetBoolValue("Gossip", "bGossipLogEnabled", dst.gossipLogEnabled);
+            dst.gossipTickIntervalSeconds = static_cast<int>(
+                ini.GetLongValue("Gossip", "iGossipTickIntervalSeconds", dst.gossipTickIntervalSeconds));
+            dst.gossipMaxEventsPerTick =
+                static_cast<int>(ini.GetLongValue("Gossip", "iGossipMaxEventsPerTick", dst.gossipMaxEventsPerTick));
+            dst.gossipMaxMillisecondsPerTick = static_cast<int>(
+                ini.GetLongValue("Gossip", "iGossipMaxMillisecondsPerTick", dst.gossipMaxMillisecondsPerTick));
+            dst.gossipConversationsPerDay = static_cast<float>(
+                ini.GetDoubleValue("Gossip", "fGossipConversationsPerDay", dst.gossipConversationsPerDay));
+            dst.gossipWeightHousehold =
+                static_cast<float>(ini.GetDoubleValue("Gossip", "fGossipWeightHousehold", dst.gossipWeightHousehold));
+            dst.gossipWeightPersonalEdge = static_cast<float>(
+                ini.GetDoubleValue("Gossip", "fGossipWeightPersonalEdge", dst.gossipWeightPersonalEdge));
+            dst.gossipWeightSettlement =
+                static_cast<float>(ini.GetDoubleValue("Gossip", "fGossipWeightSettlement", dst.gossipWeightSettlement));
+            dst.gossipWeightHold =
+                static_cast<float>(ini.GetDoubleValue("Gossip", "fGossipWeightHold", dst.gossipWeightHold));
+            dst.gossipWeightProvince =
+                static_cast<float>(ini.GetDoubleValue("Gossip", "fGossipWeightProvince", dst.gossipWeightProvince));
+            dst.gossipPersonalDistanceSameSettlement = static_cast<float>(ini.GetDoubleValue(
+                "Gossip", "fGossipPersonalDistanceSameSettlement", dst.gossipPersonalDistanceSameSettlement));
+            dst.gossipPersonalDistanceSameHold = static_cast<float>(
+                ini.GetDoubleValue("Gossip", "fGossipPersonalDistanceSameHold", dst.gossipPersonalDistanceSameHold));
+            dst.gossipPersonalDistanceFar = static_cast<float>(
+                ini.GetDoubleValue("Gossip", "fGossipPersonalDistanceFar", dst.gossipPersonalDistanceFar));
+            dst.gossipInfectiousDays =
+                static_cast<float>(ini.GetDoubleValue("Gossip", "fGossipInfectiousDays", dst.gossipInfectiousDays));
+            dst.gossipTransmissionScale = static_cast<float>(
+                ini.GetDoubleValue("Gossip", "fGossipTransmissionScale", dst.gossipTransmissionScale));
+            dst.gossipStepDays =
+                static_cast<float>(ini.GetDoubleValue("Gossip", "fGossipStepDays", dst.gossipStepDays));
+            dst.gossipMaxLiveRumors =
+                static_cast<int>(ini.GetLongValue("Gossip", "iGossipMaxLiveRumors", dst.gossipMaxLiveRumors));
+            dst.gossipMaxCarriersPerRumor = static_cast<int>(
+                ini.GetLongValue("Gossip", "iGossipMaxCarriersPerRumor", dst.gossipMaxCarriersPerRumor));
+            dst.gossipCarrierMaxAgeDays =
+                static_cast<int>(ini.GetLongValue("Gossip", "iGossipCarrierMaxAgeDays", dst.gossipCarrierMaxAgeDays));
+            dst.gossipFactionSizeMin =
+                static_cast<int>(ini.GetLongValue("Gossip", "iGossipFactionSizeMin", dst.gossipFactionSizeMin));
+            dst.gossipFactionSizeMax =
+                static_cast<int>(ini.GetLongValue("Gossip", "iGossipFactionSizeMax", dst.gossipFactionSizeMax));
+            dst.gossipSeedStubsOnLoad = ini.GetBoolValue("Gossip", "bGossipSeedStubsOnLoad", dst.gossipSeedStubsOnLoad);
+            dst.gossipStubSeedCount =
+                static_cast<int>(ini.GetLongValue("Gossip", "iGossipStubSeedCount", dst.gossipStubSeedCount));
+            dst.gossipStubSeedIntervalGameHours = static_cast<int>(
+                ini.GetLongValue("Gossip", "iGossipStubSeedIntervalGameHours", dst.gossipStubSeedIntervalGameHours));
+            dst.gossipStubSeedMaxTotal =
+                static_cast<int>(ini.GetLongValue("Gossip", "iGossipStubSeedMaxTotal", dst.gossipStubSeedMaxTotal));
+            dst.gossipRandomSeed =
+                static_cast<int>(ini.GetLongValue("Gossip", "iGossipRandomSeed", dst.gossipRandomSeed));
+
             dst.travelEventsMaxStored =
                 static_cast<int>(ini.GetLongValue("TravelEvents", "iTravelEventsMaxStored", dst.travelEventsMaxStored));
             dst.travelCondensationWindowSeconds = static_cast<int>(ini.GetLongValue(

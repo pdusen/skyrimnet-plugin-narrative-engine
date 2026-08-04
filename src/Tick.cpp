@@ -7,6 +7,9 @@
 #include <EvaluationPipeline.h>
 #include <EventHistoryWriter.h>
 #include <FineRoads.h>
+#include <GossipLog.h>
+#include <GossipSeeder.h>
+#include <GossipSim.h>
 #include <logger.h>
 #include <PhaseTracker.h>
 #include <PluginThread.h>
@@ -71,6 +74,9 @@ namespace NarrativeEngine::Tick
             TravelEventLog::Poll(pt, elapsedSec);
             EventHistoryWriter::Poll(pt, elapsedSec);
             FineRoads::Poll(pt, elapsedSec);
+            GossipSeeder::Poll(pt, elapsedSec);
+            GossipSim::Poll(pt, elapsedSec);
+            GossipLog::Poll(pt, elapsedSec);
 
             // Consume the elapsed sample above so a subsequent
             // re-enable doesn't credit disabled time.

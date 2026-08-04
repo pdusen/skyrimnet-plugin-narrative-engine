@@ -508,6 +508,170 @@ namespace NarrativeEngine::Settings
         // want to be tunable without a rebuild.
         int stuckRecoveryMovementThresholdUnits = 100;
         int stuckRecoveryCheckIntervalSeconds = 4;
+
+        // [Gossip]
+        // Background rumor propagation across the unique-actor
+        // population. See docs/implementation/PHASE_13_GOSSIP_PROPAGATION.md.
+        //
+        // Ships DISABLED. Milestone 1 is a validation harness: it writes
+        // stub memories with placeholder text into SkyrimNet's memory
+        // database and does not clean them up. Do not enable on a
+        // playthrough you care about.
+        bool gossipEnabled = false;
+        // The dedicated rumor-trace log at
+        // Data/../SKSE/NarrativeEngine_Gossip.log. Deliberately
+        // independent of bDebugMode so a long validation session can run
+        // with a quiet main log and a complete gossip trace.
+        bool gossipLogEnabled = true;
+        // Accumulator threshold for the simulation poll, in unpaused
+        // real seconds (Tick-driven accumulator pattern).
+        int gossipTickIntervalSeconds = 2;
+        // Work caps per simulation firing, applied together. Neither
+        // drops work — the remainder stays queued and drains on the next
+        // firing, so load spreads across ticks by design.
+        //
+        // The MILLISECOND budget is the real governor and the count is a
+        // backstop. Per-event cost is dominated by the AddMemory calls a
+        // transmission makes, and that grows with the size of SkyrimNet's
+        // memory database, so bounding time adapts where bounding a count
+        // cannot.
+        //
+        // History worth keeping: the count was 25 for the first in-game
+        // run and starved the queue outright — a game day generated far
+        // more than 25 events, so the backlog grew every day and
+        // propagation stalled at roughly one telling per rumor per day.
+        // At 400 it merely throttled during time skips. It is now set high
+        // enough that it should never bind; lower it only if profiling
+        // shows the time budget is not doing its job.
+        int gossipMaxEventsPerTick = 5000;
+        int gossipMaxMillisecondsPerTick = 8;
+
+        // A carrier's finite daily budget of gossip-capable conversations,
+        // divided among their contacts in proportion to the channel
+        // weights below.
+        //
+        // This is the term that keeps propagation subcritical. Modelling
+        // contact as a per-PAIR rate instead makes a person's total
+        // social activity scale with the size of their settlement, and
+        // the offline validation run showed that saturates the entire
+        // province within one game day.
+        float gossipConversationsPerDay = 2.0f;
+
+        // Relative channel weights. Ratios, NOT rates — only their
+        // proportions matter, since the budget above sets the absolute
+        // scale.
+        //
+        // The household:settlement ratio is what separates the three
+        // tiers of the design target. Too low and settlements saturate
+        // as readily as households; no value of the transmission
+        // probability compensates, because the epidemic threshold is
+        // sharp. See PHASE_13_SIR_VALIDATION_LOG.md, iterations 2-3.
+        float gossipWeightHousehold = 600.0f;
+        // The middle ring between "people I live with" and "anyone in
+        // town". At 4 it was too weak to act as one; 40 measurably fills
+        // the 13-30 settlement band, where the dropoff was harshest.
+        float gossipWeightPersonalEdge = 40.0f;
+        float gossipWeightSettlement = 1.0f;
+        float gossipWeightHold = 0.05f;
+        // Strangers in another hold. Near-zero by design: the measured
+        // cross-hold transport is shared membership of a province-
+        // spanning organisation, not proximity.
+        float gossipWeightProvince = 0.0001f;
+
+        // Distance attenuation on the personal-edge channel. A guild-mate
+        // in your own settlement is someone you see constantly; one three
+        // holds away you see rarely, if ever.
+        //
+        // The channel originally had no distance term — deliberate, since
+        // it is what carries a rumor between holds — which was harmless
+        // at weight 4 but became the dominant cross-hold leak once the
+        // weight rose to 40. Attenuating it is almost perfectly
+        // selective: household, settlement and post-jump coverage are all
+        // unchanged across the whole range, and only the frequency of
+        // hold crossings moves.
+        float gossipPersonalDistanceSameSettlement = 1.0f;
+        float gossipPersonalDistanceSameHold = 0.5f;
+        float gossipPersonalDistanceFar = 0.10f;
+
+        // --- SIR model ------------------------------------------------
+        //
+        // Susceptible -> Infectious (for a fixed period) -> Recovered
+        // (immune permanently, never re-infectable).
+        //
+        // Transmissibility is CONSTANT for a rumor's whole life. A rumor
+        // does not become less catching because it has changed hands; an
+        // outbreak ends when conversations start landing on people who
+        // already know — exhaustion of susceptible contacts, not decay.
+        // Three earlier models all failed by making spread a function of
+        // how far the rumor had already spread.
+
+        // How long an NPC keeps bringing a rumor up after hearing it.
+        float gossipInfectiousDays = 3.0f;
+        // Per-conversation transmission probability is
+        // `notability * this`. Lengthening the infectious period while
+        // lowering this is what decouples the tiers: household
+        // saturation needs only a few successes out of many attempts, so
+        // extra conversations buy it cheaply, while outward spread is
+        // governed by the probability.
+        float gossipTransmissionScale = 0.7f;
+        // Simulation step, in game days. Each step an infectious carrier
+        // holds Poisson(conversationsPerDay * this) conversations.
+        // Smaller is finer-grained and costs proportionally more events.
+        float gossipStepDays = 0.25f;
+
+        // Hard bounds on persistent state, so the co-save payload cannot
+        // grow with playthrough length.
+        //
+        // Raised from 12 after the first SIR in-game run. Under SIR rumors
+        // live long enough that a cap of 12 stayed saturated almost
+        // permanently, and because SeedRumor refuses while the cap is full,
+        // it silently throttled the harness to a third of its configured
+        // seeding rate. Worth remembering if this is ever lowered again.
+        //
+        // At 40 x 80 carriers the co-save payload is roughly 95 KB — larger
+        // than the 25 KB the original design budgeted, and acceptable only
+        // because this is a validation harness. Bring it back down before
+        // anything ships to players.
+        int gossipMaxLiveRumors = 40;
+        int gossipMaxCarriersPerRumor = 80;
+        // Backstop only — a carrier normally recovers via
+        // gossipInfectiousDays long before this.
+        int gossipCarrierMaxAgeDays = 30;
+
+        // Faction co-membership band. A faction outside this size range
+        // is an attribute bucket rather than a social group. Size alone
+        // is not sufficient — see NarrativeEngine_GossipFactions.ini for
+        // the name-based filter that does the rest of the work.
+        int gossipFactionSizeMin = 3;
+        int gossipFactionSizeMax = 40;
+
+        // TEMPORARY (Milestone 1 only). Seeds a stratified spread of
+        // stub rumors at session start so the simulation has something
+        // to propagate before real seeding exists. Delete alongside
+        // GossipSeeder when Milestone 2 lands.
+        bool gossipSeedStubsOnLoad = false;
+        int gossipStubSeedCount = 12;
+        // Keep planting during the run. Without this a validation
+        // session produces exactly iGossipStubSeedCount rumors, all of
+        // which burn out within about a week of game time (the model's
+        // median active spread is ~4.6 game days), after which nothing
+        // further happens and there is nothing left to observe.
+        //
+        // Twelve rumors is also far too small a sample to compare
+        // against the offline distributions — reach varies from 2 to
+        // 100, so a dozen draws cannot distinguish "running cooler than
+        // predicted" from ordinary variance. Continuous seeding is what
+        // turns the harness from a one-shot into a steady state.
+        //
+        // 0 disables re-seeding (one-shot, the old behaviour).
+        int gossipStubSeedIntervalGameHours = 6;
+        // Ceiling on rumors seeded across the whole session, so a long
+        // run cannot plant unboundedly many stub memories.
+        int gossipStubSeedMaxTotal = 120;
+        // RNG seed for both the seeder and the simulation. Fixing it
+        // makes a validation run exactly repeatable, which is what makes
+        // a tuning change measurable. 0 means "derive from the session".
+        int gossipRandomSeed = 1337;
     };
 
     // Narrow mutation surface for WriteMcmOverride. One optional per
