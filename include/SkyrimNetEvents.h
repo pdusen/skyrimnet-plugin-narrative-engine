@@ -23,6 +23,27 @@ namespace NarrativeEngine::SkyrimNetEvents
     // phrasing stays grammatical.
     std::string FormatRelativeGameDuration(double seconds);
 
+    // What FormatEventsText does with a `book_read` event's `book_text`
+    // field — the full body of the book the player just opened.
+    //
+    // Either way the markup is rendered to plain text (see BookTextRenderer);
+    // the choice is only whether the body survives at all. It is genuinely
+    // large: SkyrimNet hands us the whole book, and an illustrated one runs
+    // to tens of kilobytes. A single such event is enough to dominate a
+    // prompt, so every LLM-facing consumer wants `Omit` — none of them reason
+    // about what a book *said*, only that one was read. `Render` exists for
+    // the human-facing consumers (the dashboard timeline, the event history
+    // log), where the body is the interesting part.
+    //
+    // Deliberately has no default: picking wrong is a silent prompt-size
+    // blowup in one direction and silent data loss in the other, so each call
+    // site states its choice.
+    enum class BookTextPolicy
+    {
+        Render,
+        Omit,
+    };
+
     // Walks a parsed SkyrimNet events array in place. For each object event,
     // synthesizes an `evt.text` field based on `evt.type` and `evt.data`,
     // prepended with a relative-time bucket computed against the supplied
@@ -32,8 +53,8 @@ namespace NarrativeEngine::SkyrimNetEvents
     // missing fields and non-object entries.
     //
     // `book_read` events are additionally normalized in place: `data
-    // .book_text` is rewritten to its rendered plain-text form (see
-    // BookTextRenderer). That mutation matters independently of the
+    // .book_text` is rewritten to its rendered plain-text form, or erased
+    // outright, per `bookText`. That mutation matters independently of the
     // synthesized `text` — the whole event object is serialized into the
     // prompt context, so leaving the raw markup on `data` would ship it
     // across the API boundary even though no template renders it.
@@ -45,7 +66,10 @@ namespace NarrativeEngine::SkyrimNetEvents
     // module reaching for `RE::PlayerCharacter` and dragging an engine
     // dependency into what is otherwise a pure JSON transform. Empty falls
     // back to "The player".
-    void FormatEventsText(nlohmann::json& events, double currentGameTimeSeconds, std::string_view playerName);
+    void FormatEventsText(nlohmann::json& events,
+                          double currentGameTimeSeconds,
+                          BookTextPolicy bookText,
+                          std::string_view playerName);
 
     // Merges the SkyrimNet event tail with each internal-source tail
     // (combat + weather + travel), sorts the union ascending by

@@ -161,6 +161,14 @@ namespace NarrativeEngine::EventHistoryWriter
             // in-place. We give it `0` as currentGameTimeSeconds so the
             // "[N ago]" prefix collapses to "just now" — we don't use
             // that prefix here; we prepend our own in-game timestamp.
+            //
+            // The one consumer that keeps book bodies. This file is the
+            // durable archive of what actually happened in the session, it
+            // competes with nothing for space, and "which book did the
+            // player read, and what did it say" is exactly the kind of
+            // thing you come here to answer. FlushLocked indents the
+            // continuation lines so the multi-line body doesn't break the
+            // one-record-per-line format.
             std::string playerName;
             if (auto* pc = RE::PlayerCharacter::GetSingleton()) {
                 if (const char* dn = pc->GetDisplayFullName(); dn && *dn) {
@@ -168,7 +176,7 @@ namespace NarrativeEngine::EventHistoryWriter
                 }
             }
 
-            SkyrimNetEvents::FormatEventsText(parsed, 0.0, playerName);
+            SkyrimNetEvents::FormatEventsText(parsed, 0.0, SkyrimNetEvents::BookTextPolicy::Render, playerName);
 
             double newestKept = g_lastSkyrimNetLocalTime;
 
@@ -217,9 +225,9 @@ namespace NarrativeEngine::EventHistoryWriter
         }
 
         // The log's contract is one record per line, so a body that spans
-        // lines (only book_read does today, once its markup is rendered to
-        // plain text) gets its continuations indented. A reader still sees
-        // where each record starts, and `grep '^\['` still enumerates them.
+        // lines (only book_read does today — see the Render policy above)
+        // gets its continuations indented. A reader still sees where each
+        // record starts, and `grep '^\['` still enumerates them.
         std::string IndentContinuationLines(const std::string& body)
         {
             if (body.find('\n') == std::string::npos) {

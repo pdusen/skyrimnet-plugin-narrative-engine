@@ -1092,7 +1092,13 @@ namespace NarrativeEngine::DashboardUIManager
         nlohmann::json skyrimSide = nlohmann::json::array();
         if (parsed.is_array()) {
             std::reverse(parsed.begin(), parsed.end());
-            SkyrimNetEvents::FormatEventsText(parsed, currentGameTimeSeconds, reads.playerName);
+            // Book bodies dropped to hold the "reads identically to what the
+            // Director sees" property above — and because a book body is
+            // tens of kilobytes of prose that would bury the timeline it's
+            // listed in. The full rendered text still lands in the event
+            // history log.
+            SkyrimNetEvents::FormatEventsText(
+                parsed, currentGameTimeSeconds, SkyrimNetEvents::BookTextPolicy::Omit, reads.playerName);
             skyrimSide = std::move(parsed);
         }
         j["recent_events"] =

@@ -267,7 +267,15 @@ namespace NarrativeEngine::EvaluationPipeline
                 // Synthesize `evt.text` per event so the template just
                 // renders `{{ evt.text }}`; each line carries a "N ago"
                 // relative timestamp from gameTimeSeconds.
-                SkyrimNetEvents::FormatEventsText(parsed, snapshot.player.gameTimeSeconds, snapshot.player.name);
+                //
+                // Book bodies are dropped: the Director scores tension, and
+                // what a book said has never moved that needle — but one
+                // illustrated book is tens of kilobytes and has blown a
+                // request on its own.
+                SkyrimNetEvents::FormatEventsText(parsed,
+                                                  snapshot.player.gameTimeSeconds,
+                                                  SkyrimNetEvents::BookTextPolicy::Omit,
+                                                  snapshot.player.name);
 
                 // Drop unrecognized event types (FormatEventsText's
                 // "(no data)" last-resort case). Log each so the type

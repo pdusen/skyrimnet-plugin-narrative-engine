@@ -52,7 +52,10 @@ namespace NarrativeEngine::SkyrimNetEvents
         return std::to_string(w) + (w == 1 ? " week" : " weeks");
     }
 
-    void FormatEventsText(nlohmann::json& events, double currentGameTimeSeconds, std::string_view playerName)
+    void FormatEventsText(nlohmann::json& events,
+                          double currentGameTimeSeconds,
+                          BookTextPolicy bookText,
+                          std::string_view playerName)
     {
         for (auto& evt : events) {
             if (!evt.is_object())
@@ -65,10 +68,14 @@ namespace NarrativeEngine::SkyrimNetEvents
             // to the caller are free of the raw markup.
             if (type == "book_read") {
                 if (auto dataIt = evt.find("data"); dataIt != evt.end() && dataIt->is_object()) {
-                    if (auto textIt = dataIt->find("book_text"); textIt != dataIt->end() && textIt->is_string()) {
-                        std::string rendered =
-                            BookTextRenderer::RenderToPlainText(textIt->get_ref<const std::string&>());
-                        *textIt = std::move(rendered);
+                    if (auto textIt = dataIt->find("book_text"); textIt != dataIt->end()) {
+                        if (bookText == BookTextPolicy::Omit) {
+                            dataIt->erase("book_text");
+                        } else if (textIt->is_string()) {
+                            std::string rendered =
+                                BookTextRenderer::RenderToPlainText(textIt->get_ref<const std::string&>());
+                            *textIt = std::move(rendered);
+                        }
                     }
                 }
             }
@@ -129,6 +136,7 @@ namespace NarrativeEngine::SkyrimNetEvents
                 const std::string reader = playerName.empty() ? std::string("The player") : std::string(playerName);
                 text = title.empty() ? (reader + " read a book") : (reader + " read \"" + title + "\"");
 
+                // Empty under BookTextPolicy::Omit — erased above.
                 if (const std::string body = str("book_text"); !body.empty()) {
                     text += ":\n" + body;
                 }
