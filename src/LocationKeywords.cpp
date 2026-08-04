@@ -60,6 +60,18 @@ namespace NarrativeEngine::LocationKeywords
             return cache;
         }
 
+        const std::array<RE::BGSKeyword*, kOccupied.size()>& ResolvedOccupied()
+        {
+            static const auto cache = []() {
+                std::array<RE::BGSKeyword*, kOccupied.size()> out{};
+                for (std::size_t i = 0; i < kOccupied.size(); ++i) {
+                    out[i] = LookupKeyword(kOccupied[i]);
+                }
+                return out;
+            }();
+            return cache;
+        }
+
         const std::array<RE::BGSKeyword*, kVisitHostileExtras.size()>& ResolvedVisitHostileExtras()
         {
             static const auto cache = []() {
@@ -143,6 +155,11 @@ namespace NarrativeEngine::LocationKeywords
     bool IsDangerous(RE::BGSLocation* loc)
     {
         return LocationOrAncestorHasAny(loc, ResolvedDangerous(), "Dangerous");
+    }
+
+    bool IsOccupied(RE::BGSLocation* loc)
+    {
+        return LocationOrAncestorHasAny(loc, ResolvedOccupied(), "Occupied");
     }
 
     bool IsVisitHostile(RE::BGSLocation* loc)

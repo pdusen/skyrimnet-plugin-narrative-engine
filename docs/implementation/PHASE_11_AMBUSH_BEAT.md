@@ -594,16 +594,22 @@ lists stay hostile regardless, which is what an ambush needs.
 
 ### Where ambushes may happen
 
-Ambushes fire **outdoors, on the road or in open wilderness, and nowhere else.** Three hard exclusions:
+Ambushes fire **outdoors, on the road or in open wilderness, and nowhere else.** Four hard exclusions:
 
 - **Any interior cell.** The beat spawns a travelling approach from thousands of units away; interiors have
   neither the room nor the sightlines.
+- **Locations marked Occupied** (`LocationKeywords::IsOccupied`) — anywhere vanilla's Civil War and World
+  Interactions systems tag as inhabited: settlements, farms, mills, mines, orc strongholds, garrisoned forts,
+  watchtowers, the DLC villages. Somebody lives, works, or stands watch there, so an ambush doesn't belong.
 - **Locations marked Safe** (`LocationKeywords::IsSafe`) — towns, farms, inns, guild halls. Guards on patrol
   and NPCs with schedules already own those cells, and an ambush there reads as nonsense.
 - **Locations marked Dangerous** (`LocationKeywords::IsDangerous`) — dungeons, bandit camps, lairs. Vanilla
   already populates them with combat; layering a Director-issued fight on top stacks into gauntlets.
 
-Both keyword predicates walk the `BGSLocation::parentLoc` chain, so a child location inherits its parent's
+The Occupied test runs **first and unconditionally**, ahead of the other two. The sets overlap — a garrisoned
+fort is both Occupied and Dangerous — and Occupied has to win, so it cannot sit behind another keyword test.
+
+All three keyword predicates walk the `BGSLocation::parentLoc` chain, so a child location inherits its parent's
 classification the way vanilla quest conditions read it.
 
 **Enforced twice, deliberately.** `AmbushLocationBlocker` is the single shared predicate behind both gates so
@@ -613,8 +619,8 @@ they cannot drift apart:
    is never offered a beat it couldn't legally run.
 2. **At compose time** — the first thing `TickCompose` does, before any group resolution or spawning. A
    beat-select round trip takes seconds, and the player can walk into a cave or through a town gate inside that
-   window. Failure here is a clean COMPOSE failure with `failure_reason` of `interior`, `safe_location`, or
-   `dangerous_location`, and no cooldown stamp.
+   window. Failure here is a clean COMPOSE failure with `failure_reason` of `interior`, `occupied_location`,
+   `safe_location`, or `dangerous_location`, and no cooldown stamp.
 
 Neither gate marshals to the main thread. Both read a stable singleton pointer, a `constexpr` member load
 (`GetParentCell`), a flag, and a `parentLoc` walk over cached keyword pointers — the same shape `IsAvailable`

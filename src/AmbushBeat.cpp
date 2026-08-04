@@ -207,8 +207,12 @@ namespace NarrativeEngine
         // nowhere else. Returns nullptr when the spot is usable, or the
         // reason it isn't.
         //
-        // Three exclusions, all hard:
+        // Four exclusions, all hard:
         //   * Interiors — the beat spawns a travelling approach.
+        //   * Occupied locations — anywhere vanilla's CW/WI systems mark
+        //     as inhabited. Checked first and unconditionally: a garrisoned
+        //     fort is Occupied AND Dangerous, and Occupied has to win, so
+        //     this must not sit behind any other keyword test.
         //   * Safe locations — towns, farms, inns. Guards and scheduled
         //     NPCs already own those cells.
         //   * Dangerous locations — dungeons, camps, lairs. Vanilla
@@ -221,6 +225,9 @@ namespace NarrativeEngine
         {
             if (interior) {
                 return "interior";
+            }
+            if (LocationKeywords::IsOccupied(loc)) {
+                return "occupied_location";
             }
             if (LocationKeywords::IsSafe(loc)) {
                 return "safe_location";

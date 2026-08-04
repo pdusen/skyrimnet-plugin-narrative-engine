@@ -11,9 +11,9 @@ namespace RE
 // Curated lists of vanilla BGSLocation keywords, grouped by the
 // authorial meaning each set conveys, plus helpers that check a Location
 // (and its ancestor chain) against those sets. Source of truth for the
-// lists lives in docs/vanilla/keywords/locations/{safe,dangerous}.csv —
-// edit those when a new keyword should join either set, and mirror the
-// change in kSafe / kDangerous below.
+// lists lives in docs/vanilla/keywords/locations/{safe,dangerous,occupied}.csv
+// — edit those when a new keyword should join a set, and mirror the
+// change in kSafe / kDangerous / kOccupied below.
 //
 // Each entry is a vanilla EditorID. Resolution to a runtime BGSKeyword*
 // happens once inside this module (cached, lazy on first call) via
@@ -23,10 +23,10 @@ namespace RE
 // closed would silently block actions everywhere instead of just at the
 // affected location.
 //
-// `kSafe` / `kDangerous` are exposed for callers that need the raw
-// EditorID list (logging, prompt context, etc.). Most call sites only
-// want the boolean predicates IsSafe / IsDangerous and should reach for
-// those — they walk the BGSLocation::parentLoc chain so that e.g. a
+// `kSafe` / `kDangerous` / `kOccupied` are exposed for callers that need
+// the raw EditorID list (logging, prompt context, etc.). Most call sites
+// only want the boolean predicates IsSafe / IsDangerous / IsOccupied and
+// should reach for those — they walk the BGSLocation::parentLoc chain so that e.g. a
 // child location like WhiterunStablesExterior inherits its parent
 // WhiterunLocation's LocTypeCity classification, matching how vanilla
 // quest conditions read these keywords.
@@ -109,6 +109,26 @@ namespace NarrativeEngine::LocationKeywords
         "LocTypeWerewolfLair",
     };
 
+    // "Occupied" — somebody lives, works, or stands watch here. Vanilla's
+    // Civil War and World Interactions systems tag the locations they
+    // stage content at, and that tagging is a good proxy for "this place
+    // has people in it": settlements, farms, mills, mines, orc
+    // strongholds, garrisoned forts, watchtowers, and the DLC villages
+    // all carry at least one. An ambush belongs on the road and in empty
+    // wilderness, so anything Occupied is off-limits no matter what else
+    // it's tagged with.
+    //
+    // Unlike kSafe / kDangerous, these are not purely authorial LocType*
+    // classifications — they're referenced by the vanilla CW and WI quest
+    // scripts (e.g. CWEventHappening is a script property on the CW
+    // quest), so treat membership as potentially dynamic across a
+    // playthrough rather than fixed at load.
+    inline constexpr std::array<std::string_view, 3> kOccupied = {
+        "CWEventHappening",
+        "WIComplexInteractionToggle",
+        "WIDragonAttacked",
+    };
+
     // True when `loc` or any ancestor reached via BGSLocation::parentLoc
     // carries any keyword from kSafe. Null `loc` returns false. Bounded
     // parentLoc walk; the resolved BGSKeyword* table is built once on
@@ -118,6 +138,10 @@ namespace NarrativeEngine::LocationKeywords
     // True when `loc` or any ancestor reached via BGSLocation::parentLoc
     // carries any keyword from kDangerous. Null `loc` returns false.
     bool IsDangerous(RE::BGSLocation* loc);
+
+    // True when `loc` or any ancestor reached via BGSLocation::parentLoc
+    // carries any keyword from kOccupied. Null `loc` returns false.
+    bool IsOccupied(RE::BGSLocation* loc);
 
     // True when `loc` (or any ancestor) is either kDangerous OR carries a
     // keyword from kVisitHostileExtras. Used by NPCVisitBeat's
