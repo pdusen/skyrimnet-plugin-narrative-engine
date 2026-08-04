@@ -217,7 +217,7 @@ namespace NarrativeEngine::Settings
         // engine uses to move actors travelling outside the loaded cell
         // grid. Nothing consumes the graph yet; this is a diagnostic to
         // establish whether that data is an accurate road network.
-        bool travelGraphEnabled = true;
+        bool travelGraphEnabled = false;
         // Debug: after the graph builds, dump one 24-bit BMP per
         // worldspace to the SKSE log directory. Nodes are black, edges
         // gray, empty space white. Worldspaces with no nodes are
@@ -240,7 +240,7 @@ namespace NarrativeEngine::Settings
         // grid, extracted from kPreferred-flagged navmesh triangles.
         // Complements TravelGraph, which only carries the long-distance
         // skeleton and has no spurs. Nothing consumes it yet.
-        bool fineRoadsEnabled = true;
+        bool fineRoadsEnabled = false;
         // Rescans are normally event-driven: cell-loaded, load-game, and
         // fast-travel-end sinks flag the graph and the next tick picks it
         // up. This is only a backstop, in unpaused seconds. It exists
