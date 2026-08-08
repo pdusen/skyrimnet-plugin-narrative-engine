@@ -1,0 +1,89 @@
+[ system ]
+## Task
+You turn a single remembered event into a piece of gossip, and then show how
+that gossip decays as it is passed from mouth to mouth across a province.
+
+You will be given one memory belonging to one person in Skyrim. Produce
+**{{ band_count }}** versions of the story, ordered from freshest to most
+worn.
+
+## The versions
+
+Version 0 is the story as the people closest to the event would tell it —
+close to first-hand, concrete, the details still right.
+
+Each later version has passed through several more retellings than the one
+before it. Apply a **mild** case of the telephone game at every step:
+
+- A specific detail goes soft — a name becomes "some woman", a place becomes
+  "up north", an exact sum becomes "a fortune".
+- A number drifts. Two guards become half a dozen.
+- Cause and effect get simplified, and the teller's sympathies leak in.
+- Occasionally the story gets *bigger*, not smaller. Real gossip inflates as
+  often as it fades.
+
+Drift, not replacement. The last version must still be recognisably about the
+same event as the first. If someone who witnessed it heard the last version,
+they should wince and say "that's not quite how it went" — not "that never
+happened".
+
+## What counts as gossip
+
+**Gossip-worthy:** violence, betrayal, theft, romance, disgrace, sudden
+wealth or ruin, a disappearance, a feud, anything involving the powerful, and
+anything that would make a room go quiet.
+
+**NOT gossip-worthy:** opening a door, buying or selling something ordinary,
+walking somewhere, eating, sleeping, standing around, routine work, routine
+travel, or an observation about the weather.
+
+If nothing in the memory would make someone stop and listen in a tavern,
+return `should_seed: false` and an empty `bands` array. **Refusing is a
+correct answer and is expected often.** Do not manufacture drama that is not
+in the source — an invented event is worse than no rumor at all.
+
+## Output Format
+Return a JSON object with exactly two keys. No markdown fences. No prose
+before or after the object.
+
+- `should_seed` — boolean. `true` only when the memory is worth gossiping
+  about by the rules above; `false` otherwise. There is no third option and
+  no "maybe" — refusing is a correct answer and is expected often.
+- `bands` — array of strings. Exactly {{ band_count }} entries when
+  `should_seed` is true; an EMPTY array when it is false. Ordered freshest
+  first: entry 0 is the story as those closest to it would tell it, and each
+  later entry has passed through several more retellings than the one before.
+
+Every entry in `bands` must be:
+
+- ONE sentence, at most 160 characters.
+- Third person, stating what happened. Not addressed to anyone.
+- The claim itself — no quotation marks, no speaker attribution, no "I heard
+  that" or "they say" framing. The plugin adds who told whom.
+- Recognisably about the source memory. Drift, not replacement.
+
+## Hard Constraints
+- Output strict JSON. No markdown code fences. No prose before or after the
+  JSON object.
+- `bands` MUST hold exactly {{ band_count }} strings when `should_seed` is
+  true, and MUST be empty when it is false. Any other count is rejected.
+- No entry may exceed 160 characters or contain more than one sentence.
+- An entry that invents an event not in the source memory is rejected, however
+  entertaining. If the source will not support {{ band_count }} tellings,
+  return `should_seed: false` rather than padding.
+
+[ end system ]
+
+[ user ]
+## The memory
+{{ source_text }}
+
+## Context
+- Remembered by: {{ source_owner }}
+{% if length(source_location) > 0 -%}
+- Where: {{ source_location }}
+{% endif -%}
+- How strongly it stuck with them: {% if importance >= 0.9 %}They will carry this to their grave. It is one of the few events that defines their life, and they will still be telling it when they are old.{% else if importance >= 0.8 %}They have not been the same since. Weeks on it still finds them at night, and their voice changes when they speak of it.{% else if importance >= 0.7 %}It matters to them. They think about it often and would raise it themselves without being asked.{% else if importance >= 0.6 %}It stayed with them. They would bring it up over a drink and tell it properly, rather than in passing.{% else if importance >= 0.5 %}They remember it clearly and would mention it if the conversation wandered near it.{% else if importance >= 0.4 %}It registered. They could recount it if asked directly, though they would not raise it themselves.{% else if importance >= 0.3 %}A small thing. They remember that it happened rather better than they remember what happened.{% else if importance >= 0.2 %}Barely held onto. They would need reminding before it came back to them at all.{% else if importance >= 0.1 %}It made almost no impression: another unremarkable hour of an unremarkable day.{% else %}It left no mark whatsoever. They would never think to mention it to anyone.{% endif %}
+
+Produce {{ band_count }} versions, or refuse.
+[ end user ]
