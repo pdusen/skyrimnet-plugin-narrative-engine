@@ -46,6 +46,7 @@ export interface DirectorState {
     letter_pool: LetterPoolState;
     actions: ActionInfo[];
     visit: VisitTabState;
+    gossip: GossipTabState;
     settings: SettingsTabState;
 }
 
@@ -206,4 +207,54 @@ export interface EventEntry {
     gameTime: number;
     originatingActorName: string;
     targetActorName: string;
+}
+
+// --- Gossip tab -----------------------------------------------------------
+
+export interface RumorEntry {
+    id: number;
+    // Band 0 — the freshest telling, and the rumor's identity in the list.
+    // Empty only if generation somehow produced no bands, in which case the
+    // list falls back to naming the source memory.
+    text: string;
+    // Every generation band, shown in the expanded row. Band selection at
+    // transmission time is min(generation / 3, bands - 1).
+    bands: string[];
+    // True when every still-infectious carrier has run out of named
+    // contacts who do not already carry the rumor. Live but going nowhere.
+    // See GossipSim::RumorView for why the province channel is excluded.
+    stalled: boolean;
+    // False only between the last carrier retiring and the reap at the end
+    // of that same poll, so in practice always true here.
+    live: boolean;
+    notability: number;             // 0..1, the per-conversation β
+    age_days: number;               // in-world days since seeding
+    idle_days: number;              // in-world days since the last telling
+    carriers: number;               // everyone who has ever held it
+    active_carriers: number;        // still infectious
+    settlements: number;
+    holds: number;
+    max_depth: number;              // deepest generation reached
+    transmissions: number;
+    wasted: number;                 // tellings that landed on someone who knew
+    origin_name: string;
+    origin_location: string;
+    source_memory_id: number;
+}
+
+export interface GossipTabState {
+    enabled: boolean;               // bGossipEnabled
+    harvest_enabled: boolean;       // bGossipHarvestEnabled
+    graph_ready: boolean;
+    participants: number;
+    queued_events: number;
+    transmissions_session: number;
+    wasted_session: number;
+    memories_written: number;
+    harvest_sweeps: number;
+    harvest_sent_for_generation: number;
+    claims_outstanding: number;
+    // Newest first. Holds exactly the rumors that have not been reaped —
+    // a rumor is listed until its last carrier retires.
+    rumors: RumorEntry[];
 }

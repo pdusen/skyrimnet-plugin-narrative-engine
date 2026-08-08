@@ -6,6 +6,10 @@
 #include <BeatSystem.h>
 #include <CombatEventLog.h>
 #include <DecisionLog.h>
+#include <GossipClaims.h>
+#include <GossipGraph.h>
+#include <GossipHarvest.h>
+#include <GossipSim.h>
 #include <LetterPool.h>
 #include <logger.h>
 #include <MainThread.h>
@@ -1305,6 +1309,61 @@ namespace NarrativeEngine::DashboardUIManager
                 {"current", current},
                 {"recent_verdicts", std::move(verdictsJson)},
                 {"history", std::move(historyJson)},
+            };
+        }
+
+        // gossip — every rumor still in the simulation, newest first, plus
+        // the counters that give the list context.
+        //
+        // GetRumorViews flattens under the simulation mutex and hands back
+        // plain values, so nothing here holds a reference into live state.
+        // The whole section is skipped when the subsystem is off: composing
+        // an empty rumor list every push would be waste, and the tab shows
+        // the disabled notice from the `enabled` flag alone.
+        {
+            const auto& cfg = Settings::Get();
+            const auto sim = GossipSim::GetStats();
+            const auto harvest = GossipHarvest::GetStats();
+
+            nlohmann::json rumorsJson = nlohmann::json::array();
+            if (cfg.gossipEnabled) {
+                for (const auto& r : GossipSim::GetRumorViews()) {
+                    rumorsJson.push_back({
+                        {"id", r.id},
+                        {"text", r.text},
+                        {"bands", r.bands},
+                        {"stalled", r.stalled},
+                        {"live", r.live},
+                        {"notability", r.notability},
+                        {"age_days", r.ageDays},
+                        {"idle_days", r.idleDays},
+                        {"carriers", r.carriers},
+                        {"active_carriers", r.activeCarriers},
+                        {"settlements", r.settlements},
+                        {"holds", r.holds},
+                        {"max_depth", r.maxDepth},
+                        {"transmissions", r.transmissions},
+                        {"wasted", r.wasted},
+                        {"origin_name", r.originName},
+                        {"origin_location", r.originLocation},
+                        {"source_memory_id", r.sourceMemoryId},
+                    });
+                }
+            }
+
+            j["gossip"] = {
+                {"enabled", cfg.gossipEnabled},
+                {"harvest_enabled", cfg.gossipHarvestEnabled},
+                {"graph_ready", GossipGraph::IsReady()},
+                {"participants", GossipGraph::ParticipantCount()},
+                {"queued_events", sim.queuedEvents},
+                {"transmissions_session", sim.transmissionsThisSession},
+                {"wasted_session", sim.wastedThisSession},
+                {"memories_written", sim.memoriesWritten},
+                {"harvest_sweeps", harvest.sweeps},
+                {"harvest_sent_for_generation", harvest.sentForGeneration},
+                {"claims_outstanding", GossipClaims::Count()},
+                {"rumors", std::move(rumorsJson)},
             };
         }
 

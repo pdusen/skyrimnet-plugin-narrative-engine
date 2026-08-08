@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-export type TabId = 'director' | 'letters' | 'visit' | 'dispatch' | 'settings';
+export type TabId = 'director' | 'letters' | 'visit' | 'gossip' | 'dispatch' | 'settings';
 
 interface Props {
     active: TabId;
@@ -16,6 +16,7 @@ const TABS: TabDef[] = [
     { id: 'director', label: 'Director' },
     { id: 'letters',  label: 'Letters'  },
     { id: 'visit',    label: 'Visit'    },
+    { id: 'gossip',   label: 'Gossip'   },
     { id: 'dispatch', label: 'Dispatch' },
     { id: 'settings', label: 'Settings' },
 ];

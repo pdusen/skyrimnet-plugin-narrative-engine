@@ -823,3 +823,192 @@ body {
     gap: 8px;
     justify-content: center;
 }
+
+/* ---------- Gossip tab --------------------------------------------------- */
+
+.gossip-tab {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    /* The list panel below owns the scrolling, so this column must be
+       allowed to shrink. Without min-height:0 a flex item defaults to
+       min-content and the list grows the page instead of scrolling. */
+    min-height: 0;
+}
+
+.gossip-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    font-size: 11px;
+    color: #7a838f;
+}
+
+.gossip-summary b {
+    color: #c9d5e6;
+    font-weight: 600;
+}
+
+.gossip-summary i {
+    font-style: normal;
+    color: #5a5e66;
+}
+
+.gossip-warn {
+    color: #e0b070;
+}
+
+/* The scroll container. A fixed max-height rather than a flex-derived one:
+   the dashboard root is already max-height:90vh with its own overflow, and
+   nesting a second percentage-based scroller inside it collapses to zero
+   height in the PrismaUI browser. */
+.gossip-list-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.rumor-list {
+    list-style: none;
+    margin: 0;
+    padding: 0 6px 0 0;
+    max-height: 52vh;
+    overflow-y: auto;
+}
+
+.rumor {
+    padding: 8px 0;
+    border-bottom: 1px solid #1d2026;
+}
+
+.rumor:last-child {
+    border-bottom: none;
+}
+
+.rumor-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.rumor-id {
+    color: #6a6e76;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+}
+
+.rumor-state {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid;
+}
+
+.rumor-state.spreading {
+    color: #9be3c9;
+    border-color: #2f5b4c;
+    background: #11211c;
+}
+
+.rumor-state.stalled {
+    color: #b0955f;
+    border-color: #4a4030;
+    background: #1d1a12;
+}
+
+.rumor-meta {
+    color: #5a5e66;
+    font-size: 11px;
+}
+
+/* Pushed hard right so the toggle sits in a predictable column no matter
+   how the badges above it wrap. */
+.rumor-expand {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: #6a6e76;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 0 4px;
+}
+
+.rumor-expand:hover {
+    color: #c9d5e6;
+}
+
+.rumor-text {
+    color: #c9d5e6;
+    font-size: 12px;
+    margin: 4px 0 6px;
+    line-height: 1.4;
+}
+
+.rumor.stalled .rumor-text {
+    color: #8d949e;
+}
+
+.rumor-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 14px;
+    font-size: 11px;
+    color: #7a838f;
+}
+
+.rumor-stats b {
+    color: #c9d5e6;
+    font-weight: 600;
+}
+
+.rumor-stats i {
+    font-style: normal;
+    color: #5a5e66;
+}
+
+.rumor-detail {
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: #0b0d11;
+    border: 1px solid #1d2026;
+    border-radius: 3px;
+}
+
+.rumor-origin {
+    font-size: 11px;
+    color: #7a838f;
+    margin-bottom: 6px;
+}
+
+.rumor-origin b {
+    color: #c9d5e6;
+    font-weight: 600;
+}
+
+.rumor-bands {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    counter-reset: band;
+}
+
+.rumor-bands li {
+    display: flex;
+    gap: 10px;
+    padding: 3px 0;
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+.band-label {
+    color: #5a5e66;
+    white-space: nowrap;
+    flex: 0 0 68px;
+}
+
+.band-text {
+    color: #a8b2be;
+}
