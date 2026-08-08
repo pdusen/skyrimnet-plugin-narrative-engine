@@ -142,6 +142,10 @@ an empty "Fixes" header just to keep the template):
   behavior, event sources feeding the LLM's context, MCM entries, Major
   performance improvements, etc.>
 
+## Fixes
+
+- <bullet per user-visible bug fix>
+
 ## What's New — Internals and Debug Aids
 
 - <bullet per change that doesn't directly change what the player sees
@@ -149,23 +153,25 @@ an empty "Fixes" header just to keep the template):
   by default, release/packaging tooling improvements, engine-level
   scaffolding, etc.>
 
-## Fixes
-
-- <bullet per user-visible bug fix>
-
 ## Notes
 
 <optional caveats — known issues, upgrade steps, etc.>
 ```
 
+Section order is fixed and MUST NOT be rearranged: Summary, What's New —
+Player-Facing, Fixes, What's New — Internals and Debug Aids, Notes. The
+ordering principle is "everything the player notices comes before anything
+they don't" — so "Internals and Debug Aids" is always the LAST content
+section, below "Fixes". Never place internals above fixes; a reader scanning
+the mod page for what changed for them has to get through the plumbing to
+reach the bug fixes, which is exactly backwards.
+
 The two-way split under "What's New" is required, not optional — a flat
 "What's New" list buries player-facing features behind internal plumbing
-and makes the release read like a changelog. Player-facing goes FIRST
-because that's what a mod-page reader is scanning for; internals go SECOND
-so a curious reader can still find them. When a change straddles both
+and makes the release read like a changelog. When a change straddles both
 (e.g. a new dashboard control backed by a new subsystem), put the visible
-symptom in the first section and the subsystem in the second, cross-
-referencing briefly if it helps.
+symptom in the player-facing section and the subsystem in the internals
+section, cross-referencing briefly if it helps.
 
 If either subsection would have zero bullets, drop the whole subsection
 header (don't ship an empty "Internals and Debug Aids" just to keep the
@@ -174,10 +180,10 @@ nothing landed there.
 
 Framing rules:
 
-- Player-facing framing in the first subsection, not engineer framing.
+- Player-facing framing in the player-facing subsection, not engineer framing.
   "The Director now respects a minimum phase-dwell floor before advancing"
   beats "Refactor `PhaseTracker::EvaluateAdvance` signature." The internals
-  subsection can be a bit more technical, but still avoid raw file paths
+  subsection can be a bit more technical, but still avoids raw file paths
   and symbol names when a behavior description works.
 - Cite behaviors, not file paths or symbol names.
 - Keep it tight. A short list beats a wall of prose.
