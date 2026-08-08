@@ -16,9 +16,9 @@ loaded cells, and it never requires an actor to be resident in memory.
 > permanent immunity, and termination by exhaustion of susceptible contacts.
 >
 > The current model, its calibration, and the parameters the plugin actually ships are in
-> [`PHASE_13_SIR_VALIDATION_LOG.md`](PHASE_13_SIR_VALIDATION_LOG.md). Everything else in this document — the
-> social graph, residence resolution, faction filtering, seeding, threading, the stub-memory scheme and the
-> implementation plan — is unaffected and still current.
+> [`tests/gossip-spread/PHASE_13_SIR_VALIDATION_LOG.md`](tests/gossip-spread/PHASE_13_SIR_VALIDATION_LOG.md).
+> Everything else in this document — the social graph, residence resolution, faction filtering, seeding,
+> threading, the stub-memory scheme and the implementation plan — is unaffected and still current.
 >
 > **Doc status: design settled; implementation staged as a validation harness first.** The design below is
 > the target. The implementation plan at the end of this document deliberately builds **only** the parts
@@ -700,8 +700,9 @@ passes `PluginThread::Token` throughout.
 ## Validation
 
 The graph was built offline and simulated before any C++ was written, by
-[`scripts/build-social-graph.py`](../../scripts/build-social-graph.py). It parses the Spriggit export,
-reconstructs the same graph the runtime would build at `kDataLoaded`, and Monte-Carlos the propagation model
+[`tests/gossip-spread/build-social-graph.py`](tests/gossip-spread/build-social-graph.py). It parses the
+Spriggit export, reconstructs the same graph the runtime would build at `kDataLoaded`, and Monte-Carlos the
+propagation model
 over it. Every measured figure in this document comes from that script and can be regenerated:
 
 ```text
@@ -900,8 +901,7 @@ for the session thereafter. Mutex-guarded reads, as with `HoldGrid`.
 4. **Member lists.** Build `household → [npc]`, `settlement → [npc]`, `hold → [npc]` reverse indexes.
 
 **Verification — this step's whole point.** Log a summary block and compare against the offline measurements
-in [`PHASE_13_VALIDATION_LOG.md`](PHASE_13_VALIDATION_LOG.md). On a vanilla-plus-DLC load order expect
-approximately:
+below. On a vanilla-plus-DLC load order expect approximately:
 
 | Quantity              | Offline figure             |
 | --------------------- | -------------------------- |
@@ -1119,10 +1119,17 @@ only thing standing between here and Milestone 1's done condition.
   in double-applies it for any pair that is both a neighbour and a relation, which is ~92% of vanilla
   relationship edges. And `via` attribution prefers the specific channel (faction / relationship) over the
   proximity tier when a peer is reachable both ways, since that is the more informative answer in the log.
-- **Known limitation: dead NPCs keep gossiping.** Death lives on the `Actor` reference, not the `TESNPC` base
-  form, and this simulation deliberately runs over NPCs whose references are not loaded. The viability check
-  catches deleted forms only. Over a 20-day run the distortion is negligible; a death-event sink maintaining
-  a persistent dead-set is Milestone 2 work.
+- **Known limitation: dead NPCs keep gossiping.** The viability check catches deleted forms only, so a
+  murdered NPC carries on until their carrier recovers. Negligible over a 20-day run.
+
+  **Correction:** this was originally written up as hard — death living on an `Actor` reference that is not
+  loaded — and that reasoning was wrong. `BGSLocation` stores unique NPCs as `UniqueNPCData { Actor* actor;
+  … }` while storing ordinary persistent refs as `UnloadedRefData { FormID refID; FormID parentSpaceID;
+  CellKey cellKey; }`. The engine would not hold a raw `Actor*` to something destroyed on cell unload:
+  unique NPCs are always resident and only their 3D unloads, which is why `GetDead` works as a condition on
+  them anywhere. The fix is retaining `entry.refID` from the `LCUN` walk and reading
+  `ActorState::GetLifeState()`, not a death-event sink. See
+  [`PHASE_13_MILESTONE_2.md`](PHASE_13_MILESTONE_2.md).
 - Game-time deltas are clamped to 3 days per poll. A larger jump is logged as a `catch-up` NOTE line rather
   than credited in full, so a `set timescale` experiment cannot schedule an unbounded burst.
 
@@ -1223,8 +1230,9 @@ Read `NarrativeEngine_Gossip.log`, primarily the `BURNOUT` lines, which carry a 
 - The graph census at Step 2 matches the offline figures within a margin the load order explains.
 
 Record the actual numbers against the offline predictions in
-[`PHASE_13_VALIDATION_LOG.md`](PHASE_13_VALIDATION_LOG.md) under a new "In-game run" section. Where they
-diverge, the in-game numbers win — the offline model was always a stand-in for this.
+[`tests/gossip-spread/PHASE_13_SIR_VALIDATION_LOG.md`](tests/gossip-spread/PHASE_13_SIR_VALIDATION_LOG.md)
+under a new "In-game run" section. Where they diverge, the in-game numbers win — the offline model was
+always a stand-in for this.
 
 ---
 

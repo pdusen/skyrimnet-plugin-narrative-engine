@@ -3,13 +3,14 @@
 The record of replacing the gossip propagation model with a proper SIR epidemic and calibrating it offline,
 before any of it was written in C++.
 
-This supersedes the propagation half of
-[`PHASE_13_VALIDATION_LOG.md`](PHASE_13_VALIDATION_LOG.md). That document's **structural** findings — residence
-coverage, household and settlement sizes, faction filtering, the `LCUN` additive-merge trap — all still stand;
-they are measurements of shipped game data and are unaffected. What is superseded is everything about how a
-rumor spreads, because the model underneath it was wrong in a way no amount of tuning could fix.
+This supersedes the propagation model originally described in
+[`PHASE_13_GOSSIP_PROPAGATION.md`](../../PHASE_13_GOSSIP_PROPAGATION.md). That document's **structural**
+findings — residence coverage, household and settlement sizes, faction filtering, the `LCUN` additive-merge
+trap — all still stand; they are measurements of shipped game data and are unaffected. What is superseded is
+everything about how a rumor spreads, because the model underneath it was wrong in a way no amount of tuning
+could fix.
 
-All figures from [`scripts/build-social-graph.py`](../../scripts/build-social-graph.py) against a vanilla +
+All figures from [`build-social-graph.py`](build-social-graph.py) against a vanilla +
 DLC graph of 857 participants, 249 households, 58 settlements, 10 holds.
 
 ---
