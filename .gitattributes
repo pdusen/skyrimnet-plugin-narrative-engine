@@ -1,3 +1,38 @@
+# Line endings are declared here rather than left to `core.autocrlf`, because
+# that setting is per-machine and this repo has three consumers that disagree
+# about what the WORKING TREE should contain:
+#
+#   * .editorconfig       -- `end_of_line = lf` for everything, overridden to
+#                            crlf for PowerShell and batch scripts.
+#   * .pre-commit-config  -- `mixed-line-ending --fix=lf`, excluding the same
+#                            script types plus .psc.
+#   * the Creation Kit    -- authors and expects CRLF in .psc sources.
+#
+# With `core.autocrlf=true` and no rules here, git wrote CRLF into every file
+# on checkout while the pre-commit hook rewrote those same files to LF and
+# failed the commit. The hook's own stash/restore then re-converted them, so
+# it could never converge: any commit that left something unstaged aborted,
+# every time, and the only way through was --no-verify.
+#
+# Everything below normalises to LF in the repository regardless; `eol=`
+# controls only what lands in the working tree. These rules take precedence
+# over core.autocrlf, so the behaviour is now identical on every machine.
+
+# Default: text detected automatically, LF in the working tree.
+* text=auto eol=lf
+
+# PowerShell and batch keep CRLF in the working tree, matching .editorconfig.
+*.ps1  text eol=crlf
+*.psm1 text eol=crlf
+*.psd1 text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# Papyrus is Creation-Kit-authored and edited in CK tooling that expects CRLF.
+# The pre-commit hook excludes .psc for the same reason.
+*.psc  text eol=crlf
+
+# Plugin files are binary and go through Git LFS; never touch their contents.
 *.esl filter=lfs diff=lfs merge=lfs -text
 *.esp filter=lfs diff=lfs merge=lfs -text
 *.esm filter=lfs diff=lfs merge=lfs -text
