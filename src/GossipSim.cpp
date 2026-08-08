@@ -650,7 +650,10 @@ namespace NarrativeEngine::GossipSim
             // stretch still has to let claims age out, or a lull would freeze
             // the ledger.
             if (const auto expired = GossipClaims::Sweep(g_simGameDay); expired > 0) {
-                logger::debug("GossipClaims: expired {} claim(s); {} remain", expired, GossipClaims::Count());
+                logger::debug("GossipClaims: expired {} claim(s); {} memory + {} event claim(s) remain",
+                              expired,
+                              GossipClaims::Count(),
+                              GossipClaims::EventCount());
             }
 
             std::size_t reaped = 0;

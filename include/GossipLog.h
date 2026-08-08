@@ -122,6 +122,7 @@ namespace NarrativeEngine::GossipLog
         std::size_t rejectedNoContent = 0;
         std::size_t rejectedNoGameTime = 0;
         std::size_t rejectedOwnOutput = 0;
+        std::size_t rejectedSameEvent = 0;
     };
     void Harvest(const HarvestStats& stats);
 

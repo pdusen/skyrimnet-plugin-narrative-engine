@@ -254,7 +254,8 @@ namespace NarrativeEngine::GossipLog
     {
         Emit(std::format("HARVEST actors={}/{}  memories={}  candidates={}  sent={}  "
                          "(rejected: {} too-old, {} low-importance, {} diary, {} no-content, "
-                         "{} no-game-time, {} own-gossip, {} claimed, {} not-participant)",
+                         "{} no-game-time, {} own-gossip, {} claimed, {} same-event, "
+                         "{} not-participant)",
                          stats.actorsSampled,
                          stats.actorsSeen,
                          stats.memoriesExamined,
@@ -267,6 +268,7 @@ namespace NarrativeEngine::GossipLog
                          stats.rejectedNoGameTime,
                          stats.rejectedOwnOutput,
                          stats.rejectedClaimed,
+                         stats.rejectedSameEvent,
                          stats.rejectedNotParticipant));
     }
 

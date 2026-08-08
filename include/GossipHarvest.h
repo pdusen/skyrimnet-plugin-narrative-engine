@@ -113,6 +113,8 @@ namespace NarrativeEngine::GossipHarvest
         std::size_t rejectedNoContent = 0;
         std::size_t rejectedNoGameTime = 0;
         std::size_t rejectedOwnOutput = 0;
+        // Another witness's account of the same happening already seeded.
+        std::size_t rejectedSameEvent = 0;
     };
     Stats GetStats();
 } // namespace NarrativeEngine::GossipHarvest

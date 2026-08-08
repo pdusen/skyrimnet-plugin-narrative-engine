@@ -43,7 +43,28 @@ namespace NarrativeEngine::GossipHarvest
             RE::FormID owner = 0;
             float importance = 0.0f;
             std::string text;
+            // The happening this memory is an account of, as SkyrimNet's
+            // own event ids. Claimed alongside the memory so no other
+            // witness's account of the same happening can seed a second
+            // rumor about it.
+            std::vector<std::int64_t> eventIds;
         };
+
+        std::vector<std::int64_t> ReadEventIds(const nlohmann::json& row)
+        {
+            std::vector<std::int64_t> out;
+            const auto it = row.find("related_event_ids");
+            if (it == row.end() || !it->is_array()) {
+                return out;
+            }
+            out.reserve(it->size());
+            for (const auto& e : *it) {
+                if (e.is_number_integer() || e.is_number_unsigned()) {
+                    out.push_back(e.get<std::int64_t>());
+                }
+            }
+            return out;
+        }
 
         // One ranked actor, carrying both halves of its identity.
         //
@@ -276,8 +297,19 @@ namespace NarrativeEngine::GossipHarvest
                     GossipLog::Memory(id, actor.npc, importance, "claimed");
                     continue;
                 }
+                // Somebody else's account of the same happening has already
+                // become a rumor. SkyrimNet writes a separate memory to
+                // every actor present, each with its own id but sharing
+                // related_event_ids, so without this three witnesses to one
+                // confrontation produce three rumors about it.
+                auto eventIds = ReadEventIds(m);
+                if (GossipClaims::AreEventsClaimed(eventIds)) {
+                    ++sweep.rejectedSameEvent;
+                    GossipLog::Memory(id, actor.npc, importance, "same-event");
+                    continue;
+                }
                 GossipLog::Memory(id, actor.npc, importance, std::format("candidate ({})", type));
-                out.push_back(Candidate{id, actor.npc, importance, std::move(content)});
+                out.push_back(Candidate{id, actor.npc, importance, std::move(content), std::move(eventIds)});
             }
         }
 
@@ -291,6 +323,7 @@ namespace NarrativeEngine::GossipHarvest
             g_stats.rejectedTooOld += sweep.rejectedTooOld;
             g_stats.rejectedLowImportance += sweep.rejectedLowImportance;
             g_stats.rejectedClaimed += sweep.rejectedClaimed;
+            g_stats.rejectedSameEvent += sweep.rejectedSameEvent;
             g_stats.rejectedNotParticipant += sweep.rejectedNotParticipant;
             g_stats.rejectedDiary += sweep.rejectedDiary;
             g_stats.rejectedNoContent += sweep.rejectedNoContent;
@@ -336,11 +369,23 @@ namespace NarrativeEngine::GossipHarvest
                 if (sweep.sentForGeneration >= want) {
                     break;
                 }
+                // Re-check the events here, not just at qualification.
+                // Nothing is claimed until this loop runs, so two accounts
+                // of the same happening can both have passed the gate
+                // above; the first one through claims the events and the
+                // second must see that.
+                if (GossipClaims::AreEventsClaimed(c.eventIds)) {
+                    ++sweep.rejectedSameEvent;
+                    GossipLog::Memory(c.memoryId, c.owner, c.importance, "same-event (this sweep)");
+                    continue;
+                }
                 // Claim BEFORE generating. The LLM call is async and can
                 // fail or be refused, at which point GossipContent releases
                 // the claim — so a rumor can never exist without a claim
                 // behind it, and a refused memory is handed straight back.
-                GossipClaims::Claim(c.memoryId, nowGameDay);
+                // The related events are claimed with it and come back with
+                // it on release.
+                GossipClaims::Claim(c.memoryId, c.eventIds, nowGameDay);
                 const auto* p = GossipGraph::Find(c.owner);
                 const auto& locName = GossipGraph::LocationName(p ? (p->settlement ? p->settlement : p->hold) : 0);
                 GossipContent::RequestBands(c.memoryId, c.owner, c.text, locName, c.importance);

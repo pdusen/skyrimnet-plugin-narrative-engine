@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 namespace SKSE
 {
@@ -49,7 +50,14 @@ namespace SKSE
 // SKSE's serialization thread and take the same lock.
 namespace NarrativeEngine::GossipClaims
 {
-    // SKSE co-save record type. Frozen — changing it orphans saved payloads.
+    // SKSE co-save record type. Frozen — changing it orphans saved
+    // payloads.
+    //
+    // One record holds everything: each memory claim is followed by the
+    // ids of the events it claimed. The events carry neither their own
+    // expiry nor an owner backref on disk, because both are implied by the
+    // claim they sit under — which also makes a dangling event claim
+    // unrepresentable rather than merely unlikely.
     inline constexpr std::uint32_t kRecordTypeId = 'NEGC';
 
     void Initialize();
@@ -57,18 +65,35 @@ namespace NarrativeEngine::GossipClaims
     // True while `memoryId` is claimed. The harvester's qualification gate.
     bool IsClaimed(std::int64_t memoryId);
 
-    // Claim `memoryId` until `nowGameDay + fGossipClaimExpiryDays`.
+    // True while ANY id in `eventIds` is claimed.
+    //
+    // This is what stops one event becoming several rumors. SkyrimNet
+    // writes a separate memory to every actor who was present, each with
+    // its own id but with overlapping `related_event_ids`; per-memory
+    // dedup alone happily seeds all of them. On the first in-game run six
+    // of ten rumors were duplicates of just two events — three memories of
+    // one confrontation had byte-identical event sets.
+    bool AreEventsClaimed(const std::vector<std::int64_t>& eventIds);
+
+    // Claim `memoryId`, and separately claim every id in `eventIds`, until
+    // `nowGameDay + fGossipClaimExpiryDays`.
+    //
     // Re-claiming an already-claimed id refreshes nothing and is a no-op —
     // the original expiry stands, so a claim cannot be extended
-    // indefinitely by repeated attempts.
-    void Claim(std::int64_t memoryId, double nowGameDay);
+    // indefinitely by repeated attempts. Event claims record the memory
+    // that took them so Release can find them again.
+    void Claim(std::int64_t memoryId, const std::vector<std::int64_t>& eventIds, double nowGameDay);
 
-    // Hand a memory back immediately.
+    // Hand a memory back immediately, along with every event claim it
+    // took.
     //
     // Needed because a rumor is claimed BEFORE its content is generated:
     // if generation fails, or the model judges the memory not worth
     // gossiping about, the claim must be released or a transient error
-    // would permanently burn a memory that never produced anything.
+    // would permanently burn a memory that never produced anything. The
+    // events must come back too, or a failed generation would keep every
+    // other witness's account of the same event locked out for the whole
+    // expiry window.
     void Release(std::int64_t memoryId);
 
     // Drop expired claims. Called from the simulation poll on sampled game
@@ -77,6 +102,7 @@ namespace NarrativeEngine::GossipClaims
     std::size_t Sweep(double nowGameDay);
 
     std::size_t Count();
+    std::size_t EventCount();
 
     void OnSave(SKSE::SerializationInterface* intfc);
     void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);
