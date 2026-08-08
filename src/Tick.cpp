@@ -7,8 +7,8 @@
 #include <EvaluationPipeline.h>
 #include <EventHistoryWriter.h>
 #include <FineRoads.h>
+#include <GossipHarvest.h>
 #include <GossipLog.h>
-#include <GossipSeeder.h>
 #include <GossipSim.h>
 #include <logger.h>
 #include <PhaseTracker.h>
@@ -74,7 +74,7 @@ namespace NarrativeEngine::Tick
             TravelEventLog::Poll(pt, elapsedSec);
             EventHistoryWriter::Poll(pt, elapsedSec);
             FineRoads::Poll(pt, elapsedSec);
-            GossipSeeder::Poll(pt, elapsedSec);
+            GossipHarvest::Poll(pt, elapsedSec);
             GossipSim::Poll(pt, elapsedSec);
             GossipLog::Poll(pt, elapsedSec);
 

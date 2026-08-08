@@ -520,10 +520,10 @@ namespace NarrativeEngine::Settings
         // Background rumor propagation across the unique-actor
         // population. See docs/implementation/PHASE_13_GOSSIP_PROPAGATION.md.
         //
-        // Ships DISABLED. Milestone 1 is a validation harness: it writes
-        // stub memories with placeholder text into SkyrimNet's memory
-        // database and does not clean them up. Do not enable on a
-        // playthrough you care about.
+        // Ships DISABLED pending in-game validation. Every transmission
+        // writes two real memories into SkyrimNet's database and does
+        // not clean them up, so enable on a playthrough you are willing
+        // to leave gossip in.
         bool gossipEnabled = false;
         // The dedicated rumor-trace log at
         // Data/../SKSE/NarrativeEngine_Gossip.log. Deliberately
@@ -652,32 +652,54 @@ namespace NarrativeEngine::Settings
         int gossipFactionSizeMin = 3;
         int gossipFactionSizeMax = 40;
 
-        // TEMPORARY (Milestone 1 only). Seeds a stratified spread of
-        // stub rumors at session start so the simulation has something
-        // to propagate before real seeding exists. Delete alongside
-        // GossipSeeder when Milestone 2 lands.
-        bool gossipSeedStubsOnLoad = false;
-        int gossipStubSeedCount = 12;
-        // Keep planting during the run. Without this a validation
-        // session produces exactly iGossipStubSeedCount rumors, all of
-        // which burn out within about a week of game time (the model's
-        // median active spread is ~4.6 game days), after which nothing
-        // further happens and there is nothing left to observe.
+        // --- Milestone 2: memory harvesting -------------------------
         //
-        // Twelve rumors is also far too small a sample to compare
-        // against the offline distributions — reach varies from 2 to
-        // 100, so a dozen draws cannot distinguish "running cooler than
-        // predicted" from ordinary variance. Continuous seeding is what
-        // turns the harness from a one-shot into a steady state.
+        // Rumors are sourced from SkyrimNet's memory database rather than
+        // planted. There is no global memory query — GetMemoriesForActor
+        // is strictly per-actor — so the sweep is two-stage:
+        // GetActorEngagement(0, ...) ranks every active actor by recent
+        // memory importance, then the top N get a per-actor fetch.
+        bool gossipHarvestEnabled = true;
+        float gossipHarvestIntervalGameHours = 12.0f;
+        // Memories older than this are never candidates. Gossip is news.
+        float gossipHarvestWindowDays = 50.0f;
+        // How long a claimed memory stays claimed.
         //
-        // 0 disables re-seeding (one-shot, the old behaviour).
-        int gossipStubSeedIntervalGameHours = 6;
-        // Ceiling on rumors seeded across the whole session, so a long
-        // run cannot plant unboundedly many stub memories.
-        int gossipStubSeedMaxTotal = 120;
-        // RNG seed for both the seeder and the simulation. Fixing it
-        // makes a validation run exactly repeatable, which is what makes
-        // a tuning change measurable. 0 means "derive from the session".
+        // MUST EXCEED gossipHarvestWindowDays. A memory claimed the
+        // instant it was created has its claim expire at this age but
+        // stops being harvestable at the window — so the claim always
+        // outlives eligibility, and the memory can never be seeded
+        // twice. Invert the two and a memory claimed early becomes
+        // re-harvestable partway through its life. Settings::Load
+        // asserts this and complains loudly if it is violated.
+        float gossipClaimExpiryDays = 60.0f;
+        // Notability floor for a candidate. A memory's importance maps
+        // directly onto the rumor's notability, both being 0..1.
+        float gossipMinMemoryImportance = 0.45f;
+        int gossipHarvestActorSampleSize = 25;
+        int gossipHarvestMemoriesPerActor = 10;
+        // Bounds the one-event-many-memories case: a combat event writes
+        // a memory to every witness, and those are distinct ids
+        // describing the same thing.
+        int gossipMaxSeedsPerHarvest = 1;
+        // --- Milestone 2: rumor content -----------------------------
+        //
+        // Generation bands, all produced by ONE call at seed time. Band
+        // edges are at generation 3 and 6; measured depth reaches 12 but
+        // generations 9+ carry only 4% of traffic, so a fourth band
+        // would be output spent on almost nothing.
+        //
+        // The prompt asset and the LLM variant it runs under are NOT
+        // configurable. The prompt ships in statics/ and its contract
+        // with GossipContent (the context keys it reads, the JSON shape
+        // it returns) is compiled in, so pointing the call at a
+        // different asset can only break it. Gossip runs under the
+        // existing `narrative_engine_composer` variant, which already
+        // covers creative writing in an NPC's voice; a separate variant
+        // would be one more thing for the user to tune with no distinct
+        // task shape behind it.
+        int gossipContentBands = 3;
+
         int gossipRandomSeed = 1337;
     };
 

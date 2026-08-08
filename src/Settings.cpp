@@ -313,13 +313,23 @@ namespace NarrativeEngine::Settings
                 static_cast<int>(ini.GetLongValue("Gossip", "iGossipFactionSizeMin", dst.gossipFactionSizeMin));
             dst.gossipFactionSizeMax =
                 static_cast<int>(ini.GetLongValue("Gossip", "iGossipFactionSizeMax", dst.gossipFactionSizeMax));
-            dst.gossipSeedStubsOnLoad = ini.GetBoolValue("Gossip", "bGossipSeedStubsOnLoad", dst.gossipSeedStubsOnLoad);
-            dst.gossipStubSeedCount =
-                static_cast<int>(ini.GetLongValue("Gossip", "iGossipStubSeedCount", dst.gossipStubSeedCount));
-            dst.gossipStubSeedIntervalGameHours = static_cast<int>(
-                ini.GetLongValue("Gossip", "iGossipStubSeedIntervalGameHours", dst.gossipStubSeedIntervalGameHours));
-            dst.gossipStubSeedMaxTotal =
-                static_cast<int>(ini.GetLongValue("Gossip", "iGossipStubSeedMaxTotal", dst.gossipStubSeedMaxTotal));
+            dst.gossipHarvestEnabled = ini.GetBoolValue("Gossip", "bGossipHarvestEnabled", dst.gossipHarvestEnabled);
+            dst.gossipHarvestIntervalGameHours = static_cast<float>(
+                ini.GetDoubleValue("Gossip", "fGossipHarvestIntervalGameHours", dst.gossipHarvestIntervalGameHours));
+            dst.gossipHarvestWindowDays = static_cast<float>(
+                ini.GetDoubleValue("Gossip", "fGossipHarvestWindowDays", dst.gossipHarvestWindowDays));
+            dst.gossipClaimExpiryDays =
+                static_cast<float>(ini.GetDoubleValue("Gossip", "fGossipClaimExpiryDays", dst.gossipClaimExpiryDays));
+            dst.gossipMinMemoryImportance = static_cast<float>(
+                ini.GetDoubleValue("Gossip", "fGossipMinMemoryImportance", dst.gossipMinMemoryImportance));
+            dst.gossipHarvestActorSampleSize = static_cast<int>(
+                ini.GetLongValue("Gossip", "iGossipHarvestActorSampleSize", dst.gossipHarvestActorSampleSize));
+            dst.gossipHarvestMemoriesPerActor = static_cast<int>(
+                ini.GetLongValue("Gossip", "iGossipHarvestMemoriesPerActor", dst.gossipHarvestMemoriesPerActor));
+            dst.gossipMaxSeedsPerHarvest =
+                static_cast<int>(ini.GetLongValue("Gossip", "iGossipMaxSeedsPerHarvest", dst.gossipMaxSeedsPerHarvest));
+            dst.gossipContentBands =
+                static_cast<int>(ini.GetLongValue("Gossip", "iGossipContentBands", dst.gossipContentBands));
             dst.gossipRandomSeed =
                 static_cast<int>(ini.GetLongValue("Gossip", "iGossipRandomSeed", dst.gossipRandomSeed));
 
@@ -614,6 +624,25 @@ namespace NarrativeEngine::Settings
                       g_config.tickIntervalSeconds);
         ApplyLogLevelForTraceMode();
         RebuildSpellNameBlocklistSet();
+
+        // The gossip claim ledger is only correct while a claim outlives
+        // the window in which its memory can be harvested. A memory
+        // claimed the instant it was created has its claim expire at
+        // fGossipClaimExpiryDays but stops being a candidate at
+        // fGossipHarvestWindowDays; invert the two and it becomes
+        // re-harvestable partway through its life, and the same story
+        // circulates twice.
+        //
+        // Complain rather than clamp: a tuning pass that adjusts one
+        // number without the other should be visible, not silently
+        // corrected into something the author did not ask for.
+        if (g_config.gossipClaimExpiryDays <= g_config.gossipHarvestWindowDays) {
+            logger::error("Settings: fGossipClaimExpiryDays ({}) must EXCEED fGossipHarvestWindowDays ({}) "
+                          "— as configured, a harvested memory can be claimed, expire, and be re-harvested "
+                          "before it ages out, seeding the same story twice",
+                          g_config.gossipClaimExpiryDays,
+                          g_config.gossipHarvestWindowDays);
+        }
     }
 
     const Config& Get()

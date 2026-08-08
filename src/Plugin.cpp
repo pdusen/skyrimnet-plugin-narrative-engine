@@ -13,9 +13,11 @@
 #include <EvalDispatch.h>
 #include <EventHistoryWriter.h>
 #include <FineRoads.h>
+#include <GossipClaims.h>
+#include <GossipContent.h>
 #include <GossipGraph.h>
+#include <GossipHarvest.h>
 #include <GossipLog.h>
-#include <GossipSeeder.h>
 #include <GossipSim.h>
 #include <HoldGrid.h>
 #include <LetterPool.h>
@@ -201,7 +203,10 @@ namespace NarrativeEngine
                 // GossipLog only registers here; the trace file itself
                 // is opened per save-game session in OnSessionStart.
                 GossipLog::Initialize();
+                GossipClaims::Initialize();
                 GossipSim::Initialize();
+                GossipContent::Initialize();
+                GossipHarvest::Initialize();
                 AsyncDispatch::Start();
                 EvalDispatch::Start();
                 // Must start before BeatSystem::Initialize — the poll
@@ -260,18 +265,18 @@ namespace NarrativeEngine
                 AmbushBeat_Persistence::OnRevert();
                 VisitState::OnRevert();
                 GossipSim::OnRevert();
+                GossipClaims::OnRevert();
                 PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
                 // Rotate the history log for the new session BEFORE
                 // Tick starts polling — the first Poll cycle needs the
                 // file already open to actually write anything.
                 EventHistoryWriter::OnSessionStart();
-                // Gossip: open the trace file, re-base the simulation's
-                // game-time sample, then seed. Ordered before Tick::Start
-                // so the first Poll has a file to write to and rumors to
-                // advance.
+                // Gossip: open the trace file and re-base the simulation's
+                // game-time sample, before Tick::Start so the first Poll
+                // has a file to write to.
                 GossipLog::OnSessionStart();
                 GossipSim::OnSessionStart();
-                GossipSeeder::OnSessionStart();
+                GossipHarvest::OnSessionStart();
                 Tick::Start();
                 break;
             case SKSE::MessagingInterface::kPreLoadGame:
@@ -308,6 +313,7 @@ namespace NarrativeEngine
                 AmbushBeat_Persistence::OnRevert();
                 VisitState::OnRevert();
                 GossipSim::OnRevert();
+                GossipClaims::OnRevert();
                 PhaseTracker::Reset();
                 break;
             case SKSE::MessagingInterface::kPostLoadGame:
@@ -330,12 +336,10 @@ namespace NarrativeEngine
                 // OnSessionStart re-bases the game-time sample, which
                 // matters more here than on a new game: without it the
                 // first poll after loading a day-200 save would read as
-                // a 200-day jump. The seeder no-ops when the co-save
-                // restored live rumors, so loading mid-run resumes
-                // rather than re-seeding.
+                // a 200-day jump.
                 GossipLog::OnSessionStart();
                 GossipSim::OnSessionStart();
-                GossipSeeder::OnSessionStart();
+                GossipHarvest::OnSessionStart();
                 Tick::Start();
                 break;
             default:
@@ -358,6 +362,7 @@ namespace NarrativeEngine
             LetterPool::OnSave(intfc);
             VisitState::OnSave(intfc);
             GossipSim::OnSave(intfc);
+            GossipClaims::OnSave(intfc);
             // Future subsystems append their OnSave calls here.
         }
 
@@ -409,6 +414,9 @@ namespace NarrativeEngine
                 case GossipSim::kRecordTypeId:
                     GossipSim::OnLoad(intfc, version, length);
                     break;
+                case GossipClaims::kRecordTypeId:
+                    GossipClaims::OnLoad(intfc, version, length);
+                    break;
                 default:
                     // Unknown record — likely from a newer build or a
                     // removed subsystem. GetNextRecordInfo's next call
@@ -437,6 +445,7 @@ namespace NarrativeEngine
             LetterPool::OnRevert();
             VisitState::OnRevert();
             GossipSim::OnRevert();
+            GossipClaims::OnRevert();
             // Future subsystems append their OnRevert calls here.
         }
     } // namespace
