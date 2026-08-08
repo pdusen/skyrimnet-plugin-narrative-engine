@@ -157,7 +157,7 @@ player reads it, your voice lands, and they move on.
 ## Your recent memories about {{ player_name }}
 
 {% if length(sender.memories) == 0 %}*No recent player-involving memories on file. Draw on what a person like you would plausibly know about {{ player_name }} from your station, location, and role — but keep the letter's specifics grounded rather than inventing dramatic backstory.*
-{% else %}{% for mem in sender.memories %}- [{{ mem.type }}, {{ mem.age_hours }}h ago{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
+{% else %}{% for mem in sender.memories %}- [{{ mem.type }}, {{ mem.age }}{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
 {% endfor %}{% endif %}
 
 {% if length(sender.recent_dialogue) > 0 %}

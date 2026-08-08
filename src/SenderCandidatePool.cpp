@@ -6,6 +6,7 @@
 #include <logger.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
+#include <SkyrimNetEvents.h>
 
 #include <nlohmann/json.hpp>
 
@@ -36,20 +37,25 @@ namespace NarrativeEngine::SenderCandidatePool
 
         // Trim a raw memory tail per the caller's importance / diary
         // rules and reshape each entry into the compact
-        // `{type, content, age_hours, emotion, location}` shape both
-        // compose prompts consume.
+        // `{type, content, age, age_seconds, emotion, location}` shape
+        // both compose prompts consume.
+        //
+        // `age` is the rendered label the prompt shows; `age_seconds` is
+        // the in-world age it was built from, retained for sorting and
+        // for the dialogue-age filter. Both derive from the row's
+        // `game_time`, NOT from `age_hours` — see
+        // SkyrimNetEvents::MemoryAgeGameSeconds.
         //
         // Returns a JSON array (possibly empty). Preserves the same
         // sort-and-truncate discipline LetterComposer used: sort by
-        // ascending age_hours (newest first), truncate to
+        // ascending in-world age (newest first), truncate to
         // maxMemoriesPerCandidate, then reverse for
         // oldest-to-newest presentation.
         //
         // `watermarkGameHours` (if set) is the per-candidate memory
         // watermark: memories whose absolute game-hours fall AT OR
-        // BELOW the watermark are dropped. Absolute time is derived
-        // as `nowGameHours - age_hours`; `nowGameHours` is captured
-        // once per call rather than per-memory.
+        // BELOW the watermark are dropped. The row's `game_time` IS
+        // that absolute reading, so no derivation is needed.
         nlohmann::json FilterAndShapeMemories(nlohmann::json raw,
                                               const BuildOptions& opts,
                                               std::optional<double> watermarkGameHours)
@@ -58,7 +64,10 @@ namespace NarrativeEngine::SenderCandidatePool
                 return nlohmann::json::array();
             }
 
-            const double nowGameHours = watermarkGameHours.has_value() ? EngineUtils::GetCurrentGameHours() : 0.0;
+            // Needed unconditionally now: every shaped memory carries a
+            // rendered in-world age, not just the watermarked ones.
+            const double nowGameHours = EngineUtils::GetCurrentGameHours();
+            const double nowGameSeconds = nowGameHours * 3600.0;
 
             auto trimmed = nlohmann::json::array();
             for (auto& m : raw) {
@@ -87,16 +96,24 @@ namespace NarrativeEngine::SenderCandidatePool
                     continue;
                 }
 
+                const double ageSeconds = SkyrimNetEvents::MemoryAgeGameSeconds(m, nowGameSeconds);
+
                 // Per-sender memory-watermark filter. Drops memories
                 // whose absolute game-hours predate the watermark —
                 // used to exclude memories that were already the
                 // subject of an earlier beat with this sender.
+                //
+                // The row's `game_time` is already the absolute in-world
+                // reading the watermark is stored in, so this is a direct
+                // comparison. It used to be derived from `age_hours`,
+                // which is real-world elapsed time — on a save resumed
+                // after a long break that produced a negative absolute
+                // time and silently dropped every memory the sender had.
                 if (watermarkGameHours.has_value()) {
-                    double ageHours = 0.0;
-                    if (auto it = m.find("age_hours"); it != m.end() && it->is_number()) {
-                        ageHours = it->get<double>();
+                    if (ageSeconds < 0.0) {
+                        continue; // no usable in-world time; cannot place it
                     }
-                    const double absoluteGameHours = nowGameHours - ageHours;
+                    const double absoluteGameHours = (nowGameSeconds - ageSeconds) / 3600.0;
                     if (absoluteGameHours <= *watermarkGameHours) {
                         continue;
                     }
@@ -109,8 +126,9 @@ namespace NarrativeEngine::SenderCandidatePool
                 if (auto it = m.find("content"); it != m.end() && it->is_string()) {
                     out["content"] = LLMTextSanitizer::Sanitize(it->get<std::string>());
                 }
-                if (auto it = m.find("age_hours"); it != m.end() && it->is_number()) {
-                    out["age_hours"] = it->get<double>();
+                if (ageSeconds >= 0.0) {
+                    out["age"] = SkyrimNetEvents::FormatRelativeGameTime(ageSeconds);
+                    out["age_seconds"] = ageSeconds;
                 }
                 std::string emotion;
                 if (auto it = m.find("emotion"); it != m.end() && it->is_string()) {
@@ -125,11 +143,11 @@ namespace NarrativeEngine::SenderCandidatePool
                 trimmed.push_back(std::move(out));
             }
 
-            // Sort ascending on age_hours (newest first) so truncation
+            // Sort ascending on in-world age (newest first) so truncation
             // keeps the most recent survivors, then reverse for
             // oldest-to-newest presentation.
             std::sort(trimmed.begin(), trimmed.end(), [](const nlohmann::json& a, const nlohmann::json& b) {
-                return a.value("age_hours", 0.0) < b.value("age_hours", 0.0);
+                return a.value("age_seconds", 0.0) < b.value("age_seconds", 0.0);
             });
 
             const int cap = std::max(0, opts.maxMemoriesPerCandidate);

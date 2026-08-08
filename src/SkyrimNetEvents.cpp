@@ -32,6 +32,25 @@ namespace NarrativeEngine::SkyrimNetEvents
         return std::to_string(w) + (w == 1 ? " week ago" : " weeks ago");
     }
 
+    double MemoryAgeGameSeconds(const nlohmann::json& memoryRow, double nowGameSeconds)
+    {
+        if (!memoryRow.is_object() || nowGameSeconds <= 0.0) {
+            return -1.0;
+        }
+        const auto it = memoryRow.find("game_time");
+        if (it == memoryRow.end() || !it->is_number()) {
+            return -1.0;
+        }
+        const double gameTime = it->get<double>();
+        if (gameTime <= 0.0) {
+            return -1.0;
+        }
+        // Clamp rather than return a negative age: a row written a few
+        // simulation ticks ahead of the sampled clock is "just now", not
+        // an error worth propagating to every caller.
+        return std::max(0.0, nowGameSeconds - gameTime);
+    }
+
     std::string FormatRelativeGameDuration(double seconds)
     {
         if (seconds < 60.0)

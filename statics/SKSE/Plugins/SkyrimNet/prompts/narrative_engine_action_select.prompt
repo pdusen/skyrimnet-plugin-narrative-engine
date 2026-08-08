@@ -94,7 +94,7 @@ support the tone the moment needs.
 ##### {{ s.name }} (form_id: {{ s.form_id }})
 
             {%- for mem in s.memories %}
-- [{{ mem.type }}, {{ mem.age_hours }}h ago{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
+- [{{ mem.type }}, {{ mem.age }}{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
             {%- endfor %}
         {% endfor -%}
     {% endif %}
@@ -112,7 +112,7 @@ needs to land face-to-face.
 ##### {{ s.name }} (form_id: {{ s.form_id }})
 
             {%- for mem in s.memories %}
-- [{{ mem.type }}, {{ mem.age_hours }}h ago{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
+- [{{ mem.type }}, {{ mem.age }}{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
             {%- endfor %}
         {% endfor -%}
     {% endif %}

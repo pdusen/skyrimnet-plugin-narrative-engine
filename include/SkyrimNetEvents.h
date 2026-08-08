@@ -16,6 +16,22 @@ namespace NarrativeEngine::SkyrimNetEvents
     // Used as the leading "[N units ago]" prefix on each rendered event line.
     std::string FormatRelativeGameTime(double secondsAgo);
 
+    // In-world age of one memory row from GetMemoriesForActor, in game
+    // seconds, or a negative value when the row carries no usable
+    // `game_time`. `nowGameSeconds` is the caller's current game clock
+    // (Calendar::GetHoursPassed() * 3600, or the GetDaysPassed() * 86400
+    // equivalent — they share a base).
+    //
+    // USE THIS RATHER THAN THE ROW'S `age_hours`. That field is REAL-WORLD
+    // elapsed time since the row was written, not game time: a save picked
+    // up after a two-month break reports every memory in it as ~60 days
+    // old while none of them has aged an in-world hour. Memory ages shown
+    // to an LLM were wrong in exactly that way until this existed, and the
+    // gossip harvester rejected every candidate it saw because of it.
+    //
+    // See docs/engine-findings/skyrimnet-memory-json-field-names.md.
+    double MemoryAgeGameSeconds(const nlohmann::json& memoryRow, double nowGameSeconds);
+
     // Bare-duration variant of FormatRelativeGameTime — drops the trailing
     // "ago" so it can be substituted into "for X" / "in X" phrasing.
     // ("5 minutes" instead of "5 minutes ago", "2 hours" instead of "2 hours

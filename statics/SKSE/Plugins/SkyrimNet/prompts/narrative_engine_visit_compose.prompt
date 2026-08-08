@@ -154,7 +154,7 @@ for {{ sender_name }}'s known personality even without concrete
 anchoring memories.*
 {% else %}
 {% for mem in sender_memories %}
-- [{{ mem.type }}, {{ mem.age_hours }}h ago{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
+- [{{ mem.type }}, {{ mem.age }}{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
 {% endfor %}
 {% endif %}
 

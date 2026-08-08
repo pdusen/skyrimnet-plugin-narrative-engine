@@ -7,6 +7,7 @@
 #include <SenderCandidatePool.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
+#include <SkyrimNetEvents.h>
 
 #include <nlohmann/json.hpp>
 
@@ -193,7 +194,7 @@ namespace NarrativeEngine::LetterComposer
         // Pull a single actor's player-involving memory tail from
         // SkyrimNet, filter by importance floor, and reduce each entry
         // to the minimal shape the prompts render:
-        // `{type, content, age_hours, emotion, location}`.
+        // `{type, content, age, age_seconds, emotion, location}`.
         //
         // Memories with `importance_score` below the configured floor
         // are dropped: SkyrimNet's own retrieval returns a top-N ranked
@@ -219,7 +220,10 @@ namespace NarrativeEngine::LetterComposer
         // (`text`, `importance`) that no longer match runtime output;
         // the real names are `content` and `importance_score`. Verified
         // against a captured memory payload — do not "fix" back to the
-        // doc names.
+        // doc names. `timestamp` is likewise really `age_hours` — which
+        // is REAL-WORLD elapsed time, not game time; use `game_time` for
+        // anything in-world.
+        // See docs/engine-findings/skyrimnet-memory-json-field-names.md.
         // `includeDiaries` controls the diary-entry filter. Action-
         // select uses false: the LLM only needs the sender's summary
         // memories to judge tonal fit, and long first-person diary
@@ -318,11 +322,11 @@ namespace NarrativeEngine::LetterComposer
         }
 
         // Trim dialogue entries older than the oldest memory in `memories`.
-        // Memories carry age relative to now (`age_hours`); dialogue
-        // carries absolute game-seconds (`gameTime`). We convert the
-        // oldest kept memory's age to a game-seconds cutoff via
-        // `RE::Calendar::GetHoursPassed()` (also game-seconds base after
-        // × 3600), then drop dialogue entries below the cutoff.
+        // Shaped memories carry their in-world age (`age_seconds`);
+        // dialogue carries absolute game-seconds (`gameTime`). Both are
+        // now on the same clock, so the oldest kept memory's age converts
+        // to a game-seconds cutoff by plain subtraction from
+        // `RE::Calendar::GetHoursPassed() * 3600`.
         //
         // If `memories` is empty (no lower bound) or the oldest age
         // resolves to 0 (unknown), no filter is applied — better to
@@ -337,22 +341,27 @@ namespace NarrativeEngine::LetterComposer
             if (!dialogue.is_array() || dialogue.empty())
                 return;
 
-            double oldestMemoryAgeHours = 0.0;
+            // `age_seconds` is the shaped memory's IN-WORLD age. It used to
+            // be `age_hours`, which is real-world elapsed time — mixing that
+            // with the game clock below put the cutoff arbitrarily far in
+            // the past, so the filter silently did nothing on any save
+            // resumed after a break.
+            double oldestMemoryAgeSeconds = 0.0;
             if (memories.is_array()) {
                 for (const auto& m : memories) {
-                    const double h = m.value("age_hours", 0.0);
-                    if (h > oldestMemoryAgeHours)
-                        oldestMemoryAgeHours = h;
+                    const double s = m.value("age_seconds", 0.0);
+                    if (s > oldestMemoryAgeSeconds)
+                        oldestMemoryAgeSeconds = s;
                 }
             }
-            if (oldestMemoryAgeHours <= 0.0)
+            if (oldestMemoryAgeSeconds <= 0.0)
                 return;
 
             auto* calendar = RE::Calendar::GetSingleton();
             if (!calendar)
                 return;
             const double nowGameSeconds = static_cast<double>(calendar->GetHoursPassed()) * 3600.0;
-            const double cutoffGameSeconds = nowGameSeconds - oldestMemoryAgeHours * 3600.0;
+            const double cutoffGameSeconds = nowGameSeconds - oldestMemoryAgeSeconds;
 
             auto& arr = dialogue.get_ref<nlohmann::json::array_t&>();
             arr.erase(std::remove_if(arr.begin(),
@@ -361,28 +370,6 @@ namespace NarrativeEngine::LetterComposer
                                          return e.value("gameTime", 0.0) < cutoffGameSeconds;
                                      }),
                       arr.end());
-        }
-
-        // Human-friendly age label. Used as the `[…]` prefix on each
-        // rendered dialogue line so the LLM has a sense of how recent
-        // each exchange was without having to reason about raw game-
-        // seconds. Round to whole hours; pluralize; special-case sub-
-        // hour and multi-day ranges so the label reads naturally.
-        std::string FormatDialogueAgeLabel(double ageHours)
-        {
-            if (ageHours < 0.5)
-                return "just now";
-            if (ageHours < 1.5)
-                return "1 hour ago";
-            if (ageHours < 24.0) {
-                const long long h = static_cast<long long>(std::round(ageHours));
-                return std::to_string(h) + " hours ago";
-            }
-            const double days = ageHours / 24.0;
-            if (days < 1.5)
-                return "1 day ago";
-            const long long d = static_cast<long long>(std::round(days));
-            return std::to_string(d) + " days ago";
         }
 
         // Compute a rendered age label per dialogue entry (`age_str`)
@@ -400,8 +387,9 @@ namespace NarrativeEngine::LetterComposer
                     continue;
                 const double gt = e.value("gameTime", 0.0);
                 if (nowGameSeconds > 0.0 && gt > 0.0) {
-                    const double ageHours = (nowGameSeconds - gt) / 3600.0;
-                    e["age_str"] = FormatDialogueAgeLabel(ageHours);
+                    // Canonical formatter, shared with events and now with
+                    // memories, so every age the prompt shows reads the same.
+                    e["age_str"] = SkyrimNetEvents::FormatRelativeGameTime(std::max(0.0, nowGameSeconds - gt));
                 } else {
                     e["age_str"] = "";
                 }
@@ -451,6 +439,12 @@ namespace NarrativeEngine::LetterComposer
             auto trimmed = nlohmann::json::array();
             int droppedBelowThreshold = 0;
             int droppedDiary = 0;
+            // Sampled once per call rather than per memory; every shaped
+            // memory needs it to render an in-world age.
+            auto* ageCalendar = RE::Calendar::GetSingleton();
+            const double nowGameSeconds =
+                ageCalendar ? static_cast<double>(ageCalendar->GetHoursPassed()) * 3600.0 : 0.0;
+
             for (auto& m : raw) {
                 if (!m.is_object())
                     continue;
@@ -492,8 +486,13 @@ namespace NarrativeEngine::LetterComposer
                 if (auto it = m.find("content"); it != m.end() && it->is_string()) {
                     out["content"] = LLMTextSanitizer::Sanitize(it->get<std::string>());
                 }
-                if (auto it = m.find("age_hours"); it != m.end() && it->is_number()) {
-                    out["age_hours"] = it->get<double>();
+                // In-world age, from `game_time`. See
+                // SkyrimNetEvents::MemoryAgeGameSeconds for why not
+                // `age_hours`.
+                if (const double ageSeconds = SkyrimNetEvents::MemoryAgeGameSeconds(m, nowGameSeconds);
+                    ageSeconds >= 0.0) {
+                    out["age"] = SkyrimNetEvents::FormatRelativeGameTime(ageSeconds);
+                    out["age_seconds"] = ageSeconds;
                 }
                 // `emotion` and `location` are optional on the memory
                 // object — SkyrimNet emits `null` when not set. Always
@@ -519,12 +518,12 @@ namespace NarrativeEngine::LetterComposer
             // confuses the LLM when it's trying to reason about how
             // the sender's relationship with the player has evolved.
             //
-            // Sort ascending on age_hours (newest first) so the
+            // Sort ascending on in-world age (newest first) so the
             // truncate step below keeps the most recent survivors,
             // then reverse for oldest-to-newest presentation.
             std::sort(trimmed.begin(), trimmed.end(), [](const nlohmann::json& a, const nlohmann::json& b) {
-                const double aAge = a.value("age_hours", 0.0);
-                const double bAge = b.value("age_hours", 0.0);
+                const double aAge = a.value("age_seconds", 0.0);
+                const double bAge = b.value("age_seconds", 0.0);
                 return aAge < bAge;
             });
 

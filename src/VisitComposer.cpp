@@ -7,6 +7,7 @@
 #include <SenderCandidatePool.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
+#include <SkyrimNetEvents.h>
 
 #include <nlohmann/json.hpp>
 
@@ -167,9 +168,9 @@ namespace NarrativeEngine::VisitComposer
         }
 
         // Trim dialogue entries older than the oldest kept memory.
-        // Memories carry `age_hours` relative to now; dialogue
-        // carries absolute `gameTime`. Convert the oldest memory's
-        // age to a game-seconds cutoff and drop dialogue below it.
+        // Shaped memories carry their in-world `age_seconds`; dialogue
+        // carries absolute `gameTime`. Both on the same clock, so the
+        // oldest memory's age converts to a cutoff by subtraction.
         //
         // If `memories` is empty or the oldest age is 0 (unknown),
         // no filter is applied — better to show the LLM the full
@@ -180,22 +181,27 @@ namespace NarrativeEngine::VisitComposer
             if (!dialogue.is_array() || dialogue.empty())
                 return;
 
-            double oldestMemoryAgeHours = 0.0;
+            // `age_seconds` is the shaped memory's IN-WORLD age. It used to
+            // be `age_hours`, which is real-world elapsed time — mixing that
+            // with the game clock below put the cutoff arbitrarily far in
+            // the past, so the filter silently did nothing on any save
+            // resumed after a break.
+            double oldestMemoryAgeSeconds = 0.0;
             if (memories.is_array()) {
                 for (const auto& m : memories) {
-                    const double h = m.value("age_hours", 0.0);
-                    if (h > oldestMemoryAgeHours)
-                        oldestMemoryAgeHours = h;
+                    const double s = m.value("age_seconds", 0.0);
+                    if (s > oldestMemoryAgeSeconds)
+                        oldestMemoryAgeSeconds = s;
                 }
             }
-            if (oldestMemoryAgeHours <= 0.0)
+            if (oldestMemoryAgeSeconds <= 0.0)
                 return;
 
             auto* calendar = RE::Calendar::GetSingleton();
             if (!calendar)
                 return;
             const double nowGameSeconds = static_cast<double>(calendar->GetHoursPassed()) * 3600.0;
-            const double cutoffGameSeconds = nowGameSeconds - oldestMemoryAgeHours * 3600.0;
+            const double cutoffGameSeconds = nowGameSeconds - oldestMemoryAgeSeconds;
 
             auto& arr = dialogue.get_ref<nlohmann::json::array_t&>();
             arr.erase(std::remove_if(arr.begin(),
@@ -204,27 +210,6 @@ namespace NarrativeEngine::VisitComposer
                                          return e.value("gameTime", 0.0) < cutoffGameSeconds;
                                      }),
                       arr.end());
-        }
-
-        // Human-friendly age label (same shape the letter composer
-        // uses) — the `[…]` prefix on each rendered dialogue line
-        // so the LLM has a sense of recency without reasoning about
-        // raw game-seconds.
-        std::string FormatDialogueAgeLabel(double ageHours)
-        {
-            if (ageHours < 0.5)
-                return "just now";
-            if (ageHours < 1.5)
-                return "1 hour ago";
-            if (ageHours < 24.0) {
-                const long long h = static_cast<long long>(std::round(ageHours));
-                return std::to_string(h) + " hours ago";
-            }
-            const double days = ageHours / 24.0;
-            if (days < 1.5)
-                return "1 day ago";
-            const long long d = static_cast<long long>(std::round(days));
-            return std::to_string(d) + " days ago";
         }
 
         // Compute an `age_str` per dialogue entry and drop `gameTime`.
@@ -241,8 +226,9 @@ namespace NarrativeEngine::VisitComposer
                     continue;
                 const double gt = e.value("gameTime", 0.0);
                 if (nowGameSeconds > 0.0 && gt > 0.0) {
-                    const double ageHours = (nowGameSeconds - gt) / 3600.0;
-                    e["age_str"] = FormatDialogueAgeLabel(ageHours);
+                    // Canonical formatter, shared with events and now with
+                    // memories, so every age the prompt shows reads the same.
+                    e["age_str"] = SkyrimNetEvents::FormatRelativeGameTime(std::max(0.0, nowGameSeconds - gt));
                 } else {
                     e["age_str"] = std::string{"recent"};
                 }
