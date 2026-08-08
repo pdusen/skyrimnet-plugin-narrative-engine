@@ -1,6 +1,8 @@
 #include <GossipSim.h>
 
 #include <EventLogUtil.h>
+#include <GossipClaims.h>
+#include <GossipContent.h>
 #include <GossipGraph.h>
 #include <GossipLog.h>
 #include <logger.h>
@@ -22,7 +24,7 @@ namespace NarrativeEngine::GossipSim
 {
     namespace
     {
-        constexpr std::uint32_t kRecordVersion = 3;
+        constexpr std::uint32_t kRecordVersion = 4;
 
         // Sentinel peer standing in for "somebody, anywhere in Skyrim".
         // Resolved to a random participant only if it is actually
@@ -64,7 +66,15 @@ namespace NarrativeEngine::GossipSim
             // Constant for the rumor's whole life. Per-conversation
             // transmission probability is `notability * transmissionScale`.
             float notability = 1.0f;
-            std::string slice;
+            // Provenance. Without a recorded source, "no memory is ever
+            // used twice" cannot be verified from the trace — a claimed
+            // memory and the rumor it produced would only be correlated
+            // by timing.
+            std::int64_t sourceMemoryId = 0;
+            RE::FormID sourceActor = 0;
+            // Generation-banded text, all produced by one call at seed
+            // time. Selected by the receiving carrier's generation.
+            std::vector<std::string> bands;
             // Every NPC that has EVER carried this rumor. Membership here is
             // what makes someone immune, so it must never be pruned while the
             // rumor is live — a removed entry would be re-infectable and the
@@ -287,24 +297,62 @@ namespace NarrativeEngine::GossipSim
         // form. Checked here rather than at graph-build time so a form
         // removed by a load-order change drops out without a rebuild.
         //
-        // KNOWN MILESTONE 1 LIMITATION: this does NOT detect a dead
-        // actor. Death lives on the Actor reference, not on the TESNPC
-        // base form, and the whole point of this simulation is that it
-        // runs over NPCs whose references are not loaded. So a murdered
-        // NPC keeps gossiping until their carrier ages out.
+        // Whether an actor can hold a conversation right now, and whether
+        // that is a permanent state.
         //
-        // Not worth solving here. The honest fixes are a death-event
-        // sink maintaining a persistent dead-set, or resolving the
-        // reference opportunistically when the actor happens to be
-        // loaded. Both are Milestone 2 work; for a 20-day validation run
-        // the distortion is negligible.
-        bool IsViableListener(RE::FormID npc)
+        // Only kAlive counts as available: someone bleeding out, unconscious
+        // or restrained cannot gossip either. But "cannot gossip right now"
+        // and "out of the epidemic" are different outcomes, and conflating
+        // them is a real bug — retiring a carrier under SIR makes them
+        // PERMANENTLY immune, so an NPC knocked out for a day would be
+        // silently removed from the outbreak for good instead of resuming.
+        //
+        // This is possible off the main thread because unique NPCs' Actor
+        // objects are persistent and always resident; only their 3D unloads.
+        // BGSLocation stores them as UniqueNPCData { Actor* actor; ... }
+        // while storing ordinary persistent refs as UnloadedRefData
+        // { FormID refID; FormID parentSpaceID; CellKey cellKey; } — the
+        // engine would not hold a raw pointer to something destroyed on cell
+        // unload. That is why GetDead works as a condition on them anywhere.
+        //
+        // LookupByID takes the engine's own read-write lock and
+        // GetLifeState() is an inline field read, so neither needs the main
+        // thread.
+        enum class Availability : std::uint8_t
         {
-            auto* base = RE::TESForm::LookupByID<RE::TESNPC>(npc);
-            if (!base) {
-                return false;
+            Available,      // kAlive
+            TemporarilyOut, // down, restrained, disabled — will be back
+            Gone,           // dead, or the form no longer resolves
+        };
+
+        Availability ActorAvailability(RE::FormID npc)
+        {
+            const auto* p = GossipGraph::Find(npc);
+            if (!p || p->actorRef == 0) {
+                return Availability::Gone;
             }
-            return !base->IsDeleted();
+            auto* actor = RE::TESForm::LookupByID<RE::Actor>(p->actorRef);
+            if (!actor) {
+                return Availability::Gone;
+            }
+            // AsActorState() rather than the inherited GetLifeState(): the
+            // ActorState base sits at a different offset on AE (0xC0) than
+            // SE (0xB8), and AsActorState does that relocation. Calling the
+            // inherited method directly reads the wrong bytes on one runtime.
+            const auto* state = actor->AsActorState();
+            if (!state) {
+                return Availability::Gone;
+            }
+            switch (state->GetLifeState()) {
+            case RE::ACTOR_LIFE_STATE::kAlive:
+                // Disabled is transient: a quest can re-enable them.
+                return actor->IsDisabled() ? Availability::TemporarilyOut : Availability::Available;
+            case RE::ACTOR_LIFE_STATE::kDead:
+                return Availability::Gone;
+            default:
+                // kDying resolves itself — transient now, kDead next step.
+                return Availability::TemporarilyOut;
+            }
         }
 
         void ScheduleLocked(std::uint32_t rumorId, RE::FormID carrier, double dueGameDay)
@@ -312,49 +360,66 @@ namespace NarrativeEngine::GossipSim
             g_queue.push({dueGameDay, rumorId, carrier});
         }
 
-        // Stub memory pair. Milestone 1 writes real AddMemory calls with
-        // placeholder text so the plumbing and the cost are measured
-        // even though the content is not yet generated.
+        // The two memories a transmission writes. No LLM here — this is a
+        // string build from band text the seed-time call already produced,
+        // plus relationship-aware framing.
         //
-        // The [NE-GOSSIP-STUB ...] prefix and the "stub" tag are the
-        // purge handles. Milestone 2 replaces the content; when it does,
-        // every free-form field it introduces MUST pass through
-        // LLMTextSanitizer::Sanitize at the point of extraction from the
-        // LLM response (see docs/LLM_RESPONSE_HANDLING.md). Nothing here
-        // needs it today because no string originates from a model.
-        void WriteStubMemories(const Rumor& rumor,
-                               RE::FormID teller,
-                               RE::FormID listener,
-                               std::uint32_t generation,
-                               float notability,
-                               RE::FormID location)
+        // The Milestone 1 [NE-GOSSIP-STUB ...] prefix and the "stub" tag are
+        // gone; the "gossip" tag stays. Type stays KNOWLEDGE, which is what
+        // keeps gossip's own output out of the harvester's candidate set.
+        //
+        // `teller` and `listener` arrive as TESNPC BASE forms, because that
+        // is what the carrier map and the whole graph are keyed on. Every
+        // id handed to SkyrimNet — the memory owner and the related-actor
+        // array alike — must be the PLACED REFERENCE instead. These are
+        // different FormIDs for the same person, and writing a memory
+        // against the base form addresses nobody.
+        void WriteMemories(const Rumor& rumor,
+                           RE::FormID teller,
+                           RE::FormID listener,
+                           std::uint32_t generation,
+                           RE::FormID location)
         {
-            const auto& tellerName = GossipGraph::NpcName(teller);
-            const auto& listenerName = GossipGraph::NpcName(listener);
+            if (rumor.bands.empty()) {
+                return;
+            }
+            const auto tellerRef = GossipGraph::ActorRefFor(teller);
+            const auto listenerRef = GossipGraph::ActorRefFor(listener);
+            if (tellerRef == 0 || listenerRef == 0) {
+                // A participant the LCUN walk gave no reference for. The
+                // transmission still happened in the model — it is only the
+                // memory write that cannot be addressed — so this counts as
+                // a write failure rather than unwinding the simulation.
+                ++g_stats.memoryWriteFailures;
+                if (Settings::Get().debugMode) {
+                    logger::debug("GossipSim: no placed reference for {} -> {}; memory pair skipped",
+                                  tellerRef == 0 ? GossipGraph::NpcName(teller) : GossipGraph::NpcName(listener),
+                                  rumor.id);
+                }
+                return;
+            }
+
+            const auto band = std::min(GossipContent::BandForGeneration(generation), rumor.bands.size() - 1);
+            const auto composed = GossipContent::Compose(rumor.bands[band], teller, listener);
+
             const auto& locName = GossipGraph::LocationName(location);
-            const auto tags = std::string{R"(["gossip","stub"])"};
-
-            const auto tellerText =
-                std::format("[NE-GOSSIP-STUB r{:02} gen{}] I told {} a rumor. (placeholder content, notability {:.2f})",
-                            rumor.id,
-                            generation,
-                            listenerName.empty() ? "someone" : listenerName,
-                            notability);
-            const auto listenerText = std::format(
-                "[NE-GOSSIP-STUB r{:02} gen{}] {} told me a rumor. (placeholder content, notability {:.2f})",
-                rumor.id,
-                generation,
-                tellerName.empty() ? "Someone" : tellerName,
-                notability);
-
-            const auto related = std::format("[{}]", listener);
-            const auto relatedBack = std::format("[{}]", teller);
-
-            const int a =
-                SkyrimNetAPI::AddMemory(teller, tellerText, notability, "KNOWLEDGE", "", locName, tags, related);
-            const int b = SkyrimNetAPI::AddMemory(
-                listener, listenerText, notability, "KNOWLEDGE", "", locName, tags, relatedBack);
-
+            const auto tags = std::string{R"(["gossip"])"};
+            const int a = SkyrimNetAPI::AddMemory(tellerRef,
+                                                  composed.tellerText,
+                                                  rumor.notability,
+                                                  "KNOWLEDGE",
+                                                  "",
+                                                  locName,
+                                                  tags,
+                                                  std::format("[{}]", listenerRef));
+            const int b = SkyrimNetAPI::AddMemory(listenerRef,
+                                                  composed.listenerText,
+                                                  rumor.notability,
+                                                  "KNOWLEDGE",
+                                                  "",
+                                                  locName,
+                                                  tags,
+                                                  std::format("[{}]", tellerRef));
             for (const int id : {a, b}) {
                 if (id > 0) {
                     ++g_stats.memoriesWritten;
@@ -440,9 +505,21 @@ namespace NarrativeEngine::GossipSim
                 recover("age");
                 return;
             }
-            if (!IsViableListener(carrierId)) {
+            switch (ActorAvailability(carrierId)) {
+            case Availability::Gone:
                 recover("dead");
                 return;
+            case Availability::TemporarilyOut:
+                // Down but not out. Skip this step and try again next one;
+                // do NOT recover, which would make them permanently immune.
+                // Their infectious clock keeps running — time spent
+                // unconscious is time not spent talking, which is correct
+                // and needs no clock-pausing machinery.
+                carrier.nextStepGameDay = nowGameDay + std::max(0.01f, cfg.gossipStepDays);
+                ScheduleLocked(rumorId, carrierId, carrier.nextStepGameDay);
+                return;
+            case Availability::Available:
+                break;
             }
 
             const auto& contacts = ContactsFor(carrierId);
@@ -505,7 +582,13 @@ namespace NarrativeEngine::GossipSim
                 }
 
                 const auto* toP = GossipGraph::Find(listener);
-                if (!toP || !IsViableListener(listener)) {
+                if (!toP || ActorAvailability(listener) != Availability::Available) {
+                    // No conversation happened. Deliberately NOT counted as a
+                    // wasted telling: wasted tellings are the saturation brake
+                    // and mean "they already knew", which is a different
+                    // thing. Miscounting here would make the outbreak look
+                    // more saturated than it is and terminate early. The
+                    // listener stays susceptible and can catch it later.
                     continue;
                 }
                 if (static_cast<int>(rumor.carriers.size()) >= cfg.gossipMaxCarriersPerRumor) {
@@ -538,7 +621,7 @@ namespace NarrativeEngine::GossipSim
                                 fromP ? fromP->hold : 0,
                                 toP->hold);
 
-                WriteStubMemories(rumor, carrierId, listener, fresh.generation, rumor.notability, location);
+                WriteMemories(rumor, carrierId, listener, fresh.generation, location);
                 ScheduleLocked(rumorId, listener, fresh.nextStepGameDay);
             }
 
@@ -546,6 +629,87 @@ namespace NarrativeEngine::GossipSim
             ScheduleLocked(rumorId, carrierId, carrier.nextStepGameDay);
         }
 
+        // Claim expiry and burned-out-rumor reaping, run at the end of every
+        // poll rather than once the map grows past some threshold.
+        //
+        // Erasing here rather than in FinishRumorLocked is deliberate:
+        // ProcessEventLocked holds references into the map while it runs, and
+        // erasing underneath it would invalidate them. Stale queue entries
+        // pointing at a reaped rumor are harmless — ProcessEventLocked looks
+        // the id up and returns when it is gone.
+        //
+        // A burned-out rumor is pure dead weight: every participant already
+        // has their memories in SkyrimNet's database, no carrier is scheduled,
+        // and nothing anywhere reads a dead rumor's data. Its carrier map —
+        // up to gossipMaxCarriersPerRumor entries at ~37 bytes each — would
+        // otherwise ride along in the co-save.
+        void SweepAndReapLocked()
+        {
+            // Claim expiry rides the same sampled game time as the rumor reap.
+            // Deliberately not gated on there being live rumors: a quiet
+            // stretch still has to let claims age out, or a lull would freeze
+            // the ledger.
+            if (const auto expired = GossipClaims::Sweep(g_simGameDay); expired > 0) {
+                logger::debug("GossipClaims: expired {} claim(s); {} remain", expired, GossipClaims::Count());
+            }
+
+            std::size_t reaped = 0;
+            for (auto it = g_rumors.begin(); it != g_rumors.end();) {
+                if (it->second.live) {
+                    ++it;
+                } else {
+                    it = g_rumors.erase(it);
+                    ++reaped;
+                }
+            }
+            if (reaped > 0 && Settings::Get().debugMode) {
+                logger::debug("GossipSim: reaped {} burned-out rumor(s); {} remain", reaped, g_rumors.size());
+            }
+        }
+
+        // Has this rumor run out of people to tell?
+        //
+        // True when every still-infectious carrier finds all of their NAMED
+        // contacts already carrying it. The rumor is alive — carriers are
+        // still scheduled, still burning down their infectious window — but
+        // there is nobody left for them to reach.
+        //
+        // kProvincePeer is skipped on purpose. It is a sentinel standing for
+        // "somebody, anywhere in Skyrim", resolved to a random participant at
+        // transmission time, and every carrier holds one. Counting it as a
+        // vector would make this predicate answer "not stalled" for every
+        // rumor until literally every participant in the province carried it,
+        // which is never. What the reader wants to know is whether the
+        // rumor's local social neighbourhood is saturated, and that is what
+        // this measures. The province lottery can still fire and un-stall a
+        // rumor; that is the model working, not the readout lying.
+        //
+        // Cost is bounded and early-exits on the first susceptible contact,
+        // which is the overwhelmingly common case for a spreading rumor. Only
+        // a genuinely stalled rumor pays the full scan.
+        bool IsStalledLocked(const Rumor& rumor)
+        {
+            bool anyActive = false;
+            for (const auto& [npc, carrier] : rumor.carriers) {
+                if (carrier.recovered) {
+                    continue;
+                }
+                anyActive = true;
+                for (const auto& c : ContactsFor(npc)) {
+                    if (c.peer == kProvincePeer || c.rate <= 0.0f) {
+                        continue;
+                    }
+                    if (!rumor.carriers.contains(c.peer)) {
+                        return false; // somebody left to tell
+                    }
+                }
+            }
+            // No infectious carriers at all means it is not going anywhere
+            // either — though the reap normally removes such a rumor in the
+            // same poll that produced it.
+            (void)anyActive;
+            return true;
+        }
     } // namespace
 
     void Initialize()
@@ -720,37 +884,13 @@ namespace NarrativeEngine::GossipSim
                                         g_queue.size()));
         }
 
-        // Reap finished rumors every poll, not just once the map grows past
-        // some threshold.
-        //
-        // A burned-out rumor is pure dead weight: every participant already
-        // has their memories in SkyrimNet's database, no carrier is scheduled,
-        // and nothing anywhere reads a dead rumor's data. Its carrier map —
-        // up to gossipMaxCarriersPerRumor entries at ~37 bytes each — was
-        // being carried in the co-save until the map happened to exceed twice
-        // the live-rumor cap, which at 40 live rumors meant up to 40 dead ones
-        // riding along, roughly 120 KB of nothing.
-        //
-        // Erasing here rather than in FinishRumorLocked is deliberate:
-        // ProcessEventLocked holds references into the map while it runs, and
-        // erasing underneath it would invalidate them. Stale queue entries
-        // pointing at a reaped rumor are harmless — ProcessEventLocked looks
-        // the id up and returns when it is gone.
-        std::size_t reaped = 0;
-        for (auto it = g_rumors.begin(); it != g_rumors.end();) {
-            if (it->second.live) {
-                ++it;
-            } else {
-                it = g_rumors.erase(it);
-                ++reaped;
-            }
-        }
-        if (reaped > 0 && Settings::Get().debugMode) {
-            logger::debug("GossipSim: reaped {} burned-out rumor(s); {} remain", reaped, g_rumors.size());
-        }
+        SweepAndReapLocked();
     }
 
-    std::uint32_t SeedRumor(RE::FormID originNpc, float notability, std::string_view slice)
+    std::uint32_t SeedRumor(RE::FormID originNpc,
+                            float notability,
+                            std::int64_t sourceMemoryId,
+                            std::vector<std::string> bands)
     {
         const auto& cfg = Settings::Get();
         if (!cfg.gossipEnabled || !GossipGraph::IsReady()) {
@@ -786,7 +926,9 @@ namespace NarrativeEngine::GossipSim
         rumor.seedGameDay = g_simGameDay;
         rumor.lastActivityGameDay = g_simGameDay;
         rumor.notability = std::clamp(notability, 0.0f, 1.0f);
-        rumor.slice = std::string(slice);
+        rumor.sourceMemoryId = sourceMemoryId;
+        rumor.sourceActor = originNpc;
+        rumor.bands = std::move(bands);
 
         Carrier origin;
         origin.generation = 0;
@@ -799,8 +941,67 @@ namespace NarrativeEngine::GossipSim
         ScheduleLocked(id, originNpc, origin.nextStepGameDay);
         g_rumors.emplace(id, std::move(rumor));
 
-        GossipLog::Seed(id, notability, originNpc, p->settlement ? p->settlement : p->hold, slice);
+        GossipLog::Seed(id, notability, originNpc, p->settlement ? p->settlement : p->hold, sourceMemoryId);
         return id;
+    }
+
+    std::vector<RumorView> GetRumorViews()
+    {
+        std::scoped_lock lock(g_mutex);
+        std::vector<RumorView> out;
+        out.reserve(g_rumors.size());
+
+        for (const auto& [id, r] : g_rumors) {
+            RumorView v;
+            v.id = id;
+            v.bands = r.bands;
+            v.text = r.bands.empty() ? std::string{} : r.bands.front();
+            v.live = r.live;
+            v.stalled = IsStalledLocked(r);
+            v.notability = r.notability;
+            v.ageDays = std::max(0.0, g_simGameDay - r.seedGameDay);
+            v.idleDays = std::max(0.0, g_simGameDay - r.lastActivityGameDay);
+            v.carriers = r.carriers.size();
+            v.maxDepth = r.maxDepth;
+            v.transmissions = r.transmissions;
+            v.wasted = r.wasted;
+            v.originNpc = r.originNpc;
+            v.sourceMemoryId = r.sourceMemoryId;
+
+            std::unordered_set<RE::FormID> holds;
+            std::unordered_set<RE::FormID> settlements;
+            for (const auto& [npc, carrier] : r.carriers) {
+                if (!carrier.recovered) {
+                    ++v.activeCarriers;
+                }
+                if (const auto* p = GossipGraph::Find(npc)) {
+                    if (p->hold) {
+                        holds.insert(p->hold);
+                    }
+                    if (p->settlement) {
+                        settlements.insert(p->settlement);
+                    }
+                }
+            }
+            v.holds = holds.size();
+            v.settlements = settlements.size();
+
+            v.originName = GossipGraph::NpcName(r.originNpc);
+            v.originLocation = GossipGraph::LocationName(r.originSettlement);
+            out.push_back(std::move(v));
+        }
+
+        // Newest first. Ties broken by id descending so the order is stable
+        // across pushes — two rumors seeded in the same poll share a
+        // seedGameDay exactly, and an unstable sort would let them swap
+        // places between frames.
+        std::sort(out.begin(), out.end(), [](const RumorView& a, const RumorView& b) {
+            if (a.ageDays != b.ageDays) {
+                return a.ageDays < b.ageDays;
+            }
+            return a.id > b.id;
+        });
+        return out;
     }
 
     Stats GetStats()
@@ -855,7 +1056,13 @@ namespace NarrativeEngine::GossipSim
             intfc->WriteRecordData(r.lastActivityGameDay);
             const std::uint8_t live = r.live ? 1 : 0;
             intfc->WriteRecordData(live);
-            EventLogUtil::WriteString(intfc, r.slice);
+            intfc->WriteRecordData(r.sourceMemoryId);
+            intfc->WriteRecordData(r.sourceActor);
+            const auto bandCount = static_cast<std::uint32_t>(r.bands.size());
+            intfc->WriteRecordData(bandCount);
+            for (const auto& b : r.bands) {
+                EventLogUtil::WriteString(intfc, b);
+            }
 
             const auto carrierCount = static_cast<std::uint32_t>(r.carriers.size());
             intfc->WriteRecordData(carrierCount);
@@ -917,11 +1124,23 @@ namespace NarrativeEngine::GossipSim
                 g_queue = {};
                 return;
             }
-            if (!EventLogUtil::ReadString(intfc, r.slice)) {
-                logger::error("GossipSim::OnLoad: short read on rumor slice; reverting");
+            std::uint32_t bandCount = 0;
+            if (intfc->ReadRecordData(r.sourceMemoryId) != sizeof(r.sourceMemoryId)
+                || intfc->ReadRecordData(r.sourceActor) != sizeof(r.sourceActor)
+                || intfc->ReadRecordData(bandCount) != sizeof(bandCount)) {
+                logger::error("GossipSim::OnLoad: short read on rumor provenance; reverting");
                 g_rumors.clear();
                 g_queue = {};
                 return;
+            }
+            r.bands.resize(bandCount);
+            for (auto& b : r.bands) {
+                if (!EventLogUtil::ReadString(intfc, b)) {
+                    logger::error("GossipSim::OnLoad: short read on band text; reverting");
+                    g_rumors.clear();
+                    g_queue = {};
+                    return;
+                }
             }
             r.transmissions = tx;
             r.wasted = wasted;

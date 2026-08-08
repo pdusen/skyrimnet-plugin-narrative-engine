@@ -30,7 +30,15 @@ import statistics
 import sys
 from collections import Counter, defaultdict
 
-SEED_RE = re.compile(r"SEED\s+r(\d+)\s+notability=([\d.]+)\s+origin=(.+?)\s+@(.+?)(?:\s+slice=(\S+))?\s*$")
+# Milestone 1 traces ended a SEED line with `slice=<label>`; Milestone 2
+# replaced that with `memory=<id>`, naming the source memory the rumor came
+# from. Both are accepted so older traces still parse. The location group is
+# anchored on whichever trailer is present rather than on end-of-line: a
+# non-greedy `@(.+?)` followed by an OPTIONAL trailer will happily swallow
+# `memory=42` into the location and report no source at all.
+SEED_RE = re.compile(
+    r"SEED\s+r(\d+)\s+notability=([\d.]+)\s+origin=(.+?)\s+@(.+?)"
+    r"(?:\s+slice=(\S+)|\s+memory=(-?\d+))?\s*$")
 # `tier=` is optional so this parses traces from before it was added. The
 # earlier hard requirement of `via=... @` silently stopped matching every
 # TELL line the moment tier= was inserted, which made every rumor look like
@@ -84,7 +92,10 @@ def parse_log(path):
             rumors[int(m.group(1))] = {
                 "notability": float(m.group(2)),
                 "origin": m.group(3).strip(),
+                # Milestone 1 stratification label, or the Milestone 2
+                # source memory id. Only one is ever populated.
                 "slice": m.group(5) or "?",
+                "memory": int(m.group(6)) if m.group(6) is not None else None,
                 "carriers": {m.group(3).strip()},
                 "burned": False,
             }
@@ -102,6 +113,39 @@ def parse_log(path):
     return rumors
 
 
+def report_sources(rumors):
+    """No memory is ever used twice -- the central Milestone 2 property.
+
+    Every rumor records the memory id it was seeded from, and the claim
+    ledger is what makes a repeat impossible. That property is only
+    actually verified if something reads the ids back, so it is checked
+    here rather than left to be eyeballed across a session's worth of
+    trace. A duplicate is a hard failure: the same story is circulating
+    twice, and everyone who heard it the first time is susceptible again.
+    """
+    sourced = {rid: r["memory"] for rid, r in rumors.items() if r["memory"] is not None}
+    print(f"\n{'=' * 76}\nSOURCE MEMORIES\n{'=' * 76}")
+    if not sourced:
+        print("No memory-sourced SEED lines -- a Milestone 1 trace, or seeding never ran.")
+        return
+    print(f"{len(sourced)} of {len(rumors)} rumors carry a source memory id.")
+
+    seen = Counter(sourced.values())
+    dupes = sorted(mid for mid, c in seen.items() if c > 1)
+    if dupes:
+        print(f"\n  *** {len(dupes)} memory/memories seeded more than one rumor "
+              f"-- the claim ledger did not hold ***")
+        for mid in dupes:
+            rids = sorted(rid for rid, m in sourced.items() if m == mid)
+            print(f"    m{mid}: {', '.join(f'r{r:02}' for r in rids)}")
+    else:
+        print("  No memory seeded twice.")
+
+    unsourced = len(rumors) - len(sourced)
+    if unsourced:
+        print(f"  {unsourced} rumor(s) carry no source id -- pre-Milestone-2 lines in the same trace.")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("log")
@@ -116,6 +160,8 @@ def main():
     if not rumors:
         print("No SEED lines found — is that a gossip trace?", file=sys.stderr)
         return 1
+
+    report_sources(rumors)
 
     matched = unmatched = 0
     # (tier, notability band, size band) -> list of coverage fractions
@@ -174,7 +220,8 @@ def main():
         print(f"{nb:<16}{f['household']:>14}{f['settlement']:>14}{f['hold']:>10}")
 
     print(f"\n{'=' * 76}\nPER-RUMOR SUMMARY\n{'=' * 76}")
-    print(f"{'rumor':<7}{'note':>6}{'slice':>19}{'reach':>7}{'days':>7}  best-saturated unit")
+    src_col = "memory" if any(r["memory"] is not None for r in rumors.values()) else "slice"
+    print(f"{'rumor':<7}{'note':>6}{src_col:>19}{'reach':>7}{'days':>7}  best-saturated unit")
     print("-" * 76)
     for rid, r in sorted(rumors.items()):
         best = ("", 0.0, 0)
@@ -192,7 +239,8 @@ def main():
                 if frac > best[1]:
                     best = (unit, frac, sizes[tier][unit])
         label = f"{best[0]} {100 * best[1]:.0f}% of {best[2]}" if best[0] else "-"
-        print(f"r{rid:<6}{r['notability']:>6.2f}{r['slice']:>19}"
+        source = f"m{r['memory']}" if r["memory"] is not None else r["slice"]
+        print(f"r{rid:<6}{r['notability']:>6.2f}{source:>19}"
               f"{r.get('reach', 0):>7}{r.get('days', 0):>7.1f}  {label}")
     return 0
 

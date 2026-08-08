@@ -9,8 +9,10 @@
 // GossipGraph — the static social graph the gossip simulation runs over.
 //
 // Reconstructs, at runtime, the same structure the offline validation
-// script built from the Spriggit export (see
-// docs/implementation/PHASE_13_VALIDATION_LOG.md). Three layers:
+// script built from the Spriggit export (that script is
+// docs/implementation/tests/gossip-spread/build-social-graph.py; its
+// measurements are in docs/implementation/PHASE_13_GOSSIP_PROPAGATION.md).
+// Three layers:
 //
 //   1. A TIER TREE over BGSLocation::parentLoc, classified by LocType*
 //      keywords into household / settlement / hold. A single location
@@ -69,6 +71,12 @@ namespace NarrativeEngine::GossipGraph
     struct Participant
     {
         RE::FormID npc = 0;
+        // The placed ACHR, from the LCUN row. Unique NPCs' Actor objects
+        // are persistent and always resident — only their 3D unloads —
+        // so this resolves to a live Actor whether or not the player is
+        // anywhere near them. That is what makes a life-state check
+        // possible off the main thread.
+        RE::FormID actorRef = 0;
         RE::FormID household = 0;
         RE::FormID settlement = 0;
         RE::FormID hold = 0;
@@ -110,7 +118,28 @@ namespace NarrativeEngine::GossipGraph
     const std::vector<RE::FormID>& Participants();
 
     // Returns nullptr when `npc` is not a participant.
+    //
+    // KEYED ON THE TESNPC BASE FORM, not on a placed reference. This is
+    // the boundary that matters when talking to SkyrimNet: every
+    // SkyrimNet endpoint — GetActorEngagement rows, GetMemoriesForActor,
+    // AddMemory, related-actor arrays — speaks ACTOR REFERENCE ids, and
+    // feeding one of those to this function silently finds nothing.
+    // Cross the boundary with FindByActorRef / ActorRefFor.
     const Participant* Find(RE::FormID npc);
+
+    // The reverse direction: a placed reference id (what SkyrimNet hands
+    // back) to the participant it belongs to. Returns nullptr when the
+    // reference is unknown, which covers actors outside the graph and
+    // the handful of participants whose LCUN row carried no refID.
+    //
+    // No engine access — this is a prebuilt index, so it is safe from
+    // the plugin thread. Callers that need to resolve the residue can
+    // fall back to LookupByID + GetActorBase themselves.
+    const Participant* FindByActorRef(RE::FormID actorRef);
+
+    // A participant's placed reference id, or 0 when unknown. Use before
+    // handing any id to SkyrimNet.
+    RE::FormID ActorRefFor(RE::FormID npc);
 
     // Tier co-members, INCLUDING the queried NPC. Empty when `loc` is 0
     // or unknown. The returned reference is valid for the session.
@@ -157,6 +186,10 @@ namespace NarrativeEngine::GossipGraph
         std::size_t uniqueNpcsScanned = 0;
         std::size_t rejectedNotPerson = 0;
         std::size_t rejectedNoLocation = 0;
+        // Participants whose LCUN row carried a usable refID. Anything
+        // short of `participants` is the number that cannot be addressed
+        // in SkyrimNet's id space without an engine lookup.
+        std::size_t withActorRef = 0;
     };
     const Census& GetCensus();
 } // namespace NarrativeEngine::GossipGraph

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 #include <PluginThread.h>
 
@@ -20,8 +22,8 @@ namespace SKSE
 // with no live carriers has none.
 //
 // See docs/implementation/PHASE_13_GOSSIP_PROPAGATION.md for the model
-// and PHASE_13_VALIDATION_LOG.md for the offline run that produced the
-// tuning. Two properties of that model are load-bearing and easy to
+// and tests/gossip-spread/PHASE_13_SIR_VALIDATION_LOG.md for the offline
+// run that produced the tuning. Two properties of that model are load-bearing and easy to
 // break by "simplifying":
 //
 //   * Contact is a FINITE PER-PERSON DAILY BUDGET divided among a
@@ -34,12 +36,16 @@ namespace SKSE
 //     the saturation brake; without it the model does not terminate.
 //
 // ---------------------------------------------------------------------
-// Milestone 1 scope
+// What a transmission writes
 //
-// Memories written on each transmission are STUBS: real AddMemory calls
-// carrying placeholder text and a notability-derived importance, tagged
-// so they can be found and purged. No LLM is involved anywhere in this
-// module. Real content generation is Milestone 2.
+// Two real AddMemory calls, one for each party, composed by
+// GossipContent from the rumor's generation-banded text plus
+// relationship-aware framing. No LLM is involved anywhere in this
+// module: the single call that produces the band text happens once, at
+// seed time, before the rumor is ever handed here.
+//
+// Both memories are typed KNOWLEDGE and tagged "gossip", which is what
+// keeps gossip's own output out of GossipHarvest's candidate set.
 //
 // ---------------------------------------------------------------------
 // Threading
@@ -71,12 +77,17 @@ namespace NarrativeEngine::GossipSim
     // time, then processes at most iGossipMaxEventsPerTick due events.
     void Poll(const PluginThread::Token&, double unpausedElapsedSeconds);
 
-    // Introduce a rumor originating with `originNpc`. `slice` is a
-    // free-form label recorded in the log so a stratified seeding run
-    // can be read back against its seed conditions. Returns the rumor's
-    // id, or 0 if it could not be seeded (graph not ready, origin not a
-    // participant, or the live-rumor cap is full).
-    std::uint32_t SeedRumor(RE::FormID originNpc, float notability, std::string_view slice);
+    // Introduce a rumor originating with `originNpc`, sourced from
+    // `sourceMemoryId`. Returns the rumor's id, or 0 if it could not be
+    // seeded (graph not ready, origin not a participant, or the
+    // live-rumor cap is full).
+    // `bands` is the generation-banded text, produced by one LLM call at
+    // seed time. Band selection at transmission time is by the receiving
+    // carrier's generation.
+    std::uint32_t SeedRumor(RE::FormID originNpc,
+                            float notability,
+                            std::int64_t sourceMemoryId,
+                            std::vector<std::string> bands);
 
     struct Stats
     {
@@ -89,6 +100,60 @@ namespace NarrativeEngine::GossipSim
         std::size_t memoryWriteFailures = 0;
     };
     Stats GetStats();
+
+    // A read-only per-rumor snapshot for the dashboard. Flattened at call
+    // time under the simulation mutex so the caller never holds a
+    // reference into live state.
+    struct RumorView
+    {
+        std::uint32_t id = 0;
+        // Band 0 — the freshest telling. The dashboard shows this as the
+        // rumor's identity; `bands` carries the rest for the expanded row.
+        std::string text;
+        std::vector<std::string> bands;
+
+        // STALLED means every still-infectious carrier has run out of
+        // people to tell: each of their named contacts already carries
+        // the rumor. It is live but going nowhere.
+        //
+        // "Named" is the operative word. Every carrier also holds a
+        // province-wide lottery ticket (the kProvincePeer sentinel, at
+        // fGossipWeightProvince) that can reach any participant at all,
+        // so no carrier is ever exhausted in the strictest sense. Judging
+        // stall on that would mean nothing is ever stalled, which is
+        // useless. A stalled rumor can therefore still jump — rarely —
+        // and un-stall itself, which is correct behaviour rather than a
+        // glitch in the readout.
+        bool stalled = false;
+        // False only in the window between the last carrier retiring and
+        // the reap at the end of that same poll, so in practice the
+        // dashboard never sees it. Carried anyway rather than asserted
+        // away: the pairing of live+stalled is what makes the state
+        // unambiguous if the reap is ever decoupled from the poll.
+        bool live = true;
+
+        float notability = 0.0f;
+        double ageDays = 0.0;  // since seeding
+        double idleDays = 0.0; // since the last successful telling
+
+        std::size_t carriers = 0;       // everyone who has ever held it
+        std::size_t activeCarriers = 0; // still infectious
+        std::size_t settlements = 0;
+        std::size_t holds = 0;
+        std::uint32_t maxDepth = 0;
+        std::size_t transmissions = 0;
+        std::size_t wasted = 0;
+
+        RE::FormID originNpc = 0;
+        std::string originName;
+        std::string originLocation;
+        std::int64_t sourceMemoryId = 0;
+    };
+
+    // Every rumor still in the map, newest first. The map holds exactly
+    // the rumors that have not been reaped, which is what the dashboard
+    // wants: a rumor is listed until its last carrier retires.
+    std::vector<RumorView> GetRumorViews();
 
     void OnSave(SKSE::SerializationInterface* intfc);
     void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);

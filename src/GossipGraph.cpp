@@ -111,6 +111,9 @@ namespace NarrativeEngine::GossipGraph
 
         std::unordered_map<RE::FormID, Participant> g_participants;
         std::vector<RE::FormID> g_participantIds;
+        // Placed-reference id -> base NPC id. The bridge into SkyrimNet's
+        // id space; see the note on Find() in the header.
+        std::unordered_map<RE::FormID, RE::FormID> g_byActorRef;
 
         std::unordered_map<RE::FormID, std::vector<RE::FormID>> g_household;
         std::unordered_map<RE::FormID, std::vector<RE::FormID>> g_settlement;
@@ -403,9 +406,15 @@ namespace NarrativeEngine::GossipGraph
         // The per-entry `editorLoc` is finer-grained than the location
         // carrying the entry: WhiterunLocation's array lists the
         // Gray-Manes with editorLoc = WhiterunHouseGrayManeLocation.
-        std::unordered_map<RE::FormID, RE::FormID> BuildResidenceIndex()
+        struct Residence
         {
-            std::unordered_map<RE::FormID, RE::FormID> out;
+            RE::FormID location = 0;
+            RE::FormID actorRef = 0;
+        };
+
+        std::unordered_map<RE::FormID, Residence> BuildResidenceIndex()
+        {
+            std::unordered_map<RE::FormID, Residence> out;
             auto* dh = RE::TESDataHandler::GetSingleton();
             if (!dh) {
                 return out;
@@ -444,7 +453,7 @@ namespace NarrativeEngine::GossipGraph
                     if (!resolved) {
                         resolved = loc->GetFormID();
                     }
-                    out[npcId] = resolved;
+                    out[npcId] = Residence{resolved, entry.refID};
                 }
             }
             logger::info("GossipGraph: LCUN scan -> {} rows, {} distinct NPCs ({} resolved via placed ref)",
@@ -486,8 +495,9 @@ namespace NarrativeEngine::GossipGraph
 
                 Participant p;
                 p.npc = id;
+                p.actorRef = it->second.actorRef;
                 p.name = npc->GetName() ? npc->GetName() : "";
-                WalkTiers(it->second, p.household, p.settlement, p.hold);
+                WalkTiers(it->second.location, p.household, p.settlement, p.hold);
                 if (!p.hold) {
                     // No tier at all. Correct for wandering caravans,
                     // Daedric princes, and quest actors staged in
@@ -502,6 +512,10 @@ namespace NarrativeEngine::GossipGraph
 
             for (const auto id : g_participantIds) {
                 const auto& p = g_participants.at(id);
+                if (p.actorRef) {
+                    g_byActorRef.emplace(p.actorRef, id);
+                    ++g_census.withActorRef;
+                }
                 if (p.household) {
                     g_household[p.household].push_back(id);
                 }
@@ -637,9 +651,16 @@ namespace NarrativeEngine::GossipGraph
                          c.uniqueNpcsScanned,
                          c.rejectedNotPerson,
                          c.rejectedNoLocation);
+            // The bridge into SkyrimNet's id space. A participant with no
+            // placed reference cannot be matched against an engagement row
+            // or be written a memory without an engine lookup, so a large
+            // shortfall here caps what gossip can ever do.
+            logger::info("GossipGraph: census -- participantsWithActorRef={} ({} without)",
+                         c.withActorRef,
+                         c.participants > c.withActorRef ? c.participants - c.withActorRef : 0);
 
             // Offline reference figures for a vanilla + DLC load order
-            // (docs/implementation/PHASE_13_VALIDATION_LOG.md). A large
+            // (docs/implementation/PHASE_13_GOSSIP_PROPAGATION.md). A large
             // shortfall means the LCUN read is broken, not that the load
             // order differs — that failure mode produced 326
             // participants and a 10-resident Riften during offline work.
@@ -757,6 +778,21 @@ namespace NarrativeEngine::GossipGraph
     const std::vector<RE::FormID>& Participants()
     {
         return g_participantIds;
+    }
+
+    const Participant* FindByActorRef(RE::FormID actorRef)
+    {
+        if (actorRef == 0) {
+            return nullptr;
+        }
+        const auto it = g_byActorRef.find(actorRef);
+        return it == g_byActorRef.end() ? nullptr : Find(it->second);
+    }
+
+    RE::FormID ActorRefFor(RE::FormID npc)
+    {
+        const auto* p = Find(npc);
+        return p ? p->actorRef : 0;
     }
 
     const Participant* Find(RE::FormID npc)

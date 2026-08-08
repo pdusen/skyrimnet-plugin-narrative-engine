@@ -53,14 +53,12 @@ namespace NarrativeEngine::GossipLog
 
     // --- emitters -----------------------------------------------------
 
-    // A rumor enters the world. `slice` is the seeder's stratification
-    // label ("large-settlement", "low-notability", ...) or empty for a
-    // rumor that arrived any other way.
+    // A rumor enters the world, naming the memory it came from.
     void Seed(std::uint32_t rumorId,
               float notability,
               RE::FormID originNpc,
               RE::FormID settlement,
-              std::string_view slice);
+              std::int64_t sourceMemoryId);
 
     // One successful transmission. `via` is the specific channel that best
     // explains the contact; `tier` is the proximity tier the pair share.
@@ -106,9 +104,41 @@ namespace NarrativeEngine::GossipLog
     };
     void Burnout(std::uint32_t rumorId, const BurnoutStats& stats);
 
+    // One harvest sweep. Every count is for THIS sweep alone — a
+    // cumulative figure alongside a per-sweep one cannot be read as a
+    // rate, and the rate is the whole question the sweep log answers.
+    struct HarvestStats
+    {
+        std::size_t actorsSeen = 0; // rows GetActorEngagement returned
+        std::size_t actorsSampled = 0;
+        std::size_t memoriesExamined = 0;
+        std::size_t candidates = 0;
+        std::size_t sentForGeneration = 0;
+        std::size_t rejectedTooOld = 0;
+        std::size_t rejectedLowImportance = 0;
+        std::size_t rejectedClaimed = 0;
+        std::size_t rejectedNotParticipant = 0;
+        std::size_t rejectedDiary = 0;
+        std::size_t rejectedNoContent = 0;
+        std::size_t rejectedNoGameTime = 0;
+        std::size_t rejectedOwnOutput = 0;
+    };
+    void Harvest(const HarvestStats& stats);
+
+    // One memory's fate in a sweep. `verdict` is "candidate" or the
+    // rejection reason ("too-old", "low-importance", "wrong-type",
+    // "claimed"). Emitted per examined memory, which is verbose by
+    // design: a sweep that finds nothing is the interesting case, and
+    // "found nothing" is only diagnosable if the near-misses are named.
+    void Memory(std::int64_t memoryId, RE::FormID owner, float importance, std::string_view verdict);
+
+    // A memory enters or leaves the ledger. `action` is "claimed",
+    // "released" or "expired".
+    void Claim(std::int64_t memoryId, std::string_view action, std::size_t outstanding);
+
     // Free-form note line, for anything that does not fit the shapes
-    // above: queue-depth warnings, seeder summaries, catch-up drains,
-    // and the end-of-session census.
+    // above: queue-depth warnings, catch-up drains, content-generation
+    // failures, and the end-of-session census.
     //
     // The census is written by GossipSim rather than here, so that this
     // module never has to know the simulation's types. Plugin.cpp orders

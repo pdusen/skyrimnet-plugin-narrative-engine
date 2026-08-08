@@ -176,15 +176,14 @@ namespace NarrativeEngine::GossipLog
               float notability,
               RE::FormID originNpc,
               RE::FormID settlement,
-              std::string_view slice)
+              std::int64_t sourceMemoryId)
     {
-        Emit(std::format("SEED    r{:02}  notability={:.2f}  origin={:<24} @{}{}{}",
+        Emit(std::format("SEED    r{:02}  notability={:.2f}  origin={:<24} @{}  memory={}",
                          rumorId,
                          notability,
                          NameOf(originNpc),
                          LocOf(settlement),
-                         slice.empty() ? "" : "  slice=",
-                         slice));
+                         sourceMemoryId));
     }
 
     void Tell(std::uint32_t rumorId,
@@ -249,6 +248,36 @@ namespace NarrativeEngine::GossipLog
                          stats.days,
                          stats.transmissions,
                          stats.wasted));
+    }
+
+    void Harvest(const HarvestStats& stats)
+    {
+        Emit(std::format("HARVEST actors={}/{}  memories={}  candidates={}  sent={}  "
+                         "(rejected: {} too-old, {} low-importance, {} diary, {} no-content, "
+                         "{} no-game-time, {} own-gossip, {} claimed, {} not-participant)",
+                         stats.actorsSampled,
+                         stats.actorsSeen,
+                         stats.memoriesExamined,
+                         stats.candidates,
+                         stats.sentForGeneration,
+                         stats.rejectedTooOld,
+                         stats.rejectedLowImportance,
+                         stats.rejectedDiary,
+                         stats.rejectedNoContent,
+                         stats.rejectedNoGameTime,
+                         stats.rejectedOwnOutput,
+                         stats.rejectedClaimed,
+                         stats.rejectedNotParticipant));
+    }
+
+    void Memory(std::int64_t memoryId, RE::FormID owner, float importance, std::string_view verdict)
+    {
+        Emit(std::format("MEMORY  m{:<8}  {:<22} imp={:.2f}  {}", memoryId, NameOf(owner), importance, verdict));
+    }
+
+    void Claim(std::int64_t memoryId, std::string_view action, std::size_t outstanding)
+    {
+        Emit(std::format("CLAIM   m{:<8}  {:<9} outstanding={}", memoryId, action, outstanding));
     }
 
     void Note(std::string_view text)
