@@ -24,6 +24,17 @@ user message:
 [ end user ]
 ```
 
+**All four markers are required.** Opening `[ system ]` or `[ user ]` without its `[ end ... ]` makes SkyrimNet
+fail the render outright, and the error it reports names only the template — nothing points at the missing
+marker.
+
+**Never put a fenced code block in a prompt.** A worked example wrapped in a ```` ```json ```` fence made
+`narrative_engine_gossip_seed` fail to render on every attempt until it was deleted; no other prompt here
+contains one. Show the expected output shape by describing each key in prose, the way
+`narrative_engine_action_select.prompt` does under its `## Output Format` and `## Hard Constraints`
+headings. (Inja itself renders fences without complaint at 3.3, 3.4 and 3.5 — whatever rejects them is
+elsewhere in SkyrimNet's pipeline, so do not expect the template-engine docs to mention it.)
+
 Why this matters:
 
 - **Maps to the chat API.** Commercial LLM providers (OpenAI, Anthropic, OpenRouter) take role-tagged messages.
