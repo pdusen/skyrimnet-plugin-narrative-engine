@@ -67,10 +67,17 @@ Beyond what SkyrimNet already requires, NarrativeEngine needs:
 
 - **MCM Helper** — hosts NarrativeEngine's Mod Configuration Menu page (mod credits and a hotkey rebind for the
   in-game dashboard). Available on Nexus Mods.
+- **powerofthree's Tweaks** — restores runtime EditorID lookup, which NarrativeEngine uses to resolve nearly all
+  of its game data. Without it (or an equivalent EditorID-retaining mod) the plugin loads but no beat ever fires.
+  Available on Nexus Mods.
 
-That's the only *additional* install. NarrativeEngine also hard-requires **PrismaUI** (which hosts the in-game
+Those are the only *additional* installs. NarrativeEngine also hard-requires **PrismaUI** (which hosts the in-game
 dashboard) and **SkyUI** (which MCM Helper depends on), but both are already in SkyrimNet's requirements list
 linked above — following that guide end-to-end covers them. If SkyrimNet is working, they're in place.
+
+That EditorID dependency also covers optional configuration: the `[AlphaCanon]` section of
+`Data/SKSE/Plugins/NarrativeEngine.ini` blacklists cells and Locations the Director should leave alone entirely
+(Sovngarde ships on that list). The file documents every knob inline.
 
 ## Getting Started
 
@@ -82,15 +89,17 @@ linked above — following that guide end-to-end covers them. If SkyrimNet is wo
 2. **Install MCM Helper.** Not one of SkyrimNet's prerequisites, but NarrativeEngine needs it — the mod's MCM
    page (credits + dashboard-hotkey rebind) won't register without it. Install through your mod manager the same
    way any other Skyrim mod goes in; no per-mod configuration needed.
-3. **Install NarrativeEngine.** Add it to your load order *after* SkyrimNet (SkyrimNet must be loaded first so
+3. **Install powerofthree's Tweaks.** Also not one of SkyrimNet's prerequisites, and also not optional here.
+   Install through your mod manager; the default configuration is fine, nothing needs enabling.
+4. **Install NarrativeEngine.** Add it to your load order *after* SkyrimNet (SkyrimNet must be loaded first so
    NarrativeEngine can register its plugin manifest with it). No FOMOD choices to make — it's a single-option
    install.
-4. **Launch the game and open the dashboard.** Load a save (or start a new game). Press **F7** — the NarrativeEngine
+5. **Launch the game and open the dashboard.** Load a save (or start a new game). Press **F7** — the NarrativeEngine
    dashboard should appear as an overlay. If it doesn't, check `Data/SKSE/Plugins/NarrativeEngine.log` for the
    line reading `DashboardUIManager: initialized`; its absence usually means PrismaUI failed to load, which
    almost always traces back to a SKSE / Address Library mismatch. Close the dashboard the same way you opened
    it, or with Esc.
-5. **Point the Director at a fast, cheap model.** Open the SkyrimNet dashboard (SkyrimNet's own PrismaUI
+6. **Point the Director at a fast, cheap model.** Open the SkyrimNet dashboard (SkyrimNet's own PrismaUI
    overlay) and navigate to **AI → Models**. The full list of SkyrimNet's model profiles appears there,
    including two NarrativeEngine registers: `narrative_engine_director` and `narrative_engine_composer`. Only
    the director needs your attention: it runs on every tick to score dramatic tension and pick beats, so a
@@ -98,7 +107,7 @@ linked above — following that guide end-to-end covers them. If SkyrimNet is wo
    `deepseek/deepseek-v4-flash` is a reasonable pick on OpenRouter. The composer profile (letters and
    briefings written in a specific NPC's voice) fires only when a beat actually starts, so its default —
    inheriting SkyrimNet's dialogue model — is fine.
-6. **Play.** The Director starts ticking as soon as you're in-world. First few ticks may not fire any beats — the
+7. **Play.** The Director starts ticking as soon as you're in-world. First few ticks may not fire any beats — the
    arc has to build up tension and the phase has to overstay its ideal duration first. Open the dashboard any time
    to watch what it's thinking, tune the phase durations under the Settings tab if the pacing feels off, or
    temporarily disable the tick from the Dispatch tab when you want a quiet stretch.

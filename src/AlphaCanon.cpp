@@ -1,5 +1,6 @@
 #include <AlphaCanon.h>
 
+#include <logger.h>
 #include <Settings.h>
 
 #include <algorithm>
@@ -43,6 +44,11 @@ namespace NarrativeEngine::AlphaCanon
             }
             return false;
         }
+
+        // Upper bound on parentLoc traversal depth. Vanilla never nests
+        // more than two or three deep; the cap is defensive against a
+        // cycle introduced by malformed mod data.
+        constexpr int kMaxParentDepth = 16;
     } // namespace
 
     bool IsInActiveCombat()
@@ -95,6 +101,37 @@ namespace NarrativeEngine::AlphaCanon
         return CsvContains(csv, edid);
     }
 
+    bool IsInBlacklistedLocation()
+    {
+        const auto& csv = Settings::Get().blacklistedLocationEDIDsCSV;
+        if (csv.empty()) {
+            return false;
+        }
+
+        auto* pc = RE::PlayerCharacter::GetSingleton();
+        if (!pc) {
+            return false;
+        }
+
+        // Walk the player's Location and its parentLoc ancestors so a
+        // blacklisted parent covers every Location beneath it — e.g.
+        // SovngardeHallofHeroesLocation's ParentLocation is
+        // SovngardeLocation, so blacklisting the latter blocks the
+        // former without naming it.
+        auto* loc = pc->GetCurrentLocation();
+        for (int depth = 0; loc && depth < kMaxParentDepth; ++depth) {
+            // Location EditorIDs need runtime retention (powerofthree's
+            // Tweaks or equivalent); without it this is "" for every
+            // Location and the blacklist degrades open.
+            if (const char* edid = loc->GetFormEditorID(); edid && *edid && CsvContains(csv, edid)) {
+                logger::debug("AlphaCanon: player location blacklisted via '{}'", edid);
+                return true;
+            }
+            loc = loc->parentLoc;
+        }
+        return false;
+    }
+
     Signal EvaluateAll()
     {
         Signal mask = Signal::None;
@@ -106,6 +143,8 @@ namespace NarrativeEngine::AlphaCanon
             mask |= Signal::InDialogue;
         if (IsInDoNotDisturbCell())
             mask |= Signal::InDoNotDisturbCell;
+        if (IsInBlacklistedLocation())
+            mask |= Signal::InBlacklistedLocation;
         return mask;
     }
 
@@ -120,6 +159,8 @@ namespace NarrativeEngine::AlphaCanon
             names.emplace_back("InDialogue");
         if (HasFlag(mask, Signal::InDoNotDisturbCell))
             names.emplace_back("InDoNotDisturbCell");
+        if (HasFlag(mask, Signal::InBlacklistedLocation))
+            names.emplace_back("InBlacklistedLocation");
         return names;
     }
 } // namespace NarrativeEngine::AlphaCanon

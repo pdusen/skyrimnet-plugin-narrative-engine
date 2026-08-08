@@ -672,6 +672,8 @@ namespace NarrativeEngine::BeatSystem
                 return "scriptedScene";
             if (AlphaCanon::IsInDoNotDisturbCell())
                 return "doNotDisturbCell";
+            if (AlphaCanon::IsInBlacklistedLocation())
+                return "blacklistedLocation";
             return nullptr;
         }
 
@@ -1112,8 +1114,10 @@ namespace NarrativeEngine::BeatSystem
         //     UI::IsMenuOpen — matches EngineUtils::IsPlayerInCombat /
         //     IsPlayerInDialogue (both untagged, safe-from-any-thread).
         //   * CheckGlobalBeatPreconditions → AlphaCanon::IsInScriptedScene
-        //     / IsInDoNotDisturbCell — stable-singleton pointer walks
-        //     + bool/string loads.
+        //     / IsInDoNotDisturbCell / IsInBlacklistedLocation — stable-
+        //     singleton pointer walks + bool/string loads. The last one
+        //     also walks BGSLocation::parentLoc, the same off-main read
+        //     Region::ForPlayer and AmbushBeat::IsAvailable already do.
         //   * BeatRegistry::AvailableMatching → per-beat IsAvailable —
         //     the two implementations that exist (NPCLetterBeat,
         //     NPCVisitBeat) do SkyrimNet DLL calls + alias-walk

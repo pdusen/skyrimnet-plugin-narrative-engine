@@ -201,6 +201,8 @@ namespace NarrativeEngine::Settings
 
             dst.doNotDisturbCellEDIDsCSV =
                 ini.GetValue("AlphaCanon", "sDoNotDisturbCellEDIDsCSV", dst.doNotDisturbCellEDIDsCSV.c_str());
+            dst.blacklistedLocationEDIDsCSV =
+                ini.GetValue("AlphaCanon", "sBlacklistedLocationEDIDsCSV", dst.blacklistedLocationEDIDsCSV.c_str());
 
             // [Dashboard] — DXSC always via GetLongValue; modifiers via
             // the three-bool shape (MCM Helper's schema), reconstructed

@@ -139,6 +139,13 @@ namespace NarrativeEngine::Settings
         // Empty by default. Whitespace around commas is allowed.
         std::string doNotDisturbCellEDIDsCSV;
 
+        // Comma-separated list of Location EditorIDs the Director will
+        // not fire beats in. Matching is inclusive of descendants: the
+        // player's current Location and every ancestor reached via
+        // BGSLocation::parentLoc is tested, so naming a parent covers
+        // its whole subtree. Whitespace around commas is allowed.
+        std::string blacklistedLocationEDIDsCSV = "SovngardeLocation";
+
         // [Dashboard]
         int dashboardHotkeyDXSC = 65;              // DirectX scan code; 65 == DIK_F7; -1 disables
         std::uint8_t dashboardHotkeyModifiers = 0; // kModShift|kModCtrl|kModAlt bitmask; 0 = none
