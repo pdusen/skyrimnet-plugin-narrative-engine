@@ -1,6 +1,7 @@
 #include <FineRoads.h>
 
 #include <BmpWriter.h>
+#include <EngineUtils.h>
 #include <logger.h>
 #include <MainThread.h>
 #include <Settings.h>
@@ -60,6 +61,10 @@ namespace NarrativeEngine::FineRoads
         Graph g_graph;
         bool g_initialized = false;
         bool g_sinksRegistered = false;
+        // Tracked separately from g_sinksRegistered: the fast-travel
+        // source is absent on VR, so that one sink can legitimately fail
+        // to register while the rest are live.
+        bool g_fastTravelSinkRegistered = false;
         double g_secondsSinceBackstop = 0.0;
 
         // Set by the event sinks, consumed by Poll. Starts true so the
@@ -503,15 +508,20 @@ namespace NarrativeEngine::FineRoads
         if (auto* src = RE::ScriptEventSourceHolder::GetSingleton()) {
             src->AddEventSink<RE::TESCellFullyLoadedEvent>(GetCellLoadedSink());
             src->AddEventSink<RE::TESLoadGameEvent>(GetLoadGameSink());
-            src->AddEventSink<RE::TESFastTravelEndEvent>(GetFastTravelEndSink());
+            // Fast travel goes through EngineUtils because the event
+            // source doesn't exist on VR — see the header comment there.
+            // The other two sinks already cover every VR grid change.
+            g_fastTravelSinkRegistered = EngineUtils::AddFastTravelEndSink(GetFastTravelEndSink());
             g_sinksRegistered = true;
         } else {
             logger::error("FineRoads: ScriptEventSourceHolder unavailable; sinks not registered "
                           "(the backstop rescan still covers grid changes)");
         }
 
-        logger::info(
-            "FineRoads: initialized (enabled={}, sinks={})", Settings::Get().fineRoadsEnabled, g_sinksRegistered);
+        logger::info("FineRoads: initialized (enabled={}, sinks={}, fastTravelSink={})",
+                     Settings::Get().fineRoadsEnabled,
+                     g_sinksRegistered,
+                     g_fastTravelSinkRegistered);
     }
 
     void Poll(const PluginThread::Token& pt, double unpausedElapsedSeconds)

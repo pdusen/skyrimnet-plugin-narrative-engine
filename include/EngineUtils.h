@@ -2,6 +2,12 @@
 
 #include <MainThread.h>
 
+namespace RE
+{
+    template <class T> class BSTEventSink;
+    struct TESFastTravelEndEvent;
+} // namespace RE
+
 // Small, single-purpose wrappers around commonly-accessed engine
 // singletons and derived values. Each helper's purpose:
 //   * Give call sites a stable name and signature independent of
@@ -41,4 +47,21 @@ namespace NarrativeEngine::EngineUtils
     bool IsPlayerInCombat(const MainThread::Token&);
     bool IsPlayerInDialogue();
     bool IsPlayerInDialogue(const MainThread::Token&);
+
+    // Register / unregister a TESFastTravelEndEvent sink.
+    //
+    // These exist because `ScriptEventSourceHolder::AddEventSink<T>` is
+    // NOT safe for this one event type. Skyrim VR's holder layout stops
+    // one base class short of SE/AE's: it has no TESFastTravelEndEvent
+    // source, so CommonLibSSE-NG's accessor returns nullptr on VR and
+    // the templated AddEventSink then dereferences it. Callers must go
+    // through these wrappers instead of touching the holder directly.
+    // See docs/engine-findings/scripteventsourceholder-addeventsink-crashes-on-vr.md.
+    //
+    // Returns true when the sink was actually (un)registered — false on
+    // VR, and false if the holder singleton isn't up yet. VR has no fast
+    // travel at all, so the false case costs nothing but the caller
+    // should not report the sink as live.
+    bool AddFastTravelEndSink(RE::BSTEventSink<RE::TESFastTravelEndEvent>* sink);
+    bool RemoveFastTravelEndSink(RE::BSTEventSink<RE::TESFastTravelEndEvent>* sink);
 } // namespace NarrativeEngine::EngineUtils

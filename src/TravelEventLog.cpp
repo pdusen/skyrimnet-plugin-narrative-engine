@@ -1,5 +1,6 @@
 #include <TravelEventLog.h>
 
+#include <EngineUtils.h>
 #include <EventLogUtil.h>
 #include <logger.h>
 #include <PhaseTracker.h>
@@ -345,12 +346,15 @@ namespace NarrativeEngine::TravelEventLog
     void Initialize()
     {
         if (!g_sinksRegistered) {
-            auto* src = RE::ScriptEventSourceHolder::GetSingleton();
-            if (src) {
-                src->AddEventSink<RE::TESFastTravelEndEvent>(GetFastTravelEndSink());
-                g_sinksRegistered = true;
-            } else {
-                logger::error("TravelEventLog: ScriptEventSourceHolder unavailable; fast-travel sink not registered");
+            // Not `holder->AddEventSink<TESFastTravelEndEvent>` — that
+            // faults on VR, which has no such event source. EngineUtils
+            // reports false there and the poll-driven location diff
+            // still catches the move; it just can't tag it as a fast
+            // travel. VR has no fast travel to tag anyway.
+            g_sinksRegistered = EngineUtils::AddFastTravelEndSink(GetFastTravelEndSink());
+            if (!g_sinksRegistered) {
+                logger::warn("TravelEventLog: fast-travel event source unavailable; sink not registered "
+                             "(expected on Skyrim VR)");
             }
         }
         logger::info("TravelEventLog: initialized (follower radius={:.0f} units, fast-travel sink={})",
@@ -362,9 +366,7 @@ namespace NarrativeEngine::TravelEventLog
     {
         if (!g_sinksRegistered)
             return;
-        if (auto* src = RE::ScriptEventSourceHolder::GetSingleton()) {
-            src->RemoveEventSink<RE::TESFastTravelEndEvent>(GetFastTravelEndSink());
-        }
+        EngineUtils::RemoveFastTravelEndSink(GetFastTravelEndSink());
         g_sinksRegistered = false;
     }
 

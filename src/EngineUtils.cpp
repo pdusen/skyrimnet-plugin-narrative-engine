@@ -49,4 +49,39 @@ namespace NarrativeEngine::EngineUtils
     {
         return IsPlayerInDialogue();
     }
+
+    namespace
+    {
+        // The one safe way to reach the fast-travel event source.
+        // `AsTESFastTravelEndEventSource()` is CommonLibSSE-NG's
+        // runtime-aware accessor: it hands back the relocated member on
+        // SE/AE and a null pointer on VR, where the holder simply has no
+        // such base class. The templated
+        // `ScriptEventSourceHolder::AddEventSink<TESFastTravelEndEvent>`
+        // routes through the same accessor but immediately dereferences
+        // the result, so on VR it faults on a null + 0x48 read.
+        RE::BSTEventSource<RE::TESFastTravelEndEvent>* GetFastTravelEndEventSource()
+        {
+            auto* holder = RE::ScriptEventSourceHolder::GetSingleton();
+            return holder ? holder->AsTESFastTravelEndEventSource() : nullptr;
+        }
+    } // namespace
+
+    bool AddFastTravelEndSink(RE::BSTEventSink<RE::TESFastTravelEndEvent>* sink)
+    {
+        auto* source = GetFastTravelEndEventSource();
+        if (!source || !sink)
+            return false;
+        source->AddEventSink(sink);
+        return true;
+    }
+
+    bool RemoveFastTravelEndSink(RE::BSTEventSink<RE::TESFastTravelEndEvent>* sink)
+    {
+        auto* source = GetFastTravelEndEventSource();
+        if (!source || !sink)
+            return false;
+        source->RemoveEventSink(sink);
+        return true;
+    }
 } // namespace NarrativeEngine::EngineUtils
