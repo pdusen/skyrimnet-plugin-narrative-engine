@@ -203,8 +203,8 @@ GossipDispatch job: "gossip tick", stamped with the game time it was SUPPOSED to
         c.  settle the claim, dated asOf
   3.  simulate — advance the simulation clock to asOf and drain every carrier-step due by then
   4.  prune — reap dead rumors, expire claims as of asOf
-  5.  flush the trace
-  6.  publish the dashboard snapshot
+  5.  publish the dashboard snapshot
+      (the trace is not a step — every line is flushed as it is written)
 ```
 
 No callbacks, no continuation chain, no re-entrancy. Read top to bottom.
@@ -259,7 +259,7 @@ just a scheduling one.
 | `GossipSim::SeedRumor`               | `AsyncDispatch` worker, from a walk       | step 2                                     |
 | `GossipSim::Poll` — the event drain  | `AsyncDispatch` worker, via `Tick`        | step 3                                     |
 | `GossipClaims` mutation and expiry   | wherever the caller happened to be        | steps 2 and 4                              |
-| `GossipLog::Poll` — the trace flush  | `AsyncDispatch` worker, via `Tick`        | step 5                                     |
+| `GossipLog` writes                   | `AsyncDispatch` worker, via `Tick`        | inline, flushed per line — see below       |
 | `OnSessionStart`                     | **main thread** (SKSE messaging)          | enqueued; the main thread does not wait    |
 | `OnSessionEnd`                       | **main thread** (SKSE messaging)          | enqueued **and waited on** — see below     |
 | `GossipLog` lifecycle                | **main thread** (SKSE messaging)          | follows `GossipSim`'s, same job            |
@@ -472,6 +472,18 @@ This is worth naming and not worth solving:
 - The symptom is a duplicate "I heard a rumor that…" memory, which is indistinguishable from an NPC being
   told the same thing twice by two different people — something the simulation does on purpose.
 
+### The trace is flushed per line, not per tick
+
+`GossipLog::Poll` flushed every five seconds because it was a poll. Replacing it with a flush at the end of
+the tick job looked equivalent and was not: **a tick blocks for two LLM round trips**, so the trace went
+silent for ten seconds at a stretch and then arrived in a burst. Worse, the stream's own buffer fills
+wherever it happens to fill, so a `tail` of the file would sit on a half-written line for the duration —
+which is what the first test run showed.
+
+Every line is therefore flushed as it is written, and the tick job has no flush step at all. The cost is a
+few hundred flushes per tick on a thread that has nothing else to do, set against two multi-second network
+calls. A trace only readable after the interesting part has finished is not doing its job.
+
 ### The census writes from the snapshot too
 
 `GossipSim::OnSessionEnd` fires at `kPreLoadGame` and writes the live-rumor census into the trace before
@@ -579,7 +591,7 @@ each one had a live alternative.
 | `GossipHarvest`   | Loses its mutex and its `Poll`. Becomes the sweep, called as step 1 of a tick with an `asOf` horizon.                                                                              |
 | `GossipContent`   | Loses `Walk`, `Advance`, `Evaluate` and the whole continuation chain. Becomes a loop over the shuffled pool making blocking calls.                                                 |
 | `GossipClaims`    | Loses its mutex. Its maps move into `GossipState`; it keeps `'NEGC'` and the ledger logic.                                                                                        |
-| `GossipLog`       | Keeps its mutex — it is a file writer, and session-boundary writes still come from the main thread. Its `Poll` becomes step 5 of the tick.                                         |
+| `GossipLog`       | Keeps its mutex — it is a file writer, and session-boundary writes still come from the main thread. Its `Poll` goes; every line is flushed as it is written.                        |
 | `Tick`            | Keeps the cadence check. Reduced to: accumulate, compare, enqueue one stamped job per crossed boundary, return.                                                                    |
 
 ---
