@@ -22,8 +22,6 @@ namespace NarrativeEngine::GossipClaims
         // records are skipped rather than migrated.
         constexpr std::uint32_t kRecordVersion = 2;
 
-        std::mutex g_mutex;
-
         // The ledger lives in GossipState alongside the simulation, not
         // in a global of its own, because the two have to be SAVED FROM
         // THE SAME INSTANT. Publish them separately and a reload can
@@ -31,12 +29,15 @@ namespace NarrativeEngine::GossipClaims
         // leaving that memory free to seed a second rumor about a
         // happening already going round.
         //
-        // GossipSim owns the instance; these are references into it.
-        // EventClaim itself moved to GossipState.h for the same reason.
+        // GossipSim owns the instance. EventClaim itself moved to
+        // GossipState.h for the same reason.
+        //
+        // Reached through the token inside each function rather than bound
+        // once at file scope: MutableState is gated on GossipThread::Token
+        // now, and a static-init binding would have no token to present.
+        // That is the gate working as intended — a reference captured at
+        // load time is exactly the sort of back door it exists to close.
         using GossipState_::EventClaim;
-
-        auto& g_claims = GossipSim::MutableState().claims;
-        auto& g_eventClaims = GossipSim::MutableState().eventClaims;
     } // namespace
 
     void Initialize()
@@ -47,18 +48,18 @@ namespace NarrativeEngine::GossipClaims
                      cfg.gossipHarvestWindowDays);
     }
 
-    bool IsClaimed(std::int64_t memoryId)
+    bool IsClaimed(const GossipThread::Token& gt, std::int64_t memoryId)
     {
-        std::scoped_lock lock(g_mutex);
+        const auto& g_claims = GossipSim::MutableState(gt).claims;
         return g_claims.contains(memoryId);
     }
 
-    bool AreEventsClaimed(const std::vector<std::int64_t>& eventIds)
+    bool AreEventsClaimed(const GossipThread::Token& gt, const std::vector<std::int64_t>& eventIds)
     {
+        const auto& g_eventClaims = GossipSim::MutableState(gt).eventClaims;
         if (eventIds.empty()) {
             return false;
         }
-        std::scoped_lock lock(g_mutex);
         for (const auto e : eventIds) {
             if (g_eventClaims.contains(e)) {
                 return true;
@@ -67,15 +68,19 @@ namespace NarrativeEngine::GossipClaims
         return false;
     }
 
-    void Claim(std::int64_t memoryId, const std::vector<std::int64_t>& eventIds, double nowGameDay)
+    void Claim(const GossipThread::Token& gt,
+               std::int64_t memoryId,
+               const std::vector<std::int64_t>& eventIds,
+               double nowGameDay)
     {
+        auto& g_claims = GossipSim::MutableState(gt).claims;
+        auto& g_eventClaims = GossipSim::MutableState(gt).eventClaims;
         const auto& cfg = Settings::Get();
         const double expiry = nowGameDay + std::max(1.0f, cfg.gossipClaimExpiryDays);
         std::size_t outstanding = 0;
         std::size_t eventsTaken = 0;
         bool inserted = false;
         {
-            std::scoped_lock lock(g_mutex);
             // emplace, not insert_or_assign: a repeated claim must not push
             // the expiry further out, or a memory could be held indefinitely.
             inserted = g_claims.emplace(memoryId, expiry).second;
@@ -104,13 +109,14 @@ namespace NarrativeEngine::GossipClaims
         }
     }
 
-    void Release(std::int64_t memoryId)
+    void Release(const GossipThread::Token& gt, std::int64_t memoryId)
     {
+        auto& g_claims = GossipSim::MutableState(gt).claims;
+        auto& g_eventClaims = GossipSim::MutableState(gt).eventClaims;
         std::size_t outstanding = 0;
         std::size_t eventsFreed = 0;
         bool erased = false;
         {
-            std::scoped_lock lock(g_mutex);
             erased = g_claims.erase(memoryId) > 0;
             outstanding = g_claims.size();
 
@@ -135,11 +141,11 @@ namespace NarrativeEngine::GossipClaims
         }
     }
 
-    void ReleaseEvents(std::int64_t memoryId)
+    void ReleaseEvents(const GossipThread::Token& gt, std::int64_t memoryId)
     {
+        auto& g_eventClaims = GossipSim::MutableState(gt).eventClaims;
         std::size_t freed = 0;
         {
-            std::scoped_lock lock(g_mutex);
             for (auto it = g_eventClaims.begin(); it != g_eventClaims.end();) {
                 if (it->second.claimedByMemoryId == memoryId) {
                     it = g_eventClaims.erase(it);
@@ -154,13 +160,14 @@ namespace NarrativeEngine::GossipClaims
         }
     }
 
-    std::size_t Sweep(double nowGameDay)
+    std::size_t Sweep(const GossipThread::Token& gt, double nowGameDay)
     {
+        auto& g_claims = GossipSim::MutableState(gt).claims;
+        auto& g_eventClaims = GossipSim::MutableState(gt).eventClaims;
         std::vector<std::int64_t> expired;
         std::size_t outstanding = 0;
         std::size_t eventsExpired = 0;
         {
-            std::scoped_lock lock(g_mutex);
             for (auto it = g_claims.begin(); it != g_claims.end();) {
                 if (it->second <= nowGameDay) {
                     expired.push_back(it->first);

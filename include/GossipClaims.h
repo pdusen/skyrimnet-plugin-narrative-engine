@@ -1,6 +1,7 @@
 #pragma once
 
 #include <GossipState.h>
+#include <GossipThread.h>
 
 #include <cstdint>
 #include <vector>
@@ -65,7 +66,7 @@ namespace NarrativeEngine::GossipClaims
     void Initialize();
 
     // True while `memoryId` is claimed. The harvester's qualification gate.
-    bool IsClaimed(std::int64_t memoryId);
+    bool IsClaimed(const GossipThread::Token&, std::int64_t memoryId);
 
     // True while ANY id in `eventIds` is claimed.
     //
@@ -75,7 +76,7 @@ namespace NarrativeEngine::GossipClaims
     // dedup alone happily seeds all of them. On the first in-game run six
     // of ten rumors were duplicates of just two events — three memories of
     // one confrontation had byte-identical event sets.
-    bool AreEventsClaimed(const std::vector<std::int64_t>& eventIds);
+    bool AreEventsClaimed(const GossipThread::Token&, const std::vector<std::int64_t>& eventIds);
 
     // Claim `memoryId`, and separately claim every id in `eventIds`, until
     // `nowGameDay + fGossipClaimExpiryDays`.
@@ -84,7 +85,10 @@ namespace NarrativeEngine::GossipClaims
     // the original expiry stands, so a claim cannot be extended
     // indefinitely by repeated attempts. Event claims record the memory
     // that took them so Release can find them again.
-    void Claim(std::int64_t memoryId, const std::vector<std::int64_t>& eventIds, double nowGameDay);
+    void Claim(const GossipThread::Token&,
+               std::int64_t memoryId,
+               const std::vector<std::int64_t>& eventIds,
+               double nowGameDay);
 
     // Hand a memory back immediately, along with every event claim it
     // took.
@@ -96,7 +100,7 @@ namespace NarrativeEngine::GossipClaims
     // events must come back too, or a failed generation would keep every
     // other witness's account of the same event locked out for the whole
     // expiry window.
-    void Release(std::int64_t memoryId);
+    void Release(const GossipThread::Token&, std::int64_t memoryId);
 
     // Give back only the event claims, keeping the memory claim.
     //
@@ -105,12 +109,12 @@ namespace NarrativeEngine::GossipClaims
     // may have an account of it they would repeat. Holding the memory
     // stops this owner being asked about it again; releasing the events
     // leaves the happening open to another witness.
-    void ReleaseEvents(std::int64_t memoryId);
+    void ReleaseEvents(const GossipThread::Token&, std::int64_t memoryId);
 
     // Drop expired claims. Called from the simulation poll on sampled game
     // time rather than on rumor activity, so a quiet stretch with no live
     // rumors still expires claims. Returns how many were dropped.
-    std::size_t Sweep(double nowGameDay);
+    std::size_t Sweep(const GossipThread::Token&, double nowGameDay);
 
     std::size_t Count(const GossipState&);
     std::size_t EventCount(const GossipState&);

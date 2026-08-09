@@ -19,7 +19,14 @@ touches.
        ┌──────────────────────┐
        │    Plugin thread     │   Business logic, state accessors, our own
        │ (PluginThread::Token)│   worker loops (AsyncDispatch, BeatSystem).
-       └──────────┬───────────┘
+       └────┬─────────────┬───┘
+            │             │  GossipDispatch::EnqueueWork(fn)
+            │             ▼
+            │  ┌──────────────────────┐
+            │  │    Gossip worker     │   The rumor simulation, and nothing
+            │  │ (GossipThread::Token)│   else. Still ThreadRole::Plugin —
+            │  └──────────────────────┘   a narrower capability, not a role.
+            │
                   │
                   │  MainThread::Run<T>(pt, fn) — blocking
                   │  MainThread::FireAndForget(pt, fn) — non-blocking
@@ -51,7 +58,7 @@ token-free. Its lambda receives a `PluginThread::Token` when the job runs on
 the worker, at which point the code has crossed into plugin-thread land and
 the rest of the plugin API is available.
 
-## The two tokens
+## The three tokens
 
 Two zero-sized, non-copyable, non-movable types with private constructors,
 each friend-declared with exactly one dispatcher type in the code that
@@ -60,7 +67,20 @@ mints it:
 ```cpp
 namespace NarrativeEngine::MainThread   { class Token { /* friend RunDispatcher, FireAndForgetDispatcher */ }; }
 namespace NarrativeEngine::PluginThread { class Token { /* friend AsyncDispatch::JobDispatcher */ }; }
+namespace NarrativeEngine::GossipThread { class Token { /* friend GossipDispatch::JobDispatcher */ }; }
 ```
+
+`GossipThread::Token` is not a fourth *role* — the gossip worker declares
+`ThreadRole::Plugin` like every other worker. It is a narrower **capability**
+inside that role, and it exists so that "only the gossip worker touches gossip
+state" can be a signature rather than a convention. That is what lets
+`GossipSim`, `GossipHarvest` and `GossipClaims` carry no mutex at all: there is
+no second thread to race with, and the type system says so.
+
+Where a call is safe on *any* worker we own but not on main — the blocking
+SkyrimNet LLM round trip is the example — it is gated on the `WorkerToken`
+concept in `include/WorkerToken.h`, which both worker tokens satisfy.
+`MainThread::Run` pointedly does **not** accept it.
 
 The tokens carry no runtime state. Their whole job is to prove — at compile
 time, in the signature — that the caller is running in the expected context.
@@ -69,8 +89,9 @@ inside a `Run` / `FireAndForget` lambda; a function that takes
 `PluginThread::Token const&` can only be called from inside an `EnqueueWork`
 job (or an inner `Run` / `FireAndForget` lambda that received one).
 
-**The exhaustive rule:** every plugin function takes either a
-`MainThread::Token const&` or a `PluginThread::Token const&` as an argument.
+**The exhaustive rule:** every plugin function takes a `MainThread::Token
+const&`, a `PluginThread::Token const&`, or a `GossipThread::Token const&` as an
+argument.
 Engine-touching wrappers demand the first; plugin-scope business logic
 demands the second. General-purpose utilities may offer overloads accepting
 either. `AsyncDispatch::EnqueueWork` is the sole deliberate exception —
@@ -156,6 +177,8 @@ human review.
 | 4 | Engine touch from unsanctioned context            | Compile error — engine wrappers demand `MainThread::Token`, which only lives inside a `Run` / `FireAndForget` lambda. |
 | 5 | Plugin logic called from a foreign thread         | Compile error — every plugin function demands one of the two tokens; foreign code has neither. |
 | 6 | Long-lived reference to main-thread state escapes the lambda | **Convention only** — return by value from `Run<T>` lambdas; do not capture engine pointers into worker-scope state that outlives the lambda. Reviewers must look for this. |
+| 7 | Gossip simulation state touched from a non-gossip thread | Compile error — `GossipSim::MutableState` and the `GossipClaims` mutators demand a `GossipThread::Token`, which only `GossipDispatch`'s job dispatcher mints. |
+| 8 | Gossip code reaches the main thread and deadlocks | Compile error — `MainThread::Run` / `FireAndForget` still demand `PluginThread::Token`, so a gossip job cannot call them. |
 
 The runtime `ThreadRole` marker (`include/ThreadRole.h`) is a belt-and-
 braces layer beneath the compile-time barriers. `MainThread::Run` asserts

@@ -46,8 +46,6 @@ namespace NarrativeEngine::GossipSim
         // the way it always was.
         using namespace GossipState_;
 
-        std::mutex g_mutex;
-
         // THE live instance. Everything below is a reference into it, so
         // that publishing a snapshot is one copy of one object rather
         // than a gather across six globals that could each be caught at a
@@ -658,13 +656,13 @@ namespace NarrativeEngine::GossipSim
         // and nothing anywhere reads a dead rumor's data. Its carrier map —
         // up to gossipMaxCarriersPerRumor entries at ~37 bytes each — would
         // otherwise ride along in the co-save.
-        void SweepAndReapLocked()
+        void SweepAndReap(const GossipThread::Token& gt)
         {
             // Claim expiry rides the same sampled game time as the rumor reap.
             // Deliberately not gated on there being live rumors: a quiet
             // stretch still has to let claims age out, or a lull would freeze
             // the ledger.
-            if (const auto expired = GossipClaims::Sweep(g_simGameDay); expired > 0) {
+            if (const auto expired = GossipClaims::Sweep(gt, g_simGameDay); expired > 0) {
                 logger::debug("GossipClaims: expired {} claim(s); {} memory + {} event claim(s) remain",
                               expired,
                               GossipClaims::Count(State()),
@@ -730,7 +728,7 @@ namespace NarrativeEngine::GossipSim
         }
     } // namespace
 
-    GossipState& MutableState()
+    GossipState& MutableState(const GossipThread::Token&)
     {
         return State();
     }
@@ -761,7 +759,6 @@ namespace NarrativeEngine::GossipSim
             return false;
         }
         {
-            std::scoped_lock lock(g_mutex);
             State() = std::move(*taken);
             // Derived, not owned, and describing a world that may have
             // just been replaced.
@@ -799,31 +796,34 @@ namespace NarrativeEngine::GossipSim
         }
         GossipGraph::RefreshRelationships();
 
-        // BEFORE the clock re-base below. OnSessionStart runs at
-        // kPostLoadGame, after the record dispatch has filled the staging
-        // area, so re-basing first would rebase state that is about to be
-        // thrown away.
-        AdoptPendingState();
-
-        std::scoped_lock lock(g_mutex);
-        g_contactCache.clear();
-        // Re-base the game-time sample so a load does not read as a
-        // multi-year jump on the first poll.
-        g_lastGameDaySample = NowGameDay();
-        g_simGameDay = g_lastGameDaySample;
-        g_counters.transmissions = 0;
-        g_counters.wasted = 0;
-        g_counters.memoriesWritten = 0;
-        g_counters.memoryWriteFailures = 0;
-        // Publish immediately rather than waiting for the first poll, so
-        // a dashboard opened straight after a load shows the world that
-        // was just restored instead of an empty one.
-        PublishSnapshot();
+        // Runs on the MAIN thread, so it must not touch live state. A tick
+        // cancelled a moment ago at kPreLoadGame is not necessarily a tick
+        // that has finished — it stops at its next checkpoint, which may
+        // be a blocking LLM call away. Writing live here would race it.
+        //
+        // Everything inbound goes through the staging area instead, and
+        // the gossip thread adopts it at the top of its next job. Note
+        // this MODIFIES the pending state rather than replacing it: the
+        // record dispatch has already filled it by now.
+        //
+        // The clock re-base that used to live here is gone. Nothing needs
+        // it: SetHorizon stamps the simulation clock from the tick's own
+        // schedule, and GossipTick re-bases its schedule separately.
+        auto& pending = PendingState();
+        pending.counters = {};
+        pending.harvest = {};
     }
 
     void OnSessionEnd()
     {
-        std::scoped_lock lock(g_mutex);
+        // Main thread, at kPreLoadGame. Reads the published snapshot
+        // rather than live state for the same reason OnSessionStart
+        // stages instead of writing: a cancelled tick may still be
+        // unwinding. The snapshot is immutable and cannot be pulled out
+        // from under this.
+        const auto snap = Snapshot();
+        const auto& g_rumors = snap->rumors;
+        const auto& g_counters = snap->counters;
         if (g_rumors.empty()) {
             return;
         }
@@ -856,37 +856,38 @@ namespace NarrativeEngine::GossipSim
         }
     }
 
-    void Advance(const GossipThread::Token&, double asOfGameDay, const GossipDispatch::CancellationHandle& cancel)
+    void SetHorizon(const GossipThread::Token&, double asOfGameDay)
+    {
+        // The simulation clock is SET, not advanced by a sampled delta.
+        //
+        // This is what makes a late tick still a correct tick: the job was
+        // scheduled for `asOfGameDay` and treats the world as standing at
+        // exactly that moment, whether it ran on time or forty seconds
+        // late behind two LLM calls.
+        //
+        // Set BEFORE the harvest rather than inside the drain, because a
+        // rumor seeded during this tick stamps itself with the clock. Set
+        // it afterwards and every rumor would be dated one whole interval
+        // in the past.
+        //
+        // It also retires kMaxGameDayDeltaPerPoll. That clamp existed to
+        // stop a console time jump crediting an unbounded burst in one
+        // poll; the scheduler now caps how many ticks may be outstanding,
+        // which bounds the same thing in ticks rather than days and does
+        // it before the work is ever queued.
+        g_simGameDay = asOfGameDay;
+        g_lastGameDaySample = asOfGameDay;
+    }
+
+    void Advance(const GossipThread::Token& gt, double asOfGameDay, const GossipDispatch::CancellationHandle& cancel)
     {
         const auto& cfg = Settings::Get();
         if (!cfg.gossipEnabled || !GossipGraph::IsReady()) {
             return;
         }
-
-        std::scoped_lock lock(g_mutex);
-
-        // The simulation clock is SET, not advanced by a sampled delta.
-        //
-        // This is what makes a late tick still a correct tick: the job
-        // was scheduled for `asOfGameDay` and simulates the world up to
-        // exactly that moment, whether it ran on time or forty seconds
-        // late behind two LLM calls. Whatever happened after `asOfGameDay`
-        // is the next tick's business.
-        //
-        // It also retires kMaxGameDayDeltaPerPoll. That clamp existed to
-        // stop a console time jump crediting an unbounded burst in one
-        // poll; the scheduler now caps how many ticks may be outstanding,
-        // which bounds the same thing in ticks rather than in days and
-        // does it before the work is ever queued.
         if (asOfGameDay < g_simGameDay) {
-            // Clock went backwards — a load of an older save, or a console
-            // time change. Re-base rather than reason about it.
-            g_simGameDay = asOfGameDay;
-            g_lastGameDaySample = asOfGameDay;
             return;
         }
-        g_simGameDay = asOfGameDay;
-        g_lastGameDaySample = asOfGameDay;
 
         // Drain the due queue to completion. No wall-clock budget: nothing
         // else runs on this thread, so there is nobody to yield to. The
@@ -937,10 +938,11 @@ namespace NarrativeEngine::GossipSim
             ++processed;
         }
 
-        SweepAndReapLocked();
+        SweepAndReap(gt);
     }
 
-    std::uint32_t SeedRumor(RE::FormID originNpc,
+    std::uint32_t SeedRumor(const GossipThread::Token&,
+                            RE::FormID originNpc,
                             float notability,
                             std::int64_t sourceMemoryId,
                             std::vector<std::string> bands)
@@ -953,8 +955,6 @@ namespace NarrativeEngine::GossipSim
         if (!p) {
             return 0;
         }
-
-        std::scoped_lock lock(g_mutex);
 
         const auto liveCount =
             std::count_if(g_rumors.begin(), g_rumors.end(), [](const auto& kv) { return kv.second.live; });
@@ -998,9 +998,8 @@ namespace NarrativeEngine::GossipSim
         return id;
     }
 
-    float AvailableContactShare(RE::FormID npc)
+    float AvailableContactShare(const GossipThread::Token&, RE::FormID npc)
     {
-        std::scoped_lock lock(g_mutex);
         float total = 0.0f;
         float reachable = 0.0f;
         for (const auto& c : ContactsFor(npc)) {
@@ -1317,8 +1316,8 @@ namespace NarrativeEngine::GossipSim
             g_pending->harvest = {};
         }
         // The contact cache is derived rather than owned, so it is not in
-        // the pending state and has to be dropped here.
-        std::scoped_lock lock(g_mutex);
-        g_contactCache.clear();
+        // the pending state. AdoptPendingState clears it on the gossip
+        // thread, which is the only thread allowed to touch it — dropping
+        // it from here would be a cross-thread write to live state.
     }
 } // namespace NarrativeEngine::GossipSim

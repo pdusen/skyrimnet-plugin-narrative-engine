@@ -35,11 +35,6 @@ namespace NarrativeEngine::GossipHarvest
         // Whether the "cannot sweep yet" note has already been emitted for
         // the current outage; reset the moment a sweep succeeds.
         bool g_deferredLogged = false;
-        // Session counters live in GossipState so the dashboard reads
-        // them from the same image as the rumors they produced. A sweep
-        // count and a rumor count caught at different instants cannot be
-        // reconciled by whoever is looking at them.
-        auto& g_stats = GossipSim::MutableState().harvest;
 
         // A memory's timestamp is in the same cumulative game-seconds units
         // EventLogUtil::NowGameTimeSeconds returns, so ages are a plain
@@ -176,7 +171,8 @@ namespace NarrativeEngine::GossipHarvest
         }
 
         // Stage 2: qualify this actor's recent memories.
-        void CollectFrom(const RankedActor& actor,
+        void CollectFrom(const GossipThread::Token& gt,
+                         const RankedActor& actor,
                          const Settings::Config& cfg,
                          double nowGameSeconds,
                          GossipLog::HarvestStats& sweep,
@@ -320,7 +316,7 @@ namespace NarrativeEngine::GossipHarvest
                     GossipLog::Memory(id, actor.npc, importance, "no-content");
                     continue;
                 }
-                if (GossipClaims::IsClaimed(id)) {
+                if (GossipClaims::IsClaimed(gt, id)) {
                     ++sweep.rejectedClaimed;
                     GossipLog::Memory(id, actor.npc, importance, "claimed");
                     continue;
@@ -331,7 +327,7 @@ namespace NarrativeEngine::GossipHarvest
                 // related_event_ids, so without this three witnesses to one
                 // confrontation produce three rumors about it.
                 auto eventIds = ReadEventIds(m);
-                if (GossipClaims::AreEventsClaimed(eventIds)) {
+                if (GossipClaims::AreEventsClaimed(gt, eventIds)) {
                     ++sweep.rejectedSameEvent;
                     GossipLog::Memory(id, actor.npc, importance, "same-event");
                     continue;
@@ -343,8 +339,9 @@ namespace NarrativeEngine::GossipHarvest
 
         // Session totals. The log carries per-sweep numbers; these are the
         // "how has this session behaved overall" view.
-        void Accumulate(const GossipLog::HarvestStats& sweep)
+        void Accumulate(const GossipThread::Token& gt, const GossipLog::HarvestStats& sweep)
         {
+            auto& g_stats = GossipSim::MutableState(gt).harvest;
             g_stats.actorsRanked += sweep.actorsSampled;
             g_stats.memoriesExamined += sweep.memoriesExamined;
             g_stats.sentForGeneration += sweep.sentForGeneration;
@@ -369,6 +366,12 @@ namespace NarrativeEngine::GossipHarvest
                           double nowGameDay,
                           const GossipDispatch::CancellationHandle& cancel)
         {
+            // Session counters live in GossipState so the dashboard reads
+            // them from the same image as the rumors they produced. Bound
+            // through the token here rather than at file scope: a
+            // static-init reference would have no token to present, which
+            // is the gate doing its job.
+            auto& g_stats = GossipSim::MutableState(gt).harvest;
             const auto& cfg = Settings::Get();
             if (!GossipGraph::IsReady() || !SkyrimNetAPI::IsMemorySystemReady()) {
                 // Logged once per outage rather than every poll: this fires
@@ -399,13 +402,13 @@ namespace NarrativeEngine::GossipHarvest
             sweep.actorsSampled = actors.size();
             if (actors.empty()) {
                 GossipLog::Harvest(sweep);
-                Accumulate(sweep);
+                Accumulate(gt, sweep);
                 return true;
             }
 
             std::vector<Candidate> candidates;
             for (const auto& a : actors) {
-                CollectFrom(a, cfg, nowGameDay * 86400.0, sweep, candidates);
+                CollectFrom(gt, a, cfg, nowGameDay * 86400.0, sweep, candidates);
             }
             sweep.candidates = candidates.size();
 
@@ -443,7 +446,7 @@ namespace NarrativeEngine::GossipHarvest
                 // read per contact) and only the candidates in line for an
                 // evaluation need it. Failing it moves on to the next
                 // candidate rather than ending the sweep.
-                if (const float share = GossipSim::AvailableContactShare(c.owner);
+                if (const float share = GossipSim::AvailableContactShare(gt, c.owner);
                     share < cfg.gossipMinAvailableContactShare) {
                     ++sweep.rejectedIsolated;
                     GossipLog::Memory(c.memoryId,
@@ -464,7 +467,7 @@ namespace NarrativeEngine::GossipHarvest
                         return std::find(queued.eventIds.begin(), queued.eventIds.end(), id) != queued.eventIds.end();
                     });
                 });
-                if (overlapsPool || GossipClaims::AreEventsClaimed(c.eventIds)) {
+                if (overlapsPool || GossipClaims::AreEventsClaimed(gt, c.eventIds)) {
                     ++sweep.rejectedSameEvent;
                     GossipLog::Memory(c.memoryId, c.owner, c.importance, "same-event (this sweep)");
                     continue;
@@ -499,7 +502,7 @@ namespace NarrativeEngine::GossipHarvest
             }
 
             GossipLog::Harvest(sweep);
-            Accumulate(sweep);
+            Accumulate(gt, sweep);
             return true;
         }
     } // namespace
@@ -519,19 +522,6 @@ namespace NarrativeEngine::GossipHarvest
                      cfg.gossipHarvestWindowDays,
                      cfg.gossipMinMemoryImportance,
                      cfg.gossipEvalAttemptsPerHarvest);
-    }
-
-    void OnSessionStart()
-    {
-        // No lock. Harvest's only remaining shared state is the session
-        // counter block inside GossipState, and this runs at kNewGame /
-        // kPostLoadGame on the main thread — before Tick has restarted,
-        // so no tick can be in flight.
-        //
-        // Taking a lock here would be actively harmful now that a sweep
-        // blocks on two LLM calls: loading a game would hitch behind a
-        // model round trip.
-        g_stats = {};
     }
 
     bool RunSweep(const GossipThread::Token& gt, double asOfGameDay, const GossipDispatch::CancellationHandle& cancel)

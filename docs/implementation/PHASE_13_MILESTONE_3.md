@@ -852,7 +852,7 @@ against claims made by **earlier ticks**, which is still live.
 
 ### Step 7 — Delete the mutexes
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** Collect the guarantee the previous six steps bought.
 
@@ -868,6 +868,35 @@ fourth box to its diagram.
 
 **Verification:** builds clean; a deliberate call to a `GossipSim` internal from `AsyncDispatch` **fails to
 compile**, and the experiment is deleted. A long session produces identical behaviour to Step 6.
+
+Done. `GossipSim`, `GossipHarvest`, `GossipClaims` and `GossipContent` hold no simulation mutex between
+them. The two locks that remain in `GossipSim` guard the **handoff channels** — the published snapshot
+pointer and the pending state — which are by definition touched by more than one thread and are the only
+places that should be.
+
+The compile-time proof, against the real build flags:
+
+```text
+GossipSim::MutableState(pt)  from AsyncDispatch  ->  error C2664: cannot convert argument 1
+                                                     from 'const PluginThread::Token'
+                                                     to 'const GossipThread::Token &'
+GossipSim::MutableState(gt)  from GossipDispatch ->  exit 0
+```
+
+Two problems this step surfaced that the plan had not:
+
+**`OnSessionStart` was writing live state from the main thread.** A tick cancelled a moment earlier at
+`kPreLoadGame` is not a tick that has *finished* — it stops at its next checkpoint, which may be a blocking
+LLM call away. It now modifies the staging area instead, like every other inbound path. Its clock re-base
+disappeared entirely: nothing needs it once `SetHorizon` stamps the clock from the tick's own schedule.
+`GossipHarvest::OnSessionStart` is gone for the same reason, its one job now covered by the sim's.
+
+**`seedGameDay` was a whole interval stale.** The horizon was being set inside `Advance`, which runs *after*
+the harvest — so a rumor seeded during a tick dated itself from the previous tick's horizon. `SetHorizon` is
+now step 0 of the job, before anything can seed.
+
+`docs/THREADING_MODEL.md` gains the gossip worker in its diagram, a third token, and rows 7 and 8 of the
+enforcement table.
 
 ---
 

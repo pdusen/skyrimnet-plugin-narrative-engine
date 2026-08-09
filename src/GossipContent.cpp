@@ -157,9 +157,9 @@ namespace NarrativeEngine::GossipContent
         // `Abandon` is for the cases where nothing was learned — a call
         // failed, or an answer could not be read. The memory goes back
         // entirely so it can be tried again on a later sweep.
-        void Abandon(std::int64_t memoryId, const std::string& why)
+        void Abandon(const GossipThread::Token& gt, std::int64_t memoryId, const std::string& why)
         {
-            GossipClaims::Release(memoryId);
+            GossipClaims::Release(gt, memoryId);
             GossipLog::Note(std::format("content: memory {} released — {}", memoryId, why));
         }
 
@@ -168,9 +168,9 @@ namespace NarrativeEngine::GossipContent
         // repeating. The memory stays claimed so this owner is not asked
         // again, but the events go back so another witness with their own
         // account of the same happening can still seed from it.
-        void KeepMemoryOnly(std::int64_t memoryId, const std::string& why)
+        void KeepMemoryOnly(const GossipThread::Token& gt, std::int64_t memoryId, const std::string& why)
         {
-            GossipClaims::ReleaseEvents(memoryId);
+            GossipClaims::ReleaseEvents(gt, memoryId);
             GossipLog::Note(std::format("content: memory {} kept, events freed — {}", memoryId, why));
         }
 
@@ -216,7 +216,7 @@ namespace NarrativeEngine::GossipContent
 
             const auto result = SkyrimNetAPI::SendCustomPromptToLLM(gt, kSeedPromptName, kSeedVariant, ctx.dump());
             if (!result.ok) {
-                Abandon(sourceMemoryId, "seed call failed");
+                Abandon(gt, sourceMemoryId, "seed call failed");
                 return false;
             }
             // Strip a wrapping markdown fence before parsing. Models wrap
@@ -228,13 +228,13 @@ namespace NarrativeEngine::GossipContent
             auto j = nlohmann::json::parse(body, nullptr, false);
             if (j.is_discarded() || !j.is_object()) {
                 logger::warn("GossipContent: seed response not a JSON object: {}", body);
-                Abandon(sourceMemoryId, "unparseable seed response");
+                Abandon(gt, sourceMemoryId, "unparseable seed response");
                 return false;
             }
 
             const auto rawIt = j.find("bands");
             if (rawIt == j.end() || !rawIt->is_array() || rawIt->empty()) {
-                Abandon(sourceMemoryId, "seed response carried no bands");
+                Abandon(gt, sourceMemoryId, "seed response carried no bands");
                 return false;
             }
 
@@ -252,7 +252,7 @@ namespace NarrativeEngine::GossipContent
                 bands.push_back(LLMTextSanitizer::Sanitize(b.get<std::string>()));
             }
             if (bands.empty()) {
-                Abandon(sourceMemoryId, "all bands empty after sanitize");
+                Abandon(gt, sourceMemoryId, "all bands empty after sanitize");
                 return false;
             }
             // Short responses are padded by repeating the last band rather
@@ -262,9 +262,9 @@ namespace NarrativeEngine::GossipContent
                 bands.push_back(bands.back());
             }
 
-            const auto id = GossipSim::SeedRumor(owner, importance, sourceMemoryId, std::move(bands));
+            const auto id = GossipSim::SeedRumor(gt, owner, importance, sourceMemoryId, std::move(bands));
             if (id == 0) {
-                Abandon(sourceMemoryId, "simulation refused the seed");
+                Abandon(gt, sourceMemoryId, "simulation refused the seed");
                 return false;
             }
             return true;
@@ -312,7 +312,7 @@ namespace NarrativeEngine::GossipContent
             // Band 0 only. The later bands are the same story degraded,
             // and showing all three would just be noise.
             nlohmann::json activeRumors = nlohmann::json::array();
-            for (const auto& r : GossipSim::GetRumorViews(GossipSim::MutableState())) {
+            for (const auto& r : GossipSim::GetRumorViews(GossipSim::MutableState(gt))) {
                 if (!r.text.empty()) {
                     activeRumors.push_back(r.text);
                 }
@@ -392,13 +392,13 @@ namespace NarrativeEngine::GossipContent
             // seconds apart for two director calls and one answer. They
             // stay as a guard against claims made by EARLIER ticks, which
             // is still a live case.
-            if (GossipClaims::IsClaimed(c.memoryId)) {
+            if (GossipClaims::IsClaimed(gt, c.memoryId)) {
                 ++skipped;
                 GossipLog::Note(
                     std::format("content: memory {} skipped — already claimed since the pool was built", c.memoryId));
                 continue;
             }
-            if (GossipClaims::AreEventsClaimed(c.eventIds)) {
+            if (GossipClaims::AreEventsClaimed(gt, c.eventIds)) {
                 ++skipped;
                 GossipLog::Note(std::format("content: memory {} skipped — another account of the same "
                                             "happening is already in play",
@@ -407,7 +407,7 @@ namespace NarrativeEngine::GossipContent
             }
 
             // Claim BEFORE evaluating. Every path below settles it.
-            GossipClaims::Claim(c.memoryId, c.eventIds, claimGameDay);
+            GossipClaims::Claim(gt, c.memoryId, c.eventIds, claimGameDay);
 
             std::string duplicateOf;
             const auto verdict = Evaluate(gt, c, duplicateOf);
@@ -415,7 +415,7 @@ namespace NarrativeEngine::GossipContent
             if (cancel && cancel->IsCancelled()) {
                 // The verdict describes a world that has been replaced.
                 // Give the memory back rather than acting on it.
-                Abandon(c.memoryId, "evaluation returned after the world was replaced");
+                Abandon(gt, c.memoryId, "evaluation returned after the world was replaced");
                 return;
             }
 
@@ -423,7 +423,7 @@ namespace NarrativeEngine::GossipContent
                 // The owner would not tell this. Their memory is spent;
                 // the happening is not.
                 ++refused;
-                KeepMemoryOnly(c.memoryId, "owner would not share this publicly");
+                KeepMemoryOnly(gt, c.memoryId, "owner would not share this publicly");
                 continue;
             }
             if (verdict == "not_worthy") {
@@ -431,7 +431,7 @@ namespace NarrativeEngine::GossipContent
                 // handling as `private`: this owner is done with it, the
                 // happening is still open.
                 ++refused;
-                KeepMemoryOnly(c.memoryId, "not worth gossiping about");
+                KeepMemoryOnly(gt, c.memoryId, "not worth gossiping about");
                 continue;
             }
             if (verdict == "duplicate") {
@@ -450,7 +450,8 @@ namespace NarrativeEngine::GossipContent
                 // An unrecognised verdict is a prompt or model fault, not
                 // a judgement about the memory, so give it all back.
                 ++refused;
-                Abandon(c.memoryId,
+                Abandon(gt,
+                        c.memoryId,
                         verdict.empty() ? "evaluation gave no usable answer"
                                         : "evaluation carried an unrecognised verdict");
                 continue;

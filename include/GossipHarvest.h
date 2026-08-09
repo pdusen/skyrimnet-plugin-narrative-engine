@@ -88,9 +88,6 @@ namespace NarrativeEngine::GossipHarvest
 {
     void Initialize();
 
-    // kNewGame / kPostLoadGame. Re-bases the game-time pacing sample.
-    void OnSessionStart();
-
     // Run ONE sweep against the game time the tick was scheduled for.
     // Step 1 of the gossip tick job.
     //

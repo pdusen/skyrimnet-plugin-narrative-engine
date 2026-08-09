@@ -291,7 +291,6 @@ namespace NarrativeEngine
                 // has a file to write to.
                 GossipLog::OnSessionStart();
                 GossipSim::OnSessionStart();
-                GossipHarvest::OnSessionStart();
                 GossipTick::OnSessionStart();
                 Tick::Start();
                 break;
@@ -356,7 +355,6 @@ namespace NarrativeEngine
                 // a 200-day jump.
                 GossipLog::OnSessionStart();
                 GossipSim::OnSessionStart();
-                GossipHarvest::OnSessionStart();
                 GossipTick::OnSessionStart();
                 Tick::Start();
                 break;

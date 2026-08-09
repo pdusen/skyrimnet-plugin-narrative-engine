@@ -46,6 +46,12 @@ namespace NarrativeEngine::GossipTick
                 return;
             }
 
+            // 0. Stamp the clock BEFORE the harvest. A rumor seeded during
+            // this tick dates itself from the simulation clock, so setting
+            // the horizon afterwards would date every rumor one whole
+            // interval in the past.
+            GossipSim::SetHorizon(gt, asOf);
+
             // 1-2. Harvest, evaluate, compose, seed. Returns false when
             // the graph or SkyrimNet's memory system is not ready yet, in
             // which case the boundary stays owed rather than being spent

@@ -77,7 +77,18 @@ namespace NarrativeEngine::GossipSim
     // Milestone 3 step 7 replaces this with a GossipThread::Token-gated
     // accessor; until the work has actually moved threads, the existing
     // mutex is still what guards it.
-    GossipState& MutableState();
+    // The live state.
+    //
+    // Gated on GossipThread::Token, which is the whole of Milestone 3's
+    // safety argument: the gossip worker is the only thread that can
+    // produce one, so it is the only thread that can reach this, so the
+    // simulation needs no mutex. AsyncDispatch, the main thread and
+    // SKSE's serialisation thread have no way to call it — a compile
+    // error, not a rule.
+    //
+    // Everything they need instead: Snapshot() to read, PendingState() to
+    // write.
+    GossipState& MutableState(const GossipThread::Token&);
 
     // The last published image of the whole gossip world.
     //
@@ -109,6 +120,11 @@ namespace NarrativeEngine::GossipSim
     // before GossipLog closes its file.
     void OnSessionEnd();
 
+    // Stamp the simulation clock with the tick's horizon. Step 0 of the
+    // tick job — before the harvest, because a rumor seeded during this
+    // tick dates itself from this clock.
+    void SetHorizon(const GossipThread::Token&, double asOfGameDay);
+
     // Advance the simulation to `asOfGameDay` and drain everything due by
     // then. Step 3 of the gossip tick job.
     //
@@ -129,7 +145,8 @@ namespace NarrativeEngine::GossipSim
     // `bands` is the generation-banded text, produced at seed time by
     // GossipContent. Band selection at transmission time is by the
     // receiving carrier's generation.
-    std::uint32_t SeedRumor(RE::FormID originNpc,
+    std::uint32_t SeedRumor(const GossipThread::Token&,
+                            RE::FormID originNpc,
                             float notability,
                             std::int64_t sourceMemoryId,
                             std::vector<std::string> bands);
@@ -227,7 +244,7 @@ namespace NarrativeEngine::GossipSim
     // The province sentinel is excluded, as it is for the stall test: it
     // resolves to a random participant at transmission time and is a
     // lottery ticket rather than a contact.
-    float AvailableContactShare(RE::FormID npc);
+    float AvailableContactShare(const GossipThread::Token&, RE::FormID npc);
 
     // Every rumor still in the map, newest first. The map holds exactly
     // the rumors that have not been reaped, which is what the dashboard
