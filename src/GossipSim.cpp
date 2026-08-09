@@ -1,5 +1,7 @@
 #include <GossipSim.h>
 
+#include <GossipDispatch.h>
+
 #include <optional>
 
 #include <GossipState.h>
@@ -36,12 +38,6 @@ namespace NarrativeEngine::GossipSim
         // selected — materialising ~850 province edges per carrier to
         // model a 0.0001-weight channel would be absurd.
         constexpr RE::FormID kProvincePeer = 0xFFFFFFFF;
-
-        // Clamp on the game-time delta credited in one poll. A delta
-        // larger than this is almost certainly a console `set timescale`
-        // experiment or a debug time jump rather than play; crediting it
-        // in full would schedule an unbounded burst.
-        constexpr double kMaxGameDayDeltaPerPoll = 3.0;
 
         // Rumor, Carrier, QueueEntry and EventQueue now live in
         // GossipState.h, because the co-save and the dashboard both need
@@ -92,7 +88,6 @@ namespace NarrativeEngine::GossipSim
         // out.
         std::mutex g_pendingMutex;
         std::optional<GossipState> g_pending;
-        double g_secondsSinceTick = 0.0;
 
         std::mt19937 g_rng{1337};
 
@@ -816,7 +811,6 @@ namespace NarrativeEngine::GossipSim
         // multi-year jump on the first poll.
         g_lastGameDaySample = NowGameDay();
         g_simGameDay = g_lastGameDaySample;
-        g_secondsSinceTick = 0.0;
         g_counters.transmissions = 0;
         g_counters.wasted = 0;
         g_counters.memoriesWritten = 0;
@@ -862,7 +856,7 @@ namespace NarrativeEngine::GossipSim
         }
     }
 
-    void Poll(const PluginThread::Token&, double unpausedElapsedSeconds)
+    void Advance(const GossipThread::Token&, double asOfGameDay, const GossipDispatch::CancellationHandle& cancel)
     {
         const auto& cfg = Settings::Get();
         if (!cfg.gossipEnabled || !GossipGraph::IsReady()) {
@@ -871,92 +865,70 @@ namespace NarrativeEngine::GossipSim
 
         std::scoped_lock lock(g_mutex);
 
-        g_secondsSinceTick += unpausedElapsedSeconds;
-        const double interval = static_cast<double>(std::max(1, cfg.gossipTickIntervalSeconds));
-        if (g_secondsSinceTick < interval) {
-            return;
-        }
-        g_secondsSinceTick -= interval;
-
-        // Game time is sampled as a VALUE. Never a timer of our own —
-        // TIMESCALE is player-adjustable at runtime and the clock is not
-        // pause-aware.
-        const double now = NowGameDay();
-        if (g_lastGameDaySample < 0.0) {
-            g_lastGameDaySample = now;
-            g_simGameDay = now;
-            return;
-        }
-        double delta = now - g_lastGameDaySample;
-        if (delta < 0.0) {
-            // Clock went backwards — a load of an older save, or a
-            // console time change. Re-base rather than reason about it.
-            g_lastGameDaySample = now;
-            g_simGameDay = now;
-            return;
-        }
-        if (delta > kMaxGameDayDeltaPerPoll) {
-            // Credit only what we clamped to, and leave the sample
-            // BEHIND by the remainder so the rest is credited on
-            // subsequent polls.
-            //
-            // Advancing the sample to `now` here would silently discard
-            // the excess, leaving the simulation permanently behind the
-            // game clock — every clamped jump would lose real simulated
-            // time that never comes back.
-            GossipLog::Note(std::format("catch-up: game-time delta {:.2f} days; crediting {:.2f} now, "
-                                        "{:.2f} carried forward",
-                                        delta,
-                                        kMaxGameDayDeltaPerPoll,
-                                        delta - kMaxGameDayDeltaPerPoll));
-            delta = kMaxGameDayDeltaPerPoll;
-        }
-        g_lastGameDaySample += delta;
-        g_simGameDay += delta;
-
-        // Drain the due queue under BOTH a wall-clock budget and a count
-        // cap. Nothing is dropped: whatever is left stays queued and drains
-        // on the next firing, so the load spreads across ticks by design.
+        // The simulation clock is SET, not advanced by a sampled delta.
         //
-        // The TIME budget is the real governor. Per-event cost is dominated
-        // by the two AddMemory calls a transmission makes, and that cost
-        // grows with the size of SkyrimNet's memory database — so bounding
-        // time is self-tuning in a way that bounding a count is not. The
-        // count is now only a backstop against a pathological schedule.
+        // This is what makes a late tick still a correct tick: the job
+        // was scheduled for `asOfGameDay` and simulates the world up to
+        // exactly that moment, whether it ran on time or forty seconds
+        // late behind two LLM calls. Whatever happened after `asOfGameDay`
+        // is the next tick's business.
+        //
+        // It also retires kMaxGameDayDeltaPerPoll. That clamp existed to
+        // stop a console time jump crediting an unbounded burst in one
+        // poll; the scheduler now caps how many ticks may be outstanding,
+        // which bounds the same thing in ticks rather than in days and
+        // does it before the work is ever queued.
+        if (asOfGameDay < g_simGameDay) {
+            // Clock went backwards — a load of an older save, or a console
+            // time change. Re-base rather than reason about it.
+            g_simGameDay = asOfGameDay;
+            g_lastGameDaySample = asOfGameDay;
+            return;
+        }
+        g_simGameDay = asOfGameDay;
+        g_lastGameDaySample = asOfGameDay;
+
+        // Drain the due queue to completion. No wall-clock budget: nothing
+        // else runs on this thread, so there is nobody to yield to. The
+        // count cap survives purely as a runaway backstop — it costs
+        // nothing and is the difference between a bug being slow and a bug
+        // being a hang.
         //
         // Note an "event" is a carrier-STEP, not a conversation: each one
         // runs Poisson(conversationsPerDay * stepDays) conversations.
         const int cap = std::max(1, cfg.gossipMaxEventsPerTick);
-        const auto budgetStart = std::chrono::steady_clock::now();
-        const std::chrono::milliseconds budget{std::max(1, cfg.gossipMaxMillisecondsPerTick)};
         int processed = 0;
-        bool outOfTime = false;
         while (!g_queue.empty() && g_queue.top().dueGameDay <= g_simGameDay) {
             if (processed >= cap) {
+                GossipLog::Note(std::format("drain: stopped at the {}-event backstop with {} still due; "
+                                            "iGossipMaxEventsPerTick is too low or something is looping",
+                                            cap,
+                                            g_queue.size()));
                 break;
             }
-            // Checked every 4 events rather than every 16. The count cap no
-            // longer binds in practice, so this budget is the only thing
-            // governing the drain — and each event can make two AddMemory
-            // calls into SkyrimNet's vector database, whose cost is not
-            // something this side can predict. At a 16-event stride the
-            // budget could overshoot by ~32 database writes before noticing.
-            if (processed > 0 && (processed % 4) == 0 && std::chrono::steady_clock::now() - budgetStart > budget) {
-                outOfTime = true;
-                break;
+            // THE cancellation checkpoint that matters. Every step past
+            // this point can make two AddMemory calls into SkyrimNet's
+            // database, which lives outside our co-save and is not rolled
+            // back by loading an earlier game. A tick that keeps draining
+            // after a load keeps writing memories into a world with no
+            // record of the rumor that produced them.
+            if (cancel && cancel->IsCancelled()) {
+                GossipLog::Note(std::format("drain: abandoned after {} event(s) — the world it was "
+                                            "simulating has been replaced",
+                                            processed));
+                return;
             }
             const auto entry = g_queue.top();
             g_queue.pop();
             // Process AT the event's scheduled time, not at the current
-            // simulated time. This is what makes catch-up actually catch
-            // up: a carrier due on day 5.2 when the clock has jumped to
-            // day 6.0 reschedules from 5.2, is immediately due again,
-            // and works through its backlog inside this same drain loop.
+            // simulated time. A carrier due on day 5.2 when the tick's
+            // horizon is day 6.0 reschedules from 5.2, is immediately due
+            // again, and works through its backlog inside this same loop.
             //
-            // Using g_simGameDay instead would silently collapse each
-            // carrier's backlog to a single event per jump, so a 24-hour
-            // wait would advance every rumor by exactly one telling
-            // regardless of how much time passed.
+            // Using g_simGameDay instead would collapse each carrier's
+            // backlog to a single event per tick, so a 24-hour wait would
+            // advance every rumor by exactly one telling regardless of how
+            // much time passed.
             //
             // The loop cannot spin: a carrier reschedules a full
             // gossipStepDays ahead every time, so it can only fire
@@ -965,41 +937,7 @@ namespace NarrativeEngine::GossipSim
             ++processed;
         }
 
-        // Only complain when the queue is genuinely backed up — i.e. we
-        // stopped while events were still due. Stopping because nothing
-        // is due yet is the normal, healthy case and used to be reported
-        // as a stall.
-        const bool stillDue = !g_queue.empty() && g_queue.top().dueGameDay <= g_simGameDay;
-        if (stillDue) {
-            // Only the entries actually past their due time, because only
-            // those are work this poll deferred. The queue's total DEPTH is
-            // deliberately NOT reported here: every live carrier holds one
-            // scheduled future step at all times, so the depth is a census
-            // of the carrier population rather than any measure of backlog,
-            // and it barely moves during a drain — each processed event
-            // pops one entry and pushes that carrier's next step straight
-            // back. Printed beside an overrun it reads as a queue that
-            // never empties, which is the opposite of what it means. The
-            // dashboard carries it as `queued_events`, where a census
-            // number belongs.
-            const auto deferred = std::count_if(
-                g_queue.c.begin(), g_queue.c.end(), [](const QueueEntry& e) { return e.dueGameDay <= g_simGameDay; });
-            GossipLog::Note(std::format("catch-up: processed {} ({}), {} due events deferred to next poll",
-                                        processed,
-                                        outOfTime ? "time budget" : "work cap",
-                                        deferred));
-        }
-
         SweepAndReapLocked();
-
-        // One publication point, at the end of the unit of work. Harvest
-        // ran before this in Tick's ordering, so a snapshot taken here
-        // covers both halves.
-        //
-        // Milestone 3 step 5 narrows this to once per scheduled tick;
-        // until the work moves threads it fires on the existing 2-second
-        // sim cadence so the dashboard keeps the freshness it has today.
-        PublishSnapshot();
     }
 
     std::uint32_t SeedRumor(RE::FormID originNpc,
@@ -1382,6 +1320,5 @@ namespace NarrativeEngine::GossipSim
         // the pending state and has to be dropped here.
         std::scoped_lock lock(g_mutex);
         g_contactCache.clear();
-        g_secondsSinceTick = 0.0;
     }
 } // namespace NarrativeEngine::GossipSim

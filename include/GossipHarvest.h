@@ -3,6 +3,7 @@
 #include <cstddef>
 
 #include <GossipState.h>
+#include <GossipThread.h>
 #include <PluginThread.h>
 
 // GossipHarvest — turns SkyrimNet memories into rumors.
@@ -89,9 +90,19 @@ namespace NarrativeEngine::GossipHarvest
     // kNewGame / kPostLoadGame. Re-bases the game-time pacing sample.
     void OnSessionStart();
 
-    // Tick-driven. Runs a sweep every fGossipHarvestIntervalGameHours of
-    // in-world time; no-op otherwise.
-    void Poll(const PluginThread::Token&, double unpausedElapsedSeconds);
+    // Run ONE sweep against the game time the tick was scheduled for.
+    // Step 1 of the gossip tick job.
+    //
+    // Carries no cadence of its own — the scheduler owns that, and the
+    // owed-sweep backlog that used to live here now lives in the job
+    // queue as stamped ticks. Returns false if the sweep could not run
+    // (graph or memory system not ready), which is the scheduler's cue to
+    // leave the boundary owed rather than consume it.
+    //
+    // `asOfGameDay` is a HORIZON as well as a timestamp: memories written
+    // after it are not examined, so a tick that runs late still harvests
+    // the world as it stood when it was due.
+    bool RunSweep(const GossipThread::Token&, double asOfGameDay);
 
     // Session totals, reset on OnSessionStart. Per-sweep numbers go to
     // the gossip trace as HARVEST lines — the two are kept apart on

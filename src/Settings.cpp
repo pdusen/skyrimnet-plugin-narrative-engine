@@ -277,8 +277,6 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("Gossip", "iGossipTickIntervalSeconds", dst.gossipTickIntervalSeconds));
             dst.gossipMaxEventsPerTick =
                 static_cast<int>(ini.GetLongValue("Gossip", "iGossipMaxEventsPerTick", dst.gossipMaxEventsPerTick));
-            dst.gossipMaxMillisecondsPerTick = static_cast<int>(
-                ini.GetLongValue("Gossip", "iGossipMaxMillisecondsPerTick", dst.gossipMaxMillisecondsPerTick));
             dst.gossipConversationsPerDay = static_cast<float>(
                 ini.GetDoubleValue("Gossip", "fGossipConversationsPerDay", dst.gossipConversationsPerDay));
             dst.gossipWeightHousehold =

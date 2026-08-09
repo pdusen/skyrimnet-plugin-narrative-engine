@@ -1,5 +1,7 @@
 #include <GossipHarvest.h>
 
+#include <GossipThread.h>
+
 #include <EventLogUtil.h>
 #include <GossipClaims.h>
 #include <GossipContent.h>
@@ -30,8 +32,6 @@ namespace NarrativeEngine::GossipHarvest
         // but seeded from the same iGossipRandomSeed so a run stays
         // reproducible end to end.
         std::mt19937 g_rng{7919};
-        double g_lastGameDaySample = -1.0;
-        double g_gameHoursSinceSweep = 0.0;
         // Whether the "cannot sweep yet" note has already been emitted for
         // the current outage; reset the moment a sweep succeeds.
         bool g_deferredLogged = false;
@@ -247,8 +247,22 @@ namespace NarrativeEngine::GossipHarvest
                     GossipLog::Memory(id, actor.npc, importance, "no-game-time");
                     continue;
                 }
+                // `nowGameSeconds` is the TICK'S HORIZON, not the current
+                // clock. A negative age therefore means the memory was
+                // written after the moment this tick is simulating, and is
+                // discarded for being in the future rather than for being
+                // stale — the next tick will pick it up.
+                //
+                // The two share a counter but not a trace message, because
+                // "the harvest window is too short" and "the queue ran
+                // late" are diagnosed completely differently.
                 const double ageDays = (nowGameSeconds - gameTimeIt->get<double>()) / 86400.0;
-                if (ageDays > cfg.gossipHarvestWindowDays || ageDays < 0.0) {
+                if (ageDays < 0.0) {
+                    ++sweep.rejectedTooOld;
+                    GossipLog::Memory(id, actor.npc, importance, std::format("after-horizon ({:.1f}d)", -ageDays));
+                    continue;
+                }
+                if (ageDays > cfg.gossipHarvestWindowDays) {
                     ++sweep.rejectedTooOld;
                     GossipLog::Memory(id, actor.npc, importance, std::format("too-old ({:.1f}d)", ageDays));
                     continue;
@@ -505,64 +519,26 @@ namespace NarrativeEngine::GossipHarvest
     void OnSessionStart()
     {
         std::scoped_lock lock(g_mutex);
-        g_lastGameDaySample = -1.0;
-        g_gameHoursSinceSweep = 0.0;
         g_stats = {};
     }
 
-    void Poll(const PluginThread::Token&, double)
+    bool RunSweep(const GossipThread::Token&, double asOfGameDay)
     {
         const auto& cfg = Settings::Get();
         if (!cfg.gossipEnabled || !cfg.gossipHarvestEnabled) {
-            return;
+            return false;
         }
 
-        std::scoped_lock lock(g_mutex);
-        const double now = NowGameDay();
-        if (g_lastGameDaySample < 0.0) {
-            g_lastGameDaySample = now;
-            return;
-        }
-        const double deltaHours = (now - g_lastGameDaySample) * 24.0;
-        g_lastGameDaySample = now;
-        if (deltaHours <= 0.0) {
-            return;
-        }
-        // Clamped for the same reason GossipSim clamps: a console time jump
-        // should not trigger a burst of sweeps.
-        g_gameHoursSinceSweep += std::min(deltaHours, 72.0);
-
-        const double interval = std::max(0.1f, cfg.gossipHarvestIntervalGameHours);
-
-        // Resting passes in-world time in large jumps, so a single poll can
-        // arrive owing several sweeps — a 24-hour rest against a 12-hour
-        // interval owes two. Those are worked off rather than dropped: the
-        // world should have gossiped twice while the player slept.
+        // No accumulator, no owed-sweep arithmetic, no clamp. The
+        // scheduler decides WHEN a sweep is due and hands this the game
+        // time it is due FOR; this function's only job is to run one
+        // sweep against that horizon.
         //
-        // The backlog is capped so a very long rest, or a console time jump,
-        // cannot owe an unbounded run of them. Whatever exceeds the cap is
-        // discarded deliberately — there is no value in harvesting the same
-        // memory corpus six times in a row.
-        constexpr int kMaxOwedSweeps = 4;
-        g_gameHoursSinceSweep = std::min(g_gameHoursSinceSweep, interval * kMaxOwedSweeps);
-
-        if (g_gameHoursSinceSweep < interval) {
-            return;
-        }
-
-        // One sweep per poll, and only ONE. The remainder stays on the
-        // accumulator, so the next poll two seconds later takes the next
-        // owed sweep and the backlog drains within a few seconds of game
-        // time. Running them all inside this call would mean several
-        // rounds of per-actor queries while holding the mutex, and would
-        // fire several LLM calls at once.
-        if (!RunSweepLocked(now)) {
-            // It could not run. Leave the accumulator untouched so this
-            // sweep is owed again next poll instead of being consumed by
-            // an attempt that did nothing.
-            return;
-        }
-        g_gameHoursSinceSweep -= interval;
+        // The owed-sweep backlog that used to live here now lives in the
+        // job queue: two crossed interval boundaries enqueue two stamped
+        // ticks, and the queue runs them in schedule order.
+        std::scoped_lock lock(g_mutex);
+        return RunSweepLocked(asOfGameDay);
     }
 
     Stats GetStats(const GossipState& st)

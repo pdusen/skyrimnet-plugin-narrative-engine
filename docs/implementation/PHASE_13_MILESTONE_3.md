@@ -750,7 +750,7 @@ incoming one has no rumors for.
 
 ### Step 5 — Scheduled, stamped, cancellable ticks on the gossip thread
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** The work changes threads. This is the step the milestone exists for.
 
@@ -776,6 +776,29 @@ one's rumors present in the second's `active_rumors`. Confirm the plugin thread'
 handful of microseconds per poll. Load a save mid-tick and confirm the trace shows the tick abandoning, with
 no `TELL` lines after the load stamped for the old world. Confirm `Stop()` during an in-flight tick unwinds
 promptly rather than waiting out the LLM timeout.
+
+Built; the in-game half is Step 8. `GossipTick` owns the schedule, `Tick` is down to one call, and
+`GossipSim::Poll` / `GossipHarvest::Poll` / `GossipLog::Poll` no longer exist — replaced by
+`Advance(gt, asOf, cancel)`, `RunSweep(gt, asOf)` and `Flush()`.
+
+Two things the plan did not anticipate:
+
+**The backlog cap cannot have its own counter.** The obvious implementation keeps an `outstanding` count in
+the scheduler and decrements it from the job's exit path — but a tick **cancelled while still queued never
+reaches its exit path**, so the count creeps upward across loads until the cap silences gossip permanently.
+`GossipDispatch::OutstandingCount()` is now the single answer, because the dispatcher already releases
+handles on every exit, cancelled ones included.
+
+**Step 5 cannot ship without hopping the LLM callbacks.** Harvest now runs on the gossip thread but its
+content-generation callbacks still land on `AsyncDispatch`, so without a hop two threads would touch gossip
+state — the mutexes would hold, but `GossipContent`'s unlocked `GetRumorViews` read would not. The
+callbacks therefore wrap their bodies in `GossipDispatch::EnqueueWork` for exactly one step; Step 6 deletes
+the wrapper along with everything else in the continuation chain.
+
+Deleted: `iGossipMaxMillisecondsPerTick` and the budget check, `kMaxGameDayDeltaPerPoll` and its catch-up
+clamp, the `catch-up:` trace line, `GossipHarvest`'s owed-sweep accumulator, and `GossipLog`'s five-second
+flush throttle. `iGossipMaxEventsPerTick` survives as a runaway backstop and now says so in the trace when
+it binds.
 
 ---
 

@@ -3,6 +3,7 @@
 #include <EvaluationPipeline.h>
 #include <EventLogUtil.h>
 #include <GossipClaims.h>
+#include <GossipDispatch.h>
 #include <GossipGraph.h>
 #include <GossipLog.h>
 #include <GossipSim.h>
@@ -214,53 +215,64 @@ namespace NarrativeEngine::GossipContent
                 ctx.dump(),
                 [sourceMemoryId, owner, importance, bandCount](
                     const PluginThread::Token&, std::string response, bool success) {
-                    if (!success) {
-                        Abandon(sourceMemoryId, "seed call failed");
-                        return;
-                    }
-                    const auto body = EvaluationPipeline::StripMarkdownFences(response);
-                    auto j = nlohmann::json::parse(body, nullptr, false);
-                    if (j.is_discarded() || !j.is_object()) {
-                        logger::warn("GossipContent: seed response not a JSON object: {}", body);
-                        Abandon(sourceMemoryId, "unparseable seed response");
-                        return;
-                    }
+                    // SkyrimNet answers on a foreign thread and our wrapper
+                    // lands us on AsyncDispatch's. Gossip state belongs to
+                    // GossipDispatch's worker, so hop once more before
+                    // touching any of it.
+                    //
+                    // Throwaway: step 6 makes these calls blocking and the
+                    // whole continuation chain collapses into a loop.
+                    GossipDispatch::EnqueueWork(
+                        [sourceMemoryId, owner, importance, bandCount, response = std::move(response), success](
+                            const GossipThread::Token&) {
+                            if (!success) {
+                                Abandon(sourceMemoryId, "seed call failed");
+                                return;
+                            }
+                            const auto body = EvaluationPipeline::StripMarkdownFences(response);
+                            auto j = nlohmann::json::parse(body, nullptr, false);
+                            if (j.is_discarded() || !j.is_object()) {
+                                logger::warn("GossipContent: seed response not a JSON object: {}", body);
+                                Abandon(sourceMemoryId, "unparseable seed response");
+                                return;
+                            }
 
-                    const auto rawIt = j.find("bands");
-                    if (rawIt == j.end() || !rawIt->is_array() || rawIt->empty()) {
-                        Abandon(sourceMemoryId, "seed response carried no bands");
-                        return;
-                    }
+                            const auto rawIt = j.find("bands");
+                            if (rawIt == j.end() || !rawIt->is_array() || rawIt->empty()) {
+                                Abandon(sourceMemoryId, "seed response carried no bands");
+                                return;
+                            }
 
-                    std::vector<std::string> bands;
-                    bands.reserve(rawIt->size());
-                    for (const auto& b : *rawIt) {
-                        if (!b.is_string()) {
-                            continue;
-                        }
-                        // Sanitize AT THE POINT OF EXTRACTION, before this
-                        // text is cached, persisted to the co-save, or
-                        // written into a memory. Band text reaches both the
-                        // save payload and SkyrimNet's prompt context, so
-                        // smart quotes, dashes and zero-width characters
-                        // would travel a long way.
-                        bands.push_back(LLMTextSanitizer::Sanitize(b.get<std::string>()));
-                    }
-                    if (bands.empty()) {
-                        Abandon(sourceMemoryId, "all bands empty after sanitize");
-                        return;
-                    }
-                    // Short responses are padded by repeating the last band
-                    // rather than rejected — a model returning two of three
-                    // usable versions is still usable.
-                    while (static_cast<int>(bands.size()) < bandCount) {
-                        bands.push_back(bands.back());
-                    }
+                            std::vector<std::string> bands;
+                            bands.reserve(rawIt->size());
+                            for (const auto& b : *rawIt) {
+                                if (!b.is_string()) {
+                                    continue;
+                                }
+                                // Sanitize AT THE POINT OF EXTRACTION, before this
+                                // text is cached, persisted to the co-save, or
+                                // written into a memory. Band text reaches both the
+                                // save payload and SkyrimNet's prompt context, so
+                                // smart quotes, dashes and zero-width characters
+                                // would travel a long way.
+                                bands.push_back(LLMTextSanitizer::Sanitize(b.get<std::string>()));
+                            }
+                            if (bands.empty()) {
+                                Abandon(sourceMemoryId, "all bands empty after sanitize");
+                                return;
+                            }
+                            // Short responses are padded by repeating the last band
+                            // rather than rejected — a model returning two of three
+                            // usable versions is still usable.
+                            while (static_cast<int>(bands.size()) < bandCount) {
+                                bands.push_back(bands.back());
+                            }
 
-                    const auto id = GossipSim::SeedRumor(owner, importance, sourceMemoryId, std::move(bands));
-                    if (id == 0) {
-                        Abandon(sourceMemoryId, "simulation refused the seed");
-                    }
+                            const auto id = GossipSim::SeedRumor(owner, importance, sourceMemoryId, std::move(bands));
+                            if (id == 0) {
+                                Abandon(sourceMemoryId, "simulation refused the seed");
+                            }
+                        });
                 });
 
             if (!queued) {
@@ -347,82 +359,86 @@ namespace NarrativeEngine::GossipContent
                 // candidate under evaluation keeps this callback independent
                 // of the pool's lifetime and of any later mutation of it.
                 [walk, c](const PluginThread::Token&, std::string response, bool success) {
-                    if (!success) {
-                        Abandon(c.memoryId, "evaluation call failed");
-                        Advance(walk);
-                        return;
-                    }
-                    // Strip a wrapping markdown fence before parsing. Models
-                    // wrap their JSON in a json code fence often enough that
-                    // the instruction not to cannot be relied on, and the
-                    // whole response is discarded when they do — one seed
-                    // was lost this way to an otherwise perfect object.
-                    const auto body = EvaluationPipeline::StripMarkdownFences(response);
-                    auto j = nlohmann::json::parse(body, nullptr, false);
-                    if (j.is_discarded() || !j.is_object()) {
-                        logger::warn("GossipContent: evaluation response not a JSON object: {}", body);
-                        Abandon(c.memoryId, "unparseable evaluation response");
-                        Advance(walk);
-                        return;
-                    }
+                    // Same hop as the seed stage, and for the same reason.
+                    GossipDispatch::EnqueueWork([walk, c, response = std::move(response), success](
+                                                    const GossipThread::Token&) {
+                        if (!success) {
+                            Abandon(c.memoryId, "evaluation call failed");
+                            Advance(walk);
+                            return;
+                        }
+                        // Strip a wrapping markdown fence before parsing. Models
+                        // wrap their JSON in a json code fence often enough that
+                        // the instruction not to cannot be relied on, and the
+                        // whole response is discarded when they do — one seed
+                        // was lost this way to an otherwise perfect object.
+                        const auto body = EvaluationPipeline::StripMarkdownFences(response);
+                        auto j = nlohmann::json::parse(body, nullptr, false);
+                        if (j.is_discarded() || !j.is_object()) {
+                            logger::warn("GossipContent: evaluation response not a JSON object: {}", body);
+                            Abandon(c.memoryId, "unparseable evaluation response");
+                            Advance(walk);
+                            return;
+                        }
 
-                    auto verdict = j.value("verdict", std::string{});
-                    std::transform(verdict.begin(), verdict.end(), verdict.begin(), [](unsigned char ch) {
-                        return static_cast<char>(std::tolower(ch));
+                        auto verdict = j.value("verdict", std::string{});
+                        std::transform(verdict.begin(), verdict.end(), verdict.begin(), [](unsigned char ch) {
+                            return static_cast<char>(std::tolower(ch));
+                        });
+
+                        if (verdict == "private") {
+                            // The owner would not tell this. Their memory is
+                            // spent; the happening is not.
+                            KeepMemoryOnly(c.memoryId, "owner would not share this publicly");
+                            Advance(walk);
+                            return;
+                        }
+                        if (verdict == "not_worthy") {
+                            // Nothing here anyone would stop to listen to. Same
+                            // claim handling as `private`: this owner is done
+                            // with it, the happening is still open.
+                            KeepMemoryOnly(c.memoryId, "not worth gossiping about");
+                            Advance(walk);
+                            return;
+                        }
+                        if (verdict == "duplicate") {
+                            // The story is already going round. Both the memory
+                            // and its events stay claimed — this happening has
+                            // had its rumor, and no other account of it should
+                            // start a second one.
+                            const auto which = j.value("duplicate_of", std::string{});
+                            GossipLog::Note(std::format("content: memory {} claimed, no rumor — already covered{}{}",
+                                                        c.memoryId,
+                                                        which.empty() ? "" : " by: ",
+                                                        LLMTextSanitizer::Sanitize(which)));
+                            Advance(walk);
+                            return;
+                        }
+                        if (verdict != "seed") {
+                            // An unrecognised verdict is a prompt or model
+                            // fault, not a judgement about the memory, so give
+                            // it all back.
+                            Abandon(c.memoryId,
+                                    verdict.empty() ? "evaluation carried no verdict"
+                                                    : "evaluation carried an unrecognised verdict");
+                            Advance(walk);
+                            return;
+                        }
+
+                        // Accepted. The sweep's seed budget is spent HERE rather
+                        // than when the bands arrive: composition is a separate
+                        // call that can still fail, and retrying a different
+                        // candidate on that failure would make a sweep's cost
+                        // unbounded by anything the settings say. A failed
+                        // composition releases the memory, so it comes back
+                        // round on a later sweep.
+                        --walk->seedsRemaining;
+                        GossipLog::Note(std::format("content: memory {} passed evaluation — composing", c.memoryId));
+                        RequestBands(c);
+                        if (walk->seedsRemaining > 0) {
+                            Advance(walk);
+                        }
                     });
-
-                    if (verdict == "private") {
-                        // The owner would not tell this. Their memory is
-                        // spent; the happening is not.
-                        KeepMemoryOnly(c.memoryId, "owner would not share this publicly");
-                        Advance(walk);
-                        return;
-                    }
-                    if (verdict == "not_worthy") {
-                        // Nothing here anyone would stop to listen to. Same
-                        // claim handling as `private`: this owner is done
-                        // with it, the happening is still open.
-                        KeepMemoryOnly(c.memoryId, "not worth gossiping about");
-                        Advance(walk);
-                        return;
-                    }
-                    if (verdict == "duplicate") {
-                        // The story is already going round. Both the memory
-                        // and its events stay claimed — this happening has
-                        // had its rumor, and no other account of it should
-                        // start a second one.
-                        const auto which = j.value("duplicate_of", std::string{});
-                        GossipLog::Note(std::format("content: memory {} claimed, no rumor — already covered{}{}",
-                                                    c.memoryId,
-                                                    which.empty() ? "" : " by: ",
-                                                    LLMTextSanitizer::Sanitize(which)));
-                        Advance(walk);
-                        return;
-                    }
-                    if (verdict != "seed") {
-                        // An unrecognised verdict is a prompt or model
-                        // fault, not a judgement about the memory, so give
-                        // it all back.
-                        Abandon(c.memoryId,
-                                verdict.empty() ? "evaluation carried no verdict"
-                                                : "evaluation carried an unrecognised verdict");
-                        Advance(walk);
-                        return;
-                    }
-
-                    // Accepted. The sweep's seed budget is spent HERE rather
-                    // than when the bands arrive: composition is a separate
-                    // call that can still fail, and retrying a different
-                    // candidate on that failure would make a sweep's cost
-                    // unbounded by anything the settings say. A failed
-                    // composition releases the memory, so it comes back
-                    // round on a later sweep.
-                    --walk->seedsRemaining;
-                    GossipLog::Note(std::format("content: memory {} passed evaluation — composing", c.memoryId));
-                    RequestBands(c);
-                    if (walk->seedsRemaining > 0) {
-                        Advance(walk);
-                    }
                 });
 
             if (!queued) {

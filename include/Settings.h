@@ -551,7 +551,6 @@ namespace NarrativeEngine::Settings
         // enough that it should never bind; lower it only if profiling
         // shows the time budget is not doing its job.
         int gossipMaxEventsPerTick = 5000;
-        int gossipMaxMillisecondsPerTick = 8;
 
         // A carrier's finite daily budget of gossip-capable conversations,
         // divided among their contacts in proportion to the channel

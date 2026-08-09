@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include <GossipDispatch.h>
 #include <GossipState.h>
 #include <PluginThread.h>
 
@@ -108,9 +109,18 @@ namespace NarrativeEngine::GossipSim
     // before GossipLog closes its file.
     void OnSessionEnd();
 
-    // Plugin-thread poll on the Tick-driven accumulator. Samples game
-    // time, then processes at most iGossipMaxEventsPerTick due events.
-    void Poll(const PluginThread::Token&, double unpausedElapsedSeconds);
+    // Advance the simulation to `asOfGameDay` and drain everything due by
+    // then. Step 3 of the gossip tick job.
+    //
+    // The clock is SET rather than advanced by a sampled delta, which is
+    // what lets a tick that ran late still be a correct tick: it
+    // simulates up to the moment it was scheduled for and no further.
+    //
+    // Runs to completion — no time budget, because nothing else runs on
+    // the gossip thread and there is nobody to yield to. `cancel` is
+    // polled between events; a tick abandoned mid-drain stops writing
+    // memories into a world that has been replaced under it.
+    void Advance(const GossipThread::Token&, double asOfGameDay, const GossipDispatch::CancellationHandle& cancel);
 
     // Introduce a rumor originating with `originNpc`, sourced from
     // `sourceMemoryId`. Returns the rumor's id, or 0 if it could not be

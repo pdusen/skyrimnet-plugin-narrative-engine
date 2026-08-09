@@ -22,7 +22,6 @@ namespace NarrativeEngine::GossipLog
 
         std::mutex g_mutex;
         std::ofstream g_file;
-        double g_secondsSinceFlush = 0.0;
         std::uint32_t g_sessionCounter = 0;
         std::size_t g_linesWritten = 0;
 
@@ -152,17 +151,15 @@ namespace NarrativeEngine::GossipLog
         g_file.close();
     }
 
-    void Poll(const PluginThread::Token&, double unpausedElapsedSeconds)
+    void Flush()
     {
         std::scoped_lock lock(g_mutex);
         if (!g_file.is_open()) {
             return;
         }
-        g_secondsSinceFlush += unpausedElapsedSeconds;
-        if (g_secondsSinceFlush < 5.0) {
-            return;
-        }
-        g_secondsSinceFlush = 0.0;
+        // No throttle any more. This is called once per gossip tick
+        // rather than every couple of seconds, and a tick is already the
+        // unit at which the trace becomes worth reading.
         g_file.flush();
     }
 

@@ -20,6 +20,7 @@
 #include <GossipHarvest.h>
 #include <GossipLog.h>
 #include <GossipSim.h>
+#include <GossipTick.h>
 #include <HoldGrid.h>
 #include <LetterPool.h>
 #include <logger.h>
@@ -208,6 +209,7 @@ namespace NarrativeEngine
                 GossipSim::Initialize();
                 GossipContent::Initialize();
                 GossipHarvest::Initialize();
+                GossipTick::Initialize();
                 AsyncDispatch::Start();
                 EvalDispatch::Start();
                 // The gossip simulation's own worker. Third instance of
@@ -276,6 +278,7 @@ namespace NarrativeEngine
                 NPCVisitBeat_Persistence::OnRevert();
                 AmbushBeat_Persistence::OnRevert();
                 VisitState::OnRevert();
+                GossipDispatch::CancelAll();
                 GossipSim::OnRevert();
                 GossipClaims::OnRevert();
                 PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
@@ -289,6 +292,7 @@ namespace NarrativeEngine
                 GossipLog::OnSessionStart();
                 GossipSim::OnSessionStart();
                 GossipHarvest::OnSessionStart();
+                GossipTick::OnSessionStart();
                 Tick::Start();
                 break;
             case SKSE::MessagingInterface::kPreLoadGame:
@@ -324,6 +328,7 @@ namespace NarrativeEngine
                 NPCVisitBeat_Persistence::OnRevert();
                 AmbushBeat_Persistence::OnRevert();
                 VisitState::OnRevert();
+                GossipDispatch::CancelAll();
                 GossipSim::OnRevert();
                 GossipClaims::OnRevert();
                 PhaseTracker::Reset();
@@ -352,6 +357,7 @@ namespace NarrativeEngine
                 GossipLog::OnSessionStart();
                 GossipSim::OnSessionStart();
                 GossipHarvest::OnSessionStart();
+                GossipTick::OnSessionStart();
                 Tick::Start();
                 break;
             default:
@@ -466,6 +472,13 @@ namespace NarrativeEngine
             AmbushBeat_Persistence::OnRevert();
             LetterPool::OnRevert();
             VisitState::OnRevert();
+            // Cancel BEFORE staging the empty state. A tick still running
+            // is simulating a world that no longer exists, and every
+            // carrier-step it gets through writes two memories into
+            // SkyrimNet's database — which lives outside our co-save and
+            // is not rolled back by loading an earlier game. Disowning
+            // its results at the end would not unwrite those.
+            GossipDispatch::CancelAll();
             GossipSim::OnRevert();
             GossipClaims::OnRevert();
             // Future subsystems append their OnRevert calls here.

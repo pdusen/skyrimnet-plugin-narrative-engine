@@ -46,7 +46,15 @@ namespace NarrativeEngine::GossipLog
 
     // Tick-driven flush, so a crash loses at most one interval of lines
     // rather than the whole session's tail.
-    void Poll(const PluginThread::Token&, double unpausedElapsedSeconds);
+    // Flush the trace to disk. Called at the end of each gossip tick,
+    // from the gossip thread — so the order lines reach the file is the
+    // order the work happened in.
+    //
+    // GossipLog keeps its mutex, unlike the rest of gossip. It is a file
+    // writer rather than simulation state, and its session-boundary
+    // writes still come from the main thread; a mutex on a log write is
+    // not what Milestone 3 is trying to remove.
+    void Flush();
 
     // True when a file is open and lines will actually land.
     bool IsActive();
