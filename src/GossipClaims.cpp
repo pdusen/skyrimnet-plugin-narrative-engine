@@ -133,6 +133,25 @@ namespace NarrativeEngine::GossipClaims
         }
     }
 
+    void ReleaseEvents(std::int64_t memoryId)
+    {
+        std::size_t freed = 0;
+        {
+            std::scoped_lock lock(g_mutex);
+            for (auto it = g_eventClaims.begin(); it != g_eventClaims.end();) {
+                if (it->second.claimedByMemoryId == memoryId) {
+                    it = g_eventClaims.erase(it);
+                    ++freed;
+                } else {
+                    ++it;
+                }
+            }
+        }
+        if (freed > 0) {
+            GossipLog::Note(std::format("claim: memory {} kept, but released {} related event(s)", memoryId, freed));
+        }
+    }
+
     std::size_t Sweep(double nowGameDay)
     {
         std::vector<std::int64_t> expired;

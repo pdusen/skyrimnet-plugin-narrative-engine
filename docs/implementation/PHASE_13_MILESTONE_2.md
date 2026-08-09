@@ -294,9 +294,9 @@ transitions to `Live` and the origin carrier's first step is scheduled.
 Because every band arrives together, there is exactly one handshake and no mid-flight state where some bands
 exist and others do not.
 
-If generation fails, or the model returns `should_seed: false`, the rumor is abandoned and **its claim is
-released** — otherwise a transient LLM failure or a single "this is not worth gossiping about" verdict would
-permanently burn a memory that never produced anything.
+If generation fails, the rumor is abandoned and **its claim is released** — otherwise a transient LLM
+failure would permanently burn a memory that never produced anything. A refusal is different: it is an
+answer rather than an error, and Step 11 covers what each verdict does to the claims.
 
 #### Memory text is composed, not generated
 
@@ -605,7 +605,8 @@ or like a different event?
 3. **Every band string through `LLMTextSanitizer::Sanitize` at the point of extraction from the response
    JSON** — before it is cached, persisted, or written into a memory.
 4. On success: store the bands, transition to `Live`, schedule the origin carrier's first step.
-5. On failure or `should_seed: false`: abandon the rumor and `GossipClaims::Release` its memory.
+5. On failure: abandon the rumor and `GossipClaims::Release` its memory. Refusal verdicts have their own
+   claim handling — see Step 11.
 6. Band selection at transmission time is `min(generation / 3, bands - 1)`.
 7. Co-save gains the band strings. Three bands of ~150 characters across 40 live rumors is ~18 KB on top of
    the existing payload.
@@ -738,6 +739,56 @@ it does `entry.actor->As<RE::TESNPC>()` and gets 999 distinct NPCs, so in practi
 **base form**, whatever CommonLibSSE-NG names its type. The Step 3 fix is unaffected, because it resolves
 `entry.refID` rather than that pointer, but the argument offered for it was based on a misreading and should
 not be reused.
+
+---
+
+### Step 11 — The seed call decides three things, not one
+
+- [x] Complete
+
+**Goal:** Stop seeding rumors an NPC would never repeat, and stop seeding a story that is already going
+round — both judged in the call that was already being made.
+
+The seed prompt receives two things it did not have before:
+
+- **The owner's character profile**, via `render_character_profile("full", npc.UUID)` — the same mechanism
+  the letter composer uses. `npc.UUID` is keyed on the placed reference, so `GossipGraph::ActorRefFor`
+  converts the graph's base form first. Without it the prompt knew only a name, which is not enough to
+  judge whether someone would repeat a thing.
+- **Every unreaped rumor's band-0 text**, from `GossipSim::GetRumorViews`. Band 0 only; the later bands are
+  the same story degraded and would be noise.
+
+It answers three questions in order and stops at the first that settles it, returning exactly one verdict:
+
+| Verdict      | Meaning                                      | Memory claim | Event claims |
+| ------------ | -------------------------------------------- | ------------ | ------------ |
+| `private`    | This person would not tell the world          | kept         | **released** |
+| `not_worthy` | Nobody would stop to listen                   | kept         | **released** |
+| `duplicate`  | A circulating rumor is already about this     | kept         | kept         |
+| `seed`       | Passes all three; bands follow                | kept         | kept         |
+
+The split in the last column is the whole point. `private` and `not_worthy` are judgements about **this
+owner**, so their memory is spent — asking again next sweep would burn another call on the same answer —
+but the happening is untouched, and another witness with their own account of it can still seed. `duplicate`
+is a judgement about **the happening**, so the events stay claimed and no other account can start a second
+rumor about it.
+
+A failed call, an unparseable response, or an unrecognised verdict releases everything: nothing was learned,
+so nothing should be spent. That is deliberately distinct from a refusal, which is an answer.
+
+**Why this subsumes the per-subject cooldown.** A metadata gate was designed for the repeated-storyline case
+(Faralda's two trysts) and then measured against the corpus. It does not work. Tag overlap is inverted — the
+pair that must be blocked scores 0.25 while the same-cast-different-story pair that must survive scores 0.32.
+Actor overlap separates those two controls but `related_actors` is far too broad to be a subject key: a
+two-person tryst lists ten shared actors, and at any threshold that catches Faralda it also blocks hundreds
+of plainly distinct stories. Scoping it to `RELATIONSHIP` memories narrowed the damage without fixing it.
+The discriminator has to be meaning, which is what the `duplicate` verdict provides, and the `private`
+verdict removes the observed case outright since neither tryst is something Faralda would repeat.
+
+**Verification:** the prompt renders under Inja with rumors present and with an empty list, and with a
+missing profile. In game: confirm a private memory returns `private` and that its events stay harvestable by
+another witness; confirm a second account of a covered happening returns `duplicate`; confirm the claim
+trace shows events freed for the first and held for the second.
 
 ---
 

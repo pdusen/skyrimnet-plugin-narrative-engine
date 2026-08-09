@@ -96,6 +96,15 @@ namespace NarrativeEngine::GossipClaims
     // expiry window.
     void Release(std::int64_t memoryId);
 
+    // Give back only the event claims, keeping the memory claim.
+    //
+    // For the verdicts where THIS NPC will not be telling THIS story, but
+    // the happening itself is still fair game: someone else who was there
+    // may have an account of it they would repeat. Holding the memory
+    // stops this owner being asked about it again; releasing the events
+    // leaves the happening open to another witness.
+    void ReleaseEvents(std::int64_t memoryId);
+
     // Drop expired claims. Called from the simulation poll on sampled game
     // time rather than on rumor activity, so a quiet stretch with no live
     // rumors still expires claims. Returns how many were dropped.

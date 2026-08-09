@@ -128,16 +128,62 @@ namespace NarrativeEngine::GossipContent
         ctx["source_location"] = locationName;
         ctx["importance"] = importance;
 
+        // Seats the character profile. SkyrimNet's system_head and
+        // character_profile submodules read the subject from `npc.UUID`;
+        // that is the key render_character_profile(...) resolves against.
+        // The UUID is keyed on the PLACED REFERENCE, like everything else
+        // SkyrimNet exposes, so the graph's base form has to be converted.
+        //
+        // Without this the prompt could only be told the owner's name,
+        // which is not enough to judge whether they would repeat a thing.
+        const auto ownerRef = GossipGraph::ActorRefFor(owner);
+        const std::uint64_t ownerUUID = ownerRef ? SkyrimNetAPI::FormIDToUUID(ownerRef) : 0;
+        if (ownerUUID == 0) {
+            logger::warn("GossipContent: no SkyrimNet UUID for {} (ref 0x{:X}); the seed prompt will "
+                         "judge discretion without a character profile",
+                         NameOf(owner),
+                         ownerRef);
+        }
+        nlohmann::json npc = nlohmann::json::object();
+        npc["UUID"] = ownerUUID;
+        ctx["npc"] = std::move(npc);
+
+        // Every rumor still in the world, as its band-0 text. This is what
+        // the model checks the candidate against to decide the story is
+        // already going round. Band 0 only: the later bands are the same
+        // story degraded, and showing all three would just be noise.
+        nlohmann::json activeRumors = nlohmann::json::array();
+        for (const auto& r : GossipSim::GetRumorViews()) {
+            if (!r.text.empty()) {
+                activeRumors.push_back(r.text);
+            }
+        }
+        ctx["active_rumors"] = std::move(activeRumors);
+
+        // Failure paths, distinguished by what they do to the claims.
+        //
+        // `abandon` is for the cases where nothing was learned — the call
+        // failed, or the answer could not be read. The memory goes back
+        // entirely so it can be tried again.
         const auto abandon = [sourceMemoryId](const char* why) {
             GossipClaims::Release(sourceMemoryId);
             GossipLog::Note(std::format("content: memory {} released — {}", sourceMemoryId, why));
+        };
+        // `keepMemoryOnly` is for a verdict about THIS owner rather than
+        // about the happening: they would not repeat it, or it is not worth
+        // repeating. The memory stays claimed so this owner is not asked
+        // again, but the events go back so another witness with their own
+        // account of the same happening can still seed from it.
+        const auto keepMemoryOnly = [sourceMemoryId](const char* why) {
+            GossipClaims::ReleaseEvents(sourceMemoryId);
+            GossipLog::Note(std::format("content: memory {} kept, events freed — {}", sourceMemoryId, why));
         };
 
         const bool queued = SkyrimNetAPI::SendCustomPromptToLLM(
             kSeedPromptName,
             kLLMVariant,
             ctx.dump(),
-            [sourceMemoryId, owner, importance, bandCount, abandon](
+            [sourceMemoryId, owner, importance, bandCount, abandon, keepMemoryOnly](
                 const PluginThread::Token&, std::string response, bool success) {
                 if (!success) {
                     abandon("LLM call failed");
@@ -148,21 +194,54 @@ namespace NarrativeEngine::GossipContent
                     abandon("unparseable response");
                     return;
                 }
-                if (!j.value("should_seed", false)) {
-                    // A refusal is a correct and expected answer — the
-                    // memory simply was not worth gossiping about.
-                    abandon("model judged it not gossip-worthy");
+
+                auto verdict = j.value("verdict", std::string{});
+                std::transform(verdict.begin(), verdict.end(), verdict.begin(), [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+
+                if (verdict == "private") {
+                    // The owner would not tell this. Their memory is spent;
+                    // the happening is not.
+                    keepMemoryOnly("owner would not share this publicly");
                     return;
                 }
-                const auto& raw = j["bands"];
-                if (!raw.is_array() || raw.empty()) {
-                    abandon("no bands returned");
+                if (verdict == "not_worthy") {
+                    // Nothing here anyone would stop to listen to. Same
+                    // claim handling as `private`: this owner is done with
+                    // it, the happening is still open.
+                    keepMemoryOnly("not worth gossiping about");
+                    return;
+                }
+                if (verdict == "duplicate") {
+                    // The story is already going round. Both the memory and
+                    // its events stay claimed — this happening has had its
+                    // rumor, and no other account of it should start a
+                    // second one.
+                    const auto which = j.value("duplicate_of", std::string{});
+                    GossipLog::Note(std::format("content: memory {} claimed, no rumor — already covered{}{}",
+                                                sourceMemoryId,
+                                                which.empty() ? "" : " by: ",
+                                                LLMTextSanitizer::Sanitize(which)));
+                    return;
+                }
+                if (verdict != "seed") {
+                    // An unrecognised verdict is a prompt or model fault,
+                    // not a judgement about the memory, so give it all back.
+                    abandon(verdict.empty() ? "response carried no verdict"
+                                            : "response carried an unrecognised verdict");
+                    return;
+                }
+
+                const auto rawIt = j.find("bands");
+                if (rawIt == j.end() || !rawIt->is_array() || rawIt->empty()) {
+                    abandon("verdict was seed but no bands were returned");
                     return;
                 }
 
                 std::vector<std::string> bands;
-                bands.reserve(raw.size());
-                for (const auto& b : raw) {
+                bands.reserve(rawIt->size());
+                for (const auto& b : *rawIt) {
                     if (!b.is_string()) {
                         continue;
                     }
