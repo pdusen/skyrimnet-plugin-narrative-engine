@@ -8,6 +8,7 @@
 #include <GossipLog.h>
 #include <GossipSim.h>
 #include <GossipThread.h>
+#include <JsonUtils.h>
 #include <LLMTextSanitizer.h>
 #include <logger.h>
 #include <Settings.h>
@@ -16,6 +17,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <exception>
 #include <format>
 #include <memory>
 #include <vector>
@@ -219,38 +221,56 @@ namespace NarrativeEngine::GossipContent
                 Abandon(gt, sourceMemoryId, "seed call failed");
                 return false;
             }
-            // Strip a wrapping markdown fence before parsing. Models wrap
-            // their JSON in a json code fence often enough that the
-            // instruction not to cannot be relied on, and the whole
-            // response is discarded when they do — one seed was lost this
-            // way to an otherwise perfect object.
-            const auto body = EvaluationPipeline::StripMarkdownFences(result.response);
-            auto j = nlohmann::json::parse(body, nullptr, false);
-            if (j.is_discarded() || !j.is_object()) {
-                logger::warn("GossipContent: seed response not a JSON object: {}", body);
-                Abandon(gt, sourceMemoryId, "unparseable seed response");
-                return false;
-            }
-
-            const auto rawIt = j.find("bands");
-            if (rawIt == j.end() || !rawIt->is_array() || rawIt->empty()) {
-                Abandon(gt, sourceMemoryId, "seed response carried no bands");
-                return false;
-            }
-
+            // Reading the response is fallible in ways the checks below
+            // cannot enumerate, so it is contained: a throw here fails this
+            // one seed instead of unwinding the tick that asked for it.
+            // The scope ends before SeedRumor — releasing a claim for a
+            // rumor that may already have been created is a worse failure
+            // than the one being guarded against.
             std::vector<std::string> bands;
-            bands.reserve(rawIt->size());
-            for (const auto& b : *rawIt) {
-                if (!b.is_string()) {
-                    continue;
+            try {
+                // Strip a wrapping markdown fence before parsing. Models
+                // wrap their JSON in a json code fence often enough that the
+                // instruction not to cannot be relied on, and the whole
+                // response is discarded when they do — one seed was lost
+                // this way to an otherwise perfect object.
+                const auto body = EvaluationPipeline::StripMarkdownFences(result.response);
+                auto j = nlohmann::json::parse(body, nullptr, false);
+                if (j.is_discarded() || !j.is_object()) {
+                    logger::warn("GossipContent: seed response not a JSON object: {}", body);
+                    Abandon(gt, sourceMemoryId, "unparseable seed response");
+                    return false;
                 }
-                // Sanitize AT THE POINT OF EXTRACTION, before this text is
-                // cached, persisted to the co-save, or written into a
-                // memory. Band text reaches both the save payload and
-                // SkyrimNet's prompt context, so smart quotes, dashes and
-                // zero-width characters would travel a long way.
-                bands.push_back(LLMTextSanitizer::Sanitize(b.get<std::string>()));
+
+                const auto rawIt = j.find("bands");
+                if (rawIt == j.end() || !rawIt->is_array() || rawIt->empty()) {
+                    Abandon(gt, sourceMemoryId, "seed response carried no bands");
+                    return false;
+                }
+
+                bands.reserve(rawIt->size());
+                for (const auto& b : *rawIt) {
+                    if (!b.is_string()) {
+                        continue;
+                    }
+                    // Sanitize AT THE POINT OF EXTRACTION, before this text
+                    // is cached, persisted to the co-save, or written into a
+                    // memory. Band text reaches both the save payload and
+                    // SkyrimNet's prompt context, so smart quotes, dashes
+                    // and zero-width characters would travel a long way.
+                    bands.push_back(LLMTextSanitizer::Sanitize(b.get<std::string>()));
+                }
+            } catch (const std::exception& e) {
+                logger::error(
+                    "GossipContent: seed response for memory {} could not be read: {}", sourceMemoryId, e.what());
+                Abandon(gt, sourceMemoryId, "unreadable seed response");
+                return false;
+            } catch (...) {
+                logger::error("GossipContent: seed response for memory {} could not be read", sourceMemoryId);
+                Abandon(gt, sourceMemoryId, "unreadable seed response");
+                return false;
             }
+
             if (bands.empty()) {
                 Abandon(gt, sourceMemoryId, "all bands empty after sanitize");
                 return false;
@@ -323,19 +343,35 @@ namespace NarrativeEngine::GossipContent
             if (!result.ok) {
                 return {};
             }
-            const auto body = EvaluationPipeline::StripMarkdownFences(result.response);
-            auto j = nlohmann::json::parse(body, nullptr, false);
-            if (j.is_discarded() || !j.is_object()) {
-                logger::warn("GossipContent: evaluation response not a JSON object: {}", body);
+            // Everything from here down reads a payload a model wrote, and
+            // nothing a model writes is a guarantee. A throw escaping this
+            // function unwinds the whole tick: the candidate's claim is
+            // never settled, the simulation never advances, and the
+            // snapshot is never published — all for one malformed field.
+            // Failing this ONE seed is strictly better, so the failure is
+            // contained where the untrusted data is read.
+            try {
+                const auto body = EvaluationPipeline::StripMarkdownFences(result.response);
+                auto j = nlohmann::json::parse(body, nullptr, false);
+                if (j.is_discarded() || !j.is_object()) {
+                    logger::warn("GossipContent: evaluation response not a JSON object: {}", body);
+                    return {};
+                }
+
+                auto verdict = JsonUtils::StringOr(j, "verdict");
+                std::transform(verdict.begin(), verdict.end(), verdict.begin(), [](unsigned char ch) {
+                    return static_cast<char>(std::tolower(ch));
+                });
+                duplicateOf = JsonUtils::StringOr(j, "duplicate_of");
+                return verdict;
+            } catch (const std::exception& e) {
+                logger::error(
+                    "GossipContent: evaluation response for memory {} could not be read: {}", c.memoryId, e.what());
+                return {};
+            } catch (...) {
+                logger::error("GossipContent: evaluation response for memory {} could not be read", c.memoryId);
                 return {};
             }
-
-            auto verdict = j.value("verdict", std::string{});
-            std::transform(verdict.begin(), verdict.end(), verdict.begin(), [](unsigned char ch) {
-                return static_cast<char>(std::tolower(ch));
-            });
-            duplicateOf = j.value("duplicate_of", std::string{});
-            return verdict;
         }
     } // namespace
 

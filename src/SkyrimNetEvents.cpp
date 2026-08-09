@@ -1,6 +1,7 @@
 #include <SkyrimNetEvents.h>
 
 #include <BookTextRenderer.h>
+#include <JsonUtils.h>
 
 #include <nlohmann/json.hpp>
 
@@ -80,7 +81,7 @@ namespace NarrativeEngine::SkyrimNetEvents
             if (!evt.is_object())
                 continue;
 
-            const std::string type = evt.value("type", std::string{});
+            const std::string type = JsonUtils::StringOr(evt, "type");
 
             // Normalize the book body before anything reads `data`, so both
             // the synthesized `text` below and the event object we hand back
@@ -265,8 +266,8 @@ namespace NarrativeEngine::SkyrimNetEvents
 
             for (const auto& h : hits) {
                 const bool namedActor = h.value("ne_actor_is_named", false);
-                const std::string actor = h.value("originatingActorName", std::string{});
-                const std::string targ = h.value("targetActorName", std::string{});
+                const std::string actor = JsonUtils::StringOr(h, "originatingActorName");
+                const std::string targ = JsonUtils::StringOr(h, "targetActorName");
                 if (namedActor && !actor.empty() && !targ.empty()) {
                     const std::string canA = (actor < targ) ? actor : targ;
                     const std::string canB = (actor < targ) ? targ : actor;

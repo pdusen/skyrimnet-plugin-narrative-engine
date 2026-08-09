@@ -9,6 +9,7 @@
 #include <GossipGraph.h>
 #include <GossipLog.h>
 #include <GossipSim.h>
+#include <JsonUtils.h>
 #include <logger.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -215,7 +216,40 @@ namespace NarrativeEngine::GossipHarvest
                 // real-world clock as age_hours below — so it would import
                 // the same bug through a different door.
                 const auto importance = static_cast<float>(m.value("importance_score", 0.0));
-                auto content = m.value("content", std::string{});
+                auto content = JsonUtils::StringOr(m, "content");
+
+                // The DIRECT feedback-loop guard.
+                //
+                // The design was built on "there is NO tags field, so the
+                // ["gossip"] tag written at AddMemory time cannot be filtered
+                // on at read time" — which is why the type allowlist was made
+                // to carry that job. The raw row dump falsifies it: `tags` is
+                // right there on the row. Checking it is exact where the type
+                // rule is a proxy, and it keeps holding if the allowlist is
+                // ever widened to admit KNOWLEDGE.
+                //
+                // FIRST, ahead of the age test, and that ordering is load-
+                // bearing rather than cosmetic. PublicAddMemory takes no
+                // timestamp (SkyrimNet API v9) and stamps `game_time` on that
+                // path with WALL-CLOCK seconds, so every memory this plugin
+                // writes reads back as roughly 20,650 game-days in the
+                // future. Behind the age test, all 221 of our own writebacks
+                // in one 15-day run were rejected as `after-horizon` and this
+                // guard never ran once — which both made `too-old` a count of
+                // nothing but our own output and left the one check that
+                // actually stops the feedback loop completely unexercised.
+                // Ours are recognised by the tag we wrote, not by a clock we
+                // do not control.
+                if (const auto tagsIt = m.find("tags"); tagsIt != m.end() && tagsIt->is_array()) {
+                    const bool ours = std::any_of(tagsIt->begin(), tagsIt->end(), [](const auto& t) {
+                        return t.is_string() && t.template get_ref<const std::string&>() == "gossip";
+                    });
+                    if (ours) {
+                        ++sweep.rejectedOwnOutput;
+                        GossipLog::Memory(id, actor.npc, importance, "own-gossip");
+                        continue;
+                    }
+                }
 
                 // IN-WORLD age, from `game_time`.
                 //
@@ -231,6 +265,15 @@ namespace NarrativeEngine::GossipHarvest
                 // base EventLogUtil::NowGameTimeSeconds returns
                 // (Calendar::GetDaysPassed * 86400) — so this is a plain
                 // subtraction in one consistent clock.
+                //
+                // That holds for rows SkyrimNet wrote itself, which is what
+                // this filter is for. Rows written through PublicAddMemory
+                // carry a wall-clock stamp instead (see the tag guard above),
+                // so any plugin's writeback that is NOT tagged `gossip` —
+                // LetterPool's, for one — still lands here and is rejected as
+                // after-horizon. Correct by accident rather than by design;
+                // it stops being accidental if SkyrimNet ever accepts a
+                // timestamp on that call.
                 //
                 // Guard the missing-field case explicitly rather than
                 // letting it default to 0: a 0 would read as "written at
@@ -271,32 +314,13 @@ namespace NarrativeEngine::GossipHarvest
                 // Read for the trace only. There is no type allowlist any
                 // more: it existed solely to keep gossip out of its own
                 // input, back when `tags` was believed absent from the
-                // response, and the tag check below does that job exactly.
+                // response, and the tag check above does that job exactly.
                 // Kept as a rejected/accepted annotation because knowing
                 // WHICH types are seeding is worth a log column — on a real
                 // save KNOWLEDGE is both the largest bucket and the
                 // highest-scoring one, which is what the allowlist was
                 // silently discarding.
-                const auto type = m.value("type", std::string{});
-                // The DIRECT feedback-loop guard.
-                //
-                // The design was built on "there is NO tags field, so the
-                // ["gossip"] tag written at AddMemory time cannot be filtered
-                // on at read time" — which is why the type allowlist was made
-                // to carry that job. The raw row dump falsifies it: `tags` is
-                // right there on the row. Checking it is exact where the type
-                // rule is a proxy, and it keeps holding if the allowlist is
-                // ever widened to admit KNOWLEDGE.
-                if (const auto tagsIt = m.find("tags"); tagsIt != m.end() && tagsIt->is_array()) {
-                    const bool ours = std::any_of(tagsIt->begin(), tagsIt->end(), [](const auto& t) {
-                        return t.is_string() && t.template get_ref<const std::string&>() == "gossip";
-                    });
-                    if (ours) {
-                        ++sweep.rejectedOwnOutput;
-                        GossipLog::Memory(id, actor.npc, importance, "own-gossip");
-                        continue;
-                    }
-                }
+                const auto type = JsonUtils::StringOr(m, "type");
                 // SkyrimNet folds diary entries into the same table this
                 // endpoint queries, typed EXPERIENCE — which is one of our
                 // source types, so they qualify on every other rule. There

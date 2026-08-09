@@ -2,6 +2,7 @@
 
 #include <CombatEventLog.h>
 #include <EventLogUtil.h>
+#include <JsonUtils.h>
 #include <logger.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -190,7 +191,7 @@ namespace NarrativeEngine::EventHistoryWriter
                 // The `text` field FormatEventsText emitted has a
                 // "[just now] " prefix baked in from the delta=~0
                 // rendering; strip it for the history line.
-                std::string text = evt.value("text", std::string{});
+                std::string text = JsonUtils::StringOr(evt, "text");
                 if (!text.empty() && text.front() == '[') {
                     const auto close = text.find(']');
                     if (close != std::string::npos && close + 2 <= text.size()) {
@@ -198,7 +199,7 @@ namespace NarrativeEngine::EventHistoryWriter
                     }
                 }
 
-                std::string kind = evt.value("type", std::string{});
+                std::string kind = JsonUtils::StringOr(evt, "type");
                 if (kind.empty()) {
                     kind = "unknown";
                 }
