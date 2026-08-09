@@ -2,6 +2,7 @@
 
 #include <cstddef>
 
+#include <GossipState.h>
 #include <PluginThread.h>
 
 // GossipHarvest — turns SkyrimNet memories into rumors.
@@ -123,5 +124,5 @@ namespace NarrativeEngine::GossipHarvest
         // have spread the rumor anywhere.
         std::size_t rejectedIsolated = 0;
     };
-    Stats GetStats();
+    Stats GetStats(const GossipState&);
 } // namespace NarrativeEngine::GossipHarvest

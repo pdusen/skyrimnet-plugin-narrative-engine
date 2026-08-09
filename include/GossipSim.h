@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -77,6 +78,27 @@ namespace NarrativeEngine::GossipSim
     // mutex is still what guards it.
     GossipState& MutableState();
 
+    // The last published image of the whole gossip world.
+    //
+    // Immutable and shared: every outside reader — the dashboard, the
+    // co-save, the session-end census — loads this pointer and reads it
+    // with no lock and no wait. Never null; before the first publish it
+    // is an empty state, which reads correctly as "nothing has happened
+    // yet".
+    //
+    // Published only at the end of a unit of gossip work, never during
+    // one. A snapshot taken mid-drain would show a half-advanced
+    // simulation: some carriers stepped to the new game day and some
+    // not, transmission counts that do not match the carrier set they
+    // came from. What a reader needs is a series of consistent states,
+    // and a completed unit of work is exactly that.
+    std::shared_ptr<const GossipState> Snapshot();
+
+    // Copy the live state into a new published snapshot. Called at the
+    // end of gossip work; step 5 of Milestone 3 narrows that to once per
+    // scheduled tick.
+    void PublishSnapshot();
+
     // kNewGame / kPostLoadGame. Refreshes the graph's relationship
     // layer and re-bases the game-time sample so a load does not look
     // like a colossal time jump.
@@ -117,7 +139,13 @@ namespace NarrativeEngine::GossipSim
         std::size_t memoriesWritten = 0;
         std::size_t memoryWriteFailures = 0;
     };
-    Stats GetStats();
+    // Projections take the image to read EXPLICITLY, so a call site
+    // cannot be ambiguous about whether it is looking at the published
+    // snapshot or at live state. The dashboard wants the snapshot — one
+    // image per compose, so its numbers cannot disagree with each other.
+    // GossipContent wants live state, because a rumor seeded moments ago
+    // belongs in the list the next candidate is judged against.
+    Stats GetStats(const GossipState&);
 
     // A read-only per-rumor snapshot for the dashboard. Flattened at call
     // time under the simulation mutex so the caller never holds a
@@ -194,7 +222,7 @@ namespace NarrativeEngine::GossipSim
     // Every rumor still in the map, newest first. The map holds exactly
     // the rumors that have not been reaped, which is what the dashboard
     // wants: a rumor is listed until its last carrier retires.
-    std::vector<RumorView> GetRumorViews();
+    std::vector<RumorView> GetRumorViews(const GossipState&);
 
     void OnSave(SKSE::SerializationInterface* intfc);
     void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);

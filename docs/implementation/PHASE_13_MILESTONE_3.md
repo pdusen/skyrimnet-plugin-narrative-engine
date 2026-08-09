@@ -672,7 +672,7 @@ be reasoned about.
 
 ### Step 3 — Publish the snapshot; the dashboard reads it
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** One `std::shared_ptr<const GossipState>` published at a single point, and the first reader off the
 lock.
@@ -688,6 +688,24 @@ lock.
 **Verification:** the Gossip tab shows the same values it does today. Confirm the rumor list, carrier counts
 and claim count are mutually consistent — they now come from one instant by construction, which is a
 guarantee the current code does not make.
+
+Done, with one design refinement the plan did not anticipate. Every projection now takes the image to read
+**explicitly** — `GetStats(const GossipState&)`, `GetRumorViews(const GossipState&)`,
+`GossipClaims::Count(const GossipState&)` — rather than reaching for the snapshot internally.
+
+That fell out of a regression the first attempt introduced. `GossipContent` also calls `GetRumorViews`, to
+build the `active_rumors` list the evaluation judges duplicates against, and it needs **live** state: a rumor
+seeded moments earlier in the same sweep belongs in that list, and a snapshot published only at the end of a
+unit of work would not have it. A no-argument accessor that quietly meant "the snapshot" would have made
+that a silent behaviour change. Passing the image makes the two call sites read differently, which is
+correct, because they *are* different.
+
+`GossipHarvest`'s session counters moved into `GossipState` for the same reason as the claim ledger: a sweep
+count and a rumor count caught at different instants cannot be reconciled by whoever is looking at them. The
+dashboard now takes one `Snapshot()` per compose and derives all four gossip readouts from it.
+
+`IsStalledLocked` lost its suffix — it reads only the rumor handed to it, and the name was claiming a lock
+that the snapshot path does not hold.
 
 ---
 

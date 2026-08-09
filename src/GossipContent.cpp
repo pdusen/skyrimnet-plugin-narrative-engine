@@ -327,7 +327,11 @@ namespace NarrativeEngine::GossipContent
             // Band 0 only. The later bands are the same story degraded, and
             // showing all three would just be noise.
             nlohmann::json activeRumors = nlohmann::json::array();
-            for (const auto& r : GossipSim::GetRumorViews()) {
+            // LIVE state, not the published snapshot: a rumor seeded
+            // earlier in this same sweep belongs in the list this
+            // candidate is judged against, and the snapshot is only
+            // published at the end of a unit of work.
+            for (const auto& r : GossipSim::GetRumorViews(GossipSim::MutableState())) {
                 if (!r.text.empty()) {
                     activeRumors.push_back(r.text);
                 }

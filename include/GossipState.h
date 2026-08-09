@@ -148,6 +148,29 @@ namespace NarrativeEngine::GossipState_
         std::int64_t claimedByMemoryId = 0;
     };
 
+    // Session totals for the harvest side. Here rather than in
+    // GossipHarvest's own global so that the dashboard reads them from
+    // the same image as the rumors they produced — a sweep count and a
+    // rumor count caught at different instants cannot be reconciled by
+    // whoever is looking at them.
+    struct HarvestCounters
+    {
+        std::size_t sweeps = 0;
+        std::size_t actorsRanked = 0;
+        std::size_t memoriesExamined = 0;
+        std::size_t sentForGeneration = 0;
+        std::size_t rejectedTooOld = 0;
+        std::size_t rejectedLowImportance = 0;
+        std::size_t rejectedNotParticipant = 0;
+        std::size_t rejectedClaimed = 0;
+        std::size_t rejectedDiary = 0;
+        std::size_t rejectedNoContent = 0;
+        std::size_t rejectedNoGameTime = 0;
+        std::size_t rejectedOwnOutput = 0;
+        std::size_t rejectedSameEvent = 0;
+        std::size_t rejectedIsolated = 0;
+    };
+
     // Session totals. Reset at OnSessionStart, not persisted — they
     // describe this play session rather than the world.
     struct SessionCounters
@@ -179,6 +202,7 @@ namespace NarrativeEngine
         // without reading a multi-year jump on the first tick.
         double lastGameDaySample = -1.0;
         GossipState_::SessionCounters counters;
+        GossipState_::HarvestCounters harvest;
 
         // --- claim ledger ----------------------------------------------
         //

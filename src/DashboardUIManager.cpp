@@ -1322,12 +1322,17 @@ namespace NarrativeEngine::DashboardUIManager
         // the disabled notice from the `enabled` flag alone.
         {
             const auto& cfg = Settings::Get();
-            const auto sim = GossipSim::GetStats();
-            const auto harvest = GossipHarvest::GetStats();
+            // ONE image for the whole gossip section. Four separate
+            // reads could each land on a different publication, and the
+            // resulting numbers would quietly fail to add up — a carrier
+            // count from one instant beside a rumor list from another.
+            const auto snap = GossipSim::Snapshot();
+            const auto sim = GossipSim::GetStats(*snap);
+            const auto harvest = GossipHarvest::GetStats(*snap);
 
             nlohmann::json rumorsJson = nlohmann::json::array();
             if (cfg.gossipEnabled) {
-                for (const auto& r : GossipSim::GetRumorViews()) {
+                for (const auto& r : GossipSim::GetRumorViews(*snap)) {
                     rumorsJson.push_back({
                         {"id", r.id},
                         {"text", r.text},
@@ -1362,7 +1367,7 @@ namespace NarrativeEngine::DashboardUIManager
                 {"memories_written", sim.memoriesWritten},
                 {"harvest_sweeps", harvest.sweeps},
                 {"harvest_sent_for_generation", harvest.sentForGeneration},
-                {"claims_outstanding", GossipClaims::Count()},
+                {"claims_outstanding", GossipClaims::Count(*snap)},
                 {"rumors", std::move(rumorsJson)},
             };
         }

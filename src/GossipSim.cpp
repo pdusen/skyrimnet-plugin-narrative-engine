@@ -73,6 +73,16 @@ namespace NarrativeEngine::GossipSim
 
         auto& g_lastGameDaySample = State().lastGameDaySample;
         auto& g_simGameDay = State().simGameDay;
+
+        // The published image. Swapped wholesale; readers hold their copy
+        // of the shared_ptr for as long as they need it, so a publish can
+        // never pull the ground out from under a reader mid-read.
+        //
+        // Guarded by its own mutex rather than std::atomic<shared_ptr>
+        // purely for MSVC-version portability; the critical section is a
+        // pointer assignment.
+        std::mutex g_snapshotMutex;
+        std::shared_ptr<const GossipState> g_snapshot = std::make_shared<const GossipState>();
         double g_secondsSinceTick = 0.0;
 
         std::mt19937 g_rng{1337};
@@ -653,8 +663,8 @@ namespace NarrativeEngine::GossipSim
             if (const auto expired = GossipClaims::Sweep(g_simGameDay); expired > 0) {
                 logger::debug("GossipClaims: expired {} claim(s); {} memory + {} event claim(s) remain",
                               expired,
-                              GossipClaims::Count(),
-                              GossipClaims::EventCount());
+                              GossipClaims::Count(State()),
+                              GossipClaims::EventCount(State()));
             }
 
             std::size_t reaped = 0;
@@ -691,7 +701,7 @@ namespace NarrativeEngine::GossipSim
         // Cost is bounded and early-exits on the first susceptible contact,
         // which is the overwhelmingly common case for a spreading rumor. Only
         // a genuinely stalled rumor pays the full scan.
-        bool IsStalledLocked(const Rumor& rumor)
+        bool IsStalled(const Rumor& rumor)
         {
             bool anyActive = false;
             for (const auto& [npc, carrier] : rumor.carriers) {
@@ -719,6 +729,19 @@ namespace NarrativeEngine::GossipSim
     GossipState& MutableState()
     {
         return State();
+    }
+
+    std::shared_ptr<const GossipState> Snapshot()
+    {
+        std::scoped_lock lock(g_snapshotMutex);
+        return g_snapshot;
+    }
+
+    void PublishSnapshot()
+    {
+        auto fresh = std::make_shared<const GossipState>(State());
+        std::scoped_lock lock(g_snapshotMutex);
+        g_snapshot = std::move(fresh);
     }
 
     void Initialize()
@@ -751,6 +774,10 @@ namespace NarrativeEngine::GossipSim
         g_counters.wasted = 0;
         g_counters.memoriesWritten = 0;
         g_counters.memoryWriteFailures = 0;
+        // Publish immediately rather than waiting for the first poll, so
+        // a dashboard opened straight after a load shows the world that
+        // was just restored instead of an empty one.
+        PublishSnapshot();
     }
 
     void OnSessionEnd()
@@ -917,6 +944,15 @@ namespace NarrativeEngine::GossipSim
         }
 
         SweepAndReapLocked();
+
+        // One publication point, at the end of the unit of work. Harvest
+        // ran before this in Tick's ordering, so a snapshot taken here
+        // covers both halves.
+        //
+        // Milestone 3 step 5 narrows this to once per scheduled tick;
+        // until the work moves threads it fires on the existing 2-second
+        // sim cadence so the dashboard keeps the freshness it has today.
+        PublishSnapshot();
     }
 
     std::uint32_t SeedRumor(RE::FormID originNpc,
@@ -994,22 +1030,21 @@ namespace NarrativeEngine::GossipSim
         return total > 0.0f ? reachable / total : 0.0f;
     }
 
-    std::vector<RumorView> GetRumorViews()
+    std::vector<RumorView> GetRumorViews(const GossipState& st)
     {
-        std::scoped_lock lock(g_mutex);
         std::vector<RumorView> out;
-        out.reserve(g_rumors.size());
+        out.reserve(st.rumors.size());
 
-        for (const auto& [id, r] : g_rumors) {
+        for (const auto& [id, r] : st.rumors) {
             RumorView v;
             v.id = id;
             v.bands = r.bands;
             v.text = r.bands.empty() ? std::string{} : r.bands.front();
             v.live = r.live;
-            v.stalled = IsStalledLocked(r);
+            v.stalled = IsStalled(r);
             v.notability = r.notability;
-            v.ageDays = std::max(0.0, g_simGameDay - r.seedGameDay);
-            v.idleDays = std::max(0.0, g_simGameDay - r.lastActivityGameDay);
+            v.ageDays = std::max(0.0, st.simGameDay - r.seedGameDay);
+            v.idleDays = std::max(0.0, st.simGameDay - r.lastActivityGameDay);
             v.carriers = r.carriers.size();
             v.maxDepth = r.maxDepth;
             v.transmissions = r.transmissions;
@@ -1053,24 +1088,23 @@ namespace NarrativeEngine::GossipSim
         return out;
     }
 
-    Stats GetStats()
+    Stats GetStats(const GossipState& st)
     {
-        std::scoped_lock lock(g_mutex);
         Stats out;
-        out.transmissionsThisSession = g_counters.transmissions;
-        out.wastedThisSession = g_counters.wasted;
-        out.notCaughtThisSession = g_counters.notCaught;
-        out.unavailableThisSession = g_counters.unavailable;
-        out.cappedThisSession = g_counters.capped;
-        out.memoriesWritten = g_counters.memoriesWritten;
-        out.memoryWriteFailures = g_counters.memoryWriteFailures;
+        out.transmissionsThisSession = st.counters.transmissions;
+        out.wastedThisSession = st.counters.wasted;
+        out.notCaughtThisSession = st.counters.notCaught;
+        out.unavailableThisSession = st.counters.unavailable;
+        out.cappedThisSession = st.counters.capped;
+        out.memoriesWritten = st.counters.memoriesWritten;
+        out.memoryWriteFailures = st.counters.memoryWriteFailures;
         out.liveRumors = static_cast<std::size_t>(
-            std::count_if(g_rumors.begin(), g_rumors.end(), [](const auto& kv) { return kv.second.live; }));
+            std::count_if(st.rumors.begin(), st.rumors.end(), [](const auto& kv) { return kv.second.live; }));
         out.totalCarriers = 0;
-        for (const auto& [id, r] : g_rumors) {
+        for (const auto& [id, r] : st.rumors) {
             out.totalCarriers += r.carriers.size();
         }
-        out.queuedEvents = g_queue.size();
+        out.queuedEvents = st.queue.size();
         return out;
     }
 
@@ -1267,6 +1301,7 @@ namespace NarrativeEngine::GossipSim
         }
 
         logger::info("GossipSim::OnLoad: restored {} rumors, {} queued events", g_rumors.size(), g_queue.size());
+        PublishSnapshot();
     }
 
     void OnRevert()
@@ -1280,5 +1315,12 @@ namespace NarrativeEngine::GossipSim
         g_simGameDay = 0.0;
         g_secondsSinceTick = 0.0;
         g_counters = {};
+        State().harvest = {};
+        // Both lifecycle paths publish so the snapshot can never describe
+        // a world that has been torn down. A reader that saw a reverted
+        // state as "the last good one" would show rumors that no longer
+        // exist, and — once the co-save reads the snapshot in step 4 —
+        // would save them.
+        PublishSnapshot();
     }
 } // namespace NarrativeEngine::GossipSim

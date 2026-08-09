@@ -1,5 +1,7 @@
 #pragma once
 
+#include <GossipState.h>
+
 #include <cstdint>
 #include <vector>
 
@@ -110,8 +112,8 @@ namespace NarrativeEngine::GossipClaims
     // rumors still expires claims. Returns how many were dropped.
     std::size_t Sweep(double nowGameDay);
 
-    std::size_t Count();
-    std::size_t EventCount();
+    std::size_t Count(const GossipState&);
+    std::size_t EventCount(const GossipState&);
 
     void OnSave(SKSE::SerializationInterface* intfc);
     void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);

@@ -35,7 +35,11 @@ namespace NarrativeEngine::GossipHarvest
         // Whether the "cannot sweep yet" note has already been emitted for
         // the current outage; reset the moment a sweep succeeds.
         bool g_deferredLogged = false;
-        Stats g_stats;
+        // Session counters live in GossipState so the dashboard reads
+        // them from the same image as the rumors they produced. A sweep
+        // count and a rumor count caught at different instants cannot be
+        // reconciled by whoever is looking at them.
+        auto& g_stats = GossipSim::MutableState().harvest;
 
         // A memory's timestamp is in the same cumulative game-seconds units
         // EventLogUtil::NowGameTimeSeconds returns, so ages are a plain
@@ -561,9 +565,24 @@ namespace NarrativeEngine::GossipHarvest
         g_gameHoursSinceSweep -= interval;
     }
 
-    Stats GetStats()
+    Stats GetStats(const GossipState& st)
     {
-        std::scoped_lock lock(g_mutex);
-        return g_stats;
+        const auto& h = st.harvest;
+        Stats out;
+        out.sweeps = h.sweeps;
+        out.actorsRanked = h.actorsRanked;
+        out.memoriesExamined = h.memoriesExamined;
+        out.sentForGeneration = h.sentForGeneration;
+        out.rejectedTooOld = h.rejectedTooOld;
+        out.rejectedLowImportance = h.rejectedLowImportance;
+        out.rejectedNotParticipant = h.rejectedNotParticipant;
+        out.rejectedClaimed = h.rejectedClaimed;
+        out.rejectedDiary = h.rejectedDiary;
+        out.rejectedNoContent = h.rejectedNoContent;
+        out.rejectedNoGameTime = h.rejectedNoGameTime;
+        out.rejectedOwnOutput = h.rejectedOwnOutput;
+        out.rejectedSameEvent = h.rejectedSameEvent;
+        out.rejectedIsolated = h.rejectedIsolated;
+        return out;
     }
 } // namespace NarrativeEngine::GossipHarvest

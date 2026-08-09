@@ -194,16 +194,14 @@ namespace NarrativeEngine::GossipClaims
         return expired.size();
     }
 
-    std::size_t Count()
+    std::size_t Count(const GossipState& st)
     {
-        std::scoped_lock lock(g_mutex);
-        return g_claims.size();
+        return st.claims.size();
     }
 
-    std::size_t EventCount()
+    std::size_t EventCount(const GossipState& st)
     {
-        std::scoped_lock lock(g_mutex);
-        return g_eventClaims.size();
+        return st.eventClaims.size();
     }
 
     void OnSave(SKSE::SerializationInterface* intfc)
