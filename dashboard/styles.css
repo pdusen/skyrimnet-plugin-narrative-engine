@@ -923,21 +923,43 @@ body {
     font-size: 11px;
 }
 
-/* Pushed hard right so the toggle sits in a predictable column no matter
-   how the badges above it wrap. */
-.rumor-expand {
-    margin-left: auto;
+/* The clickable summary. A button reset rather than bespoke styling, so the
+   contents lay out exactly as they did when this was a div. */
+.rumor-summary {
+    display: block;
+    width: 100%;
     background: none;
     border: none;
-    color: #6a6e76;
+    padding: 0;
+    margin: 0;
+    text-align: left;
+    font: inherit;
+    color: inherit;
     cursor: pointer;
-    font-family: inherit;
-    font-size: 12px;
-    padding: 0 4px;
 }
 
-.rumor-expand:hover {
+.rumor-summary:hover .rumor-text {
+    color: #ffffff;
+}
+
+.rumor-summary:hover .rumor-expand {
     color: #c9d5e6;
+}
+
+/* Keyboard users get a visible target; mouse users never see this. */
+.rumor-summary:focus-visible {
+    outline: 1px solid #4a5058;
+    outline-offset: 2px;
+    border-radius: 3px;
+}
+
+/* Pushed hard right so the indicator sits in a predictable column no matter
+   how the badges above it wrap. Passive now — the whole summary toggles. */
+.rumor-expand {
+    margin-left: auto;
+    color: #6a6e76;
+    font-size: 12px;
+    padding: 0 4px;
 }
 
 .rumor-text {

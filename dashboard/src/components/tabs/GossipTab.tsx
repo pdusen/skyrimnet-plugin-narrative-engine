@@ -36,46 +36,57 @@ function RumorRow({ rumor }: { rumor: RumorEntry }) {
 
     return (
         <li className={rumor.stalled ? 'rumor stalled' : 'rumor'}>
-            <div className="rumor-head">
-                <span className="rumor-id">r{String(rumor.id).padStart(2, '0')}</span>
-                <span className={rumor.stalled ? 'rumor-state stalled' : 'rumor-state spreading'}>
-                    {rumor.stalled ? 'Stalled' : 'Spreading'}
-                </span>
-                <span className="rumor-meta">n={rumor.notability.toFixed(2)}</span>
-                <span className="rumor-meta">{duration(rumor.age_days)} old</span>
-                <button
-                    type="button"
-                    className="rumor-expand"
-                    onClick={() => setExpanded(v => !v)}
-                    title={expanded ? 'Collapse' : 'Show every generation band and provenance'}
-                >
-                    {expanded ? '▾' : '▸'}
-                </button>
-            </div>
+            {/* The whole summary is the toggle, not just the chevron — a
+                12px arrow is a poor target for something every row does.
+                A real <button> rather than a click handler on a div, so it
+                is keyboard-reachable and announces its state; the chevron
+                is now a passive indicator inside it, since nesting a
+                button inside a button is invalid. The expanded detail
+                below is deliberately OUTSIDE the button, so selecting band
+                text does not collapse the row. */}
+            <button
+                type="button"
+                className="rumor-summary"
+                onClick={() => setExpanded(v => !v)}
+                aria-expanded={expanded}
+                title={expanded ? 'Collapse' : 'Show every generation band and provenance'}
+            >
+                <div className="rumor-head">
+                    <span className="rumor-id">r{String(rumor.id).padStart(2, '0')}</span>
+                    <span className={rumor.stalled ? 'rumor-state stalled' : 'rumor-state spreading'}>
+                        {rumor.stalled ? 'Stalled' : 'Spreading'}
+                    </span>
+                    <span className="rumor-meta">n={rumor.notability.toFixed(2)}</span>
+                    <span className="rumor-meta">{duration(rumor.age_days)} old</span>
+                    <span className="rumor-expand" aria-hidden="true">
+                        {expanded ? '▾' : '▸'}
+                    </span>
+                </div>
 
-            <div className="rumor-text">{headline}</div>
+                <div className="rumor-text">{headline}</div>
 
-            <div className="rumor-stats">
-                <span>
-                    <b>{rumor.carriers}</b> {rumor.carriers === 1 ? 'carrier' : 'carriers'}{' '}
-                    <i>({rumor.active_carriers} still telling)</i>
-                </span>
-                <span>
-                    <b>{rumor.settlements}</b> {rumor.settlements === 1 ? 'settlement' : 'settlements'}
-                </span>
-                <span>
-                    <b>{rumor.holds}</b> {rumor.holds === 1 ? 'hold' : 'holds'}
-                </span>
-                <span>
-                    gen <b>{rumor.max_depth}</b>
-                </span>
-                <span>
-                    <b>{rumor.transmissions}</b> told <i>({rumor.wasted} wasted)</i>
-                </span>
-                <span>
-                    quiet <b>{duration(rumor.idle_days)}</b>
-                </span>
-            </div>
+                <div className="rumor-stats">
+                    <span>
+                        <b>{rumor.carriers}</b> {rumor.carriers === 1 ? 'carrier' : 'carriers'}{' '}
+                        <i>({rumor.active_carriers} still telling)</i>
+                    </span>
+                    <span>
+                        <b>{rumor.settlements}</b> {rumor.settlements === 1 ? 'settlement' : 'settlements'}
+                    </span>
+                    <span>
+                        <b>{rumor.holds}</b> {rumor.holds === 1 ? 'hold' : 'holds'}
+                    </span>
+                    <span>
+                        gen <b>{rumor.max_depth}</b>
+                    </span>
+                    <span>
+                        <b>{rumor.transmissions}</b> told <i>({rumor.wasted} wasted)</i>
+                    </span>
+                    <span>
+                        quiet <b>{duration(rumor.idle_days)}</b>
+                    </span>
+                </div>
+            </button>
 
             {expanded && (
                 <div className="rumor-detail">
