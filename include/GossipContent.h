@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include <GossipDispatch.h>
+#include <GossipThread.h>
 #include <PluginThread.h>
 
 #include <RE/Skyrim.h>
@@ -120,7 +122,11 @@ namespace NarrativeEngine::GossipContent
     // composition that follows it succeeds. A failed composition releases
     // the memory, so it returns to the pool on a later sweep rather than
     // being retried mid-walk.
-    void RequestRumors(std::vector<Candidate> pool, int maxSeeds, double claimGameDay);
+    void RequestRumors(const GossipThread::Token&,
+                       std::vector<Candidate> pool,
+                       int maxSeeds,
+                       double claimGameDay,
+                       const GossipDispatch::CancellationHandle& cancel);
 
     // Band index for a carrier at `generation`, clamped to the configured
     // band count. Edges are every three generations: 0-2, 3-5, 6+.

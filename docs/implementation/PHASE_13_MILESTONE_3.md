@@ -804,7 +804,7 @@ it binds.
 
 ### Step 6 — Blocking LLM calls and the linear tick
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** Delete the continuation machinery.
 
@@ -833,6 +833,20 @@ unrepresentable.
 today. Confirm the `content:` lines for one tick are contiguous — no interleaving with another tick's, which
 was the symptom that exposed the concurrent-walk bug. Confirm a forced LLM failure releases the claim and
 moves to the next candidate.
+
+Built; the in-game half is Step 8. `struct Walk`, its `shared_ptr`, the `Advance`/`Evaluate` mutual
+recursion and the step-5 `EnqueueWork` hops are all gone — `GossipContent` no longer mentions
+`PluginThread` at all. `RequestRumors` is a `for` loop over the shuffled pool.
+
+`GossipHarvest` lost its mutex here rather than waiting for step 7, because keeping it would have been
+actively harmful: the sweep now blocks for two LLM round trips, and `OnSessionStart` took the same mutex
+from the main thread — so loading a game would have hitched behind a model call. Harvest's only remaining
+shared state is the counter block inside `GossipState`, and `OnSessionStart` runs before `Tick` restarts, so
+no tick can be in flight.
+
+The `IsClaimed` / `AreEventsClaimed` re-checks stay, but their justification changed. They were added
+against *concurrent walks*, which one job per tick on a serial queue makes unrepresentable; they now guard
+against claims made by **earlier ticks**, which is still live.
 
 ---
 

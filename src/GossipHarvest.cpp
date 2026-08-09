@@ -1,5 +1,6 @@
 #include <GossipHarvest.h>
 
+#include <GossipDispatch.h>
 #include <GossipThread.h>
 
 #include <EventLogUtil.h>
@@ -25,7 +26,6 @@ namespace NarrativeEngine::GossipHarvest
 {
     namespace
     {
-        std::mutex g_mutex;
         // Decides the order the candidate pool is walked in, which decides
         // which memory seeds. Separate from GossipSim's generator so that
         // seeding order does not shift whenever transmission draws change,
@@ -363,7 +363,11 @@ namespace NarrativeEngine::GossipHarvest
         // Returns false when the sweep could not run at all. The caller
         // uses that to leave the accumulator alone, so a sweep that never
         // happened is retried rather than silently counted as done.
-        bool RunSweepLocked(double nowGameDay)
+        // The "Locked" suffix is gone with the lock: this now runs on the
+        // gossip thread and owns everything it touches for the duration.
+        bool RunSweepImpl(const GossipThread::Token& gt,
+                          double nowGameDay,
+                          const GossipDispatch::CancellationHandle& cancel)
         {
             const auto& cfg = Settings::Get();
             if (!GossipGraph::IsReady() || !SkyrimNetAPI::IsMemorySystemReady()) {
@@ -480,7 +484,8 @@ namespace NarrativeEngine::GossipHarvest
                 // claim on every path out, so a rumor can never exist
                 // without a claim behind it while the candidates the walk
                 // never reaches are never claimed at all.
-                GossipContent::RequestRumors(std::move(pool), std::max(1, cfg.gossipMaxSeedsPerHarvest), nowGameDay);
+                GossipContent::RequestRumors(
+                    gt, std::move(pool), std::max(1, cfg.gossipMaxSeedsPerHarvest), nowGameDay, cancel);
             }
 
             if (candidates.size() > attempts) {
@@ -518,11 +523,18 @@ namespace NarrativeEngine::GossipHarvest
 
     void OnSessionStart()
     {
-        std::scoped_lock lock(g_mutex);
+        // No lock. Harvest's only remaining shared state is the session
+        // counter block inside GossipState, and this runs at kNewGame /
+        // kPostLoadGame on the main thread — before Tick has restarted,
+        // so no tick can be in flight.
+        //
+        // Taking a lock here would be actively harmful now that a sweep
+        // blocks on two LLM calls: loading a game would hitch behind a
+        // model round trip.
         g_stats = {};
     }
 
-    bool RunSweep(const GossipThread::Token&, double asOfGameDay)
+    bool RunSweep(const GossipThread::Token& gt, double asOfGameDay, const GossipDispatch::CancellationHandle& cancel)
     {
         const auto& cfg = Settings::Get();
         if (!cfg.gossipEnabled || !cfg.gossipHarvestEnabled) {
@@ -537,8 +549,11 @@ namespace NarrativeEngine::GossipHarvest
         // The owed-sweep backlog that used to live here now lives in the
         // job queue: two crossed interval boundaries enqueue two stamped
         // ticks, and the queue runs them in schedule order.
-        std::scoped_lock lock(g_mutex);
-        return RunSweepLocked(asOfGameDay);
+        // Deliberately unlocked. This call blocks for as long as two LLM
+        // round trips, and it is only ever entered from the gossip
+        // thread, so a mutex here would buy nothing and could only ever
+        // stall whoever else took it.
+        return RunSweepImpl(gt, asOfGameDay, cancel);
     }
 
     Stats GetStats(const GossipState& st)

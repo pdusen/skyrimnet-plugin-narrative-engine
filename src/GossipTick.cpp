@@ -50,7 +50,7 @@ namespace NarrativeEngine::GossipTick
             // the graph or SkyrimNet's memory system is not ready yet, in
             // which case the boundary stays owed rather than being spent
             // on an attempt that did nothing.
-            const bool swept = GossipHarvest::RunSweep(gt, asOf);
+            const bool swept = GossipHarvest::RunSweep(gt, asOf, cancel);
 
             if (cancel && cancel->IsCancelled()) {
                 return;

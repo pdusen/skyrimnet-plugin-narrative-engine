@@ -2,6 +2,7 @@
 
 #include <cstddef>
 
+#include <GossipDispatch.h>
 #include <GossipState.h>
 #include <GossipThread.h>
 #include <PluginThread.h>
@@ -102,7 +103,7 @@ namespace NarrativeEngine::GossipHarvest
     // `asOfGameDay` is a HORIZON as well as a timestamp: memories written
     // after it are not examined, so a tick that runs late still harvests
     // the world as it stood when it was due.
-    bool RunSweep(const GossipThread::Token&, double asOfGameDay);
+    bool RunSweep(const GossipThread::Token&, double asOfGameDay, const GossipDispatch::CancellationHandle& cancel);
 
     // Session totals, reset on OnSessionStart. Per-sweep numbers go to
     // the gossip trace as HARVEST lines — the two are kept apart on
