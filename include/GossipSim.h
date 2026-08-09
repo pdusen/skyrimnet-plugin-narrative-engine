@@ -96,6 +96,11 @@ namespace NarrativeEngine::GossipSim
         std::size_t queuedEvents = 0;
         std::size_t transmissionsThisSession = 0;
         std::size_t wastedThisSession = 0;
+        // Conversation outcomes. transmissions + wasted + notCaught +
+        // unavailable + capped accounts for every conversation drawn.
+        std::size_t notCaughtThisSession = 0;
+        std::size_t unavailableThisSession = 0;
+        std::size_t cappedThisSession = 0;
         std::size_t memoriesWritten = 0;
         std::size_t memoryWriteFailures = 0;
     };

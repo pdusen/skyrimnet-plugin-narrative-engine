@@ -101,6 +101,13 @@ namespace NarrativeEngine::GossipLog
         double days = 0.0;
         std::size_t transmissions = 0;
         std::size_t wasted = 0;
+        // Every conversation the rumor's carriers drew, and where each one
+        // went. The five outcomes sum to `conversations`, so a rumor that
+        // told nobody says whether it never spoke or simply never landed.
+        std::size_t conversations = 0;
+        std::size_t notCaught = 0;
+        std::size_t unavailable = 0;
+        std::size_t capped = 0;
     };
     void Burnout(std::uint32_t rumorId, const BurnoutStats& stats);
 

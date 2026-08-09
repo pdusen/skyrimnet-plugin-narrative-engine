@@ -239,15 +239,19 @@ namespace NarrativeEngine::GossipLog
     void Burnout(std::uint32_t rumorId, const BurnoutStats& stats)
     {
         Emit(std::format("BURNOUT r{:02}  reach={}  depth={}  holds={}  settlements={}  days={:.1f}  "
-                         "transmissions={}  wasted={}",
+                         "conversations={} ({} told, {} knew, {} missed, {} away, {} capped)",
                          rumorId,
                          stats.reach,
                          stats.depth,
                          stats.holds,
                          stats.settlements,
                          stats.days,
+                         stats.conversations,
                          stats.transmissions,
-                         stats.wasted));
+                         stats.wasted,
+                         stats.notCaught,
+                         stats.unavailable,
+                         stats.capped));
     }
 
     void Harvest(const HarvestStats& stats)

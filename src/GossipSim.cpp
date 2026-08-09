@@ -24,7 +24,8 @@ namespace NarrativeEngine::GossipSim
 {
     namespace
     {
-        constexpr std::uint32_t kRecordVersion = 4;
+        // v5 adds the per-rumor conversation-outcome counters.
+        constexpr std::uint32_t kRecordVersion = 5;
 
         // Sentinel peer standing in for "somebody, anywhere in Skyrim".
         // Resolved to a random participant only if it is actually
@@ -83,6 +84,16 @@ namespace NarrativeEngine::GossipSim
             std::uint32_t maxDepth = 0;
             std::size_t transmissions = 0;
             std::size_t wasted = 0;
+            // Conversation accounting. `conversations` is every one drawn;
+            // the five outcome buckets below sum to it exactly, so a rumor
+            // that reached nobody can be told apart from one that never
+            // opened its mouth. Without this, a conversation that happened
+            // and simply failed the transmission roll was counted nowhere,
+            // and two dead rumors could not be explained at all.
+            std::size_t conversations = 0;
+            std::size_t notCaught = 0;   // spoke, but it did not take
+            std::size_t unavailable = 0; // listener down, gone, or unreachable
+            std::size_t capped = 0;      // carrier cap already reached
             double lastActivityGameDay = 0.0;
             bool live = true;
         };
@@ -454,6 +465,10 @@ namespace NarrativeEngine::GossipSim
             stats.days = std::max(0.0, rumor.lastActivityGameDay - rumor.seedGameDay);
             stats.transmissions = rumor.transmissions;
             stats.wasted = rumor.wasted;
+            stats.conversations = rumor.conversations;
+            stats.notCaught = rumor.notCaught;
+            stats.unavailable = rumor.unavailable;
+            stats.capped = rumor.capped;
             GossipLog::Burnout(rumor.id, stats);
         }
 
@@ -536,6 +551,7 @@ namespace NarrativeEngine::GossipSim
             const double beta =
                 std::clamp(static_cast<double>(rumor.notability * cfg.gossipTransmissionScale), 0.0, 1.0);
             const int conversations = DrawPoisson(std::max(0.0f, cfg.gossipConversationsPerDay) * step);
+            rumor.conversations += static_cast<std::size_t>(std::max(0, conversations));
 
             std::uniform_real_distribution<float> pick(0.0f, totalRate);
             std::uniform_real_distribution<double> roll01(0.0, 1.0);
@@ -559,6 +575,8 @@ namespace NarrativeEngine::GossipSim
                 if (listener == kProvincePeer) {
                     const auto& all = GossipGraph::Participants();
                     if (all.empty()) {
+                        ++rumor.unavailable;
+                        ++g_stats.unavailableThisSession;
                         continue;
                     }
                     std::uniform_int_distribution<std::size_t> d(0, all.size() - 1);
@@ -578,11 +596,18 @@ namespace NarrativeEngine::GossipSim
                 }
 
                 if (roll01(g_rng) >= beta) {
-                    continue; // they spoke; it did not catch
+                    // They spoke and it did not take. Counted rather than
+                    // dropped: this is the single largest silent outcome,
+                    // and its absence made "reached nobody" unattributable.
+                    ++rumor.notCaught;
+                    ++g_stats.notCaughtThisSession;
+                    continue;
                 }
 
                 const auto* toP = GossipGraph::Find(listener);
                 if (!toP || ActorAvailability(listener) != Availability::Available) {
+                    ++rumor.unavailable;
+                    ++g_stats.unavailableThisSession;
                     // No conversation happened. Deliberately NOT counted as a
                     // wasted telling: wasted tellings are the saturation brake
                     // and mean "they already knew", which is a different
@@ -592,6 +617,8 @@ namespace NarrativeEngine::GossipSim
                     continue;
                 }
                 if (static_cast<int>(rumor.carriers.size()) >= cfg.gossipMaxCarriersPerRumor) {
+                    ++rumor.capped;
+                    ++g_stats.cappedThisSession;
                     continue;
                 }
 
@@ -753,10 +780,21 @@ namespace NarrativeEngine::GossipSim
         if (g_rumors.empty()) {
             return;
         }
-        GossipLog::Note(std::format("CENSUS  live rumors={}  transmissions={}  wasted={}  memories={} (failed {})",
+        // The session-level counterpart of the per-rumor BURNOUT line: the
+        // five outcomes sum to every conversation held this session, so a
+        // quiet session says whether nobody spoke or nothing landed.
+        const auto conversations = g_stats.transmissionsThisSession + g_stats.wastedThisSession
+                                   + g_stats.notCaughtThisSession + g_stats.unavailableThisSession
+                                   + g_stats.cappedThisSession;
+        GossipLog::Note(std::format("CENSUS  live rumors={}  conversations={} ({} told, {} knew, {} missed, "
+                                    "{} away, {} capped)  memories={} (failed {})",
                                     g_rumors.size(),
+                                    conversations,
                                     g_stats.transmissionsThisSession,
                                     g_stats.wastedThisSession,
+                                    g_stats.notCaughtThisSession,
+                                    g_stats.unavailableThisSession,
+                                    g_stats.cappedThisSession,
                                     g_stats.memoriesWritten,
                                     g_stats.memoryWriteFailures));
         for (const auto& [id, rumor] : g_rumors) {
@@ -1056,6 +1094,14 @@ namespace NarrativeEngine::GossipSim
             const auto wasted = static_cast<std::uint32_t>(r.wasted);
             intfc->WriteRecordData(tx);
             intfc->WriteRecordData(wasted);
+            const auto conversations = static_cast<std::uint32_t>(r.conversations);
+            const auto notCaught = static_cast<std::uint32_t>(r.notCaught);
+            const auto unavailable = static_cast<std::uint32_t>(r.unavailable);
+            const auto capped = static_cast<std::uint32_t>(r.capped);
+            intfc->WriteRecordData(conversations);
+            intfc->WriteRecordData(notCaught);
+            intfc->WriteRecordData(unavailable);
+            intfc->WriteRecordData(capped);
             intfc->WriteRecordData(r.lastActivityGameDay);
             const std::uint8_t live = r.live ? 1 : 0;
             intfc->WriteRecordData(live);
@@ -1113,6 +1159,10 @@ namespace NarrativeEngine::GossipSim
             Rumor r;
             std::uint32_t tx = 0;
             std::uint32_t wasted = 0;
+            std::uint32_t conversations = 0;
+            std::uint32_t notCaught = 0;
+            std::uint32_t unavailable = 0;
+            std::uint32_t capped = 0;
             std::uint8_t live = 0;
             if (intfc->ReadRecordData(r.id) != sizeof(r.id) || intfc->ReadRecordData(r.originNpc) != sizeof(r.originNpc)
                 || intfc->ReadRecordData(r.originSettlement) != sizeof(r.originSettlement)
@@ -1120,6 +1170,10 @@ namespace NarrativeEngine::GossipSim
                 || intfc->ReadRecordData(r.notability) != sizeof(r.notability)
                 || intfc->ReadRecordData(r.maxDepth) != sizeof(r.maxDepth) || intfc->ReadRecordData(tx) != sizeof(tx)
                 || intfc->ReadRecordData(wasted) != sizeof(wasted)
+                || intfc->ReadRecordData(conversations) != sizeof(conversations)
+                || intfc->ReadRecordData(notCaught) != sizeof(notCaught)
+                || intfc->ReadRecordData(unavailable) != sizeof(unavailable)
+                || intfc->ReadRecordData(capped) != sizeof(capped)
                 || intfc->ReadRecordData(r.lastActivityGameDay) != sizeof(r.lastActivityGameDay)
                 || intfc->ReadRecordData(live) != sizeof(live)) {
                 logger::error("GossipSim::OnLoad: short read on rumor {}; reverting", i);
@@ -1147,6 +1201,10 @@ namespace NarrativeEngine::GossipSim
             }
             r.transmissions = tx;
             r.wasted = wasted;
+            r.conversations = conversations;
+            r.notCaught = notCaught;
+            r.unavailable = unavailable;
+            r.capped = capped;
             r.live = live != 0;
 
             std::uint32_t carrierCount = 0;
