@@ -678,10 +678,25 @@ namespace NarrativeEngine::Settings
         float gossipMinMemoryImportance = 0.45f;
         int gossipHarvestActorSampleSize = 25;
         int gossipHarvestMemoriesPerActor = 10;
-        // Bounds the one-event-many-memories case: a combat event writes
-        // a memory to every witness, and those are distinct ids
-        // describing the same thing.
+        // How many rumors one sweep may actually seed. The walk down the
+        // candidate pool stops once this many have been accepted.
         int gossipMaxSeedsPerHarvest = 1;
+        // How many candidates a sweep may put to the evaluator before it
+        // gives up. The sweep draws this many eligible candidates, shuffles
+        // them, and evaluates one at a time until it has seeded
+        // gossipMaxSeedsPerHarvest rumors or exhausted the pool.
+        //
+        // At 1 a single refusal wasted the whole sweep, which is what this
+        // exists to fix: a third of evaluations come back refused, so a
+        // pool of one seeded nothing about a third of the time despite
+        // having other perfectly good candidates ranked behind it.
+        //
+        // The cost is bounded by refusals, not by the pool size — the walk
+        // stops at the first acceptance. At the observed refusal rate the
+        // expected spend is ~1.5 evaluation calls per sweep whether this is
+        // 5 or 50; raising it only buys deeper cover for the unlucky sweep
+        // where the first several are all refused.
+        int gossipEvalAttemptsPerHarvest = 5;
         // --- Milestone 2: rumor content -----------------------------
         //
         // Generation bands, all produced by ONE call at seed time. Band

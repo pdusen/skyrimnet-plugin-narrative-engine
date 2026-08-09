@@ -328,6 +328,8 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("Gossip", "iGossipHarvestMemoriesPerActor", dst.gossipHarvestMemoriesPerActor));
             dst.gossipMaxSeedsPerHarvest =
                 static_cast<int>(ini.GetLongValue("Gossip", "iGossipMaxSeedsPerHarvest", dst.gossipMaxSeedsPerHarvest));
+            dst.gossipEvalAttemptsPerHarvest = static_cast<int>(
+                ini.GetLongValue("Gossip", "iGossipEvalAttemptsPerHarvest", dst.gossipEvalAttemptsPerHarvest));
             dst.gossipMinAvailableContactShare = static_cast<float>(
                 ini.GetDoubleValue("Gossip", "fGossipMinAvailableContactShare", dst.gossipMinAvailableContactShare));
             dst.gossipContentBands =

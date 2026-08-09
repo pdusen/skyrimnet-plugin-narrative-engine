@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <format>
 #include <mutex>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,12 @@ namespace NarrativeEngine::GossipHarvest
     namespace
     {
         std::mutex g_mutex;
+        // Decides the order the candidate pool is walked in, which decides
+        // which memory seeds. Separate from GossipSim's generator so that
+        // seeding order does not shift whenever transmission draws change,
+        // but seeded from the same iGossipRandomSeed so a run stays
+        // reproducible end to end.
+        std::mt19937 g_rng{7919};
         double g_lastGameDaySample = -1.0;
         double g_gameHoursSinceSweep = 0.0;
         // Whether the "cannot sweep yet" note has already been emitted for
@@ -384,17 +391,35 @@ namespace NarrativeEngine::GossipHarvest
                 return a.importance > b.importance;
             });
 
-            const auto want = static_cast<std::size_t>(std::max(1, cfg.gossipMaxSeedsPerHarvest));
+            // Take the best `attempts` candidates by importance, then hand
+            // them over in a RANDOM order.
+            //
+            // Both halves matter. Ranking by importance decides WHICH
+            // memories are worth an evaluation at all; shuffling decides
+            // which of them actually seeds, and that has to be random —
+            // walking the pool in importance order would seed the top
+            // candidate every time the evaluator accepted it, which is a
+            // pool size of one wearing a disguise.
+            //
+            // Shuffled-then-walked is equivalent to evaluating the whole
+            // pool and picking an accepted one at random: within a uniform
+            // permutation the accepted candidates are in uniform relative
+            // order, so the first one reached is uniform over them. It just
+            // costs the evaluations actually needed to find it rather than
+            // one per candidate.
+            const auto attempts = static_cast<std::size_t>(std::max(1, cfg.gossipEvalAttemptsPerHarvest));
+            std::vector<GossipContent::Candidate> pool;
+            pool.reserve(attempts);
             for (const auto& c : candidates) {
-                if (sweep.sentForGeneration >= want) {
+                if (pool.size() >= attempts) {
                     break;
                 }
                 // An origin whose contacts are almost all unreachable will
                 // spend its whole quota on people who are away and reach
                 // nobody. Checked HERE rather than at qualification: it is
                 // the most expensive test in the pipeline (a life-state
-                // read per contact) and only the candidates actually about
-                // to be seeded need it. Failing it moves on to the next
+                // read per contact) and only the candidates in line for an
+                // evaluation need it. Failing it moves on to the next
                 // candidate rather than ending the sweep.
                 if (const float share = GossipSim::AvailableContactShare(c.owner);
                     share < cfg.gossipMinAvailableContactShare) {
@@ -406,37 +431,48 @@ namespace NarrativeEngine::GossipHarvest
                     continue;
                 }
 
-                // Re-check the events here, not just at qualification.
-                // Nothing is claimed until this loop runs, so two accounts
-                // of the same happening can both have passed the gate
-                // above; the first one through claims the events and the
-                // second must see that.
-                if (GossipClaims::AreEventsClaimed(c.eventIds)) {
+                // Two accounts of the same happening must not both take pool
+                // slots: whichever the shuffle reaches second is guaranteed
+                // to be skipped once the first claims the events, so it
+                // would occupy an attempt and buy nothing. The persistent
+                // ledger is still re-checked per step inside the walk — this
+                // is only about not wasting slots within one sweep.
+                const bool overlapsPool = std::any_of(pool.begin(), pool.end(), [&](const auto& queued) {
+                    return std::any_of(c.eventIds.begin(), c.eventIds.end(), [&](std::int64_t id) {
+                        return std::find(queued.eventIds.begin(), queued.eventIds.end(), id) != queued.eventIds.end();
+                    });
+                });
+                if (overlapsPool || GossipClaims::AreEventsClaimed(c.eventIds)) {
                     ++sweep.rejectedSameEvent;
                     GossipLog::Memory(c.memoryId, c.owner, c.importance, "same-event (this sweep)");
                     continue;
                 }
-                // Claim BEFORE evaluating. Both LLM calls are async and
-                // either can fail or be refused, at which point
-                // GossipContent settles the claim — so a rumor can never
-                // exist without a claim behind it, and a memory that
-                // produced nothing is handed straight back. The related
-                // events are claimed with it; which of the two comes back
-                // depends on why there was no rumor, and that split lives
-                // in GossipContent rather than here.
-                GossipClaims::Claim(c.memoryId, c.eventIds, nowGameDay);
+
                 const auto* p = GossipGraph::Find(c.owner);
                 const auto& locName = GossipGraph::LocationName(p ? (p->settlement ? p->settlement : p->hold) : 0);
-                GossipContent::RequestRumor(c.memoryId, c.owner, c.text, locName, c.importance);
-                ++sweep.sentForGeneration;
+                pool.push_back(
+                    GossipContent::Candidate{c.memoryId, c.owner, c.importance, c.text, locName, c.eventIds});
             }
-            if (candidates.size() > want) {
+
+            if (!pool.empty()) {
+                std::shuffle(pool.begin(), pool.end(), g_rng);
+                sweep.sentForGeneration = pool.size();
+                // Nothing is claimed yet. The walk claims each candidate
+                // immediately before its own evaluation and settles that
+                // claim on every path out, so a rumor can never exist
+                // without a claim behind it while the candidates the walk
+                // never reaches are never claimed at all.
+                GossipContent::RequestRumors(std::move(pool), std::max(1, cfg.gossipMaxSeedsPerHarvest), nowGameDay);
+            }
+
+            if (candidates.size() > attempts) {
                 // Named rather than dropped quietly: a sweep that leaves
                 // material on the table is the signal that
-                // iGossipMaxSeedsPerHarvest is the binding constraint on
-                // the seeding rate, not the qualification rules.
-                GossipLog::Note(std::format(
-                    "harvest: {} candidate(s) not seeded this sweep (cap {})", candidates.size() - want, want));
+                // iGossipEvalAttemptsPerHarvest is the binding constraint on
+                // what gets considered, not the qualification rules.
+                GossipLog::Note(std::format("harvest: {} candidate(s) beyond the evaluation pool this sweep (pool {})",
+                                            candidates.size() - attempts,
+                                            attempts));
             }
 
             GossipLog::Harvest(sweep);
@@ -448,11 +484,18 @@ namespace NarrativeEngine::GossipHarvest
     void Initialize()
     {
         const auto& cfg = Settings::Get();
-        logger::info("GossipHarvest: initialized (enabled={}, every {}h, window {}d, minImportance {})",
+        if (cfg.gossipRandomSeed != 0) {
+            g_rng.seed(static_cast<std::uint32_t>(cfg.gossipRandomSeed));
+        } else {
+            std::random_device rd;
+            g_rng.seed(rd());
+        }
+        logger::info("GossipHarvest: initialized (enabled={}, every {}h, window {}d, minImportance {}, pool {})",
                      cfg.gossipHarvestEnabled,
                      cfg.gossipHarvestIntervalGameHours,
                      cfg.gossipHarvestWindowDays,
-                     cfg.gossipMinMemoryImportance);
+                     cfg.gossipMinMemoryImportance,
+                     cfg.gossipEvalAttemptsPerHarvest);
     }
 
     void OnSessionStart()

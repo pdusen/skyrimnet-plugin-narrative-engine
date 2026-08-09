@@ -101,9 +101,13 @@ namespace NarrativeEngine::GossipHarvest
         std::size_t sweeps = 0;
         std::size_t actorsRanked = 0;
         std::size_t memoriesExamined = 0;
-        // Memories handed to GossipContent, which is not the same as
-        // rumors that exist: generation can still fail or be refused,
-        // and the claim is released when it is.
+        // Candidates placed in the evaluation pool, which is NOT the
+        // number of rumors, the number of LLM calls, or even the number
+        // of memories claimed. The sweep hands the pool over shuffled and
+        // the walk stops at the first acceptance, so most of a pool is
+        // typically never reached — and what it never reaches it never
+        // claims. The per-candidate outcomes are the `content:` lines in
+        // the trace.
         std::size_t sentForGeneration = 0;
         std::size_t rejectedTooOld = 0;
         std::size_t rejectedLowImportance = 0;

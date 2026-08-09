@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include <PluginThread.h>
 
@@ -11,12 +12,15 @@
 //
 // Two responsibilities, deliberately unequal in cost:
 //
-//   1. AT MOST TWO LLM calls per candidate memory, at seed time — an
-//      evaluation, and then the band generation only if the evaluation
-//      approves. Never one call per band, and emphatically not one per
-//      transmission: cost scales with the number of candidates, never with
-//      how far a rumor spreads. A rumor reaching eight people and one
-//      reaching eighty cost exactly the same.
+//   1. A handful of LLM calls per HARVEST SWEEP — one evaluation per
+//      candidate the sweep actually reaches, and one band generation for
+//      the candidate it accepts. Never one call per band, and emphatically
+//      not one per transmission: cost scales with sweeps, never with how
+//      far a rumor spreads. A rumor reaching eight people and one reaching
+//      eighty cost exactly the same.
+//
+//      The sweep stops evaluating at its first acceptance, so the pool
+//      size bounds the worst case rather than describing the usual one.
 //
 //   2. A string build per transmission: band text, plus a framing template
 //      chosen by relationship and distance, plus names. No model involved.
@@ -59,14 +63,44 @@ namespace NarrativeEngine::GossipContent
 {
     void Initialize();
 
-    // Evaluate a memory and, if it passes, generate the rumor from it.
-    // Fire-and-forget: both continuations run on the plugin thread once
-    // SkyrimNet answers, and the last of them calls GossipSim::SeedRumor
-    // itself with the sanitized bands.
+    // One memory a sweep is willing to turn into a rumor. Assembled by
+    // GossipHarvest, which has already applied every cheap qualification
+    // test; nothing here is claimed yet.
+    struct Candidate
+    {
+        std::int64_t memoryId = 0;
+        // The TESNPC BASE form. The graph's key, and what SeedRumor and
+        // every log line expect — not the placed reference.
+        RE::FormID owner = 0;
+        float importance = 0.0f;
+        std::string text;
+        std::string locationName;
+        // The happening this memory is an account of, as SkyrimNet's own
+        // event ids. Claimed alongside the memory so no other witness's
+        // account of the same happening can seed a second rumor.
+        std::vector<std::int64_t> eventIds;
+    };
+
+    // Walk a candidate pool, evaluating ONE AT A TIME until `maxSeeds`
+    // rumors have been seeded or the pool is exhausted. Fire-and-forget:
+    // every continuation runs on the plugin thread as SkyrimNet answers,
+    // and the last one calls GossipSim::SeedRumor with the sanitized bands.
     //
-    // The caller has already claimed `sourceMemoryId` and its related
-    // events. What happens to those claims depends on WHY no rumor
-    // resulted, and the distinction matters:
+    // `pool` must ALREADY BE SHUFFLED. Selection is "the first candidate in
+    // a random permutation that the evaluator accepts", which is uniform
+    // over the accepted set — evaluating a pre-shuffled list in order is
+    // exactly equivalent to judging them all and picking an approved one at
+    // random, at a fraction of the cost, because the walk stops at the
+    // first acceptance instead of paying for every verdict. Hand it a list
+    // sorted by importance and that property is lost: the most important
+    // candidate would seed every time.
+    //
+    // Claims are taken LAZILY, one candidate at a time, immediately before
+    // its evaluation. Claiming the whole pool up front would hold claims on
+    // candidates the walk never reaches — typically most of them.
+    //
+    // What happens to a claim depends on WHY that candidate produced no
+    // rumor, and the distinction matters:
     //
     //   * Nothing was learned — a call failed to queue, failed outright,
     //     returned something unparseable, carried an unrecognised verdict,
@@ -80,11 +114,13 @@ namespace NarrativeEngine::GossipContent
     //
     //   * `duplicate` — a judgement about the happening. Memory and events
     //     both stay claimed, so no second rumor about it can start.
-    void RequestRumor(std::int64_t sourceMemoryId,
-                      RE::FormID owner,
-                      const std::string& sourceText,
-                      const std::string& locationName,
-                      float importance);
+    //
+    // Only the first two continue the walk in a way that can still cost
+    // more: an acceptance spends the sweep's seed budget whether or not the
+    // composition that follows it succeeds. A failed composition releases
+    // the memory, so it returns to the pool on a later sweep rather than
+    // being retried mid-walk.
+    void RequestRumors(std::vector<Candidate> pool, int maxSeeds, double claimGameDay);
 
     // Band index for a carrier at `generation`, clamped to the configured
     // band count. Edges are every three generations: 0-2, 3-5, 6+.
