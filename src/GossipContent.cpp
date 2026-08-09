@@ -1,5 +1,6 @@
 #include <GossipContent.h>
 
+#include <EvaluationPipeline.h>
 #include <EventLogUtil.h>
 #include <GossipClaims.h>
 #include <GossipGraph.h>
@@ -189,8 +190,15 @@ namespace NarrativeEngine::GossipContent
                     abandon("LLM call failed");
                     return;
                 }
-                auto j = nlohmann::json::parse(response, nullptr, false);
+                // Strip a wrapping markdown fence before parsing. Models
+                // wrap their JSON in ```json ... ``` often enough that the
+                // instruction not to cannot be relied on, and the whole
+                // response is discarded when they do — one seed was lost
+                // this way to an otherwise perfectly formed object.
+                const auto body = EvaluationPipeline::StripMarkdownFences(response);
+                auto j = nlohmann::json::parse(body, nullptr, false);
                 if (j.is_discarded() || !j.is_object()) {
+                    logger::warn("GossipContent: response not a JSON object: {}", body);
                     abandon("unparseable response");
                     return;
                 }

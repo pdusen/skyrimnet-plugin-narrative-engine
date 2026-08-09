@@ -28,14 +28,14 @@ them.
 
 Measured against a real save, the pool it draws from is far narrower than the graph suggests:
 
-| Quantity                                            | Value    |
-| --------------------------------------------------- | -------- |
-| Graph participants                                  | 881      |
-| Participants holding **any** seedable memory        | **41**   |
-| Seedable memories in total                          | 323      |
-| Share held by the single most active actor          | **24.1%** |
-| Share held by the top 3                             | **54.8%** |
-| Share held by the top 10                            | 78.6%    |
+| Quantity                                     | Value     |
+| -------------------------------------------- | --------- |
+| Graph participants                           | 881       |
+| Participants holding **any** seedable memory | **41**    |
+| Seedable memories in total                   | 323       |
+| Share held by the single most active actor   | **24.1%** |
+| Share held by the top 3                      | **54.8%** |
+| Share held by the top 10                     | 78.6%     |
 
 Because selection is a global ranking over that distribution, the same few people win every sweep, and the
 other ~840 participants are structurally incapable of ever seeding a rumor no matter how long the game runs.
