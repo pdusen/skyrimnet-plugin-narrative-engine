@@ -112,9 +112,25 @@ namespace NarrativeEngine::GossipSim
             }
         };
 
+        // std::priority_queue hides its container as a protected member,
+        // which makes "how many of these are due right now?" unanswerable
+        // from outside. That question has to be answerable: the drain
+        // report used to print the whole queue depth and call it the due
+        // count, which reads as an unbounded backlog when it is nothing of
+        // the sort (see the drain loop in Poll).
+        //
+        // Exposing `c` rather than switching to a hand-rolled vector heap
+        // keeps the ordering semantics exactly as they were. The scan is a
+        // linear pass over a container the size of the live-carrier set —
+        // tens of entries — and only runs when the drain stopped early.
+        struct EventQueue : std::priority_queue<QueueEntry>
+        {
+            using std::priority_queue<QueueEntry>::c;
+        };
+
         std::mutex g_mutex;
         std::unordered_map<std::uint32_t, Rumor> g_rumors;
-        std::priority_queue<QueueEntry> g_queue;
+        EventQueue g_queue;
         std::uint32_t g_nextRumorId = 1;
 
         double g_lastGameDaySample = -1.0;
@@ -919,10 +935,23 @@ namespace NarrativeEngine::GossipSim
         // as a stall.
         const bool stillDue = !g_queue.empty() && g_queue.top().dueGameDay <= g_simGameDay;
         if (stillDue) {
-            GossipLog::Note(std::format("catch-up: processed {} ({}), {} events still due",
+            // Only the entries actually past their due time, because only
+            // those are work this poll deferred. The queue's total DEPTH is
+            // deliberately NOT reported here: every live carrier holds one
+            // scheduled future step at all times, so the depth is a census
+            // of the carrier population rather than any measure of backlog,
+            // and it barely moves during a drain — each processed event
+            // pops one entry and pushes that carrier's next step straight
+            // back. Printed beside an overrun it reads as a queue that
+            // never empties, which is the opposite of what it means. The
+            // dashboard carries it as `queued_events`, where a census
+            // number belongs.
+            const auto deferred = std::count_if(
+                g_queue.c.begin(), g_queue.c.end(), [](const QueueEntry& e) { return e.dueGameDay <= g_simGameDay; });
+            GossipLog::Note(std::format("catch-up: processed {} ({}), {} due events deferred to next poll",
                                         processed,
                                         outOfTime ? "time budget" : "work cap",
-                                        g_queue.size()));
+                                        deferred));
         }
 
         SweepAndReapLocked();
