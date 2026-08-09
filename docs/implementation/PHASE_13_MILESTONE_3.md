@@ -13,7 +13,8 @@ Prerequisites:
 - [`../THREADING_MODEL.md`](../THREADING_MODEL.md) — the three roles, the two tokens, and the enforcement
   table this milestone extends.
 
-> **Doc status: design only.** No implementation plan yet, and nothing here is built.
+> **Doc status: planned, not built.** The design is settled and the implementation plan below is ordered;
+> no step has been started.
 
 ---
 
@@ -565,6 +566,250 @@ each one had a live alternative.
    abandoned tick has already pushed into SkyrimNet's database, which is the only part of a tick's output
    that a load cannot roll back.
 
+## Module structure
+
+| Module            | Role                                                                                                                                                                              |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GossipDispatch`  | **New.** The dedicated worker and its serial FIFO queue. Mints `GossipThread::Token`. Owns the cancellation-token registry.                                                        |
+| `GossipThread`    | **New.** The token type, mirroring `PluginThread` exactly.                                                                                                                        |
+| `WorkerToken`     | **New.** The trait and concept naming which tokens may hold a blocking SkyrimNet call.                                                                                            |
+| `GossipState`     | **New.** One struct owning every piece of mutable gossip state — rumors, queue, counters, claims. The unit that is snapshotted, serialised and swapped.                            |
+| `GossipTick`      | **New.** The single linear job: harvest, evaluate, compose, seed, simulate, prune, flush, publish. Carries its `asOf` stamp and its cancellation token.                            |
+| `GossipSim`       | Loses its mutex, its `Poll`, `kMaxGameDayDeltaPerPoll` and the per-tick time budget. Becomes the drain and the model, operating on a `GossipState` handed to it.                   |
+| `GossipHarvest`   | Loses its mutex and its `Poll`. Becomes the sweep, called as step 1 of a tick with an `asOf` horizon.                                                                              |
+| `GossipContent`   | Loses `Walk`, `Advance`, `Evaluate` and the whole continuation chain. Becomes a loop over the shuffled pool making blocking calls.                                                 |
+| `GossipClaims`    | Loses its mutex. Its maps move into `GossipState`; it keeps `'NEGC'` and the ledger logic.                                                                                        |
+| `GossipLog`       | Keeps its mutex — it is a file writer, and session-boundary writes still come from the main thread. Its `Poll` becomes step 5 of the tick.                                         |
+| `Tick`            | Keeps the cadence check. Reduced to: accumulate, compare, enqueue one stamped job per crossed boundary, return.                                                                    |
+
+---
+
+## Implementation plan
+
+Ordered so that **the thread moves last among the risky parts**. Steps 2–4 restructure ownership and
+serialisation while everything is still single-threaded on `AsyncDispatch`, which means any bug they
+introduce is a plain logic bug rather than a logic bug wearing a race as a disguise. Only once state has one
+owner and one publication point does the work change threads.
+
+Step 1 is pure addition and touches nothing existing. Step 7 is pure subtraction and is safe precisely
+because everything before it has landed.
+
+---
+
+### Step 1 — `GossipDispatch`, `GossipThread::Token`, and the worker-token concept
+
+- [ ] Complete
+
+**Goal:** The thread exists and can be given work. Nothing uses it yet.
+
+1. `GossipThread::Token` mirroring `PluginThread::Token` — private constructor, non-copyable, non-movable,
+   one `friend` for `GossipDispatch`'s job dispatcher.
+2. `GossipDispatch` with `Start()` / `Stop()` / `EnqueueWork()`, modelled directly on `EvalDispatch`. One
+   `std::thread`, one `std::deque`, one condition variable. `ScopedThreadRole(ThreadRole::Plugin)` at the
+   top of the worker loop, held for the thread's lifetime. Exceptions swallowed and logged so a bad job
+   cannot kill the worker.
+3. The `is_worker_token` trait and `WorkerToken` concept, with the blocking
+   `SkyrimNetAPI::SendCustomPromptToLLM` overload retargeted onto it.
+4. `Start()` at `kDataLoaded` beside the other dispatchers; `Stop()` in shutdown **after**
+   `AsyncDispatch::Stop()`.
+
+`MainThread::Run` and `MainThread::FireAndForget` are deliberately left demanding `PluginThread::Token`.
+
+**Verification:** enqueue a job that logs and confirm it runs on a distinct thread id from `AsyncDispatch`'s.
+Confirm a job enqueued after `Stop()` is dropped with a warning rather than crashing. Confirm that a
+deliberate `MainThread::Run` from inside a gossip job **fails to compile**, and delete the experiment.
+
+---
+
+### Step 2 — `GossipState`: one owner for every mutable field
+
+- [ ] Complete
+
+**Goal:** Collect gossip's scattered file-static state into a single copyable struct, with no behaviour
+change and no thread change.
+
+Everything currently living as a `g_`-prefixed static in `GossipSim.cpp` and `GossipClaims.cpp` moves into
+one struct: the rumor map, the event queue, `g_nextRumorId`, `g_simGameDay`, `g_lastGameDaySample`, the
+session counters, the memory-claim map and the event-claim map. `GossipHarvest`'s pacing state stays out —
+it belongs to the scheduler, not to the world.
+
+The functions in all three modules take a `GossipState&` rather than reaching for statics. A single
+file-static instance remains for now, still mutex-guarded, still on `AsyncDispatch`.
+
+This is the step where the copy cost gets checked: the struct must be cheaply copyable, which means no
+`std::function`, no owning pointers, and containers of trivially-copyable elements.
+
+**Verification:** a full session behaves identically — same seeds, same transmissions, same trace, same
+co-save round-trip. This step should be invisible in every log.
+
+---
+
+### Step 3 — Publish the snapshot; the dashboard reads it
+
+- [ ] Complete
+
+**Goal:** One `std::shared_ptr<const GossipState>` published at a single point, and the first reader off the
+lock.
+
+1. A published snapshot pointer, swapped atomically at the end of the combined gossip work in `Tick`.
+2. `GossipSim::GetStats`, `GossipSim::GetRumorViews`, `GossipHarvest::GetStats` and `GossipClaims::Count`
+   become projections **of a snapshot** rather than lock-taking reads of live state.
+3. `DashboardUIManager` loads the pointer once per compose and derives everything it shows from that one
+   image, so its numbers cannot disagree with each other.
+
+`RumorView` survives as the dashboard's projection type; it stops being produced by walking live state.
+
+**Verification:** the Gossip tab shows the same values it does today. Confirm the rumor list, carrier counts
+and claim count are mutually consistent — they now come from one instant by construction, which is a
+guarantee the current code does not make.
+
+---
+
+### Step 4 — Serialisation through the snapshot
+
+- [ ] Complete
+
+**Goal:** `OnSave`, `OnLoad` and `OnRevert` stop touching live state.
+
+- `OnSave` serialises the published snapshot. Both `'NEGS'` and `'NEGC'` are written from **the same
+  snapshot**, so claims and rumors are always an image of the same instant.
+- `OnLoad` deserialises into a fresh `GossipState` and publishes it as **pending**.
+- `OnRevert` publishes a default-constructed `GossipState` as pending.
+- The pending state is adopted at the top of the next unit of gossip work, before anything else runs.
+
+Record ids and versions are untouched. `'NEGS'` stays at version 5 unless the state struct's layout forces a
+bump, in which case bump it and skip-and-log on mismatch as the existing code already does.
+
+**Verification:** save with rumors in flight, reload, confirm carriers, generations, queued events and
+claims all restore. Confirm a revert with no load leaves an empty world rather than a half-cleared one. Save
+twice in a row without any gossip work between and confirm byte-identical records.
+
+---
+
+### Step 5 — Scheduled, stamped, cancellable ticks on the gossip thread
+
+- [ ] Complete
+
+**Goal:** The work changes threads. This is the step the milestone exists for.
+
+1. **`Tick` stops calling gossip directly.** It accumulates against `iGossipTickIntervalSeconds`, samples the
+   game clock, and enqueues one `GossipTick{ asOf }` per crossed `fGossipHarvestIntervalGameHours` boundary,
+   up to `kMaxOutstandingTicks` (inheriting the existing `kMaxOwedSweeps = 4`). Beyond the cap the schedule
+   advances without enqueuing and the drop is logged.
+2. **The tick job runs harvest, drain, prune and flush in order**, on the gossip thread, against the single
+   `GossipState`. Content generation still uses the asynchronous LLM path for now, with its callbacks hopping
+   from `AsyncDispatch` onto `GossipDispatch` — Step 6 removes that.
+3. **`asOf` is the horizon.** `g_simGameDay` is *set* to `asOf` rather than sampled; memory rows stamped
+   after `asOf` are discarded before ranking; memory ages, claim dates and claim expiry all measure against
+   `asOf`.
+4. **Cancellation tokens.** Every enqueued tick carries one. `OnLoad` and `OnRevert` cancel all outstanding
+   tokens; `GossipDispatch::Stop()` cancels before joining. Checks at job entry, after each LLM call returns,
+   between drain events, and before publishing.
+5. **Deletions:** `iGossipMaxMillisecondsPerTick` and the budget check; `kMaxGameDayDeltaPerPoll` and its
+   catch-up clamp; the `catch-up: processed …` trace line, which described a mechanism that no longer exists.
+   `iGossipMaxEventsPerTick` stays as a runaway backstop.
+
+**Verification:** pass 24 hours with `T` and confirm **two** ticks run, in schedule order, with the first
+one's rumors present in the second's `active_rumors`. Confirm the plugin thread's gossip work is now a
+handful of microseconds per poll. Load a save mid-tick and confirm the trace shows the tick abandoning, with
+no `TELL` lines after the load stamped for the old world. Confirm `Stop()` during an in-flight tick unwinds
+promptly rather than waiting out the LLM timeout.
+
+---
+
+### Step 6 — Blocking LLM calls and the linear tick
+
+- [ ] Complete
+
+**Goal:** Delete the continuation machinery.
+
+`GossipContent` switches to the blocking `SendCustomPromptToLLM` overload and becomes a loop:
+
+```text
+for each candidate in the shuffled pool:
+    if cancelled: return
+    claim it
+    verdict = evaluate(candidate)          // blocks
+    if cancelled: return
+    settle the claim per the verdict
+    if verdict == seed:
+        bands = compose(candidate)         // blocks
+        if cancelled: return
+        seed the rumor, dated asOf
+        break
+```
+
+`struct Walk`, its `shared_ptr`, and the `Advance` / `Evaluate` mutual recursion go. The `IsClaimed` and
+`AreEventsClaimed` re-checks stay, demoted from load-bearing to belt-and-braces: with one job per tick on a
+serial queue, two walks can no longer overlap, so the double-claim defect they were added for is now
+unrepresentable.
+
+**Verification:** a sweep that refuses its first candidate and accepts its second produces the same trace as
+today. Confirm the `content:` lines for one tick are contiguous — no interleaving with another tick's, which
+was the symptom that exposed the concurrent-walk bug. Confirm a forced LLM failure releases the claim and
+moves to the next candidate.
+
+---
+
+### Step 7 — Delete the mutexes
+
+- [ ] Complete
+
+**Goal:** Collect the guarantee the previous six steps bought.
+
+Every `std::scoped_lock` in `GossipSim.cpp`, `GossipHarvest.cpp` and `GossipClaims.cpp` goes, along with the
+mutexes themselves. Their internal functions take `GossipThread::Token const&` instead of
+`PluginThread::Token const&`, which is what makes the deletion provable rather than hopeful.
+
+`GossipLog` keeps its mutex and its `PluginThread`/main-thread callers. It is a file writer, not simulation
+state.
+
+Add the seventh row to the enforcement table in [`../THREADING_MODEL.md`](../THREADING_MODEL.md), and a
+fourth box to its diagram.
+
+**Verification:** builds clean; a deliberate call to a `GossipSim` internal from `AsyncDispatch` **fails to
+compile**, and the experiment is deleted. A long session produces identical behaviour to Step 6.
+
+---
+
+### Step 8 — In-game validation
+
+- [ ] Complete
+
+**[USER]**
+
+Run on a save with live rumors already spreading, and pass a lot of time.
+
+1. **Two ticks for 24 hours.** The count of `HARVEST` lines must match the number of intervals crossed, not
+   the number of times you pressed `T`.
+2. **Late ticks are still correct ticks.** With several ticks queued behind a slow LLM call, confirm each one
+   reports memories and ages consistent with its own `asOf` rather than with the wall clock.
+3. **Nothing stutters.** The whole point. Watch for hitches while a large drain runs.
+4. **Saves are instant** regardless of what gossip is doing, including mid-drain and mid-LLM-call.
+5. **Load mid-tick is clean.** Load an earlier save while a tick is running and confirm no rumor, claim or
+   memory from the abandoned tick appears afterwards.
+6. **The dashboard stays consistent**, and updates once per tick rather than continuously.
+7. **Propagation is unchanged.** Reach, depth, settlement and hold counts should match the pre-refactor runs
+   within noise. The model did not move; if the numbers move, something else did.
+8. **Batched memory writes read acceptably.** Transmissions now land in bursts of one tick rather than
+   trickling. Confirm this reads as news arriving rather than as a glitch.
+
+---
+
+## Done condition
+
+Milestone 3 is complete when:
+
+- All 8 steps are checked off and Step 8 passes.
+- No mutex remains in `GossipSim`, `GossipHarvest` or `GossipClaims`.
+- No non-gossip thread ever blocks on the gossip thread, in either direction.
+- Two crossed interval boundaries produce two ticks, each reading the world as of its own `asOf`.
+- A load cancels outstanding work, and nothing from an abandoned tick reaches SkyrimNet.
+- `iGossipMaxMillisecondsPerTick`, `kMaxGameDayDeltaPerPoll` and the `Walk` continuation chain are gone.
+- Propagation metrics match the pre-refactor runs within noise.
+
+---
+
 ## Open questions
 
-None. The design is settled; what remains is the implementation plan.
+None. The design is settled and the plan above is ordered.
