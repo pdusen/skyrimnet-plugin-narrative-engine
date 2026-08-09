@@ -123,7 +123,7 @@ namespace NarrativeEngine::GossipSim
         //
         // "Named" is the operative word. Every carrier also holds a
         // province-wide lottery ticket (the kProvincePeer sentinel, at
-        // fGossipWeightProvince) that can reach any participant at all,
+        // fGossipProvinceShare) that can reach any participant at all,
         // so no carrier is ever exhausted in the strictest sense. Judging
         // stall on that would mean nothing is ever stalled, which is
         // useless. A stalled rumor can therefore still jump — rarely —

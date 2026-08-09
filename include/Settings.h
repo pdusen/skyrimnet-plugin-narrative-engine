@@ -583,7 +583,25 @@ namespace NarrativeEngine::Settings
         // Strangers in another hold. Near-zero by design: the measured
         // cross-hold transport is shared membership of a province-
         // spanning organisation, not proximity.
-        float gossipWeightProvince = 0.0001f;
+        // NOT a weight — the fraction of a carrier's conversations held
+        // with somebody from anywhere in Skyrim, rather than with a named
+        // contact. The named weights above divide the remaining
+        // (1 - share) between them.
+        //
+        // 0.01 is derived rather than felt. A province draw only crosses a
+        // hold if the stranger it lands on catches the rumor (beta =
+        // notability * fGossipTransmissionScale, about 0.6 at a typical
+        // notability) and lives in a different hold (about 0.85 of the
+        // time), so the effective cross-hold rate is roughly half the
+        // share. Against the conversation counts a real run produces —
+        // median 74 per rumor, 200 for the one that spread furthest —
+        // that puts a hold crossing at ~7% for a rumor that barely moves,
+        // ~31% for a typical one, and ~64% for one that gets everywhere.
+        //
+        // That scaling is the point: a story told two hundred times SHOULD
+        // be the one that reaches a traveller. A flat "rumors cross holds
+        // X% of the time" would not have that property.
+        float gossipProvinceShare = 0.01f;
 
         // Distance attenuation on the personal-edge channel. A guild-mate
         // in your own settlement is someone you see constantly; one three

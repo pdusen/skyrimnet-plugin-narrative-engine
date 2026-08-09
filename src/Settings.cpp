@@ -289,8 +289,8 @@ namespace NarrativeEngine::Settings
                 static_cast<float>(ini.GetDoubleValue("Gossip", "fGossipWeightSettlement", dst.gossipWeightSettlement));
             dst.gossipWeightHold =
                 static_cast<float>(ini.GetDoubleValue("Gossip", "fGossipWeightHold", dst.gossipWeightHold));
-            dst.gossipWeightProvince =
-                static_cast<float>(ini.GetDoubleValue("Gossip", "fGossipWeightProvince", dst.gossipWeightProvince));
+            dst.gossipProvinceShare =
+                static_cast<float>(ini.GetDoubleValue("Gossip", "fGossipProvinceShare", dst.gossipProvinceShare));
             dst.gossipPersonalDistanceSameSettlement = static_cast<float>(ini.GetDoubleValue(
                 "Gossip", "fGossipPersonalDistanceSameSettlement", dst.gossipPersonalDistanceSameSettlement));
             dst.gossipPersonalDistanceSameHold = static_cast<float>(

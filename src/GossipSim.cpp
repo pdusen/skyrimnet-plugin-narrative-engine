@@ -297,25 +297,46 @@ namespace NarrativeEngine::GossipSim
             for (const auto& [peer, c] : weighted) {
                 total += c.rate;
             }
-            const float provinceWeight = cfg.gossipWeightProvince * static_cast<float>(GossipGraph::ParticipantCount());
-            total += provinceWeight;
             if (total <= 0.0f) {
                 return g_contactCache.emplace(npc, std::move(out)).first->second;
             }
 
+            // The province channel is a SHARE OF THE BUDGET, not another
+            // weight thrown into the same division.
+            //
+            // As a weight it was unusable, because it competed against a
+            // sum this carrier happens to own. One housemate contributes
+            // 600; a College mage with four of them and a settlement full
+            // of neighbours carries a named total near 2500, while a
+            // crofter with two neighbours carries about 2. The same
+            // province weight therefore bought wildly different odds
+            // depending on how well connected somebody was — and worst
+            // odds for exactly the well-connected carriers who actually
+            // spread things. Measured over a full run: 203 transmissions,
+            // 891 conversations, not one province draw, and none possible
+            // in any realistic session.
+            //
+            // As a share it means one plain thing that holds for everyone:
+            // this fraction of a carrier's conversations are with somebody
+            // from anywhere in Skyrim. The named contacts divide the rest
+            // among themselves exactly as before, so the daily budget
+            // still sums to fGossipConversationsPerDay.
+            //
+            // Population is deliberately NOT a factor. It was, and that
+            // was double-counting: a carrier's conversations are a fixed
+            // daily budget, so how many people exist elsewhere changes who
+            // the stranger turns out to be, never how often they meet one.
+            const float share = std::clamp(cfg.gossipProvinceShare, 0.0f, 0.5f);
             const float budget = std::max(0.1f, cfg.gossipConversationsPerDay);
             out.reserve(weighted.size() + 1);
             for (auto& [peer, c] : weighted) {
                 Contact copy = c;
-                copy.rate = budget * c.rate / total;
+                copy.rate = budget * (1.0f - share) * c.rate / total;
                 out.push_back(copy);
             }
-            if (provinceWeight > 0.0f) {
-                out.push_back({kProvincePeer,
-                               budget * provinceWeight / total,
-                               GossipGraph::Channel::Province,
-                               GossipGraph::Channel::Province,
-                               0});
+            if (share > 0.0f) {
+                out.push_back(
+                    {kProvincePeer, budget * share, GossipGraph::Channel::Province, GossipGraph::Channel::Province, 0});
             }
             return g_contactCache.emplace(npc, std::move(out)).first->second;
         }

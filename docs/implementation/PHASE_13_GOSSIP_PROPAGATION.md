@@ -857,7 +857,7 @@ Add a `[Gossip]` block to `Settings::Config`, `ReadIniInto`, and the shipped
 | `fGossipWeightPersonalEdge`           | `4.0`         |                                                               |
 | `fGossipWeightSettlement`             | `1.0`         |                                                               |
 | `fGossipWeightHold`                   | `0.05`        |                                                               |
-| `fGossipWeightProvince`               | `0.0001`      |                                                               |
+| `fGossipProvinceShare`                | `0.01`        | Share of conversations, not a weight — see the note below     |
 | `fGossipTellQuotaMean`                | `2.5`         | Mean of the geometric telling quota, scaled by notability.    |
 | `fGossipTopicProbability`             | `0.35`        | Chance the rumor comes up in a given conversation.            |
 | `fGossipNotabilityFloor`              | `0.15`        | Carrier retirement threshold.                                 |
@@ -1205,7 +1205,7 @@ Read `NarrativeEngine_Gossip.log`, primarily the `BURNOUT` lines, which carry a 
    All of them dying at 2–3 is a broken graph — check the Step 2 census first.
 4. **Hold crossings.** Offline: 83% of rumors never left their origin hold; 2.3% reached three or more.
    `grep XHOLD` and confirm the channel attribution is roughly faction 78% / relationship 16% / province 6%.
-   Heavy province attribution means `fGossipWeightProvince` is too high.
+   Heavy province attribution means `fGossipProvinceShare` is too high.
 5. **Notability slices behave differently.** The 0.9–1.0 seeds should visibly outrun the 0.2–0.3 seeds. If
    they do not, notability is not reaching the transmission roll.
 6. **Small settlements stay local.** Offline: ≤5 residents → median reach 7 over 3.6 days. They should

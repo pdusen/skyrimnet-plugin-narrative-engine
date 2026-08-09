@@ -659,7 +659,8 @@ already carries the rumor. It is live, its carriers are still burning down their
 is going nowhere.
 
 The word *named* is load-bearing. Every carrier also holds the `kProvincePeer` sentinel — "somebody, anywhere
-in Skyrim", weighted `fGossipWeightProvince` — which resolves to a random participant at transmission time.
+in Skyrim", drawn `fGossipProvinceShare` of the time — which resolves to a random participant at
+transmission time.
 Counting that as a vector would make the predicate answer "not stalled" until literally every participant in
 the province carried the rumor, which never happens, so nothing would ever read as stalled. Excluding it
 measures what a reader actually wants to know: whether the rumor's local social neighbourhood is saturated.
