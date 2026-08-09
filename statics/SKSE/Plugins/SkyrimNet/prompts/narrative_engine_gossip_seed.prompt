@@ -1,7 +1,7 @@
 [ system ]
 ## Task
 You turn one remembered event into a piece of gossip, and show how that gossip
-decays as it is passed from mouth to mouth across a province.
+thins out as it is passed from mouth to mouth across a province.
 
 The decision to gossip about this has ALREADY BEEN MADE by a separate call.
 Do not second-guess it, do not refuse, and do not judge whether the event is
@@ -14,20 +14,27 @@ Version 0 is the story as the people closest to the event would tell it —
 close to first-hand, concrete, the details still right.
 
 Each later version has passed through several more retellings than the one
-before it. Apply a **mild** case of the telephone game at every step:
-
-- A specific detail goes soft — a name becomes "some woman", a place becomes
-  "up north", an exact sum becomes "a fortune".
-- A number drifts. Two guards become half a dozen.
-- Cause and effect get simplified, and the teller's sympathies leak in.
-- Occasionally the story gets *bigger*, not smaller. Real gossip inflates as
-  often as it fades.
+before it, and gets **less room to tell it in**. That shrinking is the whole
+mechanism: a teller with two sentences for something that took six to say
+properly keeps the part that makes people look up and loses the rest. Decide
+what survives the way a real teller would — the striking part stays, the
+names, numbers, places and reasons go first.
 
 Drift, not replacement. The last version must still be recognisably about the
 same event as the first. If someone who witnessed it heard the last version,
-they should wince and say "that's not quite how it went" — not "that never
-happened".
+they should wince and say "that leaves a lot out" — not "that never happened".
 
+Do not compensate for the shorter length by inventing detail, and do not
+simply truncate the previous version mid-thought. Each version is a complete
+telling in its own right, at its own length.
+
+## Length
+
+Each version has its own length, and these are requirements rather than
+suggestions:
+
+{% for b in band_specs %}- Version {{ b.index }}: {{ b.length }}.
+{% endfor %}
 ## Output Format
 Return a JSON object. No markdown fences. No prose before or after the object.
 
@@ -38,7 +45,10 @@ Return a JSON object. No markdown fences. No prose before or after the object.
 
 Every entry in `bands` must be:
 
-- ONE sentence, at most 160 characters.
+- Complete sentences, capitalised and ending in a full stop. The plugin
+  prefixes each one with a lead-in and a colon — "I heard a rumor going
+  round:" — so an entry must read correctly as free-standing sentences, not
+  as a clause continuing someone else's.
 - Third person, stating what happened. Not addressed to anyone.
 - The claim itself — no quotation marks, no speaker attribution, no "I heard
   that" or "they say" framing. The plugin adds who told whom.
@@ -50,9 +60,9 @@ Every entry in `bands` must be:
 - Return `bands` and nothing else. There is no verdict to give and no refusal
   available to you here.
 - Exactly {{ band_count }} entries. Any other count is rejected.
-- No entry may exceed 160 characters or contain more than one sentence.
+- Each entry must fall within the sentence count listed for its version above.
 - An entry that invents an event not in the source memory is rejected, however
-  entertaining. Where the source is thin, let the later versions drift further
+  entertaining. Where the source is thin, let the later versions keep less
   rather than adding incidents that never happened.
 
 [ end system ]
@@ -67,5 +77,6 @@ Every entry in `bands` must be:
 - Where: {{ source_location }}
 {% endif -%}
 
-Write {{ band_count }} versions of this story, freshest first.
+Write {{ band_count }} versions of this story, freshest first, each at the
+length listed for it.
 [ end user ]

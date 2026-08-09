@@ -102,6 +102,41 @@ namespace NarrativeEngine::GossipContent
             return n.empty() ? std::string{"someone"} : n;
         }
 
+        // How long the telling at `index` should run, as the prompt asks
+        // for it.
+        //
+        // Band 0 gets 4-6 sentences, matching the upper half of what
+        // SkyrimNet's own memory generation produces (2-4 soft, 6 hard) —
+        // a first-hand account should read like any other memory that
+        // actor holds. Each later band loses a sentence off both ends, and
+        // the floor stops at "no more than 2" because a band with a
+        // minimum of zero sentences is a band with no rumor in it.
+        //
+        //     band 0   4 to 6        band 3   1 to 3
+        //     band 1   3 to 5        band 4+  no more than 2
+        //     band 2   2 to 4
+        //
+        // Shrinking length IS the decay model. An earlier revision spelled
+        // out a telephone game — soften a name, drift a number, let the
+        // teller's sympathies leak in — and that turned out to be doing
+        // the same work twice: a teller with two sentences for something
+        // that took six to say properly drops the specifics on their own,
+        // and drops the ones that matter least first. Instructing the
+        // vagueness as well produced drift on top of compression.
+        //
+        // Computed here rather than in the template because the shape is
+        // arithmetic over band_count, and this project has lost two test
+        // runs to Inja constructs that looked fine and did not render.
+        std::string BandLengthSpec(int index)
+        {
+            const int lo = std::max(0, 4 - index);
+            const int hi = std::max(2, 6 - index);
+            if (lo == 0) {
+                return "no more than 2 sentences";
+            }
+            return std::format("{} to {} sentences", lo, hi);
+        }
+
         std::string HoldName(RE::FormID npc)
         {
             const auto* p = GossipGraph::Find(npc);
@@ -159,6 +194,19 @@ namespace NarrativeEngine::GossipContent
             ctx["source_text"] = c.text;
             ctx["source_owner"] = NameOf(owner);
             ctx["source_location"] = c.locationName;
+
+            // One entry per band, in order, each carrying the length the
+            // prompt should ask for. The template renders the list rather
+            // than deriving it, so adding a band can never produce a spec
+            // the code does not agree with.
+            nlohmann::json bandSpecs = nlohmann::json::array();
+            for (int i = 0; i < bandCount; ++i) {
+                nlohmann::json entry = nlohmann::json::object();
+                entry["index"] = i;
+                entry["length"] = BandLengthSpec(i);
+                bandSpecs.push_back(std::move(entry));
+            }
+            ctx["band_specs"] = std::move(bandSpecs);
 
             const bool queued = SkyrimNetAPI::SendCustomPromptToLLM(
                 kSeedPromptName,
@@ -450,21 +498,30 @@ namespace NarrativeEngine::GossipContent
         // How the listener will remember hearing it. The last row is the
         // common case by a wide margin, and that is fine — it is genuinely
         // how most gossip arrives.
+        //
+        // Every framing is a LEAD-IN ENDING IN A COLON, never a "…told me
+        // that" clause. Band text is one to six standalone sentences, and
+        // a subordinating "that" can only govern the first of them: "I
+        // heard a rumor that A College mage was caught. The Arch-Mage
+        // covered it up." reads as a grammatical error from the second
+        // sentence on, and did so in the logs even at one sentence,
+        // because the model returns a capitalised sentence rather than a
+        // clause. A colon takes any number of sentences without caring.
         std::string heard;
         if (!tie.kinship.empty() && !tie.sameHold) {
             const auto where = HoldName(teller);
-            heard = std::format(
-                "My {} came from {}, and told me that {}", tie.kinship, where.empty() ? "away" : where, bandText);
+            heard =
+                std::format("My {} came from {} with news: {}", tie.kinship, where.empty() ? "away" : where, bandText);
         } else if (!tie.kinship.empty()) {
-            heard = std::format("My {} {} told me that {}", tie.kinship, tellerName, bandText);
+            heard = std::format("My {} {} told me this: {}", tie.kinship, tellerName, bandText);
         } else if (tie.sameHousehold) {
-            heard = std::format("{} mentioned over supper that {}", tellerName, bandText);
+            heard = std::format("{} mentioned this over supper: {}", tellerName, bandText);
         } else if (tie.sameSettlement) {
-            heard = std::format("{} told me that {}", tellerName, bandText);
+            heard = std::format("{} told me this: {}", tellerName, bandText);
         } else {
-            heard = std::format("I heard a rumor that {}", bandText);
+            heard = std::format("I heard a rumor going round: {}", bandText);
         }
 
-        return ComposedPair{std::format("I told {} that {}", listenerName, bandText), std::move(heard)};
+        return ComposedPair{std::format("I told {} this: {}", listenerName, bandText), std::move(heard)};
     }
 } // namespace NarrativeEngine::GossipContent
