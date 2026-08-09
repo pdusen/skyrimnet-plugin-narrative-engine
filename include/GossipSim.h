@@ -41,8 +41,8 @@ namespace SKSE
 // Two real AddMemory calls, one for each party, composed by
 // GossipContent from the rumor's generation-banded text plus
 // relationship-aware framing. No LLM is involved anywhere in this
-// module: the single call that produces the band text happens once, at
-// seed time, before the rumor is ever handed here.
+// module: the calls that judge the memory and produce the band text both
+// happen at seed time, before the rumor is ever handed here.
 //
 // Both memories are typed KNOWLEDGE and tagged "gossip", which is what
 // keeps gossip's own output out of GossipHarvest's candidate set.
@@ -81,9 +81,9 @@ namespace NarrativeEngine::GossipSim
     // `sourceMemoryId`. Returns the rumor's id, or 0 if it could not be
     // seeded (graph not ready, origin not a participant, or the
     // live-rumor cap is full).
-    // `bands` is the generation-banded text, produced by one LLM call at
-    // seed time. Band selection at transmission time is by the receiving
-    // carrier's generation.
+    // `bands` is the generation-banded text, produced at seed time by
+    // GossipContent. Band selection at transmission time is by the
+    // receiving carrier's generation.
     std::uint32_t SeedRumor(RE::FormID originNpc,
                             float notability,
                             std::int64_t sourceMemoryId,

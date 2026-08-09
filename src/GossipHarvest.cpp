@@ -416,16 +416,18 @@ namespace NarrativeEngine::GossipHarvest
                     GossipLog::Memory(c.memoryId, c.owner, c.importance, "same-event (this sweep)");
                     continue;
                 }
-                // Claim BEFORE generating. The LLM call is async and can
-                // fail or be refused, at which point GossipContent releases
-                // the claim — so a rumor can never exist without a claim
-                // behind it, and a refused memory is handed straight back.
-                // The related events are claimed with it and come back with
-                // it on release.
+                // Claim BEFORE evaluating. Both LLM calls are async and
+                // either can fail or be refused, at which point
+                // GossipContent settles the claim — so a rumor can never
+                // exist without a claim behind it, and a memory that
+                // produced nothing is handed straight back. The related
+                // events are claimed with it; which of the two comes back
+                // depends on why there was no rumor, and that split lives
+                // in GossipContent rather than here.
                 GossipClaims::Claim(c.memoryId, c.eventIds, nowGameDay);
                 const auto* p = GossipGraph::Find(c.owner);
                 const auto& locName = GossipGraph::LocationName(p ? (p->settlement ? p->settlement : p->hold) : 0);
-                GossipContent::RequestBands(c.memoryId, c.owner, c.text, locName, c.importance);
+                GossipContent::RequestRumor(c.memoryId, c.owner, c.text, locName, c.importance);
                 ++sweep.sentForGeneration;
             }
             if (candidates.size() > want) {

@@ -14,14 +14,15 @@
 #      NarrativeEngine declares two variants:
 #
 #        - narrative_engine_director  — structured-JSON decision work
-#                                       (per-tick tension eval, action select).
-#                                       A small, cheap, low-temperature model
-#                                       is usually the right pick.
+#                                       (per-tick tension eval, action select,
+#                                       gossip evaluation). A small, cheap,
+#                                       low-temperature model is usually the
+#                                       right pick.
 #        - narrative_engine_composer  — creative writing in a specific NPC's
-#                                       voice (letter composition today). The
-#                                       task shape matches SkyrimNet dialogue,
-#                                       so the base dialogue model is a
-#                                       sensible default.
+#                                       voice (letters, visits, gossip text).
+#                                       The task shape matches SkyrimNet
+#                                       dialogue, so the base dialogue model
+#                                       is a sensible default.
 #
 #   2. `schema.fields:` declares plugin settings that SkyrimNet exposes in
 #      its in-game UI. Override categories below are named per-variant so
@@ -34,10 +35,10 @@ plugin:
 
 variants:
   - name: narrative_engine_director
-    description: "The Narrative Director — per-tick Freytag-pyramid phase + tension evaluation and action-select decisions. Structured-JSON classification work; benefits from a small, cheap, low-temperature model. Uses base SkyrimNet config unless overridden in 'Director LLM Overrides' below."
+    description: "The Narrative Director — per-tick Freytag-pyramid phase + tension evaluation, action-select decisions, and the gossip verdict that decides whether a memory is worth turning into a rumor. Structured-JSON classification work; benefits from a small, cheap, low-temperature model. Uses base SkyrimNet config unless overridden in 'Director LLM Overrides' below."
 
   - name: narrative_engine_composer
-    description: "The Narrative Composer — creative writing in a specific NPC's voice (letter composition today; future in-voice prompts will reuse this same variant). Shape matches SkyrimNet dialogue generation, so the base dialogue model is a sensible default. Uses base SkyrimNet config unless overridden in 'Composer LLM Overrides' below."
+    description: "The Narrative Composer — creative writing in a specific NPC's voice (letters, visits, and the retold text of a rumor). Only reached for gossip once the Director has already approved the memory, so refusals never cost a Composer call. Shape matches SkyrimNet dialogue generation, so the base dialogue model is a sensible default. Uses base SkyrimNet config unless overridden in 'Composer LLM Overrides' below."
 
 schema:
   fields:

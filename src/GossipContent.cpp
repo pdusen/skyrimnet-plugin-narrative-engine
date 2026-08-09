@@ -26,18 +26,31 @@ namespace NarrativeEngine::GossipContent
         // would be output spent on almost nothing.
         constexpr std::uint32_t kGenerationsPerBand = 3;
 
-        // Not settings. The prompt ships in statics/ and its contract with
-        // this file -- the context keys it reads, the JSON shape it must
-        // return -- is compiled in just below, so repointing the call at a
+        // Not settings. The prompts ship in statics/ and their contract with
+        // this file -- the context keys they read, the JSON shape they must
+        // return -- is compiled in just below, so repointing a call at a
         // different asset could only break it.
         //
-        // The variant is the one the letter composer already uses: gossip
-        // generation is creative writing in a specific voice, which is the
-        // same task shape, so it wants the same model. A variant of its own
-        // would mean another entry in the SkyrimNet manifest and another
-        // override category for the user to tune, with nothing behind it.
+        // TWO CALLS, TWO MODELS, and the split is the whole point. Judging a
+        // memory is classification: read a profile, compare against a list,
+        // return one word from a fixed set. Writing the bands is creative
+        // writing in a specific register. Those want different models, and
+        // the expensive one should not be paying for the answer "no".
+        //
+        // Most candidates never reach the second call. `private`,
+        // `not_worthy` and `duplicate` all settle on the cheap model, and on
+        // the first working run those three accounted for the clear majority
+        // of verdicts -- every one of which used to be a composer call spent
+        // to be told the memory was unusable.
+        //
+        // The eval variant is the director's: structured-JSON decision work,
+        // same shape as the per-tick tension evaluation. The seed variant is
+        // the letter composer's: writing in a voice, same shape as a letter.
+        // Neither needed a new manifest entry.
+        constexpr const char* kEvalPromptName = "narrative_engine_gossip_eval";
+        constexpr const char* kEvalVariant = "narrative_engine_director";
         constexpr const char* kSeedPromptName = "narrative_engine_gossip_seed";
-        constexpr const char* kLLMVariant = "narrative_engine_composer";
+        constexpr const char* kSeedVariant = "narrative_engine_composer";
 
         // The relationship between two participants, for framing only.
         struct Tie
@@ -97,13 +110,124 @@ namespace NarrativeEngine::GossipContent
             const auto& n = GossipGraph::LocationName(p->settlement ? p->settlement : p->hold);
             return n;
         }
+
+        // The two ways a candidate can end without a rumor, distinguished by
+        // what they do to the claims. Free functions rather than lambdas
+        // because both stages need them and the second stage is reached from
+        // inside the first one's callback.
+        //
+        // `Abandon` is for the cases where nothing was learned — a call
+        // failed, or an answer could not be read. The memory goes back
+        // entirely so it can be tried again on a later sweep.
+        void Abandon(std::int64_t memoryId, const std::string& why)
+        {
+            GossipClaims::Release(memoryId);
+            GossipLog::Note(std::format("content: memory {} released — {}", memoryId, why));
+        }
+
+        // `KeepMemoryOnly` is for a verdict about THIS owner rather than
+        // about the happening: they would not repeat it, or it is not worth
+        // repeating. The memory stays claimed so this owner is not asked
+        // again, but the events go back so another witness with their own
+        // account of the same happening can still seed from it.
+        void KeepMemoryOnly(std::int64_t memoryId, const std::string& why)
+        {
+            GossipClaims::ReleaseEvents(memoryId);
+            GossipLog::Note(std::format("content: memory {} kept, events freed — {}", memoryId, why));
+        }
+
+        // Stage two. Reached ONLY from a `seed` verdict, which is what keeps
+        // the expensive model off the refusals.
+        //
+        // Deliberately narrower context than the evaluation: no character
+        // profile, no active-rumor list, no importance. Discretion and
+        // duplication were settled upstream, and re-showing the material
+        // behind those judgements here would be paying the composer to
+        // reconsider a decision it is explicitly told not to revisit. What
+        // is left is what writing the tellings actually needs — the event,
+        // who it happened to, and where.
+        void RequestBands(std::int64_t sourceMemoryId,
+                          RE::FormID owner,
+                          const std::string& sourceText,
+                          const std::string& locationName,
+                          float importance)
+        {
+            const int bandCount = std::max(1, Settings::Get().gossipContentBands);
+
+            nlohmann::json ctx;
+            ctx["band_count"] = bandCount;
+            ctx["source_text"] = sourceText;
+            ctx["source_owner"] = NameOf(owner);
+            ctx["source_location"] = locationName;
+
+            const bool queued = SkyrimNetAPI::SendCustomPromptToLLM(
+                kSeedPromptName,
+                kSeedVariant,
+                ctx.dump(),
+                [sourceMemoryId, owner, importance, bandCount](
+                    const PluginThread::Token&, std::string response, bool success) {
+                    if (!success) {
+                        Abandon(sourceMemoryId, "seed call failed");
+                        return;
+                    }
+                    const auto body = EvaluationPipeline::StripMarkdownFences(response);
+                    auto j = nlohmann::json::parse(body, nullptr, false);
+                    if (j.is_discarded() || !j.is_object()) {
+                        logger::warn("GossipContent: seed response not a JSON object: {}", body);
+                        Abandon(sourceMemoryId, "unparseable seed response");
+                        return;
+                    }
+
+                    const auto rawIt = j.find("bands");
+                    if (rawIt == j.end() || !rawIt->is_array() || rawIt->empty()) {
+                        Abandon(sourceMemoryId, "seed response carried no bands");
+                        return;
+                    }
+
+                    std::vector<std::string> bands;
+                    bands.reserve(rawIt->size());
+                    for (const auto& b : *rawIt) {
+                        if (!b.is_string()) {
+                            continue;
+                        }
+                        // Sanitize AT THE POINT OF EXTRACTION, before this
+                        // text is cached, persisted to the co-save, or
+                        // written into a memory. Band text reaches both the
+                        // save payload and SkyrimNet's prompt context, so
+                        // smart quotes, dashes and zero-width characters
+                        // would travel a long way.
+                        bands.push_back(LLMTextSanitizer::Sanitize(b.get<std::string>()));
+                    }
+                    if (bands.empty()) {
+                        Abandon(sourceMemoryId, "all bands empty after sanitize");
+                        return;
+                    }
+                    // Short responses are padded by repeating the last band
+                    // rather than rejected — a model returning two of three
+                    // usable versions is still usable.
+                    while (static_cast<int>(bands.size()) < bandCount) {
+                        bands.push_back(bands.back());
+                    }
+
+                    const auto id = GossipSim::SeedRumor(owner, importance, sourceMemoryId, std::move(bands));
+                    if (id == 0) {
+                        Abandon(sourceMemoryId, "simulation refused the seed");
+                    }
+                });
+
+            if (!queued) {
+                Abandon(sourceMemoryId, "could not queue the seed call");
+            }
+        }
     } // namespace
 
     void Initialize()
     {
-        logger::info("GossipContent: initialized (prompt='{}', variant='{}', bands={})",
+        logger::info("GossipContent: initialized (eval='{}' on '{}', seed='{}' on '{}', bands={})",
+                     kEvalPromptName,
+                     kEvalVariant,
                      kSeedPromptName,
-                     kLLMVariant,
+                     kSeedVariant,
                      Settings::Get().gossipContentBands);
     }
 
@@ -113,17 +237,13 @@ namespace NarrativeEngine::GossipContent
         return std::min<std::size_t>(generation / kGenerationsPerBand, bands - 1);
     }
 
-    void RequestBands(std::int64_t sourceMemoryId,
+    void RequestRumor(std::int64_t sourceMemoryId,
                       RE::FormID owner,
                       const std::string& sourceText,
                       const std::string& locationName,
                       float importance)
     {
-        const auto& cfg = Settings::Get();
-        const int bandCount = std::max(1, cfg.gossipContentBands);
-
         nlohmann::json ctx;
-        ctx["band_count"] = bandCount;
         ctx["source_text"] = sourceText;
         ctx["source_owner"] = NameOf(owner);
         ctx["source_location"] = locationName;
@@ -140,7 +260,7 @@ namespace NarrativeEngine::GossipContent
         const auto ownerRef = GossipGraph::ActorRefFor(owner);
         const std::uint64_t ownerUUID = ownerRef ? SkyrimNetAPI::FormIDToUUID(ownerRef) : 0;
         if (ownerUUID == 0) {
-            logger::warn("GossipContent: no SkyrimNet UUID for {} (ref 0x{:X}); the seed prompt will "
+            logger::warn("GossipContent: no SkyrimNet UUID for {} (ref 0x{:X}); the evaluation will "
                          "judge discretion without a character profile",
                          NameOf(owner),
                          ownerRef);
@@ -161,33 +281,17 @@ namespace NarrativeEngine::GossipContent
         }
         ctx["active_rumors"] = std::move(activeRumors);
 
-        // Failure paths, distinguished by what they do to the claims.
-        //
-        // `abandon` is for the cases where nothing was learned — the call
-        // failed, or the answer could not be read. The memory goes back
-        // entirely so it can be tried again.
-        const auto abandon = [sourceMemoryId](const char* why) {
-            GossipClaims::Release(sourceMemoryId);
-            GossipLog::Note(std::format("content: memory {} released — {}", sourceMemoryId, why));
-        };
-        // `keepMemoryOnly` is for a verdict about THIS owner rather than
-        // about the happening: they would not repeat it, or it is not worth
-        // repeating. The memory stays claimed so this owner is not asked
-        // again, but the events go back so another witness with their own
-        // account of the same happening can still seed from it.
-        const auto keepMemoryOnly = [sourceMemoryId](const char* why) {
-            GossipClaims::ReleaseEvents(sourceMemoryId);
-            GossipLog::Note(std::format("content: memory {} kept, events freed — {}", sourceMemoryId, why));
-        };
-
+        // Copies rather than references into the callback: it runs on the
+        // plugin thread once SkyrimNet answers, long after the harvest sweep
+        // that supplied these strings has returned.
         const bool queued = SkyrimNetAPI::SendCustomPromptToLLM(
-            kSeedPromptName,
-            kLLMVariant,
+            kEvalPromptName,
+            kEvalVariant,
             ctx.dump(),
-            [sourceMemoryId, owner, importance, bandCount, abandon, keepMemoryOnly](
+            [sourceMemoryId, owner, importance, text = sourceText, loc = locationName](
                 const PluginThread::Token&, std::string response, bool success) {
                 if (!success) {
-                    abandon("LLM call failed");
+                    Abandon(sourceMemoryId, "evaluation call failed");
                     return;
                 }
                 // Strip a wrapping markdown fence before parsing. Models
@@ -198,8 +302,8 @@ namespace NarrativeEngine::GossipContent
                 const auto body = EvaluationPipeline::StripMarkdownFences(response);
                 auto j = nlohmann::json::parse(body, nullptr, false);
                 if (j.is_discarded() || !j.is_object()) {
-                    logger::warn("GossipContent: response not a JSON object: {}", body);
-                    abandon("unparseable response");
+                    logger::warn("GossipContent: evaluation response not a JSON object: {}", body);
+                    Abandon(sourceMemoryId, "unparseable evaluation response");
                     return;
                 }
 
@@ -211,14 +315,14 @@ namespace NarrativeEngine::GossipContent
                 if (verdict == "private") {
                     // The owner would not tell this. Their memory is spent;
                     // the happening is not.
-                    keepMemoryOnly("owner would not share this publicly");
+                    KeepMemoryOnly(sourceMemoryId, "owner would not share this publicly");
                     return;
                 }
                 if (verdict == "not_worthy") {
                     // Nothing here anyone would stop to listen to. Same
                     // claim handling as `private`: this owner is done with
                     // it, the happening is still open.
-                    keepMemoryOnly("not worth gossiping about");
+                    KeepMemoryOnly(sourceMemoryId, "not worth gossiping about");
                     return;
                 }
                 if (verdict == "duplicate") {
@@ -236,49 +340,19 @@ namespace NarrativeEngine::GossipContent
                 if (verdict != "seed") {
                     // An unrecognised verdict is a prompt or model fault,
                     // not a judgement about the memory, so give it all back.
-                    abandon(verdict.empty() ? "response carried no verdict"
-                                            : "response carried an unrecognised verdict");
+                    Abandon(sourceMemoryId,
+                            verdict.empty() ? "evaluation carried no verdict"
+                                            : "evaluation carried an unrecognised verdict");
                     return;
                 }
 
-                const auto rawIt = j.find("bands");
-                if (rawIt == j.end() || !rawIt->is_array() || rawIt->empty()) {
-                    abandon("verdict was seed but no bands were returned");
-                    return;
-                }
-
-                std::vector<std::string> bands;
-                bands.reserve(rawIt->size());
-                for (const auto& b : *rawIt) {
-                    if (!b.is_string()) {
-                        continue;
-                    }
-                    // Sanitize AT THE POINT OF EXTRACTION, before this text
-                    // is cached, persisted to the co-save, or written into a
-                    // memory. Band text reaches both the save payload and
-                    // SkyrimNet's prompt context, so smart quotes, dashes and
-                    // zero-width characters would travel a long way.
-                    bands.push_back(LLMTextSanitizer::Sanitize(b.get<std::string>()));
-                }
-                if (bands.empty()) {
-                    abandon("all bands empty after sanitize");
-                    return;
-                }
-                // Short responses are padded by repeating the last band
-                // rather than rejected — a model returning two of three
-                // usable versions is still usable.
-                while (static_cast<int>(bands.size()) < bandCount) {
-                    bands.push_back(bands.back());
-                }
-
-                const auto id = GossipSim::SeedRumor(owner, importance, sourceMemoryId, std::move(bands));
-                if (id == 0) {
-                    abandon("simulation refused the seed");
-                }
+                // Only here does the expensive model get involved.
+                GossipLog::Note(std::format("content: memory {} passed evaluation — composing", sourceMemoryId));
+                RequestBands(sourceMemoryId, owner, text, loc, importance);
             });
 
         if (!queued) {
-            abandon("could not queue the LLM call");
+            Abandon(sourceMemoryId, "could not queue the evaluation call");
         }
     }
 
