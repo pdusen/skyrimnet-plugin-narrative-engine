@@ -13,7 +13,6 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <cmath>
 #include <format>
 #include <mutex>
 #include <string>
@@ -26,6 +25,9 @@ namespace NarrativeEngine::GossipHarvest
         std::mutex g_mutex;
         double g_lastGameDaySample = -1.0;
         double g_gameHoursSinceSweep = 0.0;
+        // Whether the "cannot sweep yet" note has already been emitted for
+        // the current outage; reset the moment a sweep succeeds.
+        bool g_deferredLogged = false;
         Stats g_stats;
 
         // A memory's timestamp is in the same cumulative game-seconds units
@@ -332,12 +334,28 @@ namespace NarrativeEngine::GossipHarvest
             g_stats.rejectedOwnOutput += sweep.rejectedOwnOutput;
         }
 
-        void RunSweepLocked(double nowGameDay)
+        // Returns false when the sweep could not run at all. The caller
+        // uses that to leave the accumulator alone, so a sweep that never
+        // happened is retried rather than silently counted as done.
+        bool RunSweepLocked(double nowGameDay)
         {
             const auto& cfg = Settings::Get();
             if (!GossipGraph::IsReady() || !SkyrimNetAPI::IsMemorySystemReady()) {
-                return;
+                // Logged once per outage rather than every poll: this fires
+                // every two seconds while it lasts. Before this said
+                // anything, a sweep that fired and bailed here was
+                // indistinguishable in the trace from one that never fired,
+                // which is exactly the ambiguity that made a missing sweep
+                // hard to account for.
+                if (!g_deferredLogged) {
+                    g_deferredLogged = true;
+                    GossipLog::Note(std::format("harvest: deferred — graph ready={}, memory system ready={}",
+                                                GossipGraph::IsReady(),
+                                                SkyrimNetAPI::IsMemorySystemReady()));
+                }
+                return false;
             }
+            g_deferredLogged = false;
             ++g_stats.sweeps;
 
             // Counted for THIS sweep, then folded into the session totals
@@ -352,7 +370,7 @@ namespace NarrativeEngine::GossipHarvest
             if (actors.empty()) {
                 GossipLog::Harvest(sweep);
                 Accumulate(sweep);
-                return;
+                return true;
             }
 
             std::vector<Candidate> candidates;
@@ -403,6 +421,7 @@ namespace NarrativeEngine::GossipHarvest
 
             GossipLog::Harvest(sweep);
             Accumulate(sweep);
+            return true;
         }
     } // namespace
 
@@ -447,26 +466,36 @@ namespace NarrativeEngine::GossipHarvest
         g_gameHoursSinceSweep += std::min(deltaHours, 72.0);
 
         const double interval = std::max(0.1f, cfg.gossipHarvestIntervalGameHours);
+
+        // Resting passes in-world time in large jumps, so a single poll can
+        // arrive owing several sweeps — a 24-hour rest against a 12-hour
+        // interval owes two. Those are worked off rather than dropped: the
+        // world should have gossiped twice while the player slept.
+        //
+        // The backlog is capped so a very long rest, or a console time jump,
+        // cannot owe an unbounded run of them. Whatever exceeds the cap is
+        // discarded deliberately — there is no value in harvesting the same
+        // memory corpus six times in a row.
+        constexpr int kMaxOwedSweeps = 4;
+        g_gameHoursSinceSweep = std::min(g_gameHoursSinceSweep, interval * kMaxOwedSweeps);
+
         if (g_gameHoursSinceSweep < interval) {
             return;
         }
-        // Keep the remainder so the cadence stays in phase with elapsed
-        // in-world time, but never enough to fire again immediately.
-        //
-        // This was `std::min(g_gameHoursSinceSweep - interval, interval)`,
-        // which clamped the carry-over to EXACTLY one interval whenever two
-        // or more had accumulated — so the very next poll compared
-        // `interval < interval`, found it false, and swept again. Waiting or
-        // sleeping to pass a day is enough to accumulate that much, which is
-        // why every HARVEST line in the trace arrived in pairs seconds
-        // apart, doubling both the query load and the seeding rate.
-        //
-        // fmod cannot produce a value >= interval, so a single sweep per
-        // crossing is structural rather than something a clamp has to get
-        // right. A 72-hour catch-up now yields one sweep and resumes on
-        // schedule instead of firing twice and losing the phase.
-        g_gameHoursSinceSweep = std::fmod(g_gameHoursSinceSweep, interval);
-        RunSweepLocked(now);
+
+        // One sweep per poll, and only ONE. The remainder stays on the
+        // accumulator, so the next poll two seconds later takes the next
+        // owed sweep and the backlog drains within a few seconds of game
+        // time. Running them all inside this call would mean several
+        // rounds of per-actor queries while holding the mutex, and would
+        // fire several LLM calls at once.
+        if (!RunSweepLocked(now)) {
+            // It could not run. Leave the accumulator untouched so this
+            // sweep is owed again next poll instead of being consumed by
+            // an attempt that did nothing.
+            return;
+        }
+        g_gameHoursSinceSweep -= interval;
     }
 
     Stats GetStats()
