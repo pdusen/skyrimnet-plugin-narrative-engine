@@ -1,6 +1,7 @@
 #pragma once
 
 #include <PluginThread.h>
+#include <WorkerToken.h>
 
 #include <cstdint>
 #include <functional>
@@ -71,10 +72,22 @@ namespace NarrativeEngine::SkyrimNetAPI
     // practice — SkyrimNet's own shutdown path fires pending callbacks
     // with success=false — but noted so future callers understand the
     // tradeoff.
-    LLMResult SendCustomPromptToLLM(const PluginThread::Token&,
+    // Gated on WorkerToken rather than PluginThread::Token: any worker
+    // thread NarrativeEngine owns may hold this call, and as of the
+    // gossip thread there is more than one that wants to. The token is
+    // discarded — its whole job is the compile-time proof, exactly as in
+    // the EngineUtils token-gated wrappers.
+    LLMResult SendCustomPromptToLLMImpl(const std::string& promptName,
+                                        const std::string& variant,
+                                        const std::string& contextJson);
+
+    LLMResult SendCustomPromptToLLM(const WorkerToken auto&,
                                     const std::string& promptName,
                                     const std::string& variant,
-                                    const std::string& contextJson);
+                                    const std::string& contextJson)
+    {
+        return SendCustomPromptToLLMImpl(promptName, variant, contextJson);
+    }
 
     // Queues an async LLM call against the named SkyrimNet prompt template.
     //

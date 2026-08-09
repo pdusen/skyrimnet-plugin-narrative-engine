@@ -83,10 +83,9 @@ namespace NarrativeEngine::SkyrimNetAPI
             promptName.c_str(), variant.c_str(), contextJson.c_str(), std::move(adapted));
     }
 
-    LLMResult SendCustomPromptToLLM(const PluginThread::Token&,
-                                    const std::string& promptName,
-                                    const std::string& variant,
-                                    const std::string& contextJson)
+    LLMResult SendCustomPromptToLLMImpl(const std::string& promptName,
+                                        const std::string& variant,
+                                        const std::string& contextJson)
     {
         // shared_ptr rather than a stack-local promise so the
         // lambda's copy of the reference keeps the promise alive

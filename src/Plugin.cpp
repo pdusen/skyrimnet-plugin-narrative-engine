@@ -15,6 +15,7 @@
 #include <FineRoads.h>
 #include <GossipClaims.h>
 #include <GossipContent.h>
+#include <GossipDispatch.h>
 #include <GossipGraph.h>
 #include <GossipHarvest.h>
 #include <GossipLog.h>
@@ -209,6 +210,17 @@ namespace NarrativeEngine
                 GossipHarvest::Initialize();
                 AsyncDispatch::Start();
                 EvalDispatch::Start();
+                // The gossip simulation's own worker. Third instance of
+                // the dedicated-worker pattern, for the same reason as
+                // EvalDispatch: its jobs block for seconds and must not
+                // sit in the cadenced AsyncDispatch queue.
+                //
+                // No Stop() call site here, matching the other two —
+                // nothing tears the plugin down before the process
+                // exits. GossipDispatch::Stop() cancels before joining
+                // so that whenever a shutdown path does appear, it can
+                // stop this worker without waiting out an LLM timeout.
+                GossipDispatch::Start();
                 // Must start before BeatSystem::Initialize — the poll
                 // starts enqueuing here as soon as a beat is running.
                 BeatWorkDispatch::Start();

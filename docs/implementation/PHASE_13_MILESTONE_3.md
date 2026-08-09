@@ -598,7 +598,7 @@ because everything before it has landed.
 
 ### Step 1 — `GossipDispatch`, `GossipThread::Token`, and the worker-token concept
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** The thread exists and can be given work. Nothing uses it yet.
 
@@ -618,6 +618,19 @@ because everything before it has landed.
 **Verification:** enqueue a job that logs and confirm it runs on a distinct thread id from `AsyncDispatch`'s.
 Confirm a job enqueued after `Stop()` is dropped with a warning rather than crashing. Confirm that a
 deliberate `MainThread::Run` from inside a gossip job **fails to compile**, and delete the experiment.
+
+Done. Three throwaway translation units were compiled against the real build flags:
+
+| Probe | Result |
+| ------------------------------------------------------ | ------------------------------------------------------- |
+| Both tokens satisfy `WorkerToken`                       | compiles, exit 0                                        |
+| `MainThread::Run` with a `GossipThread::Token`          | `error C2672: no matching overloaded function found`    |
+| `static_assert(WorkerToken<Fake>)` on a hand-rolled type | `error C2338: static_assert failed`                     |
+
+The second is the one that matters: gossip code cannot reach the main thread, so the deadlock in the risk
+table has no expressible form. Note there is no shutdown path in `Plugin.cpp` today — `AsyncDispatch` and
+`EvalDispatch` are never stopped either — so `Stop()`'s cancel-before-join ordering is written for whenever
+one appears rather than exercised now.
 
 ---
 
