@@ -280,6 +280,7 @@ namespace NarrativeEngine::GossipContent
         {
             std::vector<Candidate> pool;
             std::size_t next = 0;
+            std::size_t skipped = 0;
             int seedsRemaining = 1;
             double claimGameDay = 0.0;
         };
@@ -431,12 +432,29 @@ namespace NarrativeEngine::GossipContent
             while (walk->next < walk->pool.size()) {
                 const auto c = walk->pool[walk->next++];
 
-                // Re-checked here, not just at qualification. Nothing in the
-                // pool is claimed until its own step runs, so two accounts
-                // of the same happening can both be sitting in it; whichever
-                // the shuffle put first claims the events, and the other
-                // must see that.
+                // BOTH claim tests are re-run here, not just at
+                // qualification, because a pool is built in one instant and
+                // consumed over the following half-minute — and sweeps
+                // overlap. The harvest accumulator deliberately runs owed
+                // sweeps back to back once the player rests, so two walks
+                // are routinely in flight at the same time with pools drawn
+                // from the same ranked candidate list.
+                //
+                // The MEMORY test is the one that looks redundant and is
+                // not. `private` and `not_worthy` keep the memory claim
+                // while RELEASING the events, so the event test cannot see
+                // them: memory 1356 was evaluated twice seventeen seconds
+                // apart by two concurrent walks, returned `private` both
+                // times, and cost two director calls to learn the same
+                // thing.
+                if (GossipClaims::IsClaimed(c.memoryId)) {
+                    ++walk->skipped;
+                    GossipLog::Note(std::format("content: memory {} skipped — already claimed since the pool was built",
+                                                c.memoryId));
+                    continue;
+                }
                 if (GossipClaims::AreEventsClaimed(c.eventIds)) {
+                    ++walk->skipped;
                     GossipLog::Note(std::format("content: memory {} skipped — another account of the same "
                                                 "happening is already in play",
                                                 c.memoryId));
@@ -454,9 +472,17 @@ namespace NarrativeEngine::GossipContent
             // Only worth saying when the pool was used up without seeding. A
             // walk that stopped early did so because it seeded, which the
             // SEED line already records.
+            //
+            // Refused and skipped are counted apart because they mean
+            // opposite things: refused is the evaluator doing its job, while
+            // skipped is a pool slot that never became a question at all — a
+            // sweep reporting mostly skips is one whose pool went stale
+            // under it, not one whose candidates were poor. Reporting the
+            // whole pool as "refused" hid exactly that.
             if (walk->seedsRemaining > 0) {
-                GossipLog::Note(
-                    std::format("content: no rumor this sweep — all {} candidate(s) refused", walk->pool.size()));
+                GossipLog::Note(std::format("content: no rumor this sweep — {} refused, {} skipped",
+                                            walk->pool.size() - walk->skipped,
+                                            walk->skipped));
             }
         }
     } // namespace
