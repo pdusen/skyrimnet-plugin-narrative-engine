@@ -636,7 +636,7 @@ one appears rather than exercised now.
 
 ### Step 2 — `GossipState`: one owner for every mutable field
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** Collect gossip's scattered file-static state into a single copyable struct, with no behaviour
 change and no thread change.
@@ -654,6 +654,19 @@ This is the step where the copy cost gets checked: the struct must be cheaply co
 
 **Verification:** a full session behaves identically — same seeds, same transmissions, same trace, same
 co-save round-trip. This step should be invisible in every log.
+
+Done. `Rumor`, `Carrier`, `QueueEntry`, `EventQueue` and `EventClaim` moved from two anonymous namespaces
+into `include/GossipState.h`, and the six `GossipSim` globals plus the two `GossipClaims` maps became
+references into a single `GossipState`. Every function body is untouched — the references keep each name
+spelled the way it was — so the diff is a relocation rather than a rewrite.
+
+The instance is a **function-local static** behind `GossipSim::MutableState()`, not a namespace-scope
+object. `GossipClaims` binds references into it during its own static initialisation, and the order between
+two translation units is unspecified; construct-on-first-use removes the question rather than leaving it to
+be reasoned about.
+
+`GossipSim::Stats` survives as a projection built in `GetStats()`, since it carries derived fields
+(`liveRumors`, `totalCarriers`, `queuedEvents`) that are counted rather than stored.
 
 ---
 

@@ -1,5 +1,8 @@
 #include <GossipClaims.h>
 
+#include <GossipSim.h>
+#include <GossipState.h>
+
 #include <GossipLog.h>
 #include <logger.h>
 #include <Settings.h>
@@ -20,21 +23,20 @@ namespace NarrativeEngine::GossipClaims
         constexpr std::uint32_t kRecordVersion = 2;
 
         std::mutex g_mutex;
-        // memoryId -> game day the claim expires.
-        std::unordered_map<std::int64_t, double> g_claims;
 
-        // eventId -> the claim on it. Keyed by event so the harvester's
-        // check is one hash probe per related event, never a walk over
-        // other memories' event lists.
-        struct EventClaim
-        {
-            double expiresOnGameDay = 0.0;
-            // Which memory took it. Release works from a memory id alone,
-            // so the ownership has to live here rather than the caller
-            // having to re-supply the event list it claimed with.
-            std::int64_t claimedByMemoryId = 0;
-        };
-        std::unordered_map<std::int64_t, EventClaim> g_eventClaims;
+        // The ledger lives in GossipState alongside the simulation, not
+        // in a global of its own, because the two have to be SAVED FROM
+        // THE SAME INSTANT. Publish them separately and a reload can
+        // restore a rumor whose source memory is no longer claimed,
+        // leaving that memory free to seed a second rumor about a
+        // happening already going round.
+        //
+        // GossipSim owns the instance; these are references into it.
+        // EventClaim itself moved to GossipState.h for the same reason.
+        using GossipState_::EventClaim;
+
+        auto& g_claims = GossipSim::MutableState().claims;
+        auto& g_eventClaims = GossipSim::MutableState().eventClaims;
     } // namespace
 
     void Initialize()

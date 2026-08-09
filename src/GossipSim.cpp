@@ -1,5 +1,7 @@
 #include <GossipSim.h>
 
+#include <GossipState.h>
+
 #include <EventLogUtil.h>
 #include <GossipClaims.h>
 #include <GossipContent.h>
@@ -39,105 +41,40 @@ namespace NarrativeEngine::GossipSim
         // in full would schedule an unbounded burst.
         constexpr double kMaxGameDayDeltaPerPoll = 3.0;
 
-        // Carrier state under SIR. A carrier is Infectious from
-        // `heardOnGameDay` until `infectiousUntilGameDay`, then Recovered —
-        // permanently immune and never re-infectable.
-        //
-        // Note what is NOT here: no per-carrier notability, no telling quota,
-        // no household-saturation flag. Transmissibility is constant and lives
-        // on the rumor; nothing about a carrier depletes. Three earlier models
-        // failed by making spread a function of how far a rumor had already
-        // travelled, and every one of those fields was part of that mistake.
-        struct Carrier
-        {
-            std::uint32_t generation = 0;
-            RE::FormID toldBy = 0;
-            double heardOnGameDay = 0.0;
-            double infectiousUntilGameDay = 0.0;
-            double nextStepGameDay = 0.0;
-            bool recovered = false;
-        };
-
-        struct Rumor
-        {
-            std::uint32_t id = 0;
-            RE::FormID originNpc = 0;
-            RE::FormID originSettlement = 0;
-            double seedGameDay = 0.0;
-            // Constant for the rumor's whole life. Per-conversation
-            // transmission probability is `notability * transmissionScale`.
-            float notability = 1.0f;
-            // Provenance. Without a recorded source, "no memory is ever
-            // used twice" cannot be verified from the trace — a claimed
-            // memory and the rumor it produced would only be correlated
-            // by timing.
-            std::int64_t sourceMemoryId = 0;
-            RE::FormID sourceActor = 0;
-            // Generation-banded text, all produced by one call at seed
-            // time. Selected by the receiving carrier's generation.
-            std::vector<std::string> bands;
-            // Every NPC that has EVER carried this rumor. Membership here is
-            // what makes someone immune, so it must never be pruned while the
-            // rumor is live — a removed entry would be re-infectable and the
-            // outbreak would never terminate.
-            std::unordered_map<RE::FormID, Carrier> carriers;
-            std::uint32_t maxDepth = 0;
-            std::size_t transmissions = 0;
-            std::size_t wasted = 0;
-            // Conversation accounting. `conversations` is every one drawn;
-            // the five outcome buckets below sum to it exactly, so a rumor
-            // that reached nobody can be told apart from one that never
-            // opened its mouth. Without this, a conversation that happened
-            // and simply failed the transmission roll was counted nowhere,
-            // and two dead rumors could not be explained at all.
-            std::size_t conversations = 0;
-            std::size_t notCaught = 0;   // spoke, but it did not take
-            std::size_t unavailable = 0; // listener down, gone, or unreachable
-            std::size_t capped = 0;      // carrier cap already reached
-            double lastActivityGameDay = 0.0;
-            bool live = true;
-        };
-
-        struct QueueEntry
-        {
-            double dueGameDay = 0.0;
-            std::uint32_t rumorId = 0;
-            RE::FormID carrier = 0;
-
-            // std::priority_queue is a max-heap; invert so the earliest
-            // due event pops first.
-            bool operator<(const QueueEntry& other) const
-            {
-                return dueGameDay > other.dueGameDay;
-            }
-        };
-
-        // std::priority_queue hides its container as a protected member,
-        // which makes "how many of these are due right now?" unanswerable
-        // from outside. That question has to be answerable: the drain
-        // report used to print the whole queue depth and call it the due
-        // count, which reads as an unbounded backlog when it is nothing of
-        // the sort (see the drain loop in Poll).
-        //
-        // Exposing `c` rather than switching to a hand-rolled vector heap
-        // keeps the ordering semantics exactly as they were. The scan is a
-        // linear pass over a container the size of the live-carrier set —
-        // tens of entries — and only runs when the drain stopped early.
-        struct EventQueue : std::priority_queue<QueueEntry>
-        {
-            using std::priority_queue<QueueEntry>::c;
-        };
+        // Rumor, Carrier, QueueEntry and EventQueue now live in
+        // GossipState.h, because the co-save and the dashboard both need
+        // to read them from a published snapshot rather than from live
+        // state. The `using` keeps every reference in this file spelled
+        // the way it always was.
+        using namespace GossipState_;
 
         std::mutex g_mutex;
-        std::unordered_map<std::uint32_t, Rumor> g_rumors;
-        EventQueue g_queue;
-        std::uint32_t g_nextRumorId = 1;
 
-        double g_lastGameDaySample = -1.0;
-        double g_simGameDay = 0.0;
+        // THE live instance. Everything below is a reference into it, so
+        // that publishing a snapshot is one copy of one object rather
+        // than a gather across six globals that could each be caught at a
+        // different instant.
+        //
+        // A function-local static rather than a namespace-scope object,
+        // because GossipClaims binds references into it during ITS static
+        // initialisation and the order between two translation units is
+        // unspecified. Construct-on-first-use removes the question
+        // instead of leaving it to be reasoned about.
+        GossipState& State()
+        {
+            static GossipState state;
+            return state;
+        }
+
+        auto& g_rumors = State().rumors;
+        auto& g_queue = State().queue;
+        auto& g_nextRumorId = State().nextRumorId;
+        auto& g_counters = State().counters;
+
+        auto& g_lastGameDaySample = State().lastGameDaySample;
+        auto& g_simGameDay = State().simGameDay;
         double g_secondsSinceTick = 0.0;
 
-        Stats g_stats;
         std::mt19937 g_rng{1337};
 
         // Per-carrier contact set, memoised for the session. The graph
@@ -438,7 +375,7 @@ namespace NarrativeEngine::GossipSim
                 // transmission still happened in the model — it is only the
                 // memory write that cannot be addressed — so this counts as
                 // a write failure rather than unwinding the simulation.
-                ++g_stats.memoryWriteFailures;
+                ++g_counters.memoryWriteFailures;
                 if (Settings::Get().debugMode) {
                     logger::debug("GossipSim: no placed reference for {} -> {}; memory pair skipped",
                                   tellerRef == 0 ? GossipGraph::NpcName(teller) : GossipGraph::NpcName(listener),
@@ -470,9 +407,9 @@ namespace NarrativeEngine::GossipSim
                                                   std::format("[{}]", tellerRef));
             for (const int id : {a, b}) {
                 if (id > 0) {
-                    ++g_stats.memoriesWritten;
+                    ++g_counters.memoriesWritten;
                 } else {
-                    ++g_stats.memoryWriteFailures;
+                    ++g_counters.memoryWriteFailures;
                 }
             }
         }
@@ -613,7 +550,7 @@ namespace NarrativeEngine::GossipSim
                     const auto& all = GossipGraph::Participants();
                     if (all.empty()) {
                         ++rumor.unavailable;
-                        ++g_stats.unavailableThisSession;
+                        ++g_counters.unavailable;
                         continue;
                     }
                     std::uniform_int_distribution<std::size_t> d(0, all.size() - 1);
@@ -627,7 +564,7 @@ namespace NarrativeEngine::GossipSim
                     // Already infectious, or recovered and immune. A wasted
                     // opportunity — the brake.
                     ++rumor.wasted;
-                    ++g_stats.wastedThisSession;
+                    ++g_counters.wasted;
                     GossipLog::Wasted(rumorId, carrierId, listener, conversations - i - 1);
                     continue;
                 }
@@ -637,14 +574,14 @@ namespace NarrativeEngine::GossipSim
                     // dropped: this is the single largest silent outcome,
                     // and its absence made "reached nobody" unattributable.
                     ++rumor.notCaught;
-                    ++g_stats.notCaughtThisSession;
+                    ++g_counters.notCaught;
                     continue;
                 }
 
                 const auto* toP = GossipGraph::Find(listener);
                 if (!toP || ActorAvailability(listener) != Availability::Available) {
                     ++rumor.unavailable;
-                    ++g_stats.unavailableThisSession;
+                    ++g_counters.unavailable;
                     // No conversation happened. Deliberately NOT counted as a
                     // wasted telling: wasted tellings are the saturation brake
                     // and mean "they already knew", which is a different
@@ -655,7 +592,7 @@ namespace NarrativeEngine::GossipSim
                 }
                 if (static_cast<int>(rumor.carriers.size()) >= cfg.gossipMaxCarriersPerRumor) {
                     ++rumor.capped;
-                    ++g_stats.cappedThisSession;
+                    ++g_counters.capped;
                     continue;
                 }
 
@@ -669,7 +606,7 @@ namespace NarrativeEngine::GossipSim
                 rumor.carriers.emplace(listener, fresh);
                 rumor.maxDepth = std::max(rumor.maxDepth, fresh.generation);
                 ++rumor.transmissions;
-                ++g_stats.transmissionsThisSession;
+                ++g_counters.transmissions;
                 rumor.lastActivityGameDay = nowGameDay;
 
                 const RE::FormID location = toP->settlement ? toP->settlement : toP->hold;
@@ -779,6 +716,11 @@ namespace NarrativeEngine::GossipSim
         }
     } // namespace
 
+    GossipState& MutableState()
+    {
+        return State();
+    }
+
     void Initialize()
     {
         const auto& cfg = Settings::Get();
@@ -805,10 +747,10 @@ namespace NarrativeEngine::GossipSim
         g_lastGameDaySample = NowGameDay();
         g_simGameDay = g_lastGameDaySample;
         g_secondsSinceTick = 0.0;
-        g_stats.transmissionsThisSession = 0;
-        g_stats.wastedThisSession = 0;
-        g_stats.memoriesWritten = 0;
-        g_stats.memoryWriteFailures = 0;
+        g_counters.transmissions = 0;
+        g_counters.wasted = 0;
+        g_counters.memoriesWritten = 0;
+        g_counters.memoryWriteFailures = 0;
     }
 
     void OnSessionEnd()
@@ -820,20 +762,19 @@ namespace NarrativeEngine::GossipSim
         // The session-level counterpart of the per-rumor BURNOUT line: the
         // five outcomes sum to every conversation held this session, so a
         // quiet session says whether nobody spoke or nothing landed.
-        const auto conversations = g_stats.transmissionsThisSession + g_stats.wastedThisSession
-                                   + g_stats.notCaughtThisSession + g_stats.unavailableThisSession
-                                   + g_stats.cappedThisSession;
+        const auto conversations = g_counters.transmissions + g_counters.wasted + g_counters.notCaught
+                                   + g_counters.unavailable + g_counters.capped;
         GossipLog::Note(std::format("CENSUS  live rumors={}  conversations={} ({} told, {} knew, {} missed, "
                                     "{} away, {} capped)  memories={} (failed {})",
                                     g_rumors.size(),
                                     conversations,
-                                    g_stats.transmissionsThisSession,
-                                    g_stats.wastedThisSession,
-                                    g_stats.notCaughtThisSession,
-                                    g_stats.unavailableThisSession,
-                                    g_stats.cappedThisSession,
-                                    g_stats.memoriesWritten,
-                                    g_stats.memoryWriteFailures));
+                                    g_counters.transmissions,
+                                    g_counters.wasted,
+                                    g_counters.notCaught,
+                                    g_counters.unavailable,
+                                    g_counters.capped,
+                                    g_counters.memoriesWritten,
+                                    g_counters.memoryWriteFailures));
         for (const auto& [id, rumor] : g_rumors) {
             const auto liveCarriers = std::count_if(
                 rumor.carriers.begin(), rumor.carriers.end(), [](const auto& kv) { return !kv.second.recovered; });
@@ -1115,7 +1056,14 @@ namespace NarrativeEngine::GossipSim
     Stats GetStats()
     {
         std::scoped_lock lock(g_mutex);
-        Stats out = g_stats;
+        Stats out;
+        out.transmissionsThisSession = g_counters.transmissions;
+        out.wastedThisSession = g_counters.wasted;
+        out.notCaughtThisSession = g_counters.notCaught;
+        out.unavailableThisSession = g_counters.unavailable;
+        out.cappedThisSession = g_counters.capped;
+        out.memoriesWritten = g_counters.memoriesWritten;
+        out.memoryWriteFailures = g_counters.memoryWriteFailures;
         out.liveRumors = static_cast<std::size_t>(
             std::count_if(g_rumors.begin(), g_rumors.end(), [](const auto& kv) { return kv.second.live; }));
         out.totalCarriers = 0;
@@ -1331,6 +1279,6 @@ namespace NarrativeEngine::GossipSim
         g_lastGameDaySample = -1.0;
         g_simGameDay = 0.0;
         g_secondsSinceTick = 0.0;
-        g_stats = {};
+        g_counters = {};
     }
 } // namespace NarrativeEngine::GossipSim

@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include <GossipState.h>
 #include <PluginThread.h>
 
 #include <RE/Skyrim.h>
@@ -63,6 +64,18 @@ namespace NarrativeEngine::GossipSim
     inline constexpr std::uint32_t kRecordTypeId = 'NEGS';
 
     void Initialize();
+
+    // The live state instance.
+    //
+    // GossipClaims binds its ledger references into this, because claims
+    // and rumors must be snapshotted — and therefore saved — from the
+    // same instant. Exposed rather than duplicated so there is exactly
+    // one object to copy when a tick publishes.
+    //
+    // Milestone 3 step 7 replaces this with a GossipThread::Token-gated
+    // accessor; until the work has actually moved threads, the existing
+    // mutex is still what guards it.
+    GossipState& MutableState();
 
     // kNewGame / kPostLoadGame. Refreshes the graph's relationship
     // layer and re-bases the game-time sample so a load does not look
