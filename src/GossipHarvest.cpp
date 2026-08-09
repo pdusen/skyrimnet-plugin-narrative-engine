@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <format>
 #include <mutex>
 #include <string>
@@ -449,9 +450,22 @@ namespace NarrativeEngine::GossipHarvest
         if (g_gameHoursSinceSweep < interval) {
             return;
         }
-        // Subtract rather than zero so overshoot rolls forward, but never
-        // run more than one sweep per poll.
-        g_gameHoursSinceSweep = std::min(g_gameHoursSinceSweep - interval, interval);
+        // Keep the remainder so the cadence stays in phase with elapsed
+        // in-world time, but never enough to fire again immediately.
+        //
+        // This was `std::min(g_gameHoursSinceSweep - interval, interval)`,
+        // which clamped the carry-over to EXACTLY one interval whenever two
+        // or more had accumulated — so the very next poll compared
+        // `interval < interval`, found it false, and swept again. Waiting or
+        // sleeping to pass a day is enough to accumulate that much, which is
+        // why every HARVEST line in the trace arrived in pairs seconds
+        // apart, doubling both the query load and the seeding rate.
+        //
+        // fmod cannot produce a value >= interval, so a single sweep per
+        // crossing is structural rather than something a clamp has to get
+        // right. A 72-hour catch-up now yields one sweep and resumes on
+        // schedule instead of firing twice and losing the phase.
+        g_gameHoursSinceSweep = std::fmod(g_gameHoursSinceSweep, interval);
         RunSweepLocked(now);
     }
 
