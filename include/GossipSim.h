@@ -224,7 +224,37 @@ namespace NarrativeEngine::GossipSim
     // wants: a rumor is listed until its last carrier retires.
     std::vector<RumorView> GetRumorViews(const GossipState&);
 
-    void OnSave(SKSE::SerializationInterface* intfc);
+    // Serialisation never touches live state and never waits on the
+    // gossip worker.
+    //
+    // OnSave writes the image it is handed — the caller takes ONE
+    // snapshot and passes it to both records, so claims and rumors are
+    // always saved from the same instant. Split them and a reload can
+    // restore a rumor whose source memory is no longer claimed, leaving
+    // that memory free to seed a second rumor about a happening already
+    // going round.
+    void OnSave(SKSE::SerializationInterface* intfc, const GossipState& state);
+
+    // OnLoad and OnRevert write into a PENDING state rather than the live
+    // one, and the worker adopts it at the top of its next unit of work.
+    // Neither blocks; the serialisation thread publishes inward exactly
+    // as the worker publishes outward.
+    //
+    // Each writes only its own portion of the pending state, so the order
+    // SKSE happens to dispatch the two records in cannot matter.
     void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);
     void OnRevert();
+
+    // The staging area OnLoad and OnRevert write into. Created empty on
+    // first touch.
+    GossipState& PendingState();
+
+    // Move any staged state into the live one and publish it. Returns
+    // true if there was something to adopt.
+    //
+    // Called at the top of every unit of gossip work AND at
+    // OnSessionStart, which runs at kPostLoadGame — after the record
+    // dispatch that filled the staging area, and before anything re-bases
+    // the simulation clock against state that is about to be replaced.
+    bool AdoptPendingState();
 } // namespace NarrativeEngine::GossipSim

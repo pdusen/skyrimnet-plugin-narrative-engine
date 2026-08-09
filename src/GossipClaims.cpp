@@ -204,12 +204,13 @@ namespace NarrativeEngine::GossipClaims
         return st.eventClaims.size();
     }
 
-    void OnSave(SKSE::SerializationInterface* intfc)
+    void OnSave(SKSE::SerializationInterface* intfc, const GossipState& state)
     {
         if (!intfc) {
             return;
         }
-        std::scoped_lock lock(g_mutex);
+        const auto& g_claims = state.claims;
+        const auto& g_eventClaims = state.eventClaims;
         if (!intfc->OpenRecord(kRecordTypeId, kRecordVersion)) {
             logger::error("GossipClaims::OnSave: OpenRecord failed");
             return;
@@ -273,7 +274,12 @@ namespace NarrativeEngine::GossipClaims
             return;
         }
 
-        std::scoped_lock lock(g_mutex);
+        // Into the PENDING state, not the live one. Shadows the
+        // file-scope references deliberately, so the body below reads
+        // exactly as it did while writing somewhere else entirely.
+        auto& pending = GossipSim::PendingState();
+        auto& g_claims = pending.claims;
+        auto& g_eventClaims = pending.eventClaims;
         g_claims.clear();
         g_eventClaims.clear();
 
@@ -318,8 +324,11 @@ namespace NarrativeEngine::GossipClaims
 
     void OnRevert()
     {
-        std::scoped_lock lock(g_mutex);
-        g_claims.clear();
-        g_eventClaims.clear();
+        // Only the LEDGER's portion of the pending state. GossipSim's
+        // OnRevert clears the simulation's. Split so the order SKSE
+        // dispatches the two records in cannot matter.
+        auto& pending = GossipSim::PendingState();
+        pending.claims.clear();
+        pending.eventClaims.clear();
     }
 } // namespace NarrativeEngine::GossipClaims

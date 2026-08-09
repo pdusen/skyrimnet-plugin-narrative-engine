@@ -74,6 +74,15 @@ namespace NarrativeEngine::Tick
             TravelEventLog::Poll(pt, elapsedSec);
             EventHistoryWriter::Poll(pt, elapsedSec);
             FineRoads::Poll(pt, elapsedSec);
+            // A load or a revert stages its state rather than writing
+            // live, so adopt before any gossip work reads it. Harvest
+            // runs first, so this has to sit ahead of it — a sweep
+            // against the outgoing world would claim memories the
+            // incoming one has no rumors for.
+            //
+            // No-op when nothing is staged. Milestone 3 step 5 folds
+            // this into the tick job.
+            GossipSim::AdoptPendingState();
             GossipHarvest::Poll(pt, elapsedSec);
             GossipSim::Poll(pt, elapsedSec);
             GossipLog::Poll(pt, elapsedSec);

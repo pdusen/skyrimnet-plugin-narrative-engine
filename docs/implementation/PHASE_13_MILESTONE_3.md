@@ -711,7 +711,7 @@ that the snapshot path does not hold.
 
 ### Step 4 — Serialisation through the snapshot
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** `OnSave`, `OnLoad` and `OnRevert` stop touching live state.
 
@@ -727,6 +727,24 @@ bump, in which case bump it and skip-and-log on mismatch as the existing code al
 **Verification:** save with rumors in flight, reload, confirm carriers, generations, queued events and
 claims all restore. Confirm a revert with no load leaves an empty world rather than a half-cleared one. Save
 twice in a row without any gossip work between and confirm byte-identical records.
+
+Done. Neither save path takes a lock any more: `Plugin.cpp` takes one `Snapshot()` and hands the same image
+to both `GossipSim::OnSave` and `GossipClaims::OnSave`, so the ledger and the rumors it belongs to are
+always written from the same instant.
+
+`'NEGS'` stayed at version 5 and `'NEGC'` at version 2 — the byte layouts are untouched, only the source of
+the bytes changed.
+
+One thing the plan under-specified. `OnLoad` and `OnRevert` fire for **two records dispatched in whatever
+order SKSE encounters them**, so a revert that wiped the whole staging area could erase what the other
+module's `OnLoad` had already written into it. Each module therefore clears and fills only its own portion
+of the pending state, which makes the dispatch order irrelevant rather than merely fortunate.
+
+Adoption happens at `OnSessionStart` — deliberately *before* it re-bases the simulation clock, since
+`OnSessionStart` runs at `kPostLoadGame`, after the record dispatch — and again ahead of the gossip polls in
+`Tick`. The second is belt-and-braces today, because every staging path is followed by a session start, but
+it is where step 5's tick job will do it and a sweep against the outgoing world would claim memories the
+incoming one has no rumors for.
 
 ---
 

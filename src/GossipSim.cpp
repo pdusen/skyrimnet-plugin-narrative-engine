@@ -1,5 +1,7 @@
 #include <GossipSim.h>
 
+#include <optional>
+
 #include <GossipState.h>
 
 #include <EventLogUtil.h>
@@ -83,6 +85,13 @@ namespace NarrativeEngine::GossipSim
         // pointer assignment.
         std::mutex g_snapshotMutex;
         std::shared_ptr<const GossipState> g_snapshot = std::make_shared<const GossipState>();
+
+        // The inward channel. SKSE's serialisation thread writes here;
+        // the worker adopts it at the top of its next unit of work. The
+        // two never wait on each other — states go in, snapshots come
+        // out.
+        std::mutex g_pendingMutex;
+        std::optional<GossipState> g_pending;
         double g_secondsSinceTick = 0.0;
 
         std::mt19937 g_rng{1337};
@@ -737,6 +746,38 @@ namespace NarrativeEngine::GossipSim
         return g_snapshot;
     }
 
+    GossipState& PendingState()
+    {
+        std::scoped_lock lock(g_pendingMutex);
+        if (!g_pending) {
+            g_pending.emplace();
+        }
+        return *g_pending;
+    }
+
+    bool AdoptPendingState()
+    {
+        std::optional<GossipState> taken;
+        {
+            std::scoped_lock lock(g_pendingMutex);
+            taken.swap(g_pending);
+        }
+        if (!taken) {
+            return false;
+        }
+        {
+            std::scoped_lock lock(g_mutex);
+            State() = std::move(*taken);
+            // Derived, not owned, and describing a world that may have
+            // just been replaced.
+            g_contactCache.clear();
+        }
+        PublishSnapshot();
+        logger::debug(
+            "GossipSim: adopted pending state ({} rumors, {} claims)", State().rumors.size(), State().claims.size());
+        return true;
+    }
+
     void PublishSnapshot()
     {
         auto fresh = std::make_shared<const GossipState>(State());
@@ -762,6 +803,12 @@ namespace NarrativeEngine::GossipSim
             return;
         }
         GossipGraph::RefreshRelationships();
+
+        // BEFORE the clock re-base below. OnSessionStart runs at
+        // kPostLoadGame, after the record dispatch has filled the staging
+        // area, so re-basing first would rebase state that is about to be
+        // thrown away.
+        AdoptPendingState();
 
         std::scoped_lock lock(g_mutex);
         g_contactCache.clear();
@@ -1108,28 +1155,27 @@ namespace NarrativeEngine::GossipSim
         return out;
     }
 
-    void OnSave(SKSE::SerializationInterface* intfc)
+    void OnSave(SKSE::SerializationInterface* intfc, const GossipState& state)
     {
         if (!intfc) {
             return;
         }
-        std::scoped_lock lock(g_mutex);
         if (!intfc->OpenRecord(kRecordTypeId, kRecordVersion)) {
             logger::error("GossipSim::OnSave: OpenRecord failed");
             return;
         }
 
-        intfc->WriteRecordData(g_nextRumorId);
-        intfc->WriteRecordData(g_simGameDay);
+        intfc->WriteRecordData(state.nextRumorId);
+        intfc->WriteRecordData(state.simGameDay);
 
         // Only live rumors are persisted. The poll sweep normally clears dead
         // ones already, but a save landing between a burnout and the next
         // sweep would otherwise write a rumor that will be discarded on load
         // anyway. Belt and braces on the payload size.
         const auto rumorCount = static_cast<std::uint32_t>(
-            std::count_if(g_rumors.begin(), g_rumors.end(), [](const auto& kv) { return kv.second.live; }));
+            std::count_if(state.rumors.begin(), state.rumors.end(), [](const auto& kv) { return kv.second.live; }));
         intfc->WriteRecordData(rumorCount);
-        for (const auto& [id, r] : g_rumors) {
+        for (const auto& [id, r] : state.rumors) {
             if (!r.live) {
                 continue;
             }
@@ -1175,7 +1221,7 @@ namespace NarrativeEngine::GossipSim
                 intfc->WriteRecordData(recovered);
             }
         }
-        logger::debug("GossipSim::OnSave: wrote {} live rumors ({} in memory)", rumorCount, g_rumors.size());
+        logger::debug("GossipSim::OnSave: wrote {} live rumors ({} in memory)", rumorCount, state.rumors.size());
     }
 
     void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t)
@@ -1190,7 +1236,14 @@ namespace NarrativeEngine::GossipSim
             return;
         }
 
-        std::scoped_lock lock(g_mutex);
+        std::scoped_lock pendingLock(g_pendingMutex);
+        if (!g_pending) {
+            g_pending.emplace();
+        }
+        auto& g_rumors = g_pending->rumors;
+        auto& g_queue = g_pending->queue;
+        auto& g_nextRumorId = g_pending->nextRumorId;
+        auto& g_simGameDay = g_pending->simGameDay;
         g_rumors.clear();
         g_queue = {};
 
@@ -1306,21 +1359,29 @@ namespace NarrativeEngine::GossipSim
 
     void OnRevert()
     {
+        // Clears only the SIMULATION's portion of the pending state.
+        // GossipClaims::OnRevert clears the ledger's. Keeping them
+        // separate means the order SKSE dispatches the two records in
+        // cannot matter, which it otherwise would: a revert that wiped
+        // the whole staging area could erase what the other module's
+        // OnLoad had already written into it.
+        {
+            std::scoped_lock pendingLock(g_pendingMutex);
+            if (!g_pending) {
+                g_pending.emplace();
+            }
+            g_pending->rumors.clear();
+            g_pending->queue = {};
+            g_pending->nextRumorId = 1;
+            g_pending->lastGameDaySample = -1.0;
+            g_pending->simGameDay = 0.0;
+            g_pending->counters = {};
+            g_pending->harvest = {};
+        }
+        // The contact cache is derived rather than owned, so it is not in
+        // the pending state and has to be dropped here.
         std::scoped_lock lock(g_mutex);
-        g_rumors.clear();
-        g_queue = {};
         g_contactCache.clear();
-        g_nextRumorId = 1;
-        g_lastGameDaySample = -1.0;
-        g_simGameDay = 0.0;
         g_secondsSinceTick = 0.0;
-        g_counters = {};
-        State().harvest = {};
-        // Both lifecycle paths publish so the snapshot can never describe
-        // a world that has been torn down. A reader that saw a reverted
-        // state as "the last good one" would show rumors that no longer
-        // exist, and — once the co-save reads the snapshot in step 4 —
-        // would save them.
-        PublishSnapshot();
     }
 } // namespace NarrativeEngine::GossipSim

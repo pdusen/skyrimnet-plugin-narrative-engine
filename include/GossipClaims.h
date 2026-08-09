@@ -115,7 +115,12 @@ namespace NarrativeEngine::GossipClaims
     std::size_t Count(const GossipState&);
     std::size_t EventCount(const GossipState&);
 
-    void OnSave(SKSE::SerializationInterface* intfc);
+    // Writes the image it is handed — the same one GossipSim::OnSave
+    // receives, so the ledger and the rumors it belongs to are always an
+    // image of the same instant.
+    void OnSave(SKSE::SerializationInterface* intfc, const GossipState& state);
+    // Both write into GossipSim's pending state rather than the live
+    // one, and touch only the ledger's portion of it.
     void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length);
     void OnRevert();
 } // namespace NarrativeEngine::GossipClaims

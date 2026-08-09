@@ -373,8 +373,18 @@ namespace NarrativeEngine
             AmbushBeat_Persistence::OnSave(intfc);
             LetterPool::OnSave(intfc);
             VisitState::OnSave(intfc);
-            GossipSim::OnSave(intfc);
-            GossipClaims::OnSave(intfc);
+            // ONE image for both records. Taken here rather than inside
+            // each module so the ledger and the rumors it belongs to are
+            // an image of the same instant — split them and a reload can
+            // restore a rumor whose source memory is no longer claimed,
+            // leaving that memory free to seed a second rumor about a
+            // happening already going round.
+            //
+            // Neither call touches live state or waits on the gossip
+            // worker; a save is as fast as writing the bytes.
+            const auto gossipSnapshot = GossipSim::Snapshot();
+            GossipSim::OnSave(intfc, *gossipSnapshot);
+            GossipClaims::OnSave(intfc, *gossipSnapshot);
             // Future subsystems append their OnSave calls here.
         }
 
