@@ -46,15 +46,26 @@ namespace NarrativeEngine::GossipLog
 
     // Tick-driven flush, so a crash loses at most one interval of lines
     // rather than the whole session's tail.
-    // Flush the trace to disk. Called at the end of each gossip tick,
-    // from the gossip thread — so the order lines reach the file is the
-    // order the work happened in.
+    // NOTE ON BUFFERING. Every line is flushed as it is written, and
+    // that is deliberate rather than careless.
     //
-    // GossipLog keeps its mutex, unlike the rest of gossip. It is a file
-    // writer rather than simulation state, and its session-boundary
+    // A gossip tick blocks for two LLM round trips, so anything less than
+    // per-line flushing means the trace goes silent for ten seconds at a
+    // time and then arrives in a burst — and worse, the stream's own
+    // buffer fills wherever it fills, so a tail of the file sits on a
+    // HALF-WRITTEN LINE while it waits. That is exactly what an earlier
+    // revision did: it flushed once at the end of each tick, and the file
+    // was unreadable while anything interesting was happening.
+    //
+    // The cost is a few hundred flushes per tick on a thread that has
+    // nothing else to do, against two multi-second network calls. The
+    // whole value of a trace is being readable while the thing it traces
+    // is running.
+    //
+    // GossipLog also keeps its mutex, unlike the rest of gossip. It is a
+    // file writer rather than simulation state, and its session-boundary
     // writes still come from the main thread; a mutex on a log write is
     // not what Milestone 3 is trying to remove.
-    void Flush();
 
     // True when a file is open and lines will actually land.
     bool IsActive();

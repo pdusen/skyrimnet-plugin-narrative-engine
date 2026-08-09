@@ -11,8 +11,11 @@
 //   2. generate   evaluate candidates and compose the winner (LLM)
 //   3. simulate   drain every carrier-step due by the tick's horizon
 //   4. prune      reap dead rumors, expire claims
-//   5. flush      write the trace
-//   6. publish    swap the dashboard/co-save snapshot
+//   5. publish    swap the dashboard/co-save snapshot
+//
+// The trace is not a step: every line is flushed as it is written, so
+// the file stays readable while a tick is blocked on an LLM call rather
+// than arriving in a burst afterwards.
 //
 // ---------------------------------------------------------------------
 // Scheduled, stamped, never coalesced

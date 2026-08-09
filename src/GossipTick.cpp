@@ -69,11 +69,7 @@ namespace NarrativeEngine::GossipTick
                 return;
             }
 
-            // 5. The trace, written from the same thread that generated
-            // it, so its order is execution order.
-            GossipLog::Flush();
-
-            // 6. One publication point, at the end of the job and nowhere
+            // 5. One publication point, at the end of the job and nowhere
             // else. A snapshot taken mid-drain would show a half-advanced
             // simulation — some carriers stepped to the new game day and
             // some not, transmission counts that do not match the carrier

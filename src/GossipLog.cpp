@@ -70,7 +70,7 @@ namespace NarrativeEngine::GossipLog
             if (!g_file.is_open()) {
                 return;
             }
-            g_file << EventLogUtil::CurrentInGameTimestamp() << ' ' << body << '\n';
+            g_file << EventLogUtil::CurrentInGameTimestamp() << ' ' << body << '\n' << std::flush;
             ++g_linesWritten;
         }
 
@@ -149,18 +149,6 @@ namespace NarrativeEngine::GossipLog
         g_file << "\n# session " << g_sessionCounter << " ended, " << g_linesWritten << " lines\n";
         g_file.flush();
         g_file.close();
-    }
-
-    void Flush()
-    {
-        std::scoped_lock lock(g_mutex);
-        if (!g_file.is_open()) {
-            return;
-        }
-        // No throttle any more. This is called once per gossip tick
-        // rather than every couple of seconds, and a tick is already the
-        // unit at which the trace becomes worth reading.
-        g_file.flush();
     }
 
     bool IsActive()
