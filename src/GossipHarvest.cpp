@@ -327,6 +327,7 @@ namespace NarrativeEngine::GossipHarvest
             g_stats.rejectedLowImportance += sweep.rejectedLowImportance;
             g_stats.rejectedClaimed += sweep.rejectedClaimed;
             g_stats.rejectedSameEvent += sweep.rejectedSameEvent;
+            g_stats.rejectedIsolated += sweep.rejectedIsolated;
             g_stats.rejectedNotParticipant += sweep.rejectedNotParticipant;
             g_stats.rejectedDiary += sweep.rejectedDiary;
             g_stats.rejectedNoContent += sweep.rejectedNoContent;
@@ -388,6 +389,23 @@ namespace NarrativeEngine::GossipHarvest
                 if (sweep.sentForGeneration >= want) {
                     break;
                 }
+                // An origin whose contacts are almost all unreachable will
+                // spend its whole quota on people who are away and reach
+                // nobody. Checked HERE rather than at qualification: it is
+                // the most expensive test in the pipeline (a life-state
+                // read per contact) and only the candidates actually about
+                // to be seeded need it. Failing it moves on to the next
+                // candidate rather than ending the sweep.
+                if (const float share = GossipSim::AvailableContactShare(c.owner);
+                    share < cfg.gossipMinAvailableContactShare) {
+                    ++sweep.rejectedIsolated;
+                    GossipLog::Memory(c.memoryId,
+                                      c.owner,
+                                      c.importance,
+                                      std::format("isolated (only {:.0f}% of contacts reachable)", share * 100.0f));
+                    continue;
+                }
+
                 // Re-check the events here, not just at qualification.
                 // Nothing is claimed until this loop runs, so two accounts
                 // of the same happening can both have passed the gate

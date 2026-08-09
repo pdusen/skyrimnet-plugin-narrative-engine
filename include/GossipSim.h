@@ -155,6 +155,29 @@ namespace NarrativeEngine::GossipSim
         std::int64_t sourceMemoryId = 0;
     };
 
+    // The share of `npc`'s named contact weight that currently resolves to
+    // somebody able to hold a conversation, in [0, 1]. Returns 0 when they
+    // have no named contacts at all.
+    //
+    // This IS the probability that one conversation drawn by `npc` reaches
+    // a reachable listener, because peer selection is weighted by exactly
+    // these rates — so it predicts directly how much of a carrier's quota
+    // will be spent on people who are dead, disabled, or otherwise away.
+    //
+    // A weighted share rather than a count, because the two disagree badly.
+    // Personal edges weigh 40 against a settlement neighbour's 1.0, so an
+    // NPC with a handful of faction-mates in an unstarted quest can carry
+    // most of their contact weight on people who do not exist yet while
+    // still having a dozen perfectly available neighbours. Ancano seeded
+    // five rumors in one session and every one reached nobody: 61% of
+    // their conversations went to unavailable listeners, which a count of
+    // available contacts would not have predicted.
+    //
+    // The province sentinel is excluded, as it is for the stall test: it
+    // resolves to a random participant at transmission time and is a
+    // lottery ticket rather than a contact.
+    float AvailableContactShare(RE::FormID npc);
+
     // Every rumor still in the map, newest first. The map holds exactly
     // the rumors that have not been reaped, which is what the dashboard
     // wants: a rumor is listed until its last carrier retires.

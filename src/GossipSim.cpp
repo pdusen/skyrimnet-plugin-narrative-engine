@@ -986,6 +986,23 @@ namespace NarrativeEngine::GossipSim
         return id;
     }
 
+    float AvailableContactShare(RE::FormID npc)
+    {
+        std::scoped_lock lock(g_mutex);
+        float total = 0.0f;
+        float reachable = 0.0f;
+        for (const auto& c : ContactsFor(npc)) {
+            if (c.peer == kProvincePeer || c.rate <= 0.0f) {
+                continue;
+            }
+            total += c.rate;
+            if (ActorAvailability(c.peer) == Availability::Available) {
+                reachable += c.rate;
+            }
+        }
+        return total > 0.0f ? reachable / total : 0.0f;
+    }
+
     std::vector<RumorView> GetRumorViews()
     {
         std::scoped_lock lock(g_mutex);

@@ -115,6 +115,9 @@ namespace NarrativeEngine::GossipHarvest
         std::size_t rejectedOwnOutput = 0;
         // Another witness's account of the same happening already seeded.
         std::size_t rejectedSameEvent = 0;
+        // The origin's contacts are mostly unreachable, so it could not
+        // have spread the rumor anywhere.
+        std::size_t rejectedIsolated = 0;
     };
     Stats GetStats();
 } // namespace NarrativeEngine::GossipHarvest

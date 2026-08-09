@@ -698,6 +698,21 @@ namespace NarrativeEngine::Settings
         // covers creative writing in an NPC's voice; a separate variant
         // would be one more thing for the user to tune with no distinct
         // task shape behind it.
+        // Refuse to seed a rumor from someone whose contacts are mostly
+        // unreachable. This is the fraction of an origin's weighted named
+        // contacts that must currently be able to hold a conversation.
+        //
+        // A carrier draws roughly fGossipConversationsPerDay *
+        // fGossipInfectiousDays conversations in its lifetime — about six
+        // at the shipped values — and each reaches a listener only if that
+        // listener is available, then catches with probability
+        // notability * fGossipTransmissionScale. For the expected number
+        // of successful tellings to clear 1, the reachable share needs to
+        // be around 0.3. The default sits just below that, so it rejects
+        // origins that are near-certain to reach nobody without touching
+        // the merely unlucky.
+        float gossipMinAvailableContactShare = 0.25f;
+
         int gossipContentBands = 3;
 
         int gossipRandomSeed = 1337;
