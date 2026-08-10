@@ -109,7 +109,7 @@ namespace NarrativeEngine::GossipHarvest
     struct Stats
     {
         std::size_t sweeps = 0;
-        std::size_t actorsRanked = 0;
+        std::size_t actorsExamined = 0;
         std::size_t memoriesExamined = 0;
         // Candidates placed in the evaluation pool, which is NOT the
         // number of rumors, the number of LLM calls, or even the number

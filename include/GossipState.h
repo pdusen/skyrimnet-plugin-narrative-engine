@@ -157,7 +157,10 @@ namespace NarrativeEngine::GossipState_
     struct HarvestCounters
     {
         std::size_t sweeps = 0;
-        std::size_t actorsRanked = 0;
+        // Participants queried this session. Was a count of the ranked
+        // sample; now the sum of the drawn buckets' populations, which is
+        // the same question asked of a selection that no longer ranks.
+        std::size_t actorsExamined = 0;
         std::size_t memoriesExamined = 0;
         std::size_t sentForGeneration = 0;
         std::size_t rejectedTooOld = 0;

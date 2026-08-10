@@ -135,7 +135,16 @@ namespace NarrativeEngine::GossipLog
     // rate, and the rate is the whole question the sweep log answers.
     struct HarvestStats
     {
-        std::size_t actorsSeen = 0; // rows GetActorEngagement returned
+        // Which bucket this sweep drew, and how many participants were
+        // in it. Replaces the old sampled/seen pair: there is no ranking
+        // to take a sample of any more, so "25 of 144" described a
+        // relationship that no longer exists.
+        std::uint32_t bucket = 0;
+        std::size_t bucketCount = 0;
+        std::size_t bucketPopulation = 0;
+        // Dead once the engagement path goes. Kept only so the ranking
+        // code still compiles until then; nothing reads them.
+        std::size_t actorsSeen = 0;
         std::size_t actorsSampled = 0;
         std::size_t memoriesExamined = 0;
         std::size_t candidates = 0;

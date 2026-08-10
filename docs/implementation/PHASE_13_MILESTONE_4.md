@@ -361,7 +361,7 @@ clamps onto it rather than emptying the eligible set, and a single bucket degene
 
 ### Step 3 — Harvest the drawn bucket
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** The switch. Selection stops consulting player engagement.
 
@@ -383,6 +383,24 @@ seeds came from Winterhold College because that is where the player was. Per-swe
 rise from 25 to roughly `participants / bucketCount`. Confirm a bucket holding no qualifying memories
 produces no rumor **and is not skipped over** — the sweep ends quietly and the next tick draws a different
 bucket.
+
+Done. `RunSweepImpl` walks `GossipGraph::BucketMembers(bucket)` in full; `CollectFrom` takes a
+`GossipGraph::Participant&` directly instead of the `RankedActor` pair. `RankActors` is now unreachable and
+goes in Step 4.
+
+Two consequences beyond the step as written:
+
+- The `HARVEST` line's `actors=25/144` is gone, replaced by `bucket=N/M actors=P`. The old pair described a
+  sample of a ranking, and both halves of that relationship have stopped existing. `actorsSeen` and
+  `actorsSampled` survive on `HarvestStats` for one more step, unread, only so the dead ranking code still
+  compiles.
+- `Stats::actorsRanked` became `actorsExamined`, summing bucket populations. The name was describing the
+  mechanism rather than the question, and the mechanism is what changed — the question ("how many
+  participants has this session queried?") is the same one.
+
+A participant whose graph entry carries no `actorRef` is skipped silently: there is no id SkyrimNet would
+answer to, and it is a property of the graph rather than of the sweep. On a vanilla load order this is
+never hit — all 881 resolve.
 
 ---
 

@@ -241,12 +241,13 @@ namespace NarrativeEngine::GossipLog
 
     void Harvest(const HarvestStats& stats)
     {
-        Emit(std::format("HARVEST actors={}/{}  memories={}  candidates={}  sent={}  "
+        Emit(std::format("HARVEST bucket={}/{}  actors={}  memories={}  candidates={}  sent={}  "
                          "(rejected: {} too-old, {} low-importance, {} diary, {} no-content, "
                          "{} no-game-time, {} own-gossip, {} claimed, {} same-event, "
                          "{} isolated, {} not-participant)",
-                         stats.actorsSampled,
-                         stats.actorsSeen,
+                         stats.bucket,
+                         stats.bucketCount,
+                         stats.bucketPopulation,
                          stats.memoriesExamined,
                          stats.candidates,
                          stats.sentForGeneration,

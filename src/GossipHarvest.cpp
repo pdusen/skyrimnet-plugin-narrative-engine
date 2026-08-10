@@ -173,7 +173,7 @@ namespace NarrativeEngine::GossipHarvest
 
         // Stage 2: qualify this actor's recent memories.
         void CollectFrom(const GossipThread::Token& gt,
-                         const RankedActor& actor,
+                         const GossipGraph::Participant& actor,
                          const Settings::Config& cfg,
                          double nowGameSeconds,
                          GossipLog::HarvestStats& sweep,
@@ -366,7 +366,7 @@ namespace NarrativeEngine::GossipHarvest
         void Accumulate(const GossipThread::Token& gt, const GossipLog::HarvestStats& sweep)
         {
             auto& g_stats = GossipSim::MutableState(gt).harvest;
-            g_stats.actorsRanked += sweep.actorsSampled;
+            g_stats.actorsExamined += sweep.bucketPopulation;
             g_stats.memoriesExamined += sweep.memoriesExamined;
             g_stats.sentForGeneration += sweep.sentForGeneration;
             g_stats.rejectedTooOld += sweep.rejectedTooOld;
@@ -489,21 +489,6 @@ namespace NarrativeEngine::GossipHarvest
             g_deferredLogged = false;
             ++g_stats.sweeps;
 
-            // Drawn here, after the ready checks and beside the sweep
-            // count, because a bucket's turn is spent by being drawn. A
-            // draw above the checks would burn a turn on a sweep that
-            // then bailed and examined nobody.
-            //
-            // Nothing reads `bucket` yet -- the harvest below still ranks
-            // by engagement. This step exists so the sequence can be
-            // watched over a long run before a rumor depends on it.
-            const auto bucket = DrawBucket(gt, GossipGraph::BucketCount());
-            GossipLog::Note(std::format("harvest: bucket {} of {} ({} participant(s)), recent={}",
-                                        bucket,
-                                        GossipGraph::BucketCount(),
-                                        GossipGraph::BucketMembers(bucket).size(),
-                                        HistoryText(gt)));
-
             // Counted for THIS sweep, then folded into the session totals
             // at the end. Mixing the two scales in one line is what made
             // the first version of this log unreadable: a per-sweep actor
@@ -511,17 +496,43 @@ namespace NarrativeEngine::GossipHarvest
             // be read as a rate, and the rate is the whole question.
             GossipLog::HarvestStats sweep;
 
-            const auto actors = RankActors(cfg, sweep);
-            sweep.actorsSampled = actors.size();
-            if (actors.empty()) {
+            // Drawn here, after the ready checks and beside the sweep
+            // count, because a bucket's turn is spent by being drawn. A
+            // draw above the checks would burn a turn on a sweep that
+            // then bailed and examined nobody.
+            const auto bucketCount = GossipGraph::BucketCount();
+            const auto bucket = DrawBucket(gt, bucketCount);
+            sweep.bucket = bucket;
+            sweep.bucketCount = bucketCount;
+            // The bucket and its population are on the HARVEST line; this
+            // carries the one thing that line cannot, which is what the
+            // draw was made AGAINST. Without it a repeat looks like a bug
+            // rather than like a window that had rolled over.
+            GossipLog::Note(std::format("harvest: bucket {} drawn, recent={}", bucket, HistoryText(gt)));
+
+            // Every participant in the drawn bucket, in full. No ranking,
+            // no top-N cut, and nothing here consults how much the player
+            // has interacted with anyone — which is the entire point of
+            // the milestone.
+            const auto& members = GossipGraph::BucketMembers(bucket);
+            sweep.bucketPopulation = members.size();
+            if (members.empty()) {
                 GossipLog::Harvest(sweep);
                 Accumulate(gt, sweep);
                 return true;
             }
 
             std::vector<Candidate> candidates;
-            for (const auto& a : actors) {
-                CollectFrom(gt, a, cfg, nowGameDay * 86400.0, sweep, candidates);
+            for (const auto npc : members) {
+                const auto* p = GossipGraph::Find(npc);
+                if (!p || !p->actorRef) {
+                    // No placed reference means no id SkyrimNet will
+                    // answer to. Rare — 881 of 881 resolve on a vanilla
+                    // load order — and silent, because it is a property
+                    // of the graph rather than of this sweep.
+                    continue;
+                }
+                CollectFrom(gt, *p, cfg, nowGameDay * 86400.0, sweep, candidates);
             }
             sweep.candidates = candidates.size();
 
@@ -664,7 +675,7 @@ namespace NarrativeEngine::GossipHarvest
         const auto& h = st.harvest;
         Stats out;
         out.sweeps = h.sweeps;
-        out.actorsRanked = h.actorsRanked;
+        out.actorsExamined = h.actorsExamined;
         out.memoriesExamined = h.memoriesExamined;
         out.sentForGeneration = h.sentForGeneration;
         out.rejectedTooOld = h.rejectedTooOld;
