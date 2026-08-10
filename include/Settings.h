@@ -694,6 +694,13 @@ namespace NarrativeEngine::Settings
         // directly onto the rumor's notability, both being 0..1.
         float gossipMinMemoryImportance = 0.45f;
         int gossipHarvestActorSampleSize = 25;
+        // How many buckets the participant population splits into. One
+        // bucket is examined per sweep, in full, so this is the direct
+        // control over per-sweep query cost — and the inverse control
+        // over how long any given NPC waits for a turn. At 10 against
+        // 881 participants: ~88 queries a sweep, a turn every ~5 game
+        // days at the default interval.
+        int gossipHarvestBuckets = 10;
         int gossipHarvestMemoriesPerActor = 10;
         // How many rumors one sweep may actually seed. The walk down the
         // candidate pool stops once this many have been accepted.

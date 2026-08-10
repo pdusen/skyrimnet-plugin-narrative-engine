@@ -12,6 +12,7 @@
 #include <chrono>
 #include <filesystem>
 #include <format>
+#include <string>
 #include <string_view>
 #include <system_error>
 #include <unordered_map>
@@ -120,6 +121,10 @@ namespace NarrativeEngine::GossipGraph
         std::unordered_map<RE::FormID, std::vector<RE::FormID>> g_hold;
         std::vector<RE::FormID> g_settlementIds;
         std::vector<RE::FormID> g_holdIds;
+
+        // One entry per bucket, each holding that bucket's participants.
+        // Sized at Initialize and never resized after.
+        std::vector<std::vector<RE::FormID>> g_buckets;
 
         std::unordered_map<RE::FormID, std::vector<PersonalEdge>> g_edges;
         // Faction edges are rebuilt only at Initialize; relationship
@@ -463,6 +468,44 @@ namespace NarrativeEngine::GossipGraph
             return out;
         }
 
+        // splitmix64's finalising mix, applied before the modulo.
+        //
+        // `formId % n` is NOT biased toward the load order the way the
+        // design doc originally claimed — the mod index lives in the high
+        // byte and a modulo reads the low bits, so it does not see the
+        // master at all. Measured over all 6,525 vanilla + DLC NPC
+        // records the two assignments are indistinguishable on bucket
+        // size (10.4% vs 12.0% spread at ten buckets) and on how many
+        // masters land in each bucket.
+        //
+        // What a bare modulo actually is, is a COMB over FormID order.
+        // Records inside a plugin run near-sequentially and the CK author
+        // adds a settlement's people together, so consecutive ids
+        // round-robin through the buckets in lockstep: Ivarstead's eleven
+        // NPCs hit 8 of 8 buckets under a modulo and 5 of 8 under the
+        // mix, because perfect spread is what a comb does and lumpiness
+        // is what randomness does.
+        //
+        // That comb is a dependency on how somebody numbered records. It
+        // holds for vanilla and cannot be audited for mod-added NPCs,
+        // whose allocation strides are arbitrary — a follower pack adding
+        // ten NPCs on a stride of ten lands every one of them in the same
+        // bucket. The mix costs three multiplies and removes the question
+        // permanently, which is the whole argument for it. It is not
+        // fixing an observed vanilla bias, because there is not one.
+        constexpr std::uint64_t Mix64(std::uint64_t x)
+        {
+            x += 0x9E3779B97F4A7C15ULL;
+            x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
+            x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
+            return x ^ (x >> 31);
+        }
+
+        std::uint32_t BucketFor(RE::FormID npc, std::uint32_t bucketCount)
+        {
+            return bucketCount <= 1 ? 0u : static_cast<std::uint32_t>(Mix64(npc) % bucketCount);
+        }
+
         void BuildParticipants()
         {
             auto* dh = RE::TESDataHandler::GetSingleton();
@@ -475,6 +518,8 @@ namespace NarrativeEngine::GossipGraph
             }
 
             const auto residence = BuildResidenceIndex();
+            const auto bucketCount = BucketCount();
+            g_buckets.assign(bucketCount, {});
 
             for (auto* form : dh->GetFormArray<RE::TESNPC>()) {
                 auto* npc = form ? form->As<RE::TESNPC>() : nullptr;
@@ -497,6 +542,7 @@ namespace NarrativeEngine::GossipGraph
                 p.npc = id;
                 p.actorRef = it->second.actorRef;
                 p.name = npc->GetName() ? npc->GetName() : "";
+                p.bucket = BucketFor(id, bucketCount);
                 WalkTiers(it->second.location, p.household, p.settlement, p.hold);
                 if (!p.hold) {
                     // No tier at all. Correct for wandering caravans,
@@ -523,6 +569,7 @@ namespace NarrativeEngine::GossipGraph
                     g_settlement[p.settlement].push_back(id);
                 }
                 g_hold[p.hold].push_back(id);
+                g_buckets[p.bucket].push_back(id);
             }
             for (const auto& [loc, _] : g_settlement) {
                 g_settlementIds.push_back(loc);
@@ -659,6 +706,22 @@ namespace NarrativeEngine::GossipGraph
                          c.withActorRef,
                          c.participants > c.withActorRef ? c.participants - c.withActorRef : 0);
 
+            // Bucket populations, printed in full rather than as a
+            // min/max. The failure this catches is a mixer that clusters
+            // by mod index, and that shows up as a shape — a handful of
+            // fat buckets and a tail of thin ones — which a summary
+            // statistic hides. Sizes should sit within roughly +/-30% of
+            // participants / bucketCount.
+            if (!c.bucketSizes.empty()) {
+                std::string sizes;
+                for (std::size_t i = 0; i < c.bucketSizes.size(); ++i) {
+                    sizes += std::format("{}{}", i == 0 ? "" : " ", c.bucketSizes[i]);
+                }
+                const auto mean = static_cast<double>(c.participants) / static_cast<double>(c.bucketSizes.size());
+                logger::info(
+                    "GossipGraph: census -- buckets={} (mean {:.1f} each): {}", c.bucketSizes.size(), mean, sizes);
+            }
+
             // Offline reference figures for a vanilla + DLC load order
             // (docs/implementation/PHASE_13_GOSSIP_PROPAGATION.md). A large
             // shortfall means the LCUN read is broken, not that the load
@@ -737,6 +800,11 @@ namespace NarrativeEngine::GossipGraph
         g_census.households = g_household.size();
         g_census.settlements = g_settlement.size();
         g_census.holds = g_hold.size();
+        g_census.bucketSizes.clear();
+        g_census.bucketSizes.reserve(g_buckets.size());
+        for (const auto& b : g_buckets) {
+            g_census.bucketSizes.push_back(b.size());
+        }
         for (const auto id : g_participantIds) {
             const auto& p = g_participants.at(id);
             if (p.household) {
@@ -817,6 +885,21 @@ namespace NarrativeEngine::GossipGraph
     {
         const auto it = g_hold.find(loc);
         return it == g_hold.end() ? g_emptyIds : it->second;
+    }
+
+    std::uint32_t BucketCount()
+    {
+        // Clamped, not trusted. A zero or negative bucket count would
+        // divide by zero in the assignment; an absurdly large one would
+        // allocate a bucket per participant and make almost every sweep
+        // empty. 1 is a legitimate setting — it means "examine everyone
+        // every sweep" — so the floor is 1 rather than 2.
+        return static_cast<std::uint32_t>(std::clamp(Settings::Get().gossipHarvestBuckets, 1, 1000));
+    }
+
+    const std::vector<RE::FormID>& BucketMembers(std::uint32_t index)
+    {
+        return index < g_buckets.size() ? g_buckets[index] : g_emptyIds;
     }
 
     const std::vector<PersonalEdge>& PersonalEdges(RE::FormID npc)

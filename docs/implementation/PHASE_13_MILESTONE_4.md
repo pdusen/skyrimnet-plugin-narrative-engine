@@ -87,17 +87,27 @@ This is worth stating plainly because it determines what "correct" means here. T
 that rumor origins look shuffled. It is that a farmer in Rorikstead with a notable memory has the same
 prospect of seeding a rumor as an Arch-Mage the player talks to daily.
 
-### Assignment: hash the base form, do not take a modulo of it
+### Assignment: hash the base form, do not comb it
 
 Each `GossipGraph::Participant` gains a bucket index, computed once during the graph build from the TESNPC
 base FormID and stored on the participant.
 
-**The FormID must go through a proper mixer — `formId % bucketCount` is wrong.** FormIDs carry the load
-order's mod index in their high byte and run sequentially within a plugin, so a raw modulo correlates
-strongly with which plugin a record came from. The result would be buckets that are effectively "everyone
-from Dawnguard" and "everyone from Update.esm", which is a worse bias than the one being removed. A
-finalising mix (splitmix64, FNV-1a, or equivalent) over the FormID gives low bits that are actually
-distributed.
+**The FormID goes through a finalising mix (splitmix64) before the modulo** — but not for the reason first
+written down here, which measurement did not support. The original claim was that `formId % bucketCount`
+correlates with the load order, giving buckets that are effectively "everyone from Dawnguard". It does not:
+the mod index is in the FormID's high byte and a modulo reads the low bits, so it never sees the master.
+Across all 6,525 vanilla + DLC NPC records the two assignments are indistinguishable — 10.4% vs 12.0% size
+spread at ten buckets, and the same master mix in every bucket.
+
+What a bare modulo *is* is a **comb over FormID order**. Records run near-sequentially inside a plugin and
+the CK author adds a settlement's people together, so consecutive ids round-robin through the buckets in
+lockstep. Ivarstead's eleven NPCs hit 8 of 8 buckets under a modulo and 5 of 8 under the mix — perfect
+spread is what a comb does, and lumpiness is what randomness does.
+
+That comb is a dependency on how somebody numbered records. It happens to hold for vanilla and cannot be
+audited for mod-added NPCs, whose allocation strides are arbitrary: a follower pack adding ten NPCs on a
+stride of ten puts every one of them in the same bucket. Three multiplies removes the question permanently,
+which is the entire argument. It is insurance, not a fix for an observed bias.
 
 Assignment must be **stable across sessions**, which a hash of the base FormID is: the graph is rebuilt at
 `kDataLoaded` every session, and the same participant lands in the same bucket every time without anything
@@ -245,17 +255,17 @@ Step 3 landed first.
 
 ### Step 1 — Buckets on the graph
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** Every participant has a bucket, assignment is stable across sessions, and the distribution can be
 inspected. Nothing reads it yet.
 
 1. `iGossipHarvestBuckets` (default 10) in `Settings`, the INI, and the INI's documented block.
 2. A `bucket` field on `GossipGraph::Participant`, assigned during the graph build.
-3. The assignment is `splitmix64(npc) % bucketCount` — **a finalising mix, never a raw modulo.** FormIDs
-   carry the load order's mod index in their high byte and run sequentially within a plugin, so
-   `formId % bucketCount` would produce buckets that are effectively "everyone from Dawnguard". Take the
-   mixer as its own small `constexpr` function so the reason it exists is readable at the call site.
+3. The assignment is `splitmix64(npc) % bucketCount` — **a finalising mix, never a bare modulo.** A bare
+   modulo is a comb over FormID order, which couples bucket membership to how records were numbered; see the
+   assignment section above for the measurements. Take the mixer as its own small `constexpr` function so
+   the reason it exists is readable at the call site.
 4. `GossipGraph::BucketMembers(std::uint32_t index)` returning a prebuilt `const std::vector<RE::FormID>&`,
    built once during `Initialize` alongside the household/settlement/hold indices it mirrors. A sweep must
    not scan 881 participants to find the ~88 it wants.
@@ -266,9 +276,26 @@ of the base FormID is stable, so persisting it would only create an opportunity 
 computed one to disagree.
 
 **Verification:** the census shows all N buckets non-empty with populations within roughly ±30% of
-`participants / N`. Cross-check the mixer directly: confirm that the participants in one bucket come from a
-spread of mod indices rather than clustering on one master, which is the specific failure a raw modulo would
-produce and which an even-looking population count would not catch.
+`participants / N`. Note that a size histogram cannot tell the mixer from a bare modulo — both are even, and
+the modulo is marginally *more* even, because a comb is. What the census actually checks is that the
+assignment ran and that no bucket starved.
+
+Done. `Participant::bucket`, `GossipGraph::BucketMembers`, `GossipGraph::BucketCount` and
+`iGossipHarvestBuckets` are in; `g_buckets` is built in the same pass as the household/settlement/hold
+indices, and `LogCensus` prints every bucket's population.
+
+The mixer's justification was tested against the Spriggit export before the comment was written, and **the
+rationale in this doc was wrong** — corrected above. Both assignments were run over all 6,525 vanilla + DLC
+NPC records:
+
+| Buckets | Bare modulo spread | splitmix64 spread |
+| ------- | ------------------ | ----------------- |
+| 10      | 10.4%              | 12.0%             |
+| 16      | 16.4%              | 12.3%             |
+| 20      | 20.8%              | 18.7%             |
+
+No load-order bias in either, at any bucket count. The mix stays because a bare modulo combs FormID order
+and that coupling cannot be audited for mod-added NPCs — not because vanilla showed a problem.
 
 ---
 

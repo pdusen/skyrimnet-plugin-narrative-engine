@@ -80,6 +80,12 @@ namespace NarrativeEngine::GossipGraph
         RE::FormID household = 0;
         RE::FormID settlement = 0;
         RE::FormID hold = 0;
+        // Which harvest bucket this participant belongs to. Derived from
+        // `npc` by a hash, never persisted: the graph is rebuilt every
+        // session and the same base FormID always lands in the same
+        // bucket, so saving it could only create a chance for the stored
+        // answer and the computed one to disagree.
+        std::uint32_t bucket = 0;
         std::string name;
     };
 
@@ -147,6 +153,17 @@ namespace NarrativeEngine::GossipGraph
     const std::vector<RE::FormID>& SettlementMembers(RE::FormID loc);
     const std::vector<RE::FormID>& HoldMembers(RE::FormID loc);
 
+    // Every participant in one harvest bucket, in a stable order. Empty
+    // for an out-of-range index. Prebuilt at Initialize, like the tier
+    // indices above — a sweep must not walk all 881 participants to find
+    // the ~88 it wants.
+    const std::vector<RE::FormID>& BucketMembers(std::uint32_t index);
+
+    // How many buckets the population was actually split into. Reads the
+    // setting, clamped the same way the assignment clamped it, so a
+    // caller never has to guess whether the configured value was usable.
+    std::uint32_t BucketCount();
+
     // Personal edges for one participant. Empty for the ~23% who have
     // none.
     const std::vector<PersonalEdge>& PersonalEdges(RE::FormID npc);
@@ -190,6 +207,9 @@ namespace NarrativeEngine::GossipGraph
         // short of `participants` is the number that cannot be addressed
         // in SkyrimNet's id space without an engine lookup.
         std::size_t withActorRef = 0;
+        // Population of each harvest bucket, indexed by bucket. A wildly
+        // uneven spread here means the mixer is not mixing.
+        std::vector<std::size_t> bucketSizes;
     };
     const Census& GetCensus();
 } // namespace NarrativeEngine::GossipGraph
