@@ -715,7 +715,36 @@ namespace NarrativeEngine::Settings
         // A non-negative value is used literally, clamped to bucketCount-1
         // so it can never leave the eligible set empty.
         int gossipBucketHistoryLength = -1;
-        int gossipHarvestMemoriesPerActor = 10;
+        // Rows to ask GetMemoriesForActor for, per actor.
+        //
+        // 200, not 10. At 10 this was the entire starvation bug: an empty
+        // contextQuery makes SkyrimNet sort by recency, and gossip
+        // writebacks are always the newest rows, so within three or four
+        // of an actor's turns all ten came back as our own output and the
+        // harvest saw nothing. Measured on a real save: 10 rows returned
+        // 0 usable candidates where the full corpus held 78.
+        //
+        // The cost is a bigger JSON, not more calls, and it is only paid
+        // by actors who HAVE that many memories -- most hold one to three.
+        int gossipHarvestMemoriesPerActor = 200;
+        // Passed as GetMemoriesForActor's contextQuery.
+        //
+        // Non-empty switches SkyrimNet from "most recent first" to a
+        // semantic vector search, which is what stops our own writebacks
+        // owning the front of the result. Depth alone covers today's
+        // corpus; this is what keeps working once an actor's store
+        // outgrows the depth, because gossip accumulates without bound.
+        //
+        // The wording is deliberate, and measured against 22 variants:
+        //
+        //   * It describes FORM, not topic. A topical query scored just as
+        //     well but would silently decide what gossip is about.
+        //   * It never says "gossip" or "rumor". Cosine similarity has no
+        //     negation -- every variant containing the word scored worse,
+        //     because the token pulls the query toward what it names.
+        //
+        // Empty is still honoured, and means the old recency behaviour.
+        std::string gossipHarvestContextQuery = "a notable thing that happened to me, or that I witnessed myself";
         // How many rumors one sweep may actually seed. The walk down the
         // candidate pool stops once this many have been accepted.
         int gossipMaxSeedsPerHarvest = 1;

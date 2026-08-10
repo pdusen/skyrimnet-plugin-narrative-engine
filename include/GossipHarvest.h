@@ -58,8 +58,15 @@
 // importance_score, decayed_importance, age_hours, game_time,
 // creation_time, emotion, location, related_actors.
 //
-// `tags` IS present, so the ["gossip"] tag written at AddMemory time is
-// filtered on directly, and that is the whole feedback-loop guard.
+// `tags` IS present, so the tag written at AddMemory time is filtered on
+// directly, and that is the whole feedback-loop guard.
+//
+// The tag is `ne_gossip`, not `gossip`, because SkyrimNet's own memory
+// tagger uses `gossip` as a TOPICAL label for memories that are merely
+// about gossiping. A direct read of its database found 56 such rows in
+// 1602 — real memories this guard was silently discarding, and precisely
+// the social-drama material most worth gossiping about. A tag no one else
+// writes cannot collide.
 //
 // There is deliberately NO memory-type allowlist. One existed while `tags`
 // was believed absent, restricting sources to EXPERIENCE/TRAUMA/JOY so that
@@ -101,6 +108,13 @@
 // no engine mutation happens here.
 namespace NarrativeEngine::GossipHarvest
 {
+    // The tag NarrativeEngine stamps on every memory it writes, and the
+    // only thing the feedback-loop guard tests. Declared here rather than
+    // beside the AddMemory call because the WRITE and the READ have to
+    // agree exactly, and one of them silently drifting is unrecoverable:
+    // gossip would re-seed from gossip without bound.
+    inline constexpr const char* kOwnOutputTag = "ne_gossip";
+
     void Initialize();
 
     // Run ONE sweep against the game time the tick was scheduled for.

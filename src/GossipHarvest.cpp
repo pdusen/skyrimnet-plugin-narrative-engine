@@ -85,8 +85,8 @@ namespace NarrativeEngine::GossipHarvest
                          std::vector<Candidate>& out)
         {
             // SkyrimNet call: reference id.
-            const auto raw =
-                SkyrimNetAPI::GetMemoriesForActor(actor.actorRef, std::max(1, cfg.gossipHarvestMemoriesPerActor), "");
+            const auto raw = SkyrimNetAPI::GetMemoriesForActor(
+                actor.actorRef, std::max(1, cfg.gossipHarvestMemoriesPerActor), cfg.gossipHarvestContextQuery);
             nlohmann::json j = nlohmann::json::parse(raw, nullptr, false);
             if (!j.is_array()) {
                 return;
@@ -126,12 +126,23 @@ namespace NarrativeEngine::GossipHarvest
                 // The DIRECT feedback-loop guard.
                 //
                 // The design was built on "there is NO tags field, so the
-                // ["gossip"] tag written at AddMemory time cannot be filtered
-                // on at read time" — which is why the type allowlist was made
-                // to carry that job. The raw row dump falsifies it: `tags` is
-                // right there on the row. Checking it is exact where the type
-                // rule is a proxy, and it keeps holding if the allowlist is
-                // ever widened to admit KNOWLEDGE.
+                // tag written at AddMemory time cannot be filtered on at read
+                // time" — which is why the type allowlist was made to carry
+                // that job. The raw row dump falsifies it: `tags` is right
+                // there on the row. Checking it is exact where the type rule
+                // is a proxy, and it keeps holding if the allowlist is ever
+                // widened to admit KNOWLEDGE.
+                //
+                // The tag is `ne_gossip`, NOT `gossip`, and the distinction
+                // is not cosmetic. SkyrimNet's own memory tagger applies
+                // `gossip` as a TOPICAL tag to memories that are merely
+                // about gossiping — "Witnessed J'zargo and Brelyna bickering
+                // over who held the steadiest ward", "Over heated gossip in
+                // the Hall of the Elements that Sameth told Melker". A
+                // direct read of the database found 56 such rows in 1602,
+                // every one of them a real memory this guard was discarding,
+                // and they are exactly the social-drama material most worth
+                // gossiping about. A tag nobody else writes cannot collide.
                 //
                 // FIRST, ahead of the age test, and that ordering is load-
                 // bearing rather than cosmetic. PublicAddMemory takes no
@@ -147,7 +158,7 @@ namespace NarrativeEngine::GossipHarvest
                 // do not control.
                 if (const auto tagsIt = m.find("tags"); tagsIt != m.end() && tagsIt->is_array()) {
                     const bool ours = std::any_of(tagsIt->begin(), tagsIt->end(), [](const auto& t) {
-                        return t.is_string() && t.template get_ref<const std::string&>() == "gossip";
+                        return t.is_string() && t.template get_ref<const std::string&>() == kOwnOutputTag;
                     });
                     if (ours) {
                         ++sweep.rejectedOwnOutput;

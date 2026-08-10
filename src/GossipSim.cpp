@@ -10,6 +10,7 @@
 #include <GossipClaims.h>
 #include <GossipContent.h>
 #include <GossipGraph.h>
+#include <GossipHarvest.h>
 #include <GossipLog.h>
 #include <logger.h>
 #include <Settings.h>
@@ -363,8 +364,11 @@ namespace NarrativeEngine::GossipSim
         // plus relationship-aware framing.
         //
         // The Milestone 1 [NE-GOSSIP-STUB ...] prefix and the "stub" tag are
-        // gone; the "gossip" tag stays. Type stays KNOWLEDGE, which is what
-        // keeps gossip's own output out of the harvester's candidate set.
+        // gone. What marks these as ours is GossipHarvest::kOwnOutputTag,
+        // which the harvester tests and nothing else writes — SkyrimNet's
+        // own tagger uses a plain "gossip" tag for memories that are merely
+        // ABOUT gossiping, so sharing that name made the guard discard real
+        // material. Type stays KNOWLEDGE.
         //
         // `teller` and `listener` arrive as TESNPC BASE forms, because that
         // is what the carrier map and the whole graph are keyed on. Every
@@ -401,7 +405,7 @@ namespace NarrativeEngine::GossipSim
             const auto composed = GossipContent::Compose(rumor.bands[band], teller, listener);
 
             const auto& locName = GossipGraph::LocationName(location);
-            const auto tags = std::string{R"(["gossip"])"};
+            const auto tags = std::format(R"(["{}"])", GossipHarvest::kOwnOutputTag);
             const int a = SkyrimNetAPI::AddMemory(tellerRef,
                                                   composed.tellerText,
                                                   rumor.notability,

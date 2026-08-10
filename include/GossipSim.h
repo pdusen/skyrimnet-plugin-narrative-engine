@@ -47,7 +47,8 @@ namespace SKSE
 // module: the calls that judge the memory and produce the band text both
 // happen at seed time, before the rumor is ever handed here.
 //
-// Both memories are typed KNOWLEDGE and tagged "gossip", which is what
+// Both memories are typed KNOWLEDGE and tagged GossipHarvest::kOwnOutputTag,
+// which is what
 // keeps gossip's own output out of GossipHarvest's candidate set.
 //
 // ---------------------------------------------------------------------
