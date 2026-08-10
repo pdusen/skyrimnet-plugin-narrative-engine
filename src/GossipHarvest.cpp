@@ -321,8 +321,17 @@ namespace NarrativeEngine::GossipHarvest
                 st.bucketCount = bucketCount;
             }
 
-            const auto maxHistory = static_cast<std::size_t>(std::clamp(
-                Settings::Get().gossipBucketHistoryLength, 0, std::max(0, static_cast<int>(bucketCount) - 1)));
+            // bucketCount-1 is both the default and the ceiling. At the
+            // ceiling exactly one bucket is eligible, so the draw becomes a
+            // fixed cycle and every bucket is examined every bucketCount
+            // sweeps -- no tail. Anything shorter buys an arbitrary-looking
+            // order that nothing in the game can observe, and pays for it
+            // in worst-case waiting: at 10 buckets a history of 6 leaves
+            // the mean wait at 10 sweeps but stretches the worst case to
+            // 33.
+            const int cap = std::max(0, static_cast<int>(bucketCount) - 1);
+            const int configured = Settings::Get().gossipBucketHistoryLength;
+            const auto maxHistory = static_cast<std::size_t>(configured < 0 ? cap : std::clamp(configured, 0, cap));
             while (st.bucketHistory.size() > maxHistory) {
                 st.bucketHistory.pop_front();
             }

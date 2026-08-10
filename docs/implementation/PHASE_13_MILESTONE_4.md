@@ -118,11 +118,26 @@ being persisted.
 Each sweep draws a bucket at random from those **not among the last N selected**, using the RNG seeded from
 `iGossipRandomSeed` so a run is reproducible.
 
-This gives an order that looks arbitrary while guaranteeing spread, and it degrades into a cycle naturally
-as the history lengthens. With ten buckets and a history of nine, exactly one bucket is eligible at each
-step, so the order becomes a fixed repeating cycle after the first ten draws — the same result as
-pre-shuffling a permutation, arrived at without special-casing. A shorter history leaves genuine choice at
-every step while still preventing a bucket from coming up twice in quick succession.
+**The history is `bucketCount - 1`.** Exactly one bucket is then eligible at each step, so the draw is a
+fixed repeating cycle after the first `bucketCount` of them — the same result as pre-shuffling a
+permutation, arrived at without special-casing, with the RNG choosing which permutation.
+
+A shorter history leaves genuine choice at every step, and that choice is worth nothing. Nobody can observe
+the draw order from inside the game; it exists only in the trace. What a player experiences is whose rumors
+turn up, which depends on everybody getting a turn on schedule — and a shorter history pays for its
+unobservable variety in exactly that:
+
+| History (10 buckets) | Mean wait | p95 | Worst case  |
+| -------------------- | --------- | --- | ----------- |
+| 0                    | 10 sweeps | 29  | 73 sweeps   |
+| 3                    | 10 sweeps | 23  | 64 sweeps   |
+| 6                    | 10 sweeps | 17  | 33 sweeps   |
+| **9 = N-1**          | 10 sweeps | 10  | **10**      |
+
+The mean is fixed at `bucketCount` no matter what — ten buckets, one drawn per sweep. The only thing the
+setting controls is the tail, and at `N-1` there is no tail: every bucket is examined every `N` sweeps,
+forever. At 12 game-hours per tick and ten buckets that is a turn every five game days for everyone,
+against a worst case of over two game weeks at a history of six.
 
 Three decisions that make the history behave:
 
@@ -233,7 +248,7 @@ already written down.
 | Key                            | Proposed default | Meaning                                                        |
 | ------------------------------ | ---------------- | -------------------------------------------------------------- |
 | `iGossipHarvestBuckets`        | 10               | How many buckets the population splits into; the cost lever    |
-| `iGossipBucketHistoryLength`   | 6                | How many recent selections are excluded from the next draw     |
+| `iGossipBucketHistoryLength`   | -1               | Recent selections excluded from the next draw; -1 = bucketCount-1 |
 
 Removed: `iGossipHarvestActorSampleSize`.
 
@@ -306,7 +321,7 @@ and that coupling cannot be audited for mod-added NPCs — not because vanilla s
 **Goal:** Every tick draws a bucket and records it. The choice is traced and saved, and still nothing
 consumes it.
 
-1. `iGossipBucketHistoryLength` (default 6) in `Settings` and the INI.
+1. `iGossipBucketHistoryLength` (default -1, meaning `bucketCount - 1`) in `Settings` and the INI.
 2. `bucketHistory` as a `std::deque<std::uint32_t>` on `GossipState`, plus the `bucketCount` the history was
    recorded under. It rides the existing co-save record — bump `kRecordVersion` to 6 — because the history
    and the rumors it produced must be restorable from the same instant.
@@ -314,8 +329,8 @@ consumes it.
    no longer denote the same people, and a mid-playthrough setting change is exactly when a stale history is
    most misleading. Log it; a silent reset would look like a bug later.
 4. The draw: uniform over the buckets **not** in the history, using the RNG seeded from `iGossipRandomSeed`.
-   Clamp the effective history length to `bucketCount - 1` so that a history at least as long as the bucket
-   count cannot leave the eligible set empty.
+   `bucketCount - 1` is both the default and the ceiling, so the draw is a fixed cycle unless somebody
+   explicitly asks for a shorter history, and no setting can leave the eligible set empty.
 5. Called once per tick from `RunSweepImpl`, in the same place `++g_stats.sweeps` already sits — that is,
    **after** the `IsReady()` / `IsMemorySystemReady()` checks pass. Recording a selection the sweep then
    abandoned would spend a bucket's turn on nothing.
@@ -347,15 +362,19 @@ The draw was modelled over 300 iterations to check the properties above:
 
 | Buckets | History | Clamped to | Min gap between repeats | Per-bucket count | Fixed cycle |
 | ------- | ------- | ---------- | ----------------------- | ---------------- | ----------- |
+| 10      | -1      | 9          | 10                      | 30-30            | yes         |
 | 10      | 6       | 6          | 7                       | 27-34            | no          |
-| 10      | 9       | 9          | 10                      | 30-30            | yes         |
 | 10      | 20      | 9          | 10                      | 30-30            | yes         |
 | 10      | 0       | 0          | 1                       | 24-36            | no          |
-| 1       | 6       | 0          | 1                       | 300              | yes         |
+| 1       | -1      | 0          | 1                       | 300              | yes         |
 
-The default (10/6) never repeats inside its window, spreads within +/-12% over 300 draws, and does not
-settle into a cycle. `bucketCount - 1` produces the fixed cycle the design predicts, an over-large setting
-clamps onto it rather than emptying the eligible set, and a single bucket degenerates cleanly.
+The default cycles exactly: every bucket examined every ten sweeps, no tail. An over-large explicit value
+clamps onto the same behaviour rather than emptying the eligible set, an explicit short history behaves as
+the table predicts, and a single bucket degenerates cleanly.
+
+**This step first shipped with a default of 6, which was wrong** — the design called for `N-1` and the
+settings table contradicted its own prose. The two were reconciled onto `N-1` after a test run made the
+difference visible: the trace showed an arbitrary order where a cycle was expected.
 
 ---
 
@@ -501,10 +520,14 @@ Milestone 4 is complete when:
 
 ## Open questions
 
-1. **What history length reads best?** Nine of ten is a fixed cycle; one of ten barely constrains anything.
-   Six is a guess at the midpoint and only play will tell whether the order feels arbitrary enough. Step 5
-   is where the answer comes from.
-2. **Is 12 game hours still the right interval** once each sweep covers a tenth of the province rather than
+1. **Is 12 game hours still the right interval** once each sweep covers a tenth of the province rather than
    the top 25 by engagement? The question this milestone answers is who gets examined, not how often — but
    the two interact, and the answer that felt right for a biased sample may not suit an even one. Left as a
    tuning question for after Step 5; nothing in the plan depends on it.
+
+Resolved:
+
+- ~~**What history length reads best?**~~ `bucketCount - 1`, which is now the default. The shorter histories
+  the question was weighing bought an arbitrary-looking draw order, and nothing in the game can see the draw
+  order — only the trace can. What the game does see is whether everyone gets a turn on schedule, and that
+  is strictly worse at every value below `N-1`.

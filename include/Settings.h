@@ -702,10 +702,19 @@ namespace NarrativeEngine::Settings
         // days at the default interval.
         int gossipHarvestBuckets = 10;
         // How many of the most recent bucket selections are excluded from
-        // the next draw. Clamped to bucketCount-1 at the draw, so a value
-        // at or above the bucket count degrades into a fixed cycle rather
-        // than leaving nothing eligible.
-        int gossipBucketHistoryLength = 6;
+        // the next draw.
+        //
+        // -1, the default, means bucketCount-1 and TRACKS the bucket count
+        // rather than pinning a number beside it. That is the exact-cycle
+        // setting: one bucket eligible per draw, so every bucket gets its
+        // turn every bucketCount sweeps with no tail at all. Shorter
+        // histories leave real choice in the draw and pay for it in
+        // waiting — at 10 buckets and a history of 6 the mean wait is
+        // still 10 sweeps but the worst case is 33.
+        //
+        // A non-negative value is used literally, clamped to bucketCount-1
+        // so it can never leave the eligible set empty.
+        int gossipBucketHistoryLength = -1;
         int gossipHarvestMemoriesPerActor = 10;
         // How many rumors one sweep may actually seed. The walk down the
         // candidate pool stops once this many have been accepted.
