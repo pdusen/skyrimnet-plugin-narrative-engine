@@ -301,7 +301,7 @@ and that coupling cannot be audited for mod-added NPCs — not because vanilla s
 
 ### Step 2 — Bucket selection, with a rolling history that persists
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** Every tick draws a bucket and records it. The choice is traced and saved, and still nothing
 consumes it.
@@ -329,6 +329,33 @@ the history window; every bucket appears at a comparable rate over the run; the 
 counting sequence. Save mid-run, reload, and confirm the next draw respects the restored history rather than
 re-drawing what just came up. Change `iGossipHarvestBuckets` on an existing save and confirm the history is
 discarded with a log line rather than reused.
+
+Done. `bucketHistory` and `bucketCount` are on `GossipState` and ride the gossip record at
+`kRecordVersion = 6`. `DrawBucket` sits in `GossipHarvest`, called beside `++g_stats.sweeps` — after the
+ready checks, because a bucket's turn is spent by being drawn and a draw above the checks would burn one on
+a sweep that then bailed.
+
+The count-changed check exists in **two** places, not one. The load path covers a save made under a
+different `iGossipHarvestBuckets`; `DrawBucket` covers settings reloaded mid-session, which reaches the same
+inconsistent state with no serialisation callback involved. Both log.
+
+The load reads the history bytes **whether or not it intends to keep them** — the rumor count follows them
+in the stream, so skipping the read would desynchronise every field after it. Whether to keep is decided
+after reading.
+
+The draw was modelled over 300 iterations to check the properties above:
+
+| Buckets | History | Clamped to | Min gap between repeats | Per-bucket count | Fixed cycle |
+| ------- | ------- | ---------- | ----------------------- | ---------------- | ----------- |
+| 10      | 6       | 6          | 7                       | 27-34            | no          |
+| 10      | 9       | 9          | 10                      | 30-30            | yes         |
+| 10      | 20      | 9          | 10                      | 30-30            | yes         |
+| 10      | 0       | 0          | 1                       | 24-36            | no          |
+| 1       | 6       | 0          | 1                       | 300              | yes         |
+
+The default (10/6) never repeats inside its window, spreads within +/-12% over 300 draws, and does not
+settle into a cycle. `bucketCount - 1` produces the fixed cycle the design predicts, an over-large setting
+clamps onto it rather than emptying the eligible set, and a single bucket degenerates cleanly.
 
 ---
 
