@@ -244,7 +244,7 @@ namespace NarrativeEngine::GossipLog
         Emit(std::format("HARVEST bucket={}/{}  actors={}  memories={}  candidates={}  sent={}  "
                          "(rejected: {} too-old, {} low-importance, {} diary, {} no-content, "
                          "{} no-game-time, {} own-gossip, {} claimed, {} same-event, "
-                         "{} isolated, {} not-participant)",
+                         "{} isolated)",
                          stats.bucket,
                          stats.bucketCount,
                          stats.bucketPopulation,
@@ -259,8 +259,7 @@ namespace NarrativeEngine::GossipLog
                          stats.rejectedOwnOutput,
                          stats.rejectedClaimed,
                          stats.rejectedSameEvent,
-                         stats.rejectedIsolated,
-                         stats.rejectedNotParticipant));
+                         stats.rejectedIsolated));
     }
 
     void Memory(std::int64_t memoryId, RE::FormID owner, float importance, std::string_view verdict)

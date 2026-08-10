@@ -10,27 +10,42 @@
 // GossipHarvest — turns SkyrimNet memories into rumors.
 //
 // ---------------------------------------------------------------------
-// Why this is two calls
+// Who gets examined, and why it is not everyone
 //
 // There is no global memory query. `PublicGetMemoriesForActor` is strictly
 // per-actor, and the only endpoint taking `formId = 0` for "all actors" is
 // `PublicGetDiaryEntries`, which returns diary entries — a different thing,
-// and one the letter and visit composers deliberately filter out.
+// and one the letter and visit composers deliberately filter out. So a
+// province-wide sweep would mean ~880 calls into SkyrimNet's vector
+// database, every sweep, most of them returning nothing of interest.
 //
-// So a province-wide sweep is assembled:
+// The answer is NOT to pick the most interesting people. That was the
+// first design: rank every active actor by `GetActorEngagement` and query
+// the top 25. But engagement is a measure of interaction with THE PLAYER,
+// so the ranking could only ever surface people the player had just been
+// near — the mill reported the player's own itinerary back at them, and
+// the other ~840 participants were structurally incapable of ever seeding
+// anything. Ten rumors from six people, all inside one questline.
 //
-//   Stage 1  GetActorEngagement(0, ...) returns EVERY actor with any
-//            activity, each row carrying recentMemoryImportanceMedium.
-//            With the medium window set to the harvest window that is
-//            exactly the ranking signal wanted: "this actor has important
-//            things that happened to them lately."
+// The answer is to split the population instead. Every participant is
+// assigned to one of `iGossipHarvestBuckets` buckets by a hash of their
+// base FormID, fixed for the life of the save; a sweep draws one bucket
+// and examines EVERY participant in it. Ten buckets turns one impossible
+// sweep into ten tractable ones and still reaches everybody, just not at
+// once. Bucket count is the cost lever, traded against how long a given
+// NPC waits for a turn.
 //
-//   Stage 2  GetMemoriesForActor on the top N of that ranking, then
-//            qualify per-memory.
+// Nothing in selection consults the player any more. A farmer in
+// Rorikstead with a notable memory has the same prospect of seeding as an
+// Arch-Mage the player talks to daily, which is the whole point.
 //
-// One cheap global call decides where to spend the expensive per-actor
-// ones. The alternative is ~880 per-actor calls per sweep, almost all
-// returning nothing of interest.
+// A bucket whose members hold nothing qualifying produces no rumor, and
+// the sweep does NOT scan on to a fuller one. Early in a playthrough that
+// would amplify the handful of people who have memories at all across the
+// entire province — the concentration this design exists to remove,
+// reintroduced where it does the most damage.
+//
+// See docs/implementation/PHASE_13_MILESTONE_4.md.
 //
 // ---------------------------------------------------------------------
 // The feedback loop
@@ -121,7 +136,6 @@ namespace NarrativeEngine::GossipHarvest
         std::size_t sentForGeneration = 0;
         std::size_t rejectedTooOld = 0;
         std::size_t rejectedLowImportance = 0;
-        std::size_t rejectedNotParticipant = 0;
         std::size_t rejectedClaimed = 0;
         std::size_t rejectedDiary = 0;
         std::size_t rejectedNoContent = 0;

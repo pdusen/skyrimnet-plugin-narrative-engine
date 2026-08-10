@@ -112,9 +112,6 @@ namespace NarrativeEngine::GossipGraph
 
         std::unordered_map<RE::FormID, Participant> g_participants;
         std::vector<RE::FormID> g_participantIds;
-        // Placed-reference id -> base NPC id. The bridge into SkyrimNet's
-        // id space; see the note on Find() in the header.
-        std::unordered_map<RE::FormID, RE::FormID> g_byActorRef;
 
         std::unordered_map<RE::FormID, std::vector<RE::FormID>> g_household;
         std::unordered_map<RE::FormID, std::vector<RE::FormID>> g_settlement;
@@ -559,7 +556,6 @@ namespace NarrativeEngine::GossipGraph
             for (const auto id : g_participantIds) {
                 const auto& p = g_participants.at(id);
                 if (p.actorRef) {
-                    g_byActorRef.emplace(p.actorRef, id);
                     ++g_census.withActorRef;
                 }
                 if (p.household) {
@@ -846,15 +842,6 @@ namespace NarrativeEngine::GossipGraph
     const std::vector<RE::FormID>& Participants()
     {
         return g_participantIds;
-    }
-
-    const Participant* FindByActorRef(RE::FormID actorRef)
-    {
-        if (actorRef == 0) {
-            return nullptr;
-        }
-        const auto it = g_byActorRef.find(actorRef);
-        return it == g_byActorRef.end() ? nullptr : Find(it->second);
     }
 
     RE::FormID ActorRefFor(RE::FormID npc)

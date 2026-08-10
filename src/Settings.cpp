@@ -320,8 +320,6 @@ namespace NarrativeEngine::Settings
                 static_cast<float>(ini.GetDoubleValue("Gossip", "fGossipClaimExpiryDays", dst.gossipClaimExpiryDays));
             dst.gossipMinMemoryImportance = static_cast<float>(
                 ini.GetDoubleValue("Gossip", "fGossipMinMemoryImportance", dst.gossipMinMemoryImportance));
-            dst.gossipHarvestActorSampleSize = static_cast<int>(
-                ini.GetLongValue("Gossip", "iGossipHarvestActorSampleSize", dst.gossipHarvestActorSampleSize));
             dst.gossipHarvestBuckets =
                 static_cast<int>(ini.GetLongValue("Gossip", "iGossipHarvestBuckets", dst.gossipHarvestBuckets));
             dst.gossipBucketHistoryLength = static_cast<int>(

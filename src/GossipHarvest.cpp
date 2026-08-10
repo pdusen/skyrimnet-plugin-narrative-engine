@@ -76,101 +76,6 @@ namespace NarrativeEngine::GossipHarvest
             return out;
         }
 
-        // One ranked actor, carrying both halves of its identity.
-        //
-        // These are two different FormIDs for the same person and they are
-        // not interchangeable. SkyrimNet speaks placed-reference ids;
-        // GossipGraph is keyed by TESNPC base forms. Conflating them is
-        // what made the first in-game harvest reject all 131 active actors
-        // as not-participants: every engagement row was looked up in a map
-        // that does not contain reference ids at all.
-        struct RankedActor
-        {
-            RE::FormID actorRef = 0; // for SkyrimNet calls
-            RE::FormID npc = 0;      // for the graph
-        };
-
-        // Engagement row -> participant. The prebuilt index answers almost
-        // every row without touching the engine; the fallback covers
-        // participants whose LCUN row carried no refID, and any actor
-        // SkyrimNet reports under a reference the graph never saw.
-        //
-        // Both calls are safe here: LookupByID takes the engine's own
-        // read-write lock over the all-forms map, and GetActorBase is a
-        // field read.
-        const GossipGraph::Participant* ResolveEngagementRow(RE::FormID actorRef)
-        {
-            if (const auto* p = GossipGraph::FindByActorRef(actorRef)) {
-                return p;
-            }
-            if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(actorRef)) {
-                if (auto* base = actor->GetActorBase()) {
-                    return GossipGraph::Find(base->GetFormID());
-                }
-            }
-            return nullptr;
-        }
-
-        // Stage 1: rank every active actor by how much important material
-        // they have accumulated lately.
-        std::vector<RankedActor> RankActors(const Settings::Config& cfg, GossipLog::HarvestStats& sweep)
-        {
-            const double windowSeconds = static_cast<double>(cfg.gossipHarvestWindowDays) * 86400.0;
-            const auto raw = SkyrimNetAPI::GetActorEngagement(0,
-                                                              /*excludePlayer*/ true,
-                                                              /*playerEventsOnly*/ false,
-                                                              /*shortWindow*/ 86400.0,
-                                                              /*mediumWindow*/ windowSeconds);
-            std::vector<std::pair<double, RankedActor>> ranked;
-            try {
-                const auto j = nlohmann::json::parse(raw, nullptr, false);
-                if (!j.is_array()) {
-                    return {};
-                }
-                // maxCount=0 returns EVERY actor with any activity, which can
-                // be hundreds of rows. Parsed once per sweep, never per
-                // candidate.
-                sweep.actorsSeen = j.size();
-                ranked.reserve(j.size());
-                for (const auto& row : j) {
-                    // SkyrimNet reports the placed reference, never the
-                    // base form. Resolve before asking the graph anything.
-                    const auto actorRef = static_cast<RE::FormID>(row.value("formId", 0));
-                    const auto* p = actorRef ? ResolveEngagementRow(actorRef) : nullptr;
-                    if (!p) {
-                        // Not a graph participant: nowhere to seed from.
-                        // Counted rather than dropped silently — a sweep
-                        // that finds nothing because the graph is small
-                        // reads very differently from one where the
-                        // memories themselves did not qualify.
-                        ++sweep.rejectedNotParticipant;
-                        continue;
-                    }
-                    ranked.emplace_back(row.value("recentMemoryImportanceMedium", 0.0), RankedActor{actorRef, p->npc});
-                }
-            } catch (...) {
-                logger::warn("GossipHarvest: could not parse GetActorEngagement response");
-                return {};
-            }
-
-            // Sort on the score alone. Ties keep their relative order via
-            // stable_sort, so a sweep that finds several actors at the same
-            // engagement score picks the same ones each time rather than
-            // shuffling on an unordered-map walk.
-            std::stable_sort(
-                ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-            const auto keep = static_cast<std::size_t>(std::max(1, cfg.gossipHarvestActorSampleSize));
-            if (ranked.size() > keep) {
-                ranked.resize(keep);
-            }
-            std::vector<RankedActor> out;
-            out.reserve(ranked.size());
-            for (const auto& [score, actor] : ranked) {
-                out.push_back(actor);
-            }
-            return out;
-        }
-
         // Stage 2: qualify this actor's recent memories.
         void CollectFrom(const GossipThread::Token& gt,
                          const GossipGraph::Participant& actor,
@@ -374,7 +279,6 @@ namespace NarrativeEngine::GossipHarvest
             g_stats.rejectedClaimed += sweep.rejectedClaimed;
             g_stats.rejectedSameEvent += sweep.rejectedSameEvent;
             g_stats.rejectedIsolated += sweep.rejectedIsolated;
-            g_stats.rejectedNotParticipant += sweep.rejectedNotParticipant;
             g_stats.rejectedDiary += sweep.rejectedDiary;
             g_stats.rejectedNoContent += sweep.rejectedNoContent;
             g_stats.rejectedNoGameTime += sweep.rejectedNoGameTime;
@@ -680,7 +584,6 @@ namespace NarrativeEngine::GossipHarvest
         out.sentForGeneration = h.sentForGeneration;
         out.rejectedTooOld = h.rejectedTooOld;
         out.rejectedLowImportance = h.rejectedLowImportance;
-        out.rejectedNotParticipant = h.rejectedNotParticipant;
         out.rejectedClaimed = h.rejectedClaimed;
         out.rejectedDiary = h.rejectedDiary;
         out.rejectedNoContent = h.rejectedNoContent;

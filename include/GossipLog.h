@@ -142,17 +142,12 @@ namespace NarrativeEngine::GossipLog
         std::uint32_t bucket = 0;
         std::size_t bucketCount = 0;
         std::size_t bucketPopulation = 0;
-        // Dead once the engagement path goes. Kept only so the ranking
-        // code still compiles until then; nothing reads them.
-        std::size_t actorsSeen = 0;
-        std::size_t actorsSampled = 0;
         std::size_t memoriesExamined = 0;
         std::size_t candidates = 0;
         std::size_t sentForGeneration = 0;
         std::size_t rejectedTooOld = 0;
         std::size_t rejectedLowImportance = 0;
         std::size_t rejectedClaimed = 0;
-        std::size_t rejectedNotParticipant = 0;
         std::size_t rejectedDiary = 0;
         std::size_t rejectedNoContent = 0;
         std::size_t rejectedNoGameTime = 0;

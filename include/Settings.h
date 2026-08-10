@@ -673,9 +673,10 @@ namespace NarrativeEngine::Settings
         //
         // Rumors are sourced from SkyrimNet's memory database rather than
         // planted. There is no global memory query — GetMemoriesForActor
-        // is strictly per-actor — so the sweep is two-stage:
-        // GetActorEngagement(0, ...) ranks every active actor by recent
-        // memory importance, then the top N get a per-actor fetch.
+        // is strictly per-actor — so a sweep draws one bucket of the
+        // participant population and queries every member of it. See
+        // iGossipHarvestBuckets below and GossipHarvest.h for why
+        // selection does not rank.
         bool gossipHarvestEnabled = true;
         float gossipHarvestIntervalGameHours = 12.0f;
         // Memories older than this are never candidates. Gossip is news.
@@ -693,7 +694,6 @@ namespace NarrativeEngine::Settings
         // Notability floor for a candidate. A memory's importance maps
         // directly onto the rumor's notability, both being 0..1.
         float gossipMinMemoryImportance = 0.45f;
-        int gossipHarvestActorSampleSize = 25;
         // How many buckets the participant population splits into. One
         // bucket is examined per sweep, in full, so this is the direct
         // control over per-sweep query cost — and the inverse control

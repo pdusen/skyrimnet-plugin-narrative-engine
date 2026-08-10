@@ -37,11 +37,13 @@
 // processes, and it is why the queue can back up behind a slow LLM call
 // without the simulation drifting.
 //
-// One place it cannot be exact: GetActorEngagement reports engagement as
-// of now and offers no time filter, so WHICH actors get examined is
-// unavoidably current even when the memories examined are not. The harm
-// is bounded — it can mis-prioritise, but every memory it then reads is
-// still filtered, so no post-horizon content can reach a rumor.
+// There used to be one place it could not be exact: selection ran on
+// GetActorEngagement, which reports engagement as of now and offers no
+// time filter, so WHICH actors got examined was unavoidably current even
+// when the memories examined were not. Milestone 4 removed that call —
+// the bucket a tick draws depends on the saved history and nothing else
+// — so the exception is gone and a stamped tick is stamped all the way
+// down.
 //
 // See docs/implementation/PHASE_13_MILESTONE_3.md.
 namespace NarrativeEngine::GossipTick

@@ -165,7 +165,6 @@ namespace NarrativeEngine::GossipState_
         std::size_t sentForGeneration = 0;
         std::size_t rejectedTooOld = 0;
         std::size_t rejectedLowImportance = 0;
-        std::size_t rejectedNotParticipant = 0;
         std::size_t rejectedClaimed = 0;
         std::size_t rejectedDiary = 0;
         std::size_t rejectedNoContent = 0;

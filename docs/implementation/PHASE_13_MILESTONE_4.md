@@ -406,7 +406,7 @@ never hit — all 881 resolve.
 
 ### Step 4 — Delete the engagement path
 
-- [ ] Complete
+- [x] Complete
 
 **Goal:** Pure subtraction. Nothing behaves differently.
 
@@ -433,6 +433,29 @@ a shipped INI reads as a working knob.
 **Verification:** behaviour identical to the end of Step 3 — same buckets drawn, same origins, same seeding
 rate. `GetActorEngagement` appears nowhere in `GossipHarvest`. The build is clean and the INI documents no
 setting the code does not read.
+
+Done. `RankActors`, `RankedActor`, `ResolveEngagementRow`, `iGossipHarvestActorSampleSize` and the
+`not-participant` counter are gone, along with the two `HarvestStats` fields Step 3 left alive to keep the
+dead code compiling. `SkyrimNetAPI::GetActorEngagement` itself stays — `NPCLetterBeat` and
+`SenderCandidatePool` are legitimate callers, and picking a letter's sender by player engagement is the
+right question for a letter.
+
+`GossipGraph::FindByActorRef` had exactly one caller and it was `ResolveEngagementRow`, so the reverse
+index and `g_byActorRef` went with it. Every remaining crossing into SkyrimNet's id space runs
+base-form-out through `ActorRefFor`; the reverse direction only existed because engagement rows arrived as
+references. The `withActorRef` census count stays, since addressability is still worth knowing.
+
+Three comments outside the harvester were describing the old design and were rewritten rather than
+trimmed:
+
+- **`GossipHarvest.h`'s opening rationale**, which explained the whole module as a two-call design. It now
+  states the bucket scheme and, more usefully, why ranking was wrong in the first place.
+- **`GossipTick.h`'s stamped-tick caveat.** It recorded one place a tick could not be exact: engagement
+  reports as of *now*, so which actors got examined was current even when the memories were not. That
+  exception no longer exists — the bucket depends on the saved history and nothing else — so a stamped tick
+  is now stamped all the way down. This is a real correctness gain from Milestone 4 that its design did not
+  anticipate.
+- **The `Settings.h` and INI harvest preambles**, both of which opened by describing the two-stage sweep.
 
 ---
 

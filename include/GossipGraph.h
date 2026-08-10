@@ -127,21 +127,18 @@ namespace NarrativeEngine::GossipGraph
     //
     // KEYED ON THE TESNPC BASE FORM, not on a placed reference. This is
     // the boundary that matters when talking to SkyrimNet: every
-    // SkyrimNet endpoint — GetActorEngagement rows, GetMemoriesForActor,
-    // AddMemory, related-actor arrays — speaks ACTOR REFERENCE ids, and
-    // feeding one of those to this function silently finds nothing.
-    // Cross the boundary with FindByActorRef / ActorRefFor.
-    const Participant* Find(RE::FormID npc);
-
-    // The reverse direction: a placed reference id (what SkyrimNet hands
-    // back) to the participant it belongs to. Returns nullptr when the
-    // reference is unknown, which covers actors outside the graph and
-    // the handful of participants whose LCUN row carried no refID.
+    // SkyrimNet endpoint — GetMemoriesForActor, AddMemory, related-actor
+    // arrays — speaks ACTOR REFERENCE ids, and feeding one of those to
+    // this function silently finds nothing. Cross the boundary with
+    // ActorRefFor.
     //
-    // No engine access — this is a prebuilt index, so it is safe from
-    // the plugin thread. Callers that need to resolve the residue can
-    // fall back to LookupByID + GetActorBase themselves.
-    const Participant* FindByActorRef(RE::FormID actorRef);
+    // There is no reverse (reference -> participant) lookup. One existed
+    // for the engagement ranking, which resolved rows SkyrimNet handed
+    // back; selection no longer asks SkyrimNet who to look at, so every
+    // remaining crossing runs base-form-out. A caller that genuinely
+    // needs the reverse direction can go through LookupByID +
+    // GetActorBase, which is what the old index's fallback did anyway.
+    const Participant* Find(RE::FormID npc);
 
     // A participant's placed reference id, or 0 when unknown. Use before
     // handing any id to SkyrimNet.
