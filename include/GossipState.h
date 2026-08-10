@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <queue>
 #include <string>
 #include <unordered_map>
@@ -203,6 +204,23 @@ namespace NarrativeEngine
         double lastGameDaySample = -1.0;
         GossipState_::SessionCounters counters;
         GossipState_::HarvestCounters harvest;
+
+        // --- harvest bucket selection ----------------------------------
+        //
+        // Most-recent-last. Bounded at the draw to bucketCount-1 entries,
+        // so this never grows: it is a window, not a log.
+        //
+        // Here rather than beside the scheduler because it must be saved
+        // from the SAME instant as the rumors it produced. Split them and
+        // a reload can restore a history whose exclusions describe draws
+        // that seeded rumors the save does not contain.
+        std::deque<std::uint32_t> bucketHistory;
+        // How many buckets `bucketHistory` was recorded against. Change
+        // iGossipHarvestBuckets mid-playthrough and every participant is
+        // reassigned, so the remembered indices stop denoting the same
+        // people; the load compares this and discards rather than
+        // excluding an arbitrary set.
+        std::uint32_t bucketCount = 0;
 
         // --- claim ledger ----------------------------------------------
         //

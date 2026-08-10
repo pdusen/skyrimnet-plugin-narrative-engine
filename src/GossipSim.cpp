@@ -18,6 +18,7 @@
 #include <SKSE/SKSE.h>
 
 #include <algorithm>
+#include <deque>
 #include <format>
 #include <mutex>
 #include <queue>
@@ -30,8 +31,8 @@ namespace NarrativeEngine::GossipSim
 {
     namespace
     {
-        // v5 adds the per-rumor conversation-outcome counters.
-        constexpr std::uint32_t kRecordVersion = 5;
+        // v6 adds the harvest bucket selection history.
+        constexpr std::uint32_t kRecordVersion = 6;
 
         // Sentinel peer standing in for "somebody, anywhere in Skyrim".
         // Resolved to a random participant only if it is actually
@@ -1105,6 +1106,16 @@ namespace NarrativeEngine::GossipSim
         intfc->WriteRecordData(state.nextRumorId);
         intfc->WriteRecordData(state.simGameDay);
 
+        // Bucket selection history. The count it was drawn against goes
+        // first so the load can decide whether the indices still mean
+        // anything before it reads them.
+        intfc->WriteRecordData(state.bucketCount);
+        const auto historyCount = static_cast<std::uint32_t>(state.bucketHistory.size());
+        intfc->WriteRecordData(historyCount);
+        for (const auto b : state.bucketHistory) {
+            intfc->WriteRecordData(b);
+        }
+
         // Only live rumors are persisted. The poll sweep normally clears dead
         // ones already, but a save landing between a burnout and the next
         // sweep would otherwise write a rumor that will be discarded on load
@@ -1183,12 +1194,58 @@ namespace NarrativeEngine::GossipSim
         auto& g_simGameDay = g_pending->simGameDay;
         g_rumors.clear();
         g_queue = {};
+        g_pending->bucketHistory.clear();
+        g_pending->bucketCount = 0;
 
+        std::uint32_t savedBucketCount = 0;
+        std::uint32_t historyCount = 0;
         std::uint32_t rumorCount = 0;
         if (intfc->ReadRecordData(g_nextRumorId) != sizeof(g_nextRumorId)
             || intfc->ReadRecordData(g_simGameDay) != sizeof(g_simGameDay)
-            || intfc->ReadRecordData(rumorCount) != sizeof(rumorCount)) {
+            || intfc->ReadRecordData(savedBucketCount) != sizeof(savedBucketCount)
+            || intfc->ReadRecordData(historyCount) != sizeof(historyCount)) {
             logger::error("GossipSim::OnLoad: short read on header; reverting");
+            g_rumors.clear();
+            g_queue = {};
+            return;
+        }
+
+        // Read the history whatever happens — the bytes are in the stream
+        // and the rumor count comes after them, so skipping the read
+        // would desynchronise every field that follows. Whether to KEEP
+        // it is a separate question, decided below.
+        std::deque<std::uint32_t> history;
+        for (std::uint32_t i = 0; i < historyCount; ++i) {
+            std::uint32_t b = 0;
+            if (intfc->ReadRecordData(b) != sizeof(b)) {
+                logger::error("GossipSim::OnLoad: short read on bucket history; reverting");
+                g_rumors.clear();
+                g_queue = {};
+                return;
+            }
+            history.push_back(b);
+        }
+
+        const auto liveBucketCount = GossipGraph::BucketCount();
+        if (savedBucketCount == liveBucketCount) {
+            g_pending->bucketHistory = std::move(history);
+            g_pending->bucketCount = savedBucketCount;
+        } else if (savedBucketCount != 0) {
+            // Every participant has been reassigned, so bucket 3 in the
+            // save and bucket 3 now are different sets of people.
+            // Excluding the old indices would exclude an arbitrary group.
+            // Logged rather than silent: one unusually clustered cycle
+            // after a settings change should have an explanation sitting
+            // in the log when somebody notices it.
+            logger::info("GossipSim::OnLoad: iGossipHarvestBuckets changed ({} -> {}); discarding {} "
+                         "remembered bucket selection(s)",
+                         savedBucketCount,
+                         liveBucketCount,
+                         history.size());
+        }
+
+        if (intfc->ReadRecordData(rumorCount) != sizeof(rumorCount)) {
+            logger::error("GossipSim::OnLoad: short read on rumor count; reverting");
             g_rumors.clear();
             g_queue = {};
             return;
@@ -1314,6 +1371,8 @@ namespace NarrativeEngine::GossipSim
             g_pending->simGameDay = 0.0;
             g_pending->counters = {};
             g_pending->harvest = {};
+            g_pending->bucketHistory.clear();
+            g_pending->bucketCount = 0;
         }
         // The contact cache is derived rather than owned, so it is not in
         // the pending state. AdoptPendingState clears it on the gossip

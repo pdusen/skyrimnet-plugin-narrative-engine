@@ -386,6 +386,80 @@ namespace NarrativeEngine::GossipHarvest
         // happened is retried rather than silently counted as done.
         // The "Locked" suffix is gone with the lock: this now runs on the
         // gossip thread and owns everything it touches for the duration.
+        // Draw the bucket this sweep will examine, and remember it.
+        //
+        // Uniform over every bucket NOT in the recent history, which is
+        // what makes the order look arbitrary while guaranteeing spread.
+        // The history length is clamped to bucketCount-1 rather than
+        // trusted: at bucketCount exactly nothing would be eligible, and
+        // the setting is a knob a person turns.
+        //
+        // At the clamp the sequence degrades into a fixed repeating cycle
+        // -- one bucket eligible, so one bucket drawn -- which is the same
+        // thing as pre-shuffling a permutation, arrived at without any
+        // special case for it.
+        std::uint32_t DrawBucket(const GossipThread::Token& gt, std::uint32_t bucketCount)
+        {
+            auto& st = GossipSim::MutableState(gt);
+
+            // A bucket count change is normally caught on load. This
+            // covers the other route to the same place: settings reloaded
+            // mid-session, with no serialisation callback involved.
+            if (st.bucketCount != bucketCount) {
+                if (st.bucketCount != 0) {
+                    GossipLog::Note(std::format("harvest: bucket count changed {} -> {}; forgetting {} "
+                                                "remembered selection(s)",
+                                                st.bucketCount,
+                                                bucketCount,
+                                                st.bucketHistory.size()));
+                }
+                st.bucketHistory.clear();
+                st.bucketCount = bucketCount;
+            }
+
+            const auto maxHistory = static_cast<std::size_t>(std::clamp(
+                Settings::Get().gossipBucketHistoryLength, 0, std::max(0, static_cast<int>(bucketCount) - 1)));
+            while (st.bucketHistory.size() > maxHistory) {
+                st.bucketHistory.pop_front();
+            }
+
+            std::vector<std::uint32_t> eligible;
+            eligible.reserve(bucketCount);
+            for (std::uint32_t i = 0; i < bucketCount; ++i) {
+                if (std::find(st.bucketHistory.begin(), st.bucketHistory.end(), i) == st.bucketHistory.end()) {
+                    eligible.push_back(i);
+                }
+            }
+            if (eligible.empty()) {
+                // Unreachable given the clamp above, and handled anyway:
+                // a draw that returned nothing would skip a sweep in
+                // silence, which is the one outcome with no trace of it.
+                eligible.push_back(0);
+            }
+
+            std::uniform_int_distribution<std::size_t> pick(0, eligible.size() - 1);
+            const auto drawn = eligible[pick(g_rng)];
+
+            st.bucketHistory.push_back(drawn);
+            while (st.bucketHistory.size() > maxHistory) {
+                st.bucketHistory.pop_front();
+            }
+            return drawn;
+        }
+
+        std::string HistoryText(const GossipThread::Token& gt)
+        {
+            const auto& h = GossipSim::MutableState(gt).bucketHistory;
+            if (h.empty()) {
+                return "-";
+            }
+            std::string out;
+            for (const auto b : h) {
+                out += std::format("{}{}", out.empty() ? "" : ",", b);
+            }
+            return out;
+        }
+
         bool RunSweepImpl(const GossipThread::Token& gt,
                           double nowGameDay,
                           const GossipDispatch::CancellationHandle& cancel)
@@ -414,6 +488,21 @@ namespace NarrativeEngine::GossipHarvest
             }
             g_deferredLogged = false;
             ++g_stats.sweeps;
+
+            // Drawn here, after the ready checks and beside the sweep
+            // count, because a bucket's turn is spent by being drawn. A
+            // draw above the checks would burn a turn on a sweep that
+            // then bailed and examined nobody.
+            //
+            // Nothing reads `bucket` yet -- the harvest below still ranks
+            // by engagement. This step exists so the sequence can be
+            // watched over a long run before a rumor depends on it.
+            const auto bucket = DrawBucket(gt, GossipGraph::BucketCount());
+            GossipLog::Note(std::format("harvest: bucket {} of {} ({} participant(s)), recent={}",
+                                        bucket,
+                                        GossipGraph::BucketCount(),
+                                        GossipGraph::BucketMembers(bucket).size(),
+                                        HistoryText(gt)));
 
             // Counted for THIS sweep, then folded into the session totals
             // at the end. Mixing the two scales in one line is what made

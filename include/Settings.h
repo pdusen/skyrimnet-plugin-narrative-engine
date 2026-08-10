@@ -701,6 +701,11 @@ namespace NarrativeEngine::Settings
         // 881 participants: ~88 queries a sweep, a turn every ~5 game
         // days at the default interval.
         int gossipHarvestBuckets = 10;
+        // How many of the most recent bucket selections are excluded from
+        // the next draw. Clamped to bucketCount-1 at the draw, so a value
+        // at or above the bucket count degrades into a fixed cycle rather
+        // than leaving nothing eligible.
+        int gossipBucketHistoryLength = 6;
         int gossipHarvestMemoriesPerActor = 10;
         // How many rumors one sweep may actually seed. The walk down the
         // candidate pool stops once this many have been accepted.

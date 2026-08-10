@@ -324,6 +324,8 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("Gossip", "iGossipHarvestActorSampleSize", dst.gossipHarvestActorSampleSize));
             dst.gossipHarvestBuckets =
                 static_cast<int>(ini.GetLongValue("Gossip", "iGossipHarvestBuckets", dst.gossipHarvestBuckets));
+            dst.gossipBucketHistoryLength = static_cast<int>(
+                ini.GetLongValue("Gossip", "iGossipBucketHistoryLength", dst.gossipBucketHistoryLength));
             dst.gossipHarvestMemoriesPerActor = static_cast<int>(
                 ini.GetLongValue("Gossip", "iGossipHarvestMemoriesPerActor", dst.gossipHarvestMemoriesPerActor));
             dst.gossipMaxSeedsPerHarvest =
