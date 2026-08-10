@@ -11,14 +11,13 @@ Prerequisites, all complete:
   plan.
 - [`PHASE_13_MILESTONE_2.md`](PHASE_13_MILESTONE_2.md) — harvesting, the claim ledger, content generation,
   and the discretion/duplication verdicts.
-- [`PHASE_13_MILESTONE_3.md`](PHASE_13_MILESTONE_3.md) — the dedicated gossip simulation thread. Not a
-  prerequisite in the strict sense, but it lands first: bucket sweeps raise the per-sweep query count from
-  25 to ~88, which is exactly the cost this milestone's chunking was invented to spread and which Milestone 3
-  handles structurally instead.
+- [`PHASE_13_MILESTONE_3.md`](PHASE_13_MILESTONE_3.md) — the dedicated gossip simulation thread, and a hard
+  prerequisite for this one. Bucket sweeps raise the per-sweep query count from 25 to ~88; Milestone 3 is
+  what makes that free, by moving the whole tick onto a thread nothing waits on.
 
-> **Doc status: design only.** No implementation plan yet, and nothing here is built. One thing described
-> below as a problem — the harvest accumulator firing twice per interval — has already been fixed, and is
-> recorded here only because it distorted the measurements this design is based on.
+> **Doc status: planned, not built.** One thing described below as a problem — the harvest accumulator firing
+> twice per interval — has already been fixed, and is recorded only because it distorted the measurements
+> this design is based on.
 
 ---
 
@@ -60,7 +59,6 @@ tight — it is that the ranking function answers the wrong question.
    it rather than a ranked subset.
 3. **`GetActorEngagement` removed from harvesting.** Selection no longer consults player interaction at all.
 4. **Deterministic-but-unpredictable bucket order**, with a persisted rolling history.
-5. **Chunked sweeps** across Tick polls, so a bucket's per-actor queries are not all done in one poll.
 
 ### Deferred (explicitly out)
 
@@ -116,14 +114,25 @@ step, so the order becomes a fixed repeating cycle after the first ten draws —
 pre-shuffling a permutation, arrived at without special-casing. A shorter history leaves genuine choice at
 every step while still preventing a bucket from coming up twice in quick succession.
 
-Two decisions that make the history behave:
+Three decisions that make the history behave:
 
 - **Every *selected* bucket is recorded, whether or not it produced a rumor.** Recording only productive
   buckets would leave a currently-empty bucket permanently eligible, so it could be drawn again and again
   while the rest of the population waited.
-- **The history persists in the co-save.** Its own record type, one entry per remembered selection, with
-  anything older than the most recent N pruned on write. Without persistence a reload could immediately
-  re-draw the bucket just used, and a validation run would stop being reproducible.
+- **The history persists in the co-save**, as a bounded `std::deque<std::uint32_t>` on `GossipState`,
+  written inside the existing gossip record at a bumped version. Without persistence a reload could
+  immediately re-draw the bucket just used, and a validation run would stop being reproducible.
+
+  It goes on `GossipState` rather than into a record of its own because `GossipState.h` states the rule
+  directly: everything the simulation owns is saved from a single snapshot, so two facts can never be read
+  from different instants. A separate record would allow exactly the drift that rule exists to prevent — a
+  restored bucket history that disagrees with the rumors it produced.
+
+- **The bucket count is saved beside the history, and a mismatch on load discards it.** Change
+  `iGossipHarvestBuckets` mid-playthrough and every participant is reassigned, so the remembered indices no
+  longer denote the same people — excluding them would exclude an arbitrary set. Discarding costs one
+  unusually clustered cycle, needs no reasoning at the call site, and is logged so it does not read as a bug
+  later.
 
 ### An empty bucket is a correct outcome, not a gap to paper over
 
@@ -143,18 +152,21 @@ On the current save the question is moot in any case — hashing the 41 memory-h
 **zero empty buckets**, though the distribution is uneven (one bucket holds a single memory, another holds
 98).
 
-### Sweeps are chunked across polls
+### A sweep runs whole, and does not need pacing
 
-A bucket holds roughly `participants / bucketCount` actors — about 88 at the default. Querying all of them
-in a single poll would hold the harvest mutex for the duration of ~88 vector-database round trips.
+A bucket holds roughly `participants / bucketCount` actors — about 88 at the default, against the 25 a
+ranked sample examines today. That is three and a half times the per-actor queries in one sweep, and it
+needs no accommodation whatsoever.
 
-The sweep is therefore spread over consecutive Tick polls in the house accumulator style: a bounded number
-of actors per poll, accumulating candidates, and the seeding decision made once the bucket is exhausted.
-Each poll stays short and the work is unchanged in total.
+A tick is a single job on `GossipDispatch`'s dedicated thread, running harvest → generate → simulate → prune
+→ publish start to finish with no time budget and nothing else queued behind it. The plugin thread's only
+involvement is `GossipTick::Poll` deciding *when* to enqueue. An 88-actor sweep therefore blocks nobody, and
+pacing it across polls would mean carrying resumable per-bucket state — which a load would have to cancel
+and reconcile — to solve a problem that does not exist.
 
-**This does not exist today.** `RunSweepLocked` performs the engagement call, all 25 per-actor calls, and
-seeding in one poll while holding the mutex — the Tick accumulator only decides *when* a sweep begins, not
-how the work inside one is paced.
+The cost is real but it is paid somewhere harmless: a bucket sweep takes longer in wall-clock time than a
+top-25 sweep does. Bucket count is the lever for that, trading latency-to-first-rumor rather than frame
+time.
 
 ### What this removes
 
@@ -212,7 +224,6 @@ already written down.
 | ------------------------------ | ---------------- | -------------------------------------------------------------- |
 | `iGossipHarvestBuckets`        | 10               | How many buckets the population splits into; the cost lever    |
 | `iGossipBucketHistoryLength`   | 6                | How many recent selections are excluded from the next draw     |
-| `iGossipHarvestActorsPerPoll`  | 12               | Actors queried per Tick poll while working through a bucket    |
 
 Removed: `iGossipHarvestActorSampleSize`.
 
@@ -220,16 +231,185 @@ Unchanged: `iGossipRandomSeed` continues to seed the draw, so a run remains repr
 
 ---
 
+## Implementation plan
+
+Ordered so that **the selection mechanism is fully built and observable before anything starts using it**.
+Steps 1 and 2 are pure addition: the buckets exist, a bucket is drawn every tick, and the trace says which —
+while the harvester carries on ranking by engagement exactly as it does today. That means the draw can be
+watched across a long run, and its distribution argued with, before a single rumor depends on it.
+
+Step 3 is the switch, and it is one call site. Step 4 is pure subtraction and is safe precisely because
+Step 3 landed first.
+
+---
+
+### Step 1 — Buckets on the graph
+
+- [ ] Complete
+
+**Goal:** Every participant has a bucket, assignment is stable across sessions, and the distribution can be
+inspected. Nothing reads it yet.
+
+1. `iGossipHarvestBuckets` (default 10) in `Settings`, the INI, and the INI's documented block.
+2. A `bucket` field on `GossipGraph::Participant`, assigned during the graph build.
+3. The assignment is `splitmix64(npc) % bucketCount` — **a finalising mix, never a raw modulo.** FormIDs
+   carry the load order's mod index in their high byte and run sequentially within a plugin, so
+   `formId % bucketCount` would produce buckets that are effectively "everyone from Dawnguard". Take the
+   mixer as its own small `constexpr` function so the reason it exists is readable at the call site.
+4. `GossipGraph::BucketMembers(std::uint32_t index)` returning a prebuilt `const std::vector<RE::FormID>&`,
+   built once during `Initialize` alongside the household/settlement/hold indices it mirrors. A sweep must
+   not scan 881 participants to find the ~88 it wants.
+5. The startup census gains the per-bucket population, logged at `Initialize`.
+
+Assignment is deliberately **not persisted**. The graph is rebuilt at `kDataLoaded` every session and a hash
+of the base FormID is stable, so persisting it would only create an opportunity for the saved answer and the
+computed one to disagree.
+
+**Verification:** the census shows all N buckets non-empty with populations within roughly ±30% of
+`participants / N`. Cross-check the mixer directly: confirm that the participants in one bucket come from a
+spread of mod indices rather than clustering on one master, which is the specific failure a raw modulo would
+produce and which an even-looking population count would not catch.
+
+---
+
+### Step 2 — Bucket selection, with a rolling history that persists
+
+- [ ] Complete
+
+**Goal:** Every tick draws a bucket and records it. The choice is traced and saved, and still nothing
+consumes it.
+
+1. `iGossipBucketHistoryLength` (default 6) in `Settings` and the INI.
+2. `bucketHistory` as a `std::deque<std::uint32_t>` on `GossipState`, plus the `bucketCount` the history was
+   recorded under. It rides the existing co-save record — bump `kRecordVersion` to 6 — because the history
+   and the rumors it produced must be restorable from the same instant.
+3. On load, **discard the history if the saved `bucketCount` differs from the configured one.** The indices
+   no longer denote the same people, and a mid-playthrough setting change is exactly when a stale history is
+   most misleading. Log it; a silent reset would look like a bug later.
+4. The draw: uniform over the buckets **not** in the history, using the RNG seeded from `iGossipRandomSeed`.
+   Clamp the effective history length to `bucketCount - 1` so that a history at least as long as the bucket
+   count cannot leave the eligible set empty.
+5. Called once per tick from `RunSweepImpl`, in the same place `++g_stats.sweeps` already sits — that is,
+   **after** the `IsReady()` / `IsMemorySystemReady()` checks pass. Recording a selection the sweep then
+   abandoned would spend a bucket's turn on nothing.
+6. Every drawn bucket is recorded **whether or not it produced a rumor.** Recording only productive buckets
+   would leave a currently-empty bucket permanently eligible, so it could be drawn repeatedly while the rest
+   of the population waited.
+7. A `NOTE` line per tick naming the bucket, its population, and the history it was drawn against.
+
+**Verification:** run 30+ ticks with the harvester untouched and read the trace. No bucket repeats inside
+the history window; every bucket appears at a comparable rate over the run; the order does not look like a
+counting sequence. Save mid-run, reload, and confirm the next draw respects the restored history rather than
+re-drawing what just came up. Change `iGossipHarvestBuckets` on an existing save and confirm the history is
+discarded with a log line rather than reused.
+
+---
+
+### Step 3 — Harvest the drawn bucket
+
+- [ ] Complete
+
+**Goal:** The switch. Selection stops consulting player engagement.
+
+1. `RunSweepImpl` collects from `GossipGraph::BucketMembers(drawn)` instead of from `RankActors`'s output.
+   Every member is examined; there is no top-N cut, because there is no longer a ranking to take one of.
+2. `CollectFrom` takes the participant directly. Its `RankedActor` parameter carried an `actorRef` and an
+   `npc`, both of which are already on `Participant`.
+3. The `HARVEST` trace line changes: `actors=25/144` described a sample of a ranking and now describes
+   nothing. It becomes the bucket index and its population.
+4. Memory-level ranking by `importance_score` is unchanged. Two levels of ranking collapse to one, and the
+   surviving level is the axis that actually matters.
+
+Everything downstream — qualification, claims, the eval/compose split, seeding — is untouched. This step
+changes *whose* memories are examined and nothing else.
+
+**Verification:** rumor origins over a long run come from across the province rather than from the player's
+current questline. Concretely: compare the set of origin NPCs against the pre-change runs, where 13 of 14
+seeds came from Winterhold College because that is where the player was. Per-sweep per-actor calls should
+rise from 25 to roughly `participants / bucketCount`. Confirm a bucket holding no qualifying memories
+produces no rumor **and is not skipped over** — the sweep ends quietly and the next tick draws a different
+bucket.
+
+---
+
+### Step 4 — Delete the engagement path
+
+- [ ] Complete
+
+**Goal:** Pure subtraction. Nothing behaves differently.
+
+Now dead, and removed:
+
+| Removed                       | Why                                                   |
+| ----------------------------- | ----------------------------------------------------- |
+| The `GetActorEngagement` call | The biased ranking is the thing that was replaced     |
+| `RankActors`, `RankedActor`   | No ranking left                                       |
+| `ResolveEngagementRow`        | Participants come from the graph already resolved     |
+| `rejectedNotParticipant`      | Everyone in a bucket is a participant by construction |
+
+Also: the header comment on `GossipHarvest.h` opens by explaining harvesting as a two-call design — one
+cheap global engagement call deciding where to spend the expensive per-actor ones. That rationale is gone
+and the comment must be rewritten, not trimmed. It is the first thing anyone reads about this module.
+
+`GossipGraph::FindByActorRef` loses its harvest caller. **Check for other callers before removing it** — the
+reverse index may still earn its place elsewhere, and Milestone 3 leans on the base-form/placed-reference
+distinction throughout.
+
+`iGossipHarvestActorSampleSize` is deleted from `Settings`, `Settings.cpp` and the INI. A stale key left in
+a shipped INI reads as a working knob.
+
+**Verification:** behaviour identical to the end of Step 3 — same buckets drawn, same origins, same seeding
+rate. `GetActorEngagement` appears nowhere in `GossipHarvest`. The build is clean and the INI documents no
+setting the code does not read.
+
+---
+
+### Step 5 — In-game validation
+
+- [ ] Complete
+
+**[USER]**
+
+Needs a save with an established memory corpus, and enough time passed to cover several full bucket cycles.
+Note that **wait-driven time passage will not exercise this** — with no conversations happening there are no
+new memories, so the sweep has only the existing corpus to draw on and the point of the milestone cannot be
+observed. This wants real play, or at minimum a save whose corpus is already broad.
+
+1. **Origins spread out.** The measure that matters. Rumor origins should reach people the player has never
+   spoken to, in holds the player is not in.
+2. **A farmer's odds match an Arch-Mage's.** Someone unremarkable with a notable memory seeds a rumor.
+3. **Empty buckets pass quietly.** A sweep that finds nothing logs and ends. No skipping forward, no
+   double-sweeping to compensate.
+4. **The draw order still looks arbitrary** after the history has been running a while, and does not settle
+   into an obvious cycle at the configured length. This is where open question 1 gets answered.
+5. **Cost is acceptable.** ~88 per-actor queries per tick on the gossip thread. Confirm no stutter — there
+   should be none, since nothing waits on that thread — and note how long a sweep takes end to end.
+6. **Rumor quality is worse and that is expected.** The best memory in the drawn bucket seeds, not the best
+   in the province. Confirm the drop reads as variety rather than as the system picking badly.
+
+---
+
+## Done condition
+
+Milestone 4 is complete when:
+
+- All 5 steps are checked off and Step 5 passes.
+- Selection never consults `GetActorEngagement`; the call does not appear in `GossipHarvest`.
+- Every graph participant is in exactly one bucket, and the assignment is identical across sessions.
+- A bucket is never drawn twice within the history window, and the history survives a save/load round trip.
+- Changing `iGossipHarvestBuckets` on an existing save discards the history with a log line.
+- An empty bucket produces no rumor and is not skipped.
+- `iGossipHarvestActorSampleSize`, `RankActors`, `RankedActor` and `ResolveEngagementRow` are gone.
+- Rumor origins over a long run are distributed across the province rather than tracking the player.
+
+---
+
 ## Open questions
 
 1. **What history length reads best?** Nine of ten is a fixed cycle; one of ten barely constrains anything.
-   Six is a guess at the midpoint and only play will tell whether the order feels arbitrary enough.
-2. **What happens when `iGossipHarvestBuckets` changes mid-playthrough?** Every participant is reassigned,
-   and the persisted history refers to indices that no longer denote the same people. Probably acceptable —
-   the effect is one disordered cycle — but it should be a deliberate answer rather than an accident.
-3. **Should a bucket's sweep be abandoned if the game is saved or loaded mid-chunk?** A partially-walked
-   bucket has no persisted state under this design, so a reload restarts it. That is likely fine, but it
-   means frequent saving could starve later members of a bucket.
-4. **Is 12 game hours still the right interval** once each sweep covers a tenth of the province rather than
+   Six is a guess at the midpoint and only play will tell whether the order feels arbitrary enough. Step 5
+   is where the answer comes from.
+2. **Is 12 game hours still the right interval** once each sweep covers a tenth of the province rather than
    the top 25 by engagement? The question this milestone answers is who gets examined, not how often — but
-   the two interact, and the answer that felt right for a biased sample may not suit an even one.
+   the two interact, and the answer that felt right for a biased sample may not suit an even one. Left as a
+   tuning question for after Step 5; nothing in the plan depends on it.
