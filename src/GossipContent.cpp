@@ -517,11 +517,10 @@ namespace NarrativeEngine::GossipContent
         }
     }
 
-    ComposedPair Compose(const std::string& bandText, RE::FormID teller, RE::FormID listener)
+    std::string ComposeHeard(const std::string& bandText, RE::FormID teller, RE::FormID listener)
     {
         const auto tie = DescribeTie(teller, listener);
         const auto tellerName = NameOf(teller);
-        const auto listenerName = NameOf(listener);
 
         // How the listener will remember hearing it. The last row is the
         // common case by a wide margin, and that is fine — it is genuinely
@@ -550,6 +549,20 @@ namespace NarrativeEngine::GossipContent
             heard = std::format("I heard a rumor going round: {}", bandText);
         }
 
-        return ComposedPair{std::format("I told {} this: {}", listenerName, bandText), std::move(heard)};
+        return heard;
+    }
+
+    std::string ComposeTold(const std::string& bandText, const std::vector<RE::FormID>& listeners)
+    {
+        // "B", "B and C", "B, C and D". Oxford comma deliberately omitted:
+        // these are spoken-voice memories, not prose.
+        std::string who;
+        for (std::size_t i = 0; i < listeners.size(); ++i) {
+            if (i > 0) {
+                who += (i + 1 == listeners.size()) ? " and " : ", ";
+            }
+            who += NameOf(listeners[i]);
+        }
+        return std::format("I told {} this: {}", who, bandText);
     }
 } // namespace NarrativeEngine::GossipContent

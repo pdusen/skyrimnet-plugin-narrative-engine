@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <deque>
 #include <format>
+#include <map>
 #include <mutex>
 #include <queue>
 #include <random>
@@ -359,7 +360,34 @@ namespace NarrativeEngine::GossipSim
             g_queue.push({dueGameDay, rumorId, carrier});
         }
 
-        // The two memories a transmission writes. No LLM here — this is a
+        // Teller-side memories, accumulated across the tick and written
+        // once per (rumor, carrier) when the drain ends.
+        //
+        // A listener catches a given rumor exactly once — the carrier map
+        // makes them immune afterwards — so the listener side is naturally
+        // one memory per person and is written immediately. The TELLER side
+        // is not: one carrier can pass the same rumor to several people in
+        // a tick, which used to produce that many near-identical "I told X
+        // this: ..." rows. Collapsing them into "I told X, Y and Z this:"
+        // reads better and writes fewer rows into the store the harvester
+        // has to read back through.
+        //
+        // Keyed on (rumor, teller). An ordered map rather than a hash so the
+        // pair key needs no hash specialisation; it holds at most one entry
+        // per carrier that spoke this tick.
+        struct PendingTell
+        {
+            std::vector<RE::FormID> listeners; // base forms, in telling order
+            std::size_t band = 0;
+            // The TELLER's own location at their first telling of the tick.
+            // A per-listener location cannot be used once there are several
+            // listeners, and where the teller stood is the more sensible
+            // answer for a memory about telling.
+            RE::FormID location = 0;
+        };
+        std::map<std::pair<std::uint32_t, RE::FormID>, PendingTell> g_pendingTells;
+
+        // The memories a transmission writes. No LLM here — this is a
         // string build from band text the seed-time call already produced,
         // plus relationship-aware framing.
         //
@@ -376,11 +404,12 @@ namespace NarrativeEngine::GossipSim
         // array alike — must be the PLACED REFERENCE instead. These are
         // different FormIDs for the same person, and writing a memory
         // against the base form addresses nobody.
-        void WriteMemories(const Rumor& rumor,
-                           RE::FormID teller,
-                           RE::FormID listener,
-                           std::uint32_t generation,
-                           RE::FormID location)
+        void RecordTransmission(const Rumor& rumor,
+                                RE::FormID teller,
+                                RE::FormID listener,
+                                std::uint32_t generation,
+                                RE::FormID listenerLocation,
+                                RE::FormID tellerLocation)
         {
             if (rumor.bands.empty()) {
                 return;
@@ -402,33 +431,90 @@ namespace NarrativeEngine::GossipSim
             }
 
             const auto band = std::min(GossipContent::BandForGeneration(generation), rumor.bands.size() - 1);
-            const auto composed = GossipContent::Compose(rumor.bands[band], teller, listener);
-
-            const auto& locName = GossipGraph::LocationName(location);
             const auto tags = std::format(R"(["{}"])", GossipHarvest::kOwnOutputTag);
-            const int a = SkyrimNetAPI::AddMemory(tellerRef,
-                                                  composed.tellerText,
-                                                  rumor.notability,
-                                                  "KNOWLEDGE",
-                                                  "",
-                                                  locName,
-                                                  tags,
-                                                  std::format("[{}]", listenerRef));
-            const int b = SkyrimNetAPI::AddMemory(listenerRef,
-                                                  composed.listenerText,
-                                                  rumor.notability,
-                                                  "KNOWLEDGE",
-                                                  "",
-                                                  locName,
-                                                  tags,
-                                                  std::format("[{}]", tellerRef));
-            for (const int id : {a, b}) {
-                if (id > 0) {
+
+            // The listener's memory goes out now: they hear this rumor once
+            // and never again, so there is nothing to accumulate.
+            const int written =
+                SkyrimNetAPI::AddMemory(listenerRef,
+                                        GossipContent::ComposeHeard(rumor.bands[band], teller, listener),
+                                        rumor.notability,
+                                        "KNOWLEDGE",
+                                        "",
+                                        GossipGraph::LocationName(listenerLocation),
+                                        tags,
+                                        std::format("[{}]", tellerRef));
+            if (written > 0) {
+                ++g_counters.memoriesWritten;
+            } else {
+                ++g_counters.memoryWriteFailures;
+            }
+
+            // The teller's waits for the end of the tick, by which point
+            // everyone they told is known.
+            auto& pending = g_pendingTells[{rumor.id, teller}];
+            if (pending.listeners.empty()) {
+                pending.band = band;
+                pending.location = tellerLocation;
+            }
+            pending.listeners.push_back(listener);
+        }
+
+        // One teller-side memory per (rumor, carrier) that spoke, then empty
+        // the accumulator.
+        //
+        // Must run on EVERY path out of the drain, cancellation included.
+        // The listener halves are already written, so skipping this would
+        // leave them unanswered — and worse, would carry the accumulator
+        // into the next tick and credit this tick's listeners to that one.
+        void FlushPendingTells()
+        {
+            for (const auto& [key, pending] : g_pendingTells) {
+                const auto rumorId = key.first;
+                const auto teller = key.second;
+                const auto it = g_rumors.find(rumorId);
+                if (it == g_rumors.end() || pending.listeners.empty()) {
+                    continue;
+                }
+                const auto& rumor = it->second;
+                if (pending.band >= rumor.bands.size()) {
+                    continue;
+                }
+                const auto tellerRef = GossipGraph::ActorRefFor(teller);
+                if (tellerRef == 0) {
+                    ++g_counters.memoryWriteFailures;
+                    continue;
+                }
+
+                std::string related = "[";
+                for (const auto listener : pending.listeners) {
+                    const auto ref = GossipGraph::ActorRefFor(listener);
+                    if (ref == 0) {
+                        continue;
+                    }
+                    if (related.size() > 1) {
+                        related += ",";
+                    }
+                    related += std::format("{}", ref);
+                }
+                related += "]";
+
+                const int written =
+                    SkyrimNetAPI::AddMemory(tellerRef,
+                                            GossipContent::ComposeTold(rumor.bands[pending.band], pending.listeners),
+                                            rumor.notability,
+                                            "KNOWLEDGE",
+                                            "",
+                                            GossipGraph::LocationName(pending.location),
+                                            std::format(R"(["{}"])", GossipHarvest::kOwnOutputTag),
+                                            related);
+                if (written > 0) {
                     ++g_counters.memoriesWritten;
                 } else {
                     ++g_counters.memoryWriteFailures;
                 }
             }
+            g_pendingTells.clear();
         }
 
         void FinishRumorLocked(Rumor& rumor)
@@ -639,7 +725,12 @@ namespace NarrativeEngine::GossipSim
                                 fromP ? fromP->hold : 0,
                                 toP->hold);
 
-                WriteMemories(rumor, carrierId, listener, fresh.generation, location);
+                RecordTransmission(rumor,
+                                   carrierId,
+                                   listener,
+                                   fresh.generation,
+                                   location,
+                                   fromP ? (fromP->settlement ? fromP->settlement : fromP->hold) : 0);
                 ScheduleLocked(rumorId, listener, fresh.nextStepGameDay);
             }
 
@@ -922,6 +1013,7 @@ namespace NarrativeEngine::GossipSim
                 GossipLog::Note(std::format("drain: abandoned after {} event(s) — the world it was "
                                             "simulating has been replaced",
                                             processed));
+                FlushPendingTells();
                 return;
             }
             const auto entry = g_queue.top();
@@ -943,6 +1035,10 @@ namespace NarrativeEngine::GossipSim
             ++processed;
         }
 
+        // Before the reap, which erases burned-out rumors: a carrier can
+        // speak and its rumor burn out inside the same drain, and the flush
+        // reads the rumor's band text.
+        FlushPendingTells();
         SweepAndReap(gt);
     }
 

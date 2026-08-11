@@ -41,15 +41,23 @@ namespace SKSE
 // ---------------------------------------------------------------------
 // What a transmission writes
 //
-// Two real AddMemory calls, one for each party, composed by
-// GossipContent from the rumor's generation-banded text plus
-// relationship-aware framing. No LLM is involved anywhere in this
-// module: the calls that judge the memory and produce the band text both
-// happen at seed time, before the rumor is ever handed here.
+// Real AddMemory calls, composed by GossipContent from the rumor's
+// generation-banded text plus relationship-aware framing. No LLM is
+// involved anywhere in this module: the calls that judge the memory and
+// produce the band text both happen at seed time, before the rumor is
+// ever handed here.
 //
-// Both memories are typed KNOWLEDGE and tagged GossipHarvest::kOwnOutputTag,
-// which is what
-// keeps gossip's own output out of GossipHarvest's candidate set.
+// The two sides are written on different schedules. A listener catches a
+// rumor once and is immune afterwards, so their memory goes out as the
+// transmission happens. A carrier can pass the same rumor to several
+// people in one tick, so the teller side accumulates and is written once
+// per (rumor, carrier) at the end of the drain, naming everyone they told
+// — "I told Onmund, Nirya and Tolfdir this: ..." rather than three
+// near-identical rows.
+//
+// Every memory is typed KNOWLEDGE and tagged GossipHarvest::kOwnOutputTag,
+// which is what keeps gossip's own output out of GossipHarvest's
+// candidate set.
 //
 // ---------------------------------------------------------------------
 // Threading

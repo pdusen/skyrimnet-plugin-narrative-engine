@@ -138,10 +138,20 @@ namespace NarrativeEngine::GossipContent
     // Kinship terms come from BGSAssociationType::associationLabels, which
     // supplies gendered labels ("sister", "cousin") straight from the
     // record rather than inventing them.
-    struct ComposedPair
-    {
-        std::string tellerText;
-        std::string listenerText;
-    };
-    ComposedPair Compose(const std::string& bandText, RE::FormID teller, RE::FormID listener);
+    // How the LISTENER remembers hearing it. Framing depends on the tie
+    // between the two, so this is per-listener and there is one such
+    // memory per person who caught the rumor.
+    std::string ComposeHeard(const std::string& bandText, RE::FormID teller, RE::FormID listener);
+
+    // How the TELLER remembers passing it on, naming every person they
+    // told during the tick.
+    //
+    // One memory per (rumor, teller, tick) rather than one per telling.
+    // A carrier can pass the same rumor on many times while each listener
+    // catches it exactly once, so the teller side is where the duplication
+    // was: three near-identical "I told X this: ..." rows for one
+    // afternoon of talking. Naming the listeners in a single row reads
+    // better and writes fewer memories into a store the harvester has to
+    // read back.
+    std::string ComposeTold(const std::string& bandText, const std::vector<RE::FormID>& listeners);
 } // namespace NarrativeEngine::GossipContent
