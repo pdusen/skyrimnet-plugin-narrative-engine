@@ -19,7 +19,6 @@
 #include <GossipGraph.h>
 #include <GossipHarvest.h>
 #include <GossipLog.h>
-#include <GossipQueryProbe.h>
 #include <GossipSim.h>
 #include <GossipTick.h>
 #include <HoldGrid.h>
@@ -293,8 +292,6 @@ namespace NarrativeEngine
                 GossipLog::OnSessionStart();
                 GossipSim::OnSessionStart();
                 GossipTick::OnSessionStart();
-                // THROWAWAY -- delete with GossipQueryProbe.
-                GossipQueryProbe::OnSessionStart();
                 Tick::Start();
                 break;
             case SKSE::MessagingInterface::kPreLoadGame:
@@ -359,8 +356,6 @@ namespace NarrativeEngine
                 GossipLog::OnSessionStart();
                 GossipSim::OnSessionStart();
                 GossipTick::OnSessionStart();
-                // THROWAWAY -- delete with GossipQueryProbe.
-                GossipQueryProbe::OnSessionStart();
                 Tick::Start();
                 break;
             default:

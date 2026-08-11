@@ -7,7 +7,6 @@
 #include <EvaluationPipeline.h>
 #include <EventHistoryWriter.h>
 #include <FineRoads.h>
-#include <GossipQueryProbe.h>
 #include <GossipTick.h>
 #include <logger.h>
 #include <PhaseTracker.h>
@@ -78,8 +77,6 @@ namespace NarrativeEngine::Tick
             // own worker, where it may block for as long as it needs to
             // without any of the polls above noticing.
             GossipTick::Poll(pt, elapsedSec);
-            // THROWAWAY -- delete with GossipQueryProbe.
-            GossipQueryProbe::Poll(pt, elapsedSec);
 
             // Consume the elapsed sample above so a subsequent
             // re-enable doesn't credit disabled time.
