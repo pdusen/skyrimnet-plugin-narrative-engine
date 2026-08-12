@@ -28,6 +28,26 @@ namespace NarrativeEngine::EvaluationPipeline
     {
         std::atomic<bool> g_inFlight = false;
 
+        // Releases g_inFlight on any exit path unless dismissed. Used to
+        // keep a throw out of BeginEvaluation from latching the flag on
+        // forever, which would skip every future tick.
+        struct InFlightGuard
+        {
+            bool armed = true;
+
+            void Dismiss() noexcept
+            {
+                armed = false;
+            }
+
+            ~InFlightGuard()
+            {
+                if (armed) {
+                    g_inFlight.store(false);
+                }
+            }
+        };
+
         // Unix-epoch seconds. The canonical DecisionRecord timestamp so
         // dashboard ordering survives save/load (a per-process steady-
         // clock anchor would reset every session).
@@ -403,13 +423,14 @@ namespace NarrativeEngine::EvaluationPipeline
         // score early in a phase from immediately advancing.
         r.advancedToPhase = PhaseTracker::EvaluateAdvance(r.currentPhase, r.tensionScore, snapshot.timeInPhaseSeconds);
 
-        // Sanitize BEFORE the clamp so truncation lands on a well-
-        // defined byte boundary (see docs/LLM_RESPONSE_HANDLING.md).
+        // Sanitize BEFORE the clamp, and clamp on character boundaries:
+        // Sanitize passes non-Latin scripts through verbatim, so a raw
+        // resize() splits multi-byte characters and the resulting invalid
+        // UTF-8 throws out of every later dump() (see
+        // docs/LLM_RESPONSE_HANDLING.md).
         if (auto it = parsed.find("narrative_note"); it != parsed.end() && it->is_string()) {
             std::string note = LLMTextSanitizer::Sanitize(it->get<std::string>());
-            if (note.size() > 200) {
-                note.resize(200);
-            }
+            LLMTextSanitizer::TruncateUTF8(note, 200);
             r.narrativeNote = std::move(note);
         }
 
@@ -437,8 +458,7 @@ namespace NarrativeEngine::EvaluationPipeline
 
     void BeginEvaluation(const PluginThread::Token& pt)
     {
-        // Drop this tick if the previous evaluation is still running;
-        // the flag releases in ApplyDecision or the failure path.
+        // Drop this tick if the previous evaluation is still running.
         bool expected = false;
         if (!g_inFlight.compare_exchange_strong(expected, true)) {
             if (Settings::Get().debugMode) {
@@ -446,6 +466,13 @@ namespace NarrativeEngine::EvaluationPipeline
             }
             return;
         }
+
+        // Everything below can throw -- JSON serialization of LLM-derived
+        // text is the realistic case -- and the worker that called us only
+        // logs the exception. Without this guard the flag stays latched and
+        // every later tick skips forever, silently killing the Director for
+        // the rest of the session.
+        InFlightGuard guard;
 
         Snapshot snapshot = BuildSnapshot(pt);
         if (Settings::Get().debugMode) {
@@ -474,14 +501,24 @@ namespace NarrativeEngine::EvaluationPipeline
 
         if (!result.ok) {
             logger::warn("EvaluationPipeline: LLM call failed: {}", result.response);
-            g_inFlight.store(false);
             return;
         }
 
         DecisionLog::DecisionRecord rec = ParseDecision(result.response, snapshot);
 
         // ConsiderBeat takes ownership and is responsible for calling
-        // ApplyDecision and the finalizer exactly once.
-        BeatSystem::ConsiderBeat(pt, std::move(snapshot), std::move(rec), [] { g_inFlight.store(false); });
+        // ApplyDecision and the finalizer exactly once. The guard is
+        // dismissed rather than left armed because ConsiderBeat may return
+        // while the beat is still resolving asynchronously -- unlatching on
+        // return would let the next tick start a second, concurrent
+        // evaluation. If it throws, its finalizer never runs, so that one
+        // path has to release the flag by hand.
+        guard.Dismiss();
+        try {
+            BeatSystem::ConsiderBeat(pt, std::move(snapshot), std::move(rec), [] { g_inFlight.store(false); });
+        } catch (...) {
+            g_inFlight.store(false);
+            throw;
+        }
     }
 } // namespace NarrativeEngine::EvaluationPipeline

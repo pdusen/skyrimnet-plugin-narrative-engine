@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <string_view>
 
@@ -36,4 +37,21 @@ namespace NarrativeEngine::LLMTextSanitizer
     // The function never throws. Invalid UTF-8 sequences are dropped at
     // the offending byte (one byte consumed, no output emitted).
     std::string Sanitize(std::string_view input);
+
+    // Shorten `text` to at most `maxBytes` bytes without splitting a
+    // UTF-8 character. No-op when the string already fits.
+    //
+    // Why this exists: `Sanitize` only rewrites the typographic-noise
+    // codepoints and passes every other script through verbatim, so its
+    // output is UTF-8 but NOT necessarily ASCII. A plain
+    // `s.resize(200)` therefore cuts mid-character for any non-Latin
+    // player -- Cyrillic and Greek are 2 bytes per letter, CJK 3 --
+    // leaving a dangling lead byte. nlohmann::json refuses to serialize
+    // invalid UTF-8, so the corrupt string throws type_error.316 out of
+    // every later `dump()` that touches it, not at the truncation site.
+    // Use this for EVERY byte-budget clamp applied to LLM-derived text.
+    //
+    // The cut moves backwards to the nearest character boundary, so the
+    // result can be up to 3 bytes shorter than `maxBytes`. Never throws.
+    void TruncateUTF8(std::string& text, std::size_t maxBytes);
 } // namespace NarrativeEngine::LLMTextSanitizer

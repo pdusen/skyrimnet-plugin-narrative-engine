@@ -1050,16 +1050,12 @@ namespace NarrativeEngine::BeatSystem
             std::string narrativeNote;
             if (auto it = parsed.find("narrative_note"); it != parsed.end() && it->is_string()) {
                 narrativeNote = LLMTextSanitizer::Sanitize(it->get<std::string>());
-                if (narrativeNote.size() > 200) {
-                    narrativeNote.resize(200);
-                }
+                LLMTextSanitizer::TruncateUTF8(narrativeNote, 200);
             }
             std::string parameterJustification;
             if (auto it = parsed.find("parameter_justification"); it != parsed.end() && it->is_string()) {
                 parameterJustification = LLMTextSanitizer::Sanitize(it->get<std::string>());
-                if (parameterJustification.size() > 400) {
-                    parameterJustification.resize(400);
-                }
+                LLMTextSanitizer::TruncateUTF8(parameterJustification, 400);
             }
 
             FinalizeWithLLMResponse(pt,

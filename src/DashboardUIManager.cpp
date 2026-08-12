@@ -11,6 +11,7 @@
 #include <GossipHarvest.h>
 #include <GossipSim.h>
 #include <LetterPool.h>
+#include <LLMTextSanitizer.h>
 #include <logger.h>
 #include <MainThread.h>
 #include <PhaseTracker.h>
@@ -1168,9 +1169,7 @@ namespace NarrativeEngine::DashboardUIManager
                             break;
                         preview.erase(pos, std::string_view{"</font>"}.size());
                     }
-                    if (preview.size() > 200) {
-                        preview.resize(200);
-                    }
+                    LLMTextSanitizer::TruncateUTF8(preview, 200);
                 }
                 slots.push_back({
                     {"index", s.index},
@@ -1272,8 +1271,7 @@ namespace NarrativeEngine::DashboardUIManager
             nlohmann::json current = nullptr;
             if (mode != VisitState::Mode::Idle) {
                 std::string briefingPreview = snap.briefingText;
-                if (briefingPreview.size() > 200)
-                    briefingPreview.resize(200);
+                LLMTextSanitizer::TruncateUTF8(briefingPreview, 200);
                 current = {
                     {"mode", modeStr(mode)},
                     {"sender_form_id", snap.senderFormID},

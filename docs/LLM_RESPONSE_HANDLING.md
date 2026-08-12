@@ -104,6 +104,39 @@ ASCII — so we'd end up with custom post-processing on top of any
 library, doubling the code paths. Hand-rolling the whole pass keeps
 everything in one switch statement and stays dependency-free.
 
+## Never clamp sanitized text with a bare `resize()`
+
+`Sanitize` returns UTF-8, **not ASCII** — that's the whole point of the
+pass-through policy above. So any byte-budget clamp applied to its output
+has to respect character boundaries:
+
+```cpp
+std::string note = LLMTextSanitizer::Sanitize(it->get<std::string>());
+LLMTextSanitizer::TruncateUTF8(note, 200);   // correct
+// note.resize(200);                         // WRONG — splits characters
+```
+
+A bare `resize(N)` lands mid-character whenever byte `N` falls inside a
+multi-byte sequence. Cyrillic and Greek are 2 bytes per letter and CJK is 3,
+so for a non-English player this is roughly a coin flip per clamp, and the
+string it produces ends in a dangling lead byte.
+
+What makes this worth its own section is the failure mode. `nlohmann::json`
+refuses to serialize invalid UTF-8, and it throws at **`dump()` time, not at
+the truncation site** — so the stack trace points at whatever subsystem
+happened to serialize the string next, arbitrarily far from the bug. In the
+one case we've shipped, a 200-byte clamp on a Russian `narrative_note`
+(`EvaluationPipeline`) surfaced as `type_error.316` thrown out of the
+Director's prompt build and the dashboard state push, neither of which does
+any truncating. The corrupt note was also persisted to the co-save, so the
+save stayed broken across restarts until the load path was taught to repair
+it.
+
+`TruncateUTF8` moves the cut backwards to the nearest character boundary, so
+the result can be up to 3 bytes under the budget. Budgets in this project are
+display or payload-size limits, never wire-format field widths, so coming in
+slightly short is always safe.
+
 ## Adding new call sites
 
 When you add a new LLM-driven feature:
@@ -122,5 +155,9 @@ When you add a new LLM-driven feature:
    and validated" — sanitize anyway. The cost is microseconds; the
    debugging cost of a smart-quote slipping into a player-visible book
    title is much higher.
+5. If the field has a length budget, clamp it with
+   `LLMTextSanitizer::TruncateUTF8(...)` rather than `resize()` — see the
+   section above for why a bare `resize()` is a latent crash for every
+   non-English player.
 
 See `CLAUDE.md` for the project-wide rule.

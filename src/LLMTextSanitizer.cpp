@@ -1,5 +1,6 @@
 #include <LLMTextSanitizer.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -220,5 +221,23 @@ namespace NarrativeEngine::LLMTextSanitizer
             out.erase(0, leading);
 
         return out;
+    }
+
+    void TruncateUTF8(std::string& text, std::size_t maxBytes)
+    {
+        if (text.size() <= maxBytes) {
+            return;
+        }
+
+        // `cut` indexes the first byte that would be dropped. If that
+        // byte is a UTF-8 continuation byte (0b10xxxxxx) the cut is
+        // sitting inside a multi-byte character, so walk backwards until
+        // it lands on a lead byte -- at most 3 steps for a well-formed
+        // sequence, and bounded by `cut > 0` if the input is malformed.
+        std::size_t cut = maxBytes;
+        while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) {
+            --cut;
+        }
+        text.resize(cut);
     }
 } // namespace NarrativeEngine::LLMTextSanitizer

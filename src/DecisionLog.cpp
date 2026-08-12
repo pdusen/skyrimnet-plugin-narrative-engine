@@ -1,5 +1,6 @@
 #include <DecisionLog.h>
 
+#include <LLMTextSanitizer.h>
 #include <logger.h>
 
 #include <deque>
@@ -181,6 +182,16 @@ namespace NarrativeEngine::DecisionLog
                 Clear();
                 return;
             }
+
+            // Repair the note's UTF-8. Builds before the byte-boundary fix
+            // in LLMTextSanitizer::TruncateUTF8 clamped this field with a
+            // raw resize(), so any co-save written by one of them can hold a
+            // note ending in a split multi-byte character. Left alone it
+            // throws type_error.316 out of every dump() that touches the
+            // decision log -- which is every Director tick and every
+            // dashboard push -- so an affected save would stay broken even
+            // on a fixed build. Sanitize drops the malformed tail bytes.
+            r.narrativeNote = LLMTextSanitizer::Sanitize(r.narrativeNote);
 
             // Validate phase bytes — clamp to Exposition (and drop bad
             // advancement values) so a corrupt save doesn't poison live state.

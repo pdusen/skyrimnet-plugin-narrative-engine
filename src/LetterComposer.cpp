@@ -835,8 +835,7 @@ namespace NarrativeEngine::LetterComposer
         out.reserve(kBudget);
         out.append(kPrefix);
         out.append(bothStripped.empty() ? senderFullName : bothStripped);
-        if (out.size() > kBudget)
-            out.resize(kBudget);
+        LLMTextSanitizer::TruncateUTF8(out, kBudget);
         return out;
     }
 
