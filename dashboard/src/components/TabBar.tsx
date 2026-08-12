@@ -5,6 +5,10 @@ export type TabId = 'director' | 'letters' | 'visit' | 'gossip' | 'dispatch' | '
 interface Props {
     active: TabId;
     onChange: (id: TabId) => void;
+    // Tabs whose subsystem is switched off in the INI. They are dropped
+    // from the bar entirely rather than rendered disabled — a greyed-out
+    // button invites a click that can never do anything.
+    hidden?: ReadonlySet<TabId>;
 }
 
 interface TabDef {
@@ -21,10 +25,10 @@ const TABS: TabDef[] = [
     { id: 'settings', label: 'Settings' },
 ];
 
-export function TabBar({ active, onChange }: Props): ReactNode {
+export function TabBar({ active, onChange, hidden }: Props): ReactNode {
     return (
         <div className="tab-bar">
-            {TABS.map(t => (
+            {TABS.filter(t => !hidden?.has(t.id)).map(t => (
                 <button
                     key={t.id}
                     type="button"
