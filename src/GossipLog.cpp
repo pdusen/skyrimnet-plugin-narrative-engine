@@ -242,24 +242,20 @@ namespace NarrativeEngine::GossipLog
     void Harvest(const HarvestStats& stats)
     {
         Emit(std::format("HARVEST bucket={}/{}  actors={}  memories={}  candidates={}  sent={}  "
-                         "(rejected: {} too-old, {} low-importance, {} diary, {} no-content, "
-                         "{} no-game-time, {} own-gossip, {} claimed, {} same-event, "
-                         "{} isolated)",
+                         "(rejected: {} diary, {} no-content, {} claimed, {} same-event, "
+                         "{} isolated, {} unfiltered)",
                          stats.bucket,
                          stats.bucketCount,
                          stats.bucketPopulation,
                          stats.memoriesExamined,
                          stats.candidates,
                          stats.sentForGeneration,
-                         stats.rejectedTooOld,
-                         stats.rejectedLowImportance,
                          stats.rejectedDiary,
                          stats.rejectedNoContent,
-                         stats.rejectedNoGameTime,
-                         stats.rejectedOwnOutput,
                          stats.rejectedClaimed,
                          stats.rejectedSameEvent,
-                         stats.rejectedIsolated));
+                         stats.rejectedIsolated,
+                         stats.rejectedUnfiltered));
     }
 
     void Memory(std::int64_t memoryId, RE::FormID owner, float importance, std::string_view verdict)

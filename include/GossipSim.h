@@ -255,6 +255,25 @@ namespace NarrativeEngine::GossipSim
     // lottery ticket rather than a contact.
     float AvailableContactShare(const GossipThread::Token&, RE::FormID npc);
 
+    // Why AvailableContactShare returned what it did, as one trace line:
+    // the tier locations the graph gave `npc`, how much of their contact
+    // weight is reachable, and the unreachable peers responsible, largest
+    // share first, each named with the channel that put them there.
+    //
+    // Exists because the verdict is a weighted ratio over data assembled
+    // from three different places -- the LCUN walk, the faction pairs and
+    // the live availability read -- and knowing only the ratio does not
+    // say which of them produced it. Ancano reads 1% while standing in a
+    // College full of live mages, and the records alone cannot distinguish
+    // "his settlement never resolved" from "his faction edges outweigh it"
+    // from "his neighbours are not resolving as available". All three are
+    // one line of numbers apart.
+    //
+    // Rebuilds the same walk rather than sharing it, so call it only on
+    // the rejection path. Contacts are cached; the availability reads are
+    // not, and there is one per peer.
+    std::string DescribeContactAvailability(const GossipThread::Token&, RE::FormID npc);
+
     // Every rumor still in the map, newest first. The map holds exactly
     // the rumors that have not been reaped, which is what the dashboard
     // wants: a rumor is listed until its last carrier retires.

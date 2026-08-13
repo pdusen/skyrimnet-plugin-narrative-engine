@@ -18,9 +18,10 @@
 
 #include <algorithm>
 #include <format>
-#include <mutex>
+#include <optional>
 #include <random>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace NarrativeEngine::GossipHarvest
@@ -33,6 +34,10 @@ namespace NarrativeEngine::GossipHarvest
         // but seeded from the same iGossipRandomSeed so a run stays
         // reproducible end to end.
         std::mt19937 g_rng{7919};
+        // SkyrimNet API version that first exported PublicQueryMemoriesForActor.
+        // Below it there is no way to keep gossip out of its own input at the
+        // point that matters — before truncation — so the harvest does not run.
+        constexpr int kMinApiVersion = 10;
         // Whether the "cannot sweep yet" note has already been emitted for
         // the current outage; reset the moment a sweep succeeds.
         bool g_deferredLogged = false;
@@ -76,6 +81,121 @@ namespace NarrativeEngine::GossipHarvest
             return out;
         }
 
+        // The filter this harvest asks SkyrimNet to apply, instead of
+        // applying it itself.
+        //
+        // All of it ran client-side until SkyrimNet API v10, and running it
+        // client-side is what starved the harvest. The old endpoint ranks an
+        // actor's WHOLE store and truncates at maxCount, so a filter applied
+        // to the result only ever filtered what survived the cut — and
+        // gossip's own writebacks are always the newest rows, so under
+        // recency ordering they took every slot. Measured on a real save: 0
+        // usable candidates out of 10 for an actor whose full corpus held 78.
+        // The workarounds were to widen the fetch to 200 rows and bias the
+        // ranking with a semantic contextQuery. Neither is needed once the
+        // filter runs in SQL ahead of the truncation, and both are gone.
+        MemoryQuery BuildQuery(const Settings::Config& cfg, double nowGameSeconds)
+        {
+            MemoryQuery q;
+            q.maxCount = std::max(1, cfg.gossipHarvestMemoriesPerActor);
+
+            // The feedback-loop guard, and the one filter gossip cannot run
+            // without. Gossip writes memories; if those could seed rumors, a
+            // rumor reaching twenty people would write forty memories, which
+            // would become forty rumors, without bound.
+            //
+            // `ne_gossip`, NOT `gossip`. SkyrimNet's own tagger applies
+            // `gossip` as a TOPICAL label to memories merely ABOUT
+            // gossiping — 56 rows in 1602 on a real save, every one a real
+            // memory, and exactly the social-drama material most worth
+            // spreading. A tag nobody else writes cannot collide.
+            q.excludeTags = {kOwnOutputTag};
+
+            // Gossip is news. Both bounds are game-seconds, the same base the
+            // row's `game_time` field and EventLogUtil::NowGameTimeSeconds
+            // report, so no unit conversion is implied anywhere.
+            //
+            // The upper bound is the TICK'S HORIZON rather than the current
+            // clock, which is what lets a tick that ran late still be an
+            // exact tick: a memory written after the moment this tick
+            // simulates belongs to the next one, and the query never sees it.
+            q.gameTimeAfter = nowGameSeconds - static_cast<double>(cfg.gossipHarvestWindowDays) * 86400.0;
+            q.gameTimeBefore = nowGameSeconds;
+
+            q.minImportance = cfg.gossipMinMemoryImportance;
+
+            // Newest first, and NOT Relevance.
+            //
+            // Relevance is the old semantic mode, and it can only return
+            // memories already present in SkyrimNet's vector index; the SQL
+            // orders see every eligible row. Completeness is what matters
+            // here — a farmer in Rorikstead with one notable memory has to
+            // be able to seed from it, and an embedding that has not been
+            // generated yet would make them invisible. The semantic
+            // contextQuery this used to pass existed only to dodge the
+            // recency crowding above, and has nothing left to do.
+            //
+            // Recency rather than importance, because the importance floor
+            // is already a filter: every row that comes back has cleared it,
+            // so ordering by it again only decides WHICH qualifying memories
+            // get dropped at the cut — and dropping the fresh ones is the
+            // wrong answer twice over. Gossip is news, so a thing that
+            // happened yesterday is better material than a slightly higher-
+            // scoring one from forty days ago; and an actor's most important
+            // memories are a nearly static set, so importance ordering hands
+            // back the same rows sweep after sweep, with anything already
+            // claimed occupying a slot until it ages out of the window
+            // entirely. Under recency the window rotates itself.
+            //
+            // Picking the best of what comes back is the caller's job and it
+            // already does it: RunSweepImpl ranks each owner's candidates by
+            // importance, then fills the evaluation pool round-robin across
+            // owners. So this cut chooses what an owner can offer, and that
+            // ranking chooses what they do offer.
+            q.orderBy = MemoryOrder::GameTimeDesc;
+            return q;
+        }
+
+        // Why `row` should not have been returned at all, or "" if it
+        // satisfies everything BuildQuery asked for.
+        //
+        // NOT a pruning pass — the query already excluded all of this, so
+        // every one of these is dead weight in the normal case. It exists
+        // because the failure it catches is silent and unbounded: if the
+        // server-side tag exclusion ever stops holding, gossip re-seeds from
+        // its own output and the only symptom is a mill that will not stop.
+        // Cheap enough (three field reads) to be worth carrying permanently.
+        std::string FilterViolation(const nlohmann::json& row, const Settings::Config& cfg, double nowGameSeconds)
+        {
+            if (const auto tagsIt = row.find("tags"); tagsIt != row.end() && tagsIt->is_array()) {
+                const bool ours = std::any_of(tagsIt->begin(), tagsIt->end(), [](const auto& t) {
+                    return t.is_string() && t.template get_ref<const std::string&>() == kOwnOutputTag;
+                });
+                if (ours) {
+                    return "own-gossip";
+                }
+            }
+            // A row with no `game_time` cannot satisfy a bounded range, so
+            // its presence is the same failure as a row outside one. Guarded
+            // explicitly rather than left to value()'s default of 0, which
+            // would read as "written at game start" and look merely old.
+            const auto gameTimeIt = row.find("game_time");
+            if (gameTimeIt == row.end() || !gameTimeIt->is_number()) {
+                return "no-game-time";
+            }
+            const double ageDays = (nowGameSeconds - gameTimeIt->get<double>()) / 86400.0;
+            if (ageDays < 0.0) {
+                return std::format("after-horizon ({:.1f}d)", -ageDays);
+            }
+            if (ageDays > cfg.gossipHarvestWindowDays) {
+                return std::format("too-old ({:.1f}d)", ageDays);
+            }
+            if (row.value("importance_score", 0.0) < static_cast<double>(cfg.gossipMinMemoryImportance)) {
+                return "low-importance";
+            }
+            return {};
+        }
+
         // Stage 2: qualify this actor's recent memories.
         void CollectFrom(const GossipThread::Token& gt,
                          const GossipGraph::Participant& actor,
@@ -85,8 +205,7 @@ namespace NarrativeEngine::GossipHarvest
                          std::vector<Candidate>& out)
         {
             // SkyrimNet call: reference id.
-            const auto raw = SkyrimNetAPI::GetMemoriesForActor(
-                actor.actorRef, std::max(1, cfg.gossipHarvestMemoriesPerActor), cfg.gossipHarvestContextQuery);
+            const auto raw = SkyrimNetAPI::QueryMemoriesForActor(actor.actorRef, BuildQuery(cfg, nowGameSeconds));
             nlohmann::json j = nlohmann::json::parse(raw, nullptr, false);
             if (!j.is_array()) {
                 return;
@@ -99,7 +218,7 @@ namespace NarrativeEngine::GossipHarvest
             if (static bool dumped = false; !dumped && Settings::Get().debugMode && !j.empty()) {
                 dumped = true;
                 logger::info("GossipHarvest: raw memory row as returned by "
-                             "GetMemoriesForActor -> {}",
+                             "QueryMemoriesForActor -> {}",
                              j.front().dump());
             }
             for (const auto& m : j) {
@@ -115,118 +234,32 @@ namespace NarrativeEngine::GossipHarvest
                 // FIELD NAMES: see the note in the header. These come from
                 // what the endpoint returns, NOT from its doc comment.
                 //
-                // `importance_score` is the raw score. The row also carries
-                // `decayed_importance`, which is far lower (0.05 against a
-                // raw 0.92 on a two-month-old memory) and decays on the same
-                // real-world clock as age_hours below — so it would import
-                // the same bug through a different door.
+                // `importance_score` is the raw score, and the field the
+                // query's minImportance bound is applied to. The row also
+                // carries `decayed_importance`, which is far lower (0.05
+                // against a raw 0.92 on a two-month-old memory) and decays
+                // on the same real-world clock `age_hours` uses — so reading
+                // that one here would put a real-world quantity back into a
+                // pipeline that is otherwise entirely in-world.
                 const auto importance = static_cast<float>(m.value("importance_score", 0.0));
                 auto content = JsonUtils::StringOr(m, "content");
 
-                // The DIRECT feedback-loop guard.
-                //
-                // The design was built on "there is NO tags field, so the
-                // tag written at AddMemory time cannot be filtered on at read
-                // time" — which is why the type allowlist was made to carry
-                // that job. The raw row dump falsifies it: `tags` is right
-                // there on the row. Checking it is exact where the type rule
-                // is a proxy, and it keeps holding if the allowlist is ever
-                // widened to admit KNOWLEDGE.
-                //
-                // The tag is `ne_gossip`, NOT `gossip`, and the distinction
-                // is not cosmetic. SkyrimNet's own memory tagger applies
-                // `gossip` as a TOPICAL tag to memories that are merely
-                // about gossiping — "Witnessed J'zargo and Brelyna bickering
-                // over who held the steadiest ward", "Over heated gossip in
-                // the Hall of the Elements that Sameth told Melker". A
-                // direct read of the database found 56 such rows in 1602,
-                // every one of them a real memory this guard was discarding,
-                // and they are exactly the social-drama material most worth
-                // gossiping about. A tag nobody else writes cannot collide.
-                //
-                // FIRST, ahead of the age test, and that ordering is load-
-                // bearing rather than cosmetic. PublicAddMemory takes no
-                // timestamp (SkyrimNet API v9) and stamps `game_time` on that
-                // path with WALL-CLOCK seconds, so every memory this plugin
-                // writes reads back as roughly 20,650 game-days in the
-                // future. Behind the age test, all 221 of our own writebacks
-                // in one 15-day run were rejected as `after-horizon` and this
-                // guard never ran once — which both made `too-old` a count of
-                // nothing but our own output and left the one check that
-                // actually stops the feedback loop completely unexercised.
-                // Ours are recognised by the tag we wrote, not by a clock we
-                // do not control.
-                if (const auto tagsIt = m.find("tags"); tagsIt != m.end() && tagsIt->is_array()) {
-                    const bool ours = std::any_of(tagsIt->begin(), tagsIt->end(), [](const auto& t) {
-                        return t.is_string() && t.template get_ref<const std::string&>() == kOwnOutputTag;
-                    });
-                    if (ours) {
-                        ++sweep.rejectedOwnOutput;
-                        GossipLog::Memory(id, actor.npc, importance, "own-gossip");
-                        continue;
-                    }
+                // Everything above was asked of SkyrimNet in the query, so
+                // this only ever fires when the server-side filter did NOT
+                // hold. Loud, and counted separately from the rejections
+                // that are genuinely ours to make: the tag exclusion is the
+                // feedback-loop guard, and a silent failure of it is a mill
+                // that will not stop.
+                if (const auto reason = FilterViolation(m, cfg, nowGameSeconds); !reason.empty()) {
+                    ++sweep.rejectedUnfiltered;
+                    GossipLog::Memory(id, actor.npc, importance, std::format("unfiltered ({})", reason));
+                    logger::warn("GossipHarvest: memory {} was returned despite the query excluding it "
+                                 "({}); SkyrimNet's server-side filter did not hold",
+                                 id,
+                                 reason);
+                    continue;
                 }
 
-                // IN-WORLD age, from `game_time`.
-                //
-                // NOT `age_hours`. That field is real-world elapsed time
-                // since the row was written: a raw row dump showed
-                // age_hours=1407.0 against creation_time 2026-06-10 for a
-                // harvest run on 2026-08-08, which is 58.6 real days — while
-                // the same memory was under half a game-day old. A save
-                // picked up after a two-month break would have every memory
-                // in it read as ancient, which is precisely what happened.
-                //
-                // `game_time` is game-seconds since game start, the same
-                // base EventLogUtil::NowGameTimeSeconds returns
-                // (Calendar::GetDaysPassed * 86400) — so this is a plain
-                // subtraction in one consistent clock.
-                //
-                // That holds for rows SkyrimNet wrote itself, which is what
-                // this filter is for. Rows written through PublicAddMemory
-                // carry a wall-clock stamp instead (see the tag guard above),
-                // so any plugin's writeback that is NOT tagged `gossip` —
-                // LetterPool's, for one — still lands here and is rejected as
-                // after-horizon. Correct by accident rather than by design;
-                // it stops being accidental if SkyrimNet ever accepts a
-                // timestamp on that call.
-                //
-                // Guard the missing-field case explicitly rather than
-                // letting it default to 0: a 0 would read as "written at
-                // game start", i.e. maximally old, and silently reject
-                // everything. That failure mode has already cost two test
-                // runs on this endpoint.
-                const auto gameTimeIt = m.find("game_time");
-                if (gameTimeIt == m.end() || !gameTimeIt->is_number()) {
-                    ++sweep.rejectedNoGameTime;
-                    GossipLog::Memory(id, actor.npc, importance, "no-game-time");
-                    continue;
-                }
-                // `nowGameSeconds` is the TICK'S HORIZON, not the current
-                // clock. A negative age therefore means the memory was
-                // written after the moment this tick is simulating, and is
-                // discarded for being in the future rather than for being
-                // stale — the next tick will pick it up.
-                //
-                // The two share a counter but not a trace message, because
-                // "the harvest window is too short" and "the queue ran
-                // late" are diagnosed completely differently.
-                const double ageDays = (nowGameSeconds - gameTimeIt->get<double>()) / 86400.0;
-                if (ageDays < 0.0) {
-                    ++sweep.rejectedTooOld;
-                    GossipLog::Memory(id, actor.npc, importance, std::format("after-horizon ({:.1f}d)", -ageDays));
-                    continue;
-                }
-                if (ageDays > cfg.gossipHarvestWindowDays) {
-                    ++sweep.rejectedTooOld;
-                    GossipLog::Memory(id, actor.npc, importance, std::format("too-old ({:.1f}d)", ageDays));
-                    continue;
-                }
-                if (importance < cfg.gossipMinMemoryImportance) {
-                    ++sweep.rejectedLowImportance;
-                    GossipLog::Memory(id, actor.npc, importance, "low-importance");
-                    continue;
-                }
                 // Read for the trace only. There is no type allowlist any
                 // more: it existed solely to keep gossip out of its own
                 // input, back when `tags` was believed absent from the
@@ -285,15 +318,12 @@ namespace NarrativeEngine::GossipHarvest
             g_stats.actorsExamined += sweep.bucketPopulation;
             g_stats.memoriesExamined += sweep.memoriesExamined;
             g_stats.sentForGeneration += sweep.sentForGeneration;
-            g_stats.rejectedTooOld += sweep.rejectedTooOld;
-            g_stats.rejectedLowImportance += sweep.rejectedLowImportance;
+            g_stats.rejectedUnfiltered += sweep.rejectedUnfiltered;
             g_stats.rejectedClaimed += sweep.rejectedClaimed;
             g_stats.rejectedSameEvent += sweep.rejectedSameEvent;
             g_stats.rejectedIsolated += sweep.rejectedIsolated;
             g_stats.rejectedDiary += sweep.rejectedDiary;
             g_stats.rejectedNoContent += sweep.rejectedNoContent;
-            g_stats.rejectedNoGameTime += sweep.rejectedNoGameTime;
-            g_stats.rejectedOwnOutput += sweep.rejectedOwnOutput;
         }
 
         // Returns false when the sweep could not run at all. The caller
@@ -395,7 +425,15 @@ namespace NarrativeEngine::GossipHarvest
             // is the gate doing its job.
             auto& g_stats = GossipSim::MutableState(gt).harvest;
             const auto& cfg = Settings::Get();
-            if (!GossipGraph::IsReady() || !SkyrimNetAPI::IsMemorySystemReady()) {
+            // The filtered memory query is a hard requirement, not a
+            // preference. On an older SkyrimNet the export does not resolve
+            // and every query returns "[]", so the harvest would run in full
+            // and report examining a bucket of actors who each turned out to
+            // have nothing — a world where nothing memorable ever happens,
+            // indistinguishable in the trace from a quiet save. Refuse the
+            // sweep instead, and say why.
+            const bool queryAvailable = SkyrimNetAPI::GetVersion() >= kMinApiVersion;
+            if (!GossipGraph::IsReady() || !SkyrimNetAPI::IsMemorySystemReady() || !queryAvailable) {
                 // Logged once per outage rather than every poll: this fires
                 // every two seconds while it lasts. Before this said
                 // anything, a sweep that fired and bailed here was
@@ -404,9 +442,12 @@ namespace NarrativeEngine::GossipHarvest
                 // hard to account for.
                 if (!g_deferredLogged) {
                     g_deferredLogged = true;
-                    GossipLog::Note(std::format("harvest: deferred — graph ready={}, memory system ready={}",
+                    GossipLog::Note(std::format("harvest: deferred — graph ready={}, memory system ready={}, "
+                                                "SkyrimNet API v{} (need v{}+ for the filtered memory query)",
                                                 GossipGraph::IsReady(),
-                                                SkyrimNetAPI::IsMemorySystemReady()));
+                                                SkyrimNetAPI::IsMemorySystemReady(),
+                                                SkyrimNetAPI::GetVersion(),
+                                                kMinApiVersion));
                 }
                 return false;
             }
@@ -464,67 +505,158 @@ namespace NarrativeEngine::GossipHarvest
                 return a.importance > b.importance;
             });
 
-            // Take the best `attempts` candidates by importance, then hand
-            // them over in a RANDOM order.
+            // Fill the evaluation pool ROUND-ROBIN over owners, best-first
+            // within each owner, then hand it over in a RANDOM order.
             //
-            // Both halves matter. Ranking by importance decides WHICH
-            // memories are worth an evaluation at all; shuffling decides
-            // which of them actually seeds, and that has to be random —
-            // walking the pool in importance order would seed the top
-            // candidate every time the evaluator accepted it, which is a
-            // pool size of one wearing a disguise.
+            // Three separate jobs, and it matters that they stay separate:
             //
-            // Shuffled-then-walked is equivalent to evaluating the whole
-            // pool and picking an accepted one at random: within a uniform
-            // permutation the accepted candidates are in uniform relative
-            // order, so the first one reached is uniform over them. It just
-            // costs the evaluations actually needed to find it rather than
-            // one per candidate.
+            // Importance ordering WITHIN an owner decides which of that
+            // person's memories represents them. Round-robin ACROSS owners
+            // decides how many slots each person gets. Shuffling decides
+            // which pooled candidate actually seeds, and that has to be
+            // random -- walking the pool in importance order would seed the
+            // top candidate every time the evaluator accepted it, which is
+            // a pool size of one wearing a disguise.
+            //
+            // The round-robin is what stops memory COUNT deciding who
+            // seeds. A flat top-N by importance handed out tickets in
+            // proportion to how many qualifying memories a person held, and
+            // that number tracks proximity to the player above all else: a
+            // follower is present for everything the player does, so they
+            // accumulate rows nobody else can. One real bucket had Onmund
+            // holding 10 of 11 candidates; another had two College mages
+            // holding 20 of 25. The first pass now gives every owner with a
+            // candidate exactly one slot, so whenever at least `attempts`
+            // people have something notable, they are all equally likely.
+            // Later passes backfill from whoever has depth, which keeps the
+            // pool full when only one or two people have anything at all
+            // rather than shrinking it -- a short pool means more sweeps
+            // that seed nothing, and the refusal rate is high enough for
+            // that to be a real cost.
+            //
+            // What this deliberately does NOT equalise is importance. An
+            // owner's best memory still competes on its own merits once
+            // pooled, and a follower's best usually outscores a farmer's.
+            // Only the ticket COUNT is levelled.
+            struct OwnerQueue
+            {
+                RE::FormID owner = 0;
+                // This owner's candidates, most important first.
+                std::vector<const Candidate*> byImportance;
+                // Lazily evaluated on first touch. The isolation gate reads
+                // a life state per contact, so it is by far the most
+                // expensive test here, and it is a property of the OWNER
+                // rather than of the memory -- under flat pooling one
+                // unreachable actor paid it once per candidate, which on a
+                // real sweep meant computing Ancano's "1% of contacts
+                // reachable" sixteen times. Cached per owner, and only
+                // owners the fill actually reaches ever compute it.
+                std::optional<bool> reachable;
+            };
+
+            // `candidates` is already sorted by importance, so first-seen
+            // order gives each owner their best memory first. That part is
+            // wanted and is kept: it decides which of a person's memories
+            // represents them.
+            std::vector<OwnerQueue> queues;
+            std::unordered_map<RE::FormID, std::size_t> queueOf;
+            for (const auto& c : candidates) {
+                const auto [it, inserted] = queueOf.try_emplace(c.owner, queues.size());
+                if (inserted) {
+                    queues.push_back(OwnerQueue{c.owner, {}, std::nullopt});
+                }
+                queues[it->second].byImportance.push_back(&c);
+            }
+
+            // The order the OWNERS are visited in, however, must be random.
+            //
+            // Built as above it is descending by whose best memory scores
+            // highest, and that is a real bias rather than a tie-break: when
+            // more people hold candidates than there are attempts, the first
+            // pass never reaches the tail of the list, so the same few actors
+            // take every slot every time their bucket comes up. Since memory
+            // importance tracks proximity to the player, that is the same
+            // follower advantage the round-robin exists to remove, re-entering
+            // one level up.
+            //
+            // Shuffling here also settles the backfill, which walks this order
+            // again on each later pass. `queueOf` is not read past this point,
+            // so reordering does not invalidate anything.
+            std::shuffle(queues.begin(), queues.end(), g_rng);
+
             const auto attempts = static_cast<std::size_t>(std::max(1, cfg.gossipEvalAttemptsPerHarvest));
             std::vector<GossipContent::Candidate> pool;
             pool.reserve(attempts);
-            for (const auto& c : candidates) {
-                if (pool.size() >= attempts) {
+            for (std::size_t round = 0; pool.size() < attempts; ++round) {
+                // Set only by an owner who is both reachable and still has a
+                // candidate at this depth, so a pass in which every
+                // remaining owner is isolated or exhausted ends the fill
+                // instead of spinning out to the longest queue's length.
+                bool anyLeft = false;
+                for (auto& q : queues) {
+                    if (pool.size() >= attempts) {
+                        break;
+                    }
+                    if (round >= q.byImportance.size()) {
+                        continue;
+                    }
+                    if (!q.reachable.has_value()) {
+                        const float share = GossipSim::AvailableContactShare(gt, q.owner);
+                        q.reachable = share >= cfg.gossipMinAvailableContactShare;
+                        if (!*q.reachable) {
+                            // Counted once per OWNER now rather than once
+                            // per memory: what the sweep skipped is a
+                            // person, and how many rows they happened to
+                            // hold is not what the number is answering.
+                            ++sweep.rejectedIsolated;
+                            const auto* best = q.byImportance.front();
+                            GossipLog::Memory(best->memoryId,
+                                              q.owner,
+                                              best->importance,
+                                              std::format("isolated (only {:.0f}% of contacts reachable) -- "
+                                                          "{} candidate(s) skipped",
+                                                          share * 100.0f,
+                                                          q.byImportance.size()));
+                            // The MEMORY line gives the verdict; this gives
+                            // the arithmetic behind it. Once per skipped
+                            // owner per sweep, which the per-owner caching
+                            // above already bounds.
+                            GossipLog::Note(GossipSim::DescribeContactAvailability(gt, q.owner));
+                        }
+                    }
+                    if (!*q.reachable) {
+                        continue;
+                    }
+                    anyLeft = true;
+
+                    const auto& c = *q.byImportance[round];
+                    // Two accounts of the same happening must not both take
+                    // pool slots: whichever the shuffle reaches second is
+                    // guaranteed to be skipped once the first claims the
+                    // events, so it would occupy an attempt and buy nothing.
+                    // The persistent ledger is still re-checked per step
+                    // inside the walk -- this is only about not wasting
+                    // slots within one sweep.
+                    const bool overlapsPool = std::any_of(pool.begin(), pool.end(), [&](const auto& queued) {
+                        return std::any_of(c.eventIds.begin(), c.eventIds.end(), [&](std::int64_t id) {
+                            return std::find(queued.eventIds.begin(), queued.eventIds.end(), id)
+                                   != queued.eventIds.end();
+                        });
+                    });
+                    if (overlapsPool || GossipClaims::AreEventsClaimed(gt, c.eventIds)) {
+                        ++sweep.rejectedSameEvent;
+                        GossipLog::Memory(c.memoryId, c.owner, c.importance, "same-event (this sweep)");
+                        continue;
+                    }
+
+                    const auto* p = GossipGraph::Find(c.owner);
+                    const auto& locName = GossipGraph::LocationName(p ? (p->settlement ? p->settlement : p->hold) : 0);
+                    pool.push_back(
+                        GossipContent::Candidate{c.memoryId, c.owner, c.importance, c.text, locName, c.eventIds});
+                }
+                if (!anyLeft) {
                     break;
                 }
-                // An origin whose contacts are almost all unreachable will
-                // spend its whole quota on people who are away and reach
-                // nobody. Checked HERE rather than at qualification: it is
-                // the most expensive test in the pipeline (a life-state
-                // read per contact) and only the candidates in line for an
-                // evaluation need it. Failing it moves on to the next
-                // candidate rather than ending the sweep.
-                if (const float share = GossipSim::AvailableContactShare(gt, c.owner);
-                    share < cfg.gossipMinAvailableContactShare) {
-                    ++sweep.rejectedIsolated;
-                    GossipLog::Memory(c.memoryId,
-                                      c.owner,
-                                      c.importance,
-                                      std::format("isolated (only {:.0f}% of contacts reachable)", share * 100.0f));
-                    continue;
-                }
-
-                // Two accounts of the same happening must not both take pool
-                // slots: whichever the shuffle reaches second is guaranteed
-                // to be skipped once the first claims the events, so it
-                // would occupy an attempt and buy nothing. The persistent
-                // ledger is still re-checked per step inside the walk — this
-                // is only about not wasting slots within one sweep.
-                const bool overlapsPool = std::any_of(pool.begin(), pool.end(), [&](const auto& queued) {
-                    return std::any_of(c.eventIds.begin(), c.eventIds.end(), [&](std::int64_t id) {
-                        return std::find(queued.eventIds.begin(), queued.eventIds.end(), id) != queued.eventIds.end();
-                    });
-                });
-                if (overlapsPool || GossipClaims::AreEventsClaimed(gt, c.eventIds)) {
-                    ++sweep.rejectedSameEvent;
-                    GossipLog::Memory(c.memoryId, c.owner, c.importance, "same-event (this sweep)");
-                    continue;
-                }
-
-                const auto* p = GossipGraph::Find(c.owner);
-                const auto& locName = GossipGraph::LocationName(p ? (p->settlement ? p->settlement : p->hold) : 0);
-                pool.push_back(
-                    GossipContent::Candidate{c.memoryId, c.owner, c.importance, c.text, locName, c.eventIds});
             }
 
             if (!pool.empty()) {
@@ -602,13 +734,10 @@ namespace NarrativeEngine::GossipHarvest
         out.actorsExamined = h.actorsExamined;
         out.memoriesExamined = h.memoriesExamined;
         out.sentForGeneration = h.sentForGeneration;
-        out.rejectedTooOld = h.rejectedTooOld;
-        out.rejectedLowImportance = h.rejectedLowImportance;
+        out.rejectedUnfiltered = h.rejectedUnfiltered;
         out.rejectedClaimed = h.rejectedClaimed;
         out.rejectedDiary = h.rejectedDiary;
         out.rejectedNoContent = h.rejectedNoContent;
-        out.rejectedNoGameTime = h.rejectedNoGameTime;
-        out.rejectedOwnOutput = h.rejectedOwnOutput;
         out.rejectedSameEvent = h.rejectedSameEvent;
         out.rejectedIsolated = h.rejectedIsolated;
         return out;

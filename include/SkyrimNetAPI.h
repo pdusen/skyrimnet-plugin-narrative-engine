@@ -3,6 +3,12 @@
 #include <PluginThread.h>
 #include <WorkerToken.h>
 
+// SkyrimNet's typed memory-query header (v10+). Unlike PublicAPI.h this one
+// declares NO function pointers — it is a plain struct plus inline
+// serializers — so it is safe to include from a header that many translation
+// units pull in. PublicAPI.h includes it too; both are `#pragma once`.
+#include <PublicAPIMemoryQuery.h>
+
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -197,7 +203,32 @@ namespace NarrativeEngine::SkyrimNetAPI
     // SkyrimNet's vector search. Empty contextQuery falls back to
     // recency. Returns "[]" if SkyrimNet or its memory system isn't
     // ready.
+    //
+    // Has exactly two modes and no filters, and ranks the actor's WHOLE
+    // store before truncating at maxCount — so any filtering the caller
+    // does afterwards only filters what survived the cut. Prefer
+    // QueryMemoriesForActor below for anything that needs a filter;
+    // this remains for the letter and visit composers, whose
+    // "most relevant to the player" query is what semantic mode is for.
     std::string GetMemoriesForActor(std::uint32_t formId, int maxCount, const std::string& contextQuery);
+
+    // Returns a JSON array of memory entries for the given actor, filtered
+    // and ordered by SkyrimNet in SQL BEFORE truncation (API v10+). Same row
+    // shape as GetMemoriesForActor.
+    //
+    // The pre-truncation part is the whole point. Any plugin that writes
+    // memories back through AddMemory is blind under the old endpoint: its
+    // own rows are always the newest, so recency ordering hands them back
+    // ahead of everything else, and it compounds the more it writes. Gossip
+    // hit exactly that — 10 rows per actor came back 100% its own output
+    // within three or four of that actor's turns.
+    //
+    // Returns "[]" on an install older than v10 (the export does not
+    // resolve), which is indistinguishable from "this actor has no matching
+    // memories" — so a caller that CANNOT work without it should check
+    // GetVersion() and say so rather than harvesting silence. Logged once
+    // per session here for the same reason.
+    std::string QueryMemoriesForActor(std::uint32_t formId, const MemoryQuery& query);
 
     // Returns a JSON array of the most recent dialogue exchanges
     // between the player and the given NPC (chronological, oldest

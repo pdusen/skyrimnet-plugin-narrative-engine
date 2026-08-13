@@ -250,7 +250,10 @@ already written down.
 | `iGossipHarvestBuckets`        | 10               | How many buckets the population splits into; the cost lever    |
 | `iGossipBucketHistoryLength`   | -1               | Recent selections excluded from the next draw; -1 = bucketCount-1 |
 
-Removed: `iGossipHarvestActorSampleSize`.
+Removed: `iGossipHarvestActorSampleSize`, and (per the v10 addendum below) `sGossipHarvestContextQuery`.
+
+Changed: `iGossipHarvestMemoriesPerActor` 200 -> 30 — see the addendum; it is headroom above the observed
+bind now, not depth through noise.
 
 Unchanged: `iGossipRandomSeed` continues to seed the draw, so a run remains reproducible.
 
@@ -500,6 +503,56 @@ observed. This wants real play, or at minimum a save whose corpus is already bro
    should be none, since nothing waits on that thread — and note how long a sweep takes end to end.
 6. **Rumor quality is worse and that is expected.** The best memory in the drawn bucket seeds, not the best
    in the province. Confirm the drop reads as variety rather than as the system picking badly.
+7. **No `unfiltered` rejections.** The `HARVEST` line's last count must stay 0 — see the addendum below. A
+   non-zero value means SkyrimNet returned rows its own filter should have excluded, and the first of them
+   also writes a warning to `NarrativeEngine.log` naming which rule did not hold.
+
+---
+
+### Addendum — SkyrimNet API v10 filtered memory query
+
+Landed after Step 4, ahead of Step 5's validation run, and it changes what the sweep costs rather than who it
+examines. Bucket selection is untouched.
+
+`PublicQueryMemoriesForActor` (v10+) applies filtering and ordering in SQL **before** truncation, which the
+old `PublicGetMemoriesForActor` could not: it ranked an actor's whole store and cut at `maxCount`, so any
+filter applied afterwards only filtered what survived the cut. Gossip's own writebacks are always the newest
+rows, so under recency ordering they owned the entire result — 0 usable candidates out of 10 for an actor
+whose corpus held 78.
+
+The harvest now asks SkyrimNet for the exclusion of its own `ne_gossip` rows, the harvest window as a
+`game_time` range bounded above by **the tick's horizon**, and the importance floor — then takes the most
+**recent** rows that satisfy all of it. Ordering by importance would be filtering on it twice: every returned
+row has already cleared the floor, so it would only decide which qualifying memories fall off the cut, and
+dropping the fresh ones is wrong both because gossip is news and because an actor's top memories are a
+near-static set that would return unchanged every sweep. Selecting the best is still done — `RunSweepImpl`
+ranks the whole bucket's candidates by importance and takes the top `iGossipEvalAttemptsPerHarvest`.
+Consequences:
+
+- `iGossipHarvestMemoriesPerActor` goes to **30**, from 200, and means something different than it used to. It
+  was depth against a result set that was mostly noise; it is now headroom above where the cut was observed to
+  bind. The first live run under the new query showed 10 truncating exactly the actors worth harvesting — 11
+  actor-sweeps returned precisely 10 rows, every one a memory-rich College mage, while everyone else returned
+  one to nine. Their true eligible depth is unknown (the run only establishes ≥ 10), so 30 is chosen against
+  the observed bind rather than a measured ceiling, and deliberately stays a real bound.
+- `sGossipHarvestContextQuery` is **removed**. Semantic ranking existed to dodge the same crowding, and its
+  ordering (`Relevance`) can only return memories already present in SkyrimNet's vector index — the SQL
+  orders see every eligible row, and completeness is what a province-wide harvest needs.
+- The client-side age, importance and own-output rejections are gone as pruning rules. They survive as a
+  single `unfiltered` counter that fires only when the server-side filter does not hold, because the failure
+  it guards against — gossip re-seeding from its own output — is silent and unbounded.
+- The sweep will not run at all below API v10, and says so once per outage in the trace. The typed wrapper
+  returns `[]` on an older install, which would otherwise read as a bucket of people to whom nothing has
+  ever happened.
+- The pool is filled **round-robin across owners**, best-first within each owner, rather than as a flat top-N
+  by importance. A flat cut handed out tickets in proportion to how many qualifying memories a person held,
+  and that number tracks proximity to the player above all else — replaying the first v10 run, one bucket
+  gave Onmund all five slots and another gave Ancano all five. Round-robin raised the distinct actors given a
+  slot across that run from 22 to 28, without shortening a single pool. The isolation gate is now cached per
+  owner too, since it reads a life state per contact and is a property of the person, not the memory.
+
+Not changed by any of this: which memories are eligible, how buckets are drawn, or how a pooled candidate is
+judged. Only how the pool is apportioned between the people who have one.
 
 ---
 

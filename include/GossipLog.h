@@ -145,21 +145,23 @@ namespace NarrativeEngine::GossipLog
         std::size_t memoriesExamined = 0;
         std::size_t candidates = 0;
         std::size_t sentForGeneration = 0;
-        std::size_t rejectedTooOld = 0;
-        std::size_t rejectedLowImportance = 0;
+        // Rows the QUERY should have excluded and did not — our own
+        // gossip writebacks, anything outside the harvest window, anything
+        // under the importance floor. Expected to stay 0 on SkyrimNet v10+;
+        // a non-zero value means the server-side filter is not holding and
+        // is the one number in this line worth alarming on.
+        std::size_t rejectedUnfiltered = 0;
         std::size_t rejectedClaimed = 0;
         std::size_t rejectedDiary = 0;
         std::size_t rejectedNoContent = 0;
-        std::size_t rejectedNoGameTime = 0;
-        std::size_t rejectedOwnOutput = 0;
         std::size_t rejectedSameEvent = 0;
         std::size_t rejectedIsolated = 0;
     };
     void Harvest(const HarvestStats& stats);
 
     // One memory's fate in a sweep. `verdict` is "candidate" or the
-    // rejection reason ("too-old", "low-importance", "wrong-type",
-    // "claimed"). Emitted per examined memory, which is verbose by
+    // rejection reason ("diary-entry", "claimed", "same-event", or
+    // "unfiltered (...)"). Emitted per examined memory, which is verbose by
     // design: a sweep that finds nothing is the interesting case, and
     // "found nothing" is only diagnosable if the near-misses are named.
     void Memory(std::int64_t memoryId, RE::FormID owner, float importance, std::string_view verdict);

@@ -1115,6 +1115,79 @@ namespace NarrativeEngine::GossipSim
         return total > 0.0f ? reachable / total : 0.0f;
     }
 
+    std::string DescribeContactAvailability(const GossipThread::Token&, RE::FormID npc)
+    {
+        const auto* self = GossipGraph::Find(npc);
+
+        float total = 0.0f;
+        float reachable = 0.0f;
+        std::size_t peers = 0;
+        std::size_t reachablePeers = 0;
+        std::vector<const Contact*> blocking;
+        for (const auto& c : ContactsFor(npc)) {
+            if (c.peer == kProvincePeer || c.rate <= 0.0f) {
+                continue;
+            }
+            ++peers;
+            total += c.rate;
+            if (ActorAvailability(c.peer) == Availability::Available) {
+                reachable += c.rate;
+                ++reachablePeers;
+            } else {
+                blocking.push_back(&c);
+            }
+        }
+
+        // Heaviest first: the verdict is a weighted ratio, so the peers
+        // that explain it are the ones holding weight, not the numerous
+        // ones. A single quest-gated faction-mate at 40 outranks forty
+        // settlement neighbours at 1.0, and that inversion is the whole
+        // reason this line exists.
+        std::sort(
+            blocking.begin(), blocking.end(), [](const Contact* a, const Contact* b) { return a->rate > b->rate; });
+
+        std::string worst;
+        constexpr std::size_t kNamed = 4;
+        for (std::size_t i = 0; i < blocking.size() && i < kNamed; ++i) {
+            const auto* c = blocking[i];
+            worst += std::format("{}{} {:.0f}% via {}",
+                                 worst.empty() ? "" : ", ",
+                                 GossipGraph::NpcName(c->peer),
+                                 total > 0.0f ? c->rate / total * 100.0f : 0.0f,
+                                 GossipGraph::ChannelName(c->via));
+        }
+        if (blocking.size() > kNamed) {
+            worst += std::format(", +{} more", blocking.size() - kNamed);
+        }
+        if (blocking.empty()) {
+            worst = "nobody -- every named contact is reachable";
+        }
+
+        // A tier that resolved to nothing is the single most useful thing
+        // this line can report, so name it as absent rather than printing
+        // an empty string that reads like a lookup failure.
+        const auto tier = [](RE::FormID loc) -> std::string {
+            if (loc == 0) {
+                return "(none)";
+            }
+            const auto& name = GossipGraph::LocationName(loc);
+            return name.empty() ? std::format("0x{:08X}", loc) : std::format("{} (0x{:08X})", name, loc);
+        };
+
+        return std::format("isolation: {} -- household={} settlement={} hold={} | "
+                           "{}/{} peers reachable, weight {:.3f}/{:.3f} = {:.1f}% | blocked by: {}",
+                           GossipGraph::NpcName(npc),
+                           self ? tier(self->household) : "(not a participant)",
+                           self ? tier(self->settlement) : "(not a participant)",
+                           self ? tier(self->hold) : "(not a participant)",
+                           reachablePeers,
+                           peers,
+                           reachable,
+                           total,
+                           total > 0.0f ? reachable / total * 100.0f : 0.0f,
+                           worst);
+    }
+
     std::vector<RumorView> GetRumorViews(const GossipState& st)
     {
         std::vector<RumorView> out;

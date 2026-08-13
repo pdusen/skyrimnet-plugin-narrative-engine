@@ -12,11 +12,11 @@
 // ---------------------------------------------------------------------
 // Who gets examined, and why it is not everyone
 //
-// There is no global memory query. `PublicGetMemoriesForActor` is strictly
+// There is no global memory query. `PublicQueryMemoriesForActor` is strictly
 // per-actor, and the only endpoint taking `formId = 0` for "all actors" is
 // `PublicGetDiaryEntries`, which returns diary entries — a different thing,
 // and one the letter and visit composers deliberately filter out. So a
-// province-wide sweep would mean ~880 calls into SkyrimNet's vector
+// province-wide sweep would mean ~880 calls into SkyrimNet's memory
 // database, every sweep, most of them returning nothing of interest.
 //
 // The answer is NOT to pick the most interesting people. That was the
@@ -58,8 +58,14 @@
 // importance_score, decayed_importance, age_hours, game_time,
 // creation_time, emotion, location, related_actors.
 //
-// `tags` IS present, so the tag written at AddMemory time is filtered on
-// directly, and that is the whole feedback-loop guard.
+// The guard is `excludeTags` on the query itself (SkyrimNet API v10+), so
+// gossip's own rows never leave the database. That matters more than it
+// sounds: filtering them out on THIS side could only ever filter what
+// survived SkyrimNet's truncation, and our writebacks are always the
+// newest rows, so under the old endpoint's recency ranking they owned the
+// entire result. GossipHarvest re-checks the tag on every row it receives,
+// but purely as an alarm — a row that trips it means the server-side
+// filter did not hold.
 //
 // The tag is `ne_gossip`, not `gossip`, because SkyrimNet's own memory
 // tagger uses `gossip` as a TOPICAL label for memories that are merely
@@ -80,7 +86,8 @@
 // Field names: trust the endpoint, not its documentation
 //
 // PublicAPI.h documents this response as {id, text, importance, timestamp,
-// type}. THREE OF THOSE FIVE ARE WRONG. The real names are `content`,
+// type}, and the v10 query endpoint returns the same rows. THREE OF THOSE
+// FIVE ARE WRONG. The real names are `content`,
 // `importance_score` and `age_hours`, corroborated by the `memories` table
 // in SkyrimNet's sql/migrations/0003_vector_memory_system.sql and by
 // SenderCandidatePool, which has been reading this same endpoint correctly
@@ -148,13 +155,13 @@ namespace NarrativeEngine::GossipHarvest
         // claims. The per-candidate outcomes are the `content:` lines in
         // the trace.
         std::size_t sentForGeneration = 0;
-        std::size_t rejectedTooOld = 0;
-        std::size_t rejectedLowImportance = 0;
+        // Rows the query asked SkyrimNet to exclude and got back anyway.
+        // 0 on a healthy v10+ install; anything else means the
+        // server-side filter is not holding.
+        std::size_t rejectedUnfiltered = 0;
         std::size_t rejectedClaimed = 0;
         std::size_t rejectedDiary = 0;
         std::size_t rejectedNoContent = 0;
-        std::size_t rejectedNoGameTime = 0;
-        std::size_t rejectedOwnOutput = 0;
         // Another witness's account of the same happening already seeded.
         std::size_t rejectedSameEvent = 0;
         // The origin's contacts are mostly unreachable, so it could not

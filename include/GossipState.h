@@ -163,13 +163,10 @@ namespace NarrativeEngine::GossipState_
         std::size_t actorsExamined = 0;
         std::size_t memoriesExamined = 0;
         std::size_t sentForGeneration = 0;
-        std::size_t rejectedTooOld = 0;
-        std::size_t rejectedLowImportance = 0;
+        std::size_t rejectedUnfiltered = 0;
         std::size_t rejectedClaimed = 0;
         std::size_t rejectedDiary = 0;
         std::size_t rejectedNoContent = 0;
-        std::size_t rejectedNoGameTime = 0;
-        std::size_t rejectedOwnOutput = 0;
         std::size_t rejectedSameEvent = 0;
         std::size_t rejectedIsolated = 0;
     };

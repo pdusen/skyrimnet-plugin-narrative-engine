@@ -715,36 +715,32 @@ namespace NarrativeEngine::Settings
         // A non-negative value is used literally, clamped to bucketCount-1
         // so it can never leave the eligible set empty.
         int gossipBucketHistoryLength = -1;
-        // Rows to ask GetMemoriesForActor for, per actor.
+        // Rows to ask SkyrimNet for, per actor.
         //
-        // 200, not 10. At 10 this was the entire starvation bug: an empty
-        // contextQuery makes SkyrimNet sort by recency, and gossip
-        // writebacks are always the newest rows, so within three or four
-        // of an actor's turns all ten came back as our own output and the
-        // harvest saw nothing. Measured on a real save: 10 rows returned
-        // 0 usable candidates where the full corpus held 78.
+        // These come back already filtered, newest first: SkyrimNet
+        // applies the tag, window and importance rules in SQL BEFORE
+        // truncating to this count (API v10+), so all of them are usable
+        // candidates. The sweep ranks the whole bucket's returns by
+        // importance afterwards, so this sets how far back one actor can
+        // contribute rather than how good the winner is.
         //
-        // The cost is a bigger JSON, not more calls, and it is only paid
-        // by actors who HAVE that many memories -- most hold one to three.
-        int gossipHarvestMemoriesPerActor = 200;
-        // Passed as GetMemoriesForActor's contextQuery.
+        // Set clear of where the cut was observed to bind, without
+        // pretending to be unbounded. At 10 a live run truncated exactly
+        // the actors worth harvesting: 11 actor-sweeps came back holding
+        // precisely 10 rows -- Onmund, Faralda, J'zargo, Nirya, Brelyna,
+        // Colette, the memory-rich College NPCs -- while everyone else
+        // returned one to nine and was unaffected. Newest-first then hides
+        // their older-but-weightier rows from the importance sort that
+        // picks the winner, so the cut only ever costs quality where
+        // quality was available.
         //
-        // Non-empty switches SkyrimNet from "most recent first" to a
-        // semantic vector search, which is what stops our own writebacks
-        // owning the front of the result. Depth alone covers today's
-        // corpus; this is what keeps working once an actor's store
-        // outgrows the depth, because gossip accumulates without bound.
-        //
-        // The wording is deliberate, and measured against 22 variants:
-        //
-        //   * It describes FORM, not topic. A topical query scored just as
-        //     well but would silently decide what gossip is about.
-        //   * It never says "gossip" or "rumor". Cosine similarity has no
-        //     negation -- every variant containing the word scored worse,
-        //     because the token pulls the query toward what it names.
-        //
-        // Empty is still honoured, and means the old recency behaviour.
-        std::string gossipHarvestContextQuery = "a notable thing that happened to me, or that I witnessed myself";
+        // Those actors' true eligible depth is unknown -- the run only
+        // establishes it is at least 10 -- so this is headroom chosen
+        // against the observed bind, not against a measured ceiling. It
+        // stays a real bound: an actor whose store outgrows it is capped
+        // rather than dragged in whole, and the cost of the cap is one
+        // bigger response, never more calls.
+        int gossipHarvestMemoriesPerActor = 30;
         // How many rumors one sweep may actually seed. The walk down the
         // candidate pool stops once this many have been accepted.
         int gossipMaxSeedsPerHarvest = 1;

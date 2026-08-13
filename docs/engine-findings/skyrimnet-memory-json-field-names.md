@@ -158,6 +158,38 @@ no server-side flag distinguishing them. The only discriminator is that the `con
 with `Diary Entry:`. Any consumer that filters on memory type will pick them up. The letter and
 visit composers filter them out deliberately; so does gossip harvesting.
 
+## What API v10 changes, and what it does not
+
+`PublicQueryMemoriesForActor` (v10+, with the typed `MemoryQuery` in `PublicAPIMemoryQuery.h`) filters and
+orders in SQL before truncating. That is a real fix for a real problem — the old endpoint ranks the whole
+store and cuts, so a plugin that writes memories back through `PublicAddMemory` reads its own rows ahead of
+everything else under recency ordering, and it compounds the more it writes. Gossip harvesting now uses it.
+
+Two things v10 does **not** change:
+
+- **The field names are the same.** The rows come back in the identical shape, so everything above still
+  applies: `content`, `importance_score`, `age_hours`, and the doc comment still names three of five wrong.
+- **`age_hours` is still real-world time.** `game_time` remains the only in-world reading, and it is the
+  field the query's `gameTimeAfter` / `gameTimeBefore` bounds are applied to.
+
+v10 also claims to stamp `game_time` correctly on every creation path, including `PublicAddMemory`.
+Confirmed for our own writes: all 57 memories gossip wrote during the first run against v10 carry an
+in-world `game_time` (22.01 game-days), with the wall clock kept separately in `creation_time`.
+
+**The v9 behaviour it supposedly fixes is a historical observation, not a verified standing property —
+treat it accordingly.** The claim on this side was that `PublicAddMemory` stamped `game_time` with
+wall-clock seconds, so a plugin-written memory read back as roughly 20,650 game-days in the *future* and
+any in-world window filter rejected it as after-horizon. What was actually observed, and logged at the
+time, is that all 221 of gossip's own writebacks in one 15-day run were rejected as `after-horizon`. The
+inferred cause was never checked against the database, that save no longer exists, and no plugin-written
+row in any surviving SkyrimNet DB carries the signature — including letter memories written months before
+v10, which hold ordinary in-world values. So the effect was real and the explanation is unconfirmed; it may
+have been specific to a SkyrimNet build rather than a property of the call.
+
+The practical rule survives either way, and is the safer one regardless of which explanation holds:
+**never rely on a timestamp you did not write to keep your own writebacks out of your own input.** Filter
+on a tag you control. Gossip does, and that is why the v10 change cost it nothing.
+
 ## Rule
 
 Do not write a SkyrimNet response parser from `PublicAPI.h`'s doc comments. Check the SQL schema

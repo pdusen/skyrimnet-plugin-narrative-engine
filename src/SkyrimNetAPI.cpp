@@ -262,6 +262,36 @@ namespace NarrativeEngine::SkyrimNetAPI
         }
     }
 
+    std::string QueryMemoriesForActor(std::uint32_t formId, const MemoryQuery& query)
+    {
+        if (!::PublicQueryMemoriesForActor) {
+            // Not an error the caller can recover from, and silent
+            // otherwise: the typed wrapper's "[]" reads exactly like an
+            // actor with nothing on file, so a v9 install would look like
+            // a world where nothing memorable ever happens.
+            static bool warned = false;
+            if (!warned) {
+                warned = true;
+                logger::warn("SkyrimNetAPI::QueryMemoriesForActor: SkyrimNet {} does not export it "
+                             "(needs API v10+); every filtered memory query will return empty",
+                             GetVersion());
+            }
+            return "[]";
+        }
+        if (!::PublicIsMemorySystemReady || !::PublicIsMemorySystemReady()) {
+            return "[]";
+        }
+        try {
+            // ::QueryMemoriesForActor is PublicAPI.h's own typed wrapper —
+            // it serializes the struct and calls the export. Qualified
+            // because this function has the same name.
+            return ::QueryMemoriesForActor(formId, query);
+        } catch (...) {
+            logger::warn("SkyrimNetAPI::QueryMemoriesForActor: exception across DLL boundary");
+            return "[]";
+        }
+    }
+
     std::string GetRecentDialogue(std::uint32_t formId, int maxExchanges)
     {
         if (!::PublicGetRecentDialogue)
