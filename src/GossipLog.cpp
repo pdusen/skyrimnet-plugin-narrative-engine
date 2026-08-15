@@ -176,33 +176,23 @@ namespace NarrativeEngine::GossipLog
               float notability,
               RE::FormID from,
               RE::FormID to,
-              GossipGraph::Channel via,
-              GossipGraph::Channel tier,
-              RE::FormID viaFaction,
+              std::string_view rung,
               RE::FormID location,
               RE::FormID fromHold,
               RE::FormID toHold)
     {
-        std::string channel = GossipGraph::ChannelName(via);
-        if (via == GossipGraph::Channel::Faction && viaFaction) {
-            const auto& fname = GossipGraph::FactionName(viaFaction);
-            channel += ":";
-            channel += fname.empty() ? std::format("0x{:08X}", viaFaction) : fname;
-        }
-
         std::string cross;
         if (fromHold != toHold) {
             cross = std::format("  XHOLD {}->{}", LocOf(fromHold), LocOf(toHold));
         }
 
-        Emit(std::format("TELL    r{:02}  gen={}  n={:.2f}  {:<22} -> {:<22} via={:<26} tier={:<11} @{}{}",
+        Emit(std::format("TELL    r{:02}  gen={}  n={:.2f}  {:<22} -> {:<22} rung={:<11} @{}{}",
                          rumorId,
                          generation,
                          notability,
                          NameOf(from),
                          NameOf(to),
-                         channel,
-                         GossipGraph::ChannelName(tier),
+                         rung,
                          LocOf(location),
                          cross));
     }
@@ -224,7 +214,8 @@ namespace NarrativeEngine::GossipLog
     void Burnout(std::uint32_t rumorId, const BurnoutStats& stats)
     {
         Emit(std::format("BURNOUT r{:02}  reach={}  depth={}  holds={}  settlements={}  days={:.1f}  "
-                         "conversations={} ({} told, {} knew, {} missed, {} away, {} capped)",
+                         "conversations={} ({} told, {} knew, {} missed, {} away, {} capped, "
+                         "{} silent)",
                          rumorId,
                          stats.reach,
                          stats.depth,
@@ -236,7 +227,8 @@ namespace NarrativeEngine::GossipLog
                          stats.wasted,
                          stats.notCaught,
                          stats.unavailable,
-                         stats.capped));
+                         stats.capped,
+                         stats.silent));
     }
 
     void Harvest(const HarvestStats& stats)

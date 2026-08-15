@@ -34,7 +34,7 @@ namespace NarrativeEngine::GossipSim
     namespace
     {
         // v6 adds the harvest bucket selection history.
-        constexpr std::uint32_t kRecordVersion = 6;
+        constexpr std::uint32_t kRecordVersion = 7;
 
         // Sentinel peer standing in for "somebody, anywhere in Skyrim".
         // Resolved to a random participant only if it is actually
@@ -96,24 +96,49 @@ namespace NarrativeEngine::GossipSim
         // is immutable between session starts, so a carrier's weighted
         // contact list never changes and recomputing it per event would
         // be pure waste.
-        struct Contact
+        // The contact ladder, seven rungs. Rungs 0/2/4/6 (household,
+        // settlement, hold, province in the doc's 1-based numbering) are the
+        // geographic tiers; rungs 1/3/5 have no natural membership and hold
+        // only peers a faction or relationship has moved.
+        enum Rung : int
         {
-            RE::FormID peer = 0;
-            float rate = 0.0f; // contacts per in-world day
-            // The specific channel that best EXPLAINS this contact
-            // (relationship / faction where one exists, else the tier).
-            GossipGraph::Channel via = GossipGraph::Channel::Settlement;
-            // The proximity tier the pair share, recorded separately.
-            //
-            // Collapsing these into one field made the logged channel mix
-            // unreadable: 371 of 636 vanilla relationship edges are
-            // same-household, so most physically-household conversations were
-            // labelled "relationship" and household looked like 15% of the
-            // traffic when it is in fact the dominant channel.
-            GossipGraph::Channel tier = GossipGraph::Channel::Settlement;
-            RE::FormID faction = 0;
+            kHousehold = 0,
+            kSettlement = 2,
+            kHold = 4,
+            kProvince = 6,
+            kRungCount = 7,
         };
-        std::unordered_map<RE::FormID, std::vector<Contact>> g_contactCache;
+
+        const char* RungName(int rung)
+        {
+            switch (rung) {
+            case 0:
+                return "household";
+            case 1:
+                return "t2";
+            case 2:
+                return "settlement";
+            case 3:
+                return "t4";
+            case 4:
+                return "hold";
+            case 5:
+                return "t6";
+            default:
+                return "province";
+            }
+        }
+
+        // A carrier's rungs, materialised. The province rung is deliberately
+        // absent: it stands for every participant in Skyrim and is resolved
+        // by drawing one at random rather than by storing 800-odd ids per
+        // carrier.
+        //
+        // Cached because the graph is immutable between session starts. This
+        // replaces the old flat weighted contact list, and is far smaller:
+        // each peer appears once, with no per-pair rate to store.
+        using TierPools = std::array<std::vector<RE::FormID>, kRungCount - 1>;
+        std::unordered_map<RE::FormID, TierPools> g_poolCache;
 
         double NowGameDay()
         {
@@ -126,27 +151,6 @@ namespace NarrativeEngine::GossipSim
             return d(g_rng);
         }
 
-        // Knuth's method. lambda is small here — a fraction of a conversation
-        // per simulation step — so the loop runs a couple of times at most.
-        int DrawPoisson(double lambda)
-        {
-            if (lambda <= 0.0) {
-                return 0;
-            }
-            const double limit = std::exp(-lambda);
-            double product = 1.0;
-            int n = 0;
-            std::uniform_real_distribution<double> uni(0.0, 1.0);
-            while (n < 60) {
-                product *= uni(g_rng);
-                if (product <= limit) {
-                    break;
-                }
-                ++n;
-            }
-            return n;
-        }
-
         // Build the weighted contact list for one carrier and divide the
         // daily conversation budget among it.
         //
@@ -154,143 +158,71 @@ namespace NarrativeEngine::GossipSim
         // 90-resident city and a two-person farmstead both yield roughly
         // fGossipConversationsPerDay contacts per day; the city dweller
         // simply spreads theirs more thinly.
-        const std::vector<Contact>& ContactsFor(RE::FormID npc)
+        const TierPools& PoolsFor(RE::FormID npc)
         {
-            if (const auto it = g_contactCache.find(npc); it != g_contactCache.end()) {
+            if (const auto it = g_poolCache.find(npc); it != g_poolCache.end()) {
                 return it->second;
             }
 
-            const auto& cfg = Settings::Get();
-            std::vector<Contact> out;
-            std::unordered_map<RE::FormID, Contact> weighted;
-
+            TierPools pools{};
             const auto* self = GossipGraph::Find(npc);
             if (!self) {
-                return g_contactCache.emplace(npc, std::move(out)).first->second;
+                return g_poolCache.emplace(npc, std::move(pools)).first->second;
             }
 
-            // `specific` marks a channel that EXPLAINS a contact the
-            // proximity tiers could not have produced. When a peer is
-            // reachable both ways — a housemate who is also your sister,
-            // a settlement neighbour who is also a guild-mate — the
-            // specific channel wins the attribution, because that is the
-            // more informative answer in the log. It matters most for
-            // cross-hold transmissions, where only a personal edge or
-            // the province channel can have enabled the contact at all.
-            const auto add =
-                [&](RE::FormID peer, float weight, GossipGraph::Channel via, RE::FormID faction, bool specific) {
-                    if (peer == npc || weight <= 0.0f) {
-                        return;
-                    }
-                    auto& c = weighted[peer];
-                    const bool firstTouch = c.peer == 0;
-                    if (firstTouch) {
-                        c.peer = peer;
-                        // Proximity tiers are added closest-first, so whichever
-                        // touches this peer first is the tightest they share.
-                        c.tier = via;
-                    }
-                    if (firstTouch || specific) {
-                        c.via = via;
-                        c.faction = faction;
-                    }
-                    c.rate += weight;
-                };
-
+            // Natural rung is the CLOSEST tier a peer qualifies for, so the
+            // rungs stay disjoint and a housemate is not also drawn as a
+            // settlement neighbour. Closest-first insertion does that without
+            // a second pass.
+            std::unordered_map<RE::FormID, int> natural;
+            const auto claim = [&](RE::FormID peer, int rung) {
+                if (peer != npc) {
+                    natural.emplace(peer, rung);
+                }
+            };
             if (self->household) {
                 for (const auto peer : GossipGraph::HouseholdMembers(self->household)) {
-                    add(peer, cfg.gossipWeightHousehold, GossipGraph::Channel::Household, 0, false);
+                    claim(peer, kHousehold);
                 }
             }
             if (self->settlement) {
                 for (const auto peer : GossipGraph::SettlementMembers(self->settlement)) {
-                    add(peer, cfg.gossipWeightSettlement, GossipGraph::Channel::Settlement, 0, false);
+                    claim(peer, kSettlement);
                 }
             }
             if (self->hold) {
                 for (const auto peer : GossipGraph::HoldMembers(self->hold)) {
-                    add(peer, cfg.gossipWeightHold, GossipGraph::Channel::Hold, 0, false);
+                    claim(peer, kHold);
                 }
             }
+
+            const auto place = [&](RE::FormID peer, int rung) {
+                // The province rung is virtual, so anyone who lands on it is
+                // simply not stored: they remain reachable through the
+                // province lottery like any other stranger.
+                if (rung >= 0 && rung < kProvince) {
+                    pools[static_cast<std::size_t>(rung)].push_back(peer);
+                }
+            };
+
             for (const auto& edge : GossipGraph::PersonalEdges(npc)) {
-                // Distance attenuation. A guild-mate in your own settlement is
-                // someone you see constantly; one three holds away you see
-                // rarely. Without this the channel is the dominant cross-hold
-                // leak at weight 40.
-                const auto* other = GossipGraph::Find(edge.other);
-                float distance = cfg.gossipPersonalDistanceFar;
-                if (other) {
-                    if (self->settlement != 0 && other->settlement == self->settlement) {
-                        distance = cfg.gossipPersonalDistanceSameSettlement;
-                    } else if (other->hold == self->hold) {
-                        distance = cfg.gossipPersonalDistanceSameHold;
-                    }
-                }
-                add(edge.other, cfg.gossipWeightPersonalEdge * distance, edge.via, edge.faction, true);
-            }
-
-            // The relationship multiplier scales a peer's WHOLE weight,
-            // applied exactly once after accumulation. You talk to a
-            // sibling in the same house more than to a housemate you
-            // merely tolerate, and to an Archnemesis not at all.
-            //
-            // Folding it into the personal-edge term above instead would
-            // apply it twice for any pair that is both a neighbour and a
-            // relation — which, given that 92% of vanilla relationship
-            // edges are same-household or same-settlement, is very nearly
-            // all of them.
-            for (const auto& edge : GossipGraph::PersonalEdges(npc)) {
-                if (const auto it = weighted.find(edge.other); it != weighted.end()) {
-                    it->second.rate *= edge.multiplier;
+                if (const auto it = natural.find(edge.other); it != natural.end()) {
+                    it->second = std::clamp(it->second + edge.tierDelta, 0, static_cast<int>(kProvince));
+                } else if (edge.tierDelta < 0) {
+                    // No shared geography, so their natural rung is province;
+                    // moved one closer they land on rung 6 -- in a pool of
+                    // their own rather than mixed into the carrier's hold,
+                    // which is the entire reason the odd rungs exist. A
+                    // measured 12% of rumors cross a hold boundary through
+                    // this path; under the old flat model it was 1%.
+                    natural.emplace(edge.other, kProvince - 1);
                 }
             }
-
-            float total = 0.0f;
-            for (const auto& [peer, c] : weighted) {
-                total += c.rate;
-            }
-            if (total <= 0.0f) {
-                return g_contactCache.emplace(npc, std::move(out)).first->second;
+            for (const auto& [peer, rung] : natural) {
+                place(peer, rung);
             }
 
-            // The province channel is a SHARE OF THE BUDGET, not another
-            // weight thrown into the same division.
-            //
-            // As a weight it was unusable, because it competed against a
-            // sum this carrier happens to own. One housemate contributes
-            // 600; a College mage with four of them and a settlement full
-            // of neighbours carries a named total near 2500, while a
-            // crofter with two neighbours carries about 2. The same
-            // province weight therefore bought wildly different odds
-            // depending on how well connected somebody was — and worst
-            // odds for exactly the well-connected carriers who actually
-            // spread things. Measured over a full run: 203 transmissions,
-            // 891 conversations, not one province draw, and none possible
-            // in any realistic session.
-            //
-            // As a share it means one plain thing that holds for everyone:
-            // this fraction of a carrier's conversations are with somebody
-            // from anywhere in Skyrim. The named contacts divide the rest
-            // among themselves exactly as before, so the daily budget
-            // still sums to fGossipConversationsPerDay.
-            //
-            // Population is deliberately NOT a factor. It was, and that
-            // was double-counting: a carrier's conversations are a fixed
-            // daily budget, so how many people exist elsewhere changes who
-            // the stranger turns out to be, never how often they meet one.
-            const float share = std::clamp(cfg.gossipProvinceShare, 0.0f, 0.5f);
-            const float budget = std::max(0.1f, cfg.gossipConversationsPerDay);
-            out.reserve(weighted.size() + 1);
-            for (auto& [peer, c] : weighted) {
-                Contact copy = c;
-                copy.rate = budget * (1.0f - share) * c.rate / total;
-                out.push_back(copy);
-            }
-            if (share > 0.0f) {
-                out.push_back(
-                    {kProvincePeer, budget * share, GossipGraph::Channel::Province, GossipGraph::Channel::Province, 0});
-            }
-            return g_contactCache.emplace(npc, std::move(out)).first->second;
+            return g_poolCache.emplace(npc, std::move(pools)).first->second;
         }
 
         // A prospective participant must still resolve to a live base
@@ -546,6 +478,7 @@ namespace NarrativeEngine::GossipSim
             stats.notCaught = rumor.notCaught;
             stats.unavailable = rumor.unavailable;
             stats.capped = rumor.capped;
+            stats.silent = rumor.silent;
             GossipLog::Burnout(rumor.id, stats);
         }
 
@@ -614,12 +547,23 @@ namespace NarrativeEngine::GossipSim
                 break;
             }
 
-            const auto& contacts = ContactsFor(carrierId);
-            float totalRate = 0.0f;
-            for (const auto& c : contacts) {
-                totalRate += c.rate;
+            const auto& pools = PoolsFor(carrierId);
+            const auto& weights = cfg.gossipTierWeights;
+            float totalWeight = 0.0f;
+            for (const auto w : weights) {
+                totalWeight += std::max(0.0f, w);
             }
-            if (contacts.empty() || totalRate <= 0.0f) {
+            // Every rung zeroed is a configuration with no contact model at
+            // all; treat it as having nobody rather than dividing by zero.
+            if (totalWeight <= 0.0f) {
+                recover("no-contacts");
+                return;
+            }
+            // A carrier with nothing on any materialised rung can still reach
+            // strangers through the province lottery, so "no contacts" now
+            // means only that the province rung is also switched off.
+            const bool anyLocal = std::any_of(pools.begin(), pools.end(), [](const auto& p) { return !p.empty(); });
+            if (!anyLocal && weights[kProvince] <= 0.0f) {
                 recover("no-contacts");
                 return;
             }
@@ -627,40 +571,58 @@ namespace NarrativeEngine::GossipSim
             const double step = std::max(0.01f, cfg.gossipStepDays);
             const double beta =
                 std::clamp(static_cast<double>(rumor.notability * cfg.gossipTransmissionScale), 0.0, 1.0);
-            const int conversations = DrawPoisson(std::max(0.0f, cfg.gossipConversationsPerDay) * step);
-            rumor.conversations += static_cast<std::size_t>(std::max(0, conversations));
+            // Deterministic per step, not Poisson. The variance that matters
+            // now comes from which rung is drawn and who is on it; layering a
+            // second source on the count only blurred the tier mix.
+            const int conversations = std::max(0, static_cast<int>(std::lround(cfg.gossipConversationsPerStep)));
+            rumor.conversations += static_cast<std::size_t>(conversations);
 
-            std::uniform_real_distribution<float> pick(0.0f, totalRate);
+            std::uniform_real_distribution<float> pickRung(0.0f, totalWeight);
             std::uniform_real_distribution<double> roll01(0.0, 1.0);
             const auto* fromP = GossipGraph::Find(carrierId);
 
             for (int i = 0; i < conversations; ++i) {
-                float roll = pick(g_rng);
-                const Contact* chosen = &contacts.back();
-                for (const auto& c : contacts) {
-                    roll -= c.rate;
+                // Rung first, peer second. This is the whole point of the
+                // model: the channel mix is chosen rather than emerging from
+                // how many people happen to live in each tier.
+                float roll = pickRung(g_rng);
+                int rung = kRungCount - 1;
+                for (int r = 0; r < kRungCount; ++r) {
+                    roll -= std::max(0.0f, weights[static_cast<std::size_t>(r)]);
                     if (roll <= 0.0f) {
-                        chosen = &c;
+                        rung = r;
                         break;
                     }
                 }
 
-                RE::FormID listener = chosen->peer;
-                auto via = chosen->via;
-                auto tier = chosen->tier;
-                RE::FormID viaFaction = chosen->faction;
-                if (listener == kProvincePeer) {
+                RE::FormID listener = 0;
+                if (rung == kProvince) {
                     const auto& all = GossipGraph::Participants();
                     if (all.empty()) {
-                        ++rumor.unavailable;
-                        ++g_counters.unavailable;
+                        ++rumor.silent;
+                        ++g_counters.silent;
                         continue;
                     }
                     std::uniform_int_distribution<std::size_t> d(0, all.size() - 1);
                     listener = all[d(g_rng)];
-                    via = GossipGraph::Channel::Province;
-                    tier = GossipGraph::Channel::Province;
-                    viaFaction = 0;
+                    if (listener == carrierId) {
+                        ++rumor.silent;
+                        ++g_counters.silent;
+                        continue;
+                    }
+                } else {
+                    const auto& pool = pools[static_cast<std::size_t>(rung)];
+                    if (pool.empty()) {
+                        // Nobody on this rung. The draw is spent and nothing
+                        // is said; the remaining rungs are NOT renormalised
+                        // to compensate, so a carrier with no household
+                        // simply talks less than one who has a family.
+                        ++rumor.silent;
+                        ++g_counters.silent;
+                        continue;
+                    }
+                    std::uniform_int_distribution<std::size_t> d(0, pool.size() - 1);
+                    listener = pool[d(g_rng)];
                 }
 
                 if (listener == carrierId || rumor.carriers.contains(listener)) {
@@ -718,9 +680,7 @@ namespace NarrativeEngine::GossipSim
                                 rumor.notability,
                                 carrierId,
                                 listener,
-                                via,
-                                tier,
-                                viaFaction,
+                                RungName(rung),
                                 location,
                                 fromP ? fromP->hold : 0,
                                 toP->hold);
@@ -781,14 +741,14 @@ namespace NarrativeEngine::GossipSim
 
         // Has this rumor run out of people to tell?
         //
-        // True when every still-infectious carrier finds all of their NAMED
-        // contacts already carrying it. The rumor is alive — carriers are
+        // True when every still-infectious carrier finds everyone on their
+        // materialised rungs already carrying it. The rumor is alive — carriers are
         // still scheduled, still burning down their infectious window — but
         // there is nobody left for them to reach.
         //
-        // kProvincePeer is skipped on purpose. It is a sentinel standing for
-        // "somebody, anywhere in Skyrim", resolved to a random participant at
-        // transmission time, and every carrier holds one. Counting it as a
+        // The province rung is skipped on purpose. It stands for "somebody,
+        // anywhere in Skyrim", is resolved to a random participant at
+        // transmission time, and every carrier has it. Counting it as a
         // vector would make this predicate answer "not stalled" for every
         // rumor until literally every participant in the province carried it,
         // which is never. What the reader wants to know is whether the
@@ -801,25 +761,21 @@ namespace NarrativeEngine::GossipSim
         // a genuinely stalled rumor pays the full scan.
         bool IsStalled(const Rumor& rumor)
         {
-            bool anyActive = false;
             for (const auto& [npc, carrier] : rumor.carriers) {
                 if (carrier.recovered) {
                     continue;
                 }
-                anyActive = true;
-                for (const auto& c : ContactsFor(npc)) {
-                    if (c.peer == kProvincePeer || c.rate <= 0.0f) {
-                        continue;
-                    }
-                    if (!rumor.carriers.contains(c.peer)) {
-                        return false; // somebody left to tell
+                for (const auto& pool : PoolsFor(npc)) {
+                    for (const auto peer : pool) {
+                        if (!rumor.carriers.contains(peer)) {
+                            return false; // somebody left to tell
+                        }
                     }
                 }
             }
             // No infectious carriers at all means it is not going anywhere
             // either — though the reap normally removes such a rumor in the
             // same poll that produced it.
-            (void)anyActive;
             return true;
         }
     } // namespace
@@ -858,7 +814,7 @@ namespace NarrativeEngine::GossipSim
             State() = std::move(*taken);
             // Derived, not owned, and describing a world that may have
             // just been replaced.
-            g_contactCache.clear();
+            g_poolCache.clear();
         }
         PublishSnapshot();
         logger::debug(
@@ -927,9 +883,9 @@ namespace NarrativeEngine::GossipSim
         // five outcomes sum to every conversation held this session, so a
         // quiet session says whether nobody spoke or nothing landed.
         const auto conversations = g_counters.transmissions + g_counters.wasted + g_counters.notCaught
-                                   + g_counters.unavailable + g_counters.capped;
+                                   + g_counters.unavailable + g_counters.capped + g_counters.silent;
         GossipLog::Note(std::format("CENSUS  live rumors={}  conversations={} ({} told, {} knew, {} missed, "
-                                    "{} away, {} capped)  memories={} (failed {})",
+                                    "{} away, {} capped, {} silent)  memories={} (failed {})",
                                     g_rumors.size(),
                                     conversations,
                                     g_counters.transmissions,
@@ -937,6 +893,7 @@ namespace NarrativeEngine::GossipSim
                                     g_counters.notCaught,
                                     g_counters.unavailable,
                                     g_counters.capped,
+                                    g_counters.silent,
                                     g_counters.memoriesWritten,
                                     g_counters.memoryWriteFailures));
         for (const auto& [id, rumor] : g_rumors) {
@@ -1101,15 +1058,22 @@ namespace NarrativeEngine::GossipSim
 
     float AvailableContactShare(const GossipThread::Token&, RE::FormID npc)
     {
+        const auto& weights = Settings::Get().gossipTierWeights;
+        const auto& pools = PoolsFor(npc);
+
         float total = 0.0f;
         float reachable = 0.0f;
-        for (const auto& c : ContactsFor(npc)) {
-            if (c.peer == kProvincePeer || c.rate <= 0.0f) {
+        for (std::size_t rung = 0; rung < pools.size(); ++rung) {
+            const float w = std::max(0.0f, weights[rung]);
+            if (w <= 0.0f) {
                 continue;
             }
-            total += c.rate;
-            if (ActorAvailability(c.peer) == Availability::Available) {
-                reachable += c.rate;
+            total += w;
+            const auto& pool = pools[rung];
+            if (std::any_of(pool.begin(), pool.end(), [](RE::FormID peer) {
+                    return ActorAvailability(peer) == Availability::Available;
+                })) {
+                reachable += w;
             }
         }
         return total > 0.0f ? reachable / total : 0.0f;
@@ -1118,54 +1082,9 @@ namespace NarrativeEngine::GossipSim
     std::string DescribeContactAvailability(const GossipThread::Token&, RE::FormID npc)
     {
         const auto* self = GossipGraph::Find(npc);
+        const auto& weights = Settings::Get().gossipTierWeights;
+        const auto& pools = PoolsFor(npc);
 
-        float total = 0.0f;
-        float reachable = 0.0f;
-        std::size_t peers = 0;
-        std::size_t reachablePeers = 0;
-        std::vector<const Contact*> blocking;
-        for (const auto& c : ContactsFor(npc)) {
-            if (c.peer == kProvincePeer || c.rate <= 0.0f) {
-                continue;
-            }
-            ++peers;
-            total += c.rate;
-            if (ActorAvailability(c.peer) == Availability::Available) {
-                reachable += c.rate;
-                ++reachablePeers;
-            } else {
-                blocking.push_back(&c);
-            }
-        }
-
-        // Heaviest first: the verdict is a weighted ratio, so the peers
-        // that explain it are the ones holding weight, not the numerous
-        // ones. A single quest-gated faction-mate at 40 outranks forty
-        // settlement neighbours at 1.0, and that inversion is the whole
-        // reason this line exists.
-        std::sort(
-            blocking.begin(), blocking.end(), [](const Contact* a, const Contact* b) { return a->rate > b->rate; });
-
-        std::string worst;
-        constexpr std::size_t kNamed = 4;
-        for (std::size_t i = 0; i < blocking.size() && i < kNamed; ++i) {
-            const auto* c = blocking[i];
-            worst += std::format("{}{} {:.0f}% via {}",
-                                 worst.empty() ? "" : ", ",
-                                 GossipGraph::NpcName(c->peer),
-                                 total > 0.0f ? c->rate / total * 100.0f : 0.0f,
-                                 GossipGraph::ChannelName(c->via));
-        }
-        if (blocking.size() > kNamed) {
-            worst += std::format(", +{} more", blocking.size() - kNamed);
-        }
-        if (blocking.empty()) {
-            worst = "nobody -- every named contact is reachable";
-        }
-
-        // A tier that resolved to nothing is the single most useful thing
-        // this line can report, so name it as absent rather than printing
-        // an empty string that reads like a lookup failure.
         const auto tier = [](RE::FormID loc) -> std::string {
             if (loc == 0) {
                 return "(none)";
@@ -1174,18 +1093,33 @@ namespace NarrativeEngine::GossipSim
             return name.empty() ? std::format("0x{:08X}", loc) : std::format("{} (0x{:08X})", name, loc);
         };
 
-        return std::format("isolation: {} -- household={} settlement={} hold={} | "
-                           "{}/{} peers reachable, weight {:.3f}/{:.3f} = {:.1f}% | blocked by: {}",
+        std::string rungs;
+        float total = 0.0f;
+        float reachable = 0.0f;
+        for (std::size_t r = 0; r < pools.size(); ++r) {
+            const float w = std::max(0.0f, weights[r]);
+            const auto& pool = pools[r];
+            const auto live = static_cast<std::size_t>(std::count_if(pool.begin(), pool.end(), [](RE::FormID peer) {
+                return ActorAvailability(peer) == Availability::Available;
+            }));
+            total += w;
+            if (live > 0) {
+                reachable += w;
+            }
+            rungs +=
+                std::format("{}{}={}/{}", rungs.empty() ? "" : " ", RungName(static_cast<int>(r)), live, pool.size());
+        }
+        // The province rung is always populated, so it is reported but left
+        // out of the ratio for the same reason the stall test leaves it out:
+        // counting it would mean nobody is ever isolated.
+        return std::format("isolation: {} —— household={} settlement={} hold={} | rungs {} | "
+                           "reachable share of local weight {:.1f}%",
                            GossipGraph::NpcName(npc),
                            self ? tier(self->household) : "(not a participant)",
                            self ? tier(self->settlement) : "(not a participant)",
                            self ? tier(self->hold) : "(not a participant)",
-                           reachablePeers,
-                           peers,
-                           reachable,
-                           total,
-                           total > 0.0f ? reachable / total * 100.0f : 0.0f,
-                           worst);
+                           rungs,
+                           total > 0.0f ? reachable / total * 100.0f : 0.0f);
     }
 
     std::vector<RumorView> GetRumorViews(const GossipState& st)
@@ -1314,10 +1248,12 @@ namespace NarrativeEngine::GossipSim
             const auto notCaught = static_cast<std::uint32_t>(r.notCaught);
             const auto unavailable = static_cast<std::uint32_t>(r.unavailable);
             const auto capped = static_cast<std::uint32_t>(r.capped);
+            const auto silent = static_cast<std::uint32_t>(r.silent);
             intfc->WriteRecordData(conversations);
             intfc->WriteRecordData(notCaught);
             intfc->WriteRecordData(unavailable);
             intfc->WriteRecordData(capped);
+            intfc->WriteRecordData(silent);
             intfc->WriteRecordData(r.lastActivityGameDay);
             const std::uint8_t live = r.live ? 1 : 0;
             intfc->WriteRecordData(live);
@@ -1432,6 +1368,7 @@ namespace NarrativeEngine::GossipSim
             std::uint32_t notCaught = 0;
             std::uint32_t unavailable = 0;
             std::uint32_t capped = 0;
+            std::uint32_t silent = 0;
             std::uint8_t live = 0;
             if (intfc->ReadRecordData(r.id) != sizeof(r.id) || intfc->ReadRecordData(r.originNpc) != sizeof(r.originNpc)
                 || intfc->ReadRecordData(r.originSettlement) != sizeof(r.originSettlement)
@@ -1442,7 +1379,7 @@ namespace NarrativeEngine::GossipSim
                 || intfc->ReadRecordData(conversations) != sizeof(conversations)
                 || intfc->ReadRecordData(notCaught) != sizeof(notCaught)
                 || intfc->ReadRecordData(unavailable) != sizeof(unavailable)
-                || intfc->ReadRecordData(capped) != sizeof(capped)
+                || intfc->ReadRecordData(capped) != sizeof(capped) || intfc->ReadRecordData(silent) != sizeof(silent)
                 || intfc->ReadRecordData(r.lastActivityGameDay) != sizeof(r.lastActivityGameDay)
                 || intfc->ReadRecordData(live) != sizeof(live)) {
                 logger::error("GossipSim::OnLoad: short read on rumor {}; reverting", i);
@@ -1474,6 +1411,7 @@ namespace NarrativeEngine::GossipSim
             r.notCaught = notCaught;
             r.unavailable = unavailable;
             r.capped = capped;
+            r.silent = silent;
             r.live = live != 0;
 
             std::uint32_t carrierCount = 0;

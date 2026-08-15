@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -561,7 +563,6 @@ namespace NarrativeEngine::Settings
         // social activity scale with the size of their settlement, and
         // the offline validation run showed that saturates the entire
         // province within one game day.
-        float gossipConversationsPerDay = 2.0f;
 
         // Relative channel weights. Ratios, NOT rates — only their
         // proportions matter, since the budget above sets the absolute
@@ -572,35 +573,35 @@ namespace NarrativeEngine::Settings
         // as readily as households; no value of the transmission
         // probability compensates, because the epidemic threshold is
         // sharp. See PHASE_13_SIR_VALIDATION_LOG.md, iterations 2-3.
-        float gossipWeightHousehold = 600.0f;
-        // The middle ring between "people I live with" and "anyone in
-        // town". At 4 it was too weak to act as one; 40 measurably fills
-        // the 13-30 settlement band, where the dropoff was harshest.
-        float gossipWeightPersonalEdge = 40.0f;
-        float gossipWeightSettlement = 1.0f;
-        float gossipWeightHold = 0.05f;
-        // Strangers in another hold. Near-zero by design: the measured
-        // cross-hold transport is shared membership of a province-
-        // spanning organisation, not proximity.
-        // NOT a weight — the fraction of a carrier's conversations held
-        // with somebody from anywhere in Skyrim, rather than with a named
-        // contact. The named weights above divide the remaining
-        // (1 - share) between them.
+        // The contact ladder. Seven rungs; a conversation draws a rung by
+        // these relative weights and then a peer uniformly from within it.
         //
-        // 0.01 is derived rather than felt. A province draw only crosses a
-        // hold if the stranger it lands on catches the rumor (beta =
-        // notability * fGossipTransmissionScale, about 0.6 at a typical
-        // notability) and lives in a different hold (about 0.85 of the
-        // time), so the effective cross-hold rate is roughly half the
-        // share. Against the conversation counts a real run produces —
-        // median 74 per rumor, 200 for the one that spread furthest —
-        // that puts a hold crossing at ~7% for a rumor that barely moves,
-        // ~31% for a typical one, and ~64% for one that gets everywhere.
+        // Rungs 1/3/5/7 are the geographic tiers. Rungs 2/4/6 have NO natural
+        // membership -- they exist only to receive peers moved by a faction
+        // or a relationship, which is what keeps a guild-mate three holds
+        // away from being lost among a hundred hold-mates.
         //
-        // That scaling is the point: a story told two hundred times SHOULD
-        // be the one that reaches a traveller. A flat "rumors cross holds
-        // X% of the time" would not have that property.
-        float gossipProvinceShare = 0.01f;
+        // MONOTONIC by contract: each rung must be <= the one closer than it.
+        // A peer moved outward must end up spoken to less, not more, or the
+        // ladder stops meaning anything. Nothing enforces this at load time
+        // because a deliberate experiment is a legitimate thing to run.
+        //
+        // Defaults measured offline against the vanilla graph (857
+        // participants) over a month of in-world time -- see
+        // docs/implementation/tests/gossip-spread/simulate-tiered.py. They
+        // give roughly 77% of rumors staying in one hold, 15% reaching two or
+        // three, and 7% going wider.
+        //
+        // Rung 6 does not need to be loud. It carries only ~1% of tellings
+        // and still produces the entire cross-hold band, because the point
+        // was never its weight -- it was giving distant ties a pool of their
+        // own instead of diluting them into the hold.
+        std::array<float, 7> gossipTierWeights{0.33f, 0.20f, 0.18f, 0.12f, 0.09f, 0.06f, 0.02f};
+        // Conversations each carrier holds per simulation step
+        // (gossipStepDays). Expressed against the STEP, not the harvest tick:
+        // those are separate clocks and coupling them would make the harvest
+        // cadence silently change how fast rumors spread.
+        float gossipConversationsPerStep = 5.0f;
 
         // Distance attenuation on the personal-edge channel. A guild-mate
         // in your own settlement is someone you see constantly; one three
@@ -613,9 +614,6 @@ namespace NarrativeEngine::Settings
         // selective: household, settlement and post-jump coverage are all
         // unchanged across the whole range, and only the frequency of
         // hold crossings moves.
-        float gossipPersonalDistanceSameSettlement = 1.0f;
-        float gossipPersonalDistanceSameHold = 0.5f;
-        float gossipPersonalDistanceFar = 0.10f;
 
         // --- SIR model ------------------------------------------------
         //
@@ -637,7 +635,7 @@ namespace NarrativeEngine::Settings
         // saturation needs only a few successes out of many attempts, so
         // extra conversations buy it cheaply, while outward spread is
         // governed by the probability.
-        float gossipTransmissionScale = 0.7f;
+        float gossipTransmissionScale = 0.055f;
         // Simulation step, in game days. Each step an infectious carrier
         // holds Poisson(conversationsPerDay * this) conversations.
         // Smaller is finer-grained and costs proportionally more events.
@@ -657,7 +655,7 @@ namespace NarrativeEngine::Settings
         // because this is a validation harness. Bring it back down before
         // anything ships to players.
         int gossipMaxLiveRumors = 40;
-        int gossipMaxCarriersPerRumor = 80;
+        int gossipMaxCarriersPerRumor = 150;
         // Backstop only — a carrier normally recovers via
         // gossipInfectiousDays long before this.
         int gossipCarrierMaxAgeDays = 30;
@@ -776,20 +774,34 @@ namespace NarrativeEngine::Settings
         // covers creative writing in an NPC's voice; a separate variant
         // would be one more thing for the user to tune with no distinct
         // task shape behind it.
-        // Refuse to seed a rumor from someone whose contacts are mostly
-        // unreachable. This is the fraction of an origin's weighted named
-        // contacts that must currently be able to hold a conversation.
+        // Refuse to seed a rumor from someone with nobody available to
+        // tell. This is the share of an origin's LOCAL rung weight (rungs
+        // 1-6; the province rung is excluded, as it is for the stall test)
+        // sitting on a rung that holds at least one reachable person.
         //
-        // A carrier draws roughly fGossipConversationsPerDay *
-        // fGossipInfectiousDays conversations in its lifetime — about six
-        // at the shipped values — and each reaches a listener only if that
-        // listener is available, then catches with probability
-        // notability * fGossipTransmissionScale. For the expected number
-        // of successful tellings to clear 1, the reachable share needs to
-        // be around 0.3. The default sits just below that, so it rejects
-        // origins that are near-certain to reach nobody without touching
-        // the merely unlucky.
-        float gossipMinAvailableContactShare = 0.25f;
+        // It is a share of WEIGHT, not of people, and the two diverge
+        // sharply under the ladder. A carrier with no household, no
+        // settlement and no ties scores 0.09 while having ninety
+        // reachable hold-mates: the single rung they can use carries 9%
+        // of the ladder and the other five come back silent.
+        //
+        // 0.05 rather than the 0.25 this began at. That figure was set
+        // against the old flat contact model, where the share really did
+        // mean "this fraction of your conversations reach a live person".
+        // Under the ladder an empty rung produces SILENCE, which the model
+        // already charges for -- such a carrier talks at a ninth of the
+        // normal rate -- so gating them out as well charges twice. At 0.25
+        // it excluded 103 of 857 vanilla participants, 69 of them at
+        // exactly that 9% signature, including every NPC whose questline
+        // stages them alone in a dungeon.
+        //
+        // No vanilla participant scores 0, so 0.05 reduces this to "has
+        // anyone at all". What survives is the case it was built for: a
+        // carrier whose rungs are populated but whose people are all dead
+        // or quest-disabled, which is Ancano — five rumors seeded in one
+        // session, every one reaching nobody, 61% of conversations landing
+        // on unavailable listeners.
+        float gossipMinAvailableContactShare = 0.05f;
 
         int gossipContentBands = 3;
 

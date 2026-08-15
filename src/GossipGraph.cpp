@@ -64,33 +64,47 @@ namespace NarrativeEngine::GossipGraph
             "LocTypeHoldMinor",
         };
 
-        // Relationship rank -> contact multiplier. Vanilla ships zero
-        // Lover and zero Archnemesis records; Lover only ever appears at
-        // runtime, via marriage.
-        float RankMultiplier(RE::BGSRelationship::RELATIONSHIP_LEVEL level)
+        // Relationship rank -> movement on the contact ladder. Warm ranks
+        // pull a peer one rung closer, cold ranks push them one further, and
+        // the two middling ranks do nothing.
+        //
+        // WRITTEN OUT BY NAME, and it has to be. RELATIONSHIP_LEVEL counts
+        // UPWARD AS WARMTH DECREASES — kLover = 0 through kArchnemesis = 8 —
+        // so the obvious `level >= kConfidant` selects Friend through
+        // Archnemesis, the exact complement of what it looks like it selects.
+        // There is no ordering comparison in here for that reason.
+        //
+        // Vanilla ships zero Lover and zero Archnemesis records; Lover only
+        // ever appears at runtime, via marriage.
+        int RelationshipTierDelta(RE::BGSRelationship::RELATIONSHIP_LEVEL level)
         {
             using L = RE::BGSRelationship::RELATIONSHIP_LEVEL;
             switch (level) {
             case L::kLover:
-                return 4.0f;
-            case L::kConfidant:
-                return 3.0f;
             case L::kAlly:
+            case L::kConfidant:
+                return -1;
             case L::kFriend:
-                return 2.0f;
             case L::kAcquaintance:
-                return 1.2f;
+                return 0;
             case L::kRival:
-                return 0.4f;
             case L::kFoe:
-                return 0.15f;
             case L::kEnemy:
-                return 0.05f;
             case L::kArchnemesis:
-                return 0.0f;
+                return 1;
             default:
-                return 1.0f;
+                return 0;
             }
+        }
+
+        // The two sources sum, then clamp to a single rung of movement in
+        // either direction. Two POSITIVE sources deliberately do not stack: a
+        // faction-mate who is also your sister is one rung closer, not two.
+        int ComposeTierDelta(bool sharedFaction, int relationshipDelta)
+        {
+            const bool closer = sharedFaction || relationshipDelta < 0;
+            const bool further = relationshipDelta > 0;
+            return (closer ? -1 : 0) + (further ? 1 : 0);
         }
 
         struct TierFlags
@@ -141,6 +155,13 @@ namespace NarrativeEngine::GossipGraph
         // faction shares a roof.
         std::vector<std::string> g_denyFragments;
         std::unordered_set<std::string> g_allowExact;
+        // Explicit allows that matched a real faction this build. Anything
+        // left in g_allowExact but missing here is an entry that did nothing
+        // -- a typo, a faction from a mod that is not installed, or a faction
+        // with too few participant members to be considered at all -- and is
+        // reported at census time. A silently inert allow entry is worse than
+        // no entry, because it reads like a rule that is in force.
+        std::unordered_set<std::string> g_allowMatched;
 
         std::string ToLower(std::string_view s)
         {
@@ -218,6 +239,7 @@ namespace NarrativeEngine::GossipGraph
         {
             LoadBuiltinDenyList();
             g_allowExact.clear();
+            g_allowMatched.clear();
 
             std::error_code ec;
             if (!std::filesystem::exists(kFactionFilePath, ec)) {
@@ -262,6 +284,32 @@ namespace NarrativeEngine::GossipGraph
                          g_allowExact.size());
         }
 
+        // An explicit allow is a statement of intent and overrides BOTH gates:
+        // the deny fragments AND the size bounds.
+        //
+        // The size bounds exist to keep occupation buckets out -- 155 people
+        // sharing JobMerchantFaction are not acquaintances -- but that is a
+        // heuristic, and naming a faction outright is better evidence than a
+        // member count. GovRuling, the jarls and their courts, is 42 members
+        // against a default ceiling of 40: a real province-spanning
+        // institution rejected by two seats.
+        //
+        // NOT pure: a match is recorded in g_allowMatched, which is what makes
+        // the unmatched-entry warning possible. Do not refactor the call out
+        // of the admission loop on the assumption that it only reads.
+        bool IsExplicitlyAllowed(std::string_view editorId)
+        {
+            if (editorId.empty()) {
+                return false;
+            }
+            const auto lowered = ToLower(editorId);
+            if (!g_allowExact.contains(lowered)) {
+                return false;
+            }
+            g_allowMatched.insert(lowered);
+            return true;
+        }
+
         bool IsBucketFaction(std::string_view editorId)
         {
             if (editorId.empty()) {
@@ -272,7 +320,7 @@ namespace NarrativeEngine::GossipGraph
                 return true;
             }
             const auto lowered = ToLower(editorId);
-            if (g_allowExact.contains(lowered)) {
+            if (IsExplicitlyAllowed(editorId)) {
                 return false;
             }
             return std::any_of(g_denyFragments.begin(), g_denyFragments.end(), [&](const std::string& frag) {
@@ -603,31 +651,52 @@ namespace NarrativeEngine::GossipGraph
             std::size_t pairs = 0;
             for (auto& [factionId, mem] : members) {
                 const int size = static_cast<int>(mem.size());
-                if (size < lo || size > hi) {
-                    continue;
-                }
+                // The EditorID is resolved BEFORE the size test on purpose.
+                // An explicit allow has to be able to override the bounds, and
+                // it cannot do that if the faction is dropped before anyone
+                // has looked at its name. That ordering was a real bug: three
+                // Civil War factions were listed in [Allow] and only two took,
+                // because GovRuling is 42 members against a ceiling of 40 --
+                // with nothing in the log to say the third had been ignored.
                 auto* faction = RE::TESForm::LookupByID<RE::TESFaction>(factionId);
                 const char* eid = faction ? faction->GetFormEditorID() : nullptr;
-                if (IsBucketFaction(eid ? eid : "")) {
+                const bool allowed = IsExplicitlyAllowed(eid ? eid : "");
+                if (!allowed && (size < lo || size > hi)) {
+                    continue;
+                }
+                if (!allowed && IsBucketFaction(eid ? eid : "")) {
                     continue;
                 }
                 ++g_census.factionsAdmitted;
                 g_factionNames[factionId] = (eid && *eid) ? eid : std::format("0x{:08X}", factionId);
                 for (std::size_t i = 0; i < mem.size(); ++i) {
                     for (std::size_t j = i + 1; j < mem.size(); ++j) {
-                        g_factionEdges[mem[i]].push_back({mem[j], 1.0f, Channel::Faction, factionId});
-                        g_factionEdges[mem[j]].push_back({mem[i], 1.0f, Channel::Faction, factionId});
+                        g_factionEdges[mem[i]].push_back({mem[j], -1, true, Channel::Faction, factionId});
+                        g_factionEdges[mem[j]].push_back({mem[i], -1, true, Channel::Faction, factionId});
                         ++pairs;
                     }
                 }
             }
             g_census.factionPairs = pairs;
+
+            // An allow entry that never matched is almost always a mistake,
+            // and it is invisible otherwise: the faction simply stays absent
+            // and the graph looks like the filter is working.
+            for (const auto& entry : g_allowExact) {
+                if (!g_allowMatched.contains(entry)) {
+                    logger::warn("GossipGraph: [Allow] entry '{}' matched no faction with participant members "
+                                 "-- check the EditorID, or the mod that defines it may not be installed",
+                                 entry);
+                }
+            }
         }
 
         // Merge faction edges with a freshly-read relationship set.
-        // Relationship rank wins where a pair is connected both ways —
-        // it carries real signal, whereas the faction multiplier is a
-        // flat 1.0.
+        //
+        // A relationship does NOT replace a shared faction where a pair has
+        // both: the two compose, so the faction bit has to survive onto the
+        // merged edge. Overwriting it would silently drop the "forced into
+        // each other's company by the organisation" half of the rule.
         void RebuildEdges()
         {
             g_edges = g_factionEdges;
@@ -645,7 +714,7 @@ namespace NarrativeEngine::GossipGraph
                     if (a == b || !g_participants.contains(a) || !g_participants.contains(b)) {
                         continue;
                     }
-                    const float mult = RankMultiplier(rel->level.get());
+                    const int relDelta = RelationshipTierDelta(rel->level.get());
                     ++g_census.relationshipEdges;
 
                     // Replace any faction edge for the same pair rather
@@ -655,11 +724,12 @@ namespace NarrativeEngine::GossipGraph
                         const auto it = std::find_if(
                             list.begin(), list.end(), [&](const PersonalEdge& e) { return e.other == to; });
                         if (it != list.end()) {
-                            it->multiplier = mult;
+                            // Keep sharedFaction and the faction id; only the
+                            // attribution and the composed delta change.
+                            it->tierDelta = ComposeTierDelta(it->sharedFaction, relDelta);
                             it->via = Channel::Relationship;
-                            it->faction = 0;
                         } else {
-                            list.push_back({to, mult, Channel::Relationship, 0});
+                            list.push_back({to, ComposeTierDelta(false, relDelta), false, Channel::Relationship, 0});
                         }
                     };
                     upsert(a, b);

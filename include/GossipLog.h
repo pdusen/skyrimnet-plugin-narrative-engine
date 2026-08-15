@@ -79,19 +79,17 @@ namespace NarrativeEngine::GossipLog
               RE::FormID settlement,
               std::int64_t sourceMemoryId);
 
-    // One successful transmission. `via` is the specific channel that best
-    // explains the contact; `tier` is the proximity tier the pair share.
-    // Both are logged because they diverge constantly -- most vanilla
-    // relationship edges are between housemates, so collapsing them made
-    // household traffic look like a sixth of what it actually is.
+    // One successful transmission. `rung` is the ladder rung the
+    // conversation was drawn from, which IS the channel under the tiered
+    // model -- no separate attribution is needed or possible, because the
+    // rung is chosen before the peer is. A telling on rung t2/t4/t6 is by
+    // construction one a faction or relationship made more likely.
     void Tell(std::uint32_t rumorId,
               std::uint32_t generation,
               float notability,
               RE::FormID from,
               RE::FormID to,
-              GossipGraph::Channel via,
-              GossipGraph::Channel tier,
-              RE::FormID viaFaction,
+              std::string_view rung,
               RE::FormID location,
               RE::FormID fromHold,
               RE::FormID toHold);
@@ -127,6 +125,8 @@ namespace NarrativeEngine::GossipLog
         std::size_t notCaught = 0;
         std::size_t unavailable = 0;
         std::size_t capped = 0;
+        // Draws that found nobody on the rung they landed on.
+        std::size_t silent = 0;
     };
     void Burnout(std::uint32_t rumorId, const BurnoutStats& stats);
 

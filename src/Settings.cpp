@@ -277,26 +277,26 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("Gossip", "iGossipTickIntervalSeconds", dst.gossipTickIntervalSeconds));
             dst.gossipMaxEventsPerTick =
                 static_cast<int>(ini.GetLongValue("Gossip", "iGossipMaxEventsPerTick", dst.gossipMaxEventsPerTick));
-            dst.gossipConversationsPerDay = static_cast<float>(
-                ini.GetDoubleValue("Gossip", "fGossipConversationsPerDay", dst.gossipConversationsPerDay));
-            dst.gossipWeightHousehold =
-                static_cast<float>(ini.GetDoubleValue("Gossip", "fGossipWeightHousehold", dst.gossipWeightHousehold));
-            dst.gossipWeightPersonalEdge = static_cast<float>(
-                ini.GetDoubleValue("Gossip", "fGossipWeightPersonalEdge", dst.gossipWeightPersonalEdge));
-            dst.gossipWeightSettlement =
-                static_cast<float>(ini.GetDoubleValue("Gossip", "fGossipWeightSettlement", dst.gossipWeightSettlement));
-            dst.gossipWeightHold =
-                static_cast<float>(ini.GetDoubleValue("Gossip", "fGossipWeightHold", dst.gossipWeightHold));
-            dst.gossipProvinceShare =
-                static_cast<float>(ini.GetDoubleValue("Gossip", "fGossipProvinceShare", dst.gossipProvinceShare));
-            dst.gossipPersonalDistanceSameSettlement = static_cast<float>(ini.GetDoubleValue(
-                "Gossip", "fGossipPersonalDistanceSameSettlement", dst.gossipPersonalDistanceSameSettlement));
-            dst.gossipPersonalDistanceSameHold = static_cast<float>(
-                ini.GetDoubleValue("Gossip", "fGossipPersonalDistanceSameHold", dst.gossipPersonalDistanceSameHold));
-            dst.gossipPersonalDistanceFar = static_cast<float>(
-                ini.GetDoubleValue("Gossip", "fGossipPersonalDistanceFar", dst.gossipPersonalDistanceFar));
             dst.gossipInfectiousDays =
                 static_cast<float>(ini.GetDoubleValue("Gossip", "fGossipInfectiousDays", dst.gossipInfectiousDays));
+            // The ladder, rung 1 (household) through rung 7 (province).
+            // Named for the geographic rungs and numbered for the adjustment
+            // rungs between them, which is how the design doc reads.
+            static constexpr const char* kTierKeys[7] = {
+                "fGossipTierWeightHousehold",
+                "fGossipTierWeight2",
+                "fGossipTierWeightSettlement",
+                "fGossipTierWeight4",
+                "fGossipTierWeightHold",
+                "fGossipTierWeight6",
+                "fGossipTierWeightProvince",
+            };
+            for (std::size_t i = 0; i < dst.gossipTierWeights.size(); ++i) {
+                dst.gossipTierWeights[i] =
+                    static_cast<float>(ini.GetDoubleValue("Gossip", kTierKeys[i], dst.gossipTierWeights[i]));
+            }
+            dst.gossipConversationsPerStep = static_cast<float>(
+                ini.GetDoubleValue("Gossip", "fGossipConversationsPerStep", dst.gossipConversationsPerStep));
             dst.gossipTransmissionScale = static_cast<float>(
                 ini.GetDoubleValue("Gossip", "fGossipTransmissionScale", dst.gossipTransmissionScale));
             dst.gossipStepDays =

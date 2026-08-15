@@ -89,14 +89,22 @@ namespace NarrativeEngine::GossipGraph
         std::string name;
     };
 
-    // A distance-blind tie to one other participant. `multiplier` folds
-    // in the BGSRelationship rank multiplier (1.0 for a faction-only
-    // edge). `faction` is the shared faction's FormID when `via` is
-    // Faction, 0 otherwise; it is carried purely so the log can name it.
+    // A distance-blind tie to one other participant.
+    //
+    // `tierDelta` is how this tie moves the peer on the contact ladder:
+    // -1 one rung closer, 0 no movement, +1 one rung further. It is composed
+    // at build time from BOTH sources, because they compose rather than
+    // override -- a faction-mate you are on bad terms with cancels out and
+    // stays where geography put them. `sharedFaction` is retained so that
+    // composition is auditable from the trace rather than only inferable.
+    //
+    // `faction` is the shared faction's FormID when one exists, 0 otherwise;
+    // it is carried purely so the log can name it.
     struct PersonalEdge
     {
         RE::FormID other = 0;
-        float multiplier = 1.0f;
+        int tierDelta = 0;
+        bool sharedFaction = false;
         Channel via = Channel::Faction;
         RE::FormID faction = 0;
     };

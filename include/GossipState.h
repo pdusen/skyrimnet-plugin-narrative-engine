@@ -104,6 +104,12 @@ namespace NarrativeEngine::GossipState_
         std::size_t notCaught = 0;   // spoke, but it did not take
         std::size_t unavailable = 0; // listener down, gone, or unreachable
         std::size_t capped = 0;      // carrier cap already reached
+        // The drawn rung had nobody available on it. Not a failed telling:
+        // no conversation happened at all. Rungs 2/4/6 have no natural
+        // membership, so an unconnected carrier spends their whole share of
+        // those rungs in silence -- which is the model's way of saying that
+        // a person with no ties talks less than one who has them.
+        std::size_t silent = 0;
         double lastActivityGameDay = 0.0;
         bool live = true;
     };
@@ -180,6 +186,7 @@ namespace NarrativeEngine::GossipState_
         std::size_t notCaught = 0;
         std::size_t unavailable = 0;
         std::size_t capped = 0;
+        std::size_t silent = 0;
         std::size_t memoriesWritten = 0;
         std::size_t memoryWriteFailures = 0;
     };
