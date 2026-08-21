@@ -821,6 +821,18 @@ namespace NarrativeEngine::LetterPool
         // takes the page text as a function argument. This hook
         // substitutes our cached body for the description argument
         // when the Book FormID is one of ours.
+        //
+        // The signature is NOT the same on every runtime. Skyrim VR
+        // appends a 9th parameter — the book's already-loaded 3D node,
+        // which the VR build hands to the menu instead of resolving it
+        // internally the way SE/AE do. A detour that forwards only the
+        // SE/AE arguments leaves that 9th stack slot holding whatever
+        // the detour's own frame happened to contain, and the original
+        // function ref-counts it (`lock inc [rbx+8]`) on the way to
+        // storing it in BookMenu::RUNTIME_DATA::bookModel — an access
+        // violation on every book opened, ours or not. So we install a
+        // runtime-matched detour rather than one shared signature. See
+        // docs/engine-findings/vr-openbookmenu-extra-parameter.md.
 
         using OpenBookMenu_t = void (*)(const RE::BSString&,
                                         const RE::ExtraDataList*,
@@ -831,7 +843,51 @@ namespace NarrativeEngine::LetterPool
                                         float,
                                         bool);
 
+        using OpenBookMenuVR_t = void (*)(const RE::BSString&,
+                                          const RE::ExtraDataList*,
+                                          RE::TESObjectREFR*,
+                                          RE::TESObjectBOOK*,
+                                          const RE::NiPoint3&,
+                                          const RE::NiMatrix3&,
+                                          float,
+                                          bool,
+                                          RE::NiAVObject*);
+
+        // Exactly one of these is non-null — whichever InstallHooks
+        // bound for the running runtime.
         OpenBookMenu_t g_origOpenBookMenu = nullptr;
+        OpenBookMenuVR_t g_origOpenBookMenuVR = nullptr;
+
+        // Shared pre-call work for both detours. Returns true when the
+        // book is one of ours AND has a cached body, in which case
+        // a_substitute holds the text to pass in place of the engine's
+        // description argument.
+        bool PrepareOpenBookMenu(RE::TESObjectBOOK* a_book, RE::BSString& a_substitute)
+        {
+            if (!a_book || !IsManagedForm(a_book->GetFormID())) {
+                return false;
+            }
+
+            // Stamp the slot index so the close-edge sink (Step 7) can
+            // fire MarkRead on it. We stamp even when TryGetBody
+            // returns false (slot has no cached body) — opening a pool
+            // letter is still a "read" lifecycle event from the
+            // player's perspective.
+            {
+                std::scoped_lock lock(g_mutex);
+                const int slotIdx = FindSlotByFormIDLocked(a_book->GetFormID());
+                if (slotIdx >= 0) {
+                    g_currentOpenSlot.store(slotIdx, std::memory_order_relaxed);
+                }
+            }
+
+            std::string body;
+            if (!TryGetBody(a_book->GetFormID(), body)) {
+                return false;
+            }
+            a_substitute = body.c_str();
+            return true;
+        }
 
         void HookedOpenBookMenu(const RE::BSString& a_description,
                                 const RE::ExtraDataList* a_extraList,
@@ -842,28 +898,39 @@ namespace NarrativeEngine::LetterPool
                                 float a_scale,
                                 bool a_useDefaultPos)
         {
-            if (a_book && IsManagedForm(a_book->GetFormID())) {
-                // Stamp the slot index so the close-edge sink (Step 7)
-                // can fire MarkRead on it. We stamp even when TryGetBody
-                // returns false (slot has no cached body) — opening a
-                // pool letter is still a "read" lifecycle event from
-                // the player's perspective.
-                {
-                    std::scoped_lock lock(g_mutex);
-                    const int slotIdx = FindSlotByFormIDLocked(a_book->GetFormID());
-                    if (slotIdx >= 0) {
-                        g_currentOpenSlot.store(slotIdx, std::memory_order_relaxed);
-                    }
-                }
+            RE::BSString substitute;
+            const bool substituted = PrepareOpenBookMenu(a_book, substitute);
+            g_origOpenBookMenu(substituted ? substitute : a_description,
+                               a_extraList,
+                               a_ref,
+                               a_book,
+                               a_pos,
+                               a_rot,
+                               a_scale,
+                               a_useDefaultPos);
+        }
 
-                std::string body;
-                if (TryGetBody(a_book->GetFormID(), body)) {
-                    RE::BSString substitute = body.c_str();
-                    g_origOpenBookMenu(substitute, a_extraList, a_ref, a_book, a_pos, a_rot, a_scale, a_useDefaultPos);
-                    return;
-                }
-            }
-            g_origOpenBookMenu(a_description, a_extraList, a_ref, a_book, a_pos, a_rot, a_scale, a_useDefaultPos);
+        void HookedOpenBookMenuVR(const RE::BSString& a_description,
+                                  const RE::ExtraDataList* a_extraList,
+                                  RE::TESObjectREFR* a_ref,
+                                  RE::TESObjectBOOK* a_book,
+                                  const RE::NiPoint3& a_pos,
+                                  const RE::NiMatrix3& a_rot,
+                                  float a_scale,
+                                  bool a_useDefaultPos,
+                                  RE::NiAVObject* a_bookModel)
+        {
+            RE::BSString substitute;
+            const bool substituted = PrepareOpenBookMenu(a_book, substitute);
+            g_origOpenBookMenuVR(substituted ? substitute : a_description,
+                                 a_extraList,
+                                 a_ref,
+                                 a_book,
+                                 a_pos,
+                                 a_rot,
+                                 a_scale,
+                                 a_useDefaultPos,
+                                 a_bookModel);
         }
 
         // Single helper for both hooks — wraps the MH_Initialize /
@@ -924,10 +991,20 @@ namespace NarrativeEngine::LetterPool
         }
         {
             REL::Relocation<std::uintptr_t> target{RELOCATION_ID(50122, 51053)};
-            InstallHook("BookMenu::OpenBookMenu",
-                        target.address(),
-                        reinterpret_cast<void*>(&HookedOpenBookMenu),
-                        reinterpret_cast<void**>(&g_origOpenBookMenu));
+            // VR's OpenBookMenu takes a 9th argument (the book's 3D
+            // node); SE/AE's does not. Detour signature must match the
+            // running runtime or the pass-through corrupts the call.
+            if (REL::Module::IsVR()) {
+                InstallHook("BookMenu::OpenBookMenu (VR)",
+                            target.address(),
+                            reinterpret_cast<void*>(&HookedOpenBookMenuVR),
+                            reinterpret_cast<void**>(&g_origOpenBookMenuVR));
+            } else {
+                InstallHook("BookMenu::OpenBookMenu",
+                            target.address(),
+                            reinterpret_cast<void*>(&HookedOpenBookMenu),
+                            reinterpret_cast<void**>(&g_origOpenBookMenu));
+            }
         }
     }
 
