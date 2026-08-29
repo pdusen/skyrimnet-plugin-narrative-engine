@@ -126,10 +126,11 @@ thread context.
 
 ## The `Token`-gated wrapper pattern
 
-Engine calls (`RE::PlayerCharacter::GetSingleton()`,
-`RE::Actor::IsInCombat()`, `RE::Sky::GetSingleton()`, `TESForm::LookupByID`,
-etc.) require the main thread. To make that requirement enforceable, wrap
-each engine read in a small function that takes a `MainThread::Token const&`:
+Most engine calls (`RE::PlayerCharacter::GetSingleton()`,
+`RE::Sky::GetSingleton()`, anything that mutates, anything that resolves a
+name or walks an engine-owned container) require the main thread. To make
+that requirement enforceable, wrap each such call in a small function that
+takes a `MainThread::Token const&`:
 
 ```cpp
 namespace NarrativeEngine::EngineUtils
@@ -150,6 +151,44 @@ plain, self-contained data (no `RE::*` pointers, no references into engine-
 owned memory) — that's the return-by-value discipline that keeps engine-
 owned state from leaking back to a worker thread.
 
+### The exception: plain field reads on persistent forms
+
+Not every engine read needs the hop, and the gossip worker depends on the
+difference. `GossipThread::Token` cannot reach the main thread at all
+(enforcement #8 below), so `GossipSim::ActorAvailability` reads actor state
+from a worker or not at all.
+
+Safe off-main, per the rationale recorded at `src/GossipSim.cpp`:
+
+- **`TESForm::LookupByID`** — it takes the engine's own read-write lock over
+  the all-forms map.
+- **Plain inline field reads on the form it returns** — `GetLifeState()` via
+  `AsActorState()`, `IsInCombat()`, `IsDead()`, `IsDisabled()`,
+  `IsBleedingOut()`.
+
+Two preconditions, neither optional:
+
+- **The form's lifetime must be guaranteed.** Unique NPCs' `Actor` objects are
+  persistent and always resident — only their 3D unloads — which is why
+  `BGSLocation` stores them as `UniqueNPCData { Actor* actor; ... }` while
+  storing ordinary persistent refs as `UnloadedRefData { FormID refID; ... }`.
+  This does **not** generalise to an arbitrary reference that can be destroyed
+  on cell unload.
+- **The call must actually be a field read.** `GetDisplayFullName()` is the
+  counterexample: it is not, and it is the reason
+  `MainThreadEngine::LookupActor` demands a `MainThread::Token` even though
+  every flag it copies out would be safe to read on its own. Do not read the
+  existence of that wrapper as evidence the flags need main.
+
+A value read this way is advisory by nature — the main thread may change it
+the instant afterwards. That is fine for a gate ("is this actor in combat
+right now?") and wrong for anything that needs the answer to stay true, which
+is why these stay reads and never become read-modify-write.
+
+When in doubt, take the hop. The exception is narrow and exists to serve
+workers that structurally cannot reach main, not to avoid a `Run` call that
+would have been fine.
+
 Example — a plugin-thread caller wanting the player's location + cell +
 whether the player is in combat, all in one main-thread hop:
 
@@ -166,15 +205,15 @@ auto snap = MainThread::Run(pt, [](MainThread::Token const& mt) {
 ## Enforcement mechanisms
 
 The design catches the classic threading misuse patterns at compile time.
-Five of the six are structural; the sixth remains convention-only and needs
-human review.
+Seven of the eight are structural; #6 remains convention-only and needs human
+review, as does the unwrapped field-read exception noted against #4.
 
 | # | Misuse pattern                                    | Caught by                                                        |
 | - | ------------------------------------------------- | ---------------------------------------------------------------- |
 | 1 | Foreign thread calls `Run` / `FireAndForget`      | Compile error — no `PluginThread::Token` to pass.                |
 | 2 | Main-thread code calls `Run`                      | Compile error — main-thread code holds `MainThread::Token`, not `PluginThread::Token`. |
 | 3 | Re-entrant `Run` from inside another `Run` lambda | Compile error — same as 2 (inner lambda holds only `MainThread::Token`). |
-| 4 | Engine touch from unsanctioned context            | Compile error — engine wrappers demand `MainThread::Token`, which only lives inside a `Run` / `FireAndForget` lambda. |
+| 4 | Engine touch from unsanctioned context            | Compile error — engine wrappers demand `MainThread::Token`, which only lives inside a `Run` / `FireAndForget` lambda. Covers wrapped calls only; the field-read exception above is deliberately unwrapped and so is convention-checked, like #6. |
 | 5 | Plugin logic called from a foreign thread         | Compile error — every plugin function demands one of the two tokens; foreign code has neither. |
 | 6 | Long-lived reference to main-thread state escapes the lambda | **Convention only** — return by value from `Run<T>` lambdas; do not capture engine pointers into worker-scope state that outlives the lambda. Reviewers must look for this. |
 | 7 | Gossip simulation state touched from a non-gossip thread | Compile error — `GossipSim::MutableState` and the `GossipClaims` mutators demand a `GossipThread::Token`, which only `GossipDispatch`'s job dispatcher mints. |
