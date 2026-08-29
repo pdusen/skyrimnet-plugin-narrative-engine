@@ -422,8 +422,8 @@ above is already landed and is not part of this phase's diff.)
 
 ## Prerequisite — capture a live `PublicGetDiaryEntries` payload
 
-**Step 1 is a data-gathering step, not a coding one, and nothing downstream can be written honestly without
-it.** The whole watermark rests on a row shape nobody here has seen. The header documents `startTime` /
+**Steps 1 and 2 are data-gathering, and nothing downstream can be written honestly without them.** The whole
+watermark rests on a row shape nobody here has seen. The header documents `startTime` /
 `endTime` as "seconds since epoch" and says rows carry "all fields from `DiaryEntry::ToJson()` plus an
 `actor_name` field" — which names nothing. Three things have to come out of one captured payload:
 
@@ -445,8 +445,242 @@ back.
 
 ## Implementation plan
 
-Not yet written. The design above is the contract; steps land once it is agreed, beginning with the payload
-capture above.
+Ordered so that **each mechanism is observable before the next one depends on it**, and so that the step which
+costs tokens and writes to the world is last.
+
+Steps 1 and 2 settle the diary payload, because every later step parses it. Step 3 builds the cadence with a
+stubbed sweep, so the schedule can be watched across in-game days — including the save/load and time-skip
+cases — while it still costs nothing. Step 4 turns on the real scan but dispatches nothing, so the ranking can
+be argued with over a long run before it is allowed to spend a single LLM call. Step 5 is the first step that
+changes anything outside the plugin, and by the time it lands the only new thing in it is the gates and the
+Papyrus bridge.
+
+---
+
+### Step 1 — SkyrimNet surface and a one-shot diary payload dump
+
+- [ ] Complete
+
+**Goal:** Every SkyrimNet call the phase needs exists behind a defensive wrapper, and one debug-mode dump puts
+a real diary payload in the log. No scheduling, no sweep, no state.
+
+1. `SkyrimNetAPI::GetDiaryEntries(formId, maxCount, startTime, endTime)`, resolving `PublicGetDiaryEntries`
+   (v4+). Defensive in the house style: `"[]"` when SkyrimNet is unavailable, when the memory system is not
+   ready, or when the pointer did not resolve. Wrap the boundary call in the same try/catch `GetRecentEvents`
+   uses — a `std::string` returned across the DLL boundary is exactly where an exception would land.
+2. `SkyrimNetAPI::IsActorBusy(formId)`, resolving `PublicIsActorBusy` (v6+), returning **`false`** when
+   unavailable. False is the correct default: a busy-check that cannot run must not silently gate the entire
+   population out.
+3. A resolved-version line at `Initialize`, logged once, naming which of the pointers came back null. The
+   phase needs v10 for `QueryMemoriesForActor` anyway, so v4 and v6 come free below that floor — but an
+   unresolved export otherwise reads as "this actor has no entries", which is indistinguishable from silence.
+4. The dump, gated on `bDebugMode`, fired once per session at `kPostLoadGame` once the memory system reports
+   ready:
+   - `GetDiaryEntries(0, 5, 0, 0)` — rows from *several* actors at once, which is what makes ordering and
+     cross-actor keying legible from a single log line. This is the only place the global form is used;
+     production reads are per-actor for the reasons in the design.
+   - `GetDiaryEntries(actorRef, 5, 0, 0)` for one arbitrary participant.
+   - Both emitted with a verbatim `j.dump()`, **not** field-by-field. The entire point is to see keys nobody
+     here has named yet, and a field-by-field reader can only print the fields it already assumed.
+5. Mark the dump as temporary at the call site. It exists to answer Step 2 and has no place in the shipped
+   sweep.
+
+**Verification:** with `bDebugMode=true`, a fresh load writes both dumps to the plugin log, and neither is
+`[]` on a save where at least one diary entry exists. If both are `[]` on a save that demonstrably has
+entries, that is a version or keying failure and Step 2 cannot proceed until it is understood.
+
+---
+
+### Step 2 — Capture the payload and settle the row shape
+
+- [ ] Complete
+
+**[USER]**
+
+**Goal:** Answer the questions in *Prerequisite* from real data, and record the answers in this doc so Steps
+3–5 are written against facts rather than against `PublicAPI.h`'s doc comment.
+
+**Test steps:**
+
+1. On a save with SkyrimNet running, pick a named NPC and trigger SkyrimNet's diary hotkey
+   (`TriggerGenerateDiaryBio`, *Target in Crosshair* scope) on them. Wait for the entry to land.
+2. Advance a few in-game hours and generate a **second** entry for that same NPC. Two entries at known,
+   different in-game times is what makes the ordering question answerable.
+3. Generate one for a different NPC, so the global dump has more than one actor in it.
+4. Save, reload with `bDebugMode=true`, and collect both dumps from the plugin log.
+5. Record in this doc, verbatim:
+   - **The field names**, and which field carries the timestamp.
+   - **Whether that timestamp is in-world or wall-clock.** Cross-check against `game_time` on a memory row
+     written around the same moment. If the diary value tracks `creation_time` instead, it is wall-clock.
+   - **The row ordering** — with two entries for one actor, does `maxCount = 1` return the newer or the older?
+   - **Which FormID keys the table** — did the per-actor dump keyed on `actorRef` return that NPC's entries?
+     If not, retry with the base `TESNPC` FormID and record which one works.
+6. **If the timestamp turns out to be wall-clock only, stop and raise it.** The watermark design assumes an
+   in-world value throughout. The fallback — deriving the watermark from `"Diary Entry:"`-prefixed rows in the
+   memory store, which do carry `game_time` — is a materially different design and needs agreeing before it
+   is built, not improvising at this point in the phase.
+
+**Success criteria:** all four answers written into this doc, with the ordering confirmed by observation
+rather than inferred from the parameter name.
+
+---
+
+### Step 3 — The worker, the scheduler, and the co-save timestamp
+
+- [ ] Complete
+
+**Goal:** The cadence runs, persists, and is fully observable, while the sweep itself is a stub that only logs
+what it would have done. The schedule can be watched across in-game days — including the save/load and
+time-skip cases — before anything queries SkyrimNet hundreds of times.
+
+1. `DiaryThread::Token` and `DiaryDispatch`, following `GossipThread` / `GossipDispatch`: serial FIFO, one
+   worker declaring `ScopedThreadRole(ThreadRole::Plugin)`, `EnqueueCancellableWork`, `CancelAll`,
+   `OutstandingCount`. `Start()` at `kDataLoaded`, `Stop()` at shutdown.
+   - Register the token in `WorkerToken.h` with one `is_worker_token` specialisation. Do not modify either
+     existing token type — that is the whole reason the trait exists rather than a shared base.
+   - `MainThread::Run` / `FireAndForget` continue to reject it, which is the property being preserved.
+2. `DiaryTick::Poll`, called from `Tick::PollOnPluginThread`, implementing the comparison from the design. No
+   accumulator, no owed-sweep queue, no rebase branch.
+3. Co-save record `'NEDY'`, version 1, carrying one `double`. `OnSave` / `OnLoad` / `OnRevert` following the
+   existing module pattern, dispatched from the record switch in `Plugin.cpp`. `DiaryDispatch::CancelAll()`
+   joins the existing `OnRevert` blocks alongside `GossipSim::OnRevert()`.
+   - No record present → initialise to the current game time, **not** `0`.
+4. `DiaryLog` on the `GossipLog` pattern: its own file, flushed per line, gated on `bDiaryLogEnabled`.
+5. Settings: `bDiaryEnabled` (default `false`), `bDiaryLogEnabled`, `fDiaryIntervalGameHours`. The rest land
+   with the steps that read them.
+6. The sweep body is a stub — log the stamp, the elapsed game hours since the previous sweep, and
+   `GossipGraph::ParticipantCount()`. Nothing else.
+
+**Verification:** with `bDiaryEnabled=true` the log shows one stub sweep per `fDiaryIntervalGameHours`.
+`T`-skipping 24 hours produces **one** sweep, not six. Saving after a sweep, playing on, then reloading that
+save resumes from the saved timestamp rather than firing immediately. A save taken before the feature was
+enabled does not fire a sweep the instant it loads.
+
+---
+
+### Step 4 — The scan: watermark, memories, score, rank
+
+- [ ] Complete
+
+**Goal:** The real scan runs and produces a ranked candidate list, logged in full. Nothing is dispatched and
+nothing is written anywhere. The ranking gets watched over many in-game days before it is allowed to cost a
+single token.
+
+1. Settings: `fDiaryImportanceThreshold`, `iDiaryMemoriesPerActor`, `sDiarySkipTags`.
+2. Walk `GossipGraph::Participants()`, applying the stable gates first, off-main:
+   `AsActorState()->GetLifeState() == kAlive` and `!IsDisabled()`. Skip on a null form or a null
+   `AsActorState()`. Read `THREADING_MODEL.md`'s field-read exception before writing this, and use
+   `AsActorState()` rather than the inherited `GetLifeState()` for the AE/SE offset reason recorded there.
+3. Per survivor: `GetDiaryEntries(actorRef, 1, 0, 0)`, parsed per Step 2's findings. Empty array →
+   watermark `0`.
+4. Per survivor: `QueryMemoriesForActor(actorRef, q)` with the query from the design section.
+5. Drop rows whose `content` begins with `"Diary Entry:"`, counted separately. A nonzero count is expected and
+   healthy. A count *equal to the row count*, sweep after sweep, means the watermark is not advancing.
+6. Sum `importance_score` over what survives; reject below `fDiaryImportanceThreshold`.
+7. Sort descending. Log per candidate: name, score, contributing row count, and watermark age in game days —
+   and for anyone rejected, the reason **with the parsed value printed beside it**, per the standing rule in
+   the field-names finding doc.
+8. Check the cancellation handle at each participant boundary, not merely at the end. The scan makes no
+   writes, but a sweep that keeps running after a load is burning a worker on a world that no longer exists.
+
+**Verification:** the ranking is populated and plausible across several sweeps — followers and
+recently-travelled-with NPCs near the top, but not exclusively so. Rejection reasons are *distributed*: a
+uniform `low-importance` verdict with `imp=0.00` on every row is the signature of a wrong field name, not of a
+working filter. Logged sweep wall-time does not grow across a session.
+
+---
+
+### Step 5 — Gates and dispatch
+
+- [ ] Complete
+
+**Goal:** The top candidates actually get diary entries. This is the first step that changes anything outside
+the plugin.
+
+1. Settings: `iDiaryEntriesPerSweep`, `fDiaryFinalistOverdraft`, `fDiaryQuietMinutes`, `bDiaryRespectActorBusy`.
+2. `SkyrimNetAPI::GenerateDiaryEntryByUUID(MainThread::Token const&, uuid)` —
+   `DispatchStaticCall("SkyrimNetApi", "GenerateDiaryEntryByUUID", …)` with a `BSFixedString` argument,
+   `MakeFunctionArguments`, and an empty callback, mirroring the boilerplate in `QuestUtils::VMDispatchOnQuest`
+   minus the handle-policy lookup a static call does not need. Token-gated because it requires main.
+   - It belongs in `SkyrimNetAPI`, not `QuestUtils`: every other SkyrimNet call routes through that namespace,
+     and the transport being a Papyrus native rather than a DLL export is an implementation detail.
+     `QuestUtils` is explicitly quest-scoped and this is not a quest call.
+3. The sweep's last act is `AsyncDispatch::EnqueueWork` carrying the finalist list **by value**. That handoff
+   is the sweep completing.
+4. In that job, walk the ranked list applying the volatile gates: `!IsInCombat()` and `!IsBleedingOut()` via
+   the same off-main helper Step 4 uses; `IsActorBusy` when `bDiaryRespectActorBusy`; and the dialogue check —
+   `GetRecentEvents(actorRef, 5, "dialogue,dialogue_background,dialogue_player_text,gamemaster_dialogue")`,
+   taking the **maximum** `gameTime` across the returned rows rather than the first. Do not assume this
+   endpoint's ordering either; Step 2 exists because that assumption is how this class of bug gets in.
+5. `FormIDToUUID` per surviving candidate. Zero → log it and continue down the list; it is not an eligibility
+   gate, just the call's precondition.
+6. `MainThread::FireAndForget` per dispatch, stopping at `iDiaryEntriesPerSweep` or when the overdrafted list
+   is exhausted.
+7. Log every dispatch and every gate rejection with its reason.
+
+**Verification:** with `iDiaryEntriesPerSweep=1`, a sweep produces exactly one dispatch. That NPC's entry
+appears in SkyrimNet's diary within a minute or two, and the **next** sweep shows their watermark advanced and
+their score reset to near zero — which is the end-to-end proof that selection, generation, and the watermark
+agree. Deliberately putting a top-ranked NPC into combat gates them out and promotes the next candidate.
+
+---
+
+### Step 6 — In-game validation
+
+- [ ] Complete
+
+**[USER]**
+
+**Goal:** Confirm the feature reaches the province rather than the neighbourhood, that the cadence argument in
+*Why the interval is short* actually holds in play, and that nothing regresses.
+
+**Test steps** (running game, `bDiaryEnabled=true`, `bDiaryLogEnabled=true`, `bDebugMode=true`):
+
+1. Play or skip through roughly 7 in-game days. Confirm sweeps fire on schedule and the diary log records one
+   per interval.
+2. From the log, tally **distinct NPCs** that received an entry over that run. The cadence argument predicts
+   turnover: followers appearing repeatedly is expected and correct, followers appearing *exclusively* is the
+   failure mode. If the same two or three names hold every slot for a week, the threshold or the interval
+   needs revisiting and the finding belongs in this doc.
+3. Confirm at least one entry goes to an NPC the player has not travelled with — the province-reach check.
+   Early in a playthrough this may legitimately fail for want of memories; note the playthrough age alongside
+   the result rather than recording a bare pass/fail.
+4. Read two or three generated entries. Confirm they reference events the NPC actually experienced and read as
+   continuations rather than restatements — the `lastDiaryEntry` continuity working is what distinguishes this
+   from an entry composed from scratch each time.
+5. Save mid-sweep and reload. Confirm no duplicate dispatches, no stuck worker, and that the schedule resumes
+   from the co-saved timestamp.
+6. Confirm no regressions: gossip ticks still fire on their own cadence, beats still dispatch, and the Tick
+   poll shows no added latency.
+
+**Success criteria:**
+
+- Sweeps fire on schedule and coalesce correctly across time skips.
+- Entries are distributed across more than a handful of NPCs over a week of play.
+- Entry content is grounded in the NPC's real memories and continuous with their previous entry.
+- Save/load is clean.
+- No gossip, beat, or tick regressions.
+
+Record the observed entries-per-game-week and the final `fDiaryIntervalGameHours` /
+`fDiaryImportanceThreshold` pair here — those two are the tuning surface and the numbers that come out of this
+step are the only real evidence about them.
+
+---
+
+## Done condition
+
+The phase is complete when:
+
+- All 6 steps are checked off and Step 6 passes.
+- The `PublicGetDiaryEntries` row shape is recorded in this doc from a captured payload, and no parser field
+  name was taken from `PublicAPI.h`'s doc comment.
+- A sweep fires every `fDiaryIntervalGameHours` of in-game time, exactly once per elapsed interval regardless
+  of how many were skipped, and survives a save/load round trip.
+- Nothing per-NPC is persisted. The only co-save record is `'NEDY'` and it holds one `double`.
+- An NPC who receives an entry has their watermark advance and their score drop on the following sweep.
+- Diary entries appear for NPCs the player has never interacted with, given a save old enough to have supplied
+  them with memories.
+- The temporary payload dump from Step 1 is gone.
 
 ---
 
