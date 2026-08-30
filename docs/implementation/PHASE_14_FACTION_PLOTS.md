@@ -746,7 +746,7 @@ replacing them is a change to two small functions.
 
 #### Step 7 — `PlotFactions.ini`: the faction roster
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -792,6 +792,65 @@ loader a file with, in turn: an unresolvable `Faction`, a missing `RankMethod`, 
 unknown key, a section whose method-required parameters are absent, and a `Member` naming an NPC that does not
 resolve — and asserts each produces a distinct outcome. The last is a **warn-and-skip on that line only**: a
 mod that replaces General Tullius must cost you Tullius, not the whole Legion.
+
+Done. `statics/SKSE/Plugins/NarrativeEngine/PlotFactions.ini` (six sections, all three methods),
+`include/PlotFactionRoster.h`, `src/PlotFactionParse.cpp` (pure), `src/PlotFactionRoster.cpp` (engine-bound),
+and `PlotFactionRoster::Load()` at `kDataLoaded` **before** `PlotPopulation::Build()` — casting reads standing
+out of the roster, so the roster has to exist first. Build clean, both probes passing.
+
+**The parse is split from the resolution, and that was not the original plan.** Written as one module it
+compiled fine and could not be verified at all: every malformed-input rule — missing keys, an unknown method, a
+method without its parameters, a `Member` line that is not `<name>, <rank>` — sat behind
+`RE::TESForm::LookupByEditorID`, so exercising any of it needed a running game and a deliberately corrupted
+shipped file. This is the same trap Step 3 hit with the co-save, recognised earlier this time:
+
+- `PlotFactionParse.cpp` — INI **text** in, structures and diagnostics out. EditorIDs stay strings. No engine,
+  no logging, no file system.
+- `PlotFactionRoster.cpp` — reads the file, resolves EditorIDs to forms, logs what the parse rejected.
+
+Diagnostics are returned as data rather than logged from inside the parse, which is what lets the probe assert
+on *the reason* a section was rejected rather than only on the count.
+
+Verification, both parts:
+
+**`check-plot-factions.py`** looks every `Faction`, `MarkerFaction` and `Member` name in the shipped file up in
+the Spriggit export — never recalled, per `docs/VANILLA_RECORD_REFERENCE.md`. It also reports what each section
+will actually *do*, because a section that parses cleanly and leaves every member on the bottom rung is a
+section that does nothing, and that is invisible from the file alone:
+
+| Section          | Faction                      | Method   | Effect                        |
+| ---------------- | ---------------------------- | -------- | ----------------------------- |
+| college          | `CollegeofWinterholdFaction` | Rank     | authored ranks, MaxRank 6     |
+| companions       | `CompanionsFaction`          | Marker   | 8 of 19 members distinguished |
+| imperiallegion   | `CWImperialFaction`          | Explicit | 2 of 288                      |
+| stormcloaks      | `CWSonsFaction`              | Explicit | 2 of 269                      |
+| darkbrotherhood  | `DarkBrotherhoodFaction`     | Explicit | 1 of 20                       |
+| thievesguild     | `ThievesGuildFaction`        | Explicit | 3 of 23                       |
+
+It fails on a marker faction that shares no members with its primary, and on an override naming someone who is
+not in the faction — both of which parse cleanly and then silently never fire.
+
+**The parse probe** drives thirteen malformed inputs, each paired with a valid section so the property under
+test is always "the good one still loaded":
+
+| Input                                        | Result                                        |
+| -------------------------------------------- | --------------------------------------------- |
+| no `Faction` / no `DisplayName` / no `RankMethod` | section skipped, named reason              |
+| `RankMethod = Seniority`                     | skipped, naming the three valid methods       |
+| `Rank` with no / non-numeric / zero `MaxRank` | skipped, three distinct reasons               |
+| `Marker` with no `MarkerFaction`             | skipped                                        |
+| `Explicit` with no `Member` lines            | skipped — it describes no hierarchy at all     |
+| a `[Group:...]` section                      | skipped, naming the required section form      |
+| three malformed `Member` lines in one section | **section kept**, only the good line survived, one warning each |
+| an unknown key (`SuccessionRule`)            | warned, section **kept** — a file written for a newer build still works |
+| `Enabled = false`                            | not loaded, and not reported as broken         |
+| repeated `MarkerFaction`                     | all kept, **in file order, which is their seniority** |
+| a file that is not INI at all                | no factions, no crash                          |
+
+The shipped roster documents the problem it solves in its own header, including the two heuristics that were
+measured and rejected — property ownership, which ranked innkeepers above jarls, and faction nesting, which
+fires for 65% of the population. Astrid's section carries the sharpest note: she leads the Dark Brotherhood and
+nothing whatsoever in the data says so, which is the clearest argument for the file existing.
 
 ---
 

@@ -29,6 +29,7 @@
 #include <NPCVisitBeat.h>
 #include <PhaseTracker.h>
 #include <PlotDispatch.h>
+#include <PlotFactionRoster.h>
 #include <PlotPopulation.h>
 #include <PlotSerialize.h>
 #include <PlotState.h>
@@ -244,6 +245,10 @@ namespace NarrativeEngine
                 // After GossipGraph::Initialize: plots read their
                 // population from the graph gossip already builds, plus
                 // the faction ranks it does not carry.
+                // Before the population is built: casting reads
+                // standing out of the roster, so the roster has to
+                // exist first.
+                PlotFactionRoster::Load();
                 PlotPopulation::Build();
                 PlotDispatch::Start();
                 // Must start before BeatSystem::Initialize — the poll
