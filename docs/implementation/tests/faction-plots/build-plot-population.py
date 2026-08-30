@@ -245,13 +245,19 @@ def main() -> int:
             if npc_editor_id not in fac_members.get(fac_editor_id, set()):
                 continue
             standing = check.standing_of(npc_editor_id, section, fac_members, fac_ranks)
-            key = fac_key.get(fac_editor_id)
-            existing = next((f for f in factions if f["faction"] == str(key)), None)
+            # NOT `key` -- that is the enclosing loop's NPC key, and
+            # shadowing it here silently rewrote every member's own id to
+            # the last rostered faction they belonged to. Everyone in the
+            # same faction then compared equal, so the simulator's
+            # "skip the mastermind themselves" test skipped the entire
+            # faction and no subordinate was ever found.
+            fac_graph_key = fac_key.get(fac_editor_id)
+            existing = next((f for f in factions if f["faction"] == str(fac_graph_key)), None)
             if existing is not None:
                 existing["standing"] = standing
                 existing["rostered"] = True
             else:
-                factions.append({"faction": str(key), "standing": standing, "rostered": True})
+                factions.append({"faction": str(fac_graph_key), "standing": standing, "rostered": True})
 
         ties = extract_ties(personal.get(key))
 

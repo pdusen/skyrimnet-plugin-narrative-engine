@@ -1038,26 +1038,32 @@ Two tunings followed, both recorded with their sweeps in the log:
 - **Base budgets tightened by a fifth.** With mishap tamed, timeouts sat at 6.8%: the clock never ran out, so
   competence had almost nothing to decide.
 
-Tuned result over 5 trials × 365 in-world days: **67.8% succeeded / 14.6% timed out / 17.6% caught**, plots
-succeeding 72.6% of the time, 524 distinct masterminds with the top ten holding 13.5% of plots, median plot 18
+Tuned result over 5 trials × 365 in-world days: **68.7% succeeded / 14.3% timed out / 17.0% caught**, plots
+succeeding 73.4% of the time, 553 distinct masterminds with the top ten holding 6.2% of plots, median plot 18.5
 days and ~6 steps.
 
-**The call rate is less than half the design's estimate — 7.1 per in-world day against Part 3's ~15.** The
-estimate was right about the per-plot cost and wrong about the pace: plots run nearer eighteen days than
+**The call rate is less than half the design's estimate — 7.0 per in-world day against Part 3's ~15.** The
+estimate was right about the per-plot cost and wrong about the pace: plots run nearer nineteen days than
 seven. Comfortably affordable, with room to raise the plot budget later.
 
-Two findings that are **not** tuning problems and are carried into Step 11:
+**The harness also reported a false finding, and the log records it as such.** It said hierarchical
+delegation never happens — ladder rungs 1 and 2 both at 0.0% — and explained it as arithmetic about how few
+NPCs have standing. It was a bug in `build-plot-population.py`: a loop variable named `key` was shadowed
+inside the roster loop, so every member of a rostered faction had their own id rewritten to that faction's
+id. The simulator's "skip the mastermind themselves" filter then skipped the whole faction, and the
+subordinate pool was empty by construction. **The plugin was never affected** — `PlotPopulation::Build` has
+no such shadowing — and `dump-faction-ranks.py` confirms every hierarchy resolves correctly: Savos Aren has
+17 subordinates, Mercer Frey 21, Astrid 13, Tullius 7.
 
-- **Hierarchical delegation never happens.** Ladder rungs 1 and 2 fire 0.0% of the time; every delegation is a
-  personal tie (67.4%) or the mastermind acting alone (32.6%). This is arithmetic, not a bug: a subordinate is
-  someone with lower standing in a shared faction, and only **25 of 857** NPCs have any standing, so 832 of
-  857 masterminds have no subordinates anywhere by definition. The design's *"the Thieves Guild has options, a
-  Riverwood farmer has themselves"* still holds, but the "has options" case is vanishingly rare. It is a
-  **roster coverage** question — more rostered factions, or intermediate ranks in the ones already there —
-  and worth deciding before Step 11, since "who does the work" is one of the things that step judges.
-- **The budget runs near-saturated**, at 10/10 for 74.7% of ticks. Expected given 18-day plots and
-  opportunistic births, but it means `iPlotMaxConcurrent` is a ceiling doing real work rather than a safety
-  limit, and raising it raises the call rate near-proportionally.
+An outcome of *exactly* 0.0% over 5,400 dispatches should have been read as a code path that cannot fire
+rather than as a distribution. Corrected figures: **rung 1 = 7.3%, rung 3 = 72.7%, rung 4 = 20.0%** — four
+fifths of steps are delegated. Rung 2 stays at 0.0% for a structural reason that is now verified rather than
+assumed: every subordinate is also a personal tie, because `GossipGraph` derives personal edges partly from
+shared faction membership, so rung 1 always claims them first.
+
+One finding that **is** real and is carried into Step 11: **the budget runs near-saturated**, at 10/10 for
+74.6% of ticks. Expected given 19-day plots and opportunistic births, but it means `iPlotMaxConcurrent` is a
+ceiling doing real work rather than a safety limit, and raising it raises the call rate near-proportionally.
 
 `population.json` is generated and gitignored. The simulator is a **mirror** of `PlotResolution.cpp` and
 `PlotCasting.cpp` rather than a second design — a harness that models something the game does not produces

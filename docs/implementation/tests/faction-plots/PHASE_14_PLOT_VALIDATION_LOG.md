@@ -92,35 +92,35 @@ is short, and the floor is what stops "short" becoming "impossible".
 
 ```text
 STEP OUTCOMES
-  succeeded      3548   67.8%
-  timeout         764   14.6%
-  caught          921   17.6%
+  succeeded      3598   68.7%
+  timeout         751   14.3%
+  caught          891   17.0%
 
 PLOTS
-  born                     930
-  ended succeeded          72.6%
-  ended at the adaptation cap  27.4%
-  duration days   median 18.0   mean 19.3   max 56.0
+  born                     931
+  ended succeeded          73.4%
+  ended at the adaptation cap  26.6%
+  duration days   median 18.5   mean 19.4   max 50.5
   steps per plot  median  6.0   mean  5.8
-  adaptations     mean 1.58
+  adaptations     mean 1.54
 
-BUDGET  mean 9.7 of 10   pinned 74.7%   starved 0.3%
+BUDGET  mean 9.7 of 10   pinned 74.6%   starved 0.3%
 
-CASTING  524 distinct masterminds, 655 distinct actors
-  top 10 masterminds hold 13.5% of all plots
-  ladder rung: 1=0.0%  2=0.0%  3=67.4%  4=32.6%
+CASTING  553 distinct masterminds, 723 distinct actors
+  top 10 masterminds hold 6.2% of all plots
+  ladder rung: 1=7.3%  2=0.0%  3=72.7%  4=20.0%
 
-LLM CALLS  7.1 per in-world day
+LLM CALLS  7.0 per in-world day
 ```
 
 Against the step's own criteria:
 
 | Criterion                                        | Result                                  |
 | ------------------------------------------------ | --------------------------------------- |
-| No outcome class below ~10% or above ~70%         | **met** — 67.8 / 14.6 / 17.6            |
-| Several hundred distinct masterminds in a year    | **met** — 524, top 10 holding 13.5%     |
+| No outcome class below ~10% or above ~70%         | **met** — 68.7 / 14.3 / 17.0            |
+| Several hundred distinct masterminds in a year    | **met** — 553, top 10 holding 6.2%      |
 | Budget neither pinned nor starving                | **partly** — see below                  |
-| A call rate the Part 3 estimate can be checked against | **met** — 7.1/day against an estimated 15 |
+| A call rate the Part 3 estimate can be checked against | **met** — 7.0/day against an estimated 15 |
 
 **The LLM call rate is less than half the design's estimate.** Part 3 reasoned "a five-step plot costs about
 eleven calls, plots run about a week, ten concurrent slots" and arrived at ~15 calls per in-world day. The
@@ -130,38 +130,111 @@ budget later if the world feels thin.
 
 ---
 
-## Two findings that are not tuning problems
+## A false finding, and the bug behind it
 
-### Hierarchical delegation never happens
+The first version of this log reported that **hierarchical delegation never happens** — ladder rungs 1 and 2
+both at 0.0% — and explained it as arithmetic: only 25 of 857 NPCs have standing, so almost no mastermind has
+a subordinate.
 
-Ladder rungs 1 and 2 — "a subordinate with a personal tie" and "any subordinate" — fire **0.0% of the time**.
-Every delegation is rung 3 (a personal tie without a shared faction, 67.4%) or rung 4 (the mastermind does it
-themselves, 32.6%).
+**That was wrong, and the explanation was wrong twice over.** It was a bug in this harness, and it should have
+been obvious that it was: if General Tullius is ever drawn as a mastermind he has 287 subordinates, so an
+outcome of *exactly* 0.0% over 5,400 dispatches cannot be a distribution.
 
-This is arithmetic, not a bug. A subordinate is someone with *lower standing in a shared faction*, and only
-**25 of 857** NPCs have any standing at all — the six rostered factions cover 77 people, and only their
-leaders and the College's ladder sit above the bottom rung. A mastermind with standing 0, which is 832 of
-857, has no subordinates anywhere by definition.
+### The bug
 
-The design's intent still holds — *"the Thieves Guild has options, a Riverwood farmer has themselves"* — but
-the "has options" case is currently vanishingly rare. This is a **roster coverage** question rather than a
-model one: rostering more factions, or adding intermediate ranks to the ones already there, is what would move
-it. Worth deciding before Step 11's in-game validation, since "who does the work" is one of the things that
-step is meant to judge.
+In `build-plot-population.py`, the loop over participants binds `key` to each NPC:
+
+```python
+for key, part in parts.items():
+    ...
+    for fac_editor_id, section in roster.items():
+        key = fac_key.get(fac_editor_id)      # <-- shadows the NPC key
+    ...
+    members.append({"id": str(key), ...})     # <-- writes the FACTION id
+```
+
+Every member who belonged to a rostered faction had their own `id` silently rewritten to that faction's key.
+So all 18 College members shared one id, all 20 Dark Brotherhood members shared another, and the simulator's
+first filter —
+
+```python
+if m.id == boss.id or not self.available(m.id, "actor"):
+    continue
+```
+
+— which is meant to skip only the mastermind themselves, skipped **the entire faction**. The subordinate pool
+was empty by construction. It also collapsed every id-keyed lookup: personal ties dropped from 659 members to
+582, which was visible in the extractor's own summary and which I did not question.
+
+**The plugin is unaffected.** `PlotPopulation::Build` is a separate implementation with no such shadowing, and
+`dump-faction-ranks.py` confirms the hierarchies resolve correctly from the game data.
+
+### What the ranks actually are
+
+`dump-faction-ranks.py` prints every rostered faction with all members ordered by resolved standing. The
+hierarchies are correct, and every superior has real subordinates:
+
+| Faction              | Method   | Superior          | Standing | Castable subordinates |
+| -------------------- | -------- | ----------------- | -------: | --------------------: |
+| College of Winterhold | Rank     | Savos Aren        |     1.00 |                    17 |
+|                      |          | Mirabelle Ervine  |     0.83 |                    16 |
+|                      |          | the masters       |     0.67 |                     9 |
+| Companions           | Marker   | Kodlak Whitemane  |     1.00 |                    12 |
+|                      |          | the Circle        |     0.50 |                     8 |
+| Imperial Legion      | Explicit | General Tullius   |     1.00 |                     7 |
+|                      |          | Legate Rikke      |     0.67 |                     6 |
+| Stormcloaks          | Explicit | Ulfric Stormcloak |     1.00 |                     1 |
+| Dark Brotherhood     | Explicit | Astrid            |     1.00 |                    13 |
+| Thieves Guild        | Explicit | Mercer Frey       |     1.00 |                    21 |
+
+### Delegation after the fix
+
+```text
+ladder rung: 1=7.3%   2=0.0%   3=72.7%   4=20.0%
+```
+
+Delegation works: four fifths of steps are handed to someone else. Rung 4 — the mastermind acting alone —
+fell from 33% to 20%.
+
+**Rung 2 is genuinely unreachable with this roster, and that is structural rather than broken.** Rung 1 is
+"a subordinate *with a personal tie*" and rung 2 is "any subordinate"; rung 2's pool is a superset, so it only
+fires when a mastermind has subordinates and none of them is a tie. Checking every standing-holder
+individually, that case never arises:
+
+```text
+boss                  standing  subs  tied-subs  -> rung
+  Savos Aren              1.00    17         17  -> 1
+  Mercer Frey             1.00    21         21  -> 1
+  Astrid                  1.00    13         13  -> 1
+  Kodlak Whitemane        1.00    12         12  -> 1
+  General Tullius         1.00     7          7  -> 1
+  Ulfric Stormcloak       1.00     1          1  -> 1
+  Galmar Stone-Fist       0.67     0          0  -> 3
+```
+
+Every subordinate is also a personal tie, because `GossipGraph` derives personal edges partly from shared
+faction membership — so the same membership that makes someone a subordinate also makes them a tie. Rung 2
+would matter for a large faction outside gossip's size band whose members share nothing else; none of the six
+rostered factions is in that position.
+
+The lesson worth keeping: **an aggregate of exactly zero deserves the same suspicion as an aggregate that is
+obviously wrong.** The number was reported, explained, and written into three documents before anyone checked
+whether the code path could fire at all.
+
+## One finding that is not a tuning problem
 
 ### The budget runs near-saturated
 
-Occupancy sits at 10/10 for 74.7% of ticks and never drops below 3. With plots lasting ~18 days and births
+Occupancy sits at 10/10 for 74.6% of ticks and never drops below 3. With plots lasting ~19 days and births
 opportunistic on any free slot, that is expected rather than wrong — but it means `iPlotMaxConcurrent` is a
 hard ceiling doing real work rather than a safety limit, and raising it would raise the call rate close to
 proportionally.
-
----
 
 ## Reproducing
 
 ```text
 python build-plot-population.py          # writes population.json from the Spriggit export
+python dump-faction-ranks.py             # every rostered faction, every member, by standing
 python simulate-plots.py --days 365 --trials 5
 python simulate-plots.py --sweep-mishap 0.04,0.02,0.012,0.008
 python simulate-plots.py --sweep-step-scale 0.8,1.0,1.3
