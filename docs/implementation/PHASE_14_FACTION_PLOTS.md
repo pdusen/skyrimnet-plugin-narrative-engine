@@ -39,8 +39,8 @@ the player; Phases A–C are what make there be something to hand.
 ### In scope
 
 - The plot and step object model, the step manifest, and the occupancy table with per-role cooldowns.
-- A **participating-faction roster** (`PlotFactions.ini`) declaring which factions plots run inside and how
-  seniority within each is determined.
+- A **faction roster** (`PlotFactions.ini`) declaring, per faction, how seniority inside it is determined. It
+  is the source of truth for leadership, not an allowlist for participation.
 - A dedicated worker thread and its token, mirroring `GossipDispatch` / `GossipThread`.
 - The in-world tick scheduler: stamped, never coalesced, backlog-capped.
 - Casting masterminds and step actors from the existing `GossipGraph` population.
@@ -744,46 +744,54 @@ replacing them is a change to two small functions.
 
 ---
 
-#### Step 7 — `PlotFactions.ini`: the participating-faction roster
+#### Step 7 — `PlotFactions.ini`: the faction roster
 
 - [ ] Complete
 
 **[CLAUDE]**
 
-**Goal:** A faction is in the plot simulation because this file says so, and it declares how seniority inside
-it is determined. Nothing derives the roster from heuristics.
+**Goal:** A faction's internal hierarchy is declared, not inferred. The roster says which factions plots know
+the shape of, and how seniority inside each is determined.
 
 This exists because the data does not support a general prominence heuristic. Step 5 weighted masterminds by
-authored faction rank; measuring against the export showed that of the 857 unique NPCs in the population, only
-the College of Winterhold populates a rank ladder. Cell ownership turned out to measure property rather than
-authority (innkeepers outrank jarls), and faction nesting fires for 65% of the population once location and
-occupant factions are counted. What the data *does* support is a per-faction answer, declared once.
+authored faction rank; measured against the export, only the College of Winterhold populates a rank ladder out
+of the 857 unique NPCs in the population. Cell ownership turned out to measure property rather than authority
+(innkeepers outrank jarls), and faction nesting fires for 65% of the population once location and occupant
+factions are counted. What the data *does* support is a per-faction answer, declared once.
+
+**The roster is the source of truth for faction LEADERSHIP, not an allowlist for participation.** A plot can
+involve anyone; what the roster adds is knowing who outranks whom inside the factions it names. Everything
+outside it falls back to what already exists — the gossip-derived admitted-faction set still makes an NPC
+count as "in an organisation" and still feeds the agent ladder, it just carries no gradient, so its members are
+peers. NPCs in no faction at all remain eligible independents at the base weight.
 
 1. `statics/SKSE/Plugins/NarrativeEngine/PlotFactions.ini`, following `AttackerGroups.ini` in form and in
    failure behaviour: `[Faction:<id>]` sections, aligned `Key = Value`, **per-section validation** so one bad
    section is skipped with a named reason in the log while every other section still loads, and an unknown key
    warned about rather than treated as an error so a file written for a newer build still works on an older
    one.
-2. Required keys on every section:
+2. Keys on every section:
 
-   | Key            | Meaning                                                                        |
-   | -------------- | ------------------------------------------------------------------------------ |
-   | `Faction`      | EditorID of the **primary** faction — `CompanionsFaction`, not `CompanionsHarbingerFaction` |
-   | `DisplayName`  | Readable name, for the dashboard and for LLM context                            |
-   | `RankMethod`   | `Rank`, `Marker`, or `Explicit` — how seniority inside this faction is decided   |
+   | Key           | Required | Meaning                                                                    |
+   | ------------- | -------- | -------------------------------------------------------------------------- |
+   | `Faction`     | yes      | EditorID of the **primary** faction — `CompanionsFaction`, not `CompanionsHarbingerFaction` |
+   | `DisplayName` | yes      | Readable name, for the dashboard and for LLM context                        |
+   | `RankMethod`  | yes      | `Rank`, `Marker` or `Explicit` — how seniority is derived                    |
+   | `Enabled`     | no       | Default true; switch a faction off without deleting its section             |
+   | `Member`      | no       | `<NpcEditorID>, <rank>` — a manual override. Repeatable. **Valid under every method**, not just `Explicit` |
 
-   Plus `Enabled` (default true), so a faction can be switched off without deleting its section.
 3. `PlotFactionRoster`, the loader: resolves every EditorID through the same lookup the item pool will use,
-   fails a section loudly and by name on an unresolvable form, and exposes the roster to the plot worker as
-   immutable session state.
-4. The shipped default roster covers the factions worth plotting inside, with one section per ranking method
-   so the file is its own documentation.
+   fails a section loudly and by name on an unresolvable `Faction`, and exposes the roster to the plot worker
+   as immutable session state.
+4. The shipped default roster covers the factions worth plotting inside, with at least one section per ranking
+   method so the file documents itself.
 
 **Verification:** `build.ps1 build` is clean. **Every EditorID in the shipped roster is confirmed to exist in
 the Spriggit export** — looked up, never recalled, per `docs/VANILLA_RECORD_REFERENCE.md`. A probe feeds the
 loader a file with, in turn: an unresolvable `Faction`, a missing `RankMethod`, an unknown `RankMethod`, an
-unknown key, and a section whose required parameters for its method are absent — and asserts that each is
-skipped with a distinct reason while the surrounding valid sections still load.
+unknown key, a section whose method-required parameters are absent, and a `Member` naming an NPC that does not
+resolve — and asserts each produces a distinct outcome. The last is a **warn-and-skip on that line only**: a
+mod that replaces General Tullius must cost you Tullius, not the whole Legion.
 
 ---
 
@@ -793,33 +801,50 @@ skipped with a distinct reason while the surrounding valid sections still load.
 
 **[CLAUDE]**
 
-**Goal:** Seniority inside a listed faction is computed by that faction's declared method, and mastermind
+**Goal:** Seniority inside a rostered faction comes from that faction's declared method, and mastermind
 weighting reads it instead of raw authored rank.
 
-1. **`RankMethod = Rank`** — read the authored faction rank, as Step 5 does today. Parameters:
-   `MaxRank` (the top of the ladder, so standing can be expressed as a fraction of it).
-   *The College of Winterhold is the case this exists for: Savos Aren 6, Mirabelle 5, the masters 4,
-   apprentices 3.*
+1. **`RankMethod = Rank`** — read the authored faction rank. Parameter: `MaxRank`, the top of the ladder, so
+   standing can be expressed as a fraction of it.
+   *The College of Winterhold: Savos Aren 6, Mirabelle 5, the masters 4, apprentices 3.*
 2. **`RankMethod = Marker`** — seniority comes from membership of separate, more exclusive factions.
-   Parameters: `MarkerFaction`, repeatable, **in descending order of seniority**; everyone in the primary
-   faction who is in none of them sits on the bottom rung together.
-   *The Companions: `CompanionsHarbingerFaction` then `CompanionsCircle`, then the rest.*
-3. **`RankMethod = Explicit`** — a hand-written ladder. Parameters: `Member = <NpcEditorID>, <rank>`,
-   repeatable; anyone unlisted stays at the bottom rung.
+   Parameter: `MarkerFaction`, repeatable, **in descending order of seniority**. Everyone in the primary
+   faction who is in none of them sits on the bottom rung together; an NPC in two markers takes the more
+   senior.
+   *The Companions: `CompanionsHarbingerFaction`, then `CompanionsCircle`, then the rest.*
+3. **`RankMethod = Explicit`** — no derivation at all; the `Member` lines *are* the ladder. Anyone unlisted
+   stays at the bottom.
    *The Imperial Legion: General Tullius at the top, Legate Rikke one below, everyone else unspecified.*
-4. A single `PlotFactionRoster::StandingOf(npc, faction)` that dispatches on the method and returns a
-   comparable figure, so casting never learns which method a faction used.
-5. `PlotCasting::MastermindWeight` reads that instead of `Member::factions[].rank`. The population build
-   stops indexing raw authored rank and indexes standing-per-listed-faction instead.
-6. Independents — NPCs in no listed faction — stay eligible at the base weight. What independence costs them
-   still shows up in casting, not in eligibility.
+4. **`Member` overrides apply under every method**, layered on top of whatever the method derived. `Explicit`
+   is therefore not a special case in the code — it is the degenerate one where nothing is derived and only
+   the overrides remain. This is what lets a `Rank` faction correct a single NPC the authored data gets wrong
+   without hand-writing its whole ladder.
+5. **Standing is normalised to 0..1 per faction.** The top of a two-rung faction and the top of a seven-rung
+   faction weigh the same: being the head of your organisation should mean the same thing whether that
+   organisation kept a deep hierarchy or a shallow one. A single
+   `PlotFactionRoster::StandingOf(npc, faction)` dispatches on the method and returns that figure, so casting
+   never learns which method a faction used.
+6. `PlotCasting::MastermindWeight` reads standing rather than `Member::factions[].rank`:
+   - rostered faction → the roster's normalised standing;
+   - non-rostered but gossip-admitted faction → the flat membership bonus, no gradient;
+   - no faction → the independent's base weight.
+7. **A mastermind in several factions may draw subordinates from any of them.** The agent ladder pools
+   candidates across every faction the mastermind belongs to, rostered or not, rather than picking one. The
+   subordinate test becomes "lower standing than the mastermind in a faction they share" — which, inside a
+   non-rostered faction where everyone is a peer, correctly yields nobody.
 
 **Verification:** `build.ps1 build` is clean. A probe over a fabricated roster and population asserts each
 method in isolation: `Rank` orders by authored rank and normalises against `MaxRank`; `Marker` puts the first
-marker faction above the second and both above the unmarked, with an NPC in two markers taking the more senior;
-`Explicit` honours the written ladder and leaves unlisted members at the bottom. A second probe asserts the
-cross-faction property that matters — **the top of a two-rank faction and the top of a seven-rank faction
-weigh the same** — and that an NPC in no listed faction is still drawn as a mastermind sometimes.
+marker faction above the second and both above the unmarked, with an NPC in two markers taking the more
+senior; `Explicit` honours the written ladder and leaves unlisted members at the bottom. Then the properties
+that cut across methods:
+
+- **A `Member` override wins under every method**, including on a `Rank` faction whose authored data disagrees.
+- **The top of a two-rung faction and the top of a seven-rung faction score identically.**
+- **A non-rostered faction produces no gradient** — its members are peers, and none is a subordinate of
+  another — while still counting as membership for the weight and for the ladder.
+- **An NPC in no listed faction is still drawn as a mastermind** sometimes.
+- **A mastermind in two factions draws subordinates from both.**
 
 Then, against the **real** export rather than a fixture: assert that the shipped roster orders Ulfric
 Stormcloak above Galmar Stone-Fist, Savos Aren above every other College member, and both above an NPC in no
