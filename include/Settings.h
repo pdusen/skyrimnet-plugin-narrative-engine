@@ -821,6 +821,92 @@ namespace NarrativeEngine::Settings
         int gossipContentBands = 3;
 
         int gossipRandomSeed = 1337;
+
+        // [Plots]
+        //
+        // The faction-plot background simulation. See
+        // docs/design/FACTION_PLOTS.md for the model and
+        // docs/implementation/PHASE_14_FACTION_PLOTS.md for the phase.
+        //
+        // Ships OFF. From Phase C onward the subsystem writes memories
+        // into SkyrimNet's database, which our co-save does not roll
+        // back, so it should be opt-in on a save the player is willing
+        // to leave plots in.
+        bool plotsEnabled = false;
+        // The dedicated trace at NarrativeEngine_Plots.log, on the same
+        // independent footing as the gossip trace: a quiet main log and
+        // a complete plot trace at the same time.
+        bool plotLogEnabled = true;
+
+        // In-world hours between simulation ticks. Two ticks a day is
+        // slow enough that a plot takes in-world weeks and fast enough
+        // that a player who travels and sleeps normally sees it move.
+        //
+        // NOT a real-time interval and NOT an accumulator: the plugin
+        // thread samples the game clock and enqueues one stamped job per
+        // boundary crossed. A paused game does not advance the clock, so
+        // there is nothing to pause-correct.
+        float plotTickIntervalGameHours = 12.0f;
+        // Ticks that may be queued or running before the scheduler stops
+        // enqueuing and starts advancing the schedule without work.
+        // Mirrors GossipTick::kMaxOutstandingTicks: a console time jump
+        // must not be able to queue a year of simulation.
+        int plotMaxOutstandingTicks = 4;
+
+        // The plot budget. A plot holds a slot from birth until it
+        // reaches a terminal state; births happen opportunistically on
+        // any tick with a slot free, so this is the hard ceiling on both
+        // concurrency and LLM call volume.
+        int plotMaxConcurrent = 10;
+
+        // Per-role cooldowns, in in-world days, before an NPC may be
+        // cast again. Separate values because the roles recur at
+        // completely different rates -- a plot ends every week or two, a
+        // step every day or two -- and one cooldown covering both would
+        // either bench masterminds far too long or fail to spread step
+        // work at all.
+        float plotMastermindCooldownDays = 5.0f;
+        float plotActorCooldownDays = 1.5f;
+
+        // Hard cap on re-plans per plot, regardless of what the LLM
+        // returns. The adaptation prompt is given an explicit concede
+        // option; this is the backstop for when it will not take it.
+        int plotMaxAdaptations = 3;
+        // Steps retained in a plot's history. Also bounds how many nodes
+        // the dashboard's chain widget can render, since the chain is
+        // history ++ live ++ remaining plan.
+        int plotStepHistoryCap = 12;
+        // How long a terminal plot is retained before reaping. Its
+        // memories persist in SkyrimNet regardless; this is only the
+        // plot record, kept so the dashboard can still answer "why did
+        // that one fail".
+        float plotTerminalRetentionDays = 7.0f;
+
+        // Clamps on a single tick's progress roll, as a FRACTION OF THE
+        // STEP'S THRESHOLD rather than an absolute -- so retuning
+        // threshold sizing does not silently change step duration.
+        //
+        // Both ends matter. A floor of zero lets an unblocked step stall
+        // indefinitely; a ceiling at or above 1.0 collapses the progress
+        // race back into the single roll it replaced.
+        float plotProgressRollMin = 0.05f;
+        float plotProgressRollMax = 0.45f;
+
+        // The caught-in-the-act roll. Typed failure is load-bearing --
+        // it decides whether the target gets a memory and whether the
+        // plot leaks into gossip -- but progress alone cannot express
+        // it, so this is a second small per-tick roll weighted up by the
+        // step's conspicuousness and down by the actor's competence.
+        //
+        // Behind a switch because its SHAPE is still an open design
+        // question (see the phase doc), not because it is optional.
+        bool plotMishapEnabled = true;
+        float plotMishapChanceBase = 0.04f;
+
+        // Seeds the plot RNG stream. 0 means nondeterministic; any other
+        // value makes a run reproducible, which is what the offline
+        // harness and any bug report both want.
+        int plotRandomSeed = 0;
     };
 
     // Narrow mutation surface for WriteMcmOverride. One optional per

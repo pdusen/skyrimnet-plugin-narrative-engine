@@ -271,6 +271,33 @@ namespace NarrativeEngine::Settings
             dst.eventHistoryFlushIntervalSeconds = static_cast<int>(ini.GetLongValue(
                 "EventHistory", "iEventHistoryFlushIntervalSeconds", dst.eventHistoryFlushIntervalSeconds));
 
+            dst.plotsEnabled = ini.GetBoolValue("Plots", "bPlotsEnabled", dst.plotsEnabled);
+            dst.plotLogEnabled = ini.GetBoolValue("Plots", "bPlotLogEnabled", dst.plotLogEnabled);
+            dst.plotTickIntervalGameHours = static_cast<float>(
+                ini.GetDoubleValue("Plots", "fPlotTickIntervalGameHours", dst.plotTickIntervalGameHours));
+            dst.plotMaxOutstandingTicks =
+                static_cast<int>(ini.GetLongValue("Plots", "iPlotMaxOutstandingTicks", dst.plotMaxOutstandingTicks));
+            dst.plotMaxConcurrent =
+                static_cast<int>(ini.GetLongValue("Plots", "iPlotMaxConcurrent", dst.plotMaxConcurrent));
+            dst.plotMastermindCooldownDays = static_cast<float>(
+                ini.GetDoubleValue("Plots", "fPlotMastermindCooldownDays", dst.plotMastermindCooldownDays));
+            dst.plotActorCooldownDays =
+                static_cast<float>(ini.GetDoubleValue("Plots", "fPlotActorCooldownDays", dst.plotActorCooldownDays));
+            dst.plotMaxAdaptations =
+                static_cast<int>(ini.GetLongValue("Plots", "iPlotMaxAdaptations", dst.plotMaxAdaptations));
+            dst.plotStepHistoryCap =
+                static_cast<int>(ini.GetLongValue("Plots", "iPlotStepHistoryCap", dst.plotStepHistoryCap));
+            dst.plotTerminalRetentionDays = static_cast<float>(
+                ini.GetDoubleValue("Plots", "fPlotTerminalRetentionDays", dst.plotTerminalRetentionDays));
+            dst.plotProgressRollMin =
+                static_cast<float>(ini.GetDoubleValue("Plots", "fPlotProgressRollMin", dst.plotProgressRollMin));
+            dst.plotProgressRollMax =
+                static_cast<float>(ini.GetDoubleValue("Plots", "fPlotProgressRollMax", dst.plotProgressRollMax));
+            dst.plotMishapEnabled = ini.GetBoolValue("Plots", "bPlotMishapEnabled", dst.plotMishapEnabled);
+            dst.plotMishapChanceBase =
+                static_cast<float>(ini.GetDoubleValue("Plots", "fPlotMishapChanceBase", dst.plotMishapChanceBase));
+            dst.plotRandomSeed = static_cast<int>(ini.GetLongValue("Plots", "iPlotRandomSeed", dst.plotRandomSeed));
+
             dst.gossipEnabled = ini.GetBoolValue("Gossip", "bGossipEnabled", dst.gossipEnabled);
             dst.gossipLogEnabled = ini.GetBoolValue("Gossip", "bGossipLogEnabled", dst.gossipLogEnabled);
             dst.gossipTickIntervalSeconds = static_cast<int>(

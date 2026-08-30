@@ -28,6 +28,7 @@
 #include <NPCLetterBeat.h>
 #include <NPCVisitBeat.h>
 #include <PhaseTracker.h>
+#include <PlotDispatch.h>
 #include <PrismaUI.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -223,6 +224,18 @@ namespace NarrativeEngine
                 // so that whenever a shutdown path does appear, it can
                 // stop this worker without waiting out an LLM timeout.
                 GossipDispatch::Start();
+                // The plot simulation's own worker. Fourth instance of
+                // the same pattern, and the case for it is the strongest
+                // yet: a plot tick can make several blocking LLM calls
+                // in sequence (birth, adaptation, and a memory
+                // composition per step transition).
+                //
+                // Started even when bPlotsEnabled is false. The worker
+                // is idle at rest -- nothing is enqueued unless the
+                // scheduler runs -- and starting it unconditionally
+                // keeps the enable flag a question about the simulation
+                // rather than about thread lifetime.
+                PlotDispatch::Start();
                 // Must start before BeatSystem::Initialize — the poll
                 // starts enqueuing here as soon as a beat is running.
                 BeatWorkDispatch::Start();

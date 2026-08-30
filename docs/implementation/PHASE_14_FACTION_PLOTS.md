@@ -213,7 +213,7 @@ only when the plan itself is at fault.
 
 #### Step 1 — `PlotThread::Token`, `PlotDispatch`, and the settings surface
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -245,6 +245,53 @@ flags and then deleted, with the expected result recorded here:
 
 Plus a probe that default-constructs `Settings` and asserts every new `[Plots]` key holds the default this
 document's table states — so the doc and the code cannot drift apart silently.
+
+Done. `include/PlotThread.h`, `include/PlotDispatch.h`, `src/PlotDispatch.cpp`, the `[Plots]` block in
+`Settings.h` / `Settings.cpp` / the shipped INI, the `is_worker_token` specialisation, and
+`PlotDispatch::Start()` beside the other dispatchers in `Plugin.cpp`. `build.ps1 build` is clean.
+
+**One probe in the table above was wrong as written and has been replaced.** The third row asked that
+`PlotDispatch::EnqueueWork` fail to compile when reached from a `PluginThread::Token`-only context. That is
+not a property the design has or wants: the scheduler enqueues plot work *from the plugin thread*, exactly as
+`Tick.cpp` does for gossip, so making it uncallable there would break Step 4 before it was written. The
+property that row was reaching for — plot state being unreachable without the plot token — belongs to
+`MutableState` and is verified in Step 2. Substituted the Milestone 3 probe that does belong here: a
+hand-rolled type must not satisfy `WorkerToken` merely by existing.
+
+Three throwaway translation units were compiled against the real build flags and then deleted:
+
+| Probe                                                       | Expected | Result                                            |
+| ----------------------------------------------------------- | -------- | ------------------------------------------------- |
+| `static_assert(WorkerToken<PlotThread::Token>)` (+ gossip, plugin) | compile  | compiled                                    |
+| `MainThread::Run` called with a `PlotThread::Token`          | reject   | `error C2672: no matching overloaded function`    |
+| `static_assert(WorkerToken<FakeToken>)` on a fabricated type  | reject   | `error C2338: static_assert failed`               |
+
+The second is the one that matters: plot code cannot reach the main thread, so the deadlock this design could
+otherwise suffer has no expressible form. Its consequence for Phase C is real and is now written into
+`WorkerToken.h` — the world effects in Step 15 need the main thread, so they cannot be called from plot code
+and must be marshalled by a `PluginThread::Token` holder.
+
+Two pieces of tooling came out of this and are kept rather than thrown away, because Steps 2 and 15 both need
+negative-compile probes again:
+
+- `docs/implementation/tests/faction-plots/compile-probe.py` — compiles a probe TU against the flags pulled
+  from the build's own `compile_commands.json`. It requires a negative probe to fail with the **specific**
+  diagnostic asserted, not merely to fail. That mattered immediately: the first run of these probes reported
+  two passes that were really `C1083 cannot open include file`, because the probes had not been given the
+  build's forced-PCH include. A negative probe that accepts any failure silently stops testing anything.
+- `docs/implementation/tests/faction-plots/compile-probe.ps1` — supplies the VS Developer environment, the
+  way `build.ps1` does. Without it the toolchain cannot find `<type_traits>`.
+
+For the settings check, a **three-way** consistency check turned out to be worth more than the probe this step
+specified. A default lives in three places — `Settings.h`, the shipped INI, and this document's table — and
+nothing in the build makes them agree; INI drift is the worst of the three, because a player reading it sees a
+number the plugin is not using. `docs/implementation/tests/faction-plots/check-plot-settings.py` asserts all
+three carry the same value for all 15 keys, compares by meaning rather than spelling (`12`, `12.0`, `12.0f`),
+and fails on a key present in one place and missing from another. Currently passing.
+
+`PlotDispatch::Start()` is called unconditionally, even with `bPlotsEnabled=false`. The worker is idle at rest
+— nothing is enqueued unless the scheduler runs — and starting it unconditionally keeps the enable flag a
+question about the simulation rather than about thread lifetime.
 
 ---
 
