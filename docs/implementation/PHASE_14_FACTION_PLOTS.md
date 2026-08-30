@@ -11,7 +11,7 @@ playing. **Player delegation (Phase D) is not in this document** — no offer po
 ESP surface. Everything here is C++ plus prompts, observable from the log and the dashboard.
 
 > **Doc status: planned, not built.** No step is checked off. Numbers in the settings table are proposed
-> starting points, not measurements: **Step 7 replaces them** with figures from an offline harness, and Step 17
+> starting points, not measurements: **Step 9 replaces them** with figures from an offline harness, and Step 19
 > checks those against real play. Two design-level questions (the conspicuousness split, and how a step gets
 > caught) are still open in the design doc and are deliberately built behind switches here rather than blocked
 > on.
@@ -39,6 +39,8 @@ the player; Phases A–C are what make there be something to hand.
 ### In scope
 
 - The plot and step object model, the step manifest, and the occupancy table with per-role cooldowns.
+- A **participating-faction roster** (`PlotFactions.ini`) declaring which factions plots run inside and how
+  seniority within each is determined.
 - A dedicated worker thread and its token, mirroring `GossipDispatch` / `GossipThread`.
 - The in-world tick scheduler: stamped, never coalesced, backlog-capped.
 - Casting masterminds and step actors from the existing `GossipGraph` population.
@@ -91,7 +93,7 @@ In brief:
 ## Settings
 
 New `[Plots]` block. `bPlotsEnabled` ships **false** through Phases A–C and flips when Phase D lands — the
-subsystem writes memories into a save from Step 14 onward and should be opt-in until it has been played.
+subsystem writes memories into a save from Step 16 onward and should be opt-in until it has been played.
 
 | Key                            | Proposed default | Meaning                                                        |
 | ------------------------------ | ---------------- | -------------------------------------------------------------- |
@@ -128,6 +130,7 @@ fractions of the step's threshold so that changing threshold sizing does not sil
 | `PlotCasting`        | **New.** Mastermind and actor selection over `GossipGraph`; occupancy, cooldowns, rejection reasons.       |
 | `PlotResolution`     | **New.** Budget/threshold sizing, the progress and mishap rolls, the presence gate, typed outcomes.        |
 | `PlotContent`        | **New.** The LLM junctions — birth, adaptation, memory composition — plus menu construction and validation.|
+| `PlotFactionRoster`  | **New.** The participating-faction roster from `PlotFactions.ini`, and the three ranking methods.          |
 | `PlotItemPool`       | **New.** The curated `Acquire` item pool, loaded and validated from its own INI.                           |
 | `PlotEffects`        | **New.** The bounded world mutations, each marshalled through `MainThread`.                                |
 | `PlotLog`            | **New.** The dedicated trace, flushed per line so it stays readable while a tick blocks on an LLM call.    |
@@ -151,8 +154,8 @@ It does not hold anything derived from `GossipGraph`, which is rebuilt every ses
 
 ## Implementation plan
 
-Ordered so that **the simulation is fully observable before anything authored reaches it**. Steps 1–9 build and
-validate a complete plot lifecycle whose objectives and plans come from a hardcoded stub table — which means
+Ordered so that **the simulation is fully observable before anything authored reaches it**. Steps 1–11 build
+and validate a complete plot lifecycle whose objectives and plans come from a hardcoded stub table — which means
 the casting distribution, the progress-race arithmetic and the terminal-state bookkeeping can all be argued
 with at zero LLM cost before a single prompt exists.
 
@@ -161,7 +164,7 @@ is what caught a propagation model tuning could not have fixed. The failure mode
 resolution model that never fails, or never succeeds, or quietly casts the same six NPCs forever — none of
 which is visible once plausible LLM-written text is draped over it.
 
-Steps 10–13 replace the stubs. Steps 14–17 attach output. Every step from 4 onward leaves the plugin runnable.
+Steps 12–15 replace the stubs. Steps 16–19 attach output. Every step from 4 onward leaves the plugin runnable.
 
 ### How steps are verified
 
@@ -175,7 +178,8 @@ Every step is a standalone unit with its own verification, and every step is own
   and look."
 - **`[USER]`** — verified by actually playing. These exist only where the question genuinely requires the
   running game and real gameplay: does the world feel right, do NPCs talk about plots coherently, does the
-  presence gate fire in normal play. There are three of them, one closing each staged phase.
+  presence gate fire in normal play. There are three of them — Steps 11, 15 and 19 — one closing each staged
+  phase.
 
 Anything that needs the game but *not* gameplay — "launch Skyrim and confirm two threads have different ids" —
 is a design smell, not a verification. Where such a check matters, the thing being checked is extracted into a
@@ -229,7 +233,7 @@ Nothing uses it yet.
 3. The `CancellationToken` / `CancellationHandle` registry, same shape as gossip's. `Stop()` cancels every
    outstanding token **before** joining.
 4. Register `PlotThread::Token` with the `is_worker_token` trait so the blocking
-   `SkyrimNetAPI::SendCustomPromptToLLM` overload accepts it. Nothing calls it until Step 11.
+   `SkyrimNetAPI::SendCustomPromptToLLM` overload accepts it. Nothing calls it until Step 13.
 5. The `[Plots]` block in `Settings`, in `statics/SKSE/Plugins/NarrativeEngine.ini`, and in the INI's
    documented comment block. `bPlotsEnabled` default **false**.
 6. `Start()` at `kDataLoaded` beside the other dispatchers; `Stop()` in shutdown after `AsyncDispatch::Stop()`.
@@ -268,7 +272,7 @@ Three throwaway translation units were compiled against the real build flags and
 
 The second is the one that matters: plot code cannot reach the main thread, so the deadlock this design could
 otherwise suffer has no expressible form. Its consequence for Phase C is real and is now written into
-`WorkerToken.h` — the world effects in Step 15 need the main thread, so they cannot be called from plot code
+`WorkerToken.h` — the world effects in Step 17 need the main thread, so they cannot be called from plot code
 and must be marshalled by a `PluginThread::Token` holder.
 
 Two pieces of tooling came out of this and are kept rather than thrown away, because Steps 2 and 15 both need
@@ -335,9 +339,9 @@ Done. `include/PlotModel.h` + `src/PlotModel.cpp` (the manifest, `Step`, `Plot`,
 it compiles and runs a command as if the player typed it — not a registration surface, and this codebase has
 no way to add a console command of its own. The established debug-action surface here is the dashboard's
 JS→C++ bridge (`DashboardUIManager::OnDispatchAction` and its siblings), so the manual trigger becomes a
-bridge action, wired up in Step 8 with the tab. The seeding itself exists now as `Plots::SeedDebugPlot`, which
+bridge action, wired up in Step 10 with the tab. The seeding itself exists now as `Plots::SeedDebugPlot`, which
 is what Steps 3–6 actually need — all four are probe-verified and call it directly. Nothing is weakened: the
-only step that needs a *human-usable* trigger is Step 9, and Step 8 lands first.
+only step that needs a *human-usable* trigger is Step 11, and Step 10 lands first.
 
 **Step 4's item 6 rests on the same mistaken premise** and is corrected there in the same way: force-tick
 becomes a bridge action, not a console command.
@@ -350,7 +354,7 @@ Two decisions worth recording:
   the card title stable across a re-plan.
 - **The RNG lives in `PlotState`, unlike gossip's**, and is a bare `std::uint64_t` splitmix64 stream rather
   than a generator object. Gossip excludes its RNG as "a generator, not world state"; plots need reproducibility
-  from a seed for the Step 7 harness and for bug reports, and a stream position that survives the co-save is
+  from a seed for the Step 9 harness and for bug reports, and a stream position that survives the co-save is
   what makes a reloaded save continue a run rather than silently reroll it. A `std::mt19937` would have put
   2.5 KB into every snapshot copy; one 64-bit field costs nothing.
 
@@ -371,7 +375,7 @@ The positive half of that pair is there deliberately: without it, the negative p
 gate works" from "I misspelled the function".
 
 The derivation probe checks more than the step asked for, because the extra cases were free once the harness
-existed: every manifest id round-trips through `ParseStepType` (the membership test Step 11's validation will
+existed: every manifest id round-trips through `ParseStepType` (the membership test Step 13's validation will
 rest on), off-manifest ids — including `"Locate"` with the wrong case and `"locate "` with a trailing space —
 are rejected rather than guessed at, a step with no target renders the bare verb rather than a trailing space,
 and `ProgressFraction` returns 0 on an unsized step rather than dividing by zero into the dashboard's progress
@@ -491,13 +495,13 @@ testable without a game clock.
 5. `PlotTick::Poll(pt)` added to `PollOnPluginThread` in `Tick.cpp`. The job body logs its stamp and returns.
 6. Two manual triggers: force one tick immediately, and force N ticks in sequence. Phase A's validation is
    entirely a question of watching many ticks go by, and making that a button rather than an hour of waiting
-   is what keeps Step 9 cheap enough to repeat after a tuning change. They enqueue through the normal
+   is what keeps Step 11 cheap enough to repeat after a tuning change. They enqueue through the normal
    scheduler so a forced tick is stamped and cancellable like any other.
 
    *(Corrected in Step 2: this said "console commands on the existing `ConsoleCommand` surface". There is no
    such surface — `ConsoleCommand` issues commands into the engine rather than registering them. These are
    dashboard bridge actions, like every other debug affordance in this plugin, and are wired to buttons in
-   Step 8.)*
+   Step 10.)*
 
 **Verification:** `build.ps1 build` is clean. A probe drives the schedule function over synthetic clock
 readings and asserts each case:
@@ -546,7 +550,7 @@ Two implementation notes:
   genuine reading look like an enormous backlog.
 
 `PlotTick::ForceTicks` is implemented and unwired, per the correction recorded in Step 2: it is a dashboard
-bridge action, wired to buttons in Step 8. Forced ticks go through the same queue with the same stamps and
+bridge action, wired to buttons in Step 10. Forced ticks go through the same queue with the same stamps and
 cancellation handles as scheduled ones, so nothing observed through them is an artefact of how they were
 triggered — and the schedule is advanced to match, or the next real poll would re-run the same in-world time.
 
@@ -583,7 +587,7 @@ never returned for either role; an NPC inside its cooldown window is never retur
 tick after it expires; the agent ladder falls through each rung in order and lands on the mastermind when the
 population offers nobody else; a rank-weighted draw over 10,000 trials puts high-rank NPCs ahead of
 independents without ever returning an independent zero times. The real-population question — does casting
-actually spread across Skyrim — is Step 7's harness, not this step.
+actually spread across Skyrim — is Step 9's harness, not this step.
 
 Done. `include/PlotCasting.h` + `src/PlotCasting.cpp` (pure: the ladder, the weighting, occupancy and
 cooldowns) and `include/PlotPopulation.h` + `src/PlotPopulation.cpp` (engine-bound: builds the population from
@@ -627,7 +631,7 @@ Two things worth recording from the run:
 - **The weighting curve is deliberately gentle** (base 1.0, +0.5 for any admitted membership, +0.75 per rank).
   A jarl should be likelier than a guard, not a hundred times likelier; steeper and the same handful of
   high-rank NPCs would scheme continuously with the cooldown as the only thing spreading the work. The probe
-  pins both ends: an independent is still drawn more than 1% of the time, and no single NPC takes half. Step 7
+  pins both ends: an independent is still drawn more than 1% of the time, and no single NPC takes half. Step 9
   is where those numbers meet the real population.
 
 `Release` starts only the cooldown for the role the NPC was actually holding. Starting both would bench
@@ -650,7 +654,7 @@ the obvious choice.
 enough to test.
 
 1. A stub plan table — hardcoded objective-plus-ladder shapes exercising every step type and both
-   conspicuousness values. Step 11 deletes it.
+   conspicuousness values. Step 13 deletes it.
 2. Budget sizing from travel distance (via `TravelGraph` / `HoldGrid`) plus the step type's inherent scale.
    Threshold sizing from step type plus target importance. **They must share no input.**
 3. The per-tick progress roll, modified by the actor's relevant skills and attributes and their suitability for
@@ -692,7 +696,7 @@ The per-tick ceiling caps any single tick at `fPlotProgressRollMax` (0.45) of th
 least `ceil(1 / 0.45) = 3` ticks before success is even *arithmetically possible*. `SizeBudget` was returning
 2 for a `Deliver` step at zero travel distance. That step could never succeed — not "was hard", could not
 succeed — and it would have failed as a perfectly ordinary-looking timeout every single time. In a log full of
-timeouts it is invisible; in the Step 7 harness it would have shown up as an inexplicably low success rate for
+timeouts it is invisible; in the Step 9 harness it would have shown up as an inexplicably low success rate for
 one step type and cost hours to trace.
 
 The fix is `MinimumViableBudget(rollMaxFraction)` and a floor under `SizeBudget`, which now takes the ceiling
@@ -735,12 +739,95 @@ Design notes worth keeping:
 
 Two proxies are in place where the design wants real values, both marked in the code as such: travel distance
 is same-hold / different-hold rather than a road-graph query, and target importance is faction rank. They
-exist to make distance and importance *matter* so Step 7 can judge whether they matter by the right amount;
+exist to make distance and importance *matter* so Step 9 can judge whether they matter by the right amount;
 replacing them is a change to two small functions.
 
 ---
 
-#### Step 7 — Offline validation harness, and tuning the numbers
+#### Step 7 — `PlotFactions.ini`: the participating-faction roster
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+**Goal:** A faction is in the plot simulation because this file says so, and it declares how seniority inside
+it is determined. Nothing derives the roster from heuristics.
+
+This exists because the data does not support a general prominence heuristic. Step 5 weighted masterminds by
+authored faction rank; measuring against the export showed that of the 857 unique NPCs in the population, only
+the College of Winterhold populates a rank ladder. Cell ownership turned out to measure property rather than
+authority (innkeepers outrank jarls), and faction nesting fires for 65% of the population once location and
+occupant factions are counted. What the data *does* support is a per-faction answer, declared once.
+
+1. `statics/SKSE/Plugins/NarrativeEngine/PlotFactions.ini`, following `AttackerGroups.ini` in form and in
+   failure behaviour: `[Faction:<id>]` sections, aligned `Key = Value`, **per-section validation** so one bad
+   section is skipped with a named reason in the log while every other section still loads, and an unknown key
+   warned about rather than treated as an error so a file written for a newer build still works on an older
+   one.
+2. Required keys on every section:
+
+   | Key            | Meaning                                                                        |
+   | -------------- | ------------------------------------------------------------------------------ |
+   | `Faction`      | EditorID of the **primary** faction — `CompanionsFaction`, not `CompanionsHarbingerFaction` |
+   | `DisplayName`  | Readable name, for the dashboard and for LLM context                            |
+   | `RankMethod`   | `Rank`, `Marker`, or `Explicit` — how seniority inside this faction is decided   |
+
+   Plus `Enabled` (default true), so a faction can be switched off without deleting its section.
+3. `PlotFactionRoster`, the loader: resolves every EditorID through the same lookup the item pool will use,
+   fails a section loudly and by name on an unresolvable form, and exposes the roster to the plot worker as
+   immutable session state.
+4. The shipped default roster covers the factions worth plotting inside, with one section per ranking method
+   so the file is its own documentation.
+
+**Verification:** `build.ps1 build` is clean. **Every EditorID in the shipped roster is confirmed to exist in
+the Spriggit export** — looked up, never recalled, per `docs/VANILLA_RECORD_REFERENCE.md`. A probe feeds the
+loader a file with, in turn: an unresolvable `Faction`, a missing `RankMethod`, an unknown `RankMethod`, an
+unknown key, and a section whose required parameters for its method are absent — and asserts that each is
+skipped with a distinct reason while the surrounding valid sections still load.
+
+---
+
+#### Step 8 — The three ranking methods, and casting through the roster
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+**Goal:** Seniority inside a listed faction is computed by that faction's declared method, and mastermind
+weighting reads it instead of raw authored rank.
+
+1. **`RankMethod = Rank`** — read the authored faction rank, as Step 5 does today. Parameters:
+   `MaxRank` (the top of the ladder, so standing can be expressed as a fraction of it).
+   *The College of Winterhold is the case this exists for: Savos Aren 6, Mirabelle 5, the masters 4,
+   apprentices 3.*
+2. **`RankMethod = Marker`** — seniority comes from membership of separate, more exclusive factions.
+   Parameters: `MarkerFaction`, repeatable, **in descending order of seniority**; everyone in the primary
+   faction who is in none of them sits on the bottom rung together.
+   *The Companions: `CompanionsHarbingerFaction` then `CompanionsCircle`, then the rest.*
+3. **`RankMethod = Explicit`** — a hand-written ladder. Parameters: `Member = <NpcEditorID>, <rank>`,
+   repeatable; anyone unlisted stays at the bottom rung.
+   *The Imperial Legion: General Tullius at the top, Legate Rikke one below, everyone else unspecified.*
+4. A single `PlotFactionRoster::StandingOf(npc, faction)` that dispatches on the method and returns a
+   comparable figure, so casting never learns which method a faction used.
+5. `PlotCasting::MastermindWeight` reads that instead of `Member::factions[].rank`. The population build
+   stops indexing raw authored rank and indexes standing-per-listed-faction instead.
+6. Independents — NPCs in no listed faction — stay eligible at the base weight. What independence costs them
+   still shows up in casting, not in eligibility.
+
+**Verification:** `build.ps1 build` is clean. A probe over a fabricated roster and population asserts each
+method in isolation: `Rank` orders by authored rank and normalises against `MaxRank`; `Marker` puts the first
+marker faction above the second and both above the unmarked, with an NPC in two markers taking the more senior;
+`Explicit` honours the written ladder and leaves unlisted members at the bottom. A second probe asserts the
+cross-faction property that matters — **the top of a two-rank faction and the top of a seven-rank faction
+weigh the same** — and that an NPC in no listed faction is still drawn as a mastermind sometimes.
+
+Then, against the **real** export rather than a fixture: assert that the shipped roster orders Ulfric
+Stormcloak above Galmar Stone-Fist, Savos Aren above every other College member, and both above an NPC in no
+listed faction.
+
+---
+
+#### Step 9 — Offline validation harness, and tuning the numbers
 
 - [ ] Complete
 
@@ -768,7 +855,7 @@ individual rules hold; this proves the system built from them produces a world w
 outcome class below ~10% or above ~70% of resolutions; at least a few hundred distinct masterminds over a
 simulated year rather than dozens; budget occupancy neither pinned at 10 nor starving; and a call rate the
 design doc's Part 3 estimate can be checked against. Any figure that cannot be brought into range by tuning is
-a model problem, and finding that here rather than in Step 9 is the entire point of the step.
+a model problem, and finding that here rather than in Step 11 is the entire point of the step.
 
 **Item 1 is done. Items 2–5 are BLOCKED on a design decision — see below.**
 
@@ -859,7 +946,7 @@ given that in this population it describes one organisation?"** Candidates, none
 
 ---
 
-#### Step 8 — The Plots tab and the step-chain widget
+#### Step 10 — The Plots tab and the step-chain widget
 
 - [ ] Complete
 
@@ -889,7 +976,7 @@ arithmetic behind it.
    its accessibility discipline — a real `<button>` for the toggle, the expanded panel outside it.
 8. The delegation row is not built; the Phase D field is reserved and simply not rendered.
 9. Wire the bridge actions Steps 2 and 4 left unwired: seed a debug plot, force one tick, force N ticks. These
-   are what make Step 9 a short console-driven session rather than a play session.
+   are what make Step 11 a short console-driven session rather than a play session.
 10. A committed fixture at `dashboard/src/fixtures/plots.sample.json`, hand-built to exercise every node
     state, a plot that has adapted, a 15-node chain, and an empty list.
 
@@ -898,18 +985,18 @@ renders `PlotsTab` against the fixture and asserts: nine nodes for a nine-step c
 number and carries the ✕; the live node's arc `stroke-dasharray` matches its progress fraction; the nodes left
 of the cursor are numbered identically before and after an adaptation replaces the tail; the 15-node chain
 emits a horizontally scrollable container rather than shrinking nodes; and the empty list renders the empty
-state rather than throwing. Whether it *looks* right is Step 9's business.
+state rather than throwing. Whether it *looks* right is Step 11's business.
 
 ---
 
-#### Step 9 — Phase A in-game validation
+#### Step 11 — Phase A in-game validation
 
 - [ ] Complete
 
 **[USER]**
 
 **Goal:** Judge the model against the real population, the real map and a real save, before any content is
-attached to it. This is what Step 7's harness was a model *of*.
+attached to it. This is what Step 9's harness was a model *of*.
 
 **This does not need real play — skipping time is the intended method.** Nothing in Phase A reads player
 activity: births draw from the whole `GossipGraph` population, casting is population-wide, and the race is
@@ -929,12 +1016,12 @@ Two things about where to stand:
 Note that the standing caveat about wait-driven test runs — that skipping time starves the memory supply and
 decays the candidate pool — **does not apply to Phase A.** That caveat is about subsystems whose input is
 memories generated by play; Phase A has no memory dependency at all, because objectives and plans come from
-the stub table. It starts applying at Step 13, and Step 13 says so.
+the stub table. It starts applying at Step 15, and Step 15 says so.
 
 Run with `bPlotsEnabled=true` and no LLM involvement anywhere, and judge from the Plots tab and the trace:
 
 1. **Plots start, advance, adapt and terminate at sane rates** against the real population — and the rates
-   match what Step 7's harness predicted. A divergence here means the harness models something the game does
+   match what Step 9's harness predicted. A divergence here means the harness models something the game does
    not, and that is worth more than either number alone.
 2. **The budget behaves.** Occupancy stays healthy, and a spell of long plots visibly suppresses births.
 3. **Casting spreads.** The masterminds are people you recognise from around the province, not the same six —
@@ -949,13 +1036,13 @@ Run with `bPlotsEnabled=true` and no LLM involvement anywhere, and judge from th
 7. **No stutter,** including while forcing many ticks in a row. Nothing waits on the plot thread, so there
    should be none; note tick durations regardless.
 
-Record findings under this step, including any tuning applied on top of Step 7's numbers.
+Record findings under this step, including any tuning applied on top of Step 9's numbers.
 
 ---
 
 ### Phase B — LLM authoring
 
-#### Step 10 — Target menus and the item pool
+#### Step 12 — Target menus and the item pool
 
 - [ ] Complete
 
@@ -978,7 +1065,7 @@ fabricated masterminds in different holds and asserts the candidate sets differ 
 
 ---
 
-#### Step 11 — The birth prompt and its response handling
+#### Step 13 — The birth prompt and its response handling
 
 - [ ] Complete
 
@@ -1012,11 +1099,11 @@ fabricated masterminds in different holds and asserts the candidate sets differ 
 | smart quotes, em-dashes, NBSP, accented Latin | plot text that is pure ASCII after the sanitizer     |
 | empty plan                | rejection                                                            |
 
-Whether the *content* is any good is Step 13's business; this step proves it cannot corrupt state.
+Whether the *content* is any good is Step 15's business; this step proves it cannot corrupt state.
 
 ---
 
-#### Step 12 — Adaptation
+#### Step 14 — Adaptation
 
 - [ ] Complete
 
@@ -1038,7 +1125,7 @@ terminates at `iPlotMaxAdaptations` rather than looping.
 
 ---
 
-#### Step 13 — Phase B in-game validation
+#### Step 15 — Phase B in-game validation
 
 - [ ] Complete
 
@@ -1062,7 +1149,7 @@ Record findings under this step.
 
 ### Phase C — memories and world effects
 
-#### Step 14 — The memory calls
+#### Step 16 — The memory calls
 
 - [ ] Complete
 
@@ -1088,7 +1175,7 @@ who is not in the step is rejected rather than written to whoever it named.
 
 ---
 
-#### Step 15 — World effects
+#### Step 17 — World effects
 
 - [ ] Complete
 
@@ -1116,7 +1203,7 @@ called with a `PlotThread::Token` — they require main — then is deleted.
 
 ---
 
-#### Step 16 — Gossip seeding
+#### Step 18 — Gossip seeding
 
 - [ ] Complete
 
@@ -1135,7 +1222,7 @@ from the plot subsystem's own candidate set. The tag predicates are pure and thi
 
 ---
 
-#### Step 17 — Phase C in-game validation and call-volume measurement
+#### Step 19 — Phase C in-game validation and call-volume measurement
 
 - [ ] Complete
 
@@ -1152,7 +1239,7 @@ Real play, subsystem fully live, over enough hours to see plots run end to end.
 3. **Confirm the target's memory is conditional.** Someone cleanly surveilled should not know; someone
    surveilled badly should.
 4. **Watch a caught failure become a rumor** and reach another hold.
-5. **Measure the real LLM call rate** over a session and compare against Step 7's harness figure and the
+5. **Measure the real LLM call rate** over a session and compare against Step 9's harness figure and the
    design doc's Part 3 estimate. Record the measurement.
 6. **Confirm nothing outside the allow-list moved.** Inventories and relationships changed as expected; no
    other world state did.
@@ -1166,8 +1253,8 @@ fewer memories. Record findings and any tuning under this step.
 
 This phase is complete when:
 
-- All 17 steps are checked off. The three `[USER]` steps — 9, 13 and 17 — have their findings recorded in this
-  document, and Step 7's validation log is committed.
+- All 19 steps are checked off. The three `[USER]` steps — 11, 15 and 19 — have their findings recorded in this
+  document, and Step 9's validation log is committed.
 - A plot can be born, dispatch steps, adapt around a failure, and reach a terminal state without any
   intervention, over a normal play session.
 - No LLM call happens on a per-tick basis; the junctions are exactly the five the design doc's Part 3 lists,
@@ -1181,7 +1268,7 @@ This phase is complete when:
 - A failed step stays in its position in the chain with the plot continuing past it, and an adaptation does not
   renumber the nodes behind the cursor.
 - Every free-form LLM string reaching state, a memory, or the log has passed through `LLMTextSanitizer`.
-- No engine state outside Step 15's allow-list is mutated.
+- No engine state outside Step 17's allow-list is mutated.
 - A caught failure is observed propagating as a rumor.
 
 ---
@@ -1192,7 +1279,7 @@ The feature's open questions are tracked in the design doc rather than duplicate
 this phase and are built around rather than blocked on:
 
 1. **Is the conspicuousness split right?** Built in Step 6 as a per-type constant from the manifest. If
-   Step 7's harness or Step 9's play shows it needs to be a per-step property decided at dispatch, that is a
+   Step 9's harness or Step 11's play shows it needs to be a per-step property decided at dispatch, that is a
    change to one function's inputs, not to the model.
 2. **How does a step get caught?** Step 6 implements the proposed per-tick mishap roll behind
    `bPlotMishapEnabled` precisely so the phase does not wait on the answer. If the shape changes, the switch
@@ -1202,4 +1289,4 @@ One question belongs to this document alone:
 
 1. **Should `bPlotsEnabled` default true when Phase D lands, or stay opt-in?** Gossip defaults on. Plots write
    more consequential memories and mutate engine state, and the honest answer probably depends on what
-   Step 17 measures.
+   Step 19 measures.
