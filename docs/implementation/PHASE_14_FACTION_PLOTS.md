@@ -828,6 +828,12 @@ weighting reads it instead of raw authored rank.
    - rostered faction → the roster's normalised standing;
    - non-rostered but gossip-admitted faction → the flat membership bonus, no gradient;
    - no faction → the independent's base weight.
+
+   **In several factions, the HIGHEST standing wins** — not the sum, not the mean. Someone's weight should
+   reflect the most authority they hold anywhere, and summing would make a well-connected nobody outrank a
+   guild master. Note the deliberate asymmetry with item 7: weighting takes the **maximum** across factions,
+   while subordinate selection takes the **union**. They are different questions — "how much can this person
+   command" against "who can they command" — and unifying them would be wrong in both directions.
 7. **A mastermind in several factions may draw subordinates from any of them.** The agent ladder pools
    candidates across every faction the mastermind belongs to, rostered or not, rather than picking one. The
    subordinate test becomes "lower standing than the mastermind in a faction they share" — which, inside a
@@ -844,7 +850,9 @@ that cut across methods:
 - **A non-rostered faction produces no gradient** — its members are peers, and none is a subordinate of
   another — while still counting as membership for the weight and for the ladder.
 - **An NPC in no listed faction is still drawn as a mastermind** sometimes.
-- **A mastermind in two factions draws subordinates from both.**
+- **A mastermind in two factions draws subordinates from both** (union), while their **weight comes from the
+  higher-ranking of the two** (maximum) — the two rules must not be collapsed into one.
+- **Membership of many low-rank factions never outweighs high standing in one.**
 
 Then, against the **real** export rather than a fixture: assert that the shipped roster orders Ulfric
 Stormcloak above Galmar Stone-Fist, Savos Aren above every other College member, and both above an NPC in no
