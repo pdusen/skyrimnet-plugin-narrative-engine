@@ -471,7 +471,7 @@ code compiled fine either way, which is exactly why it was worth fixing before m
 
 #### Step 4 — The tick schedule, as a pure function
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -513,6 +513,48 @@ readings and asserts each case:
 
 That last row is the one worth having: a save loaded from an earlier point moves the game clock backwards, and
 without a case for it the subtraction underflows.
+
+Done. `include/PlotSchedule.h` + `src/PlotSchedule.cpp` (the pure decision), `include/PlotTick.h` +
+`src/PlotTick.cpp` (the poll and the job), `PlotTick::Poll(pt)` in `Tick.cpp`'s `PollOnPluginThread`, and
+`Initialize` / `OnSessionStart` in `Plugin.cpp`. Build clean, probe passing every row.
+
+Making the schedule a free function over plain numbers paid for itself immediately — three cases the plan did
+not list turned out to matter, and all three were free to add once the harness existed:
+
+- **The cap must account for work already in flight.** `Advance` takes `currentOutstanding` rather than
+  assuming an empty queue, so a backlog that is already at the cap enqueues nothing while the schedule still
+  advances.
+- **A misconfigured interval must stall, not spin.** `fPlotTickIntervalGameHours` of 0 or negative yields no
+  stamps and leaves the schedule untouched, rather than dividing by zero or emitting a boundary per poll.
+- **An absurd clock reading must be capped before the cast, not after.** A `set timescale` stunt or a very
+  long wait produces a boundary count that would overflow `std::size_t` on its way to being clamped.
+
+The subtlest property is one the probe asserts explicitly: **the schedule advances past every boundary
+crossed, including the ones whose work was skipped.** Advancing only past the enqueued ones would leave the
+backlog permanently owed — the next poll would see the same overdue boundaries again and enqueue another
+capped batch, forever. "30 days" is therefore checked for both `stamps.size() == cap` *and*
+`newLastFired > now - interval`.
+
+Two implementation notes:
+
+- **The rebase is deferred to the next poll rather than done in `OnSessionStart`.** That hook runs on the main
+  thread at `kNewGame` / `kPostLoadGame`, and the clock reading that matters is the one the plugin thread sees
+  when it next looks. Setting a flag keeps every game-clock read on one thread. This is also where Step 3's
+  item 4 lands, as recorded there.
+- **A game-clock reading of 0.0 is treated as "no clock yet", not as a time.** `EngineUtils::GetCurrentGameHours`
+  returns 0.0 before the `Calendar` singleton exists, and taking that as a real value would make the first
+  genuine reading look like an enormous backlog.
+
+`PlotTick::ForceTicks` is implemented and unwired, per the correction recorded in Step 2: it is a dashboard
+bridge action, wired to buttons in Step 8. Forced ticks go through the same queue with the same stamps and
+cancellation handles as scheduled ones, so nothing observed through them is an artefact of how they were
+triggered — and the schedule is advanced to match, or the next real poll would re-run the same in-world time.
+
+The job body is deliberately still almost empty: it installs any pending loaded state (which is where a load
+that landed while the job sat in the queue takes effect, before anything reads live state), advances
+`simGameDay`, logs, and publishes. Steps 5 and 6 fill in the middle. Cancellation is checked at three
+boundaries in that short body already, because the reason for checking early is not how long the body is — it
+is that anything the tick does outside our co-save cannot be un-done by the load that cancelled it.
 
 ---
 

@@ -10,6 +10,7 @@
 #include <GossipTick.h>
 #include <logger.h>
 #include <PhaseTracker.h>
+#include <PlotTick.h>
 #include <PluginThread.h>
 #include <Settings.h>
 #include <TravelEventLog.h>
@@ -77,6 +78,12 @@ namespace NarrativeEngine::Tick
             // own worker, where it may block for as long as it needs to
             // without any of the polls above noticing.
             GossipTick::Poll(pt, elapsedSec);
+            // Plots take no elapsed argument: their cadence is in-game
+            // time and nothing else, so the poll samples the game clock
+            // and compares it against the schedule's own stamp. No
+            // real-seconds accumulator, and nothing to pause-correct —
+            // a paused game does not advance the game clock.
+            PlotTick::Poll(pt);
 
             // Consume the elapsed sample above so a subsequent
             // re-enable doesn't credit disabled time.

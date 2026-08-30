@@ -31,6 +31,7 @@
 #include <PlotDispatch.h>
 #include <PlotSerialize.h>
 #include <PlotState.h>
+#include <PlotTick.h>
 #include <PrismaUI.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -238,6 +239,7 @@ namespace NarrativeEngine
                 // keeps the enable flag a question about the simulation
                 // rather than about thread lifetime.
                 Plots::Initialize();
+                PlotTick::Initialize();
                 PlotDispatch::Start();
                 // Must start before BeatSystem::Initialize — the poll
                 // starts enqueuing here as soon as a beat is running.
@@ -299,6 +301,7 @@ namespace NarrativeEngine
                 GossipClaims::OnRevert();
                 PlotDispatch::CancelAll();
                 PlotSerialize::OnRevert();
+                PlotTick::OnSessionStart();
                 PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
                 // Rotate the history log for the new session BEFORE
                 // Tick starts polling — the first Poll cycle needs the
@@ -350,6 +353,7 @@ namespace NarrativeEngine
                 GossipClaims::OnRevert();
                 PlotDispatch::CancelAll();
                 PlotSerialize::OnRevert();
+                PlotTick::OnSessionStart();
                 PhaseTracker::Reset();
                 break;
             case SKSE::MessagingInterface::kPostLoadGame:
