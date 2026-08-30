@@ -22,29 +22,41 @@ namespace NarrativeEngine::PlotResolution
 
         // How long this KIND of step takes before travel is considered.
         // A stakeout is inherently slower than handing something over.
+        //
+        // Tuned by the Step 9 harness, not chosen by feel. The values it
+        // started from produced 6.8% timeouts against 18.5% caught -- the
+        // clock almost never ran out, so competence barely mattered and
+        // failure was nearly all mishap. Tightening them by a fifth puts
+        // the three outcomes at roughly 69 / 13 / 18, which is the band
+        // the step asks for.
+        //
+        // Several land below MinimumViableBudget and are floored there.
+        // That is correct rather than a rounding accident: a short errand
+        // is short, and the floor is what stops "short" becoming
+        // "impossible".
         int BaseBudgetTicks(PlotModel::StepType type)
         {
             switch (type) {
             case PlotModel::StepType::Deliver:
                 return 2;
             case PlotModel::StepType::Locate:
-                return 3;
+                return 2;
             case PlotModel::StepType::Acquire:
-                return 4;
-            case PlotModel::StepType::Conceal:
                 return 3;
+            case PlotModel::StepType::Conceal:
+                return 2;
             case PlotModel::StepType::Suborn:
-                return 5;
-            case PlotModel::StepType::Sabotage:
                 return 4;
+            case PlotModel::StepType::Sabotage:
+                return 3;
             case PlotModel::StepType::Discredit:
-                return 6;
+                return 5;
             case PlotModel::StepType::Surveil:
-                return 6;
+                return 5;
             case PlotModel::StepType::Count:
                 break;
             }
-            return 4;
+            return 3;
         }
 
         // How much work this KIND of step is before the target is
@@ -75,13 +87,13 @@ namespace NarrativeEngine::PlotResolution
         }
     } // namespace
 
-    int MinimumViableBudget(double rollMaxFraction)
+    int MinimumViableBudget(double maxFractionPerTick)
     {
-        const double ceiling = std::clamp(rollMaxFraction, 0.0001, 1.0);
+        const double ceiling = std::clamp(maxFractionPerTick, 0.0001, 1.0);
         return static_cast<int>(std::ceil(1.0 / ceiling));
     }
 
-    int SizeBudget(PlotModel::StepType type, double travelDistanceNorm, double rollMaxFraction)
+    int SizeBudget(PlotModel::StepType type, double travelDistanceNorm, double maxFractionPerTick)
     {
         const double distance = std::clamp(travelDistanceNorm, 0.0, 1.0);
         // Crossing the province roughly triples the time a step takes.
@@ -96,7 +108,7 @@ namespace NarrativeEngine::PlotResolution
         // reached at all. Below that a step is not hard, it is
         // unwinnable - and an unwinnable step fails silently and looks
         // exactly like bad luck, which is the worst way to be wrong.
-        return std::max(MinimumViableBudget(rollMaxFraction), ticks);
+        return std::max(MinimumViableBudget(maxFractionPerTick), ticks);
     }
 
     float SizeThreshold(PlotModel::StepType type, double targetImportance)
@@ -155,20 +167,30 @@ namespace NarrativeEngine::PlotResolution
         const double roll = NextUniform(rng);
         const double blended = 0.5 * actor + 0.5 * roll;
 
-        const double lo = std::max(0.0, static_cast<double>(inputs.rollMinFraction));
-        const double hi = std::max(lo, static_cast<double>(inputs.rollMaxFraction));
-        const double fraction = lo + blended * (hi - lo);
+        // ABSOLUTE work per tick. The rate depends on the actor and on
+        // nothing else, which is what makes the threshold mean anything:
+        // ticks-to-finish is roughly threshold / rate, so a harder target
+        // genuinely takes longer.
+        //
+        // This was a fraction OF the threshold in the first version, and
+        // that made the threshold cancel out of the arithmetic entirely —
+        // a step worth 5 and a step worth 500 both took 4.5 ticks. See
+        // the note in RollInputs.
+        const double lo = std::max(0.0, static_cast<double>(inputs.rateMin));
+        const double hi = std::max(lo, static_cast<double>(inputs.rateMax));
+        double progress = lo + blended * (hi - lo);
 
+        // The one relative clamp that survives: no single tick may clear
+        // more than `maxFractionPerTick` of the threshold, so a trivially
+        // small step still cannot be one-shot and MinimumViableBudget
+        // stays meaningful. For any threshold large enough to matter this
+        // never binds.
         const double threshold = std::max(0.0001, static_cast<double>(inputs.threshold));
-        const double progress = fraction * threshold;
+        const double ceiling = threshold * std::clamp(static_cast<double>(inputs.maxFractionPerTick), 0.0001, 1.0);
+        progress = std::min(progress, ceiling);
 
-        // Clamped at both ends against the threshold itself. The floor
-        // stops an unblocked step stalling forever; the ceiling stops a
-        // step clearing its threshold in one tick, which would collapse
-        // the race back into the single roll it replaced.
-        const double floorValue = lo * threshold;
-        const double ceilValue = hi * threshold;
-        return static_cast<float>(std::clamp(progress, floorValue, ceilValue));
+        // And a floor, so an unblocked step can never stall forever.
+        return static_cast<float>(std::max(progress, 0.0001));
     }
 
     bool RollMishap(const MishapInputs& inputs, std::uint64_t& rng)

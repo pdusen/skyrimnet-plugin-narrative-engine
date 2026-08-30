@@ -107,14 +107,22 @@ subsystem writes memories into a save from Step 16 onward and should be opt-in u
 | `iPlotMaxAdaptations`          | 3                | Hard cap on re-plans per plot, regardless of what the LLM says |
 | `iPlotStepHistoryCap`          | 12               | Steps retained in a plot's history                             |
 | `fPlotTerminalRetentionDays`   | 7.0              | How long a finished plot stays before reaping                  |
-| `fPlotProgressRollMin`         | 0.05             | Floor on an unblocked tick's progress, as a fraction of threshold |
-| `fPlotProgressRollMax`         | 0.45             | Ceiling, so no step clears its threshold in one tick           |
+| `fPlotProgressRateMin`         | 1.5              | Work per tick from a hopeless actor, in threshold units        |
+| `fPlotProgressRateMax`         | 5.0              | Work per tick from an ideal one                                |
+| `fPlotProgressMaxFraction`     | 0.45             | No single tick clears more than this share of a threshold      |
 | `bPlotMishapEnabled`           | true             | The caught-in-the-act roll; off while its shape is argued      |
-| `fPlotMishapChanceBase`        | 0.04             | Per-tick mishap chance before conspicuousness and competence   |
+| `fPlotMishapChanceBase`        | 0.015            | Per-tick mishap chance before conspicuousness and competence   |
 | `iPlotRandomSeed`              | 0                | Seeds the plot RNG stream; 0 = nondeterministic                |
 
-`fPlotProgressRollMin` and `fPlotProgressRollMax` are the two clamps Part 6 requires. They are expressed as
-fractions of the step's threshold so that changing threshold sizing does not silently change step duration.
+`fPlotProgressRateMin` / `Max` are the per-tick work an actor does, in the **same absolute units as a step's
+threshold** — so ticks-to-finish is roughly threshold / rate and a harder target genuinely takes longer.
+`fPlotProgressMaxFraction` is the one clamp that stays relative, and it is what `MinimumViableBudget` derives
+from.
+
+These were originally a min/max pair expressed as fractions *of* the threshold, on the reasoning that retuning
+threshold sizing should not silently change step duration. That reasoning was exactly backwards: it made the
+threshold cancel out of the arithmetic, so it could not change step duration *or anything else*. Step 9's
+harness measured a step worth 5 and a step worth 500 both finishing in 4.5 ticks. See Step 9.
 
 ---
 
@@ -973,7 +981,7 @@ Astrid through hand-written overrides — and none of them outranks another for 
 
 #### Step 9 — Offline validation harness, and tuning the numbers
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1001,92 +1009,59 @@ simulated year rather than dozens; budget occupancy neither pinned at 10 nor sta
 design doc's Part 3 estimate can be checked against. Any figure that cannot be brought into range by tuning is
 a model problem, and finding that here rather than in Step 11 is the entire point of the step.
 
-**Item 1 is done. Items 2–5 are BLOCKED on a design decision — see below.**
+Done. `build-plot-population.py`, `simulate-plots.py`, and the run recorded in
+[`tests/faction-plots/PHASE_14_PLOT_VALIDATION_LOG.md`](tests/faction-plots/PHASE_14_PLOT_VALIDATION_LOG.md).
+The settings table above carries the tuned values.
 
-`build-plot-population.py` is written and runs. It does not re-implement the Spriggit reader: Phase 13's
-`build-social-graph.py` is 1,100 lines of hard-won correctness about a format with real traps in it, so it is
-imported as a module and its graph reused. What this adds is the two things it has no reason to carry —
-faction rank, and the authored skills `PlotResolution::Suitability` consults.
+**The harness earned its keep on the first run: the threshold did nothing at all.**
 
-Extracting real data immediately caught three silent bugs in the extractor, each of which would have produced
-a *plausible-looking but meaningless* simulation rather than an error:
+Step 6 sized every step with a budget in ticks and a threshold of work, and the design turns on those being
+independent. But the per-tick roll was expressed as a *fraction of the threshold*, which makes
+ticks-to-finish `1 / mean(fraction)` — the threshold cancels out of the arithmetic entirely. A step worth 5
+and a step worth 500 both finished in 4.50 ticks. `SizeThreshold`, `TargetImportance` and the whole "how hard
+is the job" half of the model were decorative.
 
-| Bug                                                                                                | Would have looked like                                     |
-| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `PlayerSkills.SkillValues` is a LIST of `{Key, Value}`, not a mapping                                | every actor identically suited; the suitability half of the roll a constant |
-| Most unique NPCs have no authored `Level` — they are `PcLevelMult` with a `CalcMinLevel`/`CalcMaxLevel` band | every actor identically competent |
-| Faction rank read from `Fluff` instead of `Rank`                                                     | every membership rank 0 — see the correction below          |
+**Step 6's own probe passed on this**, because it asserted budget and threshold were *independently derived* —
+and a value that affects nothing is trivially independent of everything. It was checking the signatures, not
+the behaviour. That is the distinction between a probe and a harness, and it is why this step exists.
 
-The extractor now prints the distinct-value counts for skills and competence, and warns on a flat
-distribution, because a flat distribution is the signature of reading the wrong field. Current output over the
-vanilla export: **857 members, 454 in an admitted faction, 659 with personal ties, 31 distinct Speech values,
-45 distinct competence values.**
+The fix makes the roll **absolute work** in the same units as the threshold, so ticks ≈ threshold / rate.
+One relative clamp survives, `fPlotProgressMaxFraction`, which stops a trivially small step being one-shot and
+is what `MinimumViableBudget` derives from. `fPlotProgressRollMin` / `RollMax` became
+`fPlotProgressRateMin` / `RateMax` / `MaxFraction`, and Step 6's probe gained the assertion that was missing:
+**a 3× threshold must take materially longer**, measured rather than reasoned.
 
-##### Correction: an earlier version of this section claimed vanilla NPCs have no faction ranks
+Two tunings followed, both recorded with their sweeps in the log:
 
-**That claim was wrong, and so was the evidence given for it.** It is recorded here rather than quietly
-deleted because the mistake is instructive and the conclusion it supported has changed shape.
+- **`fPlotMishapChanceBase` 0.04 → 0.015.** At 0.04, being caught was the *normal* way to fail — 35.7% of
+  resolutions, against 5.7% timeouts — which drains the distinction the typed outcome exists for.
+- **Base budgets tightened by a fifth.** With mishap tamed, timeouts sat at 6.8%: the clock never ran out, so
+  competence had almost nothing to decide.
 
-Spriggit writes Mutagen's `RankPlacement` as:
+Tuned result over 5 trials × 365 in-world days: **67.8% succeeded / 14.6% timed out / 17.6% caught**, plots
+succeeding 72.6% of the time, 524 distinct masterminds with the top ten holding 13.5% of plots, median plot 18
+days and ~6 steps.
 
-```yaml
-Factions:
-  - Faction: 01F259:Skyrim.esm
-    Rank: 6              # OMITTED ENTIRELY when the rank is 0
-    Fluff: 0x000000      # three unused bytes, ALWAYS zero
-```
+**The call rate is less than half the design's estimate — 7.1 per in-world day against Part 3's ~15.** The
+estimate was right about the per-plot cost and wrong about the pace: plots run nearer eighteen days than
+seven. Comfortably affordable, with room to raise the plot budget later.
 
-The extractor read `Fluff` and fell back to `Rank` only if `Fluff` was absent — which it never is. So it
-returned 0 for every NPC in the game, including ones with a plain `Rank: 6` on the very next line. The
-"verification" then compounded the error: it counted `Fluff` values under `Factions:` blocks, found 14,086
-zeroes, and reported that as proof. It was measuring the padding.
+Two findings that are **not** tuning problems and are carried into Step 11:
 
-Ranks are in fact plentiful. Across `Skyrim/Npcs`, faction memberships carry ranks distributed
-`{-1: 753, 0: 11515, 1: 47, 2: 1, 3: 5, 4: 10, 5: 1, 6: 1}`.
+- **Hierarchical delegation never happens.** Ladder rungs 1 and 2 fire 0.0% of the time; every delegation is a
+  personal tie (67.4%) or the mastermind acting alone (32.6%). This is arithmetic, not a bug: a subordinate is
+  someone with lower standing in a shared faction, and only **25 of 857** NPCs have any standing, so 832 of
+  857 masterminds have no subordinates anywhere by definition. The design's *"the Thieves Guild has options, a
+  Riverwood farmer has themselves"* still holds, but the "has options" case is vanishingly rare. It is a
+  **roster coverage** question — more rostered factions, or intermediate ranks in the ones already there —
+  and worth deciding before Step 11, since "who does the work" is one of the things that step judges.
+- **The budget runs near-saturated**, at 10/10 for 74.7% of ticks. Expected given 18-day plots and
+  opportunistic births, but it means `iPlotMaxConcurrent` is a ceiling doing real work rather than a safety
+  limit, and raising it raises the call rate near-proportionally.
 
-**The C++ side was never affected.** `PlotPopulation::RankIn` reads `TESNPC::factions[i].rank`, which is the
-same field Spriggit spells `Rank`. Only the offline extractor was wrong.
-
-##### What the data actually says, and the design question that follows
-
-With the field read correctly, the finding is narrower but still real. Within the **857 unique NPCs the plot
-population actually covers**, only **14 memberships carry a rank above 0, across 2 factions**:
-
-| Faction                      | Members in our population | Ranked | Admitted by the 3–40 size band? |
-| ---------------------------- | ------------------------: | -----: | ------------------------------- |
-| `CollegeofWinterholdFaction` |                        18 |     13 | yes                             |
-| `CWPotentialAllyFaction`     |                         1 |      1 | no                              |
-
-The College is a textbook hierarchy and the weighting works on it exactly as designed — Savos Aren 6,
-Mirabelle Ervine 5, the masters at 4, the apprentices at 3. For everyone else in the population the rank term
-is 0, so mastermind weight is `1.5` for a faction member and `1.0` for an independent.
-
-Two things explain the gap, and they pull in opposite directions:
-
-- **The size band excludes almost every rank-carrying faction.** The factions with real rank spreads are
-  large: `JobMerchantFaction` (166), `IsGuardFaction` (463), `CWSoldierNoGuardDialogueFaction` (113),
-  `CWImperialFaction` (288), `CurrentFollowerFaction` (40/40 ranked). Gossip's 3–40 band drops all of them,
-  and plots inherited that band to get one answer to "which organisations matter".
-- **Most of those factions are bookkeeping, not hierarchy.** `IsGuardFaction`, `GuardDialogueFaction`,
-  `CWDialogueSoldierFaction`, `JobInnkeeperFaction`, `CurrentFollowerFaction` — their ranks encode a job or a
-  dialogue variant, not authority. Widening the band would admit a great deal of rank that means nothing about
-  commanding resources, which is worse than admitting none.
-
-`JobJarlFaction` is the interesting exception in principle — jarls are precisely the "commands resources"
-case — but no member of our population carries a rank in it.
-
-So the design question is not "does rank exist" but **"is authored faction rank the right prominence signal,
-given that in this population it describes one organisation?"** Candidates, none obviously right:
-
-- **Keep rank, and accept that it discriminates only inside genuine hierarchies.** The College would produce
-  richly-cast plots and everywhere else would fall back to the membership bit. Arguably honest: those are the
-  places vanilla actually modelled a hierarchy.
-- **Widen the size band for plots only**, with a hand-filtered exclusion list for the bookkeeping factions.
-  Most faithful to the design's intent, and the most content to maintain.
-- **Live rank rather than authored** (`Actor::GetFactionRank`), which reflects quest-set progression — but it
-  is a per-actor engine read, changes during play, and is still 0 for most NPCs.
-- **A different signal entirely** — faction count, membership of a small elite faction, `DispositionBase`, or
-  a curated prominent-faction list.
+`population.json` is generated and gitignored. The simulator is a **mirror** of `PlotResolution.cpp` and
+`PlotCasting.cpp` rather than a second design — a harness that models something the game does not produces
+numbers that are confidently wrong.
 
 ---
 

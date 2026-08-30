@@ -30,6 +30,8 @@ import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 GOSSIP = HERE.parent / "gossip-spread" / "build-social-graph.py"
+CHECK = HERE / "check-plot-factions.py"
+ROSTER = HERE.parents[3] / "statics" / "SKSE" / "Plugins" / "NarrativeEngine" / "PlotFactions.ini"
 DEFAULT_EXPORT = r"C:\Projects\spriggit-output"
 
 # Matches PlotPopulation.cpp: level is normalised against 50 rather than 100,
@@ -43,14 +45,19 @@ LEVEL_CEILING = 50.0
 SKILLS = ("Speech", "Sneak", "Pickpocket")
 
 
-def load_gossip_module():
-    """Import the Phase 13 builder by path — its directory name is hyphenated."""
-    if not GOSSIP.exists():
-        sys.exit(f"cannot find {GOSSIP}; this script reuses Phase 13's Spriggit reader")
-    spec = importlib.util.spec_from_file_location("build_social_graph", GOSSIP)
+def load_by_path(path, name):
+    """Import a sibling script by path — the directory names are hyphenated."""
+    if not path.exists():
+        sys.exit(f"cannot find {path}")
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def load_gossip_module():
+    """The Phase 13 Spriggit reader, reused rather than reimplemented."""
+    return load_by_path(GOSSIP, "build_social_graph")
 
 
 def faction_rank(entry: dict) -> int:
@@ -190,21 +197,61 @@ def main() -> int:
 
     npcs = graph.get("npcs") or {}
 
+    # The shipped roster, applied through the same standing mirror
+    # check-plot-factions.py uses -- so the simulation and the shipped file
+    # cannot drift apart without the check catching it.
+    check = load_by_path(CHECK, "check_plot_factions")
+    fac_members, fac_ranks = check.faction_members(args.export)
+    roster = {}
+    for section in check.parse_ini(ROSTER):
+        if section["_id"].startswith("Faction:") and section["_keys"].get("Faction"):
+            roster[section["_keys"]["Faction"][0]] = section
+    print(f"roster: {len(roster)} faction(s)", file=sys.stderr)
+
+    # faction EditorID -> the graph's key, so rostered entries can be matched
+    # against the gossip-derived ones.
+    fac_key = {}
+    for key in (graph.get("factions") or {}):
+        rec_f = graph["factions"][key]
+        eid = rec_f.get("EditorID")
+        if eid:
+            fac_key[eid] = key
+
     members = []
     for key, part in parts.items():
         rec = npcs.get(key) or {}
 
-        # Rank comes from `Rank`, which Spriggit omits when it is 0. See
-        # faction_rank -- `Fluff` is padding and is always zero.
+        # TWO sources, exactly as PlotPopulation::Build composes them.
+        #
+        # Gossip's size-filtered set is the FALLBACK: membership says
+        # "belongs to an organisation" and nothing about rank, so standing is
+        # 0 and its members are peers.
+        #
+        # The roster is the source of truth for hierarchy, and it may name
+        # factions the size filter never admitted -- the Imperial Legion has
+        # 288 members and the filter stops at 40 -- so rostered entries are
+        # added outright rather than only annotating existing ones.
         factions = []
+        seen = set()
         for entry in rec.get("Factions") or []:
             raw_faction = entry.get("Faction")
             if raw_faction not in admitted_keys:
                 continue
-            factions.append({
-                "faction": str(raw_faction),
-                "rank": faction_rank(entry),
-            })
+            factions.append({"faction": str(raw_faction), "standing": 0.0, "rostered": False})
+            seen.add(str(raw_faction))
+
+        npc_editor_id = rec.get("EditorID") or ""
+        for fac_editor_id, section in roster.items():
+            if npc_editor_id not in fac_members.get(fac_editor_id, set()):
+                continue
+            standing = check.standing_of(npc_editor_id, section, fac_members, fac_ranks)
+            key = fac_key.get(fac_editor_id)
+            existing = next((f for f in factions if f["faction"] == str(key)), None)
+            if existing is not None:
+                existing["standing"] = standing
+                existing["rostered"] = True
+            else:
+                factions.append({"faction": str(key), "standing": standing, "rostered": True})
 
         ties = extract_ties(personal.get(key))
 
@@ -227,26 +274,22 @@ def main() -> int:
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=1, sort_keys=True)
 
-    ranked = sum(1 for m in members if m["factions"])
     tied = sum(1 for m in members if m["ties"])
-    above_zero = sum(1 for m in members if any(f["rank"] > 0 for f in m["factions"]))
-    negative = sum(1 for m in members if any(f["rank"] < 0 for f in m["factions"]))
-    rank_hist = {}
-    for m in members:
-        for f in m["factions"]:
-            rank_hist[f["rank"]] = rank_hist.get(f["rank"], 0) + 1
+    ranked = sum(1 for m in members if any(f["standing"] > 0 for f in m["factions"]))
+    rostered = sum(1 for m in members if any(f["rostered"] for f in m["factions"]))
+    leaders = sum(1 for m in members if any(f["standing"] >= 0.999 for f in m["factions"]))
     distinct_skill = len({round(m["skills"]["speech"], 3) for m in members})
     distinct_comp = len({round(m["competence"], 3) for m in members})
 
     print(
-        f"wrote {args.out}: {len(members)} members, {ranked} in an admitted faction, {tied} with personal ties",
+        f"wrote {args.out}: {len(members)} members, {tied} with personal ties",
         file=sys.stderr,
     )
     # These three lines exist because each of them caught a silent extraction
     # bug that would have produced a plausible-looking but meaningless
     # simulation.
-    print(f"  faction rank > 0: {above_zero} member(s); rank < 0: {negative}", file=sys.stderr)
-    print(f"  membership rank histogram: {dict(sorted(rank_hist.items()))}", file=sys.stderr)
+    print(f"  in a rostered faction: {rostered}; with standing > 0: {ranked}; at the top of one: {leaders}",
+          file=sys.stderr)
     print(f"  distinct Speech values: {distinct_skill}", file=sys.stderr)
     print(f"  distinct competence values: {distinct_comp}", file=sys.stderr)
     if distinct_skill <= 1 or distinct_comp <= 1:

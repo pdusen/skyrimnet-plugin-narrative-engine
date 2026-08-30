@@ -882,15 +882,28 @@ namespace NarrativeEngine::Settings
         // that one fail".
         float plotTerminalRetentionDays = 7.0f;
 
-        // Clamps on a single tick's progress roll, as a FRACTION OF THE
-        // STEP'S THRESHOLD rather than an absolute -- so retuning
-        // threshold sizing does not silently change step duration.
+        // How much work one tick of an actor's effort is worth, in the
+        // same ABSOLUTE units as a step's threshold.
         //
-        // Both ends matter. A floor of zero lets an unblocked step stall
-        // indefinitely; a ceiling at or above 1.0 collapses the progress
-        // race back into the single roll it replaced.
-        float plotProgressRollMin = 0.05f;
-        float plotProgressRollMax = 0.45f;
+        // Absolute, not a fraction of the threshold, and the distinction
+        // is the whole model. When the per-tick roll was a fraction OF
+        // the threshold, ticks-to-finish came out as 1 / mean(fraction)
+        // and the threshold cancelled entirely -- a step worth 5 and a
+        // step worth 500 both took 4.5 ticks, so target importance did
+        // nothing. The Step 9 harness measured that; it is not visible
+        // from reading the code.
+        //
+        // rateMin is what a hopeless actor manages, rateMax what an ideal
+        // one does. Base thresholds run 6-18 before the target's
+        // importance multiplies them by up to 2.5.
+        float plotProgressRateMin = 1.5f;
+        float plotProgressRateMax = 5.0f;
+
+        // The one relative clamp: no single tick may clear more than this
+        // share of a step's threshold. Keeps a trivially small step from
+        // being one-shot, and is what MinimumViableBudget is derived
+        // from. For any threshold large enough to matter it never binds.
+        float plotProgressMaxFraction = 0.45f;
 
         // The caught-in-the-act roll. Typed failure is load-bearing --
         // it decides whether the target gets a memory and whether the
@@ -901,7 +914,7 @@ namespace NarrativeEngine::Settings
         // Behind a switch because its SHAPE is still an open design
         // question (see the phase doc), not because it is optional.
         bool plotMishapEnabled = true;
-        float plotMishapChanceBase = 0.04f;
+        float plotMishapChanceBase = 0.015f;
 
         // Seeds the plot RNG stream. 0 means nondeterministic; any other
         // value makes a run reproducible, which is what the offline

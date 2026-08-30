@@ -289,10 +289,12 @@ namespace NarrativeEngine::Settings
                 static_cast<int>(ini.GetLongValue("Plots", "iPlotStepHistoryCap", dst.plotStepHistoryCap));
             dst.plotTerminalRetentionDays = static_cast<float>(
                 ini.GetDoubleValue("Plots", "fPlotTerminalRetentionDays", dst.plotTerminalRetentionDays));
-            dst.plotProgressRollMin =
-                static_cast<float>(ini.GetDoubleValue("Plots", "fPlotProgressRollMin", dst.plotProgressRollMin));
-            dst.plotProgressRollMax =
-                static_cast<float>(ini.GetDoubleValue("Plots", "fPlotProgressRollMax", dst.plotProgressRollMax));
+            dst.plotProgressRateMin =
+                static_cast<float>(ini.GetDoubleValue("Plots", "fPlotProgressRateMin", dst.plotProgressRateMin));
+            dst.plotProgressRateMax =
+                static_cast<float>(ini.GetDoubleValue("Plots", "fPlotProgressRateMax", dst.plotProgressRateMax));
+            dst.plotProgressMaxFraction = static_cast<float>(
+                ini.GetDoubleValue("Plots", "fPlotProgressMaxFraction", dst.plotProgressMaxFraction));
             dst.plotMishapEnabled = ini.GetBoolValue("Plots", "bPlotMishapEnabled", dst.plotMishapEnabled);
             dst.plotMishapChanceBase =
                 static_cast<float>(ini.GetDoubleValue("Plots", "fPlotMishapChanceBase", dst.plotMishapChanceBase));

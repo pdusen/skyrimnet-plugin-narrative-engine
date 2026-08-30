@@ -42,24 +42,28 @@ namespace NarrativeEngine::PlotResolution
     // far side of the province). The caller normalises; this function
     // has no opinion about map units.
     //
-    // `rollMaxFraction` is the per-tick progress ceiling, and it is here
-    // because it sets a FLOOR under any winnable budget: no tick may add
-    // more than that fraction of the threshold, so a step needs at least
-    // ceil(1 / rollMaxFraction) ticks before success is even
+    // `maxFractionPerTick` is the per-tick progress ceiling, and it is
+    // here because it sets a FLOOR under any winnable budget: no tick may
+    // add more than that share of the threshold, so a step needs at least
+    // ceil(1 / maxFractionPerTick) ticks before success is even
     // arithmetically possible. A budget below that does not describe a
     // hard step, it describes an impossible one - and impossible steps
     // fail silently and look exactly like bad luck.
+    //
+    // Note this is a floor only. A step whose threshold is large relative
+    // to the actor's rate takes far longer than the minimum, which is
+    // where target importance now actually bites.
     //
     // This does NOT compromise the budget/threshold independence the
     // design turns on. The ceiling is a tuning constant, not a property
     // of the target: SizeBudget still cannot see targetImportance, and
     // SizeThreshold still cannot see travel.
-    [[nodiscard]] int SizeBudget(PlotModel::StepType type, double travelDistanceNorm, double rollMaxFraction);
+    [[nodiscard]] int SizeBudget(PlotModel::StepType type, double travelDistanceNorm, double maxFractionPerTick);
 
     // The fewest ticks in which a threshold can be reached at all, given
     // the per-tick ceiling. Exposed so a caller or a probe can assert a
     // budget is winnable rather than rediscovering the arithmetic.
-    [[nodiscard]] int MinimumViableBudget(double rollMaxFraction);
+    [[nodiscard]] int MinimumViableBudget(double maxFractionPerTick);
 
     // How much progress a step of this type requires against a target of
     // this importance.
@@ -88,12 +92,31 @@ namespace NarrativeEngine::PlotResolution
         // 0..1. How well this actor suits this KIND of step — a thief
         // sent to steal, a courtier sent to discredit.
         double suitability = 0.5;
-        // The step's own threshold, because the clamps are expressed as
-        // fractions of it: retuning threshold sizing must not silently
-        // change how long steps take.
+
+        // The step's own threshold, in the same absolute work units the
+        // rates below are in.
         float threshold = 1.0f;
-        float rollMinFraction = 0.05f;
-        float rollMaxFraction = 0.45f;
+
+        // ABSOLUTE work per tick, not a fraction of the threshold.
+        //
+        // This distinction is the whole of the model and it was wrong in
+        // the first implementation. When the per-tick roll is a fraction
+        // OF the threshold, ticks-to-finish is 1 / mean(fraction) and the
+        // threshold cancels out completely — a step worth 5 and a step
+        // worth 500 both take 4.5 ticks, and `SizeThreshold`, target
+        // importance and half the design do nothing at all. Measured, not
+        // reasoned: the Step 9 harness found it.
+        //
+        // With absolute rates, ticks ≈ threshold / rate, so a harder
+        // target genuinely takes longer.
+        float rateMin = 1.5f;
+        float rateMax = 5.0f;
+
+        // The one thing that DOES stay relative: no single tick may clear
+        // more than this share of the threshold, so a trivially small
+        // step still cannot be finished in one go. This is what
+        // MinimumViableBudget is derived from.
+        float maxFractionPerTick = 0.45f;
     };
 
     // Progress for one unblocked tick. Always strictly positive and

@@ -180,7 +180,7 @@ namespace NarrativeEngine::PlotTick
             step.actorName = actor != nullptr ? actor->name : std::string{};
             step.state = PlotModel::StepState::InProgress;
 
-            const double cfgRollMax = static_cast<double>(Settings::Get().plotProgressRollMax);
+            const double cfgRollMax = static_cast<double>(Settings::Get().plotProgressMaxFraction);
             const double travel = TravelDistanceNorm(actor, target);
             const double importance = TargetImportance(target);
             step.budget = PlotResolution::SizeBudget(step.type, travel, cfgRollMax);
@@ -347,8 +347,9 @@ namespace NarrativeEngine::PlotTick
             inputs.roll.competence = step.sizingCompetence;
             inputs.roll.suitability = step.sizingSuitability;
             inputs.roll.threshold = step.threshold;
-            inputs.roll.rollMinFraction = cfg.plotProgressRollMin;
-            inputs.roll.rollMaxFraction = cfg.plotProgressRollMax;
+            inputs.roll.rateMin = cfg.plotProgressRateMin;
+            inputs.roll.rateMax = cfg.plotProgressRateMax;
+            inputs.roll.maxFractionPerTick = cfg.plotProgressMaxFraction;
             inputs.mishap.enabled = cfg.plotMishapEnabled;
             inputs.mishap.chanceBase = cfg.plotMishapChanceBase;
             inputs.mishap.conspicuous = PlotModel::IsConspicuous(step.type);
