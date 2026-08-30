@@ -47,6 +47,7 @@ export interface DirectorState {
     actions: ActionInfo[];
     visit: VisitTabState;
     gossip: GossipTabState;
+    plots: PlotsTabState;
     settings: SettingsTabState;
 }
 
@@ -257,4 +258,95 @@ export interface GossipTabState {
     // Newest first. Holds exactly the rumors that have not been reaped —
     // a rumor is listed until its last carrier retires.
     rumors: RumorEntry[];
+}
+
+// --- Plots tab ------------------------------------------------------------
+
+// One tick's worth of what happened to a step. Retained per step,
+// failures included, because "it failed" is not a debuggable statement
+// and "it failed at 0.62 of its threshold, having been held for four of
+// its nine ticks" is.
+export interface PlotRoll {
+    added: number;
+    after: number;
+    held: boolean;
+    caught: boolean;
+}
+
+// The numbers that SIZED a step, kept so the expanded node can show why
+// the race was winnable or not. Without them a resolved step reports
+// what happened but not what it was ever up against.
+export interface PlotSizing {
+    travel: number;
+    importance: number;
+    competence: number;
+    suitability: number;
+}
+
+export type PlotNodeState = 'completed' | 'failed' | 'in_progress' | 'pending';
+
+// One node of a plot's chain.
+//
+// `number` runs 1..N over history ++ live ++ remaining plan, NOT over the
+// plan array — adaptation rewrites the plan tail, and numbering that
+// directly would renumber every node behind the cursor whenever a plot
+// re-planned.
+export interface PlotNode {
+    number: number;
+    label: string;
+    state: PlotNodeState;
+    outcome: string;
+    actor: string;
+    target: string;
+    progress: number;
+    threshold: number;
+    // 0..1, clamped backend-side, so the ring never has to divide by an
+    // unsized threshold.
+    fraction: number;
+    elapsed: number;
+    budget: number;
+    held_ticks: number;
+    sizing: PlotSizing;
+    rolls: PlotRoll[];
+}
+
+export interface PlotEntry {
+    id: number;
+    // Derived from the manifest's verb plus the cached target name — never
+    // authored, so the chain can label itself before any LLM exists.
+    title: string;
+    mastermind: string;
+    ambition: string;
+    status: 'active' | 'succeeded' | 'failed';
+    outcome: string;
+    adaptations: number;
+    max_adaptations: number;
+    born_game_day: number;
+    ended_game_day: number;
+    chain: PlotNode[];
+}
+
+export interface PlotFactionInfo {
+    id: string;
+    name: string;
+    method: string;
+    overrides: number;
+}
+
+export interface PlotsTabState {
+    enabled: boolean;
+    active: number;
+    budget: number;
+    sim_game_day: number;
+    ticks_run: number;
+    plots_born: number;
+    plots_succeeded: number;
+    plots_failed: number;
+    steps_succeeded: number;
+    steps_timed_out: number;
+    steps_caught: number;
+    adaptations: number;
+    factions: PlotFactionInfo[];
+    // Active plots and terminal ones awaiting reaping alike.
+    list: PlotEntry[];
 }

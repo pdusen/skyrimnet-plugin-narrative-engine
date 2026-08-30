@@ -1,0 +1,703 @@
+{
+  "enabled": true,
+  "active": 2,
+  "budget": 10,
+  "sim_game_day": 137.5,
+  "ticks_run": 275,
+  "plots_born": 31,
+  "plots_succeeded": 18,
+  "plots_failed": 11,
+  "steps_succeeded": 104,
+  "steps_timed_out": 22,
+  "steps_caught": 27,
+  "adaptations": 41,
+  "factions": [
+    {
+      "id": "college",
+      "name": "the College of Winterhold",
+      "method": "Rank",
+      "overrides": 0
+    },
+    {
+      "id": "companions",
+      "name": "the Companions",
+      "method": "Marker",
+      "overrides": 0
+    },
+    {
+      "id": "imperiallegion",
+      "name": "the Imperial Legion",
+      "method": "Explicit",
+      "overrides": 2
+    }
+  ],
+  "list": [
+    {
+      "id": 7,
+      "title": "Acquire Amulet of Kings",
+      "mastermind": "Maven Black-Briar",
+      "ambition": "Own the debts of every jarl in the Rift.",
+      "status": "active",
+      "outcome": "none",
+      "adaptations": 1,
+      "max_adaptations": 3,
+      "born_game_day": 100.5,
+      "ended_game_day": 0.0,
+      "chain": [
+        {
+          "number": 1,
+          "label": "Locate the Broker",
+          "state": "completed",
+          "outcome": "succeeded",
+          "actor": "Brynjolf",
+          "target": "the Broker",
+          "progress": 8.0,
+          "threshold": 8.0,
+          "fraction": 1.0,
+          "elapsed": 3,
+          "budget": 6,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": [
+            {
+              "added": 2.9,
+              "after": 2.9,
+              "held": false,
+              "caught": false
+            },
+            {
+              "added": 3.1,
+              "after": 6.0,
+              "held": false,
+              "caught": false
+            },
+            {
+              "added": 2.0,
+              "after": 8.0,
+              "held": false,
+              "caught": false
+            }
+          ]
+        },
+        {
+          "number": 2,
+          "label": "Watch the Estate",
+          "state": "completed",
+          "outcome": "succeeded",
+          "actor": "Sapphire",
+          "target": "the Estate",
+          "progress": 10.0,
+          "threshold": 10.0,
+          "fraction": 1.0,
+          "elapsed": 4,
+          "budget": 7,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 3,
+          "label": "Suborn the Steward",
+          "state": "completed",
+          "outcome": "succeeded",
+          "actor": "Delvin Mallory",
+          "target": "the Steward",
+          "progress": 16.0,
+          "threshold": 16.0,
+          "fraction": 1.0,
+          "elapsed": 5,
+          "budget": 8,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 4,
+          "label": "Suborn the Guard",
+          "state": "failed",
+          "outcome": "failed_caught",
+          "actor": "Vipir",
+          "target": "the Guard",
+          "progress": 6.2,
+          "threshold": 16.0,
+          "fraction": 0.39,
+          "elapsed": 3,
+          "budget": 8,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": [
+            {
+              "added": 2.1,
+              "after": 2.1,
+              "held": false,
+              "caught": false
+            },
+            {
+              "added": 2.0,
+              "after": 4.1,
+              "held": false,
+              "caught": false
+            },
+            {
+              "added": 2.1,
+              "after": 6.2,
+              "held": false,
+              "caught": true
+            }
+          ]
+        },
+        {
+          "number": 5,
+          "label": "Deliver to the Fence",
+          "state": "completed",
+          "outcome": "succeeded",
+          "actor": "Rune",
+          "target": "the Fence",
+          "progress": 6.0,
+          "threshold": 6.0,
+          "fraction": 1.0,
+          "elapsed": 2,
+          "budget": 4,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 6,
+          "label": "Locate the Vault",
+          "state": "completed",
+          "outcome": "succeeded",
+          "actor": "Cynric Endell",
+          "target": "the Vault",
+          "progress": 8.0,
+          "threshold": 8.0,
+          "fraction": 1.0,
+          "elapsed": 3,
+          "budget": 5,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 7,
+          "label": "Discredit the Owner",
+          "state": "in_progress",
+          "outcome": "none",
+          "actor": "Mercer Frey",
+          "target": "the Owner",
+          "progress": 11.3,
+          "threshold": 27.0,
+          "fraction": 0.42,
+          "elapsed": 4,
+          "budget": 9,
+          "held_ticks": 1,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": [
+            {
+              "added": 3.2,
+              "after": 3.2,
+              "held": false,
+              "caught": false
+            },
+            {
+              "added": 0.0,
+              "after": 3.2,
+              "held": true,
+              "caught": false
+            },
+            {
+              "added": 4.1,
+              "after": 7.3,
+              "held": false,
+              "caught": false
+            },
+            {
+              "added": 4.0,
+              "after": 11.3,
+              "held": false,
+              "caught": false
+            }
+          ]
+        },
+        {
+          "number": 8,
+          "label": "Acquire Amulet of Kings",
+          "state": "pending",
+          "outcome": "none",
+          "actor": "",
+          "target": "Amulet of Kings",
+          "progress": 0.0,
+          "threshold": 0.0,
+          "fraction": 0.0,
+          "elapsed": 0,
+          "budget": 0,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 9,
+          "label": "Cover Tracks",
+          "state": "pending",
+          "outcome": "none",
+          "actor": "",
+          "target": "",
+          "progress": 0.0,
+          "threshold": 0.0,
+          "fraction": 0.0,
+          "elapsed": 0,
+          "budget": 0,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Discredit Savos Aren",
+      "mastermind": "Ancano",
+      "ambition": "",
+      "status": "active",
+      "outcome": "none",
+      "adaptations": 3,
+      "max_adaptations": 3,
+      "born_game_day": 90.0,
+      "ended_game_day": 0.0,
+      "chain": [
+        {
+          "number": 1,
+          "label": "Watch Target 1",
+          "state": "completed",
+          "outcome": "succeeded",
+          "actor": "",
+          "target": "",
+          "progress": 10.0,
+          "threshold": 10.0,
+          "fraction": 1.0,
+          "elapsed": 3,
+          "budget": 6,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 2,
+          "label": "Watch Target 2",
+          "state": "completed",
+          "outcome": "succeeded",
+          "actor": "",
+          "target": "",
+          "progress": 10.0,
+          "threshold": 10.0,
+          "fraction": 1.0,
+          "elapsed": 3,
+          "budget": 6,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 3,
+          "label": "Watch Target 3",
+          "state": "completed",
+          "outcome": "succeeded",
+          "actor": "",
+          "target": "",
+          "progress": 10.0,
+          "threshold": 10.0,
+          "fraction": 1.0,
+          "elapsed": 3,
+          "budget": 6,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 4,
+          "label": "Watch Target 4",
+          "state": "completed",
+          "outcome": "succeeded",
+          "actor": "",
+          "target": "",
+          "progress": 10.0,
+          "threshold": 10.0,
+          "fraction": 1.0,
+          "elapsed": 3,
+          "budget": 6,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 5,
+          "label": "Watch Target 5",
+          "state": "completed",
+          "outcome": "succeeded",
+          "actor": "",
+          "target": "",
+          "progress": 10.0,
+          "threshold": 10.0,
+          "fraction": 1.0,
+          "elapsed": 3,
+          "budget": 6,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 6,
+          "label": "Watch Target 6",
+          "state": "completed",
+          "outcome": "succeeded",
+          "actor": "",
+          "target": "",
+          "progress": 10.0,
+          "threshold": 10.0,
+          "fraction": 1.0,
+          "elapsed": 3,
+          "budget": 6,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 7,
+          "label": "Watch Target 7",
+          "state": "in_progress",
+          "outcome": "none",
+          "actor": "",
+          "target": "",
+          "progress": 4.0,
+          "threshold": 10.0,
+          "fraction": 0.4,
+          "elapsed": 3,
+          "budget": 6,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 8,
+          "label": "Watch Target 8",
+          "state": "pending",
+          "outcome": "none",
+          "actor": "",
+          "target": "",
+          "progress": 0.0,
+          "threshold": 10.0,
+          "fraction": 0.0,
+          "elapsed": 0,
+          "budget": 6,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 9,
+          "label": "Watch Target 9",
+          "state": "pending",
+          "outcome": "none",
+          "actor": "",
+          "target": "",
+          "progress": 0.0,
+          "threshold": 10.0,
+          "fraction": 0.0,
+          "elapsed": 0,
+          "budget": 6,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 10,
+          "label": "Watch Target 10",
+          "state": "pending",
+          "outcome": "none",
+          "actor": "",
+          "target": "",
+          "progress": 0.0,
+          "threshold": 10.0,
+          "fraction": 0.0,
+          "elapsed": 0,
+          "budget": 6,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 11,
+          "label": "Watch Target 11",
+          "state": "pending",
+          "outcome": "none",
+          "actor": "",
+          "target": "",
+          "progress": 0.0,
+          "threshold": 10.0,
+          "fraction": 0.0,
+          "elapsed": 0,
+          "budget": 6,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 12,
+          "label": "Watch Target 12",
+          "state": "pending",
+          "outcome": "none",
+          "actor": "",
+          "target": "",
+          "progress": 0.0,
+          "threshold": 10.0,
+          "fraction": 0.0,
+          "elapsed": 0,
+          "budget": 6,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 13,
+          "label": "Watch Target 13",
+          "state": "pending",
+          "outcome": "none",
+          "actor": "",
+          "target": "",
+          "progress": 0.0,
+          "threshold": 10.0,
+          "fraction": 0.0,
+          "elapsed": 0,
+          "budget": 6,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 14,
+          "label": "Watch Target 14",
+          "state": "pending",
+          "outcome": "none",
+          "actor": "",
+          "target": "",
+          "progress": 0.0,
+          "threshold": 10.0,
+          "fraction": 0.0,
+          "elapsed": 0,
+          "budget": 6,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        },
+        {
+          "number": 15,
+          "label": "Watch Target 15",
+          "state": "pending",
+          "outcome": "none",
+          "actor": "",
+          "target": "",
+          "progress": 0.0,
+          "threshold": 10.0,
+          "fraction": 0.0,
+          "elapsed": 0,
+          "budget": 6,
+          "held_ticks": 0,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": []
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Acquire the Ledger",
+      "mastermind": "Ancano",
+      "ambition": "",
+      "status": "failed",
+      "outcome": "adaptation_cap_hit",
+      "adaptations": 3,
+      "max_adaptations": 3,
+      "born_game_day": 60.0,
+      "ended_game_day": 78.5,
+      "chain": [
+        {
+          "number": 1,
+          "label": "Locate the Ledger",
+          "state": "failed",
+          "outcome": "failed_timeout",
+          "actor": "",
+          "target": "",
+          "progress": 5.1,
+          "threshold": 8.0,
+          "fraction": 0.64,
+          "elapsed": 6,
+          "budget": 6,
+          "held_ticks": 4,
+          "sizing": {
+            "travel": 0.2,
+            "importance": 0.55,
+            "competence": 0.4,
+            "suitability": 0.6
+          },
+          "rolls": [
+            {
+              "added": 1.7,
+              "after": 1.7,
+              "held": false,
+              "caught": false
+            },
+            {
+              "added": 0,
+              "after": 1.7,
+              "held": true,
+              "caught": false
+            },
+            {
+              "added": 0,
+              "after": 1.7,
+              "held": true,
+              "caught": false
+            },
+            {
+              "added": 0,
+              "after": 1.7,
+              "held": true,
+              "caught": false
+            },
+            {
+              "added": 0,
+              "after": 1.7,
+              "held": true,
+              "caught": false
+            },
+            {
+              "added": 3.4,
+              "after": 5.1,
+              "held": false,
+              "caught": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

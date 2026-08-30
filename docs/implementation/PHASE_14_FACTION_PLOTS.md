@@ -1067,7 +1067,7 @@ numbers that are confidently wrong.
 
 #### Step 10 — The Plots tab and the step-chain widget
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1105,6 +1105,46 @@ number and carries the ✕; the live node's arc `stroke-dasharray` matches its p
 of the cursor are numbered identically before and after an adaptation replaces the tail; the 15-node chain
 emits a horizontally scrollable container rather than shrinking nodes; and the empty list renders the empty
 state rather than throwing. Whether it *looks* right is Step 11's business.
+
+Done. The plots block in `ComposeFullStateJSON`, `dashboard/src/components/PlotChain.tsx`,
+`components/tabs/PlotsTab.tsx`, the `plots` `TabId`, the `types.ts` slice, the styles, two committed fixtures,
+and the `ne_forcePlotTicks` / `ne_seedDebugPlot` bridge actions Steps 2 and 4 left unwired. Both builds clean,
+render probe passing.
+
+**The chain is assembled backend-side**, in `ComposeFullStateJSON`, rather than in the component. The numbering
+runs 1..N over `history ++ live ++ remaining plan` — never over the `plan` array, which adaptation rewrites —
+and doing that where the plot state lives means the React side receives a flat list it cannot get wrong.
+
+The debug buttons are Force tick / Force 10 / Force 50 and Seed debug plot. Forced ticks go through the normal
+scheduler, so they carry the same stamps and cancellation handles as scheduled ones and nothing observed
+through them is an artefact of the trigger. This is what makes Step 11 a short console-driven session rather
+than a play session.
+
+Render probe results, over a fixture built to exercise the awkward cases — a nine-node chain with a failure in
+the middle that the plot continued past, a fifteen-node chain, a terminal plot, and an empty list:
+
+| Asserted                                                                | Result |
+| ----------------------------------------------------------------------- | ------ |
+| One node per chain entry                                                | pass   |
+| The failed node keeps its number **and** carries the ✕ glyph             | pass   |
+| The live node draws a ring **and** states its percentage                 | pass   |
+| The arc's `stroke-dasharray` matches the 42% fraction arithmetically     | pass   |
+| Nodes 1–9 are each numbered, over the concatenation not the plan array   | pass   |
+| The chain sits in a horizontally scrollable container                    | pass   |
+| Terminal plots are retained under their own heading, and say why they ended | pass |
+| Nodes are real `<button>`s announcing `aria-expanded`                    | pass   |
+| **No button is nested inside another** — the detail panel is outside it   | pass   |
+| An empty list renders the empty state and draws no nodes                 | pass   |
+
+The arc check is the one worth having: it recomputes the circumference from the rendered geometry and asserts
+the dash length matches `0.42 × circumference`, so a ring that renders but shows the wrong amount fails. Colour
+is never the only signal — the failed node carries a glyph and the live node its percentage — and the probe
+asserts both rather than trusting the CSS.
+
+`render-plots-tab.mjs` transpiles the components with the TypeScript API and requires them as CommonJS, rather
+than adding a second rollup config. Two things it needs that are worth knowing if it ever breaks: `React` has
+to be injected into the module scope, because `JsxEmit.React` emits `React.createElement` and the sources
+import only types; and relative imports are resolved by hand against the importing file.
 
 ---
 

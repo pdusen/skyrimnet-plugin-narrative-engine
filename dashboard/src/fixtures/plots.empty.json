@@ -1,0 +1,35 @@
+{
+  "enabled": true,
+  "active": 0,
+  "budget": 10,
+  "sim_game_day": 137.5,
+  "ticks_run": 275,
+  "plots_born": 31,
+  "plots_succeeded": 18,
+  "plots_failed": 11,
+  "steps_succeeded": 104,
+  "steps_timed_out": 22,
+  "steps_caught": 27,
+  "adaptations": 41,
+  "factions": [
+    {
+      "id": "college",
+      "name": "the College of Winterhold",
+      "method": "Rank",
+      "overrides": 0
+    },
+    {
+      "id": "companions",
+      "name": "the Companions",
+      "method": "Marker",
+      "overrides": 0
+    },
+    {
+      "id": "imperiallegion",
+      "name": "the Imperial Legion",
+      "method": "Explicit",
+      "overrides": 2
+    }
+  ],
+  "list": []
+}
