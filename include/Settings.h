@@ -828,11 +828,11 @@ namespace NarrativeEngine::Settings
         // docs/design/FACTION_PLOTS.md for the model and
         // docs/implementation/PHASE_14_FACTION_PLOTS.md for the phase.
         //
-        // Ships OFF. From Phase C onward the subsystem writes memories
-        // into SkyrimNet's database, which our co-save does not roll
-        // back, so it should be opt-in on a save the player is willing
-        // to leave plots in.
-        bool plotsEnabled = false;
+        // On by default, like gossip. The simulation is the feature;
+        // a background sim nobody has switched on generates nothing to
+        // remember, and the whole point of tier 3 is that the world is
+        // scheming whether or not the player is looking.
+        bool plotsEnabled = true;
         // The dedicated trace at NarrativeEngine_Plots.log, on the same
         // independent footing as the gossip trace: a quiet main log and
         // a complete plot trace at the same time.

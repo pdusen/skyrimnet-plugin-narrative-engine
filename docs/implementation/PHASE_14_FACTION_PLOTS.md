@@ -92,12 +92,14 @@ In brief:
 
 ## Settings
 
-New `[Plots]` block. `bPlotsEnabled` ships **false** through Phases A–C and flips when Phase D lands — the
-subsystem writes memories into a save from Step 17 onward and should be opt-in until it has been played.
+New `[Plots]` block. `bPlotsEnabled` ships **true**, like `bGossipEnabled`: the simulation is the feature, and
+a background sim nobody has switched on generates nothing to remember. The caveat it inherits from gossip —
+that from Step 17 onward it writes memories the co-save does not roll back — belongs in the INI's own comment,
+not in a default that hides the feature.
 
 | Key                            | Proposed default | Meaning                                                        |
 | ------------------------------ | ---------------- | -------------------------------------------------------------- |
-| `bPlotsEnabled`                | false            | Master switch for the whole subsystem                          |
+| `bPlotsEnabled`                | true             | Master switch for the whole subsystem                          |
 | `bPlotLogEnabled`              | true             | The dedicated trace at `NarrativeEngine_Plots.log`             |
 | `fPlotTickIntervalGameHours`   | 12.0             | In-world hours between simulation ticks                        |
 | `iPlotMaxOutstandingTicks`     | 4                | Backlog cap; past it the schedule advances without working     |
@@ -243,7 +245,7 @@ Nothing uses it yet.
 4. Register `PlotThread::Token` with the `is_worker_token` trait so the blocking
    `SkyrimNetAPI::SendCustomPromptToLLM` overload accepts it. Nothing calls it until Step 14.
 5. The `[Plots]` block in `Settings`, in `statics/SKSE/Plugins/NarrativeEngine.ini`, and in the INI's
-   documented comment block. `bPlotsEnabled` default **false**.
+   documented comment block.
 6. `Start()` at `kDataLoaded` beside the other dispatchers; `Stop()` in shutdown after `AsyncDispatch::Stop()`.
 
 **Verification:** `build.ps1 build` is clean. Three throwaway translation units compiled against the real build
@@ -1533,6 +1535,6 @@ this phase and are built around rather than blocked on:
 
 One question belongs to this document alone:
 
-1. **Should `bPlotsEnabled` default true when Phase D lands, or stay opt-in?** Gossip defaults on. Plots write
-   more consequential memories and mutate engine state, and the honest answer probably depends on what
-   Step 20 measures.
+1. ~~**Should `bPlotsEnabled` default true, or stay opt-in?**~~ Resolved: **true**, like gossip. A background
+   simulation nobody has switched on produces nothing, and the memory-writing caveat belongs in the INI
+   comment rather than in a default that hides the feature.
