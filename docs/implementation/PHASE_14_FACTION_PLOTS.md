@@ -770,6 +770,66 @@ simulated year rather than dozens; budget occupancy neither pinned at 10 nor sta
 design doc's Part 3 estimate can be checked against. Any figure that cannot be brought into range by tuning is
 a model problem, and finding that here rather than in Step 9 is the entire point of the step.
 
+**Item 1 is done. Items 2–5 are BLOCKED on a design decision — see below.**
+
+`build-plot-population.py` is written and runs. It does not re-implement the Spriggit reader: Phase 13's
+`build-social-graph.py` is 1,100 lines of hard-won correctness about a format with real traps in it, so it is
+imported as a module and its graph reused. What this adds is the two things it has no reason to carry —
+faction rank, and the authored skills `PlotResolution::Suitability` consults.
+
+Extracting real data immediately caught three silent bugs in the extractor, each of which would have produced
+a *plausible-looking but meaningless* simulation rather than an error:
+
+| Bug                                                      | Would have looked like                                     |
+| --------------------------------------------------------- | ---------------------------------------------------------- |
+| `PlayerSkills.SkillValues` is a LIST of `{Key, Value}`, not a mapping | every actor identically suited; the suitability half of the roll a constant |
+| Most unique NPCs have no authored `Level` — they are `PcLevelMult` with a `CalcMinLevel`/`CalcMaxLevel` band | every actor identically competent |
+| Faction rank is in `Fluff`, not a field called `Rank`      | every membership rank 0                                    |
+
+The extractor now prints the distinct-value counts for skills and competence, and warns on a flat
+distribution, because a flat distribution is the signature of reading the wrong field. Current output over the
+vanilla export: **857 members, 454 in an admitted faction, 659 with personal ties, 31 distinct Speech values,
+45 distinct competence values.**
+
+##### BLOCKER: authored faction rank is uniformly zero in vanilla
+
+The design's mastermind-weighting signal is faction rank — Part 5 of the design doc: *"Mastermind weight rises
+with the resources an NPC commands. The obvious signal is faction rank within a faction that is large and
+prominent enough to matter."* Step 5 implemented exactly that.
+
+**That signal does not exist in the data.** Across all 857 unique NPCs and their 616 admitted-faction
+memberships, **not one has a rank above 0.** Verified against the raw export rather than inferred from the
+extractor: of 14,086 `Fluff` values under `Factions:` blocks in `Skyrim/Npcs`, every single one is
+`0x000000`. The non-zero `Fluff` values in those files belong to **`Perks:`** blocks, not factions.
+
+This is not a bug. It is how vanilla works: guild and court rank progression is driven by quests setting ranks
+at runtime, not by ranks authored on the base record — which is also what `TESNPC::factions` exposes to the
+runtime, so the C++ side reads the same zeros.
+
+The consequence is that mastermind weighting has collapsed to a single bit. `MastermindWeight` currently
+returns `1.0 + 0.5 (any membership) + 0.75 × rank`, and with rank always 0 that is **1.5 for the 454 faction
+members and 1.0 for the 403 independents** — a 1.5× tilt and nothing else. "The Thieves Guild has options, a
+Riverwood farmer has themselves" is still true of the *agent ladder*, which reads memberships rather than
+ranks, but the mastermind draw no longer distinguishes Maven Black-Briar from a Riften dockworker.
+
+Choosing a replacement signal is a design decision, not an implementation detail, so it is not being made
+here. Candidates worth weighing, none of them obviously right:
+
+- **Live faction rank rather than authored.** `Actor::GetFactionRank` reflects quest-set ranks, so it would
+  see a player-advanced guild hierarchy. But it is a per-actor engine read, it changes during play, and for
+  most NPCs it is still 0.
+- **Faction membership count.** A crude proxy for how connected someone is; cheap, already extracted.
+- **Membership of a *small* admitted faction.** Elite bodies are small — a court, a guild's inner circle — so
+  a tight faction may say more than a large one.
+- **`DispositionBase`, or the authored level band.** Both vary genuinely across the population (45 distinct
+  competence values), but neither means "commands resources".
+- **A curated list of prominent factions**, weighted by hand. Most honest about what the design wants, and the
+  most content to maintain.
+
+Items 2–5 wait on that answer, because "how many distinct NPCs mastermind over a simulated year" is precisely
+the number the weighting decides, and running the harness now would produce a figure that has to be thrown
+away.
+
 ---
 
 #### Step 8 — The Plots tab and the step-chain widget
