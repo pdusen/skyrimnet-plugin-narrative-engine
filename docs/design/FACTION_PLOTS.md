@@ -125,6 +125,10 @@ mechanical resolution, and it is handed to the LLM verbatim as the vocabulary it
 the type — see Part 8. **Conspicuous** is whether the step would unavoidably be noticed if the player were
 standing there, which gates when it may resolve — see Part 6.
 
+Each type also carries a **short verb phrase** — "Acquire", "Bribe", "Silence", "Watch" — used to render step
+labels and plot titles for display. It is a `constexpr` string beside the type, not authored text: the
+dashboard has to render a readable chain in Phase A, before any LLM writes anything. See Part 10.
+
 **The manifest is the objective vocabulary too.** The last step of a plan is the one that accomplishes the
 objective, so an objective is just a step type at terminal difficulty against a high-value target — which means
 the objective must come from the same manifest the steps do. The birth call is handed the manifest once and
@@ -464,9 +468,19 @@ systems — vanilla dialogue conditions, SkyrimNet's own disposition handling, o
 this plugin exists; the memory is what lets the requester actually talk about it.
 
 **The rank change is floored.** Declining errands must never drive an NPC to the bottom of the relationship
-scale: a shopkeeper the player has turned down three times is annoyed, not a nemesis. The floor sits a rung or
-two below neutral, and the penalty saturates there no matter how many offers are refused. The exact enum value
-to clamp at should be read off CommonLibSSE's relationship-level enum at implementation time, not guessed here.
+scale: a shopkeeper the player has turned down three times is annoyed, not a nemesis. The penalty saturates at
+`kRival` or `kFoe` no matter how many offers are refused, and success saturates symmetrically on the other end.
+
+Two things about the underlying representation, checked against CommonLibSSE rather than assumed:
+
+- **`RE::BGSRelationship::RELATIONSHIP_LEVEL` runs worst-is-highest** — `kLover = 0`, `kAlly`, `kConfidant`,
+  `kFriend`, `kAcquaintance`, `kRival`, `kFoe`, `kEnemy`, `kArchnemesis = 8` — which is the *inverse* of the
+  Creation Kit's -4..+4 rank scale that the same concept is usually discussed in. Clamp by **named level**,
+  never by arithmetic sign, or the floor and the ceiling silently swap.
+- **There is no C++ setter.** `BGSRelationship::level` is a field on a *relationship record*, and a pair of
+  NPCs with no such record has no rank to change at all. `SetRelationshipRank` exists as a condition/Papyrus
+  function (`TESCondition::kSetRelationshipRank`), so the mutation likely crosses the Papyrus boundary — which
+  makes this the one world effect that is not a plain engine write, and it should be costed accordingly.
 
 **Success raises rank too, and is capped the same way.** Otherwise the errand system becomes a grind for free
 affinity — a ceiling is the same argument as the floor, pointed the other way.
@@ -515,31 +529,89 @@ greying it out.
 It reads the **published snapshot**, never the live state, for exactly the reason gossip does: a read taken
 mid-tick shows a half-advanced simulation, with some plots stepped to the new game day and some not.
 
-**It is a debugging instrument first.** A tab that renders only the fiction — who is plotting what against whom
-— is pleasant and cannot diagnose anything. Every mechanical quantity that decided an outcome has to be on
-screen:
+#### The layout
 
-- **Budget occupancy** (n / 10), and how long the free slots have been free.
-- **Per plot:** mastermind, objective, ambition, plan with the cursor marked, current step and its agent,
-  adaptations spent against the cap.
-- **Per live step:** progress against threshold and elapsed against budget, as two bars side by side. The
-  shape of the race is the whole diagnosis — a step at 20% progress and 80% of its budget is already lost, and
-  that should be visible before it resolves rather than inferable afterwards.
-- **Per resolved step:** the per-tick roll history that produced the outcome, plus the inputs that sized the
-  budget and threshold in the first place (travel distance, step scale, actor competence, suitability). "It
-  failed" is not a debuggable statement; "it failed at 0.62 of its threshold, having been held for four of its
-  nine ticks" is.
-- **Casting that did not happen:** which candidates were considered for a step and why each was passed over
-  (occupied, dead, no tie to the mastermind). Casting is where a sim silently degrades into "the same six NPCs
-  do everything," and that is invisible unless the rejects are shown.
-- **Terminal plots**, retained until reaping. The question worth answering after the fact is almost always
-  *why did that one fail*, and the answer is gone if the row disappears the moment the plot ends.
-- **Delegation state:** offers currently in the pool, their expiry, and whether the Director has passed on them
-  yet — the one place where "the Director never fired it" becomes visible rather than silent.
+A **budget header** — occupancy (n / 10) and how long free slots have been free — above a **vertically
+scrolling list of plot cards**, one card per plot. Active plots first, then a *recently ended* section holding
+terminal plots until they are reaped, because the question worth answering after the fact is almost always
+*why did that one fail* and the answer is gone if the card disappears the moment the plot ends.
 
-This tab is also the **primary verification surface for Phase A**. Reading it over accelerated in-world time is
-how the resolution math, the birth rule and the casting distribution get judged before any content is attached.
-It is not a nice-to-have that trails the implementation; it is how the implementation gets checked.
+#### The plot card: a step chain
+
+Each card carries the plot's title and, beneath it, **the whole plan as one horizontal chain of numbered
+nodes** joined by connectors — the shape a reader can take in at a glance, rather than a table of fields they
+have to assemble in their head.
+
+**Node states**, four of them:
+
+| State           | Node                                                          | Connector leading out |
+| --------------- | ------------------------------------------------------------- | --------------------- |
+| **Completed**   | Filled, green, number in white                                | Green                 |
+| **Failed**      | Unfilled, muted, number still legible under a red **✕** glyph | Green (the plot went on) |
+| **In progress** | Unfilled, with a **progress ring** and the percentage beneath the number | Blue       |
+| **Pending**     | Unfilled, muted outline, muted number                         | Muted                 |
+
+The in-progress node is the one carrying real information: its ring is an arc filled to `progress / threshold`,
+so the live step's position in its race is readable without expanding anything. Each node has a short
+two-line **label** beneath it naming what that step is — "Gather Rumors", "Bribe Guard", "Locate Vault".
+
+A small **legend** sits under the chain. Colour is never the only signal: a failed node carries the ✕ glyph,
+and an in-progress node carries its percentage, so the four states remain distinguishable without relying on
+hue alone.
+
+#### Titles and labels are derived, never authored
+
+The card's title is the plot's **objective rendered through the manifest's verb phrase plus the target's
+name** — `Acquire` + *the Amulet of Kings* → "Acquire the Amulet of Kings". A step's label is the same
+construction at step scale. Both are mechanical, from a `constexpr` phrasing table and the cached target name.
+
+This is deliberate and it is not a shortcut. The tab ships in **Phase A**, before a single LLM call exists in
+the subsystem, and a tab that cannot label its own nodes until Phase B is not the verification instrument
+Phase A needs. It also keeps display text out of the sanitization surface entirely: nothing rendered here ever
+came from a model. If authored labels turn out to read better, they are an addition to the birth response, not
+a prerequisite.
+
+#### What the chain actually contains
+
+Not the `plan` array. Adaptation rewrites the *remaining* plan after a failure, so a plot's plan is not a
+stable list and rendering it directly would make finished steps vanish and renumber everything behind them.
+
+The chain is the plot's full record in order: **completed and failed steps from `history`, then the live step,
+then the remaining plan.** Numbering runs 1..N over that concatenation. An adaptation replaces the tail, so N
+can change between ticks while every node to the left of the cursor stays exactly where it was — which is the
+honest rendering of what actually happened, and is why a failed node sits *in the chain* with the plot
+continuing past it rather than terminating the card.
+
+`iPlotStepHistoryCap` bounds `history`, so a very long-running plot's chain elides its oldest nodes rather than
+growing without limit. A chain wider than the card scrolls horizontally within the card; nodes keep their size.
+
+#### The mechanical detail is one click away
+
+**It is still a debugging instrument first.** The chain is the summary; every quantity that decided an outcome
+is behind its node. Clicking a node expands the detail for that step — the same expand-in-place row pattern
+`GossipTab` already uses for rumors, including its accessibility discipline: a real `<button>` for the toggle
+so it is keyboard-reachable and announces its state, with the expanded panel outside the button.
+
+Expanded, a node shows:
+
+- **The race:** progress against threshold and elapsed against budget as two bars, plus the per-tick roll
+  history that produced them. "It failed" is not a debuggable statement; "it failed at 0.62 of its threshold,
+  having been held for four of its nine ticks" is.
+- **The sizing inputs:** travel distance, step scale, actor competence, suitability — the numbers that set the
+  budget and threshold in the first place.
+- **The cast, and the casting that did not happen:** the chosen actor, and which candidates were passed over
+  with the reason for each (occupied, on cooldown, dead, no tie to the mastermind). Casting is where a sim
+  silently degrades into "the same six NPCs do everything," and that is invisible unless the rejects are shown.
+- **Delegation state**, once Phase D exists: whether this step was offered to the player, its expiry, and
+  whether the Director passed on it — the one place where "the Director never fired it" becomes visible rather
+  than silent.
+
+The card header carries what belongs to the plot rather than a step: the mastermind, the ambition, and
+adaptations spent against the cap.
+
+This tab is the **primary verification surface for Phase A**. Reading it over accelerated in-world time is how
+the resolution math, the birth rule and the casting distribution get judged before any content is attached. It
+is not a nice-to-have that trails the implementation; it is how the implementation gets checked.
 
 ### Part 11 — Threading
 
@@ -624,6 +696,10 @@ dashboard.
 
 The Phase 13 precedent is deliberate here. Gossip built a headless validation harness first and only then
 attached content, and that ordering is what caught a propagation model that tuning could not have fixed.
+
+> **Phases A–C are planned in
+> [`../implementation/PHASE_14_FACTION_PLOTS.md`](../implementation/PHASE_14_FACTION_PLOTS.md)**, as seventeen
+> numbered steps. Phase D has no phase doc yet.
 
 ### Phase A — the simulation, headless
 
