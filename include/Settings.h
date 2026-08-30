@@ -522,11 +522,11 @@ namespace NarrativeEngine::Settings
         // Background rumor propagation across the unique-actor
         // population. See docs/implementation/PHASE_13_GOSSIP_PROPAGATION.md.
         //
-        // Ships DISABLED pending in-game validation. Every transmission
-        // writes two real memories into SkyrimNet's database and does
-        // not clean them up, so enable on a playthrough you are willing
-        // to leave gossip in.
-        bool gossipEnabled = false;
+        // Ships ENABLED as of v0.5.0. Every transmission writes two real
+        // memories into SkyrimNet's database and does not clean them up,
+        // so a player who would rather keep gossip out of an existing
+        // save turns it off rather than on.
+        bool gossipEnabled = true;
         // The dedicated rumor-trace log at
         // Data/../SKSE/NarrativeEngine_Gossip.log. Deliberately
         // independent of bDebugMode so a long validation session can run
