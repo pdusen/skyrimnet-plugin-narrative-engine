@@ -56,20 +56,18 @@ def load_gossip_module():
 def faction_rank(entry: dict) -> int:
     """Rank out of an NPC faction membership entry.
 
-    `Fluff` is written as a hex string like 0x000000 (or occasionally parsed as
-    an int); the rank is its low byte. A rank of 255 is the vanilla "no rank"
-    sentinel and reads as 0.
+    Spriggit writes Mutagen's RankPlacement as
+
+        - Faction: 029DA9:Skyrim.esm
+          Rank: 3            <-- OMITTED ENTIRELY when the rank is 0
+          Fluff: 0x000000    <-- three unused bytes, ALWAYS zero
+
+    so `Rank` is the field and `Fluff` is padding. Reading Fluff -- or reading
+    Rank only as a fallback behind it -- yields 0 for every NPC in the game,
+    including the ones that plainly do have ranks.
     """
-    raw = entry.get("Fluff", entry.get("Rank", 0))
-    if isinstance(raw, str):
-        try:
-            raw = int(raw, 16)
-        except ValueError:
-            return 0
-    if not isinstance(raw, (int, float)):
-        return 0
-    rank = int(raw) & 0xFF
-    return 0 if rank == 0xFF else rank
+    raw = entry.get("Rank", 0)
+    return int(raw) if isinstance(raw, (int, float)) else 0
 
 
 def npc_skills(rec: dict) -> dict:
@@ -196,14 +194,8 @@ def main() -> int:
     for key, part in parts.items():
         rec = npcs.get(key) or {}
 
-        # Faction rank lives in `Fluff`, not in a field called Rank.
-        #
-        # Spriggit writes each NPC faction membership as
-        #   - Faction: 029DA9:Skyrim.esm
-        #     Fluff: 0x000000
-        # where the low byte of Fluff is the rank. There is no `Rank` key on
-        # this record at all, so reading one yields 0 for everybody and the
-        # weighting silently flattens.
+        # Rank comes from `Rank`, which Spriggit omits when it is 0. See
+        # faction_rank -- `Fluff` is padding and is always zero.
         factions = []
         for entry in rec.get("Factions") or []:
             raw_faction = entry.get("Faction")
@@ -238,6 +230,11 @@ def main() -> int:
     ranked = sum(1 for m in members if m["factions"])
     tied = sum(1 for m in members if m["ties"])
     above_zero = sum(1 for m in members if any(f["rank"] > 0 for f in m["factions"]))
+    negative = sum(1 for m in members if any(f["rank"] < 0 for f in m["factions"]))
+    rank_hist = {}
+    for m in members:
+        for f in m["factions"]:
+            rank_hist[f["rank"]] = rank_hist.get(f["rank"], 0) + 1
     distinct_skill = len({round(m["skills"]["speech"], 3) for m in members})
     distinct_comp = len({round(m["competence"], 3) for m in members})
 
@@ -248,7 +245,8 @@ def main() -> int:
     # These three lines exist because each of them caught a silent extraction
     # bug that would have produced a plausible-looking but meaningless
     # simulation.
-    print(f"  faction rank > 0: {above_zero} member(s)", file=sys.stderr)
+    print(f"  faction rank > 0: {above_zero} member(s); rank < 0: {negative}", file=sys.stderr)
+    print(f"  membership rank histogram: {dict(sorted(rank_hist.items()))}", file=sys.stderr)
     print(f"  distinct Speech values: {distinct_skill}", file=sys.stderr)
     print(f"  distinct competence values: {distinct_comp}", file=sys.stderr)
     if distinct_skill <= 1 or distinct_comp <= 1:

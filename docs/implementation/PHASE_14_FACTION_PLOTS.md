@@ -780,55 +780,82 @@ faction rank, and the authored skills `PlotResolution::Suitability` consults.
 Extracting real data immediately caught three silent bugs in the extractor, each of which would have produced
 a *plausible-looking but meaningless* simulation rather than an error:
 
-| Bug                                                      | Would have looked like                                     |
-| --------------------------------------------------------- | ---------------------------------------------------------- |
-| `PlayerSkills.SkillValues` is a LIST of `{Key, Value}`, not a mapping | every actor identically suited; the suitability half of the roll a constant |
+| Bug                                                                                                | Would have looked like                                     |
+| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `PlayerSkills.SkillValues` is a LIST of `{Key, Value}`, not a mapping                                | every actor identically suited; the suitability half of the roll a constant |
 | Most unique NPCs have no authored `Level` — they are `PcLevelMult` with a `CalcMinLevel`/`CalcMaxLevel` band | every actor identically competent |
-| Faction rank is in `Fluff`, not a field called `Rank`      | every membership rank 0                                    |
+| Faction rank read from `Fluff` instead of `Rank`                                                     | every membership rank 0 — see the correction below          |
 
 The extractor now prints the distinct-value counts for skills and competence, and warns on a flat
 distribution, because a flat distribution is the signature of reading the wrong field. Current output over the
 vanilla export: **857 members, 454 in an admitted faction, 659 with personal ties, 31 distinct Speech values,
 45 distinct competence values.**
 
-##### BLOCKER: authored faction rank is uniformly zero in vanilla
+##### Correction: an earlier version of this section claimed vanilla NPCs have no faction ranks
 
-The design's mastermind-weighting signal is faction rank — Part 5 of the design doc: *"Mastermind weight rises
-with the resources an NPC commands. The obvious signal is faction rank within a faction that is large and
-prominent enough to matter."* Step 5 implemented exactly that.
+**That claim was wrong, and so was the evidence given for it.** It is recorded here rather than quietly
+deleted because the mistake is instructive and the conclusion it supported has changed shape.
 
-**That signal does not exist in the data.** Across all 857 unique NPCs and their 616 admitted-faction
-memberships, **not one has a rank above 0.** Verified against the raw export rather than inferred from the
-extractor: of 14,086 `Fluff` values under `Factions:` blocks in `Skyrim/Npcs`, every single one is
-`0x000000`. The non-zero `Fluff` values in those files belong to **`Perks:`** blocks, not factions.
+Spriggit writes Mutagen's `RankPlacement` as:
 
-This is not a bug. It is how vanilla works: guild and court rank progression is driven by quests setting ranks
-at runtime, not by ranks authored on the base record — which is also what `TESNPC::factions` exposes to the
-runtime, so the C++ side reads the same zeros.
+```yaml
+Factions:
+  - Faction: 01F259:Skyrim.esm
+    Rank: 6              # OMITTED ENTIRELY when the rank is 0
+    Fluff: 0x000000      # three unused bytes, ALWAYS zero
+```
 
-The consequence is that mastermind weighting has collapsed to a single bit. `MastermindWeight` currently
-returns `1.0 + 0.5 (any membership) + 0.75 × rank`, and with rank always 0 that is **1.5 for the 454 faction
-members and 1.0 for the 403 independents** — a 1.5× tilt and nothing else. "The Thieves Guild has options, a
-Riverwood farmer has themselves" is still true of the *agent ladder*, which reads memberships rather than
-ranks, but the mastermind draw no longer distinguishes Maven Black-Briar from a Riften dockworker.
+The extractor read `Fluff` and fell back to `Rank` only if `Fluff` was absent — which it never is. So it
+returned 0 for every NPC in the game, including ones with a plain `Rank: 6` on the very next line. The
+"verification" then compounded the error: it counted `Fluff` values under `Factions:` blocks, found 14,086
+zeroes, and reported that as proof. It was measuring the padding.
 
-Choosing a replacement signal is a design decision, not an implementation detail, so it is not being made
-here. Candidates worth weighing, none of them obviously right:
+Ranks are in fact plentiful. Across `Skyrim/Npcs`, faction memberships carry ranks distributed
+`{-1: 753, 0: 11515, 1: 47, 2: 1, 3: 5, 4: 10, 5: 1, 6: 1}`.
 
-- **Live faction rank rather than authored.** `Actor::GetFactionRank` reflects quest-set ranks, so it would
-  see a player-advanced guild hierarchy. But it is a per-actor engine read, it changes during play, and for
-  most NPCs it is still 0.
-- **Faction membership count.** A crude proxy for how connected someone is; cheap, already extracted.
-- **Membership of a *small* admitted faction.** Elite bodies are small — a court, a guild's inner circle — so
-  a tight faction may say more than a large one.
-- **`DispositionBase`, or the authored level band.** Both vary genuinely across the population (45 distinct
-  competence values), but neither means "commands resources".
-- **A curated list of prominent factions**, weighted by hand. Most honest about what the design wants, and the
-  most content to maintain.
+**The C++ side was never affected.** `PlotPopulation::RankIn` reads `TESNPC::factions[i].rank`, which is the
+same field Spriggit spells `Rank`. Only the offline extractor was wrong.
 
-Items 2–5 wait on that answer, because "how many distinct NPCs mastermind over a simulated year" is precisely
-the number the weighting decides, and running the harness now would produce a figure that has to be thrown
-away.
+##### What the data actually says, and the design question that follows
+
+With the field read correctly, the finding is narrower but still real. Within the **857 unique NPCs the plot
+population actually covers**, only **14 memberships carry a rank above 0, across 2 factions**:
+
+| Faction                      | Members in our population | Ranked | Admitted by the 3–40 size band? |
+| ---------------------------- | ------------------------: | -----: | ------------------------------- |
+| `CollegeofWinterholdFaction` |                        18 |     13 | yes                             |
+| `CWPotentialAllyFaction`     |                         1 |      1 | no                              |
+
+The College is a textbook hierarchy and the weighting works on it exactly as designed — Savos Aren 6,
+Mirabelle Ervine 5, the masters at 4, the apprentices at 3. For everyone else in the population the rank term
+is 0, so mastermind weight is `1.5` for a faction member and `1.0` for an independent.
+
+Two things explain the gap, and they pull in opposite directions:
+
+- **The size band excludes almost every rank-carrying faction.** The factions with real rank spreads are
+  large: `JobMerchantFaction` (166), `IsGuardFaction` (463), `CWSoldierNoGuardDialogueFaction` (113),
+  `CWImperialFaction` (288), `CurrentFollowerFaction` (40/40 ranked). Gossip's 3–40 band drops all of them,
+  and plots inherited that band to get one answer to "which organisations matter".
+- **Most of those factions are bookkeeping, not hierarchy.** `IsGuardFaction`, `GuardDialogueFaction`,
+  `CWDialogueSoldierFaction`, `JobInnkeeperFaction`, `CurrentFollowerFaction` — their ranks encode a job or a
+  dialogue variant, not authority. Widening the band would admit a great deal of rank that means nothing about
+  commanding resources, which is worse than admitting none.
+
+`JobJarlFaction` is the interesting exception in principle — jarls are precisely the "commands resources"
+case — but no member of our population carries a rank in it.
+
+So the design question is not "does rank exist" but **"is authored faction rank the right prominence signal,
+given that in this population it describes one organisation?"** Candidates, none obviously right:
+
+- **Keep rank, and accept that it discriminates only inside genuine hierarchies.** The College would produce
+  richly-cast plots and everywhere else would fall back to the membership bit. Arguably honest: those are the
+  places vanilla actually modelled a hierarchy.
+- **Widen the size band for plots only**, with a hand-filtered exclusion list for the bookkeeping factions.
+  Most faithful to the design's intent, and the most content to maintain.
+- **Live rank rather than authored** (`Actor::GetFactionRank`), which reflects quest-set progression — but it
+  is a per-actor engine read, changes during play, and is still 0 for most NPCs.
+- **A different signal entirely** — faction count, membership of a small elite faction, `DispositionBase`, or
+  a curated prominent-faction list.
 
 ---
 
