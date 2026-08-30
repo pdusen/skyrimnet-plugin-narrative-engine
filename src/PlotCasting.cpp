@@ -59,45 +59,54 @@ namespace NarrativeEngine::PlotCasting
 
         // How much weight an NPC's standing earns them as a mastermind.
         //
-        // Rank inside an admitted faction is the signal, because an
-        // admitted faction is one large and prominent enough to command
-        // something. The curve is deliberately gentle: a jarl should be
-        // likelier than a guard, not a hundred times likelier, or the
-        // same handful of high-rank NPCs would scheme continuously and
-        // the cooldown would be the only thing spreading the work.
+        // Three tiers, and the gap between them is deliberately modest:
+        // a jarl should be likelier than a guard, not a hundred times
+        // likelier, or the same handful of NPCs would scheme
+        // continuously and the cooldown would be the only thing
+        // spreading the work.
+        //
+        //   base            everyone, including independents
+        //   + membership    belonging to any organisation at all
+        //   + standing      how far up a ROSTERED one you are
+        //
+        // The standing term takes the MAXIMUM across factions, never the
+        // sum: someone's weight should reflect the most authority they
+        // hold anywhere, and summing would let a well-connected nobody
+        // outrank a guild master. Note the deliberate asymmetry with
+        // SelectActor, which takes the UNION across factions — "how much
+        // can this person command" and "who can they command" are
+        // different questions and must not be collapsed into one rule.
         double MastermindWeight(const Member& member)
         {
             // Independents are eligible. This is the floor everyone
             // starts from, and it is what makes a Riverwood farmer's
             // plot possible at all.
             constexpr double kBase = 1.0;
-            constexpr double kPerRank = 0.75;
             constexpr double kMembershipBonus = 0.5;
+            constexpr double kPerStanding = 3.0;
 
             double weight = kBase;
-            int bestRank = -1;
-            for (const auto& f : member.factions) {
-                bestRank = std::max(bestRank, f.rank);
-            }
             if (!member.factions.empty()) {
                 weight += kMembershipBonus;
             }
-            if (bestRank > 0) {
-                weight += kPerRank * static_cast<double>(bestRank);
+
+            double best = 0.0;
+            for (const auto& f : member.factions) {
+                best = std::max(best, f.standing);
             }
-            return weight;
+            return weight + kPerStanding * std::clamp(best, 0.0, 1.0);
         }
 
-        // The mastermind's best rank in each admitted faction, for the
-        // subordinate test.
-        std::unordered_map<RE::FormID, int> RanksOf(const Member& member)
+        // The mastermind's standing in each faction they belong to,
+        // for the subordinate test.
+        std::unordered_map<RE::FormID, double> StandingsOf(const Member& member)
         {
-            std::unordered_map<RE::FormID, int> ranks;
+            std::unordered_map<RE::FormID, double> standings;
             for (const auto& f : member.factions) {
-                auto& slot = ranks[f.faction];
-                slot = std::max(slot, f.rank);
+                auto& slot = standings[f.faction];
+                slot = std::max(slot, f.standing);
             }
-            return ranks;
+            return standings;
         }
 
         bool HasTieTo(const Member& member, RE::FormID other, bool* sharedFaction)
@@ -226,7 +235,11 @@ namespace NarrativeEngine::PlotCasting
         if (boss == nullptr) {
             return result;
         }
-        const auto bossRanks = RanksOf(*boss);
+        // Every faction the mastermind belongs to, rostered or not. A
+        // mastermind in several may draw subordinates from ANY of them:
+        // the ladder pools candidates across all rather than picking one
+        // faction first.
+        const auto bossStandings = StandingsOf(*boss);
 
         // Walk the ladder rung by rung and stop at the first rung with
         // anyone on it. Drawing across all rungs at once would let a
@@ -244,14 +257,19 @@ namespace NarrativeEngine::PlotCasting
                 const bool tied =
                     HasTieTo(*boss, member.npc, &sharedFaction) || HasTieTo(member, mastermind, &sharedFaction);
 
-                // A subordinate is someone who ranks LOWER than the
-                // mastermind in a faction they share. Equal rank is not
-                // subordinate: a fellow rank-3 is a colleague, and
-                // ordering them about is a different social act.
+                // A subordinate is someone whose standing is LOWER
+                // than the mastermind's in a faction they share. Equal
+                // standing is not subordinate: a fellow Circle member is
+                // a colleague, and ordering them about is a different
+                // social act.
+                //
+                // In a faction the roster does not list, every standing
+                // is 0, so this is false for everyone — its members are
+                // peers, exactly as intended, with no special case.
                 bool subordinate = false;
                 for (const auto& f : member.factions) {
-                    const auto it = bossRanks.find(f.faction);
-                    if (it != bossRanks.end() && f.rank < it->second) {
+                    const auto it = bossStandings.find(f.faction);
+                    if (it != bossStandings.end() && f.standing < it->second) {
                         subordinate = true;
                         break;
                     }

@@ -29,13 +29,24 @@
 // docs/implementation/PHASE_14_FACTION_PLOTS.md step 5.
 namespace NarrativeEngine::PlotCasting
 {
-    struct FactionRank
+    // One faction membership, with the NPC's standing inside it.
+    //
+    // `standing` is NORMALISED to 0..1 by PlotFactionRoster, so factions
+    // are comparable: the head of a two-rung guild and the head of a
+    // seven-rung college both come out at 1.0.
+    //
+    // A faction the roster does not list still appears here — membership
+    // is what makes someone "in an organisation" for weighting and for
+    // the agent ladder — but with `rostered = false` and a standing of
+    // 0. Its members are peers, and none is a subordinate of another.
+    // That falls out of the arithmetic rather than needing a rule: the
+    // subordinate test is "lower standing than the mastermind", and
+    // 0 < 0 is false.
+    struct FactionStanding
     {
         RE::FormID faction = 0;
-        // The NPC's rank in that faction. Vanilla ranks start at 0 and
-        // rise; a negative value means "member, rank unspecified", which
-        // a great many vanilla records use.
-        int rank = 0;
+        double standing = 0.0;
+        bool rostered = false;
     };
 
     // A distance-blind tie to another participant, from GossipGraph's
@@ -69,10 +80,10 @@ namespace NarrativeEngine::PlotCasting
         std::string name;
         RE::FormID hold = 0;
         SkillProfile skills;
-        // Memberships of factions the prominence filter admitted. An
+        // Every faction membership that counts, rostered or not. An
         // independent NPC has none, and stays eligible on that basis
         // rather than being excluded by it.
-        std::vector<FactionRank> factions;
+        std::vector<FactionStanding> factions;
         std::vector<Tie> ties;
     };
 

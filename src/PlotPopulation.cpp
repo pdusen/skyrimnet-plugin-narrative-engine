@@ -2,6 +2,7 @@
 
 #include <GossipGraph.h>
 #include <logger.h>
+#include <PlotFactionRoster.h>
 #include <Settings.h>
 
 #include <algorithm>
@@ -35,6 +36,19 @@ namespace NarrativeEngine::PlotPopulation
                 }
             }
             return admitted;
+        }
+
+        bool IsMemberOf(RE::TESNPC* npc, RE::FormID faction)
+        {
+            if (npc == nullptr || faction == 0) {
+                return false;
+            }
+            for (const auto& rank : npc->factions) {
+                if (rank.faction != nullptr && rank.faction->GetFormID() == faction) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         // Rank of `npc` in `faction`, or nullopt when not a member.
@@ -136,11 +150,38 @@ namespace NarrativeEngine::PlotPopulation
 
             if (auto* npcForm = RE::TESForm::LookupByID<RE::TESNPC>(npcId)) {
                 member.skills = ReadSkills(npcForm);
+
+                // Gossip's size-filtered set is the FALLBACK: membership
+                // of one of these says "belongs to an organisation" and
+                // nothing about rank, which is why standing stays 0.
                 for (const auto& [factionId, factionForm] : factionForms) {
                     bool isMember = false;
-                    const int rank = RankIn(npcForm, factionForm, isMember);
+                    RankIn(npcForm, factionForm, isMember);
                     if (isMember) {
-                        member.factions.push_back({factionId, rank});
+                        member.factions.push_back({factionId, 0.0, false});
+                    }
+                }
+
+                // The roster is the source of truth for hierarchy. A
+                // rostered faction either replaces the fallback entry or
+                // is added outright, because the roster may well name a
+                // faction gossip's size filter never admitted — the
+                // Imperial Legion has 288 members and the filter stops
+                // at 40.
+                for (const auto& entry : PlotFactionRoster::Entries()) {
+                    if (!IsMemberOf(npcForm, entry.faction)) {
+                        continue;
+                    }
+                    const double standing = PlotFactionRoster::StandingOf(npcId, entry.faction);
+                    const auto existing = std::find_if(
+                        member.factions.begin(),
+                        member.factions.end(),
+                        [&entry](const PlotCasting::FactionStanding& f) { return f.faction == entry.faction; });
+                    if (existing != member.factions.end()) {
+                        existing->standing = standing;
+                        existing->rostered = true;
+                    } else {
+                        member.factions.push_back({entry.faction, standing, true});
                     }
                 }
             }

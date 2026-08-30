@@ -86,20 +86,23 @@ namespace NarrativeEngine::PlotTick
             return actor->hold == target->hold ? 0.2 : 0.8;
         }
 
-        // Target importance, as a proxy: rank inside an admitted
-        // faction. A jarl is a harder mark than a farmhand. Same
-        // reasoning as above — it is here to make importance matter, not
-        // to be right.
+        // Target importance: how far up an organisation the target
+        // sits. A jarl is a harder mark than a farmhand.
+        //
+        // This reads the same normalised standing the roster gives
+        // casting, which means a faction with a declared hierarchy makes
+        // its leaders harder targets automatically. Someone in no
+        // faction, or on the bottom rung of one, is a soft mark.
         double TargetImportance(const PlotCasting::Member* target)
         {
             if (target == nullptr || target->factions.empty()) {
                 return 0.25;
             }
-            int best = 0;
+            double best = 0.0;
             for (const auto& f : target->factions) {
-                best = std::max(best, f.rank);
+                best = std::max(best, f.standing);
             }
-            return std::clamp(0.3 + 0.15 * static_cast<double>(best), 0.0, 1.0);
+            return std::clamp(0.3 + 0.7 * best, 0.0, 1.0);
         }
 
         PlotCasting::Cooldowns CooldownsFromSettings()

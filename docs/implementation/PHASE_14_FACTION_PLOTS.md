@@ -856,7 +856,7 @@ nothing whatsoever in the data says so, which is the clearest argument for the f
 
 #### Step 8 — The three ranking methods, and casting through the roster
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -916,6 +916,58 @@ that cut across methods:
 Then, against the **real** export rather than a fixture: assert that the shipped roster orders Ulfric
 Stormcloak above Galmar Stone-Fist, Savos Aren above every other College member, and both above an NPC in no
 listed faction.
+
+Done. The three methods and the override layering landed with the roster in Step 7 (`PlotFactionStanding.cpp`);
+this step is the casting change and its verification. `PlotCasting::FactionRank` became `FactionStanding`
+carrying a normalised 0..1 figure and a `rostered` flag, `MastermindWeight` reads standing, the subordinate
+test compares standing, and `PlotPopulation` fills both halves. Build clean, both probes passing.
+
+**A non-rostered faction needs no special case.** Its members all carry standing 0, and the subordinate test is
+"lower standing than the mastermind in a shared faction" — so `0 < 0` is false and nobody in it is anybody's
+subordinate, exactly as specified. The behaviour falls out of the arithmetic rather than out of a rule, which
+is the version that cannot drift.
+
+**The roster may name factions gossip's filter never admitted**, so population-building adds them outright
+rather than only annotating existing entries. The Imperial Legion has 288 members and gossip's size filter
+stops at 40 — without this the Legion would be in the roster and invisible to casting.
+
+**`TargetImportance` now reads standing too.** It was a proxy over raw authored rank, which meant it did
+nothing for seven of the eight factions. Reading the same normalised figure makes a declared hierarchy raise
+its leaders' difficulty as targets automatically — being a jarl makes you both a likelier schemer and a harder
+mark, from one declaration.
+
+The weight is now three tiers — base, +membership, +standing — with the standing term worth `3.0` at the top.
+The probe pins the gap at under 6:1 between a faction head and an unaffiliated NPC, because a steeper curve
+would leave the cooldown as the only thing spreading the work.
+
+Probe results, then deleted:
+
+| Property                                                                   | Result |
+| -------------------------------------------------------------------------- | ------ |
+| Heads of a deep and a shallow faction draw **equally**, and both beat mid-rank | pass |
+| A non-rostered faction beats no faction, but its members are peers          | pass   |
+| ...and yields no subordinates, so the mastermind acts alone                 | pass   |
+| A rostered faction does yield subordinates; **equal** standing does not      | pass   |
+| Many weak memberships never outweigh one strong one (**maximum**, not sum)   | pass   |
+| A mastermind in two factions draws subordinates from **both** (**union**)    | pass   |
+| An unaffiliated NPC is still drawn, at under 6:1 against a faction head      | pass   |
+
+And against the real export, via `check-plot-factions.py`, which now carries a Python mirror of
+`StandingFrom` so the two implementations disagreeing is itself caught:
+
+```text
+Ulfric over Galmar          Ulfric 1.00 vs Galmar 0.67
+Tullius over Rikke          GeneralTullius 1.00 vs Rikke 0.67
+Mercer over Brynjolf        MercerFrey 1.00 vs Brynjolf 0.67
+Savos tops the College      SavosAren 1.00 vs MirabelleErvine 0.83
+Kodlak over the Circle      KodlakWhitemane 1.00 vs AelaTheHuntress 0.50
+every faction leader normalises to 1.00
+```
+
+That last line is the property the whole normalisation exists for: Ulfric, Savos Aren, Kodlak and Astrid all
+reach exactly 1.00 in their own organisations, by three different methods over data of wildly differing
+quality. Savos gets there through an authored seven-rung ladder, Kodlak through marker factions, Ulfric and
+Astrid through hand-written overrides — and none of them outranks another for it.
 
 ---
 
