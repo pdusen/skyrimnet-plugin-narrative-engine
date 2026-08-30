@@ -297,7 +297,7 @@ question about the simulation rather than about thread lifetime.
 
 #### Step 2 — The object model, `PlotState`, and display derivation
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -325,6 +325,69 @@ touching the engine.
 with a `PluginThread::Token`, then is deleted. A probe constructs one synthetic plot per `StepType` and asserts
 the derived title and every step label match an expected string table — which is what actually proves the
 phrasing table is complete rather than defaulted for six of the eight types.
+
+Done. `include/PlotModel.h` + `src/PlotModel.cpp` (the manifest, `Step`, `Plot`, and the display derivation),
+`include/PlotState.h` + `src/PlotState.cpp` (`PlotState`, occupancy, counters, the RNG, and the
+`MutableState` / `Snapshot` / `PublishSnapshot` trio). `Plots::Initialize()` runs at `kDataLoaded` before
+`PlotDispatch::Start()`. Build clean.
+
+**The console command in item 7 does not exist and cannot, as written.** `ConsoleCommand` is an *issuer* —
+it compiles and runs a command as if the player typed it — not a registration surface, and this codebase has
+no way to add a console command of its own. The established debug-action surface here is the dashboard's
+JS→C++ bridge (`DashboardUIManager::OnDispatchAction` and its siblings), so the manual trigger becomes a
+bridge action, wired up in Step 8 with the tab. The seeding itself exists now as `Plots::SeedDebugPlot`, which
+is what Steps 3–6 actually need — all four are probe-verified and call it directly. Nothing is weakened: the
+only step that needs a *human-usable* trigger is Step 9, and Step 8 lands first.
+
+**Step 4's item 6 rests on the same mistaken premise** and is corrected there in the same way: force-tick
+becomes a bridge action, not a console command.
+
+Two decisions worth recording:
+
+- **The objective is stored on the plot, not read off the plan's last step.** They duplicate each other, which
+  is the point: adaptation rewrites the plan tail but may never change the destination, and holding the
+  objective outside the rewritable structure makes that an invariant instead of a convention. It also keeps
+  the card title stable across a re-plan.
+- **The RNG lives in `PlotState`, unlike gossip's**, and is a bare `std::uint64_t` splitmix64 stream rather
+  than a generator object. Gossip excludes its RNG as "a generator, not world state"; plots need reproducibility
+  from a seed for the Step 7 harness and for bug reports, and a stream position that survives the co-save is
+  what makes a reloaded save continue a run rather than silently reroll it. A `std::mt19937` would have put
+  2.5 KB into every snapshot copy; one 64-bit field costs nothing.
+
+`Conspicuousness` is a three-valued enum (`No` / `Sometimes` / `Yes`) rather than a bool, because open
+question 1 is about exactly that distinction. `IsConspicuous` currently treats `Sometimes` as conspicuous —
+the conservative reading, since the failure mode of the other choice is a scheme resolving implausibly under
+the player's nose. When that becomes per-step, only the table and that one predicate move.
+
+Probes, all deleted afterwards:
+
+| Probe                                                    | Expected | Result                              |
+| --------------------------------------------------------- | -------- | ----------------------------------- |
+| `MutableState` with a `PlotThread::Token`                  | compile  | compiled                            |
+| `MutableState` with a `PluginThread::Token`                | reject   | `error C2664: cannot convert arg 1` |
+| Label/title derivation across all 8 manifest types         | run, 0   | passed                              |
+
+The positive half of that pair is there deliberately: without it, the negative probe cannot distinguish "the
+gate works" from "I misspelled the function".
+
+The derivation probe checks more than the step asked for, because the extra cases were free once the harness
+existed: every manifest id round-trips through `ParseStepType` (the membership test Step 11's validation will
+rest on), off-manifest ids — including `"Locate"` with the wrong case and `"locate "` with a trailing space —
+are rejected rather than guessed at, a step with no target renders the bare verb rather than a trailing space,
+and `ProgressFraction` returns 0 on an unsized step rather than dividing by zero into the dashboard's progress
+ring.
+
+**No articles are inserted into derived text.** "Acquire Amulet of Kings" reads slightly stiff, but the
+alternative is a grammar problem with no correct answer — "Silence the Maven Black-Briar" is worse than stiff,
+and nothing in a Skyrim display name distinguishes a proper noun from a common one.
+
+A third piece of tooling came out of this step and is kept:
+`docs/implementation/tests/faction-plots/run-probe.{py,ps1}` compiles, links and **runs** a probe against real
+plugin sources. Steps 4, 5 and 6 all turn on pure functions whose verification is what the code *does*, not
+whether it compiles, and there is no test harness in this repo. It only works for translation units that are
+genuinely engine-free — a source that calls into CommonLibSSE fails to link — and that failure is informative
+rather than an obstacle, because it means the code under test is not the pure function the plan says it should
+be. `PlotModel.cpp` links standalone, which is the first evidence that the model layer really is separable.
 
 ---
 
@@ -374,11 +437,15 @@ testable without a game clock.
    of when it happens to run. Cancellation checked at every operation boundary, not only before publish.
 4. Publish the snapshot at the end of a job, never during one.
 5. `PlotTick::Poll(pt)` added to `PollOnPluginThread` in `Tick.cpp`. The job body logs its stamp and returns.
-6. Two console commands on the existing `ConsoleCommand` surface: force one tick immediately, and force N
-   ticks in sequence. Phase A's validation is entirely a question of watching many ticks go by, and making
-   that a command rather than an hour of waiting is what keeps Step 9 cheap enough to repeat after a tuning
-   change. They enqueue through the normal scheduler so a forced tick is stamped and cancellable like any
-   other.
+6. Two manual triggers: force one tick immediately, and force N ticks in sequence. Phase A's validation is
+   entirely a question of watching many ticks go by, and making that a button rather than an hour of waiting
+   is what keeps Step 9 cheap enough to repeat after a tuning change. They enqueue through the normal
+   scheduler so a forced tick is stamped and cancellable like any other.
+
+   *(Corrected in Step 2: this said "console commands on the existing `ConsoleCommand` surface". There is no
+   such surface — `ConsoleCommand` issues commands into the engine rather than registering them. These are
+   dashboard bridge actions, like every other debug affordance in this plugin, and are wired to buttons in
+   Step 8.)*
 
 **Verification:** `build.ps1 build` is clean. A probe drives the schedule function over synthetic clock
 readings and asserts each case:
@@ -530,8 +597,10 @@ arithmetic behind it.
 7. Clicking a node expands that step's detail in place, following `GossipTab`'s expand-row pattern including
    its accessibility discipline — a real `<button>` for the toggle, the expanded panel outside it.
 8. The delegation row is not built; the Phase D field is reserved and simply not rendered.
-9. A committed fixture at `dashboard/src/fixtures/plots.sample.json`, hand-built to exercise every node state,
-   a plot that has adapted, a 15-node chain, and an empty list.
+9. Wire the bridge actions Steps 2 and 4 left unwired: seed a debug plot, force one tick, force N ticks. These
+   are what make Step 9 a short console-driven session rather than a play session.
+10. A committed fixture at `dashboard/src/fixtures/plots.sample.json`, hand-built to exercise every node
+    state, a plot that has adapted, a 15-node chain, and an empty list.
 
 **Verification:** `npm run build` in `dashboard/` succeeds with no TypeScript errors. A `renderToString` probe
 renders `PlotsTab` against the fixture and asserts: nine nodes for a nine-step chain; the failed node keeps its

@@ -29,6 +29,7 @@
 #include <NPCVisitBeat.h>
 #include <PhaseTracker.h>
 #include <PlotDispatch.h>
+#include <PlotState.h>
 #include <PrismaUI.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -235,6 +236,7 @@ namespace NarrativeEngine
                 // scheduler runs -- and starting it unconditionally
                 // keeps the enable flag a question about the simulation
                 // rather than about thread lifetime.
+                Plots::Initialize();
                 PlotDispatch::Start();
                 // Must start before BeatSystem::Initialize — the poll
                 // starts enqueuing here as soon as a beat is running.
