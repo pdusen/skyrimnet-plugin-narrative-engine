@@ -2,12 +2,16 @@
 
 #include <EngineUtils.h>
 #include <logger.h>
+#include <PlotCasting.h>
 #include <PlotDispatch.h>
+#include <PlotPopulation.h>
+#include <PlotResolution.h>
 #include <PlotSchedule.h>
 #include <PlotState.h>
 #include <Settings.h>
 
 #include <algorithm>
+#include <array>
 
 namespace NarrativeEngine::PlotTick
 {
@@ -18,6 +22,402 @@ namespace NarrativeEngine::PlotTick
         // needs no synchronisation of its own.
         double g_lastFiredGameHours = 0.0;
         bool g_needsRebase = true;
+
+        // --- Stub content -------------------------------------------
+        //
+        // Hardcoded ladders, replaced wholesale by the birth prompt in
+        // step 11. They exist so the MACHINERY can be exercised and
+        // argued with at zero LLM cost: the casting distribution, the
+        // progress-race arithmetic and the terminal-state bookkeeping
+        // are all observable long before any model writes a word.
+        //
+        // Chosen to cover every step type and both conspicuousness
+        // values, because a stub set that only exercised the easy types
+        // would validate the easy half of the model.
+        struct StubLadder
+        {
+            std::array<PlotModel::StepType, 4> steps;
+            std::size_t length;
+        };
+
+        constexpr std::array<StubLadder, 5> kStubLadders{{
+            {{PlotModel::StepType::Locate,
+              PlotModel::StepType::Surveil,
+              PlotModel::StepType::Acquire,
+              PlotModel::StepType::Conceal},
+             4},
+            {{PlotModel::StepType::Locate,
+              PlotModel::StepType::Acquire,
+              PlotModel::StepType::Deliver,
+              PlotModel::StepType::Locate},
+             3},
+            {{PlotModel::StepType::Surveil,
+              PlotModel::StepType::Discredit,
+              PlotModel::StepType::Locate,
+              PlotModel::StepType::Locate},
+             2},
+            {{PlotModel::StepType::Locate,
+              PlotModel::StepType::Suborn,
+              PlotModel::StepType::Sabotage,
+              PlotModel::StepType::Conceal},
+             4},
+            {{PlotModel::StepType::Surveil,
+              PlotModel::StepType::Suborn,
+              PlotModel::StepType::Discredit,
+              PlotModel::StepType::Locate},
+             3},
+        }};
+
+        // Travel distance, as a proxy.
+        //
+        // Same hold is near, a different hold is far. A real road-graph
+        // distance would be better and TravelGraph could supply one, but
+        // it is an engine-side query per step and this is a Phase A
+        // stand-in whose only job is to make distance MATTER so step 7's
+        // harness can judge whether it matters by the right amount.
+        double TravelDistanceNorm(const PlotCasting::Member* actor, const PlotCasting::Member* target)
+        {
+            if (actor == nullptr || target == nullptr) {
+                return 0.5;
+            }
+            if (actor->hold == 0 || target->hold == 0) {
+                return 0.5;
+            }
+            return actor->hold == target->hold ? 0.2 : 0.8;
+        }
+
+        // Target importance, as a proxy: rank inside an admitted
+        // faction. A jarl is a harder mark than a farmhand. Same
+        // reasoning as above — it is here to make importance matter, not
+        // to be right.
+        double TargetImportance(const PlotCasting::Member* target)
+        {
+            if (target == nullptr || target->factions.empty()) {
+                return 0.25;
+            }
+            int best = 0;
+            for (const auto& f : target->factions) {
+                best = std::max(best, f.rank);
+            }
+            return std::clamp(0.3 + 0.15 * static_cast<double>(best), 0.0, 1.0);
+        }
+
+        PlotCasting::Cooldowns CooldownsFromSettings()
+        {
+            const auto& cfg = Settings::Get();
+            return {static_cast<double>(cfg.plotMastermindCooldownDays),
+                    static_cast<double>(cfg.plotActorCooldownDays)};
+        }
+
+        // Free the mastermind's slot and stamp the plot terminal.
+        void EndPlot(PlotState& state,
+                     PlotModel::Plot& plot,
+                     PlotModel::PlotStatus status,
+                     PlotModel::PlotOutcome outcome,
+                     double gameDay)
+        {
+            plot.status = status;
+            plot.outcome = outcome;
+            plot.endedOnGameDay = gameDay;
+
+            PlotCasting::Release(state.occupancy, plot.mastermind, gameDay, CooldownsFromSettings());
+
+            if (status == PlotModel::PlotStatus::Succeeded) {
+                ++state.counters.plotsSucceeded;
+            } else {
+                ++state.counters.plotsFailed;
+            }
+
+            if (Settings::Get().plotLogEnabled) {
+                logger::info("PlotTick: plot {} ({}) ended {} - {}",
+                             plot.id,
+                             PlotModel::Title(plot),
+                             PlotModel::PlotStatusId(status),
+                             PlotModel::PlotOutcomeId(outcome));
+            }
+        }
+
+        // Push a resolved step into history, capped, and release its
+        // actor.
+        void RetireStep(PlotState& state, PlotModel::Plot& plot, PlotModel::Step step, double gameDay)
+        {
+            if (step.actor != 0 && step.actor != plot.mastermind) {
+                PlotCasting::Release(state.occupancy, step.actor, gameDay, CooldownsFromSettings());
+            }
+
+            plot.history.push_back(std::move(step));
+            const auto cap = static_cast<std::size_t>(std::max(1, Settings::Get().plotStepHistoryCap));
+            while (plot.history.size() > cap) {
+                plot.history.erase(plot.history.begin());
+            }
+        }
+
+        // Cast an actor and size the step. Returns false when nobody can
+        // be found at all, which ends the plot rather than leaving it
+        // stuck.
+        bool DispatchStep(PlotState& state, PlotModel::Plot& plot, double gameDay)
+        {
+            const auto& population = PlotPopulation::Get();
+            PlotModel::Step& step = plot.plan[plot.cursor];
+
+            const auto cast = PlotCasting::SelectActor(population,
+                                                       plot.mastermind,
+                                                       state.occupancy,
+                                                       gameDay,
+                                                       PlotPopulation::AlivePredicate(),
+                                                       state.rngState);
+            if (cast.chosen == 0) {
+                return false;
+            }
+
+            const PlotCasting::Member* actor = population.Find(cast.chosen);
+            const PlotCasting::Member* target = population.Find(step.target);
+
+            step.actor = cast.chosen;
+            step.actorName = actor != nullptr ? actor->name : std::string{};
+            step.state = PlotModel::StepState::InProgress;
+
+            const double cfgRollMax = static_cast<double>(Settings::Get().plotProgressRollMax);
+            const double travel = TravelDistanceNorm(actor, target);
+            const double importance = TargetImportance(target);
+            step.budget = PlotResolution::SizeBudget(step.type, travel, cfgRollMax);
+            step.threshold = PlotResolution::SizeThreshold(step.type, importance);
+            step.sizingTravel = static_cast<float>(travel);
+            step.sizingImportance = static_cast<float>(importance);
+            step.sizingCompetence = actor != nullptr ? static_cast<float>(actor->skills.competence) : 0.5f;
+            step.sizingSuitability =
+                actor != nullptr ? static_cast<float>(PlotResolution::Suitability(
+                                       step.type, actor->skills.speech, actor->skills.sneak, actor->skills.pickpocket))
+                                 : 0.5f;
+
+            // The mastermind acting for themselves is already engaged in
+            // this plot; engaging them again would overwrite the role on
+            // their occupancy row and make releasing it start the wrong
+            // cooldown.
+            if (cast.chosen != plot.mastermind) {
+                PlotCasting::Engage(state.occupancy, cast.chosen, PlotModel::Role::Actor, plot.id);
+            }
+
+            ++state.counters.stepsDispatched;
+            if (Settings::Get().plotLogEnabled) {
+                logger::debug("PlotTick: plot {} dispatched step {} '{}' to {} (rung {}, budget {}, threshold {:.1f})",
+                              plot.id,
+                              plot.cursor,
+                              PlotModel::Label(step),
+                              step.actorName,
+                              cast.chosenRung,
+                              step.budget,
+                              step.threshold);
+            }
+            return true;
+        }
+
+        // Stub adaptation: keep the objective, rebuild the tail from a
+        // different ladder. Step 12 replaces this with the LLM call; what
+        // must survive that replacement is the shape — the objective is
+        // never rewritten, and the cap always terminates.
+        bool AdaptPlot(PlotState& state, PlotModel::Plot& plot, double gameDay)
+        {
+            const auto cap = std::max(0, Settings::Get().plotMaxAdaptations);
+            if (plot.adaptations >= cap) {
+                EndPlot(state, plot, PlotModel::PlotStatus::Failed, PlotModel::PlotOutcome::AdaptationCapHit, gameDay);
+                return false;
+            }
+            ++plot.adaptations;
+            ++state.counters.adaptations;
+
+            const auto& ladder = kStubLadders[Plots::NextRandom(state) % kStubLadders.size()];
+
+            // Rebuild from the cursor onward. Everything before it has
+            // already moved to history, and the objective is NOT in the
+            // rewritable set - adaptation rewrites the path, never the
+            // destination.
+            plot.plan.erase(plot.plan.begin() + static_cast<std::ptrdiff_t>(plot.cursor), plot.plan.end());
+            for (std::size_t i = 0; i + 1 < ladder.length; ++i) {
+                PlotModel::Step step;
+                step.type = ladder.steps[i];
+                plot.plan.push_back(step);
+            }
+            PlotModel::Step objective;
+            objective.type = plot.objectiveType;
+            objective.target = plot.objectiveTarget;
+            objective.targetName = plot.objectiveTargetName;
+            plot.plan.push_back(objective);
+            return true;
+        }
+
+        // Fill in targets for a freshly built plan from the population.
+        void AssignTargets(PlotState& state, PlotModel::Plot& plot, const PlotCasting::Population& population)
+        {
+            if (population.members.empty()) {
+                return;
+            }
+            for (auto& step : plot.plan) {
+                if (step.target != 0) {
+                    continue;
+                }
+                const auto& pick = population.members[Plots::NextRandom(state) % population.members.size()];
+                step.target = pick.npc;
+                step.targetName = pick.name;
+            }
+        }
+
+        void BirthPlot(PlotState& state, double gameDay)
+        {
+            const auto& population = PlotPopulation::Get();
+            if (population.members.empty()) {
+                return;
+            }
+
+            const auto cast = PlotCasting::SelectMastermind(
+                population, state.occupancy, gameDay, PlotPopulation::AlivePredicate(), state.rngState);
+            if (cast.chosen == 0) {
+                return;
+            }
+            const PlotCasting::Member* boss = population.Find(cast.chosen);
+            if (boss == nullptr) {
+                return;
+            }
+
+            PlotModel::Plot plot;
+            plot.id = state.nextPlotId++;
+            plot.mastermind = cast.chosen;
+            plot.mastermindName = boss->name;
+            plot.bornOnGameDay = gameDay;
+            plot.ambition = "(stub) something worth the risk.";
+
+            const auto& ladder = kStubLadders[Plots::NextRandom(state) % kStubLadders.size()];
+            plot.objectiveType = ladder.steps[ladder.length - 1];
+            for (std::size_t i = 0; i < ladder.length; ++i) {
+                PlotModel::Step step;
+                step.type = ladder.steps[i];
+                plot.plan.push_back(step);
+            }
+            AssignTargets(state, plot, population);
+            plot.objectiveTarget = plot.plan.back().target;
+            plot.objectiveTargetName = plot.plan.back().targetName;
+
+            PlotCasting::Engage(state.occupancy, plot.mastermind, PlotModel::Role::Mastermind, plot.id);
+            ++state.counters.plotsBorn;
+
+            if (Settings::Get().plotLogEnabled) {
+                logger::info("PlotTick: plot {} born - {} ({})", plot.id, PlotModel::Title(plot), plot.mastermindName);
+            }
+            state.plots.push_back(std::move(plot));
+        }
+
+        void AdvancePlot(PlotState& state, PlotModel::Plot& plot, double gameDay)
+        {
+            const auto& cfg = Settings::Get();
+
+            // A plot whose mastermind is gone has nobody to adapt it.
+            // The player can cause this without ever knowing they did.
+            if (!PlotPopulation::IsAlive(plot.mastermind)) {
+                EndPlot(state, plot, PlotModel::PlotStatus::Failed, PlotModel::PlotOutcome::MastermindLost, gameDay);
+                return;
+            }
+
+            if (plot.cursor >= plot.plan.size()) {
+                EndPlot(
+                    state, plot, PlotModel::PlotStatus::Succeeded, PlotModel::PlotOutcome::ObjectiveAchieved, gameDay);
+                return;
+            }
+
+            PlotModel::Step& step = plot.plan[plot.cursor];
+            if (step.state == PlotModel::StepState::Planned) {
+                if (!DispatchStep(state, plot, gameDay)) {
+                    EndPlot(state, plot, PlotModel::PlotStatus::Failed, PlotModel::PlotOutcome::Conceded, gameDay);
+                }
+                // A step dispatched this tick starts working next tick.
+                // Sizing and rolling on the same tick would make the
+                // first tick of every step worth double.
+                return;
+            }
+            if (step.state != PlotModel::StepState::InProgress) {
+                return;
+            }
+
+            PlotResolution::TickInputs inputs;
+            inputs.blockedByPresence = PlotModel::IsConspicuous(step.type)
+                                       && (PlotPopulation::IsNearPlayer(step.actor)
+                                           || (step.target != 0 && PlotPopulation::IsNearPlayer(step.target)));
+            inputs.roll.competence = step.sizingCompetence;
+            inputs.roll.suitability = step.sizingSuitability;
+            inputs.roll.threshold = step.threshold;
+            inputs.roll.rollMinFraction = cfg.plotProgressRollMin;
+            inputs.roll.rollMaxFraction = cfg.plotProgressRollMax;
+            inputs.mishap.enabled = cfg.plotMishapEnabled;
+            inputs.mishap.chanceBase = cfg.plotMishapChanceBase;
+            inputs.mishap.conspicuous = PlotModel::IsConspicuous(step.type);
+            inputs.mishap.competence = step.sizingCompetence;
+
+            PlotResolution::AdvanceStep(step, inputs, state.rngState);
+
+            if (!step.IsTerminal()) {
+                return;
+            }
+
+            const bool succeeded = step.state == PlotModel::StepState::Succeeded;
+            if (succeeded) {
+                ++state.counters.stepsSucceeded;
+            } else if (step.outcome == PlotModel::StepOutcome::FailedCaught) {
+                ++state.counters.stepsCaught;
+            } else {
+                ++state.counters.stepsTimedOut;
+            }
+
+            PlotModel::Step resolved = step;
+            RetireStep(state, plot, std::move(resolved), gameDay);
+
+            if (succeeded) {
+                ++plot.cursor;
+                if (plot.cursor >= plot.plan.size()) {
+                    EndPlot(state,
+                            plot,
+                            PlotModel::PlotStatus::Succeeded,
+                            PlotModel::PlotOutcome::ObjectiveAchieved,
+                            gameDay);
+                }
+                return;
+            }
+            AdaptPlot(state, plot, gameDay);
+        }
+
+        // Drop terminal plots once their retention window passes. Their
+        // memories persist in SkyrimNet regardless; this is only the
+        // record the dashboard reads.
+        void ReapPlots(PlotState& state, double gameDay)
+        {
+            const double retention = std::max(0.0, static_cast<double>(Settings::Get().plotTerminalRetentionDays));
+            std::erase_if(state.plots, [gameDay, retention](const PlotModel::Plot& p) {
+                return p.IsTerminal() && gameDay - p.endedOnGameDay > retention;
+            });
+        }
+
+        void RunSimulation(PlotState& state, double gameDay)
+        {
+            const auto budget = static_cast<std::size_t>(std::max(1, Settings::Get().plotMaxConcurrent));
+
+            // Birth first, before any plot is advanced. A slot freed by a
+            // plot ending on THIS tick is not refilled until the next
+            // one, which keeps the budget check reading the world as the
+            // tick found it.
+            if (state.ActivePlotCount() < budget) {
+                BirthPlot(state, gameDay);
+            }
+
+            // Indexed rather than ranged: BirthPlot above may have
+            // appended, and AdvancePlot never does, but the vector is
+            // still live and an iterator would be one refactor away from
+            // dangling.
+            for (std::size_t i = 0; i < state.plots.size(); ++i) {
+                if (!state.plots[i].IsTerminal()) {
+                    AdvancePlot(state, state.plots[i], gameDay);
+                }
+            }
+
+            ReapPlots(state, gameDay);
+        }
 
         // Run one unit of plot work, as of `asOfGameHours`.
         //
@@ -46,9 +446,7 @@ namespace NarrativeEngine::PlotTick
             state.simGameDay = asOfGameHours / 24.0;
             ++state.counters.ticksRun;
 
-            // Steps 5 and 6 fill in the body: birth against the budget,
-            // step dispatch and casting, the progress race, adaptation,
-            // and reaping. Until then a tick is its bookkeeping.
+            RunSimulation(state, state.simGameDay);
 
             if (cancel && cancel->IsCancelled()) {
                 return;

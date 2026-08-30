@@ -48,11 +48,27 @@ namespace NarrativeEngine::PlotCasting
         bool sharedFaction = false;
     };
 
+    // What an NPC brings to a step, cached at population-build time.
+    //
+    // Read once from the TESNPC rather than per tick: these are authored
+    // values that do not change, and reading them on the plot worker
+    // would be an engine read from the wrong place as well as a waste.
+    // All normalised to 0..1 so the resolution arithmetic never has to
+    // know Skyrim's scales.
+    struct SkillProfile
+    {
+        double competence = 0.5; // level
+        double speech = 0.5;
+        double sneak = 0.5;
+        double pickpocket = 0.5;
+    };
+
     struct Member
     {
         RE::FormID npc = 0;
         std::string name;
         RE::FormID hold = 0;
+        SkillProfile skills;
         // Memberships of factions the prominence filter admitted. An
         // independent NPC has none, and stays eligible on that basis
         // rather than being excluded by it.

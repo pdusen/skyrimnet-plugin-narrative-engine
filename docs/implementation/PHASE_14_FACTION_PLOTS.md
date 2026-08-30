@@ -642,7 +642,7 @@ the obvious choice.
 
 #### Step 6 — The progress race
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -680,6 +680,63 @@ real bug if it fails:
 4. **`FailedTimeout` carries a progress fraction** that matches what actually accumulated.
 5. **The adaptation cap terminates the plot** and releases its slot, no matter what the stub adaptation
    returns.
+
+Done. `include/PlotResolution.h` + `src/PlotResolution.cpp` (pure: sizing, the progress and mishap rolls,
+`AdvanceStep`), the tick orchestration in `PlotTick.cpp` (birth, dispatch, advance, adapt, reap), the skill
+profile and presence check on `PlotPopulation`, and `TickRecord` plus the four sizing inputs on
+`PlotModel::Step`. Co-save bumped to v2 to carry them. Build clean, probe passing.
+
+**The probe found a real bug, and it is the kind that would never have surfaced in play.**
+
+The per-tick ceiling caps any single tick at `fPlotProgressRollMax` (0.45) of the threshold, so a step needs at
+least `ceil(1 / 0.45) = 3` ticks before success is even *arithmetically possible*. `SizeBudget` was returning
+2 for a `Deliver` step at zero travel distance. That step could never succeed — not "was hard", could not
+succeed — and it would have failed as a perfectly ordinary-looking timeout every single time. In a log full of
+timeouts it is invisible; in the Step 7 harness it would have shown up as an inexplicably low success rate for
+one step type and cost hours to trace.
+
+The fix is `MinimumViableBudget(rollMaxFraction)` and a floor under `SizeBudget`, which now takes the ceiling
+as a third parameter. That does **not** compromise the budget/threshold independence the design turns on: the
+ceiling is a tuning constant, not a property of the target, so `SizeBudget` still cannot see
+`targetImportance` and `SizeThreshold` still cannot see travel. The probe now sweeps every step type at every
+travel distance and asserts every budget is winnable.
+
+The probe's own first version was also wrong in an instructive way: it tried to verify "a step that finishes on
+its last tick succeeds" with a one-tick budget, which the ceiling makes impossible by construction. The
+tightest expressible case is a budget of exactly `MinimumViableBudget` with an actor rolling at the top of the
+band, and that is what it asserts now.
+
+Probe results, one probe, then deleted:
+
+| Group           | Asserted                                                                             |
+| --------------- | ------------------------------------------------------------------------------------ |
+| Independence    | travel moves only the budget, importance only the threshold; both deterministic       |
+| Winnability     | every type at every distance gets a budget in which the threshold is reachable        |
+| Clamps          | over 100,000 rolls across the whole competence range, no roll is 0 and none clears the threshold |
+| Held ticks      | `elapsed` advances, `progress` does not; held to exhaustion fails as a plain TIMEOUT   |
+| Terminal steps  | are not advanced again                                                                |
+| Timeouts        | carry the fraction actually reached, and one roll record per tick lived                |
+| Last-tick finish| succeeds rather than expiring — the success test runs before the budget test           |
+| Mishap          | disabled never fires; conspicuous raises it; competence lowers it but never to zero    |
+| Held + mishap   | a held step is never caught — being caught while waiting for the player to leave is nonsense |
+
+Design notes worth keeping:
+
+- **The actor shifts the centre of the band they roll in, rather than replacing the roll.** A good actor still
+  has bad days and a poor one still has good ones, which is what keeps a plot's outcome from being readable
+  off its cast list.
+- **A step dispatched this tick starts working next tick.** Sizing and rolling in the same tick would make the
+  first tick of every step worth double.
+- **Birth runs before any plot is advanced**, so a slot freed by a plot ending on this tick is not refilled
+  until the next one. The budget check then reads the world as the tick found it.
+- **The mastermind acting for themselves is not re-engaged.** They are already engaged in this plot as its
+  mastermind; engaging them again would overwrite the role on their occupancy row and make the release start
+  the wrong cooldown.
+
+Two proxies are in place where the design wants real values, both marked in the code as such: travel distance
+is same-hold / different-hold rather than a road-graph query, and target importance is faction rank. They
+exist to make distance and importance *matter* so Step 7 can judge whether they matter by the right amount;
+replacing them is a change to two small functions.
 
 ---
 

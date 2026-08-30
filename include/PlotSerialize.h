@@ -41,7 +41,10 @@ namespace NarrativeEngine::PlotSerialize
     // newer version than the reader understands is DISCARDED rather than
     // guessed at: a half-understood plot is worse than no plot, because
     // it goes on to write memories about a scheme nobody planned.
-    inline constexpr std::uint32_t kRecordVersion = 1;
+    //
+    // v2 (step 6) adds each step's roll history and the four numbers
+    // that sized it. Nothing has shipped, so no migration is owed.
+    inline constexpr std::uint32_t kRecordVersion = 2;
 
     class ByteSink
     {

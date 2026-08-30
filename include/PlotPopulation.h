@@ -44,6 +44,16 @@ namespace NarrativeEngine::PlotPopulation
     // life checks.
     [[nodiscard]] bool IsAlive(RE::FormID npc);
 
+    // Is this NPC's 3D loaded — i.e. could the player plausibly be
+    // watching them right now?
+    //
+    // The presence gate for conspicuous steps. "3D loaded" rather than a
+    // distance check because it is both cheaper and more correct: an
+    // actor thirty feet away through a wall in an unloaded cell is not
+    // being watched. Safe off the main thread for the same reason
+    // IsAlive is.
+    [[nodiscard]] bool IsNearPlayer(RE::FormID npc);
+
     // Bound form of the above, for handing to PlotCasting.
     [[nodiscard]] PlotCasting::AlivePredicate AlivePredicate();
 } // namespace NarrativeEngine::PlotPopulation

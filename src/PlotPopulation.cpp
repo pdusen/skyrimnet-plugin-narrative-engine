@@ -4,6 +4,7 @@
 #include <logger.h>
 #include <Settings.h>
 
+#include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -56,6 +57,40 @@ namespace NarrativeEngine::PlotPopulation
             }
             return 0;
         }
+        // Authored competence, normalised. Level is the broad signal;
+        // the three skills are the ones PlotResolution::Suitability
+        // actually consults, and reading only those keeps this a short
+        // walk rather than a copy of Skyrim's whole skill tree.
+        //
+        // Level is normalised against 50 rather than 100: a level-50
+        // NPC is already exceptional in vanilla, and normalising against
+        // the theoretical maximum would squash almost the entire
+        // population into the bottom quarter of the range.
+        PlotCasting::SkillProfile ReadSkills(RE::TESNPC* npc)
+        {
+            PlotCasting::SkillProfile profile;
+            if (npc == nullptr) {
+                return profile;
+            }
+
+            constexpr double kLevelCeiling = 50.0;
+            profile.competence = std::clamp(static_cast<double>(npc->actorData.level) / kLevelCeiling, 0.0, 1.0);
+
+            if (npc->playerSkills.values != nullptr) {
+                const auto skill = [npc](RE::ActorValue av) {
+                    const auto index =
+                        static_cast<std::size_t>(av) - static_cast<std::size_t>(RE::ActorValue::kOneHanded);
+                    if (index >= 18) {
+                        return 0.5;
+                    }
+                    return std::clamp(static_cast<double>(npc->playerSkills.values[index]) / 100.0, 0.0, 1.0);
+                };
+                profile.speech = skill(RE::ActorValue::kSpeech);
+                profile.sneak = skill(RE::ActorValue::kSneak);
+                profile.pickpocket = skill(RE::ActorValue::kPickpocket);
+            }
+            return profile;
+        }
     } // namespace
 
     void Build()
@@ -100,6 +135,7 @@ namespace NarrativeEngine::PlotPopulation
             member.hold = participant->hold;
 
             if (auto* npcForm = RE::TESForm::LookupByID<RE::TESNPC>(npcId)) {
+                member.skills = ReadSkills(npcForm);
                 for (const auto& [factionId, factionForm] : factionForms) {
                     bool isMember = false;
                     const int rank = RankIn(npcForm, factionForm, isMember);
@@ -162,6 +198,28 @@ namespace NarrativeEngine::PlotPopulation
         // NPC who is not in the world cannot be carrying out a step, so
         // they are not castable while it lasts.
         return !actor->IsDisabled();
+    }
+
+    bool IsNearPlayer(RE::FormID npc)
+    {
+        const auto* participant = GossipGraph::Find(npc);
+        if (participant == nullptr || participant->actorRef == 0) {
+            return false;
+        }
+        auto* actor = RE::TESForm::LookupByID<RE::Actor>(participant->actorRef);
+        if (actor == nullptr) {
+            return false;
+        }
+        // "Near the player" means "the engine has their 3D loaded",
+        // which is exactly the set of actors the player could plausibly
+        // be watching. A distance check would be both more expensive and
+        // less correct — an actor thirty feet away through a wall in an
+        // unloaded cell is not being watched.
+        //
+        // Unique NPCs' Actor objects are persistent and always resident;
+        // only their 3D unloads. That is what makes this a plain bool
+        // load, safe off the main thread.
+        return actor->Is3DLoaded();
     }
 
     PlotCasting::AlivePredicate AlivePredicate()

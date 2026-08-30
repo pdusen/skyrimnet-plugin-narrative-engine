@@ -47,6 +47,49 @@ namespace NarrativeEngine::PlotSerialize
             return size == 0 || source.Read(value.data(), size);
         }
 
+        // Roll history. Capped on read so a corrupt count cannot ask for
+        // an unbounded allocation; a step that genuinely ran for
+        // thousands of ticks is already a bug worth failing on.
+        constexpr std::uint32_t kMaxRolls = 4096;
+
+        bool WriteRolls(ByteSink& sink, const std::vector<PlotModel::TickRecord>& rolls)
+        {
+            if (!WritePod(sink, static_cast<std::uint32_t>(rolls.size()))) {
+                return false;
+            }
+            for (const auto& r : rolls) {
+                if (!WritePod(sink, r.progressAdded) || !WritePod(sink, r.progressAfter)
+                    || !WritePod(sink, static_cast<std::uint8_t>(r.held))
+                    || !WritePod(sink, static_cast<std::uint8_t>(r.caught))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool ReadRolls(ByteSource& source, std::vector<PlotModel::TickRecord>& rolls)
+        {
+            std::uint32_t count{};
+            if (!ReadPod(source, count) || count > kMaxRolls) {
+                return false;
+            }
+            rolls.clear();
+            rolls.reserve(count);
+            for (std::uint32_t i = 0; i < count; ++i) {
+                PlotModel::TickRecord r;
+                std::uint8_t held{};
+                std::uint8_t caught{};
+                if (!ReadPod(source, r.progressAdded) || !ReadPod(source, r.progressAfter) || !ReadPod(source, held)
+                    || !ReadPod(source, caught)) {
+                    return false;
+                }
+                r.held = held != 0;
+                r.caught = caught != 0;
+                rolls.push_back(r);
+            }
+            return true;
+        }
+
         bool WriteStep(ByteSink& sink, const PlotModel::Step& step)
         {
             // The step TYPE goes out as its manifest id, not as the
@@ -58,7 +101,9 @@ namespace NarrativeEngine::PlotSerialize
                    && WritePod(sink, static_cast<std::uint8_t>(step.state))
                    && WritePod(sink, static_cast<std::uint8_t>(step.outcome)) && WritePod(sink, step.budget)
                    && WritePod(sink, step.elapsed) && WritePod(sink, step.threshold) && WritePod(sink, step.progress)
-                   && WritePod(sink, step.heldTicks);
+                   && WritePod(sink, step.heldTicks) && WritePod(sink, step.sizingTravel)
+                   && WritePod(sink, step.sizingImportance) && WritePod(sink, step.sizingCompetence)
+                   && WritePod(sink, step.sizingSuitability) && WriteRolls(sink, step.rolls);
         }
 
         // `ok` is set false when a FormID in this step no longer
@@ -97,7 +142,10 @@ namespace NarrativeEngine::PlotSerialize
             std::uint8_t outcome{};
             if (!ReadString(source, step.actorName) || !ReadPod(source, state) || !ReadPod(source, outcome)
                 || !ReadPod(source, step.budget) || !ReadPod(source, step.elapsed) || !ReadPod(source, step.threshold)
-                || !ReadPod(source, step.progress) || !ReadPod(source, step.heldTicks)) {
+                || !ReadPod(source, step.progress) || !ReadPod(source, step.heldTicks)
+                || !ReadPod(source, step.sizingTravel) || !ReadPod(source, step.sizingImportance)
+                || !ReadPod(source, step.sizingCompetence) || !ReadPod(source, step.sizingSuitability)
+                || !ReadRolls(source, step.rolls)) {
                 return false;
             }
             step.state = static_cast<PlotModel::StepState>(state);

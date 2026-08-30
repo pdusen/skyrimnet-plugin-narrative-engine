@@ -155,6 +155,20 @@ namespace NarrativeEngine::PlotModel
     [[nodiscard]] std::string_view StepStateId(StepState s) noexcept;
     [[nodiscard]] std::string_view StepOutcomeId(StepOutcome o) noexcept;
 
+    // What one tick did to a step.
+    //
+    // Retained per step, failures included, because "it failed" is not a
+    // debuggable statement and "it failed at 0.62 of its threshold,
+    // having been held for four of its nine ticks" is. This is what the
+    // dashboard renders behind an expanded node.
+    struct TickRecord
+    {
+        float progressAdded = 0.0f;
+        float progressAfter = 0.0f;
+        bool held = false;
+        bool caught = false;
+    };
+
     // One unit of work.
     //
     // Names are cached at dispatch rather than resolved on demand: the
@@ -192,6 +206,18 @@ namespace NarrativeEngine::PlotModel
         // only, but it is the difference between "this actor is hopeless"
         // and "the player stood next to them for a week".
         int heldTicks = 0;
+
+        // One entry per tick this step has lived through.
+        std::vector<TickRecord> rolls;
+
+        // The numbers that SIZED this step, kept so the dashboard can
+        // show why the race was winnable or not. Without them a resolved
+        // step reports what happened but not what it was ever up
+        // against.
+        float sizingTravel = 0.0f;
+        float sizingImportance = 0.0f;
+        float sizingCompetence = 0.0f;
+        float sizingSuitability = 0.0f;
 
         [[nodiscard]] bool IsTerminal() const noexcept
         {
