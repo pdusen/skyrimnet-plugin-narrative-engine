@@ -1089,7 +1089,12 @@ body {
 }
 .plot-node:focus-visible { outline: 2px solid #4b93f5; outline-offset: 3px; }
 .plot-node.expanded { box-shadow: 0 0 0 3px rgba(75, 147, 245, 0.35); }
-.plot-node-ring { position: absolute; inset: 0; }
+/* Offsets and size come from the component, which already owns NODE and
+   BORDER. An absolutely positioned child resolves against the PADDING
+   box, which `box-sizing: border-box` makes two border-widths smaller
+   than the node, so the ring has to be pulled back out over the border
+   to stay concentric with it — see ProgressRing. */
+.plot-node-ring { position: absolute; }
 .plot-node-number { position: relative; line-height: 1; }
 .plot-node-pct { position: absolute; bottom: 5px; font-size: 8px; font-weight: 600; opacity: 0.85; }
 .plot-node-cross {

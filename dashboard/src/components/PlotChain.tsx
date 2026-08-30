@@ -17,6 +17,7 @@ import type { PlotEntry, PlotNode } from '../types';
 const NODE = 44; // diameter, px
 const GAP = 34; // connector length between nodes
 const RING = 3.5;
+const BORDER = 2; // .plot-node border width; ProgressRing has to cancel it
 
 interface ColourSet {
     fill: string;
@@ -59,8 +60,22 @@ function ProgressRing({ fraction }: { fraction: number }) {
     const r = NODE / 2 - RING / 2;
     const circumference = 2 * Math.PI * r;
     const filled = Math.max(0, Math.min(1, fraction)) * circumference;
+    // Offset by the border width, not pinned to the padding box.
+    //
+    // The ring is drawn to sit exactly ON the node's border circle, so its
+    // 44px box has to be the button's BORDER box. An absolutely positioned
+    // child resolves against the padding box instead, which the global
+    // `box-sizing: border-box` makes 40px — so the old `inset: 0` plus a
+    // hardcoded 44px SVG anchored the ring 2px down and 2px right of the
+    // circle it was meant to overlay, and the two read as two rings.
     return (
-        <svg className="plot-node-ring" width={NODE} height={NODE} aria-hidden="true">
+        <svg
+            className="plot-node-ring"
+            width={NODE}
+            height={NODE}
+            style={{ top: -BORDER, left: -BORDER }}
+            aria-hidden="true"
+        >
             <circle cx={NODE / 2} cy={NODE / 2} r={r} fill="none" stroke="#3a4049" strokeWidth={RING} />
             <circle
                 cx={NODE / 2}

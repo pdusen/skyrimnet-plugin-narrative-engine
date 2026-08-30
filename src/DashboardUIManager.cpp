@@ -642,6 +642,7 @@ namespace NarrativeEngine::DashboardUIManager
             PlotDispatch::EnqueueWork([](const PlotThread::Token& pt) {
                 Plots::SeedDebugPlot(pt, Plots::MutableState(pt).simGameDay);
                 Plots::PublishSnapshot(pt);
+                PushFullState();
             });
         }
 

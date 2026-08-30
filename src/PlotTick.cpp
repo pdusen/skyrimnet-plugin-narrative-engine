@@ -1,5 +1,6 @@
 #include <PlotTick.h>
 
+#include <DashboardUIManager.h>
 #include <EngineUtils.h>
 #include <logger.h>
 #include <PlotCasting.h>
@@ -23,6 +24,29 @@ namespace NarrativeEngine::PlotTick
         // needs no synchronisation of its own.
         double g_lastFiredGameHours = 0.0;
         bool g_needsRebase = true;
+
+        // In-world hours that forced ticks have injected on top of the
+        // real calendar, and which every later stamp carries.
+        //
+        // A forced tick has to hand the simulation a game time it has
+        // not seen before: budgets are spent per tick, and terminal
+        // plots are reaped by age, so two ticks stamped with the same
+        // hour are not "one tick twice", they are a clock that stopped.
+        // The obvious implementation - stamp from the live calendar and
+        // push the schedule anchor past the stamps - is what shipped,
+        // and it was wrong twice over. The calendar does not move while
+        // the dashboard holds the game paused, so every burst restarted
+        // from the same hour; and an anchor parked in the future looks
+        // exactly like a save loaded from the past, so the next poll
+        // "re-based" it straight back down. Between them the sim clock
+        // sawtoothed instead of advancing.
+        //
+        // Kept separate from the anchor precisely so those two concerns
+        // stop fighting: the anchor still tracks the real calendar and
+        // its backwards-detection still means what it says, while this
+        // only ever grows. Reset per session, since it describes an
+        // offset into a world the next save has not lived through.
+        double g_forcedAheadGameHours = 0.0;
 
         // --- Stub content -------------------------------------------
         //
@@ -205,6 +229,8 @@ namespace NarrativeEngine::PlotTick
             return true;
         }
 
+        void AssignTargets(PlotState& state, PlotModel::Plot& plot, const PlotCasting::Population& population);
+
         // Stub adaptation: keep the objective, rebuild the tail from a
         // different ladder. Step 12 replaces this with the LLM call; what
         // must survive that replacement is the shape — the objective is
@@ -237,6 +263,16 @@ namespace NarrativeEngine::PlotTick
             objective.target = plot.objectiveTarget;
             objective.targetName = plot.objectiveTargetName;
             plot.plan.push_back(objective);
+
+            // The rebuilt tail needs targets for the same reason the
+            // original plan did. Without this the new steps go out
+            // nameless - "Locate" against nobody - and, worse, size
+            // themselves off the null-target fallbacks in
+            // TravelDistanceNorm and TargetImportance, so every
+            // post-adaptation step gets the same neutral travel and
+            // importance regardless of who it is aimed at. The objective
+            // already carries its own target and is skipped.
+            AssignTargets(state, plot, PlotPopulation::Get());
             return true;
         }
 
@@ -294,7 +330,18 @@ namespace NarrativeEngine::PlotTick
             PlotCasting::Engage(state.occupancy, plot.mastermind, PlotModel::Role::Mastermind, plot.id);
             ++state.counters.plotsBorn;
 
-            PlotLog::Born(plot, boss->skills.competence, cast.considered.size());
+            // The candidate's own weight, not the mastermind's competence.
+            // The line has always been labelled `weight=`, and reporting
+            // competence under that name made it read as a 0..1 quantity
+            // when the real weight runs 1.0..4.5 — which is precisely the
+            // range that says whether standing and faction membership are
+            // actually steering selection or just decorating it.
+            const auto pick = std::find_if(cast.considered.begin(),
+                                           cast.considered.end(),
+                                           [&](const PlotCasting::Candidate& c) { return c.npc == cast.chosen; });
+            const double weight = pick != cast.considered.end() ? pick->weight : 0.0;
+
+            PlotLog::Born(plot, weight, cast.considered.size());
             state.plots.push_back(std::move(plot));
         }
 
@@ -459,6 +506,20 @@ namespace NarrativeEngine::PlotTick
             // simulation: some plots stepped to the new game day and
             // some not.
             Plots::PublishSnapshot(pt);
+
+            // Publishing only updates the snapshot the dashboard would
+            // read on its next push; nothing pushes on its own, so a tab
+            // left open sat on whatever the last Director evaluation
+            // sent until it was closed and reopened. Every other thing
+            // that changes plot state pushes, and so must this.
+            //
+            // Only the last tick of a burst pushes: the handle is
+            // retired after this returns, so a count of one means this
+            // job is the queue. Forcing ten ticks should redraw the tab
+            // once, not compose the full state ten times.
+            if (PlotDispatch::OutstandingCount() <= 1) {
+                DashboardUIManager::PushFullState();
+            }
         }
 
         void Enqueue(double asOfGameHours)
@@ -473,6 +534,7 @@ namespace NarrativeEngine::PlotTick
     void Initialize()
     {
         g_lastFiredGameHours = 0.0;
+        g_forcedAheadGameHours = 0.0;
         g_needsRebase = true;
     }
 
@@ -484,6 +546,14 @@ namespace NarrativeEngine::PlotTick
         // looks. Marking it is enough, and it keeps the game-clock read
         // on one thread.
         g_needsRebase = true;
+
+        // Fabricated hours do not survive the world that was told about
+        // them. Plots restored from a co-save carry day stamps from the
+        // session that forced them, so a debug run leaves ages that read
+        // as being in the future until the calendar catches up; that is
+        // a property of forcing time forward at all, not something the
+        // offset should try to paper over by persisting.
+        g_forcedAheadGameHours = 0.0;
     }
 
     void Poll(const PluginThread::Token&)
@@ -525,7 +595,7 @@ namespace NarrativeEngine::PlotTick
                          decision.skipped);
         }
         for (const double stamp : decision.stamps) {
-            Enqueue(stamp);
+            Enqueue(stamp + g_forcedAheadGameHours);
         }
     }
 
@@ -537,16 +607,23 @@ namespace NarrativeEngine::PlotTick
         const double nowGameHours = EngineUtils::GetCurrentGameHours();
         const double interval = std::max(0.001, static_cast<double>(Settings::Get().plotTickIntervalGameHours));
 
-        // Stamped as if the schedule had produced them, so a forced tick
-        // is indistinguishable from a scheduled one once it is running.
-        // The schedule itself is advanced to match, or the next real
-        // poll would re-run the same in-world time.
+        // Stamped as if the schedule had produced them, so a forced
+        // tick is indistinguishable from a scheduled one once it is
+        // running - but stamped ON TOP of the hours previous bursts
+        // fabricated, not from the raw calendar, which does not move
+        // while the dashboard has the game paused.
+        //
+        // The schedule anchor is deliberately left alone. Forcing a tick
+        // injects in-world time; it does not consume the natural cadence,
+        // and writing a future hour into the anchor is what made the next
+        // poll mistake this for a loaded save.
         for (std::size_t i = 1; i <= count; ++i) {
-            Enqueue(nowGameHours + interval * static_cast<double>(i));
+            Enqueue(nowGameHours + g_forcedAheadGameHours + interval * static_cast<double>(i));
         }
-        g_lastFiredGameHours = nowGameHours + interval * static_cast<double>(count);
-        g_needsRebase = false;
+        g_forcedAheadGameHours += interval * static_cast<double>(count);
 
-        logger::info("PlotTick: forced {} tick(s)", count);
+        logger::info("PlotTick: forced {} tick(s); simulation is now {:.1f}h ahead of the calendar",
+                     count,
+                     g_forcedAheadGameHours);
     }
 } // namespace NarrativeEngine::PlotTick
