@@ -30,6 +30,7 @@
 #include <PhaseTracker.h>
 #include <PlotDispatch.h>
 #include <PlotFactionRoster.h>
+#include <PlotLog.h>
 #include <PlotPopulation.h>
 #include <PlotSerialize.h>
 #include <PlotState.h>
@@ -240,6 +241,9 @@ namespace NarrativeEngine
                 // scheduler runs -- and starting it unconditionally
                 // keeps the enable flag a question about the simulation
                 // rather than about thread lifetime.
+                // PlotLog only registers here; the trace file itself is
+                // opened per save-game session in OnSessionStart.
+                PlotLog::Initialize();
                 Plots::Initialize();
                 PlotTick::Initialize();
                 // After GossipGraph::Initialize: plots read their
@@ -312,6 +316,7 @@ namespace NarrativeEngine
                 PlotDispatch::CancelAll();
                 PlotSerialize::OnRevert();
                 PlotTick::OnSessionStart();
+                PlotLog::OnSessionStart();
                 PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
                 // Rotate the history log for the new session BEFORE
                 // Tick starts polling — the first Poll cycle needs the
@@ -349,6 +354,7 @@ namespace NarrativeEngine
                 // file.
                 GossipSim::OnSessionEnd();
                 GossipLog::OnSessionEnd();
+                PlotLog::OnSessionEnd();
                 DecisionLog::Clear();
                 CombatEventLog::OnRevert();
                 WeatherEventLog::OnRevert();
@@ -364,6 +370,7 @@ namespace NarrativeEngine
                 PlotDispatch::CancelAll();
                 PlotSerialize::OnRevert();
                 PlotTick::OnSessionStart();
+                PlotLog::OnSessionStart();
                 PhaseTracker::Reset();
                 break;
             case SKSE::MessagingInterface::kPostLoadGame:

@@ -4,6 +4,7 @@
 #include <logger.h>
 #include <PlotCasting.h>
 #include <PlotDispatch.h>
+#include <PlotLog.h>
 #include <PlotPopulation.h>
 #include <PlotResolution.h>
 #include <PlotSchedule.h>
@@ -131,13 +132,7 @@ namespace NarrativeEngine::PlotTick
                 ++state.counters.plotsFailed;
             }
 
-            if (Settings::Get().plotLogEnabled) {
-                logger::info("PlotTick: plot {} ({}) ended {} - {}",
-                             plot.id,
-                             PlotModel::Title(plot),
-                             PlotModel::PlotStatusId(status),
-                             PlotModel::PlotOutcomeId(outcome));
-            }
+            PlotLog::End(plot);
         }
 
         // Push a resolved step into history, capped, and release its
@@ -202,16 +197,11 @@ namespace NarrativeEngine::PlotTick
             }
 
             ++state.counters.stepsDispatched;
-            if (Settings::Get().plotLogEnabled) {
-                logger::debug("PlotTick: plot {} dispatched step {} '{}' to {} (rung {}, budget {}, threshold {:.1f})",
-                              plot.id,
-                              plot.cursor,
-                              PlotModel::Label(step),
-                              step.actorName,
-                              cast.chosenRung,
-                              step.budget,
-                              step.threshold);
-            }
+            const auto rejected = static_cast<std::size_t>(
+                std::count_if(cast.considered.begin(), cast.considered.end(), [](const PlotCasting::Candidate& c) {
+                    return c.reject != PlotCasting::Reject::None;
+                }));
+            PlotLog::Dispatch(plot, step, cast.chosenRung, cast.considered.size(), rejected);
             return true;
         }
 
@@ -230,6 +220,7 @@ namespace NarrativeEngine::PlotTick
             ++state.counters.adaptations;
 
             const auto& ladder = kStubLadders[Plots::NextRandom(state) % kStubLadders.size()];
+            PlotLog::Adapt(plot, plot.adaptations, cap, ladder.length);
 
             // Rebuild from the cursor onward. Everything before it has
             // already moved to history, and the objective is NOT in the
@@ -303,9 +294,7 @@ namespace NarrativeEngine::PlotTick
             PlotCasting::Engage(state.occupancy, plot.mastermind, PlotModel::Role::Mastermind, plot.id);
             ++state.counters.plotsBorn;
 
-            if (Settings::Get().plotLogEnabled) {
-                logger::info("PlotTick: plot {} born - {} ({})", plot.id, PlotModel::Title(plot), plot.mastermindName);
-            }
+            PlotLog::Born(plot, boss->skills.competence, cast.considered.size());
             state.plots.push_back(std::move(plot));
         }
 
@@ -355,11 +344,13 @@ namespace NarrativeEngine::PlotTick
             inputs.mishap.conspicuous = PlotModel::IsConspicuous(step.type);
             inputs.mishap.competence = step.sizingCompetence;
 
-            PlotResolution::AdvanceStep(step, inputs, state.rngState);
+            const auto record = PlotResolution::AdvanceStep(step, inputs, state.rngState);
+            PlotLog::Roll(plot, step, record);
 
             if (!step.IsTerminal()) {
                 return;
             }
+            PlotLog::Resolve(plot, step);
 
             const bool succeeded = step.state == PlotModel::StepState::Succeeded;
             if (succeeded) {
@@ -393,9 +384,11 @@ namespace NarrativeEngine::PlotTick
         void ReapPlots(PlotState& state, double gameDay)
         {
             const double retention = std::max(0.0, static_cast<double>(Settings::Get().plotTerminalRetentionDays));
+            const auto before = state.plots.size();
             std::erase_if(state.plots, [gameDay, retention](const PlotModel::Plot& p) {
                 return p.IsTerminal() && gameDay - p.endedOnGameDay > retention;
             });
+            PlotLog::Reap(before - state.plots.size(), gameDay);
         }
 
         void RunSimulation(PlotState& state, double gameDay)
@@ -456,12 +449,10 @@ namespace NarrativeEngine::PlotTick
                 return;
             }
 
-            if (Settings::Get().plotLogEnabled) {
-                logger::debug("PlotTick: tick #{} as of game day {:.3f} ({} plot(s))",
-                              state.counters.ticksRun,
-                              state.simGameDay,
-                              state.plots.size());
-            }
+            PlotLog::Tick(state.counters.ticksRun,
+                          state.simGameDay,
+                          state.ActivePlotCount(),
+                          static_cast<std::size_t>(std::max(1, Settings::Get().plotMaxConcurrent)));
 
             // Published at the END of the unit of work, never during one.
             // A snapshot taken mid-tick would show a half-advanced

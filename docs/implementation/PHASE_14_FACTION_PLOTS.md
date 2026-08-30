@@ -11,7 +11,7 @@ playing. **Player delegation (Phase D) is not in this document** — no offer po
 ESP surface. Everything here is C++ plus prompts, observable from the log and the dashboard.
 
 > **Doc status: planned, not built.** No step is checked off. Numbers in the settings table are proposed
-> starting points, not measurements: **Step 9 replaces them** with figures from an offline harness, and Step 19
+> starting points, not measurements: **Step 9 replaces them** with figures from an offline harness, and Step 20
 > checks those against real play. Two design-level questions (the conspicuousness split, and how a step gets
 > caught) are still open in the design doc and are deliberately built behind switches here rather than blocked
 > on.
@@ -93,7 +93,7 @@ In brief:
 ## Settings
 
 New `[Plots]` block. `bPlotsEnabled` ships **false** through Phases A–C and flips when Phase D lands — the
-subsystem writes memories into a save from Step 16 onward and should be opt-in until it has been played.
+subsystem writes memories into a save from Step 17 onward and should be opt-in until it has been played.
 
 | Key                            | Proposed default | Meaning                                                        |
 | ------------------------------ | ---------------- | -------------------------------------------------------------- |
@@ -141,7 +141,7 @@ harness measured a step worth 5 and a step worth 500 both finishing in 4.5 ticks
 | `PlotFactionRoster`  | **New.** The participating-faction roster from `PlotFactions.ini`, and the three ranking methods.          |
 | `PlotItemPool`       | **New.** The curated `Acquire` item pool, loaded and validated from its own INI.                           |
 | `PlotEffects`        | **New.** The bounded world mutations, each marshalled through `MainThread`.                                |
-| `PlotLog`            | **New.** The dedicated trace, flushed per line so it stays readable while a tick blocks on an LLM call.    |
+| `PlotLog`            | **New.** `NarrativeEngine_Plots.log` — its own sink, flushed per line so it stays readable while a tick blocks. |
 | `Tick`               | Gains one `PlotTick::Poll(pt)` call. No elapsed-seconds argument.                                          |
 | `DashboardUIManager` | Gains the plots block in `ComposeFullStateJSON`.                                                           |
 | `dashboard/src`      | Gains `tabs/PlotsTab.tsx`, a `PlotChain` widget component, a `plots` `TabId`, and its `types.ts` slice.    |
@@ -162,7 +162,7 @@ It does not hold anything derived from `GossipGraph`, which is rebuilt every ses
 
 ## Implementation plan
 
-Ordered so that **the simulation is fully observable before anything authored reaches it**. Steps 1–11 build
+Ordered so that **the simulation is fully observable before anything authored reaches it**. Steps 1–12 build
 and validate a complete plot lifecycle whose objectives and plans come from a hardcoded stub table — which means
 the casting distribution, the progress-race arithmetic and the terminal-state bookkeeping can all be argued
 with at zero LLM cost before a single prompt exists.
@@ -172,7 +172,7 @@ is what caught a propagation model tuning could not have fixed. The failure mode
 resolution model that never fails, or never succeeds, or quietly casts the same six NPCs forever — none of
 which is visible once plausible LLM-written text is draped over it.
 
-Steps 12–15 replace the stubs. Steps 16–19 attach output. Every step from 4 onward leaves the plugin runnable.
+Steps 13–16 replace the stubs. Steps 17–20 attach output. Every step from 4 onward leaves the plugin runnable.
 
 ### How steps are verified
 
@@ -186,7 +186,7 @@ Every step is a standalone unit with its own verification, and every step is own
   and look."
 - **`[USER]`** — verified by actually playing. These exist only where the question genuinely requires the
   running game and real gameplay: does the world feel right, do NPCs talk about plots coherently, does the
-  presence gate fire in normal play. There are three of them — Steps 11, 15 and 19 — one closing each staged
+  presence gate fire in normal play. There are three of them — Steps 12, 15 and 19 — one closing each staged
   phase.
 
 Anything that needs the game but *not* gameplay — "launch Skyrim and confirm two threads have different ids" —
@@ -241,7 +241,7 @@ Nothing uses it yet.
 3. The `CancellationToken` / `CancellationHandle` registry, same shape as gossip's. `Stop()` cancels every
    outstanding token **before** joining.
 4. Register `PlotThread::Token` with the `is_worker_token` trait so the blocking
-   `SkyrimNetAPI::SendCustomPromptToLLM` overload accepts it. Nothing calls it until Step 13.
+   `SkyrimNetAPI::SendCustomPromptToLLM` overload accepts it. Nothing calls it until Step 14.
 5. The `[Plots]` block in `Settings`, in `statics/SKSE/Plugins/NarrativeEngine.ini`, and in the INI's
    documented comment block. `bPlotsEnabled` default **false**.
 6. `Start()` at `kDataLoaded` beside the other dispatchers; `Stop()` in shutdown after `AsyncDispatch::Stop()`.
@@ -280,7 +280,7 @@ Three throwaway translation units were compiled against the real build flags and
 
 The second is the one that matters: plot code cannot reach the main thread, so the deadlock this design could
 otherwise suffer has no expressible form. Its consequence for Phase C is real and is now written into
-`WorkerToken.h` — the world effects in Step 17 need the main thread, so they cannot be called from plot code
+`WorkerToken.h` — the world effects in Step 18 need the main thread, so they cannot be called from plot code
 and must be marshalled by a `PluginThread::Token` holder.
 
 Two pieces of tooling came out of this and are kept rather than thrown away, because Steps 2 and 15 both need
@@ -349,7 +349,7 @@ no way to add a console command of its own. The established debug-action surface
 JS→C++ bridge (`DashboardUIManager::OnDispatchAction` and its siblings), so the manual trigger becomes a
 bridge action, wired up in Step 10 with the tab. The seeding itself exists now as `Plots::SeedDebugPlot`, which
 is what Steps 3–6 actually need — all four are probe-verified and call it directly. Nothing is weakened: the
-only step that needs a *human-usable* trigger is Step 11, and Step 10 lands first.
+only step that needs a *human-usable* trigger is Step 12, and Step 10 lands first.
 
 **Step 4's item 6 rests on the same mistaken premise** and is corrected there in the same way: force-tick
 becomes a bridge action, not a console command.
@@ -383,7 +383,7 @@ The positive half of that pair is there deliberately: without it, the negative p
 gate works" from "I misspelled the function".
 
 The derivation probe checks more than the step asked for, because the extra cases were free once the harness
-existed: every manifest id round-trips through `ParseStepType` (the membership test Step 13's validation will
+existed: every manifest id round-trips through `ParseStepType` (the membership test Step 14's validation will
 rest on), off-manifest ids — including `"Locate"` with the wrong case and `"locate "` with a trailing space —
 are rejected rather than guessed at, a step with no target renders the bare verb rather than a trailing space,
 and `ProgressFraction` returns 0 on an unsized step rather than dividing by zero into the dashboard's progress
@@ -503,7 +503,7 @@ testable without a game clock.
 5. `PlotTick::Poll(pt)` added to `PollOnPluginThread` in `Tick.cpp`. The job body logs its stamp and returns.
 6. Two manual triggers: force one tick immediately, and force N ticks in sequence. Phase A's validation is
    entirely a question of watching many ticks go by, and making that a button rather than an hour of waiting
-   is what keeps Step 11 cheap enough to repeat after a tuning change. They enqueue through the normal
+   is what keeps Step 12 cheap enough to repeat after a tuning change. They enqueue through the normal
    scheduler so a forced tick is stamped and cancellable like any other.
 
    *(Corrected in Step 2: this said "console commands on the existing `ConsoleCommand` surface". There is no
@@ -662,7 +662,7 @@ the obvious choice.
 enough to test.
 
 1. A stub plan table — hardcoded objective-plus-ladder shapes exercising every step type and both
-   conspicuousness values. Step 13 deletes it.
+   conspicuousness values. Step 14 deletes it.
 2. Budget sizing from travel distance (via `TravelGraph` / `HoldGrid`) plus the step type's inherent scale.
    Threshold sizing from step type plus target importance. **They must share no input.**
 3. The per-tick progress roll, modified by the actor's relevant skills and attributes and their suitability for
@@ -1007,7 +1007,7 @@ individual rules hold; this proves the system built from them produces a world w
 outcome class below ~10% or above ~70% of resolutions; at least a few hundred distinct masterminds over a
 simulated year rather than dozens; budget occupancy neither pinned at 10 nor starving; and a call rate the
 design doc's Part 3 estimate can be checked against. Any figure that cannot be brought into range by tuning is
-a model problem, and finding that here rather than in Step 11 is the entire point of the step.
+a model problem, and finding that here rather than in Step 12 is the entire point of the step.
 
 Done. `build-plot-population.py`, `simulate-plots.py`, and the run recorded in
 [`tests/faction-plots/PHASE_14_PLOT_VALIDATION_LOG.md`](tests/faction-plots/PHASE_14_PLOT_VALIDATION_LOG.md).
@@ -1061,7 +1061,7 @@ fifths of steps are delegated. Rung 2 stays at 0.0% for a structural reason that
 assumed: every subordinate is also a personal tie, because `GossipGraph` derives personal edges partly from
 shared faction membership, so rung 1 always claims them first.
 
-One finding that **is** real and is carried into Step 11: **the budget runs near-saturated**, at 10/10 for
+One finding that **is** real and is carried into Step 12: **the budget runs near-saturated**, at 10/10 for
 74.6% of ticks. Expected given 19-day plots and opportunistic births, but it means `iPlotMaxConcurrent` is a
 ceiling doing real work rather than a safety limit, and raising it raises the call rate near-proportionally.
 
@@ -1101,7 +1101,7 @@ arithmetic behind it.
    its accessibility discipline — a real `<button>` for the toggle, the expanded panel outside it.
 8. The delegation row is not built; the Phase D field is reserved and simply not rendered.
 9. Wire the bridge actions Steps 2 and 4 left unwired: seed a debug plot, force one tick, force N ticks. These
-   are what make Step 11 a short console-driven session rather than a play session.
+   are what make Step 12 a short console-driven session rather than a play session.
 10. A committed fixture at `dashboard/src/fixtures/plots.sample.json`, hand-built to exercise every node
     state, a plot that has adapted, a 15-node chain, and an empty list.
 
@@ -1110,7 +1110,7 @@ renders `PlotsTab` against the fixture and asserts: nine nodes for a nine-step c
 number and carries the ✕; the live node's arc `stroke-dasharray` matches its progress fraction; the nodes left
 of the cursor are numbered identically before and after an adaptation replaces the tail; the 15-node chain
 emits a horizontally scrollable container rather than shrinking nodes; and the empty list renders the empty
-state rather than throwing. Whether it *looks* right is Step 11's business.
+state rather than throwing. Whether it *looks* right is Step 12's business.
 
 Done. The plots block in `ComposeFullStateJSON`, `dashboard/src/components/PlotChain.tsx`,
 `components/tabs/PlotsTab.tsx`, the `plots` `TabId`, the `types.ts` slice, the styles, two committed fixtures,
@@ -1123,7 +1123,7 @@ and doing that where the plot state lives means the React side receives a flat l
 
 The debug buttons are Force tick / Force 10 / Force 50 and Seed debug plot. Forced ticks go through the normal
 scheduler, so they carry the same stamps and cancellation handles as scheduled ones and nothing observed
-through them is an artefact of the trigger. This is what makes Step 11 a short console-driven session rather
+through them is an artefact of the trigger. This is what makes Step 12 a short console-driven session rather
 than a play session.
 
 Render probe results, over a fixture built to exercise the awkward cases — a nine-node chain with a failure in
@@ -1154,7 +1154,88 @@ import only types; and relative imports are resolved by hand against the importi
 
 ---
 
-#### Step 11 — Phase A in-game validation
+#### Step 11 — `PlotLog`: the dedicated trace
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** A run of the simulation can be reconstructed from a file, not only from the dashboard.
+
+This step exists because it was missing. `PlotLog` was in the module table from the start and
+`bPlotLogEnabled` shipped documenting "the dedicated trace at `NarrativeEngine_Plots.log`", but no step ever
+listed it, so nothing built it. Everything currently goes to `NarrativeEngine.log`, interleaved with gossip
+and the Director, and — the part that actually matters — **nothing logs a step's resolution at all**. No line
+says whether a step succeeded, timed out or was caught, which are exactly the outcomes Step 12 has to judge.
+
+1. `PlotLog`, on `GossipLog`'s precedent: its own spdlog-free `std::ofstream` sink at
+   `NarrativeEngine_Plots.log`, session-scoped, rotated five deep, so nothing it writes reaches the main log
+   and nothing from elsewhere reaches it.
+2. **Gated on `bPlotLogEnabled` alone, never on `bDebugMode`.** The point is a long validation session with a
+   quiet main log and a complete plot trace.
+3. **Flushed per line, not per tick.** A plot tick will block on LLM calls from Step 13 onward; anything less
+   than per-line flushing leaves the file silent and then bursting, with its tail sitting on a half-written
+   line. Gossip learned this the hard way and the comment in `GossipLog.cpp` says so.
+4. Emitters covering the whole lifecycle, each a single greppable line: `TICK`, `BORN`, `DISPATCH` (with the
+   cast, the ladder rung, and the four sizing inputs), `ROLL` (per tick, with progress against threshold and
+   whether it was held), `RESOLVE` (with the typed outcome), `ADAPT`, `END`, `REAP`, and a `CENSUS` at
+   session end.
+5. Names come from the cached strings on the plot, never from a live `RE::` pointer — the trace is written
+   from the plot worker.
+
+**Verification:** `build.ps1 build` is clean. A probe over the pure line-formatting asserts that every
+emitter produces one line, that a `RESOLVE` line names its outcome, and that a `DISPATCH` line carries all
+four sizing inputs — the numbers that make a later failure explicable. Then, because the format's real job is
+to be *analysable*: a fixture trace is parsed back and the step outcomes counted from it must match the
+counters the simulation reports, which is what proves the log is a complete record rather than a sampling of
+one.
+
+Done. `include/PlotLog.h`, `src/PlotLogFormat.cpp` (pure), `src/PlotLog.cpp` (the file), the emitters wired
+through `PlotTick`, and all four lifecycle hooks in `Plugin.cpp`. Build clean, probe passing.
+
+**What was there before was worse than nothing.** `bPlotLogEnabled` shipped `true`, documenting a dedicated
+trace that did not exist; it gated four `logger` calls that went to the main log, two of them at `debug` level
+so they also needed `bDebugMode`. And **no line reported a step's resolution at all** — nothing said whether a
+step succeeded, timed out or was caught, which is precisely what Step 12 has to judge. The settings surface
+described a facility nobody had built.
+
+Nine tags, each greppable: `SESSION`, `TICK`, `BORN`, `DISPATCH`, `ROLL`, `RESOLVE`, `ADAPT`, `END`, `REAP`,
+`CENSUS`. Two carry the numbers that make a failure explicable rather than merely reported:
+
+- **`DISPATCH`** carries all four sizing inputs — travel, importance, competence, suitability — because
+  without them a later `RESOLVE` says what happened but not what the actor was ever up against. It also
+  reports the ladder rung and how many candidates were rejected, which is how "the same six NPCs do
+  everything" becomes visible rather than suspected.
+- **`ROLL`** carries progress against threshold every tick, with `HELD` or `CAUGHT` inline, so *"it failed at
+  0.62 of its threshold, having been held for four of its nine ticks"* is recoverable from the file.
+
+The format is split from the file (`PlotLogFormat.cpp`) for the reason `PlotSerialize` and
+`PlotFactionRoster` both established: the property worth verifying is that the format is **analysable**, and
+that cannot be checked if reaching the formatter needs an open file and a running game.
+
+Probe results, then deleted:
+
+| Asserted                                                                     | Result |
+| ----------------------------------------------------------------------------- | ------ |
+| Every emitter yields exactly one line, never containing a newline             | pass   |
+| Each line is tagged so one event kind can be grepped out of a long run        | pass   |
+| `DISPATCH` carries all four sizing inputs, the rung, and the reject count      | pass   |
+| `RESOLVE` names its typed outcome, progress/threshold, ticks/budget, held      | pass   |
+| A held or caught `ROLL` says so; an ordinary one says neither                  | pass   |
+| A nameless mastermind or uncast actor logs as `?`, never blank                 | pass   |
+| **Round trip: 37/11/9 outcomes formatted, parsed back, and counted exactly**   | pass   |
+
+That last one is the point of the whole format. A synthetic run is written, the `RESOLVE` lines are parsed
+back with `TICK` / `BORN` / `END` noise interleaved, and the counts must match what went in — which is what
+distinguishes a complete record from a sampling of one.
+
+Gated on `bPlotLogEnabled` alone, never `bDebugMode`, and **flushed per line**. From Step 14 a tick blocks on
+LLM round trips; buffering would leave the file silent and then bursting, with its tail on a half-written
+line. Gossip shipped that mistake once and the comment in `GossipLog.cpp` says so.
+
+---
+
+#### Step 12 — Phase A in-game validation
 
 - [ ] Complete
 
@@ -1181,7 +1262,7 @@ Two things about where to stand:
 Note that the standing caveat about wait-driven test runs — that skipping time starves the memory supply and
 decays the candidate pool — **does not apply to Phase A.** That caveat is about subsystems whose input is
 memories generated by play; Phase A has no memory dependency at all, because objectives and plans come from
-the stub table. It starts applying at Step 15, and Step 15 says so.
+the stub table. It starts applying at Step 16, and Step 16 says so.
 
 Run with `bPlotsEnabled=true` and no LLM involvement anywhere, and judge from the Plots tab and the trace:
 
@@ -1207,7 +1288,7 @@ Record findings under this step, including any tuning applied on top of Step 9's
 
 ### Phase B — LLM authoring
 
-#### Step 12 — Target menus and the item pool
+#### Step 13 — Target menus and the item pool
 
 - [ ] Complete
 
@@ -1230,7 +1311,7 @@ fabricated masterminds in different holds and asserts the candidate sets differ 
 
 ---
 
-#### Step 13 — The birth prompt and its response handling
+#### Step 14 — The birth prompt and its response handling
 
 - [ ] Complete
 
@@ -1264,11 +1345,11 @@ fabricated masterminds in different holds and asserts the candidate sets differ 
 | smart quotes, em-dashes, NBSP, accented Latin | plot text that is pure ASCII after the sanitizer     |
 | empty plan                | rejection                                                            |
 
-Whether the *content* is any good is Step 15's business; this step proves it cannot corrupt state.
+Whether the *content* is any good is Step 16's business; this step proves it cannot corrupt state.
 
 ---
 
-#### Step 14 — Adaptation
+#### Step 15 — Adaptation
 
 - [ ] Complete
 
@@ -1290,7 +1371,7 @@ terminates at `iPlotMaxAdaptations` rather than looping.
 
 ---
 
-#### Step 15 — Phase B in-game validation
+#### Step 16 — Phase B in-game validation
 
 - [ ] Complete
 
@@ -1314,7 +1395,7 @@ Record findings under this step.
 
 ### Phase C — memories and world effects
 
-#### Step 16 — The memory calls
+#### Step 17 — The memory calls
 
 - [ ] Complete
 
@@ -1340,7 +1421,7 @@ who is not in the step is rejected rather than written to whoever it named.
 
 ---
 
-#### Step 17 — World effects
+#### Step 18 — World effects
 
 - [ ] Complete
 
@@ -1368,7 +1449,7 @@ called with a `PlotThread::Token` — they require main — then is deleted.
 
 ---
 
-#### Step 18 — Gossip seeding
+#### Step 19 — Gossip seeding
 
 - [ ] Complete
 
@@ -1387,7 +1468,7 @@ from the plot subsystem's own candidate set. The tag predicates are pure and thi
 
 ---
 
-#### Step 19 — Phase C in-game validation and call-volume measurement
+#### Step 20 — Phase C in-game validation and call-volume measurement
 
 - [ ] Complete
 
@@ -1418,7 +1499,7 @@ fewer memories. Record findings and any tuning under this step.
 
 This phase is complete when:
 
-- All 19 steps are checked off. The three `[USER]` steps — 11, 15 and 19 — have their findings recorded in this
+- All 20 steps are checked off. The three `[USER]` steps — 12, 16 and 20 — have their findings recorded in this
   document, and Step 9's validation log is committed.
 - A plot can be born, dispatch steps, adapt around a failure, and reach a terminal state without any
   intervention, over a normal play session.
@@ -1433,7 +1514,7 @@ This phase is complete when:
 - A failed step stays in its position in the chain with the plot continuing past it, and an adaptation does not
   renumber the nodes behind the cursor.
 - Every free-form LLM string reaching state, a memory, or the log has passed through `LLMTextSanitizer`.
-- No engine state outside Step 17's allow-list is mutated.
+- No engine state outside Step 18's allow-list is mutated.
 - A caught failure is observed propagating as a rumor.
 
 ---
@@ -1444,7 +1525,7 @@ The feature's open questions are tracked in the design doc rather than duplicate
 this phase and are built around rather than blocked on:
 
 1. **Is the conspicuousness split right?** Built in Step 6 as a per-type constant from the manifest. If
-   Step 9's harness or Step 11's play shows it needs to be a per-step property decided at dispatch, that is a
+   Step 9's harness or Step 12's play shows it needs to be a per-step property decided at dispatch, that is a
    change to one function's inputs, not to the model.
 2. **How does a step get caught?** Step 6 implements the proposed per-tick mishap roll behind
    `bPlotMishapEnabled` precisely so the phase does not wait on the answer. If the shape changes, the switch
@@ -1454,4 +1535,4 @@ One question belongs to this document alone:
 
 1. **Should `bPlotsEnabled` default true when Phase D lands, or stay opt-in?** Gossip defaults on. Plots write
    more consequential memories and mutate engine state, and the honest answer probably depends on what
-   Step 19 measures.
+   Step 20 measures.
