@@ -48,6 +48,10 @@ buffer, save-scum recovery, single source of truth.
 ## Working directory conventions
 
 - The repo lives at `C:\Projects\NarrativeEngine\`.
+- `docs/design/` holds **feature design** docs: what a feature is and how it behaves, for features large enough
+  to span several phases. A design doc is a living contract that outlives the phases implementing it, and it
+  names the phases it breaks into. `docs/implementation/PHASE_NN_*.md` holds the point-in-time work plans that
+  are written against it. A feature small enough to land in one phase needs no design doc.
 - `docs/prior-art/` is the IntelEngine reference library — extend it (don't rewrite it) if new learnings come in about IntelEngine.
 - The IntelEngine repos at `C:\Projects\IntelEngine-NativePlugin\` and `C:\Projects\IntelEngine-GamePlugin\` are
   **read-only reference**.
