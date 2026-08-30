@@ -124,7 +124,7 @@ Against the step's own criteria:
 
 **The LLM call rate is less than half the design's estimate.** Part 3 reasoned "a five-step plot costs about
 eleven calls, plots run about a week, ten concurrent slots" and arrived at ~15 calls per in-world day. The
-model produces 7.1, because plots run nearer *eighteen* days than seven — the estimate was right about the
+model produces 7.0, because plots run nearer *nineteen* days than seven — the estimate was right about the
 per-plot cost and wrong about the pace. That is comfortably affordable and leaves room to raise the plot
 budget later if the world feels thin.
 
