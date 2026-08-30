@@ -29,6 +29,7 @@
 #include <NPCVisitBeat.h>
 #include <PhaseTracker.h>
 #include <PlotDispatch.h>
+#include <PlotPopulation.h>
 #include <PlotSerialize.h>
 #include <PlotState.h>
 #include <PlotTick.h>
@@ -240,6 +241,10 @@ namespace NarrativeEngine
                 // rather than about thread lifetime.
                 Plots::Initialize();
                 PlotTick::Initialize();
+                // After GossipGraph::Initialize: plots read their
+                // population from the graph gossip already builds, plus
+                // the faction ranks it does not carry.
+                PlotPopulation::Build();
                 PlotDispatch::Start();
                 // Must start before BeatSystem::Initialize — the poll
                 // starts enqueuing here as soon as a beat is running.

@@ -560,7 +560,7 @@ is that anything the tick does outside our co-save cannot be un-done by the load
 
 #### Step 5 — Casting
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -584,6 +584,59 @@ tick after it expires; the agent ladder falls through each rung in order and lan
 population offers nobody else; a rank-weighted draw over 10,000 trials puts high-rank NPCs ahead of
 independents without ever returning an independent zero times. The real-population question — does casting
 actually spread across Skyrim — is Step 7's harness, not this step.
+
+Done. `include/PlotCasting.h` + `src/PlotCasting.cpp` (pure: the ladder, the weighting, occupancy and
+cooldowns) and `include/PlotPopulation.h` + `src/PlotPopulation.cpp` (engine-bound: builds the population from
+`GossipGraph` plus faction ranks, and supplies the liveness predicate). `PlotPopulation::Build()` runs at
+`kDataLoaded` after `GossipGraph::Initialize`. Build clean, probe passing.
+
+The split is what made the step verifiable, and it is sharper than "takes parameters": **`PlotCasting.cpp`
+does not include `Settings.h`, `logger.h`, `GossipGraph.h` or anything engine-shaped.** It even carries its own
+six-line copy of splitmix64 rather than calling `Plots::NextRandom`, because that one lives in an engine-bound
+translation unit and using it would have dragged the plugin's plumbing into every casting probe. That is a
+deliberate duplication of a named constant and four lines of arithmetic, and it is worth it.
+
+**`GossipGraph` does not expose its admitted-faction set**, only the fact that a personal edge is a
+shared-faction one and the FormID of the faction behind it. The set is therefore recovered from the edges
+themselves rather than by inventing a second prominence filter — one answer to "which organisations matter",
+not two that can drift. Faction *ranks* are not in the graph at all and are read once at build time from each
+`TESNPC`'s own faction list, on the main thread; doing it per tick would be an engine read from the wrong
+thread as well as a waste.
+
+Probe results, one probe, then deleted:
+
+| Group                       | Asserted                                                                  |
+| --------------------------- | ------------------------------------------------------------------------- |
+| The agent ladder            | falls through rungs 1→2→3→4 in order as each rung is emptied               |
+| Subordinate test            | an EQUAL-rank colleague is never a subordinate; a tie-less stranger never cast |
+| Rung 4                      | the mastermind casts themselves, and their own occupancy does not block it |
+| Occupancy                   | engagement blocks BOTH roles — one uniqueness constraint, not two          |
+| Cooldowns                   | expire exactly on the stamp; the two roles' stamps are independent          |
+| Liveness                    | nobody alive → nobody chosen; a dead mastermind still casts a live subordinate |
+| Weighting (20,000 draws)    | rank outdraws no-rank, every member drawn, no NPC takes more than half     |
+| Determinism                 | the same seed reproduces the same casting                                  |
+| Rejects                     | occupied and cooling-down candidates recorded with their reason            |
+
+Two things worth recording from the run:
+
+- **The first failure was in the probe, not the code.** It asserted that an *actor* cooldown would show up
+  when screening for the *mastermind* role. It correctly does not — that independence is the entire reason
+  there are two stamps — so the assertion was rewritten to set the cooldown for the role being screened, and a
+  converse assertion added: an NPC serving a mastermind cooldown is still castable as an actor. A probe that
+  had "passed" here would have been asserting the bug.
+- **The weighting curve is deliberately gentle** (base 1.0, +0.5 for any admitted membership, +0.75 per rank).
+  A jarl should be likelier than a guard, not a hundred times likelier; steeper and the same handful of
+  high-rank NPCs would scheme continuously with the cooldown as the only thing spreading the work. The probe
+  pins both ends: an independent is still drawn more than 1% of the time, and no single NPC takes half. Step 7
+  is where those numbers meet the real population.
+
+`Release` starts only the cooldown for the role the NPC was actually holding. Starting both would bench
+someone from masterminding because they ran an errand, which is exactly the conflation the two stamps exist to
+prevent.
+
+The ladder walks rung by rung and stops at the first rung with anyone on it, rather than drawing across all
+rungs at once. Pooling them would let a large set of distant acquaintances drown out the one subordinate who is
+the obvious choice.
 
 ---
 
