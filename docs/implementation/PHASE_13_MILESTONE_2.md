@@ -323,6 +323,29 @@ gendered kinship terms ("sister", "cousin", "father") straight from the record r
 
 The last row will be the most common, and it is fine — that is genuinely how most gossip arrives.
 
+#### Hearsay is written below the event it is about
+
+A transmission's two memories are **not** written at the rumor's notability. Notability is the importance
+of the *original* memory the rumor was harvested from — what it was worth to the person the thing actually
+happened to — and a secondhand telling is never worth that. It is, however, worth something in proportion
+to it: a rumor about a murder should leave heavier traces than a rumor about a lost goat.
+
+So notability is rescaled from its own 0–1 range onto 0–`fGossipMemoryImportanceCeiling` at the
+`AddMemory` call. The ordering between rumors is preserved exactly — a rumor twice as notable still writes
+memories twice as important — and the entire band of hearsay sits below the event that produced it.
+
+The ceiling defaults to 0.45, level with `fGossipMinMemoryImportance`. That is deliberate: the most a
+piece of hearsay can be worth is exactly the bar a memory must clear to become a rumor in the first place,
+so gossip's own output can never outrank the material it is made from. It is a backstop behind the
+`ne_gossip` tag rather than a replacement for it — the tag is what actually keeps gossip out of its own
+input; this keeps it from crowding the retrieval ranking either way.
+
+**Teller and listener are written at the same importance.** Both are equally removed from the event; what
+separates their memories is who they name and how the telling is framed, not what it weighed. Depth does
+not enter into it either — a generation-9 memory carries the same importance as a generation-0 one, and it
+is the shrinking band text that carries degradation. Making importance fall with depth as well is a
+plausible refinement, but it is a second decay model layered on the first and is not being built now.
+
 #### Prompt discipline
 
 One prompt, under `statics/SKSE/Plugins/SkyrimNet/prompts/`. It receives the source memory and the number of
@@ -401,6 +424,7 @@ Added:
 | `fGossipHarvestWindowDays`        | 50.0                    | Memories older than this are never candidates               |
 | `fGossipClaimExpiryDays`          | 60.0                    | **Must exceed the harvest window.** See the invariant above |
 | `fGossipMinMemoryImportance`      | 0.45                    | Notability floor for a candidate                            |
+| `fGossipMemoryImportanceCeiling`  | 0.45                    | Notability is rescaled onto 0–this for transmission memories |
 | `iGossipHarvestActorSampleSize`   | 25                      | Top-N actors by recent memory importance to fetch from      |
 | `iGossipHarvestMemoriesPerActor`  | 10                      | `maxCount` per `GetMemoriesForActor` call                   |
 | `iGossipMaxSeedsPerHarvest`       | 1                       | Bounds the one-event-many-memories case                     |

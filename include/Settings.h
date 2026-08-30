@@ -692,6 +692,21 @@ namespace NarrativeEngine::Settings
         // Notability floor for a candidate. A memory's importance maps
         // directly onto the rumor's notability, both being 0..1.
         float gossipMinMemoryImportance = 0.45f;
+        // The ceiling on the importance of the memories a TRANSMISSION
+        // writes, as opposed to the source memory it came from.
+        //
+        // Hearing about an event is never as memorable as living through
+        // it, but it is memorable in proportion to it, so a transmission
+        // memory is written at `notability * this` rather than at
+        // notability itself. A 1.0 rumor is the most a piece of hearsay
+        // can be worth; it does not become worth what the event was.
+        //
+        // Set level with gossipMinMemoryImportance on purpose: hearsay
+        // then tops out exactly at the bar a memory must clear to become
+        // a rumor, so gossip's own output can never outrank the material
+        // it is made from. That is a backstop behind the kOwnOutputTag
+        // guard, not a replacement for it.
+        float gossipMemoryImportanceCeiling = 0.45f;
         // How many buckets the participant population splits into. One
         // bucket is examined per sweep, in full, so this is the direct
         // control over per-sweep query cost — and the inverse control

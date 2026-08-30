@@ -319,6 +319,25 @@ namespace NarrativeEngine::GossipSim
         };
         std::map<std::pair<std::uint32_t, RE::FormID>, PendingTell> g_pendingTells;
 
+        // The importance a transmission's memories are written at.
+        //
+        // NOT the rumor's notability, which is the importance of the
+        // ORIGINAL memory the rumor was harvested from. Hearing a story
+        // about something is never as memorable as the thing itself, so
+        // notability is rescaled from its own 0..1 range onto
+        // 0..gossipMemoryImportanceCeiling. The relationship stays
+        // proportional — a rumor twice as notable still writes memories
+        // twice as important — but the whole band sits below the event.
+        //
+        // Both halves of a transmission use this. A teller and a listener
+        // are equally removed from the event; what separates them is who
+        // they name, not how much it weighed.
+        float TransmissionImportance(const Rumor& rumor)
+        {
+            const float ceiling = std::clamp(Settings::Get().gossipMemoryImportanceCeiling, 0.0f, 1.0f);
+            return std::clamp(rumor.notability, 0.0f, 1.0f) * ceiling;
+        }
+
         // The memories a transmission writes. No LLM here — this is a
         // string build from band text the seed-time call already produced,
         // plus relationship-aware framing.
@@ -370,7 +389,7 @@ namespace NarrativeEngine::GossipSim
             const int written =
                 SkyrimNetAPI::AddMemory(listenerRef,
                                         GossipContent::ComposeHeard(rumor.bands[band], teller, listener),
-                                        rumor.notability,
+                                        TransmissionImportance(rumor),
                                         "KNOWLEDGE",
                                         "",
                                         GossipGraph::LocationName(listenerLocation),
@@ -434,7 +453,7 @@ namespace NarrativeEngine::GossipSim
                 const int written =
                     SkyrimNetAPI::AddMemory(tellerRef,
                                             GossipContent::ComposeTold(rumor.bands[pending.band], pending.listeners),
-                                            rumor.notability,
+                                            TransmissionImportance(rumor),
                                             "KNOWLEDGE",
                                             "",
                                             GossipGraph::LocationName(pending.location),
