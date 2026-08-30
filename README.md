@@ -70,6 +70,11 @@ Beyond what SkyrimNet already requires, NarrativeEngine needs:
 - **powerofthree's Tweaks** — restores runtime EditorID lookup, which NarrativeEngine uses to resolve nearly all
   of its game data. Without it (or an equivalent EditorID-retaining mod) the plugin loads but no beat ever fires.
   Available on Nexus Mods.
+- **NPCs Have Relationships** — a *soft* requirement, and the one optional install worth making. Gossip decides who
+  talks to whom partly from the relationship records in your load order, and vanilla Skyrim authors very few of them.
+  Gossip still runs without it, but the family and personal ties that carry a rumor beyond someone's own settlement are
+  much thinner, so rumors stay local more often. No patch or configuration needed.
+  [Available on Nexus Mods](https://www.nexusmods.com/skyrimspecialedition/mods/140482).
 
 Those are the only *additional* installs. NarrativeEngine also hard-requires **PrismaUI** (which hosts the in-game
 dashboard) and **SkyUI** (which MCM Helper depends on), but both are already in SkyrimNet's requirements list
