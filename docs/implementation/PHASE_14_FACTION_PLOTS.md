@@ -393,7 +393,7 @@ be. `PlotModel.cpp` links standalone, which is the first evidence that the model
 
 #### Step 3 — Co-save persistence
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -414,6 +414,58 @@ states, a populated occupancy table with cooldown stamps, a live step mid-progre
 and reads it back, asserting field-for-field equality. A second probe feeds a record whose mastermind FormID
 does not resolve and asserts the plot is dropped and its slot freed rather than reviving half-formed. A third
 feeds a truncated buffer and asserts the reader fails without leaving partial state behind.
+
+Done. `include/PlotSerialize.h`, `src/PlotSerialize.cpp` (the format), `src/PlotCoSave.cpp` (the SKSE half),
+`Plots::StageLoadedState` / `TakePendingState`, and the save / load / revert wiring in `Plugin.cpp`. Build
+clean, round-trip probe passing at 559 bytes for a two-plot state.
+
+**Item 6 did not go far enough as I first wrote it, and the probe is what said so.** The reader and writer took
+a byte sink and source as specified, but they still lived in a translation unit that included `logger.h`, and
+`logger.h` needs the plugin's SKSE plumbing. The probe failed to build with a wall of `C2039: 'log': is not a
+member of 'SKSE'` — which is precisely the outcome `run-probe.py`'s own documentation predicts for a source
+that is not as pure as the plan claims. The fix was a real split rather than a workaround:
+
+- `PlotSerialize.cpp` — the byte format and nothing else. No SKSE, no logging, no engine.
+- `PlotCoSave.cpp` — the SKSE adapters and the save/load/revert entry points, which may log.
+
+`ReadState` therefore had to stop logging its own version-mismatch, so it returns silently and `OnLoad`
+reconstructs the reason for the log line. `PlotState::FindPlot` and `ActivePlotCount` moved into the header as
+inline definitions for the same reason: they are operations on the struct's own data, and leaving them in an
+engine-bound `.cpp` dragged the plugin's plumbing into every probe that wants the format.
+
+That is worth stating plainly because it generalises: **"takes an interface" is not the same as "is testable",
+and only running the probe distinguishes them.**
+
+Probe results, one probe covering all four cases, then deleted:
+
+| Case                                              | Asserted                                                            |
+| ------------------------------------------------- | ------------------------------------------------------------------- |
+| Identity resolver                                 | every scalar, plot, step and occupancy row equal field-for-field     |
+| Resolver that drops the mastermind's FormID       | that plot dropped, count reported, the other plot intact             |
+| Truncation at 7 cut points                        | rejected, and state left EMPTY rather than half-populated            |
+| A record claiming a future version                | discarded, not guessed at                                            |
+
+The truncation case is cut at several offsets rather than one, because the failure that matters stops halfway
+through a plot rather than at a tidy field boundary.
+
+Three format decisions, each made because the alternative fails quietly:
+
+- **Step types are written as their manifest id, not the enum's numeric value.** Reordering `StepType` must not
+  silently reinterpret every saved step in every existing save.
+- **Counters are not saved.** They are session-scoped diagnostics; carrying them across a load would make
+  "plots born" a number nobody can reason about.
+- **An occupancy row pointing at a plot that was dropped is freed rather than restored.** Otherwise an NPC
+  stays engaged forever in a plot that no longer exists — a leak that would be invisible until casting starved.
+
+**Item 4's schedule rebase is Step 4's, not this step's.** There is no tick schedule to rebase yet; the only
+clock this step owns is `PlotState::simGameDay`, which comes out of the save and is correct as saved. Step 4
+already specifies the rebase in its own items 1–2, so nothing is lost — and a stub `OnSessionStart` that
+rebased nothing would have been dead code pretending to be coverage. Until the tick exists, loaded state waits
+in the pending slot; nothing reads live state before then, so it has nowhere to be wrong.
+
+One rename landed here: `PlotModel::PlotState` (the enum) became `PlotModel::PlotStatus`, because it collided
+with `NarrativeEngine::PlotState` (the struct) the moment a probe pulled both namespaces into scope. Qualified
+code compiled fine either way, which is exactly why it was worth fixing before more code depended on it.
 
 ---
 

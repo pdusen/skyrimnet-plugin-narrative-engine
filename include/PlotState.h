@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
@@ -134,14 +135,33 @@ namespace NarrativeEngine
 
         // --- Convenience ---------------------------------------------
 
-        [[nodiscard]] const PlotModel::Plot* FindPlot(std::uint32_t id) const noexcept;
-        [[nodiscard]] PlotModel::Plot* FindPlot(std::uint32_t id) noexcept;
+        // Defined inline, and deliberately so: these are operations on
+        // the struct's own data with no engine, no settings and no
+        // logging behind them. Putting them in the .cpp would drag the
+        // plugin's plumbing into every probe that wants to exercise the
+        // co-save format, which is exactly the coupling this subsystem
+        // is factored to avoid.
+        [[nodiscard]] const PlotModel::Plot* FindPlot(std::uint32_t id) const noexcept
+        {
+            const auto it =
+                std::find_if(plots.begin(), plots.end(), [id](const PlotModel::Plot& p) { return p.id == id; });
+            return it == plots.end() ? nullptr : &*it;
+        }
+
+        [[nodiscard]] PlotModel::Plot* FindPlot(std::uint32_t id) noexcept
+        {
+            return const_cast<PlotModel::Plot*>(static_cast<const PlotState*>(this)->FindPlot(id));
+        }
 
         // Plots holding a budget slot: active ones only. Terminal plots
         // awaiting reaping do not count against the budget, which is
         // what lets a finished plot free its slot immediately while
         // staying visible on the dashboard.
-        [[nodiscard]] std::size_t ActivePlotCount() const noexcept;
+        [[nodiscard]] std::size_t ActivePlotCount() const noexcept
+        {
+            return static_cast<std::size_t>(
+                std::count_if(plots.begin(), plots.end(), [](const PlotModel::Plot& p) { return !p.IsTerminal(); }));
+        }
     };
 } // namespace NarrativeEngine
 
@@ -182,6 +202,23 @@ namespace NarrativeEngine::Plots
     // END of a unit of plot work, never during one — a snapshot taken
     // mid-tick would show a half-advanced simulation.
     void PublishSnapshot(const PlotThread::Token&);
+
+    // Install state read from a co-save.
+    //
+    // Called on SKSE's SERIALISATION thread, which holds no plot token
+    // and must not touch live state — so this parks the state in a
+    // mutex-guarded pending slot and republishes the snapshot
+    // immediately, and the plot worker installs it at the top of its
+    // next unit of work. Readers therefore see the loaded world at
+    // once, and the live state changes owner only on the thread that
+    // owns it. Gossip's PendingState does the same thing for the same
+    // reason.
+    void StageLoadedState(PlotState state);
+
+    // Move any staged state into live. Called by the plot worker at the
+    // start of a unit of work, before anything reads live state.
+    // Returns true if a load was applied.
+    bool TakePendingState(const PlotThread::Token&);
 
     // splitmix64. Deterministic given the stream position in
     // PlotState::rngState, which is what makes a seeded run repeatable

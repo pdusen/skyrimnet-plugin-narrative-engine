@@ -29,6 +29,7 @@
 #include <NPCVisitBeat.h>
 #include <PhaseTracker.h>
 #include <PlotDispatch.h>
+#include <PlotSerialize.h>
 #include <PlotState.h>
 #include <PrismaUI.h>
 #include <Settings.h>
@@ -296,6 +297,8 @@ namespace NarrativeEngine
                 GossipDispatch::CancelAll();
                 GossipSim::OnRevert();
                 GossipClaims::OnRevert();
+                PlotDispatch::CancelAll();
+                PlotSerialize::OnRevert();
                 PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
                 // Rotate the history log for the new session BEFORE
                 // Tick starts polling — the first Poll cycle needs the
@@ -345,6 +348,8 @@ namespace NarrativeEngine
                 GossipDispatch::CancelAll();
                 GossipSim::OnRevert();
                 GossipClaims::OnRevert();
+                PlotDispatch::CancelAll();
+                PlotSerialize::OnRevert();
                 PhaseTracker::Reset();
                 break;
             case SKSE::MessagingInterface::kPostLoadGame:
@@ -404,6 +409,10 @@ namespace NarrativeEngine
             const auto gossipSnapshot = GossipSim::Snapshot();
             GossipSim::OnSave(intfc, *gossipSnapshot);
             GossipClaims::OnSave(intfc, *gossipSnapshot);
+            // Also snapshot-sourced, and for the same reason: a save
+            // taken mid-tick must not capture a half-advanced
+            // simulation.
+            PlotSerialize::OnSave(intfc);
             // Future subsystems append their OnSave calls here.
         }
 
@@ -455,6 +464,9 @@ namespace NarrativeEngine
                 case GossipSim::kRecordTypeId:
                     GossipSim::OnLoad(intfc, version, length);
                     break;
+                case PlotSerialize::kRecordTypeId:
+                    PlotSerialize::OnLoad(intfc, version);
+                    break;
                 case GossipClaims::kRecordTypeId:
                     GossipClaims::OnLoad(intfc, version, length);
                     break;
@@ -494,6 +506,12 @@ namespace NarrativeEngine
             GossipDispatch::CancelAll();
             GossipSim::OnRevert();
             GossipClaims::OnRevert();
+            // Same argument, and stronger: a plot tick that keeps
+            // running past a load writes memories AND mutates
+            // inventories and relationship ranks, none of which the load
+            // un-writes on our behalf.
+            PlotDispatch::CancelAll();
+            PlotSerialize::OnRevert();
             // Future subsystems append their OnRevert calls here.
         }
     } // namespace

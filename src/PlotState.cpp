@@ -6,26 +6,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-
-namespace NarrativeEngine
-{
-    const PlotModel::Plot* PlotState::FindPlot(std::uint32_t id) const noexcept
-    {
-        const auto it = std::find_if(plots.begin(), plots.end(), [id](const PlotModel::Plot& p) { return p.id == id; });
-        return it == plots.end() ? nullptr : &*it;
-    }
-
-    PlotModel::Plot* PlotState::FindPlot(std::uint32_t id) noexcept
-    {
-        return const_cast<PlotModel::Plot*>(static_cast<const PlotState*>(this)->FindPlot(id));
-    }
-
-    std::size_t PlotState::ActivePlotCount() const noexcept
-    {
-        return static_cast<std::size_t>(
-            std::count_if(plots.begin(), plots.end(), [](const PlotModel::Plot& p) { return !p.IsTerminal(); }));
-    }
-} // namespace NarrativeEngine
+#include <mutex>
+#include <optional>
 
 namespace NarrativeEngine::Plots
 {
@@ -40,6 +22,12 @@ namespace NarrativeEngine::Plots
         // shared_ptr rather than a mutex so a reader never waits on the
         // worker and the worker never waits on a reader.
         std::atomic<std::shared_ptr<const PlotState>> g_published{std::make_shared<const PlotState>()};
+
+        // Staged by a load, installed by the plot worker. The only
+        // shared mutable thing in this subsystem, and it is guarded
+        // because its two ends are genuinely different threads.
+        std::mutex g_pendingMutex;
+        std::optional<PlotState> g_pending;
     } // namespace
 
     void Initialize()
@@ -60,6 +48,34 @@ namespace NarrativeEngine::Plots
         g_published.store(std::make_shared<const PlotState>(g_live));
 
         logger::info("Plots: state initialised (enabled={}, seed={})", cfg.plotsEnabled, cfg.plotRandomSeed);
+    }
+
+    void StageLoadedState(PlotState state)
+    {
+        {
+            std::scoped_lock lock(g_pendingMutex);
+            g_pending = state;
+        }
+        // Publish immediately. Between a load and the plot worker's next
+        // unit of work there may be minutes of play, and during that
+        // window the dashboard and the co-save must show the world the
+        // player actually loaded rather than the one they left.
+        g_published.store(std::make_shared<const PlotState>(std::move(state)));
+    }
+
+    bool TakePendingState(const PlotThread::Token&)
+    {
+        std::optional<PlotState> pending;
+        {
+            std::scoped_lock lock(g_pendingMutex);
+            pending.swap(g_pending);
+        }
+        if (!pending.has_value()) {
+            return false;
+        }
+        g_live = std::move(*pending);
+        logger::info("Plots: installed loaded state ({} plot(s))", g_live.plots.size());
+        return true;
     }
 
     PlotState& MutableState(const PlotThread::Token&)

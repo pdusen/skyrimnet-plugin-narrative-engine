@@ -47,14 +47,14 @@ namespace NarrativeEngine::PlotModel
         return "unknown";
     }
 
-    std::string_view PlotStateId(PlotState s) noexcept
+    std::string_view PlotStatusId(PlotStatus s) noexcept
     {
         switch (s) {
-        case PlotState::Active:
+        case PlotStatus::Active:
             return "active";
-        case PlotState::Succeeded:
+        case PlotStatus::Succeeded:
             return "succeeded";
-        case PlotState::Failed:
+        case PlotStatus::Failed:
             return "failed";
         }
         return "unknown";
@@ -91,7 +91,7 @@ namespace NarrativeEngine::PlotModel
 
     const Step* Plot::LiveStep() const noexcept
     {
-        if (state != PlotState::Active || cursor >= plan.size()) {
+        if (status != PlotStatus::Active || cursor >= plan.size()) {
             return nullptr;
         }
         const Step& step = plan[cursor];

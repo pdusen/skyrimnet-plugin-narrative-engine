@@ -204,14 +204,14 @@ namespace NarrativeEngine::PlotModel
         [[nodiscard]] float ProgressFraction() const noexcept;
     };
 
-    enum class PlotState : std::uint8_t
+    enum class PlotStatus : std::uint8_t
     {
         Active,
         Succeeded,
         Failed
     };
 
-    [[nodiscard]] std::string_view PlotStateId(PlotState s) noexcept;
+    [[nodiscard]] std::string_view PlotStatusId(PlotStatus s) noexcept;
 
     // Why a plot ended. Kept because "why did that one fail" is the
     // question the dashboard exists to answer after the fact.
@@ -267,7 +267,7 @@ namespace NarrativeEngine::PlotModel
 
         int adaptations = 0;
 
-        PlotState state = PlotState::Active;
+        PlotStatus status = PlotStatus::Active;
         PlotOutcome outcome = PlotOutcome::None;
 
         double bornOnGameDay = 0.0;
@@ -275,7 +275,7 @@ namespace NarrativeEngine::PlotModel
 
         [[nodiscard]] bool IsTerminal() const noexcept
         {
-            return state != PlotState::Active;
+            return status != PlotStatus::Active;
         }
 
         // The live step, or nullptr when the plot is between steps or
