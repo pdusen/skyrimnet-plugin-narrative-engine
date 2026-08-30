@@ -56,10 +56,12 @@ you tune the pacing and the individual beats to your taste.
 
 ## Requirements
 
-**SkyrimNet.** NarrativeEngine is a plugin for SkyrimNet and cannot run without it. Install SkyrimNet first and
-confirm it works on its own — if characters aren't speaking and NPCs aren't remembering conversations, NarrativeEngine
-won't run either. SkyrimNet has its own set of prerequisites (SKSE, Address Library, PapyrusUtil, a configured LLM
-provider, and so on); rather than duplicate that list here, defer to their maintained
+**SkyrimNet, Beta 24 or higher.** NarrativeEngine is a plugin for SkyrimNet and cannot run without it. Beta 24 is a
+hard floor: the gossip system seeds through a filtered memory query that release introduced, and on anything older
+gossip refuses to run and says so in the log. Install SkyrimNet first and confirm it works on its own — if characters
+aren't speaking and NPCs aren't remembering conversations, NarrativeEngine won't run either. SkyrimNet has its own set
+of prerequisites (SKSE, Address Library, PapyrusUtil, a configured LLM provider, and so on); rather than duplicate that
+list here, defer to their maintained
 [System Requirements](https://github.com/MinLL/SkyrimNet-GamePlugin#-system-requirements) section and make sure every
 item there is satisfied before layering NarrativeEngine on top.
 
