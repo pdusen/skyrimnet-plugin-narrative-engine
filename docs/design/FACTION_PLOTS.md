@@ -288,13 +288,16 @@ can disagree.
 A step is not a coin flipped at a deadline. It is a **race between accumulating progress and a running
 clock**, and both sides of that race are fixed when the step is dispatched.
 
-**The budget** is how many ticks the actor gets, and it comes from *circumstance*: chiefly how far they must
-travel to reach the target, plus whatever scale the step type carries inherently. It is deliberately **not** a
-competence figure. A capable actor and a hopeless one sent on the same errand to the same place get the same
-budget; what differs is what they do with it.
+**The budget** is how many ticks the actor gets before the mastermind's window closes. It comes from the step
+type's inherent scale and from how big the job looks — a more important target is worth waiting longer for —
+and from nothing else. It is deliberately **not** a competence figure: a capable actor and a hopeless one sent
+on the same errand get the same budget, and what differs is what they do with it. It is equally deliberately
+blind to **where the actor has to go**, because travel is not time the mastermind grants. It is work the actor
+has to do.
 
-**The threshold** is how much work the step represents — a function of the step type and the target's
-importance.
+**The threshold** is how much work the step represents: the step type's base cost, scaled by the target's
+importance and by **the distance that has to be covered to reach them**. Crossing the province is part of the
+job, not an extension of the deadline.
 
 **Progress accrues per tick, on a roll modified by the actor.** Their relevant skills and attributes (already
 on the `TESNPC`), and their suitability for this kind of step, shape how much ground they cover each tick. The
@@ -317,10 +320,22 @@ Two constraints on the arithmetic:
 
 - **Clamp the per-tick roll at both ends.** It should never be zero on an unblocked tick, and never large
   enough to clear the threshold in one — the latter collapses the model back into the single roll it replaces.
-- **Budget and threshold must be independently derived.** If the budget is computed from the threshold, every
-  step has identical odds and the race is theatre. The budget answers "how long is the trip"; the threshold
-  answers "how hard is the job"; they are allowed to be badly matched, and a badly matched pair is a step the
-  mastermind should not have ordered.
+- **Distance appears on exactly one side of the race, and it is the threshold.** The first implementation had
+  this backwards, and the symptom was bad enough to be worth writing down as a rule rather than a preference.
+  Scaling the *budget* by travel hands a distant actor extra ticks to do an unchanged amount of work, which
+  makes a far errand strictly *easier* than a near one — the reverse of what the term exists to express — and
+  it leaves steps against near targets unwinnable, because their budget shrinks while their threshold does
+  not. Distance is a cost. It belongs on the work side.
+- **The budget is never derived from the threshold as a whole.** If it is, the threshold cancels out of the
+  arithmetic and every step carries identical odds however hard it was supposed to be — the same failure, in a
+  different place, as making the per-tick roll a fraction of the threshold. Sharing the *coarse scale* of the
+  job is intended; sharing the circumstance that makes it risky is not. Concretely: both sides may read the
+  step type and the target's importance; only the threshold may read travel.
+- **A step that cannot be completed is never dispatched.** Badly matched pairs are allowed and meaningful — a
+  far errand against an important target *should* be one the mastermind regrets ordering — but "hard" and
+  "arithmetically impossible" are different things, and in a log the second is indistinguishable from bad
+  luck. A floor under the budget guarantees the threshold is reachable by any actor on a perfect run, whatever
+  the curves are later tuned to.
 
 **Failure must be typed, not just boolean.** "Ran out of time" and "was caught in the act" are different inputs
 to adaptation and produce very different memories — being caught is what puts the mastermind's name in someone

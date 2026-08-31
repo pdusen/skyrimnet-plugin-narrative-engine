@@ -66,7 +66,7 @@ namespace NarrativeEngine::PlotLog
             }
         }
 
-        // Flushed as it is written. From Step 14 a plot tick blocks on
+        // Flushed as it is written. From Step 15 a plot tick blocks on
         // LLM round trips, and buffering would leave the file silent and
         // then bursting, with its tail on a half-written line while it
         // waits. Gossip shipped that mistake once.

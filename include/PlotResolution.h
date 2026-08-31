@@ -35,42 +35,58 @@
 // docs/implementation/PHASE_14_FACTION_PLOTS.md step 6.
 namespace NarrativeEngine::PlotResolution
 {
-    // How many ticks a step of this type gets, given how far its actor
-    // must travel.
+    // How many ticks a step of this type gets before the mastermind's
+    // window closes.
     //
-    // `travelDistanceNorm` is 0 (the actor is already there) to 1 (the
-    // far side of the province). The caller normalises; this function
-    // has no opinion about map units.
+    // The deadline reads the step type's inherent scale and how big the
+    // job looks - a more important target is worth waiting longer for -
+    // and NOTHING ELSE. In particular it does not read travel.
     //
-    // `maxFractionPerTick` is the per-tick progress ceiling, and it is
-    // here because it sets a FLOOR under any winnable budget: no tick may
-    // add more than that share of the threshold, so a step needs at least
-    // ceil(1 / maxFractionPerTick) ticks before success is even
-    // arithmetically possible. A budget below that does not describe a
-    // hard step, it describes an impossible one - and impossible steps
-    // fail silently and look exactly like bad luck.
-    //
-    // Note this is a floor only. A step whose threshold is large relative
-    // to the actor's rate takes far longer than the minimum, which is
-    // where target importance now actually bites.
-    //
-    // This does NOT compromise the budget/threshold independence the
-    // design turns on. The ceiling is a tuning constant, not a property
-    // of the target: SizeBudget still cannot see targetImportance, and
-    // SizeThreshold still cannot see travel.
-    [[nodiscard]] int SizeBudget(PlotModel::StepType type, double travelDistanceNorm, double maxFractionPerTick);
-
-    // The fewest ticks in which a threshold can be reached at all, given
-    // the per-tick ceiling. Exposed so a caller or a probe can assert a
-    // budget is winnable rather than rediscovering the arithmetic.
-    [[nodiscard]] int MinimumViableBudget(double maxFractionPerTick);
-
-    // How much progress a step of this type requires against a target of
-    // this importance.
+    // That is the correction this signature exists to record. Travel used
+    // to scale the budget, which handed a distant actor extra ticks to do
+    // an unchanged amount of work: a far errand came out strictly EASIER
+    // than a near one, and steps against near targets came out unwinnable
+    // because their budget shrank while their threshold did not. Travel
+    // is a cost, so it belongs on the threshold; see SizeThreshold below
+    // and Part 6 of docs/design/FACTION_PLOTS.md.
     //
     // `targetImportance` is 0 (a nobody, a trinket) to 1 (a jarl, an
-    // artefact).
-    [[nodiscard]] float SizeThreshold(PlotModel::StepType type, double targetImportance);
+    // artefact) - the same figure SizeThreshold reads. Both sides scaling
+    // with it is deliberate: importance makes a step LONGER rather than
+    // less likely to succeed, and a longer step is more exposed to the
+    // mishap roll. Travel is what moves the odds.
+    [[nodiscard]] int SizeBudget(PlotModel::StepType type, double targetImportance);
+
+    // The fewest ticks in which this threshold can be reached at all, by
+    // ANY actor, on a perfect roll every tick.
+    //
+    // Two things can make a step arithmetically impossible rather than
+    // merely hard, and a floor is only honest if it accounts for both:
+    // the per-tick ceiling (no tick may add more than `maxFractionPerTick`
+    // of the threshold) and the progress rate itself (no tick may add more
+    // than the top of the rate band). The previous version knew only about
+    // the first, so it returned ceil(1 / maxFractionPerTick) and called
+    // that winnable - which it is not, for any threshold the rate cannot
+    // cover in that many ticks. Step 12's first run dispatched six steps
+    // that could not be completed on a perfect roll; all six timed out,
+    // looking exactly like ordinary bad luck.
+    //
+    // The rate used is the best a WORST-CASE actor could roll, so the
+    // guarantee holds for every actor rather than the one being cast.
+    // Where the ceiling binds this reduces to ceil(1 / maxFractionPerTick)
+    // exactly, so the old guarantee is kept rather than traded away.
+    [[nodiscard]] int MinimumViableBudget(float threshold, double rateMin, double rateMax, double maxFractionPerTick);
+
+    // How much work a step of this type is: its base cost, scaled by how
+    // important the target is and by how far the actor has to go to reach
+    // them. Crossing the province is part of the job, not an extension of
+    // the deadline.
+    //
+    // `targetImportance` is 0 (a nobody, a trinket) to 1 (a jarl, an
+    // artefact). `travelDistanceNorm` is 0 (the actor is already there) to
+    // 1 (the far side of the province); the caller normalises, and this
+    // function has no opinion about map units.
+    [[nodiscard]] float SizeThreshold(PlotModel::StepType type, double targetImportance, double travelDistanceNorm);
 
     // How well an actor suits a KIND of step.
     //

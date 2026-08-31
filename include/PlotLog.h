@@ -43,7 +43,7 @@
 // from a live RE:: pointer. Internally mutex-guarded, so ordering stays
 // consistent even though one worker drives the simulation today.
 //
-// Every line is FLUSHED AS IT IS WRITTEN. From Step 14 a plot tick
+// Every line is FLUSHED AS IT IS WRITTEN. From Step 15 a plot tick
 // blocks on LLM round trips, and anything less than per-line flushing
 // leaves the trace silent for seconds at a time and then arriving in a
 // burst — with the file's tail sitting on a half-written line while it

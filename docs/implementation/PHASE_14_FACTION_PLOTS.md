@@ -11,7 +11,7 @@ playing. **Player delegation (Phase D) is not in this document** — no offer po
 ESP surface. Everything here is C++ plus prompts, observable from the log and the dashboard.
 
 > **Doc status: planned, not built.** No step is checked off. Numbers in the settings table are proposed
-> starting points, not measurements: **Step 9 replaces them** with figures from an offline harness, and Step 20
+> starting points, not measurements: **Step 9 replaces them** with figures from an offline harness, and Step 21
 > checks those against real play. Two design-level questions (the conspicuousness split, and how a step gets
 > caught) are still open in the design doc and are deliberately built behind switches here rather than blocked
 > on.
@@ -94,7 +94,7 @@ In brief:
 
 New `[Plots]` block. `bPlotsEnabled` ships **true**, like `bGossipEnabled`: the simulation is the feature, and
 a background sim nobody has switched on generates nothing to remember. The caveat it inherits from gossip —
-that from Step 17 onward it writes memories the co-save does not roll back — belongs in the INI's own comment,
+that from Step 18 onward it writes memories the co-save does not roll back — belongs in the INI's own comment,
 not in a default that hides the feature.
 
 | Key                            | Proposed default | Meaning                                                        |
@@ -243,7 +243,7 @@ Nothing uses it yet.
 3. The `CancellationToken` / `CancellationHandle` registry, same shape as gossip's. `Stop()` cancels every
    outstanding token **before** joining.
 4. Register `PlotThread::Token` with the `is_worker_token` trait so the blocking
-   `SkyrimNetAPI::SendCustomPromptToLLM` overload accepts it. Nothing calls it until Step 14.
+   `SkyrimNetAPI::SendCustomPromptToLLM` overload accepts it. Nothing calls it until Step 15.
 5. The `[Plots]` block in `Settings`, in `statics/SKSE/Plugins/NarrativeEngine.ini`, and in the INI's
    documented comment block.
 6. `Start()` at `kDataLoaded` beside the other dispatchers; `Stop()` in shutdown after `AsyncDispatch::Stop()`.
@@ -282,7 +282,7 @@ Three throwaway translation units were compiled against the real build flags and
 
 The second is the one that matters: plot code cannot reach the main thread, so the deadlock this design could
 otherwise suffer has no expressible form. Its consequence for Phase C is real and is now written into
-`WorkerToken.h` — the world effects in Step 18 need the main thread, so they cannot be called from plot code
+`WorkerToken.h` — the world effects in Step 19 need the main thread, so they cannot be called from plot code
 and must be marshalled by a `PluginThread::Token` holder.
 
 Two pieces of tooling came out of this and are kept rather than thrown away, because Steps 2 and 15 both need
@@ -385,7 +385,7 @@ The positive half of that pair is there deliberately: without it, the negative p
 gate works" from "I misspelled the function".
 
 The derivation probe checks more than the step asked for, because the extra cases were free once the harness
-existed: every manifest id round-trips through `ParseStepType` (the membership test Step 14's validation will
+existed: every manifest id round-trips through `ParseStepType` (the membership test Step 15's validation will
 rest on), off-manifest ids — including `"Locate"` with the wrong case and `"locate "` with a trailing space —
 are rejected rather than guessed at, a step with no target renders the bare verb rather than a trailing space,
 and `ProgressFraction` returns 0 on an unsized step rather than dividing by zero into the dashboard's progress
@@ -664,7 +664,7 @@ the obvious choice.
 enough to test.
 
 1. A stub plan table — hardcoded objective-plus-ladder shapes exercising every step type and both
-   conspicuousness values. Step 14 deletes it.
+   conspicuousness values. Step 15 deletes it.
 2. Budget sizing from travel distance (via `TravelGraph` / `HoldGrid`) plus the step type's inherent scale.
    Threshold sizing from step type plus target importance. **They must share no input.**
 3. The per-tick progress roll, modified by the actor's relevant skills and attributes and their suitability for
@@ -715,6 +715,14 @@ ceiling is a tuning constant, not a property of the target, so `SizeBudget` stil
 `targetImportance` and `SizeThreshold` still cannot see travel. The probe now sweeps every step type at every
 travel distance and asserts every budget is winnable.
 
+> **Superseded by Step 13 — the paragraph above is wrong where it matters.** `MinimumViableBudget` returns
+> `ceil(1 / rollMaxFraction)`, which only guarantees the *per-tick ceiling* is not what makes a step
+> impossible. It never looks at the progress rate or at the threshold, so it does not deliver the property its
+> name and this write-up both claim, and the probe row below asserting "every budget is winnable" was checking
+> the clamp rather than the race. Step 12's first real run dispatched 6 steps that could not be completed on a
+> perfect roll and 9 more expected to fall short; all 6 timed out. Step 13 replaces both the floor and the
+> travel term.
+
 The probe's own first version was also wrong in an instructive way: it tried to verify "a step that finishes on
 its last tick succeeds" with a one-tick budget, which the ceiling makes impossible by construction. The
 tightest expressible case is a budget of exactly `MinimumViableBudget` with an actor rolling at the top of the
@@ -725,7 +733,7 @@ Probe results, one probe, then deleted:
 | Group           | Asserted                                                                             |
 | --------------- | ------------------------------------------------------------------------------------ |
 | Independence    | travel moves only the budget, importance only the threshold; both deterministic       |
-| Winnability     | every type at every distance gets a budget in which the threshold is reachable        |
+| Winnability     | every type at every distance gets a budget in which the threshold is reachable — **this row is wrong, see Step 13** |
 | Clamps          | over 100,000 rolls across the whole competence range, no roll is 0 and none clears the threshold |
 | Held ticks      | `elapsed` advances, `progress` does not; held to exhaustion fails as a plain TIMEOUT   |
 | Terminal steps  | are not advanced again                                                                |
@@ -1175,7 +1183,7 @@ says whether a step succeeded, timed out or was caught, which are exactly the ou
    and nothing from elsewhere reaches it.
 2. **Gated on `bPlotLogEnabled` alone, never on `bDebugMode`.** The point is a long validation session with a
    quiet main log and a complete plot trace.
-3. **Flushed per line, not per tick.** A plot tick will block on LLM calls from Step 13 onward; anything less
+3. **Flushed per line, not per tick.** A plot tick will block on LLM calls from Step 14 onward; anything less
    than per-line flushing leaves the file silent and then bursting, with its tail sitting on a half-written
    line. Gossip learned this the hard way and the comment in `GossipLog.cpp` says so.
 4. Emitters covering the whole lifecycle, each a single greppable line: `TICK`, `BORN`, `DISPATCH` (with the
@@ -1231,7 +1239,7 @@ That last one is the point of the whole format. A synthetic run is written, the 
 back with `TICK` / `BORN` / `END` noise interleaved, and the counts must match what went in — which is what
 distinguishes a complete record from a sampling of one.
 
-Gated on `bPlotLogEnabled` alone, never `bDebugMode`, and **flushed per line**. From Step 14 a tick blocks on
+Gated on `bPlotLogEnabled` alone, never `bDebugMode`, and **flushed per line**. From Step 15 a tick blocks on
 LLM round trips; buffering would leave the file silent and then bursting, with its tail on a half-written
 line. Gossip shipped that mistake once and the comment in `GossipLog.cpp` says so.
 
@@ -1264,7 +1272,7 @@ Two things about where to stand:
 Note that the standing caveat about wait-driven test runs — that skipping time starves the memory supply and
 decays the candidate pool — **does not apply to Phase A.** That caveat is about subsystems whose input is
 memories generated by play; Phase A has no memory dependency at all, because objectives and plans come from
-the stub table. It starts applying at Step 16, and Step 16 says so.
+the stub table. It starts applying at Step 17, and Step 17 says so.
 
 Run with `bPlotsEnabled=true` and no LLM involvement anywhere, and judge from the Plots tab and the trace:
 
@@ -1288,9 +1296,109 @@ Record findings under this step, including any tuning applied on top of Step 9's
 
 ---
 
+#### Step 13 — Travel as work, and a floor that means what it says
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** A step's difficulty comes from where the actor has to go, not its deadline — and no step is ever
+dispatched that arithmetic has already decided.
+
+Step 12's first run found the race sized backwards. `SizeBudget` scaled the deadline by travel distance and
+`SizeThreshold` did not depend on travel at all, so an errand against a neighbour got **46% fewer ticks to do
+exactly the same amount of work** as the identical errand across the province. Two consequences, both bad:
+
+- **Near targets were unwinnable.** For a strong actor at travel ≤ 0.2, six of the eight step types were
+  impossible or expected to fall short. In the run, 12 of 12 such steps were; at travel 0.8, 3 of 74 were
+  marginal and none impossible.
+- **Distance was a bonus.** A far actor got extra ticks for unchanged work, so casting was quietly rewarded
+  for picking whoever was furthest away — the reverse of the thing the travel term was added to express.
+
+The design has been updated to match ([`FACTION_PLOTS.md` Part 6](../design/FACTION_PLOTS.md)); the
+"independently derived" constraint it used to carry has been replaced by three that say what actually has to
+hold.
+
+1. **Travel moves to the threshold.** `SizeThreshold(type, importance, travel)` returns
+   `base(type) × (1 + importance × 1.5) × (1 + travel × 0.4)`. Crossing the province is part of the job.
+2. **The budget loses travel and keeps scale.** `SizeBudget(type, importance)` returns
+   `base(type) × (1 + importance × 1.5)`. It answers "how long will the mastermind wait", which depends on how
+   big the job looks and not at all on where the actor has to go.
+3. **Base budgets are re-derived against the rate rather than chosen by feel.** Roughly half the base
+   threshold, which is what the observed progress rate covers with margin, then perturbed per type to express
+   inherent time pressure: a `Deliver` has a window, a `Surveil` can run long, `Cover Tracks` is urgent.
+4. **`MinimumViableBudget` is rewritten to do what it always claimed.** It takes the threshold and the rate
+   band, and returns `ceil(threshold / min(bestRateForTheWorstActor, threshold × maxFraction))` — the fewest
+   ticks in which *any* actor could reach the threshold on a perfect run. Where the ceiling binds this reduces
+   exactly to the old `ceil(1 / maxFraction)`, so the guarantee it used to give is kept and the one it only
+   claimed is added. Applied at dispatch, where both sides are known.
+
+Because both sides now scale identically with importance, importance no longer moves the odds — it makes a
+step **longer**, and a longer step is more exposed to the mishap roll. Travel is what moves the odds. That is
+the intended shape: distance is the risk, importance is the duration, and the actor is the rest.
+
+**Verification:** `build.ps1 build` is clean, and a probe over the pure sizing and rolling functions asserts:
+
+1. **Travel raises the threshold and never touches the budget**; importance raises both. The inverse of the
+   old independence probe, and the property whose absence caused this step.
+2. **Nothing is unwinnable.** Every step type × every travel distance × every importance × the worst possible
+   actor gets a budget in which the threshold is reachable on a perfect run. This is the assertion Step 6's
+   probe believed it was making.
+3. **The floor subsumes the old one:** where the per-tick ceiling binds, `MinimumViableBudget` returns
+   `ceil(1 / maxFraction)` exactly.
+4. **A far step is harder than a near one,** for the same type, target and actor — asserted as a strict
+   inequality on the threshold, not a simulated success rate.
+5. **The Monte Carlo distribution is sane** over actor qualities sampled from the Step 12 run rather than a
+   uniform actor who does not exist: overall success between 60% and 75%, and no step type below 20% at any
+   distance.
+
+Re-run `analyze-plot-log.py` against a fresh trace afterwards; its feasibility section reads budget and
+threshold straight off the `DISPATCH` lines, so "0 impossible, 0 expected-short" is the check that this landed
+in the game and not only in the unit test.
+
+Done. `SizeBudget(type, importance)`, `SizeThreshold(type, importance, travel)` and
+`MinimumViableBudget(threshold, rateMin, rateMax, maxFraction)` in `PlotResolution`, with the floor applied at
+dispatch in `PlotTick.cpp` where both sides are known. Build clean, probe passing.
+
+Base budgets, re-derived: `Locate` 5, `Deliver` 3, `Surveil` 6, `Acquire` 7, `Conceal` 4, `Suborn` 9,
+`Sabotage` 7, `Discredit` 9. Travel multiplier **1.4** at full distance, deliberately gentler than the 3.0 it
+used to apply to the budget — as a cost it compounds with importance, and at 3.0 a far errand against anyone
+who mattered was hopeless.
+
+Probe results, one probe, then deleted:
+
+| Group            | Asserted                                                                                     |
+| ---------------- | -------------------------------------------------------------------------------------------- |
+| Travel isolation | `SizeBudget` is identical across every travel distance; importance raises both sides           |
+| Distance costs   | threshold strictly increases with travel, every type × every importance                        |
+| Winnability      | 200 (type × importance × travel) combinations, all reachable by the **worst** actor on a perfect run |
+| Floor subsumption| where the per-tick ceiling binds, the floor is exactly `ceil(1 / maxFraction)` — the old value  |
+| Floor bites      | where the rate binds it exceeds that; 120 work at 3.25/tick best-case returns 37 ticks          |
+| Distribution     | 85.2% of steps complete within budget before the mishap roll; hardest cells `sabotage@1.0` 41%, `conceal@1.0` 43% |
+
+The distribution figure is the one to read against Step 9's numbers with care: the probe does not model
+mishaps, so 85.2% is the pure race. Applying the observed ~17% catch rate puts it near 69 / 14 / 17, which is
+the band Step 6 was aiming at and the band the offline sweep predicted.
+
+Design notes worth keeping:
+
+- **Importance stretches a step; travel risks it.** Both sides scale with importance at the same rate, so a
+  more important target does not make a step likelier to fail — it makes it *longer*, and a longer step is
+  more exposed to the mishap roll. Distance is the only circumstance that moves the odds directly, which is
+  what makes "who is nearest" matter to casting without a rule saying so. That is the property the old
+  arrangement had exactly backwards.
+- **The floor is a backstop, not a crutch.** With these curves it never engages: the base budgets already
+  cover their thresholds. That is the intended relationship — if the floor were doing routine work it would
+  mean the curves were wrong again, so it is worth checking that it stays quiet after any future tuning.
+- **The floor reads the worst possible actor, never the one being cast.** A floor that read the actor would
+  make the budget a competence figure, which the design forbids for good reason: a hopeless actor would be
+  handed a longer deadline precisely because they are hopeless.
+
+---
+
 ### Phase B — LLM authoring
 
-#### Step 13 — Target menus and the item pool
+#### Step 14 — Target menus and the item pool
 
 - [ ] Complete
 
@@ -1313,7 +1421,7 @@ fabricated masterminds in different holds and asserts the candidate sets differ 
 
 ---
 
-#### Step 14 — The birth prompt and its response handling
+#### Step 15 — The birth prompt and its response handling
 
 - [ ] Complete
 
@@ -1347,11 +1455,11 @@ fabricated masterminds in different holds and asserts the candidate sets differ 
 | smart quotes, em-dashes, NBSP, accented Latin | plot text that is pure ASCII after the sanitizer     |
 | empty plan                | rejection                                                            |
 
-Whether the *content* is any good is Step 16's business; this step proves it cannot corrupt state.
+Whether the *content* is any good is Step 17's business; this step proves it cannot corrupt state.
 
 ---
 
-#### Step 15 — Adaptation
+#### Step 16 — Adaptation
 
 - [ ] Complete
 
@@ -1373,7 +1481,7 @@ terminates at `iPlotMaxAdaptations` rather than looping.
 
 ---
 
-#### Step 16 — Phase B in-game validation
+#### Step 17 — Phase B in-game validation
 
 - [ ] Complete
 
@@ -1397,7 +1505,7 @@ Record findings under this step.
 
 ### Phase C — memories and world effects
 
-#### Step 17 — The memory calls
+#### Step 18 — The memory calls
 
 - [ ] Complete
 
@@ -1423,7 +1531,7 @@ who is not in the step is rejected rather than written to whoever it named.
 
 ---
 
-#### Step 18 — World effects
+#### Step 19 — World effects
 
 - [ ] Complete
 
@@ -1451,7 +1559,7 @@ called with a `PlotThread::Token` — they require main — then is deleted.
 
 ---
 
-#### Step 19 — Gossip seeding
+#### Step 20 — Gossip seeding
 
 - [ ] Complete
 
@@ -1470,7 +1578,7 @@ from the plot subsystem's own candidate set. The tag predicates are pure and thi
 
 ---
 
-#### Step 20 — Phase C in-game validation and call-volume measurement
+#### Step 21 — Phase C in-game validation and call-volume measurement
 
 - [ ] Complete
 
@@ -1516,7 +1624,7 @@ This phase is complete when:
 - A failed step stays in its position in the chain with the plot continuing past it, and an adaptation does not
   renumber the nodes behind the cursor.
 - Every free-form LLM string reaching state, a memory, or the log has passed through `LLMTextSanitizer`.
-- No engine state outside Step 18's allow-list is mutated.
+- No engine state outside Step 19's allow-list is mutated.
 - A caught failure is observed propagating as a rumor.
 
 ---

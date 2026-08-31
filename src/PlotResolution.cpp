@@ -20,47 +20,59 @@ namespace NarrativeEngine::PlotResolution
             return static_cast<double>(NextRandom(state) >> 11) * (1.0 / 9007199254740992.0);
         }
 
-        // How long this KIND of step takes before travel is considered.
-        // A stakeout is inherently slower than handing something over.
+        // How long the mastermind waits on this KIND of step, before the
+        // target's importance stretches it. A stakeout is inherently
+        // slower than handing something over.
         //
-        // Tuned by the Step 9 harness, not chosen by feel. The values it
-        // started from produced 6.8% timeouts against 18.5% caught -- the
-        // clock almost never ran out, so competence barely mattered and
-        // failure was nearly all mishap. Tightening them by a fifth puts
-        // the three outcomes at roughly 69 / 13 / 18, which is the band
-        // the step asks for.
+        // Re-derived in Step 13 against the progress rate rather than
+        // chosen by feel, because the previous values were sized to be
+        // stretched by travel and stopped making sense once travel moved
+        // to the threshold. The base is roughly half the base threshold --
+        // what the observed rate covers with margin -- then perturbed per
+        // type to express inherent time pressure rather than volume of
+        // work: a Deliver has a window and a Surveil can run long, at the
+        // same ratio of work to time they would otherwise get.
         //
-        // Several land below MinimumViableBudget and are floored there.
-        // That is correct rather than a rounding accident: a short errand
-        // is short, and the floor is what stops "short" becoming
-        // "impossible".
+        // Sampled against the actor qualities the Step 12 run actually
+        // cast, these put the three outcomes at roughly 69 / 14 / 17.
         int BaseBudgetTicks(PlotModel::StepType type)
         {
             switch (type) {
             case PlotModel::StepType::Deliver:
-                return 2;
+                return 3;
             case PlotModel::StepType::Locate:
-                return 2;
+                return 5;
             case PlotModel::StepType::Acquire:
-                return 3;
+                return 7;
             case PlotModel::StepType::Conceal:
-                return 2;
-            case PlotModel::StepType::Suborn:
                 return 4;
+            case PlotModel::StepType::Suborn:
+                return 9;
             case PlotModel::StepType::Sabotage:
-                return 3;
+                return 7;
             case PlotModel::StepType::Discredit:
-                return 5;
+                return 9;
             case PlotModel::StepType::Surveil:
-                return 5;
+                return 6;
             case PlotModel::StepType::Count:
                 break;
             }
             return 3;
         }
 
-        // How much work this KIND of step is before the target is
-        // considered.
+        // A jarl is roughly two and a half times the work of a nobody,
+        // and read by BOTH sizing functions - see SizeBudget on why that
+        // is deliberate rather than the coupling the design forbids.
+        constexpr double kMaxImportanceMultiplier = 2.5;
+
+        // Crossing the province adds about two fifths again to the work.
+        // Deliberately gentler than the 3x it used to apply to the budget:
+        // as a cost rather than a grant it compounds with importance, and
+        // at 3x a far errand against anyone who mattered was hopeless.
+        constexpr double kMaxTravelWorkMultiplier = 1.4;
+
+        // How much work this KIND of step is before the target and the
+        // trip are considered.
         float BaseThreshold(PlotModel::StepType type)
         {
             switch (type) {
@@ -87,37 +99,55 @@ namespace NarrativeEngine::PlotResolution
         }
     } // namespace
 
-    int MinimumViableBudget(double maxFractionPerTick)
+    int MinimumViableBudget(float threshold, double rateMin, double rateMax, double maxFractionPerTick)
     {
+        const double work = std::max(0.0001, static_cast<double>(threshold));
         const double ceiling = std::clamp(maxFractionPerTick, 0.0001, 1.0);
-        return static_cast<int>(std::ceil(1.0 / ceiling));
+
+        // The most a worst-case actor can add on a perfect roll. Quality
+        // zero, so this is the bound that holds for EVERY actor rather
+        // than for the one about to be cast - the budget must not be a
+        // competence figure, and a floor that read the actor would make
+        // it one.
+        const double lo = std::max(0.0, rateMin);
+        const double hi = std::max(lo, rateMax);
+        const double bestRate = lo + 0.5 * (hi - lo);
+
+        // Both bounds bind. Whichever is smaller decides the floor: where
+        // the ceiling is the tighter of the two this reduces to
+        // ceil(1 / maxFractionPerTick), which is exactly what this
+        // function used to return unconditionally.
+        const double perTick = std::max(0.0001, std::min(bestRate, work * ceiling));
+        return std::max(1, static_cast<int>(std::ceil(work / perTick)));
     }
 
-    int SizeBudget(PlotModel::StepType type, double travelDistanceNorm, double maxFractionPerTick)
-    {
-        const double distance = std::clamp(travelDistanceNorm, 0.0, 1.0);
-        // Crossing the province roughly triples the time a step takes.
-        // Travel is the only thing that stretches a budget, which is
-        // what makes "who is nearest" matter to casting without any rule
-        // saying so.
-        constexpr double kMaxTravelMultiplier = 3.0;
-        const double multiplier = 1.0 + distance * (kMaxTravelMultiplier - 1.0);
-        const auto ticks = static_cast<int>(static_cast<double>(BaseBudgetTicks(type)) * multiplier + 0.5);
-
-        // Floored at the fewest ticks in which the threshold could be
-        // reached at all. Below that a step is not hard, it is
-        // unwinnable - and an unwinnable step fails silently and looks
-        // exactly like bad luck, which is the worst way to be wrong.
-        return std::max(MinimumViableBudget(maxFractionPerTick), ticks);
-    }
-
-    float SizeThreshold(PlotModel::StepType type, double targetImportance)
+    int SizeBudget(PlotModel::StepType type, double targetImportance)
     {
         const double importance = std::clamp(targetImportance, 0.0, 1.0);
-        // A jarl is roughly two and a half times the work of a nobody.
-        constexpr double kMaxImportanceMultiplier = 2.5;
+        // A bigger job is worth waiting longer for, at the same rate the
+        // threshold grows - so importance stretches a step rather than
+        // making it more likely to fail. What it costs is exposure: more
+        // ticks is more mishap rolls.
         const double multiplier = 1.0 + importance * (kMaxImportanceMultiplier - 1.0);
-        return static_cast<float>(static_cast<double>(BaseThreshold(type)) * multiplier);
+        return static_cast<int>(static_cast<double>(BaseBudgetTicks(type)) * multiplier + 0.5);
+    }
+
+    float SizeThreshold(PlotModel::StepType type, double targetImportance, double travelDistanceNorm)
+    {
+        const double importance = std::clamp(targetImportance, 0.0, 1.0);
+        const double distance = std::clamp(travelDistanceNorm, 0.0, 1.0);
+
+        // A jarl is roughly two and a half times the work of a nobody.
+        const double byImportance = 1.0 + importance * (kMaxImportanceMultiplier - 1.0);
+
+        // And crossing the province adds around two fifths again on top,
+        // because the trip is part of the job. This is the term that used
+        // to scale the BUDGET, where it made distance a reward; on this
+        // side it is what makes "who is nearest" matter to casting without
+        // any rule having to say so.
+        const double byTravel = 1.0 + distance * (kMaxTravelWorkMultiplier - 1.0);
+
+        return static_cast<float>(static_cast<double>(BaseThreshold(type)) * byImportance * byTravel);
     }
 
     double Suitability(PlotModel::StepType type, double speech, double sneak, double pickpocket)

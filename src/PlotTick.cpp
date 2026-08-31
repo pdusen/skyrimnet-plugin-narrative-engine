@@ -199,11 +199,17 @@ namespace NarrativeEngine::PlotTick
             step.actorName = actor != nullptr ? actor->name : std::string{};
             step.state = PlotModel::StepState::InProgress;
 
-            const double cfgRollMax = static_cast<double>(Settings::Get().plotProgressMaxFraction);
+            const auto& cfg = Settings::Get();
             const double travel = TravelDistanceNorm(actor, target);
             const double importance = TargetImportance(target);
-            step.budget = PlotResolution::SizeBudget(step.type, travel, cfgRollMax);
-            step.threshold = PlotResolution::SizeThreshold(step.type, importance);
+
+            // Threshold first: the floor under the budget is a function of
+            // it, so the deadline cannot be settled until the work is.
+            step.threshold = PlotResolution::SizeThreshold(step.type, importance, travel);
+            step.budget = std::max(
+                PlotResolution::SizeBudget(step.type, importance),
+                PlotResolution::MinimumViableBudget(
+                    step.threshold, cfg.plotProgressRateMin, cfg.plotProgressRateMax, cfg.plotProgressMaxFraction));
             step.sizingTravel = static_cast<float>(travel);
             step.sizingImportance = static_cast<float>(importance);
             step.sizingCompetence = actor != nullptr ? static_cast<float>(actor->skills.competence) : 0.5f;
@@ -232,7 +238,7 @@ namespace NarrativeEngine::PlotTick
         void AssignTargets(PlotState& state, PlotModel::Plot& plot, const PlotCasting::Population& population);
 
         // Stub adaptation: keep the objective, rebuild the tail from a
-        // different ladder. Step 12 replaces this with the LLM call; what
+        // different ladder. Step 16 replaces this with the LLM call; what
         // must survive that replacement is the shape — the objective is
         // never rewritten, and the cap always terminates.
         bool AdaptPlot(PlotState& state, PlotModel::Plot& plot, double gameDay)
@@ -469,7 +475,7 @@ namespace NarrativeEngine::PlotTick
         // before the publish. A tick that keeps running past a load
         // writes memories into SkyrimNet's database — which lives
         // outside our co-save and is not rolled back by loading an
-        // earlier game — and from step 15 will mutate inventories and
+        // earlier game — and from step 16 will mutate inventories and
         // relationship ranks too. Discarding results at the end would
         // disown those writes without preventing them.
         void RunTick(const PlotThread::Token& pt, const PlotDispatch::CancellationHandle& cancel, double asOfGameHours)
