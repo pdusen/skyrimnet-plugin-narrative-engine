@@ -79,8 +79,16 @@ namespace NarrativeEngine::PlotFactionRoster
         // a newer build still works on an older one.
         bool IsKnownKey(std::string_view key)
         {
-            static constexpr std::string_view kKnown[] = {
-                "Enabled", "Faction", "DisplayName", "RankMethod", "MaxRank", "MarkerFaction", "Member"};
+            static constexpr std::string_view kKnown[] = {"Enabled",
+                                                          "Faction",
+                                                          "DisplayName",
+                                                          "RankMethod",
+                                                          "Membership",
+                                                          "MaxRank",
+                                                          "MarkerFaction",
+                                                          "OfficeFaction",
+                                                          "OfficeCandidate",
+                                                          "Member"};
             return std::any_of(
                 std::begin(kKnown), std::end(kKnown), [key](std::string_view k) { return EqualsNoCase(k, key); });
         }
@@ -117,7 +125,7 @@ namespace NarrativeEngine::PlotFactionRoster
 
             const auto enabled = ValueFor(ini, section.pItem, "Enabled");
             if (!enabled.empty() && (EqualsNoCase(enabled, "false") || enabled == "0")) {
-                report.warnings.push_back(entry.id + ": disabled");
+                report.disabled.push_back(entry.id);
                 continue;
             }
 
@@ -158,6 +166,21 @@ namespace NarrativeEngine::PlotFactionRoster
                 continue;
             }
 
+            // Optional, and the default is the historical behaviour, so a
+            // file written before this key existed keeps working.
+            const auto membership = ValueFor(ini, section.pItem, "Membership");
+            if (!membership.empty()) {
+                if (EqualsNoCase(membership, "Faction")) {
+                    entry.membership = Membership::Faction;
+                } else if (EqualsNoCase(membership, "Ranked")) {
+                    entry.membership = Membership::Ranked;
+                } else {
+                    report.skipped.push_back(entry.id + ": Membership '" + membership
+                                             + "' is not one of Faction, Ranked");
+                    continue;
+                }
+            }
+
             if (entry.method == RankMethod::Rank) {
                 const auto maxRank = ValueFor(ini, section.pItem, "MaxRank");
                 if (maxRank.empty()) {
@@ -176,6 +199,20 @@ namespace NarrativeEngine::PlotFactionRoster
                     report.skipped.push_back(entry.id + ": RankMethod = Marker needs at least one MarkerFaction");
                     continue;
                 }
+            }
+
+            // The tenure gate. Both keys or neither: an office faction
+            // with nobody to apply it to would silently do nothing, and
+            // candidates with no office to hold would suspend everyone
+            // they name forever. Either alone is a mistake worth naming
+            // rather than a configuration worth honouring.
+            entry.officeFactionEditorId = ValueFor(ini, section.pItem, "OfficeFaction");
+            entry.officeCandidateEditorIds = ValuesFor(ini, section.pItem, "OfficeCandidate");
+            if (entry.officeFactionEditorId.empty() != entry.officeCandidateEditorIds.empty()) {
+                report.skipped.push_back(entry.id
+                                         + ": OfficeFaction and OfficeCandidate go together; "
+                                           "one without the other describes no gate");
+                continue;
             }
 
             // Overrides are valid under every method. A malformed line

@@ -56,20 +56,47 @@ namespace NarrativeEngine::PlotPopulation
             return nullptr;
         }
 
-        std::size_t NodeForSettlement(RE::FormID settlement)
+        // Split out so a failure says WHICH stage failed. The two are
+        // very different problems -- a location with no map marker
+        // anywhere up its parent chain is authored data we cannot
+        // help, while every location failing at once is a timing bug
+        // in when we asked.
+        enum class PlacementFailure : std::uint8_t
         {
+            None,
+            NoMarker,
+            NoWorldSpace,
+            NoNode
+        };
+
+        std::size_t NodeForSettlement(RE::FormID settlement, PlacementFailure& why)
+        {
+            why = PlacementFailure::None;
             auto* marker = MarkerFor(settlement);
             if (marker == nullptr) {
+                why = PlacementFailure::NoMarker;
                 return PlotCasting::kNoRoadNode;
             }
-            auto* cell = marker->GetParentCell();
-            auto* worldSpace = cell != nullptr ? cell->GetRuntimeData().worldSpace : nullptr;
+            // GetWorldspace(), not GetParentCell()->worldSpace.
+            //
+            // `parentCell` is a plain field that the engine fills in when
+            // a reference is attached to a loaded cell, so for a map
+            // marker in a worldspace nobody has visited it is simply
+            // null -- which is 53 of Skyrim's 61 settlements at the
+            // moment we ask. GetWorldspace() is the engine's own
+            // accessor and answers for an unloaded reference too.
+            auto* worldSpace = marker->GetWorldspace();
             if (worldSpace == nullptr) {
+                why = PlacementFailure::NoWorldSpace;
                 return PlotCasting::kNoRoadNode;
             }
             const auto position = marker->GetPosition();
             const auto node = TravelGraph::FindNearestNode(worldSpace->GetFormID(), position.x, position.y);
-            return node == TravelGraph::kInvalidNode ? PlotCasting::kNoRoadNode : node;
+            if (node == TravelGraph::kInvalidNode) {
+                why = PlacementFailure::NoNode;
+                return PlotCasting::kNoRoadNode;
+            }
+            return node;
         }
 
         // Resolve every member onto the graph, then measure every pair.
@@ -90,6 +117,9 @@ namespace NarrativeEngine::PlotPopulation
             std::unordered_map<RE::FormID, std::size_t> settlementNode;
             std::unordered_map<std::size_t, std::size_t> residents;
             std::size_t placed = 0;
+            std::size_t noMarker = 0;
+            std::size_t noWorldSpace = 0;
+            std::size_t noNode = 0;
             for (auto& member : g_population.members) {
                 const auto* participant = GossipGraph::Find(member.npc);
                 if (participant == nullptr || participant->settlement == 0) {
@@ -97,8 +127,23 @@ namespace NarrativeEngine::PlotPopulation
                 }
                 auto it = settlementNode.find(participant->settlement);
                 if (it == settlementNode.end()) {
-                    it = settlementNode.emplace(participant->settlement, NodeForSettlement(participant->settlement))
-                             .first;
+                    auto why = PlacementFailure::None;
+                    it =
+                        settlementNode.emplace(participant->settlement, NodeForSettlement(participant->settlement, why))
+                            .first;
+                    switch (why) {
+                    case PlacementFailure::NoMarker:
+                        ++noMarker;
+                        break;
+                    case PlacementFailure::NoWorldSpace:
+                        ++noWorldSpace;
+                        break;
+                    case PlacementFailure::NoNode:
+                        ++noNode;
+                        break;
+                    case PlacementFailure::None:
+                        break;
+                    }
                 }
                 member.roadNode = it->second;
                 if (member.roadNode != PlotCasting::kNoRoadNode) {
@@ -110,8 +155,22 @@ namespace NarrativeEngine::PlotPopulation
 
             g_slots = g_nodeSlot.size();
             if (g_slots == 0) {
-                logger::info("PlotPopulation: no settlement resolved onto the road graph; using the hold proxy.");
+                logger::warn("PlotPopulation: no settlement resolved onto the road graph, so travel falls back to "
+                             "the hold proxy. Of {} settlement(s): {} had no map marker, {} had a marker in no "
+                             "worldspace, {} found no node near it.",
+                             settlementNode.size(),
+                             noMarker,
+                             noWorldSpace,
+                             noNode);
                 return;
+            }
+            if (noMarker + noWorldSpace + noNode > 0) {
+                logger::info("PlotPopulation: {} settlement(s) stayed off the road graph ({} no marker, {} no "
+                             "worldspace, {} no node); their residents use the hold proxy.",
+                             noMarker + noWorldSpace + noNode,
+                             noMarker,
+                             noWorldSpace,
+                             noNode);
             }
 
             // One Dijkstra per occupied node, not per pair.
@@ -347,7 +406,19 @@ namespace NarrativeEngine::PlotPopulation
                 // Imperial Legion has 288 members and the filter stops
                 // at 40.
                 for (const auto& entry : PlotFactionRoster::Entries()) {
-                    if (!IsMemberOf(npcForm, entry.faction)) {
+                    // Under Ranked, being NAMED is itself a way in. The
+                    // ladder is the membership there, so a Member line for
+                    // someone the primary faction misses should mean what
+                    // it says rather than silently doing nothing --
+                    // Whiterun's replacement steward is a Companions
+                    // servant who is in no Whiterun faction at all.
+                    const bool named = entry.membership == PlotFactionRoster::Membership::Ranked
+                                       && std::any_of(entry.overrides.begin(),
+                                                      entry.overrides.end(),
+                                                      [npcId](const PlotFactionRoster::Override& o) {
+                                                          return o.npc == npcId && o.rank > 0;
+                                                      });
+                    if (!named && !IsMemberOf(npcForm, entry.faction)) {
                         continue;
                     }
                     const double standing = PlotFactionRoster::StandingOf(npcId, entry.faction);
@@ -355,6 +426,26 @@ namespace NarrativeEngine::PlotPopulation
                         member.factions.begin(),
                         member.factions.end(),
                         [&entry](const PlotCasting::FactionStanding& f) { return f.faction == entry.faction; });
+
+                    // Membership = Ranked keeps only the people the ladder
+                    // places. The primary faction is then a SCOPE rather
+                    // than a roll: a hold court reads province-wide job
+                    // factions through the hold's own crime faction, and
+                    // the hold's other 90 residents are not courtiers.
+                    //
+                    // The erase matters as much as the skip. Gossip's
+                    // size filter admits any faction under 40 members, so
+                    // four of the nine hold crime factions arrive here
+                    // ALREADY in the list as a peer entry; leaving that
+                    // standing would keep every Falkreath farmer in the
+                    // court while every Whiterun one was excluded.
+                    if (entry.membership == PlotFactionRoster::Membership::Ranked && standing <= 0.0) {
+                        if (existing != member.factions.end()) {
+                            member.factions.erase(existing);
+                        }
+                        continue;
+                    }
+
                     if (existing != member.factions.end()) {
                         existing->standing = standing;
                         existing->rostered = true;
@@ -374,13 +465,51 @@ namespace NarrativeEngine::PlotPopulation
             g_population.members.push_back(std::move(member));
         }
 
-        BuildRoadTable();
-
         g_ready = true;
         logger::info("PlotPopulation: {} member(s), {} in an admitted faction, {} admitted faction(s)",
                      g_population.members.size(),
                      withFactions,
                      factionForms.size());
+    }
+
+    PlotCasting::SeatedPredicate SeatedPredicate()
+    {
+        // Nothing gated, nothing to ask. An EMPTY predicate rather than
+        // one that always says yes: casting reads that as "everything
+        // counts" and skips the call, which is every roster listing no
+        // court at all.
+        const auto& entries = PlotFactionRoster::Entries();
+        const bool anyGate = std::any_of(entries.begin(), entries.end(), [](const PlotFactionRoster::Entry& e) {
+            return e.officeFaction != 0 && !e.officeCandidates.empty();
+        });
+        if (!anyGate) {
+            return {};
+        }
+
+        // Asked live, per membership, at the moment casting reads it.
+        // Safe off the plot worker for the reasons IsSeated documents,
+        // and more current than any snapshot could be: there is no
+        // window between taking the answer and using it.
+        return [](RE::FormID npc, RE::FormID faction) {
+            const auto* entry = PlotFactionRoster::Find(faction);
+            return entry == nullptr || PlotFactionRoster::IsSeated(npc, *entry);
+        };
+    }
+
+    void OnSessionStart()
+    {
+        if (!g_ready) {
+            return;
+        }
+        // Already placed: the graph and the markers are both static, so
+        // a second session has nothing new to learn. A session that
+        // placed NOBODY falls through and tries again, which is what
+        // makes a bad first attempt cost one load rather than the whole
+        // playthrough.
+        if (g_slots > 0) {
+            return;
+        }
+        BuildRoadTable();
     }
 
     bool IsReady()

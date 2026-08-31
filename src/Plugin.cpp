@@ -315,6 +315,10 @@ namespace NarrativeEngine
                 GossipClaims::OnRevert();
                 PlotDispatch::CancelAll();
                 PlotSerialize::OnRevert();
+                // Before PlotTick::OnSessionStart, which re-bases the
+                // schedule: the first tick after it should already have
+                // real travel distances rather than the hold proxy.
+                PlotPopulation::OnSessionStart();
                 PlotTick::OnSessionStart();
                 PlotLog::OnSessionStart();
                 PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
@@ -386,6 +390,13 @@ namespace NarrativeEngine
                 // Seed TravelEventLog's baseline snapshot too, for the
                 // same reason.
                 TravelEventLog::OnPostLoadGame();
+                // Place the population on the road graph now that a
+                // game exists. kPreLoadGame above re-bases the plot
+                // schedule; this is the other half, and it has to be
+                // here rather than there because the map-marker
+                // references it reads do not resolve until a save is
+                // actually loaded.
+                PlotPopulation::OnSessionStart();
                 // Rotate + open the history log for the loaded
                 // session BEFORE Tick starts polling.
                 EventHistoryWriter::OnSessionStart();

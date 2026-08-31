@@ -57,6 +57,18 @@ namespace NarrativeEngine::PlotCasting
             return 0;
         }
 
+        // Does this membership count right now?
+        //
+        // One function so the three places that read standing cannot
+        // drift apart: the weighting, the mastermind's own standings,
+        // and the subordinate scan. An empty predicate means yes, which
+        // keeps every probe that drives the pure arithmetic working
+        // unchanged.
+        bool Counts(const SeatedPredicate& seated, RE::FormID npc, const FactionStanding& f)
+        {
+            return !seated || seated(npc, f.faction);
+        }
+
         // How much weight an NPC's standing earns them as a mastermind.
         //
         // Three tiers, and the gap between them is deliberately modest:
@@ -76,7 +88,7 @@ namespace NarrativeEngine::PlotCasting
         // SelectActor, which takes the UNION across factions — "how much
         // can this person command" and "who can they command" are
         // different questions and must not be collapsed into one rule.
-        double MastermindWeight(const Member& member)
+        double MastermindWeight(const Member& member, const SeatedPredicate& seated)
         {
             // Independents are eligible. This is the floor everyone
             // starts from, and it is what makes a Riverwood farmer's
@@ -86,23 +98,30 @@ namespace NarrativeEngine::PlotCasting
             constexpr double kPerStanding = 3.0;
 
             double weight = kBase;
-            if (!member.factions.empty()) {
-                weight += kMembershipBonus;
-            }
-
             double best = 0.0;
+            bool belongs = false;
             for (const auto& f : member.factions) {
+                if (!Counts(seated, member.npc, f)) {
+                    continue;
+                }
+                belongs = true;
                 best = std::max(best, f.standing);
+            }
+            if (belongs) {
+                weight += kMembershipBonus;
             }
             return weight + kPerStanding * std::clamp(best, 0.0, 1.0);
         }
 
         // The mastermind's standing in each faction they belong to,
         // for the subordinate test.
-        std::unordered_map<RE::FormID, double> StandingsOf(const Member& member)
+        std::unordered_map<RE::FormID, double> StandingsOf(const Member& member, const SeatedPredicate& seated)
         {
             std::unordered_map<RE::FormID, double> standings;
             for (const auto& f : member.factions) {
+                if (!Counts(seated, member.npc, f)) {
+                    continue;
+                }
                 auto& slot = standings[f.faction];
                 slot = std::max(slot, f.standing);
             }
@@ -220,6 +239,7 @@ namespace NarrativeEngine::PlotCasting
                             const OccupancyTable& occupancy,
                             double gameDay,
                             const AlivePredicate& alive,
+                            const SeatedPredicate& seated,
                             std::uint64_t& rng)
     {
         Result result;
@@ -229,7 +249,7 @@ namespace NarrativeEngine::PlotCasting
             Candidate candidate;
             candidate.npc = member.npc;
             candidate.reject = Screen(occupancy, member.npc, PlotModel::Role::Mastermind, gameDay, alive);
-            candidate.weight = candidate.reject == Reject::None ? MastermindWeight(member) : 0.0;
+            candidate.weight = candidate.reject == Reject::None ? MastermindWeight(member, seated) : 0.0;
             result.considered.push_back(candidate);
         }
 
@@ -242,6 +262,7 @@ namespace NarrativeEngine::PlotCasting
                        const OccupancyTable& occupancy,
                        double gameDay,
                        const AlivePredicate& alive,
+                       const SeatedPredicate& seated,
                        std::uint64_t& rng)
     {
         Result result;
@@ -254,7 +275,7 @@ namespace NarrativeEngine::PlotCasting
         // mastermind in several may draw subordinates from ANY of them:
         // the ladder pools candidates across all rather than picking one
         // faction first.
-        const auto bossStandings = StandingsOf(*boss);
+        const auto bossStandings = StandingsOf(*boss, seated);
 
         // Walk the ladder rung by rung and stop at the first rung with
         // anyone on it. Drawing across all rungs at once would let a
@@ -283,6 +304,9 @@ namespace NarrativeEngine::PlotCasting
                 // peers, exactly as intended, with no special case.
                 bool subordinate = false;
                 for (const auto& f : member.factions) {
+                    if (!Counts(seated, member.npc, f)) {
+                        continue;
+                    }
                     const auto it = bossStandings.find(f.faction);
                     if (it != bossStandings.end() && f.standing < it->second) {
                         subordinate = true;

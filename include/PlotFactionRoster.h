@@ -49,6 +49,31 @@ namespace NarrativeEngine::PlotFactionRoster
 
     [[nodiscard]] std::string_view MethodId(RankMethod m) noexcept;
 
+    // Who counts as a member of a rostered faction.
+    //
+    // The default is everyone in the primary faction, which is right for
+    // an organisation that has a faction of its own -- the Companions
+    // are exactly the members of CompanionsFaction.
+    //
+    // `Ranked` exists because a hold court has no faction of its own.
+    // The only vanilla faction holding a jarl, their steward, their
+    // housecarl, their court wizard AND their guards is the hold's crime
+    // faction, which is every single person who lives in the hold. Under
+    // `Faction` that would enrol every farmer in Whiterun Hold as a
+    // member of the court -- false on its face, and it would hand the
+    // mastermind weighting a membership bonus that everyone in Skyrim
+    // earns, flattening the distinction it exists to draw. `Ranked`
+    // narrows membership to the people the ladder actually places, and
+    // uses the primary faction only to scope it: "the jarl OF THIS
+    // HOLD", out of a province-wide JobJarlFaction.
+    enum class Membership : std::uint8_t
+    {
+        Faction,
+        Ranked
+    };
+
+    [[nodiscard]] std::string_view MembershipId(Membership m) noexcept;
+
     struct Override
     {
         RE::FormID npc = 0;
@@ -61,12 +86,31 @@ namespace NarrativeEngine::PlotFactionRoster
         std::string displayName; // for the dashboard and LLM context
         RE::FormID faction = 0;
         RankMethod method = RankMethod::Explicit;
+        Membership membership = Membership::Faction;
 
         // Rank: the top of the ladder, so standing normalises against it.
         int maxRank = 1;
 
         // Marker: descending seniority, most senior first.
         std::vector<RE::FormID> markers;
+
+        // The tenure gate. Zero when the section declares none.
+        //
+        // `officeFaction` is the faction whose CURRENT membership means
+        // holding the post; `officeCandidates` are the people the gate
+        // is about. A member of a candidate faction who is not in the
+        // office faction has their standing suspended -- they are
+        // treated as though the section did not list them -- and anyone
+        // in no candidate faction is untouched.
+        //
+        // This is the only part of a roster entry that is not a
+        // statement about authored data, and it is why the standing is
+        // re-read per tick rather than baked at load. In Skyrim it maps
+        // onto GovRuling / GovImperial / GovSons, which CWGovernmentScript
+        // maintains at runtime with AddToFaction and RemoveFromFaction as
+        // holds change hands.
+        RE::FormID officeFaction = 0;
+        std::vector<RE::FormID> officeCandidates;
 
         // Valid under EVERY method, layered over whatever the method
         // derived. This is what lets a Rank faction correct one NPC the
@@ -102,6 +146,33 @@ namespace NarrativeEngine::PlotFactionRoster
     // does not have.
     [[nodiscard]] double StandingOf(RE::FormID npc, RE::FormID faction);
 
+    // Does `npc` currently hold the post `entry`'s ladder claims for
+    // them? Safe from any thread, and called straight from the plot
+    // worker.
+    //
+    // Every step is a read of the same kind GossipSim already documented
+    // as needing no main thread: the participant lookup is a map built
+    // at load and const afterwards, `LookupByID` takes the engine's own
+    // read-write lock, and `IsInFaction` is a short scan of two arrays
+    // that mutates nothing. Nothing here is more volatile than the
+    // 3D-loaded state PlotPopulation::IsNearPlayer reads off-thread on
+    // every conspicuous step -- that one changes as the player walks
+    // around, where faction membership changes a handful of times in a
+    // playthrough.
+    //
+    // True for everyone when the entry declares no gate, and for anyone
+    // the gate does not cover. Otherwise it is exactly the test
+    // CWGovernmentScript itself makes: in a candidate faction, and in the
+    // office faction right now.
+    //
+    // Read through the ACTOR, not the TESNPC, and that distinction is
+    // the whole point. `AddToFaction` and `RemoveFromFaction` write to
+    // ExtraFactionChanges on the reference; the base form's `factions`
+    // array keeps the values the plugin was authored with and never
+    // moves. Reading the base form would answer "who was in office when
+    // Bethesda shipped the game", which is not the question.
+    [[nodiscard]] bool IsSeated(RE::FormID npc, const Entry& entry);
+
     // --- The parse, before anything is resolved -------------------------
     //
     // Reading the file and resolving EditorIDs are separated for the
@@ -127,14 +198,24 @@ namespace NarrativeEngine::PlotFactionRoster
         std::string displayName;
         std::string factionEditorId;
         RankMethod method = RankMethod::Explicit;
+        Membership membership = Membership::Faction;
         int maxRank = 1;
         std::vector<std::string> markerEditorIds;
+        std::string officeFactionEditorId;
+        std::vector<std::string> officeCandidateEditorIds;
         std::vector<RawOverride> overrides;
     };
 
     struct ParseReport
     {
         std::vector<RawEntry> entries;
+        // Sections switched off with `Enabled = false`, by id. Kept apart
+        // from `warnings` because a section the author deliberately turned
+        // off is not a complaint about their file -- the shipped roster
+        // ships several off by default, and logging those at warning level
+        // would put four grumbles in every user's log describing the
+        // intended configuration.
+        std::vector<std::string> disabled;
         // One line per section that was skipped, and per Member line
         // that was dropped, each naming what and why. The caller logs
         // them; keeping them as data is what lets a probe assert on the

@@ -270,6 +270,15 @@ namespace NarrativeEngine::PlotResolution
         // paused; it is burning its budget while making no headway,
         // which is what gives the player's presence teeth without
         // needing a rule of its own.
+        //
+        // A forced-tick log will make this look pathological -- hold the
+        // dashboard open in a crowd and every held step burns its whole
+        // budget at zero progress, because neither the player nor the
+        // NPCs move between ticks that no time separates. That is an
+        // artifact of forcing ticks, not of the rule. Real ticks are
+        // twelve in-world hours apart, and over twelve hours both ends
+        // have gone somewhere else; a step held twice running is already
+        // unusual. Do not "fix" this from a forced-tick run.
         ++step.elapsed;
 
         if (inputs.blockedByPresence) {

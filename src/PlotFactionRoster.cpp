@@ -1,5 +1,6 @@
 #include <PlotFactionRoster.h>
 
+#include <GossipGraph.h>
 #include <logger.h>
 #include <Settings.h>
 
@@ -66,6 +67,7 @@ namespace NarrativeEngine::PlotFactionRoster
             out.id = raw.id;
             out.displayName = raw.displayName;
             out.method = raw.method;
+            out.membership = raw.membership;
             out.maxRank = raw.maxRank;
 
             if (!ResolveFaction(raw.factionEditorId, raw.id, "Faction", out.faction)) {
@@ -77,6 +79,18 @@ namespace NarrativeEngine::PlotFactionRoster
                     return false;
                 }
                 out.markers.push_back(resolved);
+            }
+
+            if (!raw.officeFactionEditorId.empty()
+                && !ResolveFaction(raw.officeFactionEditorId, raw.id, "OfficeFaction", out.officeFaction)) {
+                return false;
+            }
+            for (const auto& candidate : raw.officeCandidateEditorIds) {
+                RE::FormID resolved = 0;
+                if (!ResolveFaction(candidate, raw.id, "OfficeCandidate", resolved)) {
+                    return false;
+                }
+                out.officeCandidates.push_back(resolved);
             }
 
             for (const auto& o : raw.overrides) {
@@ -136,6 +150,13 @@ namespace NarrativeEngine::PlotFactionRoster
         for (const auto& line : report.warnings) {
             logger::warn("PlotFactions: {}", line);
         }
+        if (!report.disabled.empty()) {
+            std::string list;
+            for (const auto& id : report.disabled) {
+                list += (list.empty() ? "" : ", ") + id;
+            }
+            logger::info("PlotFactions: {} section(s) switched off in the file: {}", report.disabled.size(), list);
+        }
 
         std::size_t unresolved = 0;
         for (const auto& raw : report.entries) {
@@ -152,13 +173,56 @@ namespace NarrativeEngine::PlotFactionRoster
                      report.skipped.size(),
                      unresolved);
         for (const auto& e : g_entries) {
-            logger::info("PlotFactions:   '{}' ({}) method={} markers={} overrides={}",
+            logger::info("PlotFactions:   '{}' ({}) method={} membership={} markers={} overrides={} gate={}",
                          e.id,
                          e.displayName,
                          MethodId(e.method),
+                         MembershipId(e.membership),
                          e.markers.size(),
-                         e.overrides.size());
+                         e.overrides.size(),
+                         e.officeFaction != 0 ? e.officeCandidates.size() : 0);
         }
+    }
+
+    bool IsSeated(RE::FormID npc, const Entry& entry)
+    {
+        if (entry.officeFaction == 0 || entry.officeCandidates.empty()) {
+            return true;
+        }
+
+        // The actor rather than the base form: runtime faction changes
+        // live in ExtraFactionChanges on the reference. A unique NPC's
+        // actor is persistent and always resident, so this resolves even
+        // with their cell unloaded -- the same property PlotPopulation's
+        // liveness checks rely on.
+        const auto* participant = GossipGraph::Find(npc);
+        auto* actor = participant != nullptr && participant->actorRef != 0
+                          ? RE::TESForm::LookupByID<RE::Actor>(participant->actorRef)
+                          : nullptr;
+        if (actor == nullptr) {
+            // No reference to ask. Seated is the safe answer: it leaves
+            // the ladder exactly as the authored data describes it,
+            // rather than emptying a court because a lookup failed.
+            return true;
+        }
+
+        auto* office = RE::TESForm::LookupByID<RE::TESFaction>(entry.officeFaction);
+        if (office == nullptr) {
+            return true;
+        }
+
+        bool isCandidate = false;
+        for (const RE::FormID id : entry.officeCandidates) {
+            auto* candidate = RE::TESForm::LookupByID<RE::TESFaction>(id);
+            if (candidate != nullptr && actor->IsInFaction(candidate)) {
+                isCandidate = true;
+                break;
+            }
+        }
+        if (!isCandidate) {
+            return true;
+        }
+        return actor->IsInFaction(office);
     }
 
     bool IsLoaded()

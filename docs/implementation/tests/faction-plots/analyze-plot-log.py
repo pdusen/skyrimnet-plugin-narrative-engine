@@ -223,6 +223,35 @@ def main(path):
         )
         print("             " + ", ".join(f"{k}={v}" for k, v in Counter(f.get("outcome") for _, _, f in ends).items()))
 
+    # --- 5b. The presence gate --------------------------------------------
+    # Reported because it is otherwise invisible: nothing else in the trace
+    # says the gate ever fired, and the run that first exercised it had to be
+    # read by hand to find out.
+    #
+    # Read this section with the run's METHOD in mind. A held tick spends the
+    # step's budget deliberately, so under forced ticks -- which advance the
+    # simulation without advancing the clock, leaving the player and every
+    # NPC frozen in place -- a held step will burn its whole budget at zero
+    # progress and time out. That is the harness, not a defect. Real ticks are
+    # twelve in-world hours apart and both ends have moved by the next one, so
+    # a step held twice running is already unusual.
+    resolves_with_held = [(t, k, f) for t, k, f in resolves if "held" in f]
+    held = [(t, k, f) for t, k, f in resolves_with_held if int(f["held"]) > 0]
+    if resolves_with_held:
+        if not held:
+            print("\n[presence]   no step was ever held; the player was never near an actor or target")
+        else:
+            total_held = sum(int(f["held"]) for _, _, f in held)
+            fully = [f for _, _, f in held if f.get("ticks", "0/0").split("/")[0] == f["held"]]
+            print(
+                f"\n[presence]   {len(held)} step(s) held by the player's presence, "
+                f"{total_held} tick(s) in total"
+            )
+            print(
+                f"             {len(fully)} spent EVERY tick held"
+                + ("  (expected under forced ticks; suspicious under real ones)" if fully else "")
+            )
+
     # --- 6. Who is doing the work -----------------------------------------
     rungs = Counter(f.get("rung") for _, _, f in dispatches)
     print("\n[casting]    ladder rung: " + ", ".join(f"{k}={v}" for k, v in sorted(rungs.items())))

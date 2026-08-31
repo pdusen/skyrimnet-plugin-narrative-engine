@@ -147,6 +147,20 @@ namespace NarrativeEngine::PlotCasting
     // precedent, and in a probe it is whatever the probe says.
     using AlivePredicate = std::function<bool(RE::FormID)>;
 
+    // Does this NPC's membership of this faction currently COUNT?
+    //
+    // Same shape and the same reason as AlivePredicate: the answer is a
+    // live engine fact, and this module stays engine-free by being
+    // handed it. A standing that does not count is treated as though the
+    // membership were absent -- no rung, and no credit for belonging to
+    // an organisation -- because a jarl driven out of his keep is not a
+    // junior member of his own court, he is out of it.
+    //
+    // An EMPTY predicate means everything counts, which is what a probe
+    // driving the pure arithmetic wants and what the roster produces
+    // when no section declares a tenure gate.
+    using SeatedPredicate = std::function<bool(RE::FormID npc, RE::FormID faction)>;
+
     using OccupancyTable = std::unordered_map<RE::FormID, PlotModel::Occupancy>;
 
     struct Cooldowns
@@ -196,6 +210,7 @@ namespace NarrativeEngine::PlotCasting
                                           const OccupancyTable& occupancy,
                                           double gameDay,
                                           const AlivePredicate& alive,
+                                          const SeatedPredicate& seated,
                                           std::uint64_t& rng);
 
     // Pick an actor for one of `mastermind`'s steps, down the ladder:
@@ -213,5 +228,6 @@ namespace NarrativeEngine::PlotCasting
                                      const OccupancyTable& occupancy,
                                      double gameDay,
                                      const AlivePredicate& alive,
+                                     const SeatedPredicate& seated,
                                      std::uint64_t& rng);
 } // namespace NarrativeEngine::PlotCasting

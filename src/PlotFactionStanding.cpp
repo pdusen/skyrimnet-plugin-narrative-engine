@@ -41,6 +41,17 @@ namespace NarrativeEngine::PlotFactionRoster
         return "unknown";
     }
 
+    std::string_view MembershipId(Membership m) noexcept
+    {
+        switch (m) {
+        case Membership::Faction:
+            return "Faction";
+        case Membership::Ranked:
+            return "Ranked";
+        }
+        return "unknown";
+    }
+
     double StandingFrom(const Entry& entry, const MemberFacts& facts)
     {
         // An override wins under every method. It is layered rather than

@@ -189,7 +189,7 @@ is what caught a propagation model tuning could not have fixed. The failure mode
 resolution model that never fails, or never succeeds, or quietly casts the same six NPCs forever — none of
 which is visible once plausible LLM-written text is draped over it.
 
-Steps 13–16 replace the stubs. Steps 17–20 attach output. Every step from 4 onward leaves the plugin runnable.
+Steps 15–18 replace the stubs. Steps 19–22 attach output. Every step from 4 onward leaves the plugin runnable.
 
 ### How steps are verified
 
@@ -775,7 +775,7 @@ is same-hold / different-hold rather than a road-graph query, and target importa
 exist to make distance and importance *matter* so Step 9 can judge whether they matter by the right amount;
 replacing them is a change to two small functions.
 
-> **The travel proxy was replaced in Step 15.** Step 12 measured it and the answer to "do they matter by the
+> **The travel proxy was replaced in Step 14.** Step 12 measured it and the answer to "do they matter by the
 > right amount" was no: over ten holds the comparison lands on the same value for about nine steps in ten, so
 > distance was a flat surcharge rather than a variable. It survives as the fallback.
 
@@ -814,6 +814,7 @@ peers. NPCs in no faction at all remain eligible independents at the base weight
    | `Faction`     | yes      | EditorID of the **primary** faction — `CompanionsFaction`, not `CompanionsHarbingerFaction` |
    | `DisplayName` | yes      | Readable name, for the dashboard and for LLM context                        |
    | `RankMethod`  | yes      | `Rank`, `Marker` or `Explicit` — how seniority is derived                    |
+   | `Membership`  | no       | `Faction` (default) or `Ranked` — who counts as a member. Added by the addendum below |
    | `Enabled`     | no       | Default true; switch a faction off without deleting its section             |
    | `Member`      | no       | `<NpcEditorID>, <rank>` — a manual override. Repeatable. **Valid under every method**, not just `Explicit` |
 
@@ -888,6 +889,172 @@ The shipped roster documents the problem it solves in its own header, including 
 measured and rejected — property ownership, which ranked innkeepers above jarls, and faction nesting, which
 fires for 65% of the population. Astrid's section carries the sharpest note: she leads the Dark Brotherhood and
 nothing whatsoever in the data says so, which is the clearest argument for the file existing.
+
+**Addendum — the roster filled out, and the `Membership` key that took.**
+
+Step 7 shipped six sections and one section per ranking method, which was what it set out to do: prove the
+format. It was not a roster of Skyrim. The file now covers **36 sections, 32 of them live** — 15 guilds and
+standing orders, the 7 great families, 10 hold courts, and 4 city temples shipped switched off — and that
+expansion turned up one thing the format could not express.
+
+The inclusion rule is the user's: an organisation that owns property and carries influence. That admits the
+families, which are the same shape as a guild in everything but name — Maven Black-Briar runs Riften without
+holding an office in it, and the Gray-Mane / Battle-Born feud is the civil war rehearsed one street at a time.
+It excludes bandit crews and secret orders, which settled the Forsworn and the Silver Hand before the data
+did: both turn out to have **zero unique NPCs**, so neither could have produced a hierarchy anyway.
+
+**Everything in it was read, not recalled.** Two sources, deliberately: UESP for what the fiction says the
+hierarchy is, and the Spriggit export for what the data actually marks. Every `Member` line in the file is a
+place where the two disagree. The working record — 32 raw UESP pages, the scripts that indexed the export,
+and an evaluator that prints the roster each section produces — is under `tmp/uesp/`, with its own README.
+
+**The courts needed a key.** A hold court is a real chain of command and vanilla gives it no faction: there is
+no `WhiterunCourtFaction`. What there is, is a province-wide `JobJarlFaction` that says what someone does but
+not where, and a per-hold `CrimeFactionWhiterun` that says where but not what. Crossing the two is exactly a
+`Marker` ladder read through a primary faction, so the *ranking* needed nothing new.
+
+Membership did. Under the old rule the primary faction defined the roster, so declaring the court would have
+enrolled all 93 residents of Whiterun Hold as courtiers — false on its face, and it would have handed every
+NPC in Skyrim the "belongs to an organisation" bonus that `MastermindWeight` uses to tell joiners from
+independents, flattening the distinction that term exists to draw.
+
+`Membership = Ranked` narrows the roster to the people the ladder places, and makes the primary faction a
+*scope* rather than a roll. Two details are load-bearing:
+
+- **A named `Member` admits.** Under `Ranked` the ladder is the membership, so a `Member` line for someone the
+  primary faction misses now means what it says instead of silently doing nothing. That is the only way to
+  reach Brill, who is Vignar Gray-Mane's steward and, being quartered with the Companions, is in no Whiterun
+  faction at all.
+- **The erase matters as much as the skip.** Gossip's size filter admits any faction under 40 members, so four
+  of the nine hold crime factions arrive at `PlotPopulation` *already* in an NPC's faction list as a peer
+  entry. Skipping without erasing would have kept every Falkreath farmer in the court while excluding every
+  Whiterun one.
+
+**The court ladder, and where it comes from.** `Jarl > Steward > Housecarl > Court Wizard > Guard Captain >
+Guard`. UESP's Steward article states the top of it outright; its Court Wizard article calls housecarl and
+court wizard equals, and we break that tie in the housecarl's favour deliberately — this simulation asks
+who can be given an order, and the housecarl commands the hold's soldiery.
+
+Three findings from the cross-check worth keeping:
+
+- **The empty rungs are deliberate, and the checker had to be taught so.** All ten courts declare the same six
+  markers even though eight holds have no guard captain and four have no court wizard. Trimming a hold's ladder
+  to its occupied rungs would make Falkreath's housecarl outrank Whiterun's, purely for want of a court wizard
+  — the normalisation divides by the ladder's height. `check-plot-factions.py` now distinguishes a *spacer*
+  (a real faction that does not reach into this hold) from a *dud* (a faction with no members anywhere), and
+  only the second is a failure.
+- **The civil war is the hardest thing in this file, and it took three passes to get right.** The first said
+  naming both the incumbent and the replacement covers either branch; what that actually does is seat two jarls
+  in every hold and let a man who holds no office give orders to the sitting steward. The second demoted the
+  understudies by hand, which is right for a fresh game and wrong forever after the war moves — the user's
+  objection, and it was exact: it kept Hrongar in court after his brother was ousted and never put Olfina in
+  when she should be.
+
+  **The third reads the answer live, because vanilla maintains it.** `CWGovernmentScript` holds four factions:
+  `GovImperial` and `GovSons` are the two governments a hold can be given, `GovRuling` is the one it has, and
+  `GovExiled` is where a deposed one goes. Installing a court calls `AddToFaction(GovRuling)`, exiling one
+  calls `RemoveFromFaction(GovRuling)`, and the script's own test before it moves anybody is *"is this actor in
+  a government faction, and is it the ruling one"*. The roster now asks the same question through two keys:
+
+  ```text
+  OfficeFaction   = GovRuling
+  OfficeCandidate = GovImperial
+  OfficeCandidate = GovSons
+  ```
+
+  Anyone in a candidate faction counts only while they are also in the office faction; anyone in neither is
+  untouched, which is correct rather than a gap — court wizards never relocate when a hold changes hands, and
+  Solitude's government is never replaced at all.
+
+- **The gate is applied AFTER the `Member` overrides, and that ordering carries both halves.** Hrongar keeps
+  his hand-written demotion off the jarl rung, because vanilla marks him a jarl and he is not one — *and* he
+  still leaves the court entirely when Balgruuf is driven out, without that line having to know the war
+  exists. Olfina Gray-Mane needs no line at all: she is marked a housecarl, holds no office today, and becomes
+  one the moment her great-uncle takes the keep. Dengeir gets no line either, deliberately — he is a thane
+  today and the Jarl under the Stormcloaks, and any rank written here would pin him to one of those forever.
+
+- **Reading the base form would have answered the wrong question entirely, and that is the finding worth
+  keeping.** `AddToFaction` and `RemoveFromFaction` write to `ExtraFactionChanges` on the *reference*;
+  `TESNPC::factions` keeps the values the plugin was authored with and never moves. The roster was reading the
+  base form, so even re-evaluating it every tick would have returned the government Bethesda shipped, forever.
+  `IsSeated` goes through the `Actor`, which is what the game's own script does.
+
+- **The tenure read needs no main thread, and my first cut of it wrongly assumed otherwise.** I marshalled the
+  refresh onto the main thread through `PlotTick::Poll` and cached the answer in a mutex-guarded snapshot. The
+  user pushed back, and they were right: every step is a read of exactly the kind `GossipSim` already documents
+  as safe off-thread — the participant lookup is a map built at load and const after, `LookupByID` takes the
+  engine's own read-write lock, and `IsInFaction` is a short scan of two arrays that mutates nothing. Nothing
+  in it is more volatile than the 3D-loaded state `IsNearPlayer` reads off-thread on every conspicuous step,
+  and that one changes as the player walks around, where faction membership changes a handful of times in a
+  playthrough.
+
+  So the whole apparatus came out: the refresh, the suspended-set snapshot, the mutex, the `shared_ptr` swap,
+  and the two call sites that had to remember to prime it. `SeatedPredicate` now closes over nothing and asks
+  the question live, per membership, at the moment casting reads it — which is also **strictly more current**
+  than the snapshot was, because no window remains between taking the answer and using it. The seam itself
+  stays: `PlotCasting` is handed a predicate rather than calling the engine, exactly as it is handed
+  `AlivePredicate`, so the module remains engine-free and probe-drivable.
+
+  Worth keeping as a lesson rather than just a diff: "engine read, therefore main thread" is not this
+  codebase's rule and never was. The rule is that mutations and non-trivial calls need the main thread, and
+  `GossipSim` had already written down the reasoning for reads. Reaching for the heavier pattern cost a mutex,
+  a snapshot, an atomic swap and a staleness window, to buy nothing.
+
+- **A suspended membership is treated as absent, not as a demotion.** No rung, and no credit for the
+  "belongs to an organisation" bonus either — a jarl driven out of his keep is not a junior member of his own
+  court, he is out of it. That is one helper consulted from all three places standing is read (the weighting,
+  the mastermind's own standings, the subordinate scan) so the three cannot drift apart.
+
+- **Two people had to be named to make the Stormcloak branch work at all**, and the check is what found it.
+  Vignar Gray-Mane and his steward Brill are both quartered in Jorrvaskr with the Companions and are in no
+  Whiterun faction, so the hold scope never reaches them: taking Whiterun for the Stormcloaks left the hold
+  with a housecarl and nobody to serve. `Membership = Ranked` lets a `Member` line admit them, and the gate
+  keeps them out until they hold the keep.
+
+- **Vanilla marks four courts wrongly, and the export says which.** Hrongar sits in `JobJarlFaction`, Bryling
+  and Erikur too, all three left over from quests that were cut; Solitude's actual steward and housecarl are in
+  neither job faction; Dravynea is marked a court wizard for a post she never takes. The same sweep caught two
+  quest corpses and a ghost of Kodlak Whitemane inheriting his Harbinger membership, each of which read as a
+  second head of the Companions, and Tova Shatter-Shield's corpse record carrying her standing in her own clan.
+
+- **The families needed `Ranked` for a different reason than the courts did.** Vanilla marks each family with
+  its residence-ownership faction, which is very nearly the family and occasionally not quite: three of the
+  seven have a member who lives somewhere else and is therefore missing from it — Sibbi Black-Briar is in jail,
+  Vignar Gray-Mane is quartered with the Companions, Unmid Snow-Shod sleeps in Mistveil Keep as the Jarl's
+  housecarl. The other four are complete as authored and use the default, which leaves their household servants
+  at the bottom rung where they belong.
+
+- **A switched-off section is no longer a warning.** Shipping the temples off surfaced that `Enabled = false`
+  went into `ParseReport::warnings`, so the intended configuration would have put four `logger::warn` lines in
+  every user's log at every startup. It is `ParseReport::disabled` now, logged once at info as a list.
+
+**Verification:** `build.ps1 build` clean. `check-plot-factions.py` resolves every section against the export
+— disabled ones included, since a section that is off should still be right when it is switched on — and
+asserts the Whiterun ladder descends strictly (1.00 jarl, 0.83 steward, 0.67 housecarl, 0.50 wizard, 0.33
+captain, 0.17 guard).
+
+**Its tenure check does not check a state; it checks a function.** For each hold it plays out
+`CWGovernmentScript`'s own rule — everyone in the winning government installed, everyone in the losing one
+exiled, everyone in neither untouched — once for *each* outcome, and asserts the court that comes out is right
+both times and has exactly one head of state. A hold that changes hands and yields the same court twice is a
+failure, which is what catches a roster that is accidentally correct for the game's opening minute. All nine
+holds swap their whole court; Solitude correctly does not, and Raven Rock declares no gate because the war
+never reaches Solstheim.
+
+A probe covers the rest: `Membership`'s default, both spellings and case-insensitivity; a bad value costing
+its own section and naming what it expected; `Membership`, `OfficeFaction` and `OfficeCandidate` not reading
+as unknown keys; half a gate (either key without the other) skipping its section; `Enabled = false` landing in
+`disabled` rather than `warnings`; and the shipped file parsing with **zero skips and zero warnings** at 32
+live sections, 4 off, 10 courts and 9 gated. Then, on the arithmetic: that a suspended membership costs its
+holder the rung *and* the organisation bonus, that it leaves everyone else untouched, that the same population
+and roster produce two different courts under the two outcomes, and that a man holding no office can command
+nobody. Then deleted.
+
+Done. `Membership`, the `OfficeFaction` / `OfficeCandidate` gate and `ParseReport::disabled` through
+`PlotFactionRoster.h`, `PlotFactionParse.cpp`, `PlotFactionStanding.cpp` and `PlotFactionRoster.cpp`;
+`PlotFactionRoster::IsSeated` reading through the actor; `SeatedPredicate` in `PlotPopulation.cpp` and
+threaded through `PlotCasting`'s two selectors; the rewritten
+`statics/SKSE/Plugins/NarrativeEngine/PlotFactions.ini`; and the new checks in `check-plot-factions.py`.
 
 ---
 
@@ -1360,12 +1527,90 @@ usually idle is not limiting anything. Birth still selects by weight among every
 a slot opens — saturation sets how often that selection happens, not how it is made. Step 9's criterion is
 corrected accordingly.
 
-On (4): the run was made standing in an empty room, so no conspicuous step ever had a loaded actor or target
-to be blocked by, and zero holds is the correct answer rather than a silent failure. The gate is confirmed
-wired — every one of the 881 participants resolves to a placed reference — but its behaviour is unobserved.
-**(4) and (6) are what remain before this step can be marked complete**, and both need a run of a different
-shape: parked in a city rather than an empty room, with a save and reload partway through and one move near
-the end.
+On (4): **exercised at last.** The run that did it was made standing at the Whiterun market stalls rather than
+in an empty room, which is the whole difference — there were finally loaded NPCs for a conspicuous step to be
+blocked by.
+
+The gate is correct, on both sides of the test and on the right step types. Ten steps were held. Six because
+their ACTOR was loaded (Lars Battle-Born four times, Fralia Gray-Mane twice, Olfina Gray-Mane once); four
+because their TARGET was — Drahf, Cairine and Ingun Black-Briar are nowhere near Whiterun, but
+`Sabotage Braith`, `Watch Lars Battle-Born` and `Acquire Mikael` all point at people the player was standing
+next to. Only conspicuous types appear, with no `Locate` or `Deliver` among them despite `Locate` being the
+commonest step in the run. **(4) is verified.** (6) is what remains before this step can be marked complete: a
+save and reload partway through a run.
+
+#### Step 12 follow-up — one real bug, and one that was not
+
+**1. Held steps burning their whole budget is CORRECT, and reading it as a bug was my error.** Worth writing
+down because the log makes a compelling case for the wrong conclusion. All ten held steps burned their entire
+budget at exactly `0.00` progress and timed out, which looks like a rule that dooms rather than delays — and
+the inference drawn from it was that any NPC living where the player spends time could never finish
+conspicuous work.
+
+That inference is wrong, and the reason is the *method*, not the model. Those ticks were forced from the
+dashboard, which advances the simulation without advancing the clock: the player stood still, no in-world time
+passed between ticks, and so the same NPCs were loaded at the same spot for all 200 of them. Nothing like that
+happens in play. Real ticks are twelve in-world hours apart, and over twelve hours both the player and the
+actor have gone somewhere else — a step held twice running is already unusual, and a step held for its whole
+budget effectively cannot happen. Burning budget while blocked is the rule that gives the player's presence
+teeth, and it stays.
+
+The change was written and reverted. What survives is a comment in `PlotResolution::AdvanceStep` saying so, so
+the next person to read a forced-tick log does not re-derive the same wrong fix.
+
+**A methodological note this cost, and the reason it is recorded here:** a forced-tick run is not a fast-
+forward. It is a *specific and unusual* world state — a frozen clock with a frozen player — and any finding
+that depends on where the player or an NPC is standing has to be discounted accordingly. Findings about
+arithmetic, sizing, casting spread and scheduling remain sound under forced ticks; findings about presence,
+distance and anything else geographic do not. The presence gate is the first thing this phase has tested that
+falls in the second category.
+
+**2. The road-graph travel distance had never once run.** The log said
+`no settlement resolved onto the road graph; using the hold proxy` -- **zero** of sixty settlements placed, so
+every dispatch since Step 14 has used the same-hold / different-hold proxy that step was written to replace.
+The dispatch lines confirm it: `travel` is bimodal at exactly 0.20 and 0.80 and never anything between.
+
+The cause is timing. A settlement is placed by its map marker, which `BGSLocation` holds as an
+`ObjectRefHandle`, and `PlotPopulation::Build()` runs at `kDataLoaded` -- before any save is read, when there
+is no game for a reference handle to point into. The marker is genuinely authored (`WorldLocationMarkerRef` is
+on `WhiterunLocation`) and the identical `worldLocMarker.get()` call in `RoadRoute.cpp` works, because that
+one runs during gameplay.
+
+`BuildRoadTable` therefore moved out of `Build` and into `PlotPopulation::OnSessionStart`, at `kNewGame` and
+`kPostLoadGame`. It is idempotent and retried each load until it succeeds, so a bad attempt costs one load
+rather than the playthrough. It is a warning now, too: it describes a shipped feature silently not running.
+
+**And a second cause underneath the first, which only the new diagnostic could have found.** The failure line
+was widened to name WHICH stage failed — no marker, no worldspace, no node — because "all sixty failed" and
+"three had no marker" are different problems and the old line could not tell them apart. That earned its keep
+on the very next run:
+
+```text
+Of 61 settlement(s): 7 had no map marker, 53 had a marker in no worldspace, 1 found no node near it.
+```
+
+Moving to session start had worked: markers resolved for 53 of 61 settlements where before none did. The
+blocker was the next line down. `TESObjectREFR::GetParentCell()` is a plain field the engine fills in when a
+reference is attached to a *loaded* cell, so for a map marker in a worldspace the player has never visited it
+is null — which is nearly every settlement at the moment we ask. `GetWorldspace()` is the engine's own
+accessor and answers for an unloaded reference too.
+
+Two bugs stacked in one code path, the second invisible until the first was fixed, and neither reachable from
+an offline harness. The lesson is the diagnostic rather than either fix: the original log line said only that
+the fallback had fired, which is the one thing that did not need saying.
+
+**Step 14's mishap tuning is consequently unvalidated.** It was tuned for road distances spread across the
+range and has only ever run against a proxy pinned at two values, which is part of why this run came out
+60.1% succeeded / 17.9% timed out / 22.0% caught against Step 9's 68.7 / 14.3 / 17.0. The next run is the
+first that can measure it.
+
+**`analyze-plot-log.py` grew a `[presence]` section**, because the failure was legible in the log the whole
+time and nothing was reading it. On the run that found this it prints:
+
+```text
+[presence]   10 step(s) held by the player's presence, 111 tick(s) in total
+             10 of them timed out, 10 at ZERO progress  <-- a hold should delay a step, not doom it
+```
 
 ---
 

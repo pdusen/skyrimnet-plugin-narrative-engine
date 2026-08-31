@@ -31,6 +31,23 @@ namespace NarrativeEngine::PlotPopulation
     // itself takes.
     void Build();
 
+    // Main thread, at kNewGame / kPostLoadGame. Places every settlement
+    // on the road graph and measures the distances between them.
+    //
+    // SEPARATE FROM Build, and late, because it is the one thing here
+    // that needs a running game rather than loaded plugin data. A
+    // settlement is placed by its map marker, which BGSLocation holds as
+    // an ObjectRefHandle -- and at kDataLoaded, where Build runs, there
+    // is no game yet for a reference handle to point into. The first
+    // in-game run of this feature resolved ZERO of sixty settlements and
+    // fell back to the hold proxy for every step, silently, which is
+    // exactly what an offline harness cannot catch.
+    //
+    // Idempotent, and retried on each load until it succeeds: a session
+    // that placed nobody costs one more attempt next time rather than
+    // wedging the fallback in for the life of the playthrough.
+    void OnSessionStart();
+
     [[nodiscard]] bool IsReady();
 
     // Stable for the session once built, so the plot worker may read it
@@ -56,6 +73,26 @@ namespace NarrativeEngine::PlotPopulation
 
     // Bound form of the above, for handing to PlotCasting.
     [[nodiscard]] PlotCasting::AlivePredicate AlivePredicate();
+
+    // --- Tenure: the one part of a member's standing that MOVES --------
+    //
+    // Everything else here is authored data read once. Who currently
+    // holds a hold's offices is not: CWGovernmentScript installs and
+    // exiles courts with AddToFaction and RemoveFromFaction as the war
+    // is fought, so a court read at load says who governed the province
+    // when Bethesda shipped it and nothing about this save.
+    //
+    // So it is not read at load. This binds a predicate that asks the
+    // question LIVE, per membership, at the moment casting reads it --
+    // which is both simpler than a snapshot and strictly more current
+    // than one, since no window exists between taking the answer and
+    // using it.
+    //
+    // Safe from the plot worker; see PlotFactionRoster::IsSeated for
+    // why. Returns an EMPTY predicate when no rostered section declares
+    // a tenure gate, which casting reads as "everything counts" and
+    // skips entirely.
+    [[nodiscard]] PlotCasting::SeatedPredicate SeatedPredicate();
 
     // How far apart two members are along the road network, normalised
     // to 0 (the same settlement) .. 1 (as far apart as the province

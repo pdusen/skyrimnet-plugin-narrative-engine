@@ -196,6 +196,7 @@ namespace NarrativeEngine::PlotTick
                                                        state.occupancy,
                                                        gameDay,
                                                        PlotPopulation::AlivePredicate(),
+                                                       PlotPopulation::SeatedPredicate(),
                                                        state.rngState);
             if (cast.chosen == 0) {
                 return false;
@@ -314,8 +315,12 @@ namespace NarrativeEngine::PlotTick
                 return;
             }
 
-            const auto cast = PlotCasting::SelectMastermind(
-                population, state.occupancy, gameDay, PlotPopulation::AlivePredicate(), state.rngState);
+            const auto cast = PlotCasting::SelectMastermind(population,
+                                                            state.occupancy,
+                                                            gameDay,
+                                                            PlotPopulation::AlivePredicate(),
+                                                            PlotPopulation::SeatedPredicate(),
+                                                            state.rngState);
             if (cast.chosen == 0) {
                 return;
             }
