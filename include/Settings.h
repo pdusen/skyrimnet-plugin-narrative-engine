@@ -221,17 +221,27 @@ namespace NarrativeEngine::Settings
         int holdGridPruneIsolationRadius = 5;
 
         // [TravelGraph]
-        // EXPERIMENTAL. Builds a road graph at kDataLoaded from the NAVI
-        // record's precomputed preferred-path chains — the same data the
-        // engine uses to move actors travelling outside the loaded cell
-        // grid. Nothing consumes the graph yet; this is a diagnostic to
-        // establish whether that data is an accurate road network.
-        bool travelGraphEnabled = false;
+        // Builds a road graph at kDataLoaded from the NAVI record's
+        // precomputed preferred-path chains — the same data the engine
+        // uses to move actors travelling outside the loaded cell grid.
+        //
+        // On by default because the plot simulation consumes it: travel
+        // distance is what makes one step harder than another, and
+        // without the graph plots fall back to a same-hold /
+        // different-hold comparison that Step 12 measured as almost
+        // constant. Costs a few ms at load and a few hundred nodes.
+        bool travelGraphEnabled = true;
         // Debug: after the graph builds, dump one 24-bit BMP per
         // worldspace to the SKSE log directory. Nodes are black, edges
         // gray, empty space white. Worldspaces with no nodes are
         // skipped. Overwrites existing files each session.
-        bool travelGraphDebugBitmap = true;
+        //
+        // Off, matching the shipped INI. It defaulted true while the
+        // graph itself defaulted false, which was harmless only for as
+        // long as nothing switched the graph on -- now that the graph
+        // ships enabled, that default would write a multi-megabyte
+        // bitmap on every load for anyone running without the INI.
+        bool travelGraphDebugBitmap = false;
         // World units per bitmap pixel. Lower = larger, more detailed
         // image. 256 puts a 4096-unit cell at 16 pixels and renders
         // Tamriel at roughly 1330x820. Automatically raised if it would
@@ -914,7 +924,14 @@ namespace NarrativeEngine::Settings
         // Behind a switch because its SHAPE is still an open design
         // question (see the phase doc), not because it is optional.
         bool plotMishapEnabled = true;
-        float plotMishapChanceBase = 0.015f;
+        // Retuned from 0.015 in Step 14. This is a PER-TICK chance, so it
+        // is only meaningful relative to how many ticks a step lives, and
+        // Step 13 roughly doubled that by re-deriving the base budgets.
+        // The rate the Step 9 harness settled on therefore stopped
+        // describing the model the moment those budgets changed: catches
+        // went from 12% of resolutions to 23% with no change to this
+        // number at all.
+        float plotMishapChanceBase = 0.012f;
 
         // Seeds the plot RNG stream. 0 means nondeterministic; any other
         // value makes a run reproducible, which is what the offline

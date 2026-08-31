@@ -56,4 +56,15 @@ namespace NarrativeEngine::PlotPopulation
 
     // Bound form of the above, for handing to PlotCasting.
     [[nodiscard]] PlotCasting::AlivePredicate AlivePredicate();
+
+    // How far apart two members are along the road network, normalised
+    // to 0 (the same settlement) .. 1 (as far apart as the province
+    // meaningfully gets). Returns a NEGATIVE value when the graph cannot
+    // answer -- either node missing, no route between them, or the graph
+    // switched off -- so the caller can fall back rather than being
+    // handed a plausible-looking zero.
+    //
+    // Safe off the main thread: the table is built during Build and is
+    // const for the session, exactly like the population itself.
+    [[nodiscard]] double RoadDistanceNorm(std::size_t nodeA, std::size_t nodeB);
 } // namespace NarrativeEngine::PlotPopulation

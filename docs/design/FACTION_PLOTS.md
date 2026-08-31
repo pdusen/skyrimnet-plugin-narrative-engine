@@ -257,6 +257,15 @@ cheap; a plot pointing at a target that does not exist poisons every memory it l
 The population is the one `GossipGraph` already builds. There is no reason to index unique NPCs twice, and its
 `Participant` records already carry residence, hold, and the faction and relationship edges casting needs.
 
+**Distance is measured along the road network**, not by comparing holds. `TravelGraph` reconstructs Skyrim's
+long-distance routing skeleton from the NAVI record, and each participant is placed on it once, at the node
+nearest their settlement's map marker; the distance between any two settlements is then a table lookup. The
+scale is calibrated so that the *typical* journey — the population-weighted median pair, weighting each
+settlement by how many people live there — scores 0.5, which keeps the term describing the traffic rather than
+the geometry. A hold comparison was tried first and is retained only as a fallback: across ten holds it puts
+roughly nine steps in ten at the same value, and a distance that does not vary cannot make one step harder
+than another.
+
 **Mastermind weight** rises with the resources an NPC commands. The obvious signal is faction rank within a
 faction that is large and prominent enough to matter — gossip already filters factions by size and name for its
 own purposes, and that filtered set is a reasonable starting definition of "prominent." Independent NPCs stay

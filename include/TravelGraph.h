@@ -8,9 +8,12 @@
 // TravelGraph — a queryable road graph reconstructed from the engine's
 // own precomputed long-distance pathing data.
 //
-// EXPERIMENTAL / DIAGNOSTIC. This module exists to answer one question:
-// is the NAVI record's preferred-path data a usable road network? It is
-// not yet consumed by any beat or action. Treat the API as provisional.
+// Consumed by the faction-plot simulation, which measures how far a
+// step's actor must travel to reach its target and charges that distance
+// as work. It began as a diagnostic asking whether the NAVI record's
+// preferred-path data is a usable road network; the answer was yes, and
+// the coarse skeleton is exactly the right resolution for "roughly how
+// far apart are these two people".
 //
 // ---------------------------------------------------------------------
 // Where the data comes from

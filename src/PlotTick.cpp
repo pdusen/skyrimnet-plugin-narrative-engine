@@ -93,17 +93,26 @@ namespace NarrativeEngine::PlotTick
              3},
         }};
 
-        // Travel distance, as a proxy.
+        // Travel distance along the road network.
         //
-        // Same hold is near, a different hold is far. A real road-graph
-        // distance would be better and TravelGraph could supply one, but
-        // it is an engine-side query per step and this is a Phase A
-        // stand-in whose only job is to make distance MATTER so step 7's
-        // harness can judge whether it matters by the right amount.
+        // Step 12 measured the hold proxy this replaced and found it had
+        // almost no range: same-hold / different-hold over ten holds put
+        // 91% of steps at the same value, so distance was a flat surcharge
+        // rather than a variable -- and since Step 13 made distance the
+        // only circumstance that moves a step's odds, a distance that
+        // barely varies means odds that barely vary.
+        //
+        // The hold comparison survives as the fallback, for members whose
+        // settlement has no map marker and for a session with the road
+        // graph switched off.
         double TravelDistanceNorm(const PlotCasting::Member* actor, const PlotCasting::Member* target)
         {
             if (actor == nullptr || target == nullptr) {
                 return 0.5;
+            }
+            const double road = PlotPopulation::RoadDistanceNorm(actor->roadNode, target->roadNode);
+            if (road >= 0.0) {
+                return road;
             }
             if (actor->hold == 0 || target->hold == 0) {
                 return 0.5;
@@ -238,7 +247,7 @@ namespace NarrativeEngine::PlotTick
         void AssignTargets(PlotState& state, PlotModel::Plot& plot, const PlotCasting::Population& population);
 
         // Stub adaptation: keep the objective, rebuild the tail from a
-        // different ladder. Step 16 replaces this with the LLM call; what
+        // different ladder. Step 17 replaces this with the LLM call; what
         // must survive that replacement is the shape — the objective is
         // never rewritten, and the cap always terminates.
         bool AdaptPlot(PlotState& state, PlotModel::Plot& plot, double gameDay)
@@ -475,7 +484,7 @@ namespace NarrativeEngine::PlotTick
         // before the publish. A tick that keeps running past a load
         // writes memories into SkyrimNet's database — which lives
         // outside our co-save and is not rolled back by loading an
-        // earlier game — and from step 16 will mutate inventories and
+        // earlier game — and from step 17 will mutate inventories and
         // relationship ranks too. Discarding results at the end would
         // disown those writes without preventing them.
         void RunTick(const PlotThread::Token& pt, const PlotDispatch::CancellationHandle& cancel, double asOfGameHours)

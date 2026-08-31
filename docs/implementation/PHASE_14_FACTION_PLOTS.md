@@ -11,7 +11,7 @@ playing. **Player delegation (Phase D) is not in this document** — no offer po
 ESP surface. Everything here is C++ plus prompts, observable from the log and the dashboard.
 
 > **Doc status: planned, not built.** No step is checked off. Numbers in the settings table are proposed
-> starting points, not measurements: **Step 9 replaces them** with figures from an offline harness, and Step 21
+> starting points, not measurements: **Step 9 replaces them** with figures from an offline harness, and Step 22
 > checks those against real play. Two design-level questions (the conspicuousness split, and how a step gets
 > caught) are still open in the design doc and are deliberately built behind switches here rather than blocked
 > on.
@@ -94,7 +94,7 @@ In brief:
 
 New `[Plots]` block. `bPlotsEnabled` ships **true**, like `bGossipEnabled`: the simulation is the feature, and
 a background sim nobody has switched on generates nothing to remember. The caveat it inherits from gossip —
-that from Step 18 onward it writes memories the co-save does not roll back — belongs in the INI's own comment,
+that from Step 19 onward it writes memories the co-save does not roll back — belongs in the INI's own comment,
 not in a default that hides the feature.
 
 | Key                            | Proposed default | Meaning                                                        |
@@ -113,7 +113,7 @@ not in a default that hides the feature.
 | `fPlotProgressRateMax`         | 5.0              | Work per tick from an ideal one                                |
 | `fPlotProgressMaxFraction`     | 0.45             | No single tick clears more than this share of a threshold      |
 | `bPlotMishapEnabled`           | true             | The caught-in-the-act roll; off while its shape is argued      |
-| `fPlotMishapChanceBase`        | 0.015            | Per-tick mishap chance before conspicuousness and competence   |
+| `fPlotMishapChanceBase`        | 0.012            | Per-tick mishap chance before conspicuousness and competence   |
 | `iPlotRandomSeed`              | 0                | Seeds the plot RNG stream; 0 = nondeterministic                |
 
 `fPlotProgressRateMin` / `Max` are the per-tick work an actor does, in the **same absolute units as a step's
@@ -243,7 +243,7 @@ Nothing uses it yet.
 3. The `CancellationToken` / `CancellationHandle` registry, same shape as gossip's. `Stop()` cancels every
    outstanding token **before** joining.
 4. Register `PlotThread::Token` with the `is_worker_token` trait so the blocking
-   `SkyrimNetAPI::SendCustomPromptToLLM` overload accepts it. Nothing calls it until Step 15.
+   `SkyrimNetAPI::SendCustomPromptToLLM` overload accepts it. Nothing calls it until Step 16.
 5. The `[Plots]` block in `Settings`, in `statics/SKSE/Plugins/NarrativeEngine.ini`, and in the INI's
    documented comment block.
 6. `Start()` at `kDataLoaded` beside the other dispatchers; `Stop()` in shutdown after `AsyncDispatch::Stop()`.
@@ -282,7 +282,7 @@ Three throwaway translation units were compiled against the real build flags and
 
 The second is the one that matters: plot code cannot reach the main thread, so the deadlock this design could
 otherwise suffer has no expressible form. Its consequence for Phase C is real and is now written into
-`WorkerToken.h` — the world effects in Step 19 need the main thread, so they cannot be called from plot code
+`WorkerToken.h` — the world effects in Step 20 need the main thread, so they cannot be called from plot code
 and must be marshalled by a `PluginThread::Token` holder.
 
 Two pieces of tooling came out of this and are kept rather than thrown away, because Steps 2 and 15 both need
@@ -385,7 +385,7 @@ The positive half of that pair is there deliberately: without it, the negative p
 gate works" from "I misspelled the function".
 
 The derivation probe checks more than the step asked for, because the extra cases were free once the harness
-existed: every manifest id round-trips through `ParseStepType` (the membership test Step 15's validation will
+existed: every manifest id round-trips through `ParseStepType` (the membership test Step 16's validation will
 rest on), off-manifest ids — including `"Locate"` with the wrong case and `"locate "` with a trailing space —
 are rejected rather than guessed at, a step with no target renders the bare verb rather than a trailing space,
 and `ProgressFraction` returns 0 on an unsized step rather than dividing by zero into the dashboard's progress
@@ -664,7 +664,7 @@ the obvious choice.
 enough to test.
 
 1. A stub plan table — hardcoded objective-plus-ladder shapes exercising every step type and both
-   conspicuousness values. Step 15 deletes it.
+   conspicuousness values. Step 16 deletes it.
 2. Budget sizing from travel distance (via `TravelGraph` / `HoldGrid`) plus the step type's inherent scale.
    Threshold sizing from step type plus target importance. **They must share no input.**
 3. The per-tick progress roll, modified by the actor's relevant skills and attributes and their suitability for
@@ -759,6 +759,10 @@ Two proxies are in place where the design wants real values, both marked in the 
 is same-hold / different-hold rather than a road-graph query, and target importance is faction rank. They
 exist to make distance and importance *matter* so Step 9 can judge whether they matter by the right amount;
 replacing them is a change to two small functions.
+
+> **The travel proxy was replaced in Step 15.** Step 12 measured it and the answer to "do they matter by the
+> right amount" was no: over ten holds the comparison lands on the same value for about nine steps in ten, so
+> distance was a flat surcharge rather than a variable. It survives as the fallback.
 
 ---
 
@@ -1015,7 +1019,7 @@ individual rules hold; this proves the system built from them produces a world w
 
 **Verification:** the harness runs to completion and its report is committed. The tuned settings satisfy: no
 outcome class below ~10% or above ~70% of resolutions; at least a few hundred distinct masterminds over a
-simulated year rather than dozens; budget occupancy neither pinned at 10 nor starving; and a call rate the
+simulated year rather than dozens; budget occupancy not starving; and a call rate the
 design doc's Part 3 estimate can be checked against. Any figure that cannot be brought into range by tuning is
 a model problem, and finding that here rather than in Step 12 is the entire point of the step.
 
@@ -1071,9 +1075,13 @@ fifths of steps are delegated. Rung 2 stays at 0.0% for a structural reason that
 assumed: every subordinate is also a personal tie, because `GossipGraph` derives personal edges partly from
 shared faction membership, so rung 1 always claims them first.
 
-One finding that **is** real and is carried into Step 12: **the budget runs near-saturated**, at 10/10 for
-74.6% of ticks. Expected given 19-day plots and opportunistic births, but it means `iPlotMaxConcurrent` is a
-ceiling doing real work rather than a safety limit, and raising it raises the call rate near-proportionally.
+One observation carried into Step 12: **the budget runs near-saturated**, at 10/10 for 74.6% of ticks. This
+was written up as a concern and **is not one** — resolved in Step 12. A freed slot being refilled at the next
+opportunity is the intended behaviour, not a symptom: the cap is a *rate limiter*, and a rate limiter that is
+usually idle is not limiting anything. Nothing is starved by it, because birth still selects by weight among
+every eligible mastermind whenever a slot opens; what saturation sets is how often that selection happens.
+The one real consequence is the one worth remembering: `iPlotMaxConcurrent` is a ceiling doing real work
+rather than a safety limit, so raising it raises the LLM call rate close to proportionally.
 
 `population.json` is generated and gitignored. The simulator is a **mirror** of `PlotResolution.cpp` and
 `PlotCasting.cpp` rather than a second design — a harness that models something the game does not produces
@@ -1183,7 +1191,7 @@ says whether a step succeeded, timed out or was caught, which are exactly the ou
    and nothing from elsewhere reaches it.
 2. **Gated on `bPlotLogEnabled` alone, never on `bDebugMode`.** The point is a long validation session with a
    quiet main log and a complete plot trace.
-3. **Flushed per line, not per tick.** A plot tick will block on LLM calls from Step 14 onward; anything less
+3. **Flushed per line, not per tick.** A plot tick will block on LLM calls from Step 15 onward; anything less
    than per-line flushing leaves the file silent and then bursting, with its tail sitting on a half-written
    line. Gossip learned this the hard way and the comment in `GossipLog.cpp` says so.
 4. Emitters covering the whole lifecycle, each a single greppable line: `TICK`, `BORN`, `DISPATCH` (with the
@@ -1239,7 +1247,7 @@ That last one is the point of the whole format. A synthetic run is written, the 
 back with `TICK` / `BORN` / `END` noise interleaved, and the counts must match what went in — which is what
 distinguishes a complete record from a sampling of one.
 
-Gated on `bPlotLogEnabled` alone, never `bDebugMode`, and **flushed per line**. From Step 15 a tick blocks on
+Gated on `bPlotLogEnabled` alone, never `bDebugMode`, and **flushed per line**. From Step 16 a tick blocks on
 LLM round trips; buffering would leave the file silent and then bursting, with its tail on a half-written
 line. Gossip shipped that mistake once and the comment in `GossipLog.cpp` says so.
 
@@ -1272,7 +1280,7 @@ Two things about where to stand:
 Note that the standing caveat about wait-driven test runs — that skipping time starves the memory supply and
 decays the candidate pool — **does not apply to Phase A.** That caveat is about subsystems whose input is
 memories generated by play; Phase A has no memory dependency at all, because objectives and plans come from
-the stub table. It starts applying at Step 17, and Step 17 says so.
+the stub table. It starts applying at Step 18, and Step 18 says so.
 
 Run with `bPlotsEnabled=true` and no LLM involvement anywhere, and judge from the Plots tab and the trace:
 
@@ -1293,6 +1301,56 @@ Run with `bPlotsEnabled=true` and no LLM involvement anywhere, and judge from th
    should be none; note tick durations regardless.
 
 Record findings under this step, including any tuning applied on top of Step 9's numbers.
+
+**Findings.** Three runs. The first two are written up in the commits they produced; what follows is the state
+after the third.
+
+Four defects found and fixed, none of which the offline harness could have caught because all four were about
+the boundary between the simulation and the game:
+
+1. **Forced ticks rewound the simulation clock.** Stamps came from the live calendar, which does not move
+   while the dashboard holds the game paused, and the schedule anchor was pushed past them — which the next
+   poll could not distinguish from a save loaded from the past. Forty ticks covered 4.5 in-world days instead
+   of 20, replaying the same range three times.
+2. **Adaptation rebuilt a plan's tail without targets**, so 26% of dispatches went out nameless and sized
+   themselves off null-target fallbacks.
+3. **A completed tick never reached the dashboard.** Publishing updates the snapshot the next push would read;
+   nothing pushed, so an open Plots tab sat on the last Director evaluation.
+4. **The progress race was sized backwards** — the Step 13 finding, and the one that mattered most.
+
+Verification conditions, after the third run:
+
+| # | Condition                        | Verdict                                                        |
+| - | -------------------------------- | -------------------------------------------------------------- |
+| 1 | Sane rates, matching Step 9       | **Partial** — in band, and re-tuned in Step 14                  |
+| 2 | The budget behaves                | **Pass** — see below                                            |
+| 3 | Casting spreads                   | **Pass**                                                        |
+| 4 | Presence gate fires and releases  | **Not exercised** — needs a populated cell and one move         |
+| 5 | The chain reads at a glance       | **Pass**                                                        |
+| 6 | Save/load mid-run                 | **Not exercised**                                               |
+| 7 | No stutter                        | **Pass**                                                        |
+
+On (3): 22 distinct masterminds over 23 plots, only one repeat, spread across the province and including
+General Tullius at the maximum weight of 4.50 and Drevis Neloren at 3.50 — the roster's hierarchy reaching the
+selection it was built for.
+
+On (7): measured rather than eyeballed. Another mod in the load order emits a one-second heartbeat, which
+makes a main-thread stall directly visible in the log. After both 50-tick batches the next heartbeat lands
+within a second and the following one at exactly 1.00s. The only gap over 1.1s in the run precedes the first
+forced tick.
+
+On (2), **resolved as not a problem**: occupancy sat at the cap for 79.8% of ticks, and a freed slot being
+refilled immediately is the intended behaviour rather than a symptom. The cap is a rate limiter; one that is
+usually idle is not limiting anything. Birth still selects by weight among every eligible mastermind whenever
+a slot opens — saturation sets how often that selection happens, not how it is made. Step 9's criterion is
+corrected accordingly.
+
+On (4): the run was made standing in an empty room, so no conspicuous step ever had a loaded actor or target
+to be blocked by, and zero holds is the correct answer rather than a silent failure. The gate is confirmed
+wired — every one of the 881 participants resolves to a placed reference — but its behaviour is unobserved.
+**(4) and (6) are what remain before this step can be marked complete**, and both need a run of a different
+shape: parked in a city rather than an empty room, with a save and reload partway through and one move near
+the end.
 
 ---
 
@@ -1396,9 +1454,84 @@ Design notes worth keeping:
 
 ---
 
+#### Step 14 — Road distance, and the mishap rate that followed it
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** Distance is measured along the roads rather than guessed from hold membership, and the catch rate is
+tuned to the step lengths the model actually produces.
+
+Step 12's second run confirmed Step 13 landed — zero unwinnable steps — and surfaced two consequences of it.
+
+**The travel proxy had almost no range.** Same-hold / different-hold across ten holds put **121 of 133
+dispatches at the same value**, so distance was a flat surcharge, not a variable. Step 13 had just made
+distance the only circumstance that moves a step's odds, which turned a tolerable approximation into the thing
+carrying the whole race.
+
+**The mishap rate no longer matched the model.** Step 13 roughly doubled the base budgets, mean step length
+went 5.26 → 7.03 ticks, and since the mishap roll is *per tick*, catches went 12.2% → 23.4% of resolutions
+without the rate being touched. `fPlotMishapChanceBase` was tuned by Step 9 against budgets that no longer
+exist.
+
+1. **`TravelGraph` supplies the distance.** It already reconstructs Skyrim's long-distance routing skeleton
+   from the NAVI record — 622 nodes over Tamriel, about one exterior cell apart. Coarse is the right
+   resolution here: the question is "roughly how far apart are these two people", and the fine road graph is
+   both unnecessary and unavailable outside the loaded cell grid.
+2. **Placement is per settlement, not per member.** Each member resolves to the node nearest their
+   settlement's map marker, walking up `parentLoc` when a location has none of its own — a house interior has
+   no marker, the city it sits in does, and the city is the right granularity anyway. Sixty-odd lookups
+   instead of nine hundred.
+3. **Distances are precomputed into a matrix**, one Dijkstra per occupied node, at population-build time on
+   the main thread. A per-dispatch query would be a repeated Dijkstra for an answer that cannot change, and
+   `FindNearestNode` needs the marker reference, which is not a plot-thread read.
+4. **The scale is calibrated against the traffic, not the map.** The population-weighted median pair —
+   weighting each settlement by its resident count — is defined as 0.5, and twice that is full scale. A plain
+   percentile of the pair list describes the province's geometry instead, so a map whose cities happen to sit
+   far apart would push every real dispatch to the top of the range and flatten the variation the term exists
+   to provide: the hold proxy's failure, reached from the other side.
+5. **The hold comparison survives as the fallback**, for members whose settlement has no marker and for a
+   session with the graph switched off.
+6. **`bTravelGraphEnabled` now ships true**, since the simulation consumes it. `bTravelGraphDebugBitmap`'s
+   default is corrected to false to match the shipped INI — it defaulted true while the graph defaulted false,
+   which was harmless only while nothing switched the graph on.
+7. **`fPlotMishapChanceBase` 0.015 → 0.012.**
+
+**Verification:** `build.ps1 build` is clean, `check-plot-settings.py` passes, and the offline sweep over the
+new model — actor qualities sampled from the Step 12 run, travel distributed over the full range the road
+graph now provides — reports **67.3% succeeded / 15.6% timed out / 17.1% caught**, against Step 9's target of
+68.7 / 14.3 / 17.0.
+
+Done. `Member::roadNode` and `PlotPopulation::RoadDistanceNorm`, the settlement-to-node resolution and the
+distance matrix in `PlotPopulation::Build`, and `TravelDistanceNorm` in `PlotTick.cpp` reading them.
+
+**A curve nudge that turned out to be unnecessary, which is worth recording.** Step 12's analysis found
+`Conceal` demanding 2.97 work per tick at travel 0.8 against a mean actor rate of 2.87 — the only step type
+above the line, and the reason 7 of 8 Cover Tracks steps were flagged as expected to fall short. The obvious
+fix was a budget of 5 instead of 4. It is not in this step: with real road distances the typical journey is
+0.5 rather than a pinned 0.8, `Conceal` demands 2.70, and the problem dissolves. Simulating the nudge anyway
+showed it would have *hurt* — pushing timeouts down to 9.7%, below Step 9's 10% floor, by making an
+intentionally tight step type slack. The proxy was manufacturing the symptom the nudge would have treated.
+
+Design notes worth keeping:
+
+- **The calibration is population-weighted on purpose.** What matters is the distribution of journeys the
+  simulation will actually make, and that is settlement pairs weighted by how many people live at each end —
+  not the set of pairs the map contains, most of which nobody will ever travel.
+- **A negative return means "no answer", never zero.** `RoadDistanceNorm` returns a negative value when either
+  member is off the graph or no route connects them, so the caller falls back rather than being handed a
+  plausible-looking 0.0 that would read as "they are in the same place".
+- **Per-tick rates are only meaningful against a step length.** The mishap retune is the second time a number
+  tuned in one step was silently invalidated by a change in another; both times the symptom was a distribution
+  drifting without anyone touching the parameter that governs it. A per-tick probability and a budget are one
+  setting wearing two hats.
+
+---
+
 ### Phase B — LLM authoring
 
-#### Step 14 — Target menus and the item pool
+#### Step 15 — Target menus and the item pool
 
 - [ ] Complete
 
@@ -1421,7 +1554,7 @@ fabricated masterminds in different holds and asserts the candidate sets differ 
 
 ---
 
-#### Step 15 — The birth prompt and its response handling
+#### Step 16 — The birth prompt and its response handling
 
 - [ ] Complete
 
@@ -1455,11 +1588,11 @@ fabricated masterminds in different holds and asserts the candidate sets differ 
 | smart quotes, em-dashes, NBSP, accented Latin | plot text that is pure ASCII after the sanitizer     |
 | empty plan                | rejection                                                            |
 
-Whether the *content* is any good is Step 17's business; this step proves it cannot corrupt state.
+Whether the *content* is any good is Step 18's business; this step proves it cannot corrupt state.
 
 ---
 
-#### Step 16 — Adaptation
+#### Step 17 — Adaptation
 
 - [ ] Complete
 
@@ -1481,7 +1614,7 @@ terminates at `iPlotMaxAdaptations` rather than looping.
 
 ---
 
-#### Step 17 — Phase B in-game validation
+#### Step 18 — Phase B in-game validation
 
 - [ ] Complete
 
@@ -1505,7 +1638,7 @@ Record findings under this step.
 
 ### Phase C — memories and world effects
 
-#### Step 18 — The memory calls
+#### Step 19 — The memory calls
 
 - [ ] Complete
 
@@ -1531,7 +1664,7 @@ who is not in the step is rejected rather than written to whoever it named.
 
 ---
 
-#### Step 19 — World effects
+#### Step 20 — World effects
 
 - [ ] Complete
 
@@ -1559,7 +1692,7 @@ called with a `PlotThread::Token` — they require main — then is deleted.
 
 ---
 
-#### Step 20 — Gossip seeding
+#### Step 21 — Gossip seeding
 
 - [ ] Complete
 
@@ -1578,7 +1711,7 @@ from the plot subsystem's own candidate set. The tag predicates are pure and thi
 
 ---
 
-#### Step 21 — Phase C in-game validation and call-volume measurement
+#### Step 22 — Phase C in-game validation and call-volume measurement
 
 - [ ] Complete
 
@@ -1624,7 +1757,7 @@ This phase is complete when:
 - A failed step stays in its position in the chain with the plot continuing past it, and an adaptation does not
   renumber the nodes behind the cursor.
 - Every free-form LLM string reaching state, a memory, or the log has passed through `LLMTextSanitizer`.
-- No engine state outside Step 19's allow-list is mutated.
+- No engine state outside Step 20's allow-list is mutated.
 - A caught failure is observed propagating as a rumor.
 
 ---

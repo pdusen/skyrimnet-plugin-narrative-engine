@@ -74,11 +74,22 @@ namespace NarrativeEngine::PlotCasting
         double pickpocket = 0.5;
     };
 
+    // "This member is not on the road graph." Their settlement has no
+    // map marker, or it is in a worldspace the graph does not cover, or
+    // the graph is switched off entirely.
+    inline constexpr std::size_t kNoRoadNode = static_cast<std::size_t>(-1);
+
     struct Member
     {
         RE::FormID npc = 0;
         std::string name;
         RE::FormID hold = 0;
+        // Where this member is, coarsely, for measuring travel: the road
+        // node nearest their settlement's map marker. Resolved once on
+        // the main thread at population build, because it needs the
+        // marker reference and the graph, and neither is a plot-thread
+        // read.
+        std::size_t roadNode = kNoRoadNode;
         SkillProfile skills;
         // Every faction membership that counts, rostered or not. An
         // independent NPC has none, and stays eligible on that basis

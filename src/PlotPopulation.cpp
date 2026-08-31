@@ -4,10 +4,14 @@
 #include <logger.h>
 #include <PlotFactionRoster.h>
 #include <Settings.h>
+#include <TravelGraph.h>
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace NarrativeEngine::PlotPopulation
 {
@@ -15,6 +19,180 @@ namespace NarrativeEngine::PlotPopulation
     {
         PlotCasting::Population g_population;
         bool g_ready = false;
+
+        // --- The road-distance table ------------------------------------
+        //
+        // Distinct road nodes the population actually occupies, and the
+        // normalised distance between every pair of them. Dense rather
+        // than sparse because there are as many slots as there are
+        // inhabited settlements -- around sixty in vanilla -- so the whole
+        // matrix is a few thousand floats.
+        //
+        // Built here rather than queried per dispatch for two reasons: a
+        // Dijkstra per step would be wasted work on an answer that cannot
+        // change, and FindNearestNode needs the map-marker reference,
+        // which is a main-thread read.
+        std::unordered_map<std::size_t, std::size_t> g_nodeSlot;
+        std::vector<float> g_roadNorm; // slot-major, slots x slots
+        std::size_t g_slots = 0;
+
+        constexpr float kUnreachable = -1.0f;
+
+        // A location's own map marker, or the nearest one up its parent
+        // chain. A house interior has no marker of its own; the city it
+        // sits in does, and for measuring how far someone must travel the
+        // city is the right granularity anyway.
+        RE::TESObjectREFR* MarkerFor(RE::FormID locationId)
+        {
+            auto* location = RE::TESForm::LookupByID<RE::BGSLocation>(locationId);
+            // Bounded rather than while(location): parent chains are
+            // authored data and a mod can make one circular.
+            for (int hops = 0; location != nullptr && hops < 8; ++hops) {
+                if (auto marker = location->worldLocMarker.get()) {
+                    return marker.get();
+                }
+                location = location->parentLoc;
+            }
+            return nullptr;
+        }
+
+        std::size_t NodeForSettlement(RE::FormID settlement)
+        {
+            auto* marker = MarkerFor(settlement);
+            if (marker == nullptr) {
+                return PlotCasting::kNoRoadNode;
+            }
+            auto* cell = marker->GetParentCell();
+            auto* worldSpace = cell != nullptr ? cell->GetRuntimeData().worldSpace : nullptr;
+            if (worldSpace == nullptr) {
+                return PlotCasting::kNoRoadNode;
+            }
+            const auto position = marker->GetPosition();
+            const auto node = TravelGraph::FindNearestNode(worldSpace->GetFormID(), position.x, position.y);
+            return node == TravelGraph::kInvalidNode ? PlotCasting::kNoRoadNode : node;
+        }
+
+        // Resolve every member onto the graph, then measure every pair.
+        void BuildRoadTable()
+        {
+            g_nodeSlot.clear();
+            g_roadNorm.clear();
+            g_slots = 0;
+
+            if (TravelGraph::NodeCount() == 0) {
+                logger::info("PlotPopulation: road graph unavailable; travel falls back to the hold proxy.");
+                return;
+            }
+
+            // Settlements, not members: sixty-odd lookups instead of
+            // nine hundred, and every resident of a town is the same
+            // distance from everywhere else as their neighbours.
+            std::unordered_map<RE::FormID, std::size_t> settlementNode;
+            std::unordered_map<std::size_t, std::size_t> residents;
+            std::size_t placed = 0;
+            for (auto& member : g_population.members) {
+                const auto* participant = GossipGraph::Find(member.npc);
+                if (participant == nullptr || participant->settlement == 0) {
+                    continue;
+                }
+                auto it = settlementNode.find(participant->settlement);
+                if (it == settlementNode.end()) {
+                    it = settlementNode.emplace(participant->settlement, NodeForSettlement(participant->settlement))
+                             .first;
+                }
+                member.roadNode = it->second;
+                if (member.roadNode != PlotCasting::kNoRoadNode) {
+                    ++placed;
+                    g_nodeSlot.try_emplace(member.roadNode, g_nodeSlot.size());
+                    ++residents[member.roadNode];
+                }
+            }
+
+            g_slots = g_nodeSlot.size();
+            if (g_slots == 0) {
+                logger::info("PlotPopulation: no settlement resolved onto the road graph; using the hold proxy.");
+                return;
+            }
+
+            // One Dijkstra per occupied node, not per pair.
+            std::vector<std::size_t> slotNode(g_slots, 0);
+            for (const auto& [node, slot] : g_nodeSlot) {
+                slotNode[slot] = node;
+            }
+
+            // Each pair is weighted by how likely a dispatch is to draw
+            // it -- the product of the two settlements' resident counts --
+            // so the calibration below describes the journeys the
+            // simulation will actually make, not the ones the map merely
+            // permits.
+            std::vector<float> raw(g_slots * g_slots, kUnreachable);
+            std::vector<std::pair<float, double>> weighted;
+            weighted.reserve(g_slots * g_slots);
+            for (std::size_t slot = 0; slot < g_slots; ++slot) {
+                const auto field = TravelGraph::DistanceField(slotNode[slot]);
+                for (std::size_t other = 0; other < g_slots; ++other) {
+                    const std::size_t node = slotNode[other];
+                    if (node >= field.size() || !std::isfinite(field[node])) {
+                        continue;
+                    }
+                    raw[slot * g_slots + other] = field[node];
+                    if (slot != other) {
+                        const double weight = static_cast<double>(residents[slotNode[slot]])
+                                              * static_cast<double>(residents[slotNode[other]]);
+                        weighted.emplace_back(field[node], weight);
+                    }
+                }
+            }
+
+            if (weighted.empty()) {
+                logger::info("PlotPopulation: road graph has no connected settlement pairs; using the hold proxy.");
+                g_slots = 0;
+                g_nodeSlot.clear();
+                return;
+            }
+
+            // Calibrated so the TYPICAL journey scores 0.5, by taking the
+            // population-weighted median pair and calling it half the
+            // scale. Anything past twice that is simply "far".
+            //
+            // A percentile of the raw pair list would have been simpler
+            // and wrong in a way that matters: it describes the map's
+            // geometry rather than the traffic over it, so a province
+            // whose cities happen to sit far apart would push almost
+            // every real dispatch to the top of the range and flatten the
+            // variation this whole term exists to provide -- which is the
+            // failure the hold proxy had, arrived at from the other side.
+            std::sort(weighted.begin(), weighted.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+            double total = 0.0;
+            for (const auto& [distance, weight] : weighted) {
+                total += weight;
+            }
+            float median = weighted.back().first;
+            double seen = 0.0;
+            for (const auto& [distance, weight] : weighted) {
+                seen += weight;
+                if (seen >= 0.5 * total) {
+                    median = distance;
+                    break;
+                }
+            }
+            const float reference = std::max(1.0f, 2.0f * median);
+
+            g_roadNorm.assign(g_slots * g_slots, kUnreachable);
+            for (std::size_t i = 0; i < raw.size(); ++i) {
+                if (raw[i] >= 0.0f) {
+                    g_roadNorm[i] = std::min(1.0f, raw[i] / reference);
+                }
+            }
+
+            logger::info("PlotPopulation: road distances over {} settlement node(s), {} member(s) placed; "
+                         "typical journey {:.0f} units -> norm 0.50, full scale {:.0f}, longest pair {:.0f}",
+                         g_slots,
+                         placed,
+                         median,
+                         reference,
+                         weighted.back().first);
+        }
 
         // The factions plots consider "prominent enough to command
         // something", by the same size filter gossip already applies to
@@ -196,6 +374,8 @@ namespace NarrativeEngine::PlotPopulation
             g_population.members.push_back(std::move(member));
         }
 
+        BuildRoadTable();
+
         g_ready = true;
         logger::info("PlotPopulation: {} member(s), {} in an admitted faction, {} admitted faction(s)",
                      g_population.members.size(),
@@ -206,6 +386,20 @@ namespace NarrativeEngine::PlotPopulation
     bool IsReady()
     {
         return g_ready;
+    }
+
+    double RoadDistanceNorm(std::size_t nodeA, std::size_t nodeB)
+    {
+        if (g_slots == 0 || nodeA == PlotCasting::kNoRoadNode || nodeB == PlotCasting::kNoRoadNode) {
+            return -1.0;
+        }
+        const auto a = g_nodeSlot.find(nodeA);
+        const auto b = g_nodeSlot.find(nodeB);
+        if (a == g_nodeSlot.end() || b == g_nodeSlot.end()) {
+            return -1.0;
+        }
+        const float norm = g_roadNorm[a->second * g_slots + b->second];
+        return norm < 0.0f ? -1.0 : static_cast<double>(norm);
     }
 
     const PlotCasting::Population& Get()
