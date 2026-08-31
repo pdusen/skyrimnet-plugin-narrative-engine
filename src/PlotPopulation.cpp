@@ -61,42 +61,150 @@ namespace NarrativeEngine::PlotPopulation
         // anywhere up its parent chain is authored data we cannot
         // help, while every location failing at once is a timing bug
         // in when we asked.
-        enum class PlacementFailure : std::uint8_t
+        enum class Placement : std::uint8_t
         {
-            None,
+            // Placed by the settlement's own map marker: accurate to the
+            // unit, and the route we would like to be taking.
+            ByMarker,
+            // Placed from authored LCSR data: accurate to a cell, which
+            // is the road graph's own node spacing.
+            ByAnchor,
+            // Not placed. The three reasons are worth telling apart --
+            // "no marker anywhere up the parent chain" is authored data
+            // we cannot help, while "all of them at once" is a timing
+            // bug in when we asked, and this code path has now had two
+            // of those.
             NoMarker,
             NoWorldSpace,
             NoNode
         };
 
-        std::size_t NodeForSettlement(RE::FormID settlement, PlacementFailure& why)
+        constexpr float kCellUnits = 4096.0f;
+
+        // Where a location is, from AUTHORED data only, as a list of
+        // candidates rather than one answer.
+        //
+        // The fallback for when the map marker cannot be placed, and it
+        // exists because the marker route has now failed twice for two
+        // different reasons: at kDataLoaded its ObjectRefHandle pointed
+        // into no game, and afterwards GetParentCell() was null because
+        // nobody had loaded the cell. Both were timing. This route has
+        // none: LCSR entries are plugin data, present from load, and
+        // this codebase already reads the same struct in GossipSim.
+        //
+        // A LIST because a city is in two worldspaces at once. Solitude
+        // and Windhelm keep most of their references inside their own
+        // city worldspace and the rest out in Tamriel, and the road
+        // graph only has nodes in Tamriel -- so the commonest answer is
+        // the wrong one for exactly the two capitals it matters most
+        // for. Handing back both, most-populated first, lets the graph
+        // pick the one it can actually answer for.
+        //
+        // `parentSpaceID` is a worldspace for an exterior reference and
+        // a CELL for an interior one, which is why it is looked up as a
+        // worldspace rather than trusted -- an interior does not answer,
+        // and should not.
+        //
+        // Coarse on purpose: one cell, which is the graph's own node
+        // spacing, and the question is only "roughly how far apart are
+        // these two people". The centroid rather than any single entry
+        // because a location's references are scattered across it and
+        // any one of them can sit at its edge.
+        struct Anchor
         {
-            why = PlacementFailure::None;
-            auto* marker = MarkerFor(settlement);
-            if (marker == nullptr) {
-                why = PlacementFailure::NoMarker;
-                return PlotCasting::kNoRoadNode;
+            RE::FormID worldSpace = 0;
+            float x = 0.0f;
+            float y = 0.0f;
+            std::size_t weight = 0;
+        };
+
+        std::vector<Anchor> StaticAnchors(RE::BGSLocation* location)
+        {
+            for (int hops = 0; location != nullptr && hops < 8; ++hops) {
+                std::unordered_map<RE::FormID, Anchor> bySpace;
+
+                for (const auto& special : location->specialRefs) {
+                    const auto space = special.refData.parentSpaceID;
+                    if (space == 0 || RE::TESForm::LookupByID<RE::TESWorldSpace>(space) == nullptr) {
+                        continue;
+                    }
+                    auto& anchor = bySpace[space];
+                    anchor.worldSpace = space;
+                    anchor.x += (static_cast<float>(special.refData.cellKey.xy.first) + 0.5f) * kCellUnits;
+                    anchor.y += (static_cast<float>(special.refData.cellKey.xy.second) + 0.5f) * kCellUnits;
+                    ++anchor.weight;
+                }
+
+                if (!bySpace.empty()) {
+                    std::vector<Anchor> anchors;
+                    anchors.reserve(bySpace.size());
+                    for (auto& [space, anchor] : bySpace) {
+                        anchor.x /= static_cast<float>(anchor.weight);
+                        anchor.y /= static_cast<float>(anchor.weight);
+                        anchors.push_back(anchor);
+                    }
+                    std::sort(anchors.begin(), anchors.end(), [](const Anchor& a, const Anchor& b) {
+                        return a.weight > b.weight;
+                    });
+                    return anchors;
+                }
+                location = location->parentLoc;
             }
-            // GetWorldspace(), not GetParentCell()->worldSpace.
+            return {};
+        }
+
+        std::size_t NodeForSettlement(RE::FormID settlement, Placement& how)
+        {
+            how = Placement::ByMarker;
+
+            RE::FormID worldSpaceId = 0;
+            float x = 0.0f;
+            float y = 0.0f;
+            bool placed = false;
+
+            // The map marker first: it is the settlement's own idea of
+            // where it is, and accurate to the unit rather than to the
+            // cell.
             //
-            // `parentCell` is a plain field that the engine fills in when
-            // a reference is attached to a loaded cell, so for a map
-            // marker in a worldspace nobody has visited it is simply
-            // null -- which is 53 of Skyrim's 61 settlements at the
-            // moment we ask. GetWorldspace() is the engine's own
-            // accessor and answers for an unloaded reference too.
-            auto* worldSpace = marker->GetWorldspace();
-            if (worldSpace == nullptr) {
-                why = PlacementFailure::NoWorldSpace;
-                return PlotCasting::kNoRoadNode;
+            // GetWorldspace() rather than GetParentCell()->worldSpace.
+            // `parentCell` is a plain field the engine fills in when a
+            // reference is attached to a LOADED cell, so for a marker in
+            // a worldspace nobody has visited it is null -- which was 53
+            // of Skyrim's 61 settlements when this was measured.
+            bool hasMarker = false;
+            if (auto* marker = MarkerFor(settlement)) {
+                hasMarker = true;
+                if (auto* worldSpace = marker->GetWorldspace()) {
+                    const auto position = marker->GetPosition();
+                    worldSpaceId = worldSpace->GetFormID();
+                    x = position.x;
+                    y = position.y;
+                    placed = true;
+                }
             }
-            const auto position = marker->GetPosition();
-            const auto node = TravelGraph::FindNearestNode(worldSpace->GetFormID(), position.x, position.y);
-            if (node == TravelGraph::kInvalidNode) {
-                why = PlacementFailure::NoNode;
-                return PlotCasting::kNoRoadNode;
+
+            if (placed) {
+                const auto node = TravelGraph::FindNearestNode(worldSpaceId, x, y);
+                if (node != TravelGraph::kInvalidNode) {
+                    how = Placement::ByMarker;
+                    return node;
+                }
             }
-            return node;
+
+            // Then the authored fallback, which needs no reference to be
+            // resolvable and no cell to be loaded. Candidates in order,
+            // because the graph is the judge of which worldspace is
+            // usable and only it knows.
+            for (const auto& anchor : StaticAnchors(RE::TESForm::LookupByID<RE::BGSLocation>(settlement))) {
+                const auto node = TravelGraph::FindNearestNode(anchor.worldSpace, anchor.x, anchor.y);
+                if (node != TravelGraph::kInvalidNode) {
+                    how = Placement::ByAnchor;
+                    return node;
+                }
+            }
+
+            how = placed ? Placement::NoNode : hasMarker ? Placement::NoWorldSpace : Placement::NoMarker;
+            return PlotCasting::kNoRoadNode;
         }
 
         // Resolve every member onto the graph, then measure every pair.
@@ -117,6 +225,8 @@ namespace NarrativeEngine::PlotPopulation
             std::unordered_map<RE::FormID, std::size_t> settlementNode;
             std::unordered_map<std::size_t, std::size_t> residents;
             std::size_t placed = 0;
+            std::size_t byMarker = 0;
+            std::size_t byAnchor = 0;
             std::size_t noMarker = 0;
             std::size_t noWorldSpace = 0;
             std::size_t noNode = 0;
@@ -127,21 +237,25 @@ namespace NarrativeEngine::PlotPopulation
                 }
                 auto it = settlementNode.find(participant->settlement);
                 if (it == settlementNode.end()) {
-                    auto why = PlacementFailure::None;
+                    auto how = Placement::ByMarker;
                     it =
-                        settlementNode.emplace(participant->settlement, NodeForSettlement(participant->settlement, why))
+                        settlementNode.emplace(participant->settlement, NodeForSettlement(participant->settlement, how))
                             .first;
-                    switch (why) {
-                    case PlacementFailure::NoMarker:
+                    switch (how) {
+                    case Placement::ByMarker:
+                        ++byMarker;
+                        break;
+                    case Placement::ByAnchor:
+                        ++byAnchor;
+                        break;
+                    case Placement::NoMarker:
                         ++noMarker;
                         break;
-                    case PlacementFailure::NoWorldSpace:
+                    case Placement::NoWorldSpace:
                         ++noWorldSpace;
                         break;
-                    case PlacementFailure::NoNode:
+                    case Placement::NoNode:
                         ++noNode;
-                        break;
-                    case PlacementFailure::None:
                         break;
                     }
                 }
@@ -153,24 +267,25 @@ namespace NarrativeEngine::PlotPopulation
                 }
             }
 
+            // Always logged, success or not: which ROUTE placed a
+            // settlement is the open question. If the marker column is
+            // full, GetWorldspace answers for an unloaded reference and
+            // the anchor is dead code kept for safety; if it is empty,
+            // the anchor is the only reason this works at all.
+            logger::info("PlotPopulation: road placement over {} settlement(s): {} by map marker, {} by authored "
+                         "anchor, {} no marker, {} no worldspace, {} no node.",
+                         settlementNode.size(),
+                         byMarker,
+                         byAnchor,
+                         noMarker,
+                         noWorldSpace,
+                         noNode);
+
             g_slots = g_nodeSlot.size();
             if (g_slots == 0) {
                 logger::warn("PlotPopulation: no settlement resolved onto the road graph, so travel falls back to "
-                             "the hold proxy. Of {} settlement(s): {} had no map marker, {} had a marker in no "
-                             "worldspace, {} found no node near it.",
-                             settlementNode.size(),
-                             noMarker,
-                             noWorldSpace,
-                             noNode);
+                             "the hold proxy for every step.");
                 return;
-            }
-            if (noMarker + noWorldSpace + noNode > 0) {
-                logger::info("PlotPopulation: {} settlement(s) stayed off the road graph ({} no marker, {} no "
-                             "worldspace, {} no node); their residents use the hold proxy.",
-                             noMarker + noWorldSpace + noNode,
-                             noMarker,
-                             noWorldSpace,
-                             noNode);
             }
 
             // One Dijkstra per occupied node, not per pair.

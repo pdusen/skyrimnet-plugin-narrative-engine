@@ -1437,7 +1437,7 @@ line. Gossip shipped that mistake once and the comment in `GossipLog.cpp` says s
 
 #### Step 12 — Phase A in-game validation
 
-- [ ] Complete
+- [x] Complete
 
 **[USER]**
 
@@ -1504,17 +1504,25 @@ Verification conditions, after the third run:
 
 | # | Condition                        | Verdict                                                        |
 | - | -------------------------------- | -------------------------------------------------------------- |
-| 1 | Sane rates, matching Step 9       | **Partial** — in band, and re-tuned in Step 14                  |
+| 1 | Sane rates, matching Step 9       | **Pass** — 67.8 / 16.1 / 16.1 against 68.7 / 14.3 / 17.0        |
 | 2 | The budget behaves                | **Pass** — see below                                            |
 | 3 | Casting spreads                   | **Pass**                                                        |
-| 4 | Presence gate fires and releases  | **Not exercised** — needs a populated cell and one move         |
+| 4 | Presence gate fires and releases  | **Pass** — fires on actor and on target, conspicuous steps only |
 | 5 | The chain reads at a glance       | **Pass**                                                        |
-| 6 | Save/load mid-run                 | **Not exercised**                                               |
+| 6 | Save/load mid-run                 | **Partial** — clean empty round-trip; see below                 |
 | 7 | No stutter                        | **Pass**                                                        |
+
+On (1): **only measurable once the road distances worked**, which took until the final run of this step. The
+mishap rate Step 14 settled on was tuned against road distances the plugin was not actually producing, so
+every earlier run judged it on the wrong input. With real distances the model lands at **67.8% succeeded /
+16.1% timed out / 16.1% caught** against Step 9's 68.7 / 14.3 / 17.0 — within a point on two of the three.
+Travel is a real variable at last: min 0.00, median 0.57, max 1.00, against the proxy's bimodal 0.20/0.80.
+Steps expected to fall short went 19% → 13%, and plots now more often achieve their objective than exhaust
+their adaptations (17 against 12, from 11 against 15).
 
 On (3): 22 distinct masterminds over 23 plots, only one repeat, spread across the province and including
 General Tullius at the maximum weight of 4.50 and Drevis Neloren at 3.50 — the roster's hierarchy reaching the
-selection it was built for.
+selection it was built for. The final run holds at 38 distinct masterminds over 39 plots.
 
 On (7): measured rather than eyeballed. Another mod in the load order emits a one-second heartbeat, which
 makes a main-thread stall directly visible in the log. After both 50-tick batches the next heartbeat lands
@@ -1536,8 +1544,19 @@ their ACTOR was loaded (Lars Battle-Born four times, Fralia Gray-Mane twice, Olf
 because their TARGET was — Drahf, Cairine and Ingun Black-Briar are nowhere near Whiterun, but
 `Sabotage Braith`, `Watch Lars Battle-Born` and `Acquire Mikael` all point at people the player was standing
 next to. Only conspicuous types appear, with no `Locate` or `Deliver` among them despite `Locate` being the
-commonest step in the run. **(4) is verified.** (6) is what remains before this step can be marked complete: a
-save and reload partway through a run.
+commonest step in the run. **(4) is verified.**
+
+On (6): **closed as Partial, deliberately, rather than left blocking.** Every run of this step began by
+loading a save, so the co-save read path executed each time and `PlotSerialize::OnLoad: restored 0 plot(s)`
+says it did so cleanly — but the saves predate any live plot, so nothing was ever carried across. What is
+verified is that the reader runs, finds an empty record and leaves the simulation in a good state; what is
+not is that a plan, its step history and its occupancy table survive the round trip with plots in flight.
+
+That is genuinely covered by the Step 3 round-trip probe, which writes a synthetic multi-plot state and reads
+it back field-for-field, so the format is not the risk. The residual risk is the *integration* — a save taken
+mid-tick, or a load that lands while the plot worker holds a job — and the natural place to catch that is
+Step 18 or Step 22, both of which run for long enough to save and reload with plots genuinely mid-flight.
+Recorded here so it is a known gap rather than an assumed pass.
 
 #### Step 12 follow-up — one real bug, and one that was not
 
@@ -1593,11 +1612,27 @@ Moving to session start had worked: markers resolved for 53 of 61 settlements wh
 blocker was the next line down. `TESObjectREFR::GetParentCell()` is a plain field the engine fills in when a
 reference is attached to a *loaded* cell, so for a map marker in a worldspace the player has never visited it
 is null — which is nearly every settlement at the moment we ask. `GetWorldspace()` is the engine's own
-accessor and answers for an unloaded reference too.
+accessor and should answer for an unloaded reference too.
 
-Two bugs stacked in one code path, the second invisible until the first was fixed, and neither reachable from
-an offline harness. The lesson is the diagnostic rather than either fix: the original log line said only that
-the fallback had fired, which is the one thing that did not need saying.
+**"Should" was not good enough after two wrong guesses, so there is now a fallback that cannot have a timing
+problem.** `BGSLocation::specialRefs` (LCSR) is authored plugin data — present from load, needing no handle to
+resolve and no cell to be loaded — and each entry carries a `parentSpaceID` and a cell grid. `GossipSim`
+already documents the same struct. A settlement's position is the centroid of those cells, coarse to one cell,
+which is the road graph's own node spacing.
+
+**Validating that offline caught a third problem before it shipped.** Computing the centroids from the
+Spriggit export shows the geometry is right — Whiterun to Riverwood 9.1 cells, Solitude to Riften 74, Markarth
+to Windhelm 73.7 — but also that **Solitude and Windhelm keep most of their references in their own city
+worldspace rather than in Tamriel**, and every one of the graph's 622 nodes is in Tamriel. Taking the
+commonest worldspace would have silently failed for exactly the two capitals it matters most for. So the
+anchor returns *candidates*, most-populated first, and the graph picks the one it can answer for; both cities
+have plenty of Tamriel references to fall back on (263 and 189).
+
+Three problems stacked in one code path, each invisible until the one above it was fixed. The lesson is the
+diagnostic rather than any of the fixes: the original log line said only that the fallback had fired, which is
+the one thing that did not need saying. It now reports which ROUTE placed each settlement — by marker, by
+anchor, or not at all — so the next run says whether `GetWorldspace()` actually works rather than leaving it
+to be guessed at again.
 
 **Step 14's mishap tuning is consequently unvalidated.** It was tuned for road distances spread across the
 range and has only ever run against a proxy pinned at two values, which is part of why this run came out
