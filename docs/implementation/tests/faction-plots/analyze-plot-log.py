@@ -68,6 +68,8 @@ def main(path):
     ends = []
     adapts = []
     reaps = 0
+    reaped_plots = 0
+    reaped_rows = 0
     # Lines are emitted during a tick and the TICK line closes it, so a line's
     # game day is the day of the next TICK line.
     pending = []
@@ -104,6 +106,13 @@ def main(path):
                 adapts.append(record)
             elif tag == "REAP":
                 reaps += 1
+                # "REAP  N plot(s) M occupancy row(s) day=..." -- the row
+                # count is what says the occupancy table is not growing
+                # for the life of the save.
+                numbers = re.findall(r"(\d+) (?:plot|occupancy row)\(s\)", rest)
+                if len(numbers) == 2:
+                    reaped_plots += int(numbers[0])
+                    reaped_rows += int(numbers[1])
 
     print(f"== {os.path.basename(path)} ==")
     print(
@@ -111,6 +120,11 @@ def main(path):
         f"{len(dispatches)} steps dispatched, {len(resolves)} resolved, "
         f"{len(adapts)} adaptations, {reaps} reaps"
     )
+    # Only when the line actually carried the counts. Traces from before
+    # the occupancy prune landed have a REAP line with no row count, and
+    # reporting a confident zero for those would be worse than silence.
+    if reaped_plots or reaped_rows:
+        print(f"{'':13}reaped {reaped_plots} plot(s) and {reaped_rows} spent occupancy row(s)")
 
     # --- 1. Does the simulation clock advance? ------------------------------
     days = [day for day, _, _ in ticks]

@@ -207,12 +207,14 @@ namespace NarrativeEngine::PlotLog
         Emit(FormatEnd(plot));
     }
 
-    void Reap(std::size_t count, double gameDay)
+    void Reap(std::size_t plots, std::size_t occupancyRows, double gameDay)
     {
-        if (count == 0) {
+        // Either alone is worth a line: a tick can retire spent cooldown
+        // rows without any plot ageing out of the retention window.
+        if (plots == 0 && occupancyRows == 0) {
             return;
         }
-        Emit(std::format("REAP  {} plot(s) day={:.2f}", count, gameDay));
+        Emit(std::format("REAP  {} plot(s) {} occupancy row(s) day={:.2f}", plots, occupancyRows, gameDay));
     }
 
     void Note(std::string_view text)

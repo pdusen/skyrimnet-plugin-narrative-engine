@@ -182,6 +182,21 @@ namespace NarrativeEngine::PlotCasting
         row.role = role;
     }
 
+    std::size_t PruneExpired(OccupancyTable& occupancy, double gameDay)
+    {
+        const auto before = occupancy.size();
+        std::erase_if(occupancy, [gameDay](const auto& entry) {
+            const auto& row = entry.second;
+            // Mirrors Screen's test deliberately, including the
+            // direction of the comparison: Screen rejects while
+            // `gameDay < availableAt`, so a stamp is spent once the day
+            // has reached it, not after it has passed it.
+            return !row.IsEngaged() && !(gameDay < row.mastermindAvailableAtGameDay)
+                   && !(gameDay < row.actorAvailableAtGameDay);
+        });
+        return before - occupancy.size();
+    }
+
     void Release(OccupancyTable& occupancy, RE::FormID npc, double gameDay, const Cooldowns& cooldowns)
     {
         const auto it = occupancy.find(npc);

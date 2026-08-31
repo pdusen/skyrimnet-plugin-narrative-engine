@@ -87,7 +87,7 @@ namespace NarrativeEngine::PlotLog
 
     void End(const PlotModel::Plot& plot);
 
-    void Reap(std::size_t count, double gameDay);
+    void Reap(std::size_t plots, std::size_t occupancyRows, double gameDay);
 
     void Note(std::string_view text);
 

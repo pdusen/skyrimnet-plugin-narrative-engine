@@ -160,6 +160,21 @@ It holds the active and not-yet-reaped plots (with their plans, histories and li
 table including per-role cooldown stamps, the tick schedule's last-fired stamp, and the RNG stream position.
 It does not hold anything derived from `GossipGraph`, which is rebuilt every session.
 
+**Everything in it is bounded, and each bound is enforced by a different mechanism.** Worth stating together,
+because the record is written every save for the life of a playthrough and each of these would otherwise be a
+slow leak:
+
+- **Plots** — `ReapPlots` runs every tick and erases terminal plots older than `fPlotTerminalRetentionDays`.
+  Steady state is `iPlotMaxConcurrent` live plots plus however many ended inside the retention window.
+- **Step history per plot** — capped at `iPlotStepHistoryCap` on each retire, oldest dropped first.
+- **Rolls per step** — one `TickRecord` per tick lived, so bounded by the step's own budget.
+- **Occupancy rows** — pruned alongside the plots, by `PlotCasting::PruneExpired`. This one is not a
+  retention window but an equivalence: a row is created the first time an NPC is engaged and only ever
+  mutated afterwards, so without pruning the table grows for the life of a save toward the size of the
+  participating population. An unengaged row whose cooldowns have both passed screens *identically* to a
+  missing one, for either role, so dropping it cannot change a casting decision. Rows still engaged, or still
+  benched for either role, stay — an NPC can be spent as a mastermind and still on cooldown as an actor.
+
 ---
 
 ## Implementation plan

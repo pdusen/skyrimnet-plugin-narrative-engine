@@ -170,6 +170,20 @@ namespace NarrativeEngine::PlotCasting
     // Release `npc` and start their cooldown for the role they held.
     void Release(OccupancyTable& occupancy, RE::FormID npc, double gameDay, const Cooldowns& cooldowns);
 
+    // Drop rows that no longer say anything, returning how many went.
+    //
+    // A row is created the first time an NPC is engaged and is only ever
+    // mutated afterwards, so without this the table grows for the life of
+    // a save toward the size of the participating population -- and it is
+    // persisted, so that growth is in every co-save.
+    //
+    // Safe because "inert row" and "no row" are the same answer: an
+    // unengaged row whose cooldowns have both passed screens exactly as a
+    // missing one does, for either role. Anything still engaged, or still
+    // holding a stamp in the future for EITHER role, stays -- a row can be
+    // spent as a mastermind and still benched as an actor.
+    std::size_t PruneExpired(OccupancyTable& occupancy, double gameDay);
+
     // Pick a mastermind, weighted by the resources they command.
     //
     // Weight rises with faction rank inside an admitted faction.

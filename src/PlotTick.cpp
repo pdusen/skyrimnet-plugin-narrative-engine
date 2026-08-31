@@ -450,7 +450,14 @@ namespace NarrativeEngine::PlotTick
             std::erase_if(state.plots, [gameDay, retention](const PlotModel::Plot& p) {
                 return p.IsTerminal() && gameDay - p.endedOnGameDay > retention;
             });
-            PlotLog::Reap(before - state.plots.size(), gameDay);
+
+            // Spent occupancy rows go with them. They are not covered by
+            // the retention window -- a row stops meaning anything the
+            // moment its last cooldown is up, whereas a terminal plot is
+            // deliberately kept around to be read on the dashboard.
+            const auto rows = PlotCasting::PruneExpired(state.occupancy, gameDay);
+
+            PlotLog::Reap(before - state.plots.size(), rows, gameDay);
         }
 
         void RunSimulation(PlotState& state, double gameDay)
