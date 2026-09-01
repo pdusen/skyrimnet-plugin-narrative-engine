@@ -38,17 +38,48 @@ namespace NarrativeEngine::PlotBirth
         std::string rejection;
 
         // Only meaningful when ok.
+        //
+        // The AGENDA: the larger thing this scheme ostensibly serves,
+        // and deliberately not something this system can ever finish.
+        // "Eliminate Talos worship in Skyrim." "Become Queen of Skyrim."
+        //
+        // The first version of this asked for "what this person wants
+        // and why they will not ask openly", which is a paraphrase of
+        // the objective -- so ambition and objective said the same
+        // thing, nothing pulled the objective toward anything larger,
+        // and every plot came out as a small theft with a motive
+        // attached. The design always called it "the larger thing this
+        // objective serves"; that is what it is now.
         std::string ambition;
-        // In order. The LAST entry is the objective; everything before
-        // it is preparation. That is the model's own convention from
-        // the prompt, and it is checked rather than assumed.
+
+        // In order, and NOT including the objective: these are the
+        // steps that lead up to it. The caller appends the objective as
+        // the final step.
         std::vector<PlotModel::Step> plan;
+
+        // Chosen by the model as its own field rather than inferred
+        // from whichever step happened to be last.
+        //
+        // Inferring it produced plots titled "Cover Tracks Sybille
+        // Stentor": `conceal` is a natural closing step, so it kept
+        // becoming the objective, and covering your tracks is never
+        // what a scheme is FOR. Choosing it explicitly also puts it in
+        // the right order -- pick the destination, then the route.
+        PlotModel::Step objective;
     };
 
     struct Limits
     {
-        std::size_t minSteps = 2;
-        std::size_t maxSteps = 6;
+        // Bounds on the PREPARATION steps; the objective is appended on
+        // top, so a plot runs one longer than these.
+        //
+        // Deliberately not stated in the prompt. Telling the model "2 to
+        // 6" produced 4, 4, 4 -- the midpoint of any range offered is
+        // where it lands. The bound belongs here, where it is enforced,
+        // rather than in the prose, where it is a suggestion that
+        // doubles as an anchor.
+        std::size_t minSteps = 1;
+        std::size_t maxSteps = 5;
         // A hard ceiling on the free-form field, applied AFTER
         // sanitizing. An ambition is one sentence; anything past this is
         // the model ignoring the instruction, and letting it through

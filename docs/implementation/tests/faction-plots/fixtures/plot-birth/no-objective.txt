@@ -1,0 +1,3 @@
+{"ambition": "He means to see the Legion driven out of the Reach for good.",
+ "plan": [{"type": "locate", "target": 0},
+          {"type": "sabotage", "target": 1}]}

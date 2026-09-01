@@ -171,9 +171,11 @@ namespace NarrativeEngine::PlotBirth
             }
             ctx["step_types"] = std::move(stepTypes);
 
-            const Limits limits;
-            ctx["min_steps"] = limits.minSteps;
-            ctx["max_steps"] = limits.maxSteps;
+            // No min_steps / max_steps. Offering the model a range is
+            // how the first three plots all came back at exactly four
+            // steps: the midpoint of any stated range is where it
+            // lands. The bound is enforced in Parse, where a violation
+            // costs the response rather than shaping it.
             return ctx;
         }
     } // namespace
@@ -219,14 +221,13 @@ namespace NarrativeEngine::PlotBirth
         plot.ambition = std::move(outcome.ambition);
         plot.plan = std::move(outcome.plan);
 
-        // The objective is the LAST step, which is the prompt's own
-        // convention. Copied onto the plot rather than referenced,
-        // because adaptation rewrites the plan and must not be able to
-        // rewrite the destination.
-        const auto& objective = plot.plan.back();
-        plot.objectiveType = objective.type;
-        plot.objectiveTarget = objective.target;
-        plot.objectiveTargetName = objective.targetName;
+        // The objective goes on the end of the plan, and onto the plot.
+        // Copied rather than referenced because adaptation rewrites the
+        // plan and must not be able to rewrite the destination.
+        plot.objectiveType = outcome.objective.type;
+        plot.objectiveTarget = outcome.objective.target;
+        plot.objectiveTargetName = outcome.objective.targetName;
+        plot.plan.push_back(std::move(outcome.objective));
         return true;
     }
 } // namespace NarrativeEngine::PlotBirth

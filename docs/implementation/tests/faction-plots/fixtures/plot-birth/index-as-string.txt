@@ -1,7 +1,3 @@
-{
-  "ambition": "He wants the ledger, and he does not much mind who gets hurt fetching it.",
-  "plan": [
-    { "type": "locate", "target": "1" },
-    { "type": "acquire", "target": "0" }
-  ]
-}
+{"ambition": "He means to hold the ledger of every debt in the city.",
+ "objective": {"type": "acquire", "target": "0"},
+ "plan": [{"type": "locate", "target": "1"}]}

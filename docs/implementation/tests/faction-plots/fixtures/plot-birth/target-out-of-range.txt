@@ -1,7 +1,4 @@
-{
-  "ambition": "He wants the man who took his lease to lose everything.",
-  "plan": [
-    { "type": "locate", "target": 0 },
-    { "type": "suborn", "target": 97 }
-  ]
-}
+{"ambition": "He means to see his family's name restored to the standing it had before the war.",
+ "objective": {"type": "discredit", "target": 0},
+ "plan": [{"type": "locate", "target": 0},
+          {"type": "suborn", "target": 97}]}

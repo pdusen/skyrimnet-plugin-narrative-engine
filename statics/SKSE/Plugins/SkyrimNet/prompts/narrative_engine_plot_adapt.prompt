@@ -46,9 +46,10 @@ Return a JSON object. No markdown fences. No prose before or after the object.
 
 **If `"revise"`**, add:
 
-- `plan` — the remaining steps, in order, {{ min_steps }} to {{ max_steps }} of
-  them. Each has a `type` from the list above and a `target` number, taken from
-  **Objects** when the type is `acquire` and from **People** otherwise.
+- `plan` — the remaining steps, in order: as many as this way to the objective
+  actually needs and no more. Each has a `type` from the list above and a
+  `target` number, taken from **Objects** when the type is `acquire` and from
+  **People** otherwise.
 - **The last entry must be the objective, exactly as it is given to you.** A
   plan that ends anywhere else is thrown away, and the scheme concedes by
   default.
@@ -57,13 +58,6 @@ A revision should react to what actually went wrong. If they were seen, deal
 with the person who saw them. If the approach was too slow, take a shorter one.
 Repeating the failed step unchanged is not a revision.
 
-Example shape only — do not copy its content:
-
-```
-{"decision": "revise",
- "plan": [{"type": "suborn", "target": 1},
-          {"type": "acquire", "target": 0}]}
-```
 [ end system ]
 
 [ user ]

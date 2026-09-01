@@ -1,82 +1,99 @@
 {# narrative_engine_plot_birth.prompt — invents one scheme for an
    already-chosen mastermind. Casting picked the person; this call decides
-   what they want and how they mean to get it.
+   what larger thing they are working toward, what concrete step of it they
+   are taking now, and how.
    Receives the JSON object produced by PlotBirth::BuildContext:
      mastermind { name, hold, standing }, memories [string],
      actors [{ index, name, relation, standing }],
      items [{ index, name, category }], factions [{ index, name }],
-     step_types [{ id, description }], min_steps, max_steps,
+     step_types [{ id, description }],
      npc { UUID } — required by SkyrimNet's character_profile submodules;
-                    keys every character-bio decorator. #}
+                    keys every character-bio decorator.
+   NOTE: no fenced blocks and no literal braces anywhere in this file; both
+   break the render. See docs/CUSTOM_PROMPTS.md. #}
 [ system ]
 ## Task
-One person in Skyrim has decided to do something they cannot do openly. You
-write down what they want and the steps they will take to get it.
+One person in Skyrim is working toward something they cannot pursue openly.
+You write down what they are ultimately after, the concrete move they are
+making toward it now, and the steps that move takes.
 
 The decision that this person is scheming has ALREADY BEEN MADE. Do not
 second-guess it, do not refuse, and do not decide they are too decent or too
 minor for it. Ordinary people scheme, and most schemes are small.
 
-**The scheme comes out of who they are.** Their station, their temperament,
-what they have and what they are short of. A guard captain and a fence do not
-scheme about the same things, and neither of them schemes about something a
-stranger would.
+## The three things you decide, in this order
+
+**First, the agenda.** The larger thing this person is ultimately after. It is
+nebulous, it is the work of a lifetime, and nothing they do in one scheme will
+finish it — a Thalmor officer means to see Talos worship gone from Skyrim; a
+Riften brewer means to own everyone who matters in the hold. It comes out of
+who they are: their station, their temperament, what they command and what
+they resent. This is what makes two different people scheme differently, so it
+must be theirs and not anyone's.
+
+**Second, the objective.** One concrete thing that, once done, plausibly moves
+them along that agenda — and that a handful of people could actually finish
+within a season. It is a step toward the agenda, not a measure of it, and it
+does not have to be an obvious one. This is the point of the whole scheme.
+
+**Third, the route.** The steps that get them the objective.
 
 ## What you may name
 
 You do not invent people, places or objects. Everything you can name is given
 to you with a number, and you refer to it by that number. **A name that is not
-on a list does not exist**, and a plan that reaches for one is thrown away.
+on a list does not exist**, and a scheme that reaches for one is thrown away.
 
 ## The steps you may use
 
-A plan is made of these and nothing else. Use the `id` exactly as written.
+Every step is one of these and nothing else. Use the `id` exactly as written.
 
 {% for s in step_types %}- `{{ s.id }}` — {{ s.description }}
 {% endfor %}
 
-## How to build the plan
+Each step names one target by number. `acquire` takes its target from
+**Objects**; every other step takes its target from **People**.
 
-The plan is **{{ min_steps }} to {{ max_steps }} steps**, in the order they
-happen. The LAST step is the objective — the thing that, once done, means the
-scheme succeeded. Everything before it is preparation.
+## What makes a good scheme
 
-A good plan reads as one thing leading to another. Find out where the ledger
-is, then take it, then make sure nobody knows who did. A plan whose steps
-could be shuffled without anyone noticing is a list, not a scheme.
+Take as many steps as this particular objective actually needs and no more.
+Some are one move by one person. Some need groundwork on three people who each
+want different things.
 
-Each step names one target by number:
+The route should be specific to this objective and this person — the steps
+follow from what they are trying to get and who is in their way, so a route
+that would work equally well for someone else's objective is the wrong route.
+Use different people for different steps where the objective calls for it.
 
-- `acquire` takes its target from **Objects**.
-- Every other step takes its target from **People**.
-
-Do not use the same person for every step. A scheme with one victim and one
-tool is thinner than one that touches three people who each want different
-things.
+`conceal` covers up something already done. It can end a route; it can never
+be the objective, because nobody schemes in order to have covered their
+tracks.
 
 ## Output Format
 Return a JSON object. No markdown fences. No prose before or after the object.
 
-- `ambition` — one sentence, in the third person, saying what this person
-  wants and why they will not ask for it openly. This is the only free text
-  you write; it is what a reader sees first. No names of people or places that
-  are not on the lists you are given.
-- `plan` — array of {{ min_steps }} to {{ max_steps }} objects, in order. Each
-  has:
-  - `type` — one of the step ids above, exactly as written.
-  - `target` — a number from **People**, or from **Objects** when the type is
-    `acquire`.
-
-Example shape only — do not copy its content:
-
-```
-{"ambition": "She wants the mine's ledger, because what it records would ruin her brother if anyone read it aloud.",
- "plan": [{"type": "locate", "target": 2},
-          {"type": "acquire", "target": 0},
-          {"type": "conceal", "target": 2}]}
-```
+- `ambition` — one sentence, third person: the AGENDA. The larger thing they
+  are ultimately after, not this scheme and not its objective. If your sentence
+  would be finished by completing the objective, it is the wrong sentence.
+- `objective` — an object with `type` and `target`, as described above. The
+  concrete thing this scheme exists to achieve.
+- `plan` — array of objects with `type` and `target`, in the order they happen:
+  the steps taken to reach the objective. Do NOT repeat the objective here; it
+  is added automatically as the final step.
 
 Write plainly. No markdown, no headings, no bullet points inside `ambition`.
+
+## Hard Constraints
+- Output strict JSON. No markdown code fences. No prose before or after the
+  JSON object.
+- Return only the keys `ambition`, `objective` and `plan`.
+- Every `type` MUST be one of the step ids listed above, spelled exactly.
+- Every `target` MUST be a number that appears on the list that step draws
+  from. Numbers that are not on the list, and names instead of numbers, are
+  both thrown away.
+- `objective.type` must not be `conceal`.
+- `ambition` must not name any person, place or object that is not on the
+  lists you are given.
 [ end system ]
 
 [ user ]
@@ -90,9 +107,8 @@ Write plainly. No markdown, no headings, no bullet points inside `ambition`.
 {% if length(memories) > 0 %}
 ## What is also on their mind
 
-Recent memories, newest first. Use them where they fit — a slight not
-forgotten, a debt, a rivalry, something they noticed — but they are extra
-detail, not the point. A scheme that ignores them is fine if it fits the
+Recent memories, newest first. Use them where they fit, but they are extra
+detail rather than the point. A scheme that ignores them is fine if it fits the
 person; a scheme that fits a memory but not the person is not.
 
 {% for m in memories %}- {{ m }}
@@ -115,6 +131,6 @@ person; a scheme that fits a memory but not the person is not.
 {% endfor %}
 {% endif %}
 
-Decide what {{ mastermind.name }} wants badly enough to go around the open way
-of getting it, and lay out the steps they take. Answer with the object.
+Decide what {{ mastermind.name }} is ultimately after, the one concrete thing
+they are doing about it now, and how they go about it. Answer with the object.
 [ end user ]

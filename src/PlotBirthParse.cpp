@@ -61,6 +61,74 @@ namespace NarrativeEngine::PlotBirth
         }
     } // namespace
 
+    namespace
+    {
+        // Read one {type, target} object against the menus. `where`
+        // names it for the rejection message.
+        bool ReadStep(const nlohmann::json& raw,
+                      const PlotMenus::Menus& menus,
+                      const std::string& where,
+                      PlotModel::Step& out,
+                      std::string& rejection)
+        {
+            if (!raw.is_object()) {
+                rejection = where + " was not an object";
+                return false;
+            }
+
+            const auto typeIt = raw.find("type");
+            if (typeIt == raw.end() || !typeIt->is_string()) {
+                rejection = where + " carried no 'type' string";
+                return false;
+            }
+            // A membership test against the manifest, not a lookup with
+            // a default. An unrecognised type is the model inventing a
+            // verb, and a plot built on one has a step nothing can run.
+            PlotModel::StepType type{};
+            if (!PlotModel::ParseStepType(typeIt->get<std::string>(), type)) {
+                rejection =
+                    where + " named step type '" + typeIt->get<std::string>() + "', which is not in the manifest";
+                return false;
+            }
+
+            const auto targetIt = raw.find("target");
+            if (targetIt == raw.end()) {
+                rejection = where + " carried no 'target'";
+                return false;
+            }
+            std::size_t index = 0;
+            if (!ReadIndex(*targetIt, index)) {
+                rejection = where + " had a 'target' that is not a whole number";
+                return false;
+            }
+
+            // Which menu a step draws from is decided by its TYPE, which
+            // is what lets the model write one `target` field instead of
+            // choosing a menu as well. Acquire is about an object;
+            // everything else is about a person.
+            out = PlotModel::Step{};
+            out.type = type;
+            if (type == PlotModel::StepType::Acquire) {
+                if (index >= menus.items.size()) {
+                    rejection =
+                        where + " named object " + std::to_string(index) + " of " + std::to_string(menus.items.size());
+                    return false;
+                }
+                out.target = menus.items[index].form;
+                out.targetName = menus.items[index].displayName;
+                return true;
+            }
+            if (index >= menus.actors.size()) {
+                rejection =
+                    where + " named person " + std::to_string(index) + " of " + std::to_string(menus.actors.size());
+                return false;
+            }
+            out.target = menus.actors[index].npc;
+            out.targetName = menus.actors[index].name;
+            return true;
+        }
+    } // namespace
+
     Outcome Parse(const std::string& response, const PlotMenus::Menus& menus, const Limits& limits)
     {
         // Strip a wrapping markdown fence before parsing. Models wrap
@@ -97,9 +165,13 @@ namespace NarrativeEngine::PlotBirth
         if (planIt == json.end() || !planIt->is_array()) {
             return Reject("response carried no 'plan' array");
         }
+        // The plan is the PREPARATION; the objective is separate and
+        // is appended by the caller. A plan of zero is therefore legal
+        // in principle -- a scheme that needs no groundwork -- but it
+        // reads as a wish rather than a plot, so one step is the floor.
         if (planIt->size() < limits.minSteps) {
-            return Reject("plan had " + std::to_string(planIt->size()) + " step(s), fewer than the minimum of "
-                          + std::to_string(limits.minSteps));
+            return Reject("plan had " + std::to_string(planIt->size())
+                          + " preparation step(s), fewer than the minimum of " + std::to_string(limits.minSteps));
         }
         if (planIt->size() > limits.maxSteps) {
             return Reject("plan had " + std::to_string(planIt->size()) + " step(s), more than the maximum of "
@@ -108,64 +180,42 @@ namespace NarrativeEngine::PlotBirth
 
         std::vector<PlotModel::Step> plan;
         plan.reserve(planIt->size());
+        std::string rejection;
 
         for (std::size_t i = 0; i < planIt->size(); ++i) {
-            const auto& raw = (*planIt)[i];
-            const auto where = "step " + std::to_string(i);
-            if (!raw.is_object()) {
-                return Reject(where + " was not an object");
-            }
-
-            const auto typeIt = raw.find("type");
-            if (typeIt == raw.end() || !typeIt->is_string()) {
-                return Reject(where + " carried no 'type' string");
-            }
-            // A membership test against the manifest, not a lookup with
-            // a default. An unrecognised type is the model inventing a
-            // verb, and a plot built on one has a step nothing can run.
-            PlotModel::StepType type{};
-            if (!PlotModel::ParseStepType(typeIt->get<std::string>(), type)) {
-                return Reject(where + " named step type '" + typeIt->get<std::string>()
-                              + "', which is not in the manifest");
-            }
-
-            const auto targetIt = raw.find("target");
-            if (targetIt == raw.end()) {
-                return Reject(where + " carried no 'target'");
-            }
-            std::size_t index = 0;
-            if (!ReadIndex(*targetIt, index)) {
-                return Reject(where + " had a 'target' that is not a whole number");
-            }
-
-            // Which menu a step draws from is decided by its TYPE, which
-            // is what lets the model write one `target` field instead of
-            // choosing a menu as well. Acquire is about an object;
-            // everything else is about a person.
             PlotModel::Step step;
-            step.type = type;
-            if (type == PlotModel::StepType::Acquire) {
-                if (index >= menus.items.size()) {
-                    return Reject(where + " named object " + std::to_string(index) + " of "
-                                  + std::to_string(menus.items.size()));
-                }
-                step.target = menus.items[index].form;
-                step.targetName = menus.items[index].displayName;
-            } else {
-                if (index >= menus.actors.size()) {
-                    return Reject(where + " named person " + std::to_string(index) + " of "
-                                  + std::to_string(menus.actors.size()));
-                }
-                step.target = menus.actors[index].npc;
-                step.targetName = menus.actors[index].name;
+            if (!ReadStep((*planIt)[i], menus, "step " + std::to_string(i), step, rejection)) {
+                return Reject(rejection);
             }
             plan.push_back(std::move(step));
+        }
+
+        // --- The objective ---------------------------------------------
+        const auto objectiveIt = json.find("objective");
+        if (objectiveIt == json.end()) {
+            return Reject("response carried no 'objective'");
+        }
+        PlotModel::Step objective;
+        if (!ReadStep(*objectiveIt, menus, "the objective", objective, rejection)) {
+            return Reject(rejection);
+        }
+
+        // Concealment is never what a scheme is FOR. It is what you do
+        // after the thing you actually wanted, which is why it kept
+        // becoming the objective when the objective was inferred from
+        // the last step -- and why plots ended up titled "Cover Tracks
+        // Sybille Stentor". Refused rather than rewritten: a model that
+        // picked it did not understand the task.
+        if (objective.type == PlotModel::StepType::Conceal) {
+            return Reject("the objective is 'conceal', which is what a schemer does AFTER getting what they "
+                          "wanted rather than the thing they wanted");
         }
 
         Outcome out;
         out.ok = true;
         out.ambition = std::move(ambition);
         out.plan = std::move(plan);
+        out.objective = std::move(objective);
         return out;
     }
 } // namespace NarrativeEngine::PlotBirth
