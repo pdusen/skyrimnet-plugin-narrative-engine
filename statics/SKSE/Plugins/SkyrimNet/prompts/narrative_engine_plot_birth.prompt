@@ -36,6 +36,14 @@ them along that agenda — and that a handful of people could actually finish
 within a season. It is a step toward the agenda, not a measure of it, and it
 does not have to be an obvious one. This is the point of the whole scheme.
 
+An objective is not usually an object. Putting someone in your debt
+(`suborn`), ruining what people think of a rival (`discredit`), and wrecking
+an arrangement that is holding you back (`sabotage`) are all things a scheme
+can be FOR, and for most people they fit the agenda better than a theft does.
+Reaching for something on the Objects list is one option among several, not
+the default — pick it only when the object itself is what changes their
+position.
+
 **Third, the route.** The steps that get them the objective.
 
 ## What you may name
@@ -65,9 +73,11 @@ follow from what they are trying to get and who is in their way, so a route
 that would work equally well for someone else's objective is the wrong route.
 Use different people for different steps where the objective calls for it.
 
-`conceal` covers up something already done. It can end a route; it can never
-be the objective, because nobody schemes in order to have covered their
-tracks.
+`conceal` covers up a step ALREADY TAKEN, so it only makes sense somewhere
+after the step it hides. It can never be the objective — nobody schemes in
+order to have covered their tracks — and it can never be the LAST entry in
+`plan`, because the objective happens after `plan` ends and there is nothing
+to hide yet.
 
 ## Output Format
 Return a JSON object. No markdown fences. No prose before or after the object.
@@ -78,8 +88,9 @@ Return a JSON object. No markdown fences. No prose before or after the object.
 - `objective` — an object with `type` and `target`, as described above. The
   concrete thing this scheme exists to achieve.
 - `plan` — array of objects with `type` and `target`, in the order they happen:
-  the steps taken to reach the objective. Do NOT repeat the objective here; it
-  is added automatically as the final step.
+  the groundwork laid BEFORE the objective. The objective is appended after
+  the last entry here, automatically — do not repeat it, and do not write
+  `plan` as though it were the complete scheme.
 
 Write plainly. No markdown, no headings, no bullet points inside `ambition`.
 
@@ -91,7 +102,8 @@ Write plainly. No markdown, no headings, no bullet points inside `ambition`.
 - Every `target` MUST be a number that appears on the list that step draws
   from. Numbers that are not on the list, and names instead of numbers, are
   both thrown away.
-- `objective.type` must not be `conceal`.
+- `objective.type` must not be `conceal`, and the last entry in `plan` must
+  not be `conceal` either.
 - `ambition` must not name any person, place or object that is not on the
   lists you are given.
 [ end system ]

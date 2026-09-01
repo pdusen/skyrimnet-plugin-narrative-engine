@@ -23,13 +23,16 @@ namespace NarrativeEngine::PlotBirth
 
         // The mastermind's own recent memories, newest first.
         //
+        // Takes an ACTOR REFERENCE id, not a base form -- see
+        // BuildContext for what passing the wrong one cost.
+        //
         // Through the FILTERED query rather than GetMemoriesForActor,
         // for the reason GossipHarvest documents at length: the old
         // endpoint ranks the whole store before truncating, so a plugin
         // that writes memories back sees its own output crowd out
         // everything else. Plots will write memories from Step 19, and
         // by then this would be reading its own homework.
-        std::vector<std::string> MemoriesOf(RE::FormID npc)
+        std::vector<std::string> MemoriesOf(RE::FormID actorRef)
         {
             std::vector<std::string> out;
             if (!SkyrimNetAPI::IsMemorySystemReady()) {
@@ -42,7 +45,7 @@ namespace NarrativeEngine::PlotBirth
             query.orderBy = MemoryOrder::GameTimeDesc;
             query.minImportance = cfg.plotBirthMinMemoryImportance;
 
-            const auto raw = SkyrimNetAPI::QueryMemoriesForActor(npc, query);
+            const auto raw = SkyrimNetAPI::QueryMemoriesForActor(actorRef, query);
             auto json = nlohmann::json::parse(raw, nullptr, false);
             if (json.is_discarded() || !json.is_array()) {
                 return out;
@@ -98,16 +101,37 @@ namespace NarrativeEngine::PlotBirth
         {
             nlohmann::json ctx;
 
+            // EVERY SkyrimNet endpoint speaks ACTOR REFERENCE ids --
+            // profiles, memories, related-actor arrays, all of it. The
+            // casting menus are keyed on the TESNPC base form, so the
+            // boundary gets crossed exactly once, here. GossipGraph.h
+            // says so in as many words; GossipContent already does it.
+            //
+            // This is what made every plot identical. The base form went
+            // out, FormIDToUUID handed back 0, SkyrimNet logged "No bio
+            // template found for UUID: 0", and the memory query matched
+            // nothing -- so the model met four different masterminds as
+            // four bare names with a rank phrase, and wrote the same
+            // generic caper four times. It was reading no profile
+            // because there was no profile to read.
+            const auto actorRef = GossipGraph::ActorRefFor(mastermind.npc);
+            if (actorRef == 0) {
+                logger::warn("PlotBirth: no placed reference for {} (base 0x{:X}); the prompt will have no "
+                             "character profile and no memories to work from.",
+                             mastermind.name,
+                             mastermind.npc);
+            }
+
             // SkyrimNet's character-profile submodules key every
             // bio decorator off `npc.UUID`. Without it the prompt can
             // say the mastermind's name and nothing about who they are,
             // and a scheme generated from a name is a scheme any NPC
             // could have had.
-            const auto uuid = SkyrimNetAPI::FormIDToUUID(mastermind.npc);
-            if (uuid == 0) {
+            const auto uuid = actorRef != 0 ? SkyrimNetAPI::FormIDToUUID(actorRef) : 0;
+            if (uuid == 0 && actorRef != 0) {
                 logger::warn("PlotBirth: FormIDToUUID(0x{:X}) returned 0 for {}; the prompt will have no "
                              "character profile to work from.",
-                             mastermind.npc,
+                             actorRef,
                              mastermind.name);
             }
             nlohmann::json npc = nlohmann::json::object();
@@ -124,7 +148,7 @@ namespace NarrativeEngine::PlotBirth
             boss["standing"] = StandingPhrase(best);
             ctx["mastermind"] = std::move(boss);
 
-            ctx["memories"] = MemoriesOf(mastermind.npc);
+            ctx["memories"] = MemoriesOf(actorRef);
 
             nlohmann::json actors = nlohmann::json::array();
             for (std::size_t i = 0; i < menus.actors.size(); ++i) {

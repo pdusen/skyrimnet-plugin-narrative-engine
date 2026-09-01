@@ -1,5 +1,6 @@
 #include <PlotAdapt.h>
 
+#include <GossipGraph.h>
 #include <LLMTextSanitizer.h>
 #include <logger.h>
 #include <PlotItemPool.h>
@@ -116,9 +117,20 @@ namespace NarrativeEngine::PlotAdapt
 
         // Same reason as birth: adaptation is asking what THIS person
         // does next, and that needs the profile as much as the first
-        // call did.
+        // call did -- and via the ACTOR REFERENCE, for the same reason.
+        // `plot.mastermind` is a base form; SkyrimNet does not know
+        // those, and hands back 0 for every one of them.
+        const auto actorRef = GossipGraph::ActorRefFor(plot.mastermind);
+        const auto uuid = actorRef != 0 ? SkyrimNetAPI::FormIDToUUID(actorRef) : 0;
+        if (uuid == 0) {
+            logger::warn("PlotAdapt: no SkyrimNet UUID for {} (base 0x{:X}, ref 0x{:X}); the revision will be "
+                         "judged without a character profile",
+                         plot.mastermindName,
+                         plot.mastermind,
+                         actorRef);
+        }
         nlohmann::json npc = nlohmann::json::object();
-        npc["UUID"] = SkyrimNetAPI::FormIDToUUID(plot.mastermind);
+        npc["UUID"] = uuid;
         ctx["npc"] = std::move(npc);
 
         nlohmann::json boss = nlohmann::json::object();

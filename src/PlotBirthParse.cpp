@@ -190,6 +190,21 @@ namespace NarrativeEngine::PlotBirth
             plan.push_back(std::move(step));
         }
 
+        // A plan that ENDS in concealment is a plan written as though it
+        // were the whole arc. The objective is appended after it, so a
+        // trailing `conceal` lands immediately before the thing it was
+        // supposed to hide -- which is how the dashboard came to show
+        // "Watch, Suborn, Cover Tracks, Acquire" four times in a row.
+        //
+        // Rejected rather than quietly dropped or shuffled. Deleting the
+        // step would silently rewrite someone's plan, and there is no
+        // position to shuffle it to: the objective is terminal by
+        // construction.
+        if (!plan.empty() && plan.back().type == PlotModel::StepType::Conceal) {
+            return Reject("the plan ends in 'conceal', which would cover the tracks of the objective before it "
+                          "has happened -- concealment can only follow a step already taken");
+        }
+
         // --- The objective ---------------------------------------------
         const auto objectiveIt = json.find("objective");
         if (objectiveIt == json.end()) {

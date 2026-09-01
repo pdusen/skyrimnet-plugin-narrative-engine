@@ -28,6 +28,7 @@ thing:
 | `index-as-string.txt`     | a plot — `"1"` and `1` mean the same thing                                    |
 | `objective-is-conceal.txt` | **rejection** — nobody schemes in order to have covered their tracks         |
 | `no-objective.txt`        | rejection — the objective is chosen, never inferred                           |
+| `plan-ends-in-conceal.txt` | **rejection** — the objective is appended after the plan, so a trailing `conceal` would hide something that has not happened yet |
 
 ## The two that exist because of a real failure
 
@@ -39,6 +40,13 @@ a natural closing step, and so concealment kept becoming the thing the scheme wa
 The objective is now its own field, chosen before the route rather than falling out of it, and `conceal` is
 refused as an objective outright. Both fixtures pin that: one supplies a `conceal` objective, the other omits
 the objective entirely to confirm it is never quietly reconstructed from the plan.
+
+`plan-ends-in-conceal.txt` came out of the run after that one, which produced four plots reading *Watch,
+Suborn, Cover Tracks, Acquire* — concealment sitting one place before the thing it was meant to hide. The
+model had written `plan` as the complete arc, not knowing the objective is appended after it. The prompt no
+longer invites that (it used to say `conceal` "can end a route", and `plan` is not the route), and a plan
+whose last entry is `conceal` is now refused rather than shuffled or silently trimmed: there is no other
+position to move it to, because the objective is terminal by construction.
 
 `well-formed.txt` also carries the ambition in its corrected sense — the **agenda**, the larger thing the
 scheme ostensibly serves and which no scheme can finish. *"She means to own everyone in the Rift who matters"*
