@@ -46,3 +46,7 @@ node_modules/
 docs/implementation/tests/faction-plots/population.json
 
 tmp/*
+
+# Python bytecode from the test scripts under docs/implementation/tests/.
+__pycache__/
+*.pyc
