@@ -346,6 +346,10 @@ export interface PlotsTabState {
     steps_timed_out: number;
     steps_caught: number;
     adaptations: number;
+    // Ticks queued or running. A forced burst makes one LLM call per
+    // plot born and per plot adapted, so this stays non-zero for tens of
+    // seconds at a time; the tab locks its debug buttons while it is.
+    ticks_pending: number;
     factions: PlotFactionInfo[];
     // Active plots and terminal ones awaiting reaping alike.
     list: PlotEntry[];

@@ -64,4 +64,18 @@ namespace NarrativeEngine::PlotTick
     //
     // Safe from any thread. Wired to dashboard bridge actions in step 8.
     void ForceTicks(std::size_t count);
+
+    // How many ticks are queued or currently running.
+    //
+    // Kept here rather than read off PlotDispatch::OutstandingCount()
+    // because the dashboard needs a value it can trust at PUSH time. A
+    // job is retired by the dispatcher only after its body returns, so
+    // the last tick of a burst still counts itself while it is asking
+    // for the push that would re-enable the buttons -- and the compose
+    // runs asynchronously, so which side of the retirement it lands on
+    // is a race. This counter is decremented BEFORE that push is
+    // issued, which makes the zero deterministic.
+    //
+    // Safe from any thread.
+    [[nodiscard]] std::size_t OutstandingTicks();
 } // namespace NarrativeEngine::PlotTick

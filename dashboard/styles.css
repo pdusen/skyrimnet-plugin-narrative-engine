@@ -1057,7 +1057,18 @@ body {
     background: #2a3038; color: #d6dbe2; border: 1px solid #3d444e;
     border-radius: 4px; padding: 4px 10px; font-size: 12px; cursor: pointer;
 }
-.plot-debug-actions button:hover { background: #343b45; }
+.plot-debug-actions button:hover:not(:disabled) { background: #343b45; }
+.plot-debug-actions button:disabled { opacity: 0.45; cursor: default; }
+
+/* Shown while a tick is queued or running. The buttons alone going grey
+   reads as "broken" without something saying the wait is expected. */
+.plot-busy { display: inline-flex; align-items: center; gap: 6px; color: #98a0ab; font-size: 12px; }
+.plot-spinner {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    border: 2px solid #3d444e; border-top-color: #4b93f5;
+    animation: plot-spin 0.7s linear infinite;
+}
+@keyframes plot-spin { to { transform: rotate(360deg); } }
 
 .plot-legend { display: flex; gap: 18px; color: #98a0ab; font-size: 12px; margin: 6px 0 14px; }
 .plot-legend i { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 6px; }

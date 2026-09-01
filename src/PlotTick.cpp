@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 
 namespace NarrativeEngine::PlotTick
 {
@@ -27,6 +28,11 @@ namespace NarrativeEngine::PlotTick
         // needs no synchronisation of its own.
         double g_lastFiredGameHours = 0.0;
         bool g_needsRebase = true;
+
+        // Queued + running ticks. Written from any thread; see
+        // PlotTick::OutstandingTicks for why this is not just
+        // PlotDispatch::OutstandingCount().
+        std::atomic<std::size_t> g_outstandingTicks{0};
 
         // In-world hours that forced ticks have injected on top of the
         // real calendar, and which every later stamp carries.
@@ -539,27 +545,41 @@ namespace NarrativeEngine::PlotTick
             // simulation: some plots stepped to the new game day and
             // some not.
             Plots::PublishSnapshot(pt);
+        }
 
-            // Publishing only updates the snapshot the dashboard would
-            // read on its next push; nothing pushes on its own, so a tab
-            // left open sat on whatever the last Director evaluation
-            // sent until it was closed and reopened. Every other thing
-            // that changes plot state pushes, and so must this.
-            //
-            // Only the last tick of a burst pushes: the handle is
-            // retired after this returns, so a count of one means this
-            // job is the queue. Forcing ten ticks should redraw the tab
-            // once, not compose the full state ten times.
-            if (PlotDispatch::OutstandingCount() <= 1) {
+        // Retire this tick, and push once when the queue has drained.
+        //
+        // Publishing only updates the snapshot the dashboard would read
+        // on its next push; nothing pushes on its own, so a tab left
+        // open sat on whatever the last Director evaluation sent until
+        // it was closed and reopened. Every other thing that changes
+        // plot state pushes, and so must this.
+        //
+        // Only the tick that empties the queue pushes: forcing ten
+        // should redraw the tab once, not compose the full state ten
+        // times. The decrement happens FIRST so the composed state
+        // reports zero outstanding and the Plots tab unlocks its
+        // buttons -- doing it the other way round leaves the last push
+        // racing the dispatcher's own retirement, and losing that race
+        // means the buttons never come back.
+        //
+        // Runs on every path out of RunTick, cancellation included: a
+        // cancelled burst that never decremented would lock the tab for
+        // the rest of the session.
+        void RetireTick()
+        {
+            if (g_outstandingTicks.fetch_sub(1, std::memory_order_acq_rel) == 1) {
                 DashboardUIManager::PushFullState();
             }
         }
 
         void Enqueue(double asOfGameHours)
         {
+            g_outstandingTicks.fetch_add(1, std::memory_order_relaxed);
             PlotDispatch::EnqueueCancellableWork(
                 [asOfGameHours](const PlotThread::Token& pt, const PlotDispatch::CancellationHandle& cancel) {
                     RunTick(pt, cancel, asOfGameHours);
+                    RetireTick();
                 });
         }
     } // namespace
@@ -658,5 +678,17 @@ namespace NarrativeEngine::PlotTick
         logger::info("PlotTick: forced {} tick(s); simulation is now {:.1f}h ahead of the calendar",
                      count,
                      g_forcedAheadGameHours);
+
+        // Push now, so the tab locks its buttons within a frame rather
+        // than after the first tick finishes. A burst that makes an LLM
+        // call per plot takes tens of seconds, and with no feedback at
+        // all the only thing the button told you was that you had
+        // clicked it.
+        DashboardUIManager::PushFullState();
+    }
+
+    std::size_t OutstandingTicks()
+    {
+        return g_outstandingTicks.load(std::memory_order_acquire);
     }
 } // namespace NarrativeEngine::PlotTick

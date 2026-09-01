@@ -33,6 +33,11 @@ export function PlotsTab({ plots }: { plots: PlotsTabState }): ReactNode {
     const active = plots.list.filter(p => p.status === 'active');
     const ended = plots.list.filter(p => p.status !== 'active');
     const resolved = plots.steps_succeeded + plots.steps_timed_out + plots.steps_caught;
+    // A tick born a plot makes a blocking LLM round trip, and an adapted
+    // one makes another. Without this the buttons looked idle for the
+    // whole wait and invited a second click, which just queued a second
+    // burst behind the first.
+    const busy = plots.ticks_pending > 0;
     const pct = (n: number) => (resolved > 0 ? `${Math.round((100 * n) / resolved)}%` : '—');
 
     return (
@@ -59,18 +64,26 @@ export function PlotsTab({ plots }: { plots: PlotsTabState }): ReactNode {
                     <span>{plots.steps_caught} caught ({pct(plots.steps_caught)})</span>
                 </div>
                 <div className="plot-debug-actions">
-                    <button type="button" onClick={() => forceTicks(1)}>
+                    <button type="button" disabled={busy} onClick={() => forceTicks(1)}>
                         Force tick
                     </button>
-                    <button type="button" onClick={() => forceTicks(10)}>
+                    <button type="button" disabled={busy} onClick={() => forceTicks(10)}>
                         Force 10
                     </button>
-                    <button type="button" onClick={() => forceTicks(50)}>
+                    <button type="button" disabled={busy} onClick={() => forceTicks(50)}>
                         Force 50
                     </button>
-                    <button type="button" onClick={seedPlot}>
+                    <button type="button" disabled={busy} onClick={seedPlot}>
                         Seed debug plot
                     </button>
+                    {busy && (
+                        <span className="plot-busy">
+                            <i className="plot-spinner" />
+                            {plots.ticks_pending === 1
+                                ? 'running a tick…'
+                                : `running ${plots.ticks_pending} ticks…`}
+                        </span>
+                    )}
                 </div>
             </div>
 

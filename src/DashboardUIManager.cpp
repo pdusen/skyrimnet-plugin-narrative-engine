@@ -1522,6 +1522,10 @@ namespace NarrativeEngine::DashboardUIManager
                 {"steps_timed_out", plots->counters.stepsTimedOut},
                 {"steps_caught", plots->counters.stepsCaught},
                 {"adaptations", plots->counters.adaptations},
+                // Queued or running ticks. Non-zero means a tick is out
+                // there making LLM calls, which is what the Plots tab
+                // locks its debug buttons on.
+                {"ticks_pending", PlotTick::OutstandingTicks()},
                 {"factions", std::move(factionsJson)},
                 {"list", std::move(plotsJson)},
             };
