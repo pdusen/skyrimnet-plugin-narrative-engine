@@ -1979,7 +1979,7 @@ character cap, and an empty menu — against which every index is out of range.
 
 #### Step 17 — Adaptation
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1996,6 +1996,46 @@ character cap, and an empty menu — against which every index is out of range.
 and leaves `history` and the objective untouched; a concession terminates the plot and frees the slot; a
 response attempting to change the objective is rejected rather than applied; a plot fed nothing but revisions
 terminates at `iPlotMaxAdaptations` rather than looping.
+
+Done. `narrative_engine_plot_adapt.prompt`; `include/PlotAdapt.h` with `src/PlotAdaptParse.cpp` (pure) and
+`src/PlotAdapt.cpp` (engine-bound); seven fixtures under `fixtures/plot-adapt/` with a README; `PlotLog::Concede`;
+and `AdaptPlot` in `PlotTick.cpp` rewritten to call through. **The Step 6 stub ladder table is gone** — 33
+lines, and nothing reads it now that both birth and adaptation come from the model.
+
+**Three ways out and no fourth.** The model revises, the model concedes, or the cap ends it. The one outcome
+none of these may produce is a plot stalled on a failed step with no next one, because it is the only one a
+reader cannot be told about — so a failed call, a throw, and a rejected revision all become concessions rather
+than leaving the plot where it is. Conceding on a bad response is a worse story than a good revision and a
+better one than a scheme that never resolves.
+
+**Conceding is an explicit option in the schema, not an emergent one.** Without it the model invents
+alternatives indefinitely, because inventing one is always easier than declining to, and what comes out is a
+plot where somebody grinds through six approaches to steal a bottle of mead. A refusal the model can express
+is a refusal it will use.
+
+**The cap is checked before asking, not after.** Whatever the response says, a plot that has spent its
+attempts stops — which is what makes `adaptation_cap_hit` a distinct outcome worth recording ("it would not
+concede; `iPlotMaxAdaptations` did") rather than a bug.
+
+**The objective is rejected, not corrected.** Two fixtures cover the two ways a model breaks the rule, and
+they are subtly different: `objective-changed.txt` ends on the right *verb* aimed at the wrong *thing*, which
+is the case a check comparing only step types would let through; `objective-dropped.txt` never reaches the
+objective at all. Silently appending the objective to a plan that omitted it would produce a runnable plot and
+hide the fact that the model misunderstood the task — and a model that moved the destination should not have
+the rest of its answer trusted either.
+
+**The concession sentence is traced, not persisted.** `PlotSerialize`'s reader is a strict version-equality
+check, so a new field on `Plot` would cost every existing save its in-flight plots. Step 17 does not need it;
+if Step 19's memories want the sentence, that is the moment to pay for the bump, with a reason.
+
+**Probe results, one probe over the fixtures, then deleted.** A revision replaces only the tail and still ends
+on the objective; a concession carries its sentence, and one without a sentence gets a default rather than
+being thrown away, since the decision is the load-bearing half; both objective violations are rejected with
+nothing applied; an unknown decision and a revision with no plan are rejected. Two cases that are properties
+rather than shapes, and so are not fixtures: a plot fed nothing but *good* revisions still stops at exactly
+the cap, having applied one per attempt — proving the counter rather than the model is what ends it — and a
+menu that no longer holds the objective rejects a revision naming it by its old index, which is what stops a
+dead target from being silently replaced by whoever inherited its number.
 
 ---
 

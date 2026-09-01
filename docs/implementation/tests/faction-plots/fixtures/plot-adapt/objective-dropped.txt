@@ -1,0 +1,3 @@
+{"decision": "revise",
+ "plan": [{"type": "surveil", "target": 1},
+          {"type": "discredit", "target": 0}]}

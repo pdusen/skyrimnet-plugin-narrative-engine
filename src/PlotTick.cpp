@@ -3,6 +3,7 @@
 #include <DashboardUIManager.h>
 #include <EngineUtils.h>
 #include <logger.h>
+#include <PlotAdapt.h>
 #include <PlotBirth.h>
 #include <PlotCasting.h>
 #include <PlotDispatch.h>
@@ -61,39 +62,6 @@ namespace NarrativeEngine::PlotTick
         // Chosen to cover every step type and both conspicuousness
         // values, because a stub set that only exercised the easy types
         // would validate the easy half of the model.
-        struct StubLadder
-        {
-            std::array<PlotModel::StepType, 4> steps;
-            std::size_t length;
-        };
-
-        constexpr std::array<StubLadder, 5> kStubLadders{{
-            {{PlotModel::StepType::Locate,
-              PlotModel::StepType::Surveil,
-              PlotModel::StepType::Acquire,
-              PlotModel::StepType::Conceal},
-             4},
-            {{PlotModel::StepType::Locate,
-              PlotModel::StepType::Acquire,
-              PlotModel::StepType::Deliver,
-              PlotModel::StepType::Locate},
-             3},
-            {{PlotModel::StepType::Surveil,
-              PlotModel::StepType::Discredit,
-              PlotModel::StepType::Locate,
-              PlotModel::StepType::Locate},
-             2},
-            {{PlotModel::StepType::Locate,
-              PlotModel::StepType::Suborn,
-              PlotModel::StepType::Sabotage,
-              PlotModel::StepType::Conceal},
-             4},
-            {{PlotModel::StepType::Surveil,
-              PlotModel::StepType::Suborn,
-              PlotModel::StepType::Discredit,
-              PlotModel::StepType::Locate},
-             3},
-        }};
 
         // Travel distance along the road network.
         //
@@ -247,15 +215,22 @@ namespace NarrativeEngine::PlotTick
             return true;
         }
 
-        void AssignTargets(PlotState& state, PlotModel::Plot& plot, const PlotCasting::Population& population);
-
-        // Stub adaptation: keep the objective, rebuild the tail from a
-        // different ladder. Step 17 replaces this with the LLM call; what
-        // must survive that replacement is the shape — the objective is
-        // never rewritten, and the cap always terminates.
-        bool AdaptPlot(PlotState& state, PlotModel::Plot& plot, double gameDay)
+        // A failed step re-plans instead of ending the plot, and cannot
+        // re-plan forever.
+        //
+        // Three ways out and no fourth: the model revises, the model
+        // concedes, or the cap ends it. A plot that stalls with a failed
+        // step and no next one is the outcome none of these may produce,
+        // because it is the only one a reader cannot be told about.
+        bool AdaptPlot(const PlotThread::Token& pt, PlotState& state, PlotModel::Plot& plot, double gameDay)
         {
             const auto cap = std::max(0, Settings::Get().plotMaxAdaptations);
+
+            // The backstop, and it is checked BEFORE asking rather than
+            // after. Whatever the model returns, a plot that has used
+            // its attempts stops -- which is what makes "it would not
+            // concede; iPlotMaxAdaptations did" a distinct outcome worth
+            // recording rather than a bug.
             if (plot.adaptations >= cap) {
                 EndPlot(state, plot, PlotModel::PlotStatus::Failed, PlotModel::PlotOutcome::AdaptationCapHit, gameDay);
                 return false;
@@ -263,34 +238,40 @@ namespace NarrativeEngine::PlotTick
             ++plot.adaptations;
             ++state.counters.adaptations;
 
-            const auto& ladder = kStubLadders[Plots::NextRandom(state) % kStubLadders.size()];
-            PlotLog::Adapt(plot, plot.adaptations, cap, ladder.length);
+            // The step that just failed is the last one moved to
+            // history, which is where AdvancePlot puts it before calling
+            // here.
+            const PlotModel::Step& failed = plot.history.back();
 
-            // Rebuild from the cursor onward. Everything before it has
+            // Built from the same population and world the birth call
+            // used, so an index still means what it meant then.
+            const auto menus = PlotMenus::Build(PlotPopulation::Get(), plot.mastermind, PlotMenus::CurrentWorld(), {});
+
+            const auto outcome = PlotAdapt::Compose(pt, plot, failed, menus, plot.adaptations, cap);
+
+            if (outcome.decision == PlotAdapt::Decision::Concede) {
+                // Traced rather than stored. Persisting it would mean a
+                // co-save format bump -- the reader is a strict version
+                // equality check, so every existing save would lose its
+                // in-flight plots -- and Step 17 does not need it. If Step
+                // 19's memories want the sentence, that is the moment to
+                // pay for it, with a reason.
+                PlotLog::Concede(plot, outcome.reason);
+                EndPlot(state, plot, PlotModel::PlotStatus::Failed, PlotModel::PlotOutcome::Conceded, gameDay);
+                return false;
+            }
+
+            PlotLog::Adapt(plot, plot.adaptations, cap, outcome.plan.size());
+
+            // Replace from the cursor onward. Everything before it has
             // already moved to history, and the objective is NOT in the
-            // rewritable set - adaptation rewrites the path, never the
-            // destination.
+            // rewritable set -- Parse has already refused any plan that
+            // does not end on it, so the tail arriving here is one this
+            // assignment is safe to trust.
             plot.plan.erase(plot.plan.begin() + static_cast<std::ptrdiff_t>(plot.cursor), plot.plan.end());
-            for (std::size_t i = 0; i + 1 < ladder.length; ++i) {
-                PlotModel::Step step;
-                step.type = ladder.steps[i];
+            for (const auto& step : outcome.plan) {
                 plot.plan.push_back(step);
             }
-            PlotModel::Step objective;
-            objective.type = plot.objectiveType;
-            objective.target = plot.objectiveTarget;
-            objective.targetName = plot.objectiveTargetName;
-            plot.plan.push_back(objective);
-
-            // The rebuilt tail needs targets for the same reason the
-            // original plan did. Without this the new steps go out
-            // nameless - "Locate" against nobody - and, worse, size
-            // themselves off the null-target fallbacks in
-            // TravelDistanceNorm and TargetImportance, so every
-            // post-adaptation step gets the same neutral travel and
-            // importance regardless of who it is aimed at. The objective
-            // already carries its own target and is skipped.
-            AssignTargets(state, plot, PlotPopulation::Get());
             return true;
         }
 
@@ -395,7 +376,7 @@ namespace NarrativeEngine::PlotTick
             state.plots.push_back(std::move(plot));
         }
 
-        void AdvancePlot(PlotState& state, PlotModel::Plot& plot, double gameDay)
+        void AdvancePlot(const PlotThread::Token& pt, PlotState& state, PlotModel::Plot& plot, double gameDay)
         {
             const auto& cfg = Settings::Get();
 
@@ -472,7 +453,7 @@ namespace NarrativeEngine::PlotTick
                 }
                 return;
             }
-            AdaptPlot(state, plot, gameDay);
+            AdaptPlot(pt, state, plot, gameDay);
         }
 
         // Drop terminal plots once their retention window passes. Their
@@ -513,7 +494,7 @@ namespace NarrativeEngine::PlotTick
             // dangling.
             for (std::size_t i = 0; i < state.plots.size(); ++i) {
                 if (!state.plots[i].IsTerminal()) {
-                    AdvancePlot(state, state.plots[i], gameDay);
+                    AdvancePlot(pt, state, state.plots[i], gameDay);
                 }
             }
 

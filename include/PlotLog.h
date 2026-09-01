@@ -96,6 +96,13 @@ namespace NarrativeEngine::PlotLog
     // one of them means the prompt needs work.
     void BirthRejected(const std::string& mastermind, const std::string& reason);
 
+    // A plot the mastermind gave up on, and why.
+    //
+    // The reason is not persisted -- see the call site -- so this line
+    // is the only record of it, which makes the trace the place to read
+    // why a scheme ended rather than merely that it did.
+    void Concede(const PlotModel::Plot& plot, const std::string& reason);
+
     void Note(std::string_view text);
 
     // --- Line formatting, pure ----------------------------------------

@@ -207,6 +207,11 @@ namespace NarrativeEngine::PlotLog
         Emit(FormatEnd(plot));
     }
 
+    void Concede(const PlotModel::Plot& plot, const std::string& reason)
+    {
+        Emit(std::format("CEDE  plot={} \"{}\"", plot.id, reason));
+    }
+
     void BirthRejected(const std::string& mastermind, const std::string& reason)
     {
         Emit(std::format("REJECT mastermind=\"{}\" reason=\"{}\"", mastermind, reason));

@@ -1,0 +1,99 @@
+[ system ]
+## Task
+A scheme has hit a setback. You decide whether the person behind it finds
+another way, or gives up.
+
+Both answers are real answers. A schemer who never gives up is not persistent,
+they are a machine — and a plot that grinds through every possible approach is
+worse reading than one that ends because the person behind it decided it was
+not worth it any more. Concede when a real person would.
+
+## The scheme
+
+**{{ mastermind.name }}** wants this:
+
+> {{ ambition }}
+
+The objective — the thing that, once done, means they have got what they want —
+is **{{ objective.verb }} {{ objective.target }}**. That does not change. You
+are deciding how they get there, not what they are after.
+
+## What has happened so far
+
+{% if history %}
+{% for h in history %}- {{ h }}
+{% endfor %}
+{% else %}
+Nothing yet; the first step is the one that went wrong.
+{% endif %}
+
+### The setback
+
+**{{ failure.step }}** — {{ failure.outcome }}.
+
+{% if failure.progress %}They had got about {{ failure.progress }} of the way
+through it when it went wrong.{% endif %}
+
+{% if failure.caught %}
+They were **seen**. Whatever comes next has to account for somebody now knowing
+something they should not, and for that person having a reason to talk.
+{% else %}
+It simply did not work in time. Nobody knows it was attempted.
+{% endif %}
+
+This is attempt {{ attempt }} of at most {{ max_attempts }}. After that they
+stop whether they want to or not, so a plan that needs three more setbacks to
+pay off is not a plan.
+
+## What you may name
+
+Same rule as before: you do not invent people or objects. Everything you can
+name is listed with a number, and you refer to it by that number.
+
+### People
+{% for a in actors %}{{ loop.index0 }}. {{ a.name }} — {{ a.relation }}{% if a.standing %}, {{ a.standing }}{% endif %}
+{% endfor %}
+
+{% if items %}
+### Objects
+{% for i in items %}{{ loop.index0 }}. {{ i.name }} ({{ i.category }})
+{% endfor %}
+{% endif %}
+
+## The steps you may use
+
+{% for s in step_types %}- `{{ s.id }}` — {{ s.description }}
+{% endfor %}
+
+## Output Format
+Return a JSON object. No markdown fences. No prose before or after the object.
+
+`decision` — either `"revise"` or `"concede"`.
+
+**If `"concede"`**, add:
+
+- `reason` — one sentence, third person, saying what made them stop. This is
+  what a reader sees, so it should be about the person, not about the plan:
+  "she decided the ledger was not worth what it would cost her" rather than
+  "the acquire step failed".
+
+**If `"revise"`**, add:
+
+- `plan` — the remaining steps, in order, {{ min_steps }} to {{ max_steps }} of
+  them. Each has a `type` from the list above and a `target` number, taken from
+  **Objects** when the type is `acquire` and from **People** otherwise.
+- **The last entry must be the objective, exactly as given above**: type
+  `{{ objective.type }}`, target {{ objective.index }}. A plan that ends
+  anywhere else is thrown away, and the scheme concedes by default.
+
+A revision should react to what actually went wrong. If they were seen, deal
+with the person who saw them. If the approach was too slow, take a shorter one.
+Repeating the failed step unchanged is not a revision.
+
+Example shape only — do not copy its content:
+
+```
+{"decision": "revise",
+ "plan": [{"type": "suborn", "target": 1},
+          {"type": "acquire", "target": 0}]}
+```
