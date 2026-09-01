@@ -98,6 +98,22 @@ namespace NarrativeEngine::PlotBirth
         {
             nlohmann::json ctx;
 
+            // SkyrimNet's character-profile submodules key every
+            // bio decorator off `npc.UUID`. Without it the prompt can
+            // say the mastermind's name and nothing about who they are,
+            // and a scheme generated from a name is a scheme any NPC
+            // could have had.
+            const auto uuid = SkyrimNetAPI::FormIDToUUID(mastermind.npc);
+            if (uuid == 0) {
+                logger::warn("PlotBirth: FormIDToUUID(0x{:X}) returned 0 for {}; the prompt will have no "
+                             "character profile to work from.",
+                             mastermind.npc,
+                             mastermind.name);
+            }
+            nlohmann::json npc = nlohmann::json::object();
+            npc["UUID"] = uuid;
+            ctx["npc"] = std::move(npc);
+
             nlohmann::json boss = nlohmann::json::object();
             boss["name"] = mastermind.name;
             boss["hold"] = HoldNameOf(mastermind.hold);

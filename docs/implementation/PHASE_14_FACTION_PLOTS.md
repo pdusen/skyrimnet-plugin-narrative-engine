@@ -1902,8 +1902,9 @@ than everything.
 
 1. `narrative_engine_plot_birth.prompt` under `statics/SKSE/Plugins/SkyrimNet/prompts/`, following
    [`../CUSTOM_PROMPTS.md`](../CUSTOM_PROMPTS.md).
-2. Handed the mastermind's identity, **their memories** via the SkyrimNet filtered memory query, the step
-   manifest verbatim, and the target menus.
+2. Handed the mastermind's identity, **their character profile** via `render_character_profile` — which is
+   where their ambitions live and is the primary source the scheme comes out of — **their memories** via the
+   SkyrimNet filtered memory query as supplementary detail, the step manifest verbatim, and the target menus.
 3. Returns an objective and an ordered plan in one response, every target given by menu index.
 4. Validation is a **membership test**. Anything off-menu rejects the plot at birth with a log line and frees
    the slot.
@@ -1948,6 +1949,19 @@ was chosen from — rebuilding between them would silently renumber the answer.
 **A rejected plot spends nothing.** The id is drawn and the occupancy row taken only after `Compose` succeeds,
 so a run of bad responses costs call budget and nothing else: no half-built plot, no leaked occupancy row, no
 gap in the numbering to explain later.
+
+**The scheme comes out of who the mastermind IS, and the first cut of this got that backwards.** The design
+says a plot is generated "from *that person's* ambitions and memories" — ambitions first, belonging to the
+person. I built the prompt with memories as the source and no character profile at all, which meant the model
+was handed a name, a hold and a rank, and had to invent a personality to scheme from. Every plot would have
+come out sounding like the same person.
+
+`render_character_profile("full", npc.UUID)` is how the other prompts in this project reach an NPC's bio, and
+it is where their station, temperament and ambitions come from. Both the birth and the adapt prompt now render
+it, and both contexts carry `npc.UUID` — the key every SkyrimNet character-bio decorator is keyed off.
+Memories are demoted to what they are: extra detail, used where they fit, absent for most NPCs and not
+required. *A scheme that ignores them is fine if it fits the person; a scheme that fits a memory but not the
+person is not.*
 
 **The step manifest is rendered, not restated.** `StepTypeTraits` gained a `description`, and the prompt loops
 over the manifest to list the verbs. A template that spells them out by hand is a second copy of the enum, and

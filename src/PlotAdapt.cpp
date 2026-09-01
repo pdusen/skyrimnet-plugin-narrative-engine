@@ -114,6 +114,13 @@ namespace NarrativeEngine::PlotAdapt
 
         nlohmann::json ctx;
 
+        // Same reason as birth: adaptation is asking what THIS person
+        // does next, and that needs the profile as much as the first
+        // call did.
+        nlohmann::json npc = nlohmann::json::object();
+        npc["UUID"] = SkyrimNetAPI::FormIDToUUID(plot.mastermind);
+        ctx["npc"] = std::move(npc);
+
         nlohmann::json boss = nlohmann::json::object();
         boss["name"] = plot.mastermindName;
         ctx["mastermind"] = std::move(boss);

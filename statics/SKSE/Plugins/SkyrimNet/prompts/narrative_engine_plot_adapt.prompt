@@ -10,6 +10,8 @@ not worth it any more. Concede when a real person would.
 
 ## The scheme
 
+{{ render_character_profile("full", npc.UUID) }}
+
 **{{ mastermind.name }}** wants this:
 
 > {{ ambition }}
