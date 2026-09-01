@@ -1,0 +1,7 @@
+{
+  "ambition": "She wants Brynjolf’s debt — all of it – called in before the month turns, and she will not ask twice café.​",
+  "plan": [
+    { "type": "locate", "target": 0 },
+    { "type": "discredit", "target": 1 }
+  ]
+}

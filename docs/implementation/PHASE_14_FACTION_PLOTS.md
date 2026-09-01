@@ -113,6 +113,8 @@ not in a default that hides the feature.
 | `fPlotProgressRateMax`         | 5.0              | Work per tick from an ideal one                                |
 | `fPlotProgressMaxFraction`     | 0.45             | No single tick clears more than this share of a threshold      |
 | `bPlotMishapEnabled`           | true             | The caught-in-the-act roll; off while its shape is argued      |
+| `iPlotBirthMemoryCount`        | 10               | Mastermind memories handed to the birth prompt                 |
+| `fPlotBirthMinMemoryImportance` | 0.45            | How important one has to be to qualify                         |
 | `fPlotMishapChanceBase`        | 0.012            | Per-tick mishap chance before conspicuousness and competence   |
 | `iPlotRandomSeed`              | 0                | Seeds the plot RNG stream; 0 = nondeterministic                |
 
@@ -1892,7 +1894,7 @@ than everything.
 
 #### Step 16 — The birth prompt and its response handling
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1925,6 +1927,53 @@ than everything.
 | empty plan                | rejection                                                            |
 
 Whether the *content* is any good is Step 18's business; this step proves it cannot corrupt state.
+
+Done. `narrative_engine_plot_birth.prompt`; `include/PlotBirth.h` with `src/PlotBirthParse.cpp` (pure) and
+`src/PlotBirth.cpp` (engine-bound); eight fixtures under `fixtures/plot-birth/` with a README (`.txt` rather
+than `.json`, because two of them are deliberately not valid JSON and the repo's json hooks are right to say
+so — they are response transcripts, and only some responses happen to parse); the
+`iPlotBirthMemoryCount` / `fPlotBirthMinMemoryImportance` settings; and `BirthPlot` in `PlotTick.cpp` calling
+through to the model. The stub ladder table survives only because `AdaptPlot` still uses it — Step 17 removes
+it.
+
+**Which menu a step draws from is decided by its TYPE.** `acquire` takes its target from the object menu,
+everything else from the people menu. That is what lets the model write one `target` field rather than
+choosing a menu as well, and it means an `Acquire` step finally reads as *"Acquire a ruby"* rather than the
+stub's *"Acquire Thorald Gray-Mane"*.
+
+**The menus the prompt is rendered from and the menus the response is validated against are the same object.**
+Built once in `BirthPlot` and passed to both halves, because an index means nothing except against the list it
+was chosen from — rebuilding between them would silently renumber the answer.
+
+**A rejected plot spends nothing.** The id is drawn and the occupancy row taken only after `Compose` succeeds,
+so a run of bad responses costs call budget and nothing else: no half-built plot, no leaked occupancy row, no
+gap in the numbering to explain later.
+
+**The step manifest is rendered, not restated.** `StepTypeTraits` gained a `description`, and the prompt loops
+over the manifest to list the verbs. A template that spells them out by hand is a second copy of the enum, and
+the day one gains a member the two disagree with nothing to notice.
+
+**Two things were discovered by the fixtures, and one of them was my own wrong assumption.**
+
+- `StripMarkdownFences` required the response to *begin* with a fence. A model that writes "Here is the JSON
+  you asked for:" first therefore had its entire answer discarded — a real loss rate, since that preamble is
+  common. It now drops anything before the first fence, and a response with no fence is returned untouched, so
+  the common case is undisturbed. Extracted into `src/EvaluationPipelineText.cpp` on the way, because the rest
+  of `EvaluationPipeline.cpp` needs the plugin's SKSE plumbing and a probe reaching three dozen lines of string
+  handling got a wall of `C2653: 'logger': is not a class or namespace name` for it. Same trap Step 3 hit with
+  the co-save reader, resolved the same way.
+- The probe originally asserted the sanitized ambition was **pure ASCII**. It is not supposed to be:
+  `docs/LLM_RESPONSE_HANDLING.md` passes accented Latin through deliberately, with a section explaining why,
+  so that non-English players keep their language's letters. The fixture now pins both halves — the
+  typographic noise goes, `café` stays — which is the actual contract rather than the one I assumed.
+
+**Probe results, one probe over the committed fixtures, then deleted.** Every fixture behaves as its README
+says: the well-formed one resolves each target to the menu entry it named and routes `acquire` to the object
+menu; out-of-range rejects naming both the index and the step; an invented step type rejects naming the type;
+malformed JSON salvages nothing; the fence and its preamble are stripped; the sanitizer strips what it should
+and keeps what it should; an empty plan rejects; and `"1"` is read as `1`. Plus three cases that are
+boundaries rather than shapes and so are not fixtures: a plan over the step cap, an ambition over the
+character cap, and an empty menu — against which every index is out of range.
 
 ---
 

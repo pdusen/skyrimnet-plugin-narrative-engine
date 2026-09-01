@@ -1,0 +1,7 @@
+{
+  "ambition": "She wants the guard captain replaced with somebody who owes her.",
+  "plan": [
+    { "type": "locate", "target": 0 },
+    { "type": "assassinate", "target": 1 }
+  ]
+}

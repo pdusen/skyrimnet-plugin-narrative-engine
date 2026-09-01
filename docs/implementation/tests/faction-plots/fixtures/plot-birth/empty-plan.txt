@@ -1,0 +1,4 @@
+{
+  "ambition": "She wants to be left alone, and will do nothing at all about it.",
+  "plan": []
+}

@@ -49,6 +49,8 @@ KEYS = {
     "fPlotProgressRateMin": "plotProgressRateMin",
     "fPlotProgressRateMax": "plotProgressRateMax",
     "fPlotProgressMaxFraction": "plotProgressMaxFraction",
+    "iPlotBirthMemoryCount": "plotBirthMemoryCount",
+    "fPlotBirthMinMemoryImportance": "plotBirthMinMemoryImportance",
     "bPlotMishapEnabled": "plotMishapEnabled",
     "fPlotMishapChanceBase": "plotMishapChanceBase",
     "iPlotRandomSeed": "plotRandomSeed",

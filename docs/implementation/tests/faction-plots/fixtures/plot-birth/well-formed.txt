@@ -1,0 +1,8 @@
+{
+  "ambition": "She wants the meadery's ledger, because what it records would ruin her brother if anyone read it aloud.",
+  "plan": [
+    { "type": "locate", "target": 1 },
+    { "type": "acquire", "target": 1 },
+    { "type": "conceal", "target": 0 }
+  ]
+}

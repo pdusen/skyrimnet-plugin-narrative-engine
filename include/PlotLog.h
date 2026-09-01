@@ -89,6 +89,13 @@ namespace NarrativeEngine::PlotLog
 
     void Reap(std::size_t plots, std::size_t occupancyRows, double gameDay);
 
+    // A birth that got as far as asking and came back unusable.
+    //
+    // Logged because the alternative is silence: a rejected plot and a
+    // tick where nobody was eligible look identical in the trace, and
+    // one of them means the prompt needs work.
+    void BirthRejected(const std::string& mastermind, const std::string& reason);
+
     void Note(std::string_view text);
 
     // --- Line formatting, pure ----------------------------------------

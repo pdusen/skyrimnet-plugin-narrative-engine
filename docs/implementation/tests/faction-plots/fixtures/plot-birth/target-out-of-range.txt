@@ -1,0 +1,7 @@
+{
+  "ambition": "He wants the man who took his lease to lose everything.",
+  "plan": [
+    { "type": "locate", "target": 0 },
+    { "type": "suborn", "target": 97 }
+  ]
+}

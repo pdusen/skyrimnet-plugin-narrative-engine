@@ -295,6 +295,10 @@ namespace NarrativeEngine::Settings
                 static_cast<float>(ini.GetDoubleValue("Plots", "fPlotProgressRateMax", dst.plotProgressRateMax));
             dst.plotProgressMaxFraction = static_cast<float>(
                 ini.GetDoubleValue("Plots", "fPlotProgressMaxFraction", dst.plotProgressMaxFraction));
+            dst.plotBirthMemoryCount =
+                static_cast<int>(ini.GetLongValue("Plots", "iPlotBirthMemoryCount", dst.plotBirthMemoryCount));
+            dst.plotBirthMinMemoryImportance = static_cast<float>(
+                ini.GetDoubleValue("Plots", "fPlotBirthMinMemoryImportance", dst.plotBirthMinMemoryImportance));
             dst.plotMishapEnabled = ini.GetBoolValue("Plots", "bPlotMishapEnabled", dst.plotMishapEnabled);
             dst.plotMishapChanceBase =
                 static_cast<float>(ini.GetDoubleValue("Plots", "fPlotMishapChanceBase", dst.plotMishapChanceBase));

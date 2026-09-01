@@ -3,6 +3,7 @@
 #include <DashboardUIManager.h>
 #include <EngineUtils.h>
 #include <logger.h>
+#include <PlotBirth.h>
 #include <PlotCasting.h>
 #include <PlotDispatch.h>
 #include <PlotLog.h>
@@ -332,7 +333,7 @@ namespace NarrativeEngine::PlotTick
             }
         }
 
-        void BirthPlot(PlotState& state, double gameDay)
+        void BirthPlot(const PlotThread::Token& pt, PlotState& state, double gameDay)
         {
             const auto& population = PlotPopulation::Get();
             if (population.members.empty()) {
@@ -354,22 +355,27 @@ namespace NarrativeEngine::PlotTick
             }
 
             PlotModel::Plot plot;
-            plot.id = state.nextPlotId++;
             plot.mastermind = cast.chosen;
             plot.mastermindName = boss->name;
             plot.bornOnGameDay = gameDay;
-            plot.ambition = "(stub) something worth the risk.";
 
-            const auto& ladder = kStubLadders[Plots::NextRandom(state) % kStubLadders.size()];
-            plot.objectiveType = ladder.steps[ladder.length - 1];
-            for (std::size_t i = 0; i < ladder.length; ++i) {
-                PlotModel::Step step;
-                step.type = ladder.steps[i];
-                plot.plan.push_back(step);
+            // The menus the prompt is rendered from and the menus the
+            // response is validated against are the SAME OBJECT. Built
+            // once and passed to both, because an index means nothing
+            // except against the list it was chosen from -- rebuilding
+            // between the two would silently renumber the answer.
+            const auto menus = PlotMenus::Build(population, plot.mastermind, PlotMenus::CurrentWorld(), {});
+
+            // Blocks, on the plot worker, by design. Nothing else runs
+            // there, so there is nobody to yield to.
+            if (!PlotBirth::Compose(pt, *boss, menus, plot)) {
+                // Rejected. The slot is never taken and the id is never
+                // spent, so a run of bad responses costs call budget and
+                // nothing else -- no half-built plot, no leaked
+                // occupancy row, no gap in the numbering to explain.
+                return;
             }
-            AssignTargets(state, plot, population);
-            plot.objectiveTarget = plot.plan.back().target;
-            plot.objectiveTargetName = plot.plan.back().targetName;
+            plot.id = state.nextPlotId++;
 
             PlotCasting::Engage(state.occupancy, plot.mastermind, PlotModel::Role::Mastermind, plot.id);
             ++state.counters.plotsBorn;
@@ -489,7 +495,7 @@ namespace NarrativeEngine::PlotTick
             PlotLog::Reap(before - state.plots.size(), rows, gameDay);
         }
 
-        void RunSimulation(PlotState& state, double gameDay)
+        void RunSimulation(const PlotThread::Token& pt, PlotState& state, double gameDay)
         {
             const auto budget = static_cast<std::size_t>(std::max(1, Settings::Get().plotMaxConcurrent));
 
@@ -498,7 +504,7 @@ namespace NarrativeEngine::PlotTick
             // one, which keeps the budget check reading the world as the
             // tick found it.
             if (state.ActivePlotCount() < budget) {
-                BirthPlot(state, gameDay);
+                BirthPlot(pt, state, gameDay);
             }
 
             // Indexed rather than ranged: BirthPlot above may have
@@ -541,7 +547,7 @@ namespace NarrativeEngine::PlotTick
             state.simGameDay = asOfGameHours / 24.0;
             ++state.counters.ticksRun;
 
-            RunSimulation(state, state.simGameDay);
+            RunSimulation(pt, state, state.simGameDay);
 
             if (cancel && cancel->IsCancelled()) {
                 return;

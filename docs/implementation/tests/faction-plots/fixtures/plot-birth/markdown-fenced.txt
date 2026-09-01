@@ -1,0 +1,7 @@
+Here is the plot you asked for:
+
+```json
+{"ambition": "He wants the shipment delayed long enough that the buyer walks away.",
+ "plan": [{"type": "surveil", "target": 0},
+          {"type": "sabotage", "target": 1}]}
+```

@@ -1,0 +1,99 @@
+[ system ]
+## Task
+One person in Skyrim has decided to do something they cannot do openly. You
+write down what they want and the steps they will take to get it.
+
+The decision that this person is scheming has ALREADY BEEN MADE. Do not
+second-guess it, do not refuse, and do not decide they are too decent or too
+minor for it. Ordinary people scheme, and most schemes are small.
+
+## Who
+
+**{{ mastermind.name }}**{% if mastermind.standing %}, {{ mastermind.standing }}{% endif %}.
+{% if mastermind.hold %}They live in {{ mastermind.hold }}.{% endif %}
+
+{% if memories %}
+### What is on their mind
+
+These are their own recent memories, newest first. The scheme should come out
+of something here — a slight they have not forgotten, a debt, a rivalry, an
+opportunity they noticed. That is where a real motive comes from.
+
+{% for m in memories %}- {{ m }}
+{% endfor %}
+{% else %}
+This person has no recent memories on record. Build the scheme from who they
+are and who is around them instead.
+{% endif %}
+
+## What you may name
+
+You do not invent people, places or objects. Everything you can name is listed
+below with a number, and you refer to it by that number. **A name that is not
+on a list does not exist**, and a plan that reaches for one is thrown away.
+
+### People
+{% for a in actors %}{{ loop.index0 }}. {{ a.name }} — {{ a.relation }}{% if a.standing %}, {{ a.standing }}{% endif %}
+{% endfor %}
+
+{% if items %}
+### Objects
+{% for i in items %}{{ loop.index0 }}. {{ i.name }} ({{ i.category }})
+{% endfor %}
+{% endif %}
+
+{% if factions %}
+### Organisations
+{% for f in factions %}{{ loop.index0 }}. {{ f.name }}
+{% endfor %}
+{% endif %}
+
+## The steps you may use
+
+A plan is made of these and nothing else. Use the `id` exactly as written.
+
+{% for s in step_types %}- `{{ s.id }}` — {{ s.description }}
+{% endfor %}
+
+## How to build the plan
+
+The plan is **{{ min_steps }} to {{ max_steps }} steps**, in the order they
+happen. The LAST step is the objective — the thing that, once done, means the
+scheme succeeded. Everything before it is preparation.
+
+A good plan reads as one thing leading to another. Find out where the ledger
+is, then take it, then make sure nobody knows who did. A plan whose steps
+could be shuffled without anyone noticing is a list, not a scheme.
+
+Each step names one target by number:
+
+- `acquire` takes its target from **Objects**.
+- Every other step takes its target from **People**.
+
+Do not use the same person for every step. A scheme with one victim and one
+tool is thinner than one that touches three people who each want different
+things.
+
+## Output Format
+Return a JSON object. No markdown fences. No prose before or after the object.
+
+- `ambition` — one sentence, in the third person, saying what this person
+  wants and why they will not ask for it openly. This is the only free text
+  you write; it is what a reader sees first. No names of people or places that
+  are not on the lists above.
+- `plan` — array of {{ min_steps }} to {{ max_steps }} objects, in order. Each
+  has:
+  - `type` — one of the step ids above, exactly as written.
+  - `target` — a number from **People**, or from **Objects** when the type is
+    `acquire`.
+
+Example shape only — do not copy its content:
+
+```
+{"ambition": "She wants the mine's ledger, because what it records would ruin her brother if anyone read it aloud.",
+ "plan": [{"type": "locate", "target": 2},
+          {"type": "acquire", "target": 0},
+          {"type": "conceal", "target": 2}]}
+```
+
+Write plainly. No markdown, no headings, no bullet points inside `ambition`.

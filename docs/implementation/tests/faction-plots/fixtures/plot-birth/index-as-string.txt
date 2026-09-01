@@ -1,0 +1,7 @@
+{
+  "ambition": "He wants the ledger, and he does not much mind who gets hurt fetching it.",
+  "plan": [
+    { "type": "locate", "target": "1" },
+    { "type": "acquire", "target": "0" }
+  ]
+}

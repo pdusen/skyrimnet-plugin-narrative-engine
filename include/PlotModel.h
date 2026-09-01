@@ -76,6 +76,12 @@ namespace NarrativeEngine::PlotModel
         // The display verb. Composed with a cached target name to make
         // step labels and plot titles; see Label() and Title().
         std::string_view verb;
+        // What the step MEANS, in the words the model is given. Lives
+        // here rather than in the prompt template so there is exactly
+        // one list of step types in the project: a template that
+        // restates them is a second copy of this enum, and the day one
+        // gains a member the two disagree without anything noticing.
+        std::string_view description;
         // Whether this type can currently be handed to the player. A
         // STAGING decision rather than a property of the type: the
         // `false` entries are the ones whose completion conditions are
@@ -88,14 +94,14 @@ namespace NarrativeEngine::PlotModel
     // the enum without a matching reordering here is caught by the
     // static_assert below rather than by silently mislabelling steps.
     inline constexpr std::array<StepTypeTraits, kStepTypeCount> kStepTypes{{
-        {"locate", "Locate", true, Conspicuousness::No},
-        {"acquire", "Acquire", true, Conspicuousness::Sometimes},
-        {"deliver", "Deliver to", true, Conspicuousness::No},
-        {"surveil", "Watch", true, Conspicuousness::Yes},
-        {"suborn", "Suborn", false, Conspicuousness::Yes},
-        {"discredit", "Discredit", false, Conspicuousness::Yes},
-        {"sabotage", "Sabotage", false, Conspicuousness::Yes},
-        {"conceal", "Cover Tracks", false, Conspicuousness::Sometimes},
+        {"locate", "Locate", "find out where a person or thing actually is", true, Conspicuousness::No},
+        {"acquire", "Acquire", "get hold of an object, bought, taken or lifted", true, Conspicuousness::Sometimes},
+        {"deliver", "Deliver to", "get something into someone's hands quietly", true, Conspicuousness::No},
+        {"surveil", "Watch", "watch someone long enough to learn their habits", true, Conspicuousness::Yes},
+        {"suborn", "Suborn", "buy, recruit or blackmail someone into helping", false, Conspicuousness::Yes},
+        {"discredit", "Discredit", "damage what people think of someone", false, Conspicuousness::Yes},
+        {"sabotage", "Sabotage", "quietly ruin a thing, a shipment or an arrangement", false, Conspicuousness::Yes},
+        {"conceal", "Cover Tracks", "make sure nobody can tell who did it", false, Conspicuousness::Sometimes},
     }};
 
     static_assert(kStepTypes.size() == kStepTypeCount, "kStepTypes must carry one row per StepType");

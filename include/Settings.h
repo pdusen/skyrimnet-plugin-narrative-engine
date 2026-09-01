@@ -923,6 +923,19 @@ namespace NarrativeEngine::Settings
         //
         // Behind a switch because its SHAPE is still an open design
         // question (see the phase doc), not because it is optional.
+        // How many of the mastermind's own memories the birth prompt
+        // is given, and how important one has to be to qualify.
+        //
+        // The memories are what a motive comes out of: without them the
+        // model builds a scheme from a name and a faction, and every
+        // plot reads the same. Ten is enough for a pattern to show and
+        // few enough to leave room for the menus.
+        int plotBirthMemoryCount = 10;
+        // Set level with the gossip floor on purpose. Both are asking
+        // the same question -- is this worth building a story on -- and
+        // an NPC whose memories clear one bar should clear the other.
+        float plotBirthMinMemoryImportance = 0.45f;
+
         bool plotMishapEnabled = true;
         // Retuned from 0.015 in Step 14. This is a PER-TICK chance, so it
         // is only meaningful relative to how many ticks a step lives, and
