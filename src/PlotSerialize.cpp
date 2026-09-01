@@ -203,7 +203,7 @@ namespace NarrativeEngine::PlotSerialize
                 || !WriteStepVector(sink, plot.history) || !WritePod(sink, plot.adaptations)
                 || !WritePod(sink, static_cast<std::uint8_t>(plot.status))
                 || !WritePod(sink, static_cast<std::uint8_t>(plot.outcome)) || !WritePod(sink, plot.bornOnGameDay)
-                || !WritePod(sink, plot.endedOnGameDay)) {
+                || !WritePod(sink, plot.endedOnGameDay) || !WriteString(sink, plot.concession)) {
                 return false;
             }
         }
@@ -288,7 +288,8 @@ namespace NarrativeEngine::PlotSerialize
             if (!ReadString(source, plot.objectiveTargetName) || !ReadStepVector(source, plot.plan, resolved)
                 || !ReadPod(source, cursor) || !ReadStepVector(source, plot.history, resolved)
                 || !ReadPod(source, plot.adaptations) || !ReadPod(source, plotStatus) || !ReadPod(source, plotOutcome)
-                || !ReadPod(source, plot.bornOnGameDay) || !ReadPod(source, plot.endedOnGameDay)) {
+                || !ReadPod(source, plot.bornOnGameDay) || !ReadPod(source, plot.endedOnGameDay)
+                || !ReadString(source, plot.concession)) {
                 return fail();
             }
             plot.cursor = cursor;

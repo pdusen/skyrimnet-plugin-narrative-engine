@@ -297,6 +297,17 @@ namespace NarrativeEngine::PlotModel
         // iPlotStepHistoryCap.
         std::vector<Step> history;
 
+        // Why the mastermind gave up, in their own terms -- "she decided
+        // the ledger was not worth what taking it would cost her".
+        //
+        // Empty unless the outcome is Conceded. Kept on the plot rather
+        // than only in the trace because it is the ONLY record of why a
+        // scheme ended: `Conceded` says that it did, and a reader who
+        // wants to know what happened has nowhere else to look. Step 19
+        // writes memories from terminal plots and this is the sentence
+        // they will want.
+        std::string concession;
+
         int adaptations = 0;
 
         PlotStatus status = PlotStatus::Active;

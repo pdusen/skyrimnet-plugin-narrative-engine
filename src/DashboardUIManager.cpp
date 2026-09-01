@@ -1488,6 +1488,7 @@ namespace NarrativeEngine::DashboardUIManager
                     {"title", PlotModel::Title(plot)},
                     {"mastermind", plot.mastermindName},
                     {"ambition", plot.ambition},
+                    {"concession", plot.concession},
                     {"status", PlotModel::PlotStatusId(plot.status)},
                     {"outcome", PlotModel::PlotOutcomeId(plot.outcome)},
                     {"adaptations", plot.adaptations},

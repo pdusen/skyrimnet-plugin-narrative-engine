@@ -2024,9 +2024,19 @@ objective at all. Silently appending the objective to a plan that omitted it wou
 hide the fact that the model misunderstood the task — and a model that moved the destination should not have
 the rest of its answer trusted either.
 
-**The concession sentence is traced, not persisted.** `PlotSerialize`'s reader is a strict version-equality
-check, so a new field on `Plot` would cost every existing save its in-flight plots. Step 17 does not need it;
-if Step 19's memories want the sentence, that is the moment to pay for the bump, with a reason.
+**The concession sentence is persisted, and the first version of this step wrongly declined to.** It was
+written to the trace only, on the reasoning that a new field on `Plot` means bumping `kRecordVersion` and
+`PlotSerialize`'s reader is a strict version-equality check, so every existing save would lose its in-flight
+plots. **That is not a constraint this project has** — the mod is unreleased, there are no existing saves to
+protect, and treating save compatibility as a cost here bought nothing while losing the only record of why a
+scheme ended. `Conceded` says that a plot ended; the sentence says what happened, and Step 19's memories will
+want it. Record version 2 → 3, `Plot::concession`, and it reaches the dashboard alongside the ambition.
+
+A round-trip probe covers it, because a field that is written but not read back is worse than one never added:
+the plot looks complete in memory and loses its explanation on reload, which is the case nobody thinks to
+check. It asserts the sentence survives verbatim, that an absent one comes back absent rather than as garbage,
+and that the plot written *after* it still parses — a field appended in the wrong place corrupts what follows
+it rather than itself.
 
 **Probe results, one probe over the fixtures, then deleted.** A revision replaces only the tail and still ends
 on the objective; a concession carries its sentence, and one without a sentence gets a default rather than

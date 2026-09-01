@@ -250,13 +250,8 @@ namespace NarrativeEngine::PlotTick
             const auto outcome = PlotAdapt::Compose(pt, plot, failed, menus, plot.adaptations, cap);
 
             if (outcome.decision == PlotAdapt::Decision::Concede) {
-                // Traced rather than stored. Persisting it would mean a
-                // co-save format bump -- the reader is a strict version
-                // equality check, so every existing save would lose its
-                // in-flight plots -- and Step 17 does not need it. If Step
-                // 19's memories want the sentence, that is the moment to
-                // pay for it, with a reason.
                 PlotLog::Concede(plot, outcome.reason);
+                plot.concession = outcome.reason;
                 EndPlot(state, plot, PlotModel::PlotStatus::Failed, PlotModel::PlotOutcome::Conceded, gameDay);
                 return false;
             }
