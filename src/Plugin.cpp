@@ -30,7 +30,9 @@
 #include <PhaseTracker.h>
 #include <PlotDispatch.h>
 #include <PlotFactionRoster.h>
+#include <PlotItemPool.h>
 #include <PlotLog.h>
+#include <PlotMenus.h>
 #include <PlotPopulation.h>
 #include <PlotSerialize.h>
 #include <PlotState.h>
@@ -253,7 +255,15 @@ namespace NarrativeEngine
                 // standing out of the roster, so the roster has to
                 // exist first.
                 PlotFactionRoster::Load();
+                // Same shape as the roster and for the same reason: the
+                // model is handed a menu of resolved forms rather than
+                // being trusted to name an object that exists.
+                PlotItemPool::Load();
                 PlotPopulation::Build();
+                // After both: the menus are drawn from the population's
+                // settlements, the roster's factions and the item pool,
+                // so all three have to exist first.
+                PlotMenus::BuildWorld();
                 PlotDispatch::Start();
                 // Must start before BeatSystem::Initialize — the poll
                 // starts enqueuing here as soon as a beat is running.

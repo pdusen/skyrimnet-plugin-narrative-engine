@@ -84,6 +84,10 @@ namespace NarrativeEngine::PlotCasting
         RE::FormID npc = 0;
         std::string name;
         RE::FormID hold = 0;
+        // The settlement they live in, which is finer than the hold and
+        // is what a plot's locations are drawn from -- the places that
+        // matter to a scheme are where its people are.
+        RE::FormID settlement = 0;
         // Where this member is, coarsely, for measuring travel: the road
         // node nearest their settlement's map marker. Resolved once on
         // the main thread at population build, because it needs the

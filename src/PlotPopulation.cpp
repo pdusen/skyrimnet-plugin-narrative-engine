@@ -499,6 +499,7 @@ namespace NarrativeEngine::PlotPopulation
             member.npc = npcId;
             member.name = GossipGraph::NpcName(npcId);
             member.hold = participant->hold;
+            member.settlement = participant->settlement;
 
             if (auto* npcForm = RE::TESForm::LookupByID<RE::TESNPC>(npcId)) {
                 member.skills = ReadSkills(npcForm);

@@ -1828,7 +1828,7 @@ Design notes worth keeping:
 
 #### Step 15 — Target menus and the item pool
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1846,6 +1846,47 @@ exist in the Spriggit export** at `C:\Projects\spriggit-output\` — looked up, 
 `docs/VANILLA_RECORD_REFERENCE.md`; the roster is worthless if a third of it is invented. A probe feeds the
 loader a file with one bad EditorID and asserts it fails naming that line. A probe builds menus for two
 fabricated masterminds in different holds and asserts the candidate sets differ and neither is empty.
+
+Done. `statics/SKSE/Plugins/NarrativeEngine/PlotItems.ini` (19 items over four categories),
+`include/PlotItemPool.h` with `src/PlotItemParse.cpp` (pure) and `src/PlotItemPool.cpp` (engine-bound);
+`include/PlotMenus.h` with `src/PlotMenuBuild.cpp` (pure) and `src/PlotMenus.cpp` (engine-bound);
+`check-plot-items.py`; and `PlotItemPool::Load` / `PlotMenus::BuildWorld` at `kDataLoaded` after the roster
+and the population, since the menus are drawn from all three.
+
+**The pool is type-checked, not merely resolved.** An `Acquire` step has to put its object into somebody's
+inventory, so a name that resolves to a `STAT` or a `CELL` fails at runtime exactly as surely as one that
+resolves to nothing — and does so much later, inside a plot that already looked fine. Both the loader and
+`check-plot-items.py` require a carryable record; the checker tells "does not exist" apart from "exists and is
+the wrong kind", because those are different mistakes.
+
+**Relevance is a total order, not a score.** A score would need weights nobody has measured. Four rungs say
+what the prompt needs — a personal tie AND a shared organisation, a tie, a shared organisation, the same hold
+— and each actor carries the rung as text, because *"Vilkas, a shield-brother in the Companions"* tells the
+model what kind of scheme is available in a way a bare name cannot. Ties break by faction standing and then by
+FormID, and that last one is load-bearing: hash order would renumber the same menu run to run, and an index
+the prompt cannot rely on is worse than no index at all.
+
+**Locations follow the actors rather than being chosen separately.** The places that matter to a scheme are
+where its people are, so the location menu is the settlements its candidates live in, deduplicated in menu
+order. That also means `HoldGrid` was not needed: the population already carries a settlement per member, and
+a location nobody lives in is one no scheme has a reason to name.
+
+**The stub target assignment now draws from the menu, which is how the menus get exercised before Step 16.**
+The change is not the randomness — it is still a uniform draw — but the POOL. It was all 881 unique NPCs, so a
+Riften pickpocket's scheme could turn on a Solitude priest neither had met, and every step then sized itself
+off a travel distance that reflected nothing. The fallback to the population survives for a mastermind whose
+menu comes back empty (no faction, no ties, no resolved hold), because a targetless plan is the failure Step
+12 found the first time round.
+
+**Probe results, one probe over both halves, then deleted.** The parse: a bad line costs the line and nothing
+else, an unknown category is warned about rather than fatal, a duplicate EditorID is dropped so it cannot bias
+the model's pick by appearing twice, and the shipped file parses with zero warnings at 19 items. The builder,
+against a fabricated province of two holds and two organisations: **two masterminds get two different menus**
+— the property the whole step exists for, and the one that would still pass every other check if the menu were
+secretly province-wide — a mastermind is never on their own menu, someone with no faction, tie or hold is on
+nobody's, ordering is by relation then standing then FormID, the same inputs give the same order twice, the
+caps keep the most relevant rather than the first found, and an unknown mastermind gets an empty menu rather
+than everything.
 
 ---
 

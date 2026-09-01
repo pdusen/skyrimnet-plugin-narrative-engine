@@ -6,6 +6,7 @@
 #include <PlotCasting.h>
 #include <PlotDispatch.h>
 #include <PlotLog.h>
+#include <PlotMenus.h>
 #include <PlotPopulation.h>
 #include <PlotResolution.h>
 #include <PlotSchedule.h>
@@ -298,13 +299,36 @@ namespace NarrativeEngine::PlotTick
             if (population.members.empty()) {
                 return;
             }
+
+            // Drawn from the mastermind's OWN menu, not the province.
+            //
+            // Step 16 replaces this with the LLM picking indices off the
+            // same menu; until then a uniform draw over the menu is the
+            // stub. What changes here is not the randomness but the
+            // POOL: the previous stub drew from all 881 unique NPCs, so
+            // a Riften pickpocket's scheme could turn on a Solitude
+            // priest neither of them had ever met, and every step sized
+            // itself off a travel distance that reflected nothing.
+            const auto menus = PlotMenus::Build(population, plot.mastermind, PlotMenus::CurrentWorld(), {});
+
             for (auto& step : plot.plan) {
                 if (step.target != 0) {
                     continue;
                 }
-                const auto& pick = population.members[Plots::NextRandom(state) % population.members.size()];
-                step.target = pick.npc;
-                step.targetName = pick.name;
+                // The menu can be empty -- an NPC in no faction, with no
+                // ties, whose hold did not resolve. Falling back to the
+                // population keeps such a plot runnable rather than
+                // leaving it targetless, which is the failure Step 12
+                // found the first time round.
+                if (!menus.actors.empty()) {
+                    const auto& pick = menus.actors[Plots::NextRandom(state) % menus.actors.size()];
+                    step.target = pick.npc;
+                    step.targetName = pick.name;
+                } else {
+                    const auto& pick = population.members[Plots::NextRandom(state) % population.members.size()];
+                    step.target = pick.npc;
+                    step.targetName = pick.name;
+                }
             }
         }
 
