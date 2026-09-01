@@ -153,8 +153,10 @@ namespace NarrativeEngine::PlotAdapt
         ctx["max_attempts"] = maxAttempts;
 
         nlohmann::json actors = nlohmann::json::array();
-        for (const auto& actor : menus.actors) {
+        for (std::size_t i = 0; i < menus.actors.size(); ++i) {
+            const auto& actor = menus.actors[i];
             nlohmann::json entry = nlohmann::json::object();
+            entry["index"] = i;
             entry["name"] = actor.name;
             entry["relation"] = PlotMenus::RelationPhrase(actor.relation);
             entry["standing"] = StandingPhrase(actor.standing);
@@ -163,8 +165,10 @@ namespace NarrativeEngine::PlotAdapt
         ctx["actors"] = std::move(actors);
 
         nlohmann::json items = nlohmann::json::array();
-        for (const auto& item : menus.items) {
+        for (std::size_t i = 0; i < menus.items.size(); ++i) {
+            const auto& item = menus.items[i];
             nlohmann::json entry = nlohmann::json::object();
+            entry["index"] = i;
             entry["name"] = item.displayName;
             entry["category"] = PlotItemPool::CategoryId(item.category);
             items.push_back(std::move(entry));

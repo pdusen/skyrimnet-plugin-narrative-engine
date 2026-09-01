@@ -1,3 +1,14 @@
+{# narrative_engine_plot_adapt.prompt — a scheme has hit a setback; this
+   call decides whether the person behind it finds another way or gives up.
+   Receives the JSON object produced by PlotAdapt::Compose:
+     mastermind { name }, ambition,
+     objective { type, verb, target, index }, history [string],
+     failure { step, outcome, progress, caught }, attempt, max_attempts,
+     actors [{ index, name, relation, standing }],
+     items [{ index, name, category }], step_types [{ id, description }],
+     min_steps, max_steps,
+     npc { UUID } — required by SkyrimNet's character_profile submodules;
+                    keys every character-bio decorator. #}
 [ system ]
 ## Task
 A scheme has hit a setback. You decide whether the person behind it finds
@@ -8,59 +19,13 @@ they are a machine — and a plot that grinds through every possible approach is
 worse reading than one that ends because the person behind it decided it was
 not worth it any more. Concede when a real person would.
 
-## The scheme
-
-{{ render_character_profile("full", npc.UUID) }}
-
-**{{ mastermind.name }}** wants this:
-
-> {{ ambition }}
-
-The objective — the thing that, once done, means they have got what they want —
-is **{{ objective.verb }} {{ objective.target }}**. That does not change. You
-are deciding how they get there, not what they are after.
-
-## What has happened so far
-
-{% if history %}
-{% for h in history %}- {{ h }}
-{% endfor %}
-{% else %}
-Nothing yet; the first step is the one that went wrong.
-{% endif %}
-
-### The setback
-
-**{{ failure.step }}** — {{ failure.outcome }}.
-
-{% if failure.progress %}They had got about {{ failure.progress }} of the way
-through it when it went wrong.{% endif %}
-
-{% if failure.caught %}
-They were **seen**. Whatever comes next has to account for somebody now knowing
-something they should not, and for that person having a reason to talk.
-{% else %}
-It simply did not work in time. Nobody knows it was attempted.
-{% endif %}
-
-This is attempt {{ attempt }} of at most {{ max_attempts }}. After that they
-stop whether they want to or not, so a plan that needs three more setbacks to
-pay off is not a plan.
+**The objective does not change.** You are deciding how they get there, not
+what they are after.
 
 ## What you may name
 
-Same rule as before: you do not invent people or objects. Everything you can
-name is listed with a number, and you refer to it by that number.
-
-### People
-{% for a in actors %}{{ loop.index0 }}. {{ a.name }} — {{ a.relation }}{% if a.standing %}, {{ a.standing }}{% endif %}
-{% endfor %}
-
-{% if items %}
-### Objects
-{% for i in items %}{{ loop.index0 }}. {{ i.name }} ({{ i.category }})
-{% endfor %}
-{% endif %}
+You do not invent people or objects. Everything you can name is given to you
+with a number, and you refer to it by that number.
 
 ## The steps you may use
 
@@ -84,9 +49,9 @@ Return a JSON object. No markdown fences. No prose before or after the object.
 - `plan` — the remaining steps, in order, {{ min_steps }} to {{ max_steps }} of
   them. Each has a `type` from the list above and a `target` number, taken from
   **Objects** when the type is `acquire` and from **People** otherwise.
-- **The last entry must be the objective, exactly as given above**: type
-  `{{ objective.type }}`, target {{ objective.index }}. A plan that ends
-  anywhere else is thrown away, and the scheme concedes by default.
+- **The last entry must be the objective, exactly as it is given to you.** A
+  plan that ends anywhere else is thrown away, and the scheme concedes by
+  default.
 
 A revision should react to what actually went wrong. If they were seen, deal
 with the person who saw them. If the approach was too slow, take a shorter one.
@@ -99,3 +64,58 @@ Example shape only — do not copy its content:
  "plan": [{"type": "suborn", "target": 1},
           {"type": "acquire", "target": 0}]}
 ```
+[ end system ]
+
+[ user ]
+## Whose scheme this is
+
+{{ render_character_profile("full", npc.UUID) }}
+
+**{{ mastermind.name }}** wants this:
+
+> {{ ambition }}
+
+The objective is **{{ objective.verb }} {{ objective.target }}** — type
+`{{ objective.type }}`, target {{ objective.index }}. A revised plan must end
+on exactly that.
+
+## What has happened so far
+
+{% if length(history) > 0 %}
+{% for h in history %}- {{ h }}
+{% endfor %}
+{% else %}
+Nothing yet; the first step is the one that went wrong.
+{% endif %}
+
+## The setback
+
+**{{ failure.step }}** — {{ failure.outcome }}.
+
+{% if length(failure.progress) > 0 %}They had got about {{ failure.progress }} of the way
+through it when it went wrong.{% endif %}
+
+{% if failure.caught %}
+They were **seen**. Whatever comes next has to account for somebody now knowing
+something they should not, and for that person having a reason to talk.
+{% else %}
+It simply did not work in time. Nobody knows it was attempted.
+{% endif %}
+
+This is attempt {{ attempt }} of at most {{ max_attempts }}. After that they
+stop whether they want to or not, so a plan that needs three more setbacks to
+pay off is not a plan.
+
+## People
+{% for a in actors %}{{ a.index }}. {{ a.name }} — {{ a.relation }}{% if length(a.standing) > 0 %}, {{ a.standing }}{% endif %}
+{% endfor %}
+
+{% if length(items) > 0 %}
+## Objects
+{% for i in items %}{{ i.index }}. {{ i.name }} ({{ i.category }})
+{% endfor %}
+{% endif %}
+
+Decide whether {{ mastermind.name }} finds another way to the same end, or
+stops. Answer with the object.
+[ end user ]

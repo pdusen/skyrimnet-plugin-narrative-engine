@@ -1,3 +1,13 @@
+{# narrative_engine_plot_birth.prompt — invents one scheme for an
+   already-chosen mastermind. Casting picked the person; this call decides
+   what they want and how they mean to get it.
+   Receives the JSON object produced by PlotBirth::BuildContext:
+     mastermind { name, hold, standing }, memories [string],
+     actors [{ index, name, relation, standing }],
+     items [{ index, name, category }], factions [{ index, name }],
+     step_types [{ id, description }], min_steps, max_steps,
+     npc { UUID } — required by SkyrimNet's character_profile submodules;
+                    keys every character-bio decorator. #}
 [ system ]
 ## Task
 One person in Skyrim has decided to do something they cannot do openly. You
@@ -7,51 +17,16 @@ The decision that this person is scheming has ALREADY BEEN MADE. Do not
 second-guess it, do not refuse, and do not decide they are too decent or too
 minor for it. Ordinary people scheme, and most schemes are small.
 
-## Who
-
-**{{ mastermind.name }}**{% if mastermind.standing %}, {{ mastermind.standing }}{% endif %}.
-{% if mastermind.hold %}They live in {{ mastermind.hold }}.{% endif %}
-
-{{ render_character_profile("full", npc.UUID) }}
-
-**This is the source of the scheme.** What they want comes out of who they are
-— their station, their temperament, what they have and what they are short of.
-A guard captain and a fence do not scheme about the same things, and neither
-of them schemes about something a stranger would.
-
-{% if memories %}
-### What is also on their mind
-
-Recent memories, newest first. Use them where they fit — a slight not
-forgotten, a debt, a rivalry, something they noticed — but they are extra
-detail, not the point. A scheme that ignores them is fine if it fits the
-person; a scheme that fits a memory but not the person is not.
-
-{% for m in memories %}- {{ m }}
-{% endfor %}
-{% endif %}
+**The scheme comes out of who they are.** Their station, their temperament,
+what they have and what they are short of. A guard captain and a fence do not
+scheme about the same things, and neither of them schemes about something a
+stranger would.
 
 ## What you may name
 
-You do not invent people, places or objects. Everything you can name is listed
-below with a number, and you refer to it by that number. **A name that is not
+You do not invent people, places or objects. Everything you can name is given
+to you with a number, and you refer to it by that number. **A name that is not
 on a list does not exist**, and a plan that reaches for one is thrown away.
-
-### People
-{% for a in actors %}{{ loop.index0 }}. {{ a.name }} — {{ a.relation }}{% if a.standing %}, {{ a.standing }}{% endif %}
-{% endfor %}
-
-{% if items %}
-### Objects
-{% for i in items %}{{ loop.index0 }}. {{ i.name }} ({{ i.category }})
-{% endfor %}
-{% endif %}
-
-{% if factions %}
-### Organisations
-{% for f in factions %}{{ loop.index0 }}. {{ f.name }}
-{% endfor %}
-{% endif %}
 
 ## The steps you may use
 
@@ -85,7 +60,7 @@ Return a JSON object. No markdown fences. No prose before or after the object.
 - `ambition` — one sentence, in the third person, saying what this person
   wants and why they will not ask for it openly. This is the only free text
   you write; it is what a reader sees first. No names of people or places that
-  are not on the lists above.
+  are not on the lists you are given.
 - `plan` — array of {{ min_steps }} to {{ max_steps }} objects, in order. Each
   has:
   - `type` — one of the step ids above, exactly as written.
@@ -102,3 +77,44 @@ Example shape only — do not copy its content:
 ```
 
 Write plainly. No markdown, no headings, no bullet points inside `ambition`.
+[ end system ]
+
+[ user ]
+## Who is scheming
+
+**{{ mastermind.name }}**{% if length(mastermind.standing) > 0 %}, {{ mastermind.standing }}{% endif %}.
+{% if length(mastermind.hold) > 0 %}They live in {{ mastermind.hold }}.{% endif %}
+
+{{ render_character_profile("full", npc.UUID) }}
+
+{% if length(memories) > 0 %}
+## What is also on their mind
+
+Recent memories, newest first. Use them where they fit — a slight not
+forgotten, a debt, a rivalry, something they noticed — but they are extra
+detail, not the point. A scheme that ignores them is fine if it fits the
+person; a scheme that fits a memory but not the person is not.
+
+{% for m in memories %}- {{ m }}
+{% endfor %}
+{% endif %}
+
+## People
+{% for a in actors %}{{ a.index }}. {{ a.name }} — {{ a.relation }}{% if length(a.standing) > 0 %}, {{ a.standing }}{% endif %}
+{% endfor %}
+
+{% if length(items) > 0 %}
+## Objects
+{% for i in items %}{{ i.index }}. {{ i.name }} ({{ i.category }})
+{% endfor %}
+{% endif %}
+
+{% if length(factions) > 0 %}
+## Organisations
+{% for f in factions %}{{ f.index }}. {{ f.name }}
+{% endfor %}
+{% endif %}
+
+Decide what {{ mastermind.name }} wants badly enough to go around the open way
+of getting it, and lay out the steps they take. Answer with the object.
+[ end user ]

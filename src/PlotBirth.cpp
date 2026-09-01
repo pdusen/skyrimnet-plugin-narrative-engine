@@ -127,8 +127,10 @@ namespace NarrativeEngine::PlotBirth
             ctx["memories"] = MemoriesOf(mastermind.npc);
 
             nlohmann::json actors = nlohmann::json::array();
-            for (const auto& actor : menus.actors) {
+            for (std::size_t i = 0; i < menus.actors.size(); ++i) {
+                const auto& actor = menus.actors[i];
                 nlohmann::json entry = nlohmann::json::object();
+                entry["index"] = i;
                 entry["name"] = actor.name;
                 entry["relation"] = PlotMenus::RelationPhrase(actor.relation);
                 entry["standing"] = StandingPhrase(actor.standing);
@@ -137,8 +139,10 @@ namespace NarrativeEngine::PlotBirth
             ctx["actors"] = std::move(actors);
 
             nlohmann::json items = nlohmann::json::array();
-            for (const auto& item : menus.items) {
+            for (std::size_t i = 0; i < menus.items.size(); ++i) {
+                const auto& item = menus.items[i];
                 nlohmann::json entry = nlohmann::json::object();
+                entry["index"] = i;
                 entry["name"] = item.displayName;
                 entry["category"] = PlotItemPool::CategoryId(item.category);
                 items.push_back(std::move(entry));
@@ -146,9 +150,10 @@ namespace NarrativeEngine::PlotBirth
             ctx["items"] = std::move(items);
 
             nlohmann::json factions = nlohmann::json::array();
-            for (const auto& faction : menus.factions) {
+            for (std::size_t i = 0; i < menus.factions.size(); ++i) {
                 nlohmann::json entry = nlohmann::json::object();
-                entry["name"] = faction.name;
+                entry["index"] = i;
+                entry["name"] = menus.factions[i].name;
                 factions.push_back(std::move(entry));
             }
             ctx["factions"] = std::move(factions);
