@@ -82,7 +82,7 @@ expect(nodeCount === amulet.chain.length + 15 + 1, `one node per chain entry (go
 //
 // Colour is never the only signal, and a failed step must stay in the
 // position it occupied rather than vanishing when the plot moves on.
-expect(html.includes('Step 4, Suborn the Guard, failed'), 'the failed node is labelled with its number');
+expect(html.includes('Step 4, Recruit the Guard, failed'), 'the failed node is labelled with its number');
 expect(html.includes('plot-node-cross'), 'the failed node carries the cross glyph');
 expect((html.match(/plot-node-cross/g) || []).length >= 1, 'at least one cross rendered');
 

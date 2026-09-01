@@ -165,13 +165,11 @@ namespace NarrativeEngine::PlotBirth
         if (planIt == json.end() || !planIt->is_array()) {
             return Reject("response carried no 'plan' array");
         }
-        // The plan is the PREPARATION; the objective is separate and
-        // is appended by the caller. A plan of zero is therefore legal
-        // in principle -- a scheme that needs no groundwork -- but it
-        // reads as a wish rather than a plot, so one step is the floor.
+        // The plan is the WHOLE scheme, last step included. One step is
+        // not a scheme, it is an errand.
         if (planIt->size() < limits.minSteps) {
-            return Reject("plan had " + std::to_string(planIt->size())
-                          + " preparation step(s), fewer than the minimum of " + std::to_string(limits.minSteps));
+            return Reject("plan had " + std::to_string(planIt->size()) + " step(s), fewer than the minimum of "
+                          + std::to_string(limits.minSteps));
         }
         if (planIt->size() > limits.maxSteps) {
             return Reject("plan had " + std::to_string(planIt->size()) + " step(s), more than the maximum of "
@@ -190,19 +188,17 @@ namespace NarrativeEngine::PlotBirth
             plan.push_back(std::move(step));
         }
 
-        // A plan that ENDS in concealment is a plan written as though it
-        // were the whole arc. The objective is appended after it, so a
-        // trailing `conceal` lands immediately before the thing it was
-        // supposed to hide -- which is how the dashboard came to show
-        // "Watch, Suborn, Cover Tracks, Acquire" four times in a row.
+        // The LAST STEP is the one that accomplishes the objective, and
+        // covering your tracks accomplishes nothing. A plan ending there
+        // is one that never actually reaches what it was for.
         //
-        // Rejected rather than quietly dropped or shuffled. Deleting the
-        // step would silently rewrite someone's plan, and there is no
-        // position to shuffle it to: the objective is terminal by
-        // construction.
+        // Rejected rather than quietly dropped: deleting the step would
+        // silently rewrite someone's plan, and a model that ended a
+        // scheme on concealment did not understand what the last step is
+        // for.
         if (!plan.empty() && plan.back().type == PlotModel::StepType::Conceal) {
-            return Reject("the plan ends in 'conceal', which would cover the tracks of the objective before it "
-                          "has happened -- concealment can only follow a step already taken");
+            return Reject("the plan ends in 'conceal'; the last step is the one that accomplishes the "
+                          "objective, and covering your tracks accomplishes nothing");
         }
 
         // --- The objective ---------------------------------------------

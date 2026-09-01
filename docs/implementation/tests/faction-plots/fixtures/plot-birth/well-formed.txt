@@ -1,4 +1,5 @@
 {"ambition": "She means to own everyone in the Rift who matters, so that nothing moves through it without her leave.",
  "objective": {"type": "acquire", "target": 1},
  "plan": [{"type": "locate", "target": 1},
-          {"type": "suborn", "target": 0}]}
+          {"type": "recruit", "target": 0},
+          {"type": "acquire", "target": 1}]}

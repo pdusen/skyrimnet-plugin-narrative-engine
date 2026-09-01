@@ -46,8 +46,18 @@ namespace NarrativeEngine::PlotMenus
     // ordering key, so the enum's order is the menu's order.
     enum class Relation : std::uint8_t
     {
-        // A personal tie AND a shared organisation: the strongest link
-        // the graph can express.
+        // They share a roof, and an organisation as well. In Skyrim's
+        // terms this is nearly always family -- the Gray-Manes, the
+        // Battle-Borns -- or a hall like Jorrvaskr, and it is the
+        // strongest link the graph can express.
+        //
+        // Its own rung rather than a flag on the ones below, because
+        // without it a daughter and a shield-sister came out of the
+        // menu described identically, and the model schemed against
+        // whichever one the sort happened to put first.
+        HouseholdAndColleague,
+        Household,
+        // A personal tie AND a shared organisation.
         CloseAndColleague,
         Close,     // a personal tie
         Colleague, // a shared organisation

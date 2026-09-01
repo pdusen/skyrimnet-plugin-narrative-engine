@@ -57,6 +57,16 @@ namespace NarrativeEngine::PlotCasting
     {
         RE::FormID other = 0;
         bool sharedFaction = false;
+        // They share a roof -- GossipGraph's Household channel. In
+        // practice this is family: the Gray-Manes, the Battle-Borns,
+        // the Companions in Jorrvaskr.
+        //
+        // Kept separate from `sharedFaction` because the menu was
+        // flattening it away, and the result was Eorlund Gray-Mane
+        // scheming against Olfina Gray-Mane with the prompt describing
+        // his daughter as "someone they know, in the same organisation"
+        // -- word for word what it said about Aela the Huntress.
+        bool household = false;
     };
 
     // What an NPC brings to a step, cached at population-build time.

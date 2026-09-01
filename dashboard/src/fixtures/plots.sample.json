@@ -107,7 +107,7 @@
         },
         {
           "number": 3,
-          "label": "Suborn the Steward",
+          "label": "Recruit the Steward",
           "state": "completed",
           "outcome": "succeeded",
           "actor": "Delvin Mallory",
@@ -128,7 +128,7 @@
         },
         {
           "number": 4,
-          "label": "Suborn the Guard",
+          "label": "Recruit the Guard",
           "state": "failed",
           "outcome": "failed_caught",
           "actor": "Vipir",

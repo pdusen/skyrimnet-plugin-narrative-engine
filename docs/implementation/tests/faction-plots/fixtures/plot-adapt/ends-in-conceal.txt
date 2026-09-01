@@ -1,0 +1,3 @@
+{"decision": "revise",
+ "plan": [{"type": "acquire", "target": 1},
+          {"type": "conceal", "target": 0}]}

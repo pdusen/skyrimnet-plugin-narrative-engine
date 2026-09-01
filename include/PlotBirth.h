@@ -52,34 +52,43 @@ namespace NarrativeEngine::PlotBirth
         // objective serves"; that is what it is now.
         std::string ambition;
 
-        // In order, and NOT including the objective: these are the
-        // steps that lead up to it. The caller appends the objective as
-        // the final step.
+        // The WHOLE scheme, in order, ending on the step that
+        // accomplishes the objective.
+        //
+        // The objective used to be appended here as an extra final
+        // step, and it read as padding: a plan that ended "deliver an
+        // incriminating letter to Kodlak Whitemane" already discredited
+        // Aela the Huntress, and tacking "Discredit Aela the Huntress"
+        // on after it said nothing the previous step had not. The
+        // objective is what the scheme is FOR, not a move in it.
         std::vector<PlotModel::Step> plan;
 
-        // Chosen by the model as its own field rather than inferred
-        // from whichever step happened to be last.
+        // The destination, as a type and a target. Names the plot and
+        // anchors adaptation; never appears in `plan`.
         //
-        // Inferring it produced plots titled "Cover Tracks Sybille
-        // Stentor": `conceal` is a natural closing step, so it kept
-        // becoming the objective, and covering your tracks is never
-        // what a scheme is FOR. Choosing it explicitly also puts it in
-        // the right order -- pick the destination, then the route.
+        // Still chosen by the model as its own field rather than
+        // inferred from whichever step happened to be last. Inferring
+        // it produced plots titled "Cover Tracks Sybille Stentor":
+        // `conceal` is a natural closing step, so it kept becoming the
+        // objective, and covering your tracks is never what a scheme is
+        // FOR. Choosing it explicitly also puts it in the right order --
+        // pick the destination, then the route.
         PlotModel::Step objective;
     };
 
     struct Limits
     {
-        // Bounds on the PREPARATION steps; the objective is appended on
-        // top, so a plot runs one longer than these.
+        // Bounds on the whole plan. Back to 2..6 now that the objective
+        // is no longer appended on top of it -- a plot runs exactly this
+        // many steps.
         //
         // Deliberately not stated in the prompt. Telling the model "2 to
         // 6" produced 4, 4, 4 -- the midpoint of any range offered is
         // where it lands. The bound belongs here, where it is enforced,
         // rather than in the prose, where it is a suggestion that
         // doubles as an anchor.
-        std::size_t minSteps = 1;
-        std::size_t maxSteps = 5;
+        std::size_t minSteps = 2;
+        std::size_t maxSteps = 6;
         // A hard ceiling on the free-form field, applied AFTER
         // sanitizing. An ambition is one sentence; anything past this is
         // the model ignoring the instruction, and letting it through

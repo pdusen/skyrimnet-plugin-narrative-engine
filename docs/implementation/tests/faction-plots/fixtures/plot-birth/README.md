@@ -24,11 +24,11 @@ thing:
 | `malformed-json.txt`      | rejection, and no partially built plot                                        |
 | `markdown-fenced.txt`     | a plot — the fence *and the prose before it* are stripped                     |
 | `dirty-text.txt`          | a plot whose ambition has lost its smart quotes, em-dash, en-dash, NBSP and zero-width space — and **kept** its accented Latin |
-| `empty-plan.txt`          | rejection — a scheme with no groundwork at all reads as a wish                |
+| `empty-plan.txt`          | rejection — a plan needs at least two steps; one is an errand, none is a wish |
 | `index-as-string.txt`     | a plot — `"1"` and `1` mean the same thing                                    |
 | `objective-is-conceal.txt` | **rejection** — nobody schemes in order to have covered their tracks         |
 | `no-objective.txt`        | rejection — the objective is chosen, never inferred                           |
-| `plan-ends-in-conceal.txt` | **rejection** — the objective is appended after the plan, so a trailing `conceal` would hide something that has not happened yet |
+| `plan-ends-in-conceal.txt` | **rejection** — the last step is the one that accomplishes the objective, and concealment accomplishes nothing |
 
 ## The two that exist because of a real failure
 
@@ -42,11 +42,17 @@ refused as an objective outright. Both fixtures pin that: one supplies a `concea
 the objective entirely to confirm it is never quietly reconstructed from the plan.
 
 `plan-ends-in-conceal.txt` came out of the run after that one, which produced four plots reading *Watch,
-Suborn, Cover Tracks, Acquire* — concealment sitting one place before the thing it was meant to hide. The
-model had written `plan` as the complete arc, not knowing the objective is appended after it. The prompt no
-longer invites that (it used to say `conceal` "can end a route", and `plan` is not the route), and a plan
-whose last entry is `conceal` is now refused rather than shuffled or silently trimmed: there is no other
-position to move it to, because the objective is terminal by construction.
+Suborn, Cover Tracks, Acquire* — concealment sitting one place before the thing it was meant to hide,
+because the objective was still being appended as a step after whatever the model returned.
+
+The append is gone. The objective lives on the Plot, names it, and anchors adaptation; the plan is the whole
+scheme and its last step is the one that accomplishes the objective. That came out of reading a real plot
+whose last authored step was *deliver an incriminating letter to Kodlak Whitemane* — which discredits Aela
+the Huntress on its own, and had *Discredit Aela the Huntress* bolted on after it saying nothing new.
+
+The fixture survives the change with a new reason: covering your tracks accomplishes nothing, so a plan that
+ends there never reaches what it was for. Still refused rather than trimmed — deleting the step would
+silently rewrite someone's plan.
 
 `well-formed.txt` also carries the ambition in its corrected sense — the **agenda**, the larger thing the
 scheme ostensibly serves and which no scheme can finish. *"She means to own everyone in the Rift who matters"*

@@ -245,13 +245,12 @@ namespace NarrativeEngine::PlotBirth
         plot.ambition = std::move(outcome.ambition);
         plot.plan = std::move(outcome.plan);
 
-        // The objective goes on the end of the plan, and onto the plot.
-        // Copied rather than referenced because adaptation rewrites the
-        // plan and must not be able to rewrite the destination.
+        // The objective is recorded on the PLOT and never pushed into
+        // the plan. It names the scheme and anchors adaptation; the last
+        // step of the plan is what actually achieves it.
         plot.objectiveType = outcome.objective.type;
         plot.objectiveTarget = outcome.objective.target;
         plot.objectiveTargetName = outcome.objective.targetName;
-        plot.plan.push_back(std::move(outcome.objective));
         return true;
     }
 } // namespace NarrativeEngine::PlotBirth

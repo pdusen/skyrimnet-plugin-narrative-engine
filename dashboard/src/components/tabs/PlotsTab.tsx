@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-import type { PlotsTabState } from '../../types';
+import type { PlotEntry, PlotsTabState } from '../../types';
 import { PlotChain, PlotChainLegend } from '../PlotChain';
 
 // PlotsTab — a budget header above a vertically scrolling list of plot
@@ -30,8 +30,13 @@ function seedPlot() {
 }
 
 export function PlotsTab({ plots }: { plots: PlotsTabState }): ReactNode {
-    const active = plots.list.filter(p => p.status === 'active');
-    const ended = plots.list.filter(p => p.status !== 'active');
+    // Newest first, in both sections. The backend publishes plots in
+    // birth order, which puts the one that just appeared at the bottom
+    // of a scrolling list -- exactly where nobody is looking after
+    // forcing a tick.
+    const newestFirst = (a: PlotEntry, b: PlotEntry) => b.id - a.id;
+    const active = plots.list.filter(p => p.status === 'active').sort(newestFirst);
+    const ended = plots.list.filter(p => p.status !== 'active').sort(newestFirst);
     const resolved = plots.steps_succeeded + plots.steps_timed_out + plots.steps_caught;
     // A tick born a plot makes a blocking LLM round trip, and an adapted
     // one makes another. Without this the buttons looked idle for the

@@ -41,7 +41,7 @@ namespace NarrativeEngine::PlotModel
         Acquire,   // obtain an object
         Deliver,   // move an object or message to someone
         Surveil,   // watch a person or place, report back
-        Suborn,    // buy, recruit, or blackmail someone into cooperation
+        Recruit,   // get someone onto their side, by payment, favour or threat
         Discredit, // damage a rival's standing or leverage
         Sabotage,  // impair a thing, a shipment, an arrangement
         Conceal,   // cover the tracks of a step already taken
@@ -98,7 +98,15 @@ namespace NarrativeEngine::PlotModel
         {"acquire", "Acquire", "get hold of an object, bought, taken or lifted", true, Conspicuousness::Sometimes},
         {"deliver", "Deliver to", "get something into someone's hands quietly", true, Conspicuousness::No},
         {"surveil", "Watch", "watch someone long enough to learn their habits", true, Conspicuousness::Yes},
-        {"suborn", "Suborn", "buy, recruit or blackmail someone into helping", false, Conspicuousness::Yes},
+        // Named `recruit` rather than `suborn`, which is what this was
+        // called until it turned up in most of the plots on the
+        // dashboard and stopped reading as a word at all. The step is
+        // unchanged; nobody outside a courtroom says "suborn".
+        {"recruit",
+         "Recruit",
+         "get someone onto their side, by payment, favour or threat",
+         false,
+         Conspicuousness::Yes},
         {"discredit", "Discredit", "damage what people think of someone", false, Conspicuousness::Yes},
         {"sabotage", "Sabotage", "quietly ruin a thing, a shipment or an arrangement", false, Conspicuousness::Yes},
         {"conceal", "Cover Tracks", "make sure nobody can tell who did it", false, Conspicuousness::Sometimes},

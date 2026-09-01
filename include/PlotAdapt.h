@@ -57,6 +57,9 @@ namespace NarrativeEngine::PlotAdapt
 
     struct Limits
     {
+        // The replacement tail, whole. The objective is no longer a step
+        // sitting on the end of it, so one step is a legitimate
+        // revision: "forget the groundwork, just do it".
         std::size_t minSteps = 1;
         std::size_t maxSteps = 6;
         std::size_t maxReason = 300;
@@ -64,14 +67,13 @@ namespace NarrativeEngine::PlotAdapt
 
     // Pure. Response text in, decision-or-rejection out.
     //
-    // `objective` is the step the revised plan MUST end on. It is passed
-    // rather than read off the plot so this stays engine-free and so the
-    // check is against the value the prompt was given -- the two cannot
-    // drift if they are the same argument.
-    [[nodiscard]] Outcome Parse(const std::string& response,
-                                const PlotMenus::Menus& menus,
-                                const PlotModel::Step& objective,
-                                const Limits& limits);
+    // Takes no objective any more. It used to, because the revised plan
+    // had to END on the objective and that was the one rule this file
+    // existed to enforce. The objective is no longer a step at all -- it
+    // lives on the Plot and names it -- so there is nothing here for a
+    // revision to overwrite, which is a stronger guarantee than the
+    // check it replaces.
+    [[nodiscard]] Outcome Parse(const std::string& response, const PlotMenus::Menus& menus, const Limits& limits);
 
     // --- The engine-bound half -------------------------------------------
 

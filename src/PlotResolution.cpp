@@ -46,7 +46,7 @@ namespace NarrativeEngine::PlotResolution
                 return 7;
             case PlotModel::StepType::Conceal:
                 return 4;
-            case PlotModel::StepType::Suborn:
+            case PlotModel::StepType::Recruit:
                 return 9;
             case PlotModel::StepType::Sabotage:
                 return 7;
@@ -86,7 +86,7 @@ namespace NarrativeEngine::PlotResolution
                 return 14.0f;
             case PlotModel::StepType::Conceal:
                 return 9.0f;
-            case PlotModel::StepType::Suborn:
+            case PlotModel::StepType::Recruit:
                 return 16.0f;
             case PlotModel::StepType::Sabotage:
                 return 15.0f;
@@ -158,7 +158,7 @@ namespace NarrativeEngine::PlotResolution
 
         switch (type) {
         // Talking work.
-        case PlotModel::StepType::Suborn:
+        case PlotModel::StepType::Recruit:
         case PlotModel::StepType::Discredit:
         case PlotModel::StepType::Deliver:
             return sp;

@@ -55,7 +55,7 @@ STEPS = {
     "acquire": (3, 14.0, True),
     "deliver": (2, 6.0, False),
     "surveil": (5, 10.0, True),
-    "suborn": (4, 16.0, True),
+    "recruit": (4, 16.0, True),
     "discredit": (5, 18.0, True),
     "sabotage": (3, 15.0, True),
     "conceal": (2, 9.0, True),
@@ -66,13 +66,13 @@ LADDERS = [
     ["locate", "surveil", "acquire", "conceal"],
     ["locate", "acquire", "deliver"],
     ["surveil", "discredit"],
-    ["locate", "suborn", "sabotage", "conceal"],
-    ["surveil", "suborn", "discredit"],
+    ["locate", "recruit", "sabotage", "conceal"],
+    ["surveil", "recruit", "discredit"],
 ]
 
 # Mirrored from PlotResolution::Suitability.
 SKILL_FOR = {
-    "suborn": ("speech",),
+    "recruit": ("speech",),
     "discredit": ("speech",),
     "deliver": ("speech",),
     "locate": ("speech", "sneak"),

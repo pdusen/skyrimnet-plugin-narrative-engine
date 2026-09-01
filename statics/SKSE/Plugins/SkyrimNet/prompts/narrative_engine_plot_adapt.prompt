@@ -2,11 +2,12 @@
    call decides whether the person behind it finds another way or gives up.
    Receives the JSON object produced by PlotAdapt::Compose:
      mastermind { name }, ambition,
-     objective { type, verb, target, index }, history [string],
+     objective { type, verb, target }, history [string],
+     remaining [string] — the steps they had left, which is the thing
+       being revised; without it the model re-derives the same plan,
      failure { step, outcome, progress, caught }, attempt, max_attempts,
      actors [{ index, name, relation, standing }],
      items [{ index, name, category }], step_types [{ id, description }],
-     min_steps, max_steps,
      npc { UUID } — required by SkyrimNet's character_profile submodules;
                     keys every character-bio decorator. #}
 [ system ]
@@ -46,17 +47,21 @@ Return a JSON object. No markdown fences. No prose before or after the object.
 
 **If `"revise"`**, add:
 
-- `plan` — the remaining steps, in order: as many as this way to the objective
-  actually needs and no more. Each has a `type` from the list above and a
-  `target` number, taken from **Objects** when the type is `acquire` and from
-  **People** otherwise.
-- **The last entry must be the objective, exactly as it is given to you.** A
-  plan that ends anywhere else is thrown away, and the scheme concedes by
-  default.
+- `plan` — what they do INSTEAD, in order: as many steps as this new way to
+  the objective actually needs and no more. Each has a `type` from the list
+  above and a `target` number, taken from **Objects** when the type is
+  `acquire` and from **People** otherwise. The last step is the one that
+  accomplishes the objective; do not add a step that merely restates it, and
+  do not end on `conceal`.
+
+**This replaces the steps they had left, so it has to be different from them.**
+You are shown what those were. Handing back the same steps in the same order is
+not a revision, it is a retry, and it is the most common way to get this wrong.
 
 A revision should react to what actually went wrong. If they were seen, deal
-with the person who saw them. If the approach was too slow, take a shorter one.
-Repeating the failed step unchanged is not a revision.
+with the person who saw them, or drop the approach that exposed them. If it was
+too slow, take a shorter way — fewer steps, or a blunter one. Changing who does
+the work, or what they go after, is as much a revision as changing the steps.
 
 [ end system ]
 
@@ -69,9 +74,8 @@ Repeating the failed step unchanged is not a revision.
 
 > {{ ambition }}
 
-The objective is **{{ objective.verb }} {{ objective.target }}** — type
-`{{ objective.type }}`, target {{ objective.index }}. A revised plan must end
-on exactly that.
+They are still after this, and it does not change: **{{ objective.verb }}
+{{ objective.target }}**. You are deciding how they get there.
 
 ## What has happened so far
 
@@ -80,6 +84,16 @@ on exactly that.
 {% endfor %}
 {% else %}
 Nothing yet; the first step is the one that went wrong.
+{% endif %}
+
+## What they were going to do next
+
+{% if length(remaining) > 0 %}
+{% for r in remaining %}- {{ r }}
+{% endfor %}
+This is the plan that is being thrown out. Whatever you return replaces it.
+{% else %}
+Nothing — the step that failed was the last one they had.
 {% endif %}
 
 ## The setback

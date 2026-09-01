@@ -1,3 +1,0 @@
-{"decision": "revise",
- "plan": [{"type": "suborn", "target": 0},
-          {"type": "acquire", "target": 0}]}

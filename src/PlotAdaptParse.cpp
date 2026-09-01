@@ -5,9 +5,9 @@
 
 #include <nlohmann/json.hpp>
 
-// The pure half of adaptation. No engine, no logging, no LLM -- so the
-// one rule that matters most here, that the objective cannot be
-// rewritten, is drivable from a fixture rather than trusted.
+// The pure half of adaptation. No engine, no logging, no LLM -- so
+// every way a revision can be wrong is drivable from a committed
+// fixture rather than trusted.
 namespace NarrativeEngine::PlotAdapt
 {
     namespace
@@ -52,10 +52,7 @@ namespace NarrativeEngine::PlotAdapt
         }
     } // namespace
 
-    Outcome Parse(const std::string& response,
-                  const PlotMenus::Menus& menus,
-                  const PlotModel::Step& objective,
-                  const Limits& limits)
+    Outcome Parse(const std::string& response, const PlotMenus::Menus& menus, const Limits& limits)
     {
         const auto body = EvaluationPipeline::StripMarkdownFences(response);
         auto json = nlohmann::json::parse(body, nullptr, false);
@@ -159,19 +156,15 @@ namespace NarrativeEngine::PlotAdapt
             plan.push_back(std::move(step));
         }
 
-        // THE RULE THIS FILE EXISTS FOR. Adaptation rewrites the path,
-        // never the destination.
-        //
-        // Checked rather than enforced by construction -- the plan is
-        // not silently corrected to end on the objective -- because a
-        // model that changed the objective did not understand the task,
-        // and the rest of what it wrote should be trusted no further
-        // than that. Rejecting is the honest answer; quietly fixing it
-        // would hide the very thing worth knowing about the prompt.
-        const auto& last = plan.back();
-        if (last.type != objective.type || last.target != objective.target) {
-            return Reject("the revised plan ends on '" + PlotModel::Label(last) + "' instead of the objective '"
-                          + PlotModel::Label(objective) + "'; the objective is not rewritable");
+        // Adaptation rewrites the path, never the destination -- and
+        // now it CANNOT rewrite the destination, because the objective
+        // is not in the plan for it to reach. What is left to check is
+        // the same rule birth applies: the last step is the one that
+        // accomplishes the objective, and concealment accomplishes
+        // nothing.
+        if (plan.back().type == PlotModel::StepType::Conceal) {
+            return Reject("the revised plan ends in 'conceal'; the last step is the one that accomplishes the "
+                          "objective, and covering your tracks accomplishes nothing");
         }
 
         Outcome out;

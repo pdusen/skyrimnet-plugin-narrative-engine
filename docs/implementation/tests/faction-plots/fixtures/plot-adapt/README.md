@@ -10,24 +10,28 @@ Driven against the same two-person, two-object menu the birth fixtures use, with
 
 | Fixture                  | Must produce                                                                  |
 | ------------------------ | ------------------------------------------------------------------------------ |
-| `revise.txt`             | a revised tail of two steps, ending on the objective                            |
+| `revise.txt`             | a revised tail of two steps                                                     |
 | `concede.txt`            | a concession carrying its sentence                                              |
 | `concede-no-reason.txt`  | a concession with a default sentence — the decision is the load-bearing part     |
-| `objective-changed.txt`  | **rejection** — ends on `acquire 0`, a different object                          |
-| `objective-dropped.txt`  | **rejection** — ends on a `discredit` and never reaches the objective at all     |
+| `ends-in-conceal.txt`    | **rejection** — the last step is the one that accomplishes the objective         |
 | `decision-unknown.txt`   | rejection — `escalate` is neither `revise` nor `concede`                         |
 | `revise-no-plan.txt`     | rejection — a revision with nothing to revise to                                 |
 
-The two objective fixtures are the point of this directory. Adaptation rewrites the path, never the
-destination, and the two ways a model can break that are subtly different: `objective-changed.txt` ends on the
-right *verb* aimed at the wrong *thing*, which is the one that would slip through a check that only compared
-step types. `objective-dropped.txt` never gets there at all.
+## The two fixtures that used to be here
 
-Both are **rejected rather than corrected**. Silently appending the objective to a plan that omitted it would
-produce a runnable plot and hide the fact that the model did not understand the task — and a model that
-changed the destination should not have the rest of its answer trusted either. The rejection becomes a
-concession at the call site, so the plot still ends cleanly; what is refused is the revision, not the plot.
+`objective-changed.txt` and `objective-dropped.txt` pinned the rule this directory was originally built
+around: a revised plan had to END on the objective, exactly as given, and the two ways a model could break
+that were subtly different — the right verb aimed at the wrong thing, versus never getting there at all.
+
+That rule is gone, along with the thing it protected. The objective used to be appended to the plan as a
+final step, so a revision could overwrite it; it now lives on the Plot and is never in the plan at all. A
+revision cannot rewrite the destination because the destination is not in front of it — which is a stronger
+guarantee than the check, and the check had nothing left to test.
+
+What survives is the same rule birth applies, and `ends-in-conceal.txt` pins it: the last step is the one
+that accomplishes the objective, and covering your tracks accomplishes nothing.
 
 `concede-no-reason.txt` is deliberately lenient in the other direction. The decision is what the simulation
 acts on and the sentence is only what a reader sees, so a missing sentence gets a default rather than throwing
-away a valid answer.
+away a valid answer. A rejection becomes a concession at the call site, so the plot still ends cleanly; what
+is refused is the revision, not the plot.

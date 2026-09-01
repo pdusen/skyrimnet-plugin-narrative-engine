@@ -1,4 +1,4 @@
 {"ambition": "She means to be the one the court cannot function without.",
- "objective": {"type": "suborn", "target": 0},
+ "objective": {"type": "recruit", "target": 0},
  "plan": [{"type": "locate", "target": 0},
           {"type": "assassinate", "target": 1}]}

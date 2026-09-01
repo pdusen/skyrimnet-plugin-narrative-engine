@@ -104,6 +104,10 @@ namespace NarrativeEngine::PlotAdapt
         objective.target = plot.objectiveTarget;
         objective.targetName = plot.objectiveTargetName;
 
+        // Not to number the objective for the response any more -- the
+        // revised plan no longer ends on it -- but as a LIVENESS check:
+        // an objective whose target has left the menu is one there is no
+        // longer any way to reach.
         std::size_t objectiveIndex = 0;
         if (!ObjectiveIndex(objective, menus, objectiveIndex)) {
             // The objective is no longer nameable -- its target has left
@@ -142,8 +146,23 @@ namespace NarrativeEngine::PlotAdapt
         obj["type"] = PlotModel::TypeId(objective.type);
         obj["verb"] = PlotModel::Traits(objective.type).verb;
         obj["target"] = objective.targetName;
-        obj["index"] = objectiveIndex;
         ctx["objective"] = std::move(obj);
+
+        // THE PLAN BEING REVISED. Absent until now, which is why nothing
+        // ever changed: the model was shown what had already happened
+        // and what the objective was, and then asked for a revision
+        // without ever being told what it was revising. With no plan in
+        // front of it, it re-derived one from the same inputs that
+        // produced the original, and unsurprisingly wrote the same
+        // steps back.
+        //
+        // The failed step is NOT here -- it has already moved to
+        // history. This is only what they were still intending to do.
+        nlohmann::json remaining = nlohmann::json::array();
+        for (std::size_t i = plot.cursor; i < plot.plan.size(); ++i) {
+            remaining.push_back(PlotModel::Label(plot.plan[i]));
+        }
+        ctx["remaining"] = std::move(remaining);
 
         // What has already happened, as labels rather than structures.
         // The model is being asked to continue a story, and a story is
@@ -196,9 +215,10 @@ namespace NarrativeEngine::PlotAdapt
         }
         ctx["step_types"] = std::move(stepTypes);
 
+        // No min_steps / max_steps in the context. They were set and
+        // never rendered, and putting a range in front of the model is
+        // how birth ended up with three plots of exactly four steps.
         const Limits limits;
-        ctx["min_steps"] = limits.minSteps;
-        ctx["max_steps"] = limits.maxSteps;
 
         const auto result = SkyrimNetAPI::SendCustomPromptToLLM(pt, kPromptName, kVariant, ctx.dump());
         if (!result.ok) {
@@ -207,7 +227,7 @@ namespace NarrativeEngine::PlotAdapt
 
         Outcome outcome;
         try {
-            outcome = Parse(result.response, menus, objective, limits);
+            outcome = Parse(result.response, menus, limits);
         } catch (const std::exception& e) {
             logger::warn("PlotAdapt: parsing threw for plot {}: {}", plot.id, e.what());
             return Concede("they ran out of ideas");
