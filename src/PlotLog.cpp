@@ -217,6 +217,11 @@ namespace NarrativeEngine::PlotLog
         Emit(std::format("REJECT mastermind=\"{}\" reason=\"{}\"", mastermind, reason));
     }
 
+    void BirthSkipped(const std::string& reason, std::size_t drawn, std::size_t castable)
+    {
+        Emit(std::format("SKIP  birth reason=\"{}\" drawn={} castable={}", reason, drawn, castable));
+    }
+
     void Reap(std::size_t plots, std::size_t occupancyRows, double gameDay)
     {
         // Either alone is worth a line: a tick can retire spent cooldown

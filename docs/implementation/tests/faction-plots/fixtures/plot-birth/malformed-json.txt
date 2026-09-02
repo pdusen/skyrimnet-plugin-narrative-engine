@@ -1,1 +1,0 @@
-{"ambition": "He wants what he is owed", "plan": [{"type": "locate", "target": 0}

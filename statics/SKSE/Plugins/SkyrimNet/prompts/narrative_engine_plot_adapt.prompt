@@ -1,81 +1,92 @@
 {# narrative_engine_plot_adapt.prompt — a scheme has hit a setback; this
    call decides whether the person behind it finds another way or gives up.
    Receives the JSON object produced by PlotAdapt::Compose:
-     mastermind { name }, ambition,
-     objective { type, verb, target }, history [string],
-     remaining [string] — the steps they had left, which is the thing
-       being revised; without it the model re-derives the same plan,
+     mastermind { name }, ambition, scheme,
+     history [string], remaining [string] — the steps they had left, which
+       is the thing being revised; without it the model re-derives the
+       same plan,
      failure { step, outcome, progress, caught }, attempt, max_attempts,
-     actors [{ index, name, relation, standing }],
-     items [{ index, name, category }], step_types [{ id, description }],
+     step_types [{ id, description }],
      npc { UUID } — required by SkyrimNet's character_profile submodules;
-                    keys every character-bio decorator. #}
+                    keys every character-bio decorator.
+   NOTE: no fenced blocks and no literal braces anywhere in this file; both
+   break the render. See docs/CUSTOM_PROMPTS.md. #}
 [ system ]
 ## Task
 A scheme has hit a setback. You decide whether the person behind it finds
 another way, or gives up.
 
-Both answers are real answers. A schemer who never gives up is not persistent,
-they are a machine — and a plot that grinds through every possible approach is
-worse reading than one that ends because the person behind it decided it was
-not worth it any more. Concede when a real person would.
+Both answers are real answers. A schemer who never gives up is not
+persistent, they are a machine — and a plot that grinds through every
+possible approach is worse reading than one that ends because the person
+behind it decided it was not worth it any more. Concede when a real
+person would.
 
-**The objective does not change.** You are deciding how they get there, not
+**The scheme does not change.** You are deciding how they get there, not
 what they are after.
-
-## What you may name
-
-You do not invent people or objects. Everything you can name is given to you
-with a number, and you refer to it by that number.
 
 ## The steps you may use
 
 {% for s in step_types %}- `{{ s.id }}` — {{ s.description }}
 {% endfor %}
 
+The type is the SHAPE of the work. Alongside it you write one line saying
+what the step actually is — who it involves, what it gets, why it comes
+where it does.
+
 ## Output Format
-Return a JSON object. No markdown fences. No prose before or after the object.
+Return a JSON object. No markdown fences. No prose before or after the
+object.
 
 `decision` — either `"revise"` or `"concede"`.
 
 **If `"concede"`**, add:
 
-- `reason` — one sentence, third person, saying what made them stop. This is
-  what a reader sees, so it should be about the person, not about the plan:
-  "she decided the ledger was not worth what it would cost her" rather than
-  "the acquire step failed".
+- `reason` — one sentence, third person, saying what made them stop. This
+  is what a reader sees, so it should be about the person, not about the
+  plan: "she decided the ledger was not worth what it would cost her"
+  rather than "the acquire step failed".
 
 **If `"revise"`**, add:
 
-- `plan` — what they do INSTEAD, in order: as many steps as this new way to
-  the objective actually needs and no more. Each has a `type` from the list
-  above and a `target` number, taken from **Objects** when the type is
-  `acquire` and from **People** otherwise. The last step is the one that
-  accomplishes the objective; do not add a step that merely restates it, and
-  do not end on `conceal`.
+- `plan` — what they do INSTEAD, in order: as many steps as this new way
+  to the scheme actually needs and no more. Each has a `type` from the
+  list above and a `description`, one short concrete line. The last step
+  is the one that accomplishes the scheme; do not add a step that merely
+  restates it, and do not end on `conceal`.
 
-**This replaces the steps they had left, so it has to be different from them.**
-You are shown what those were. Handing back the same steps in the same order is
-not a revision, it is a retry, and it is the most common way to get this wrong.
+**This replaces the steps they had left, so it has to be different from
+them.** You are shown what those were. Handing back the same steps in the
+same order is not a revision, it is a retry, and it is the most common way
+to get this wrong.
 
-A revision should react to what actually went wrong. If they were seen, deal
-with the person who saw them, or drop the approach that exposed them. If it was
-too slow, take a shorter way — fewer steps, or a blunter one. Changing who does
-the work, or what they go after, is as much a revision as changing the steps.
+A revision should react to what actually went wrong. If they were seen,
+deal with the person who saw them, or drop the approach that exposed
+them. If it was too slow, take a shorter way — fewer steps, or a blunter
+one. Changing who does the work, or what they go after, is as much a
+revision as changing the steps.
 
+## Hard Constraints
+- Output strict JSON. No markdown code fences. No prose before or after
+  the JSON object.
+- Every `type` MUST be one of the step ids listed above, spelled exactly.
+- Every step MUST carry a non-empty `description`.
+- The last step MUST NOT be `conceal`.
 [ end system ]
 
 [ user ]
 ## Whose scheme this is
 
-{{ render_character_profile("full", npc.UUID) }}
+{{ render_character_profile("bio_summary", npc.UUID) }}
+{{ render_character_profile("bio_personality", npc.UUID) }}
 
-**{{ mastermind.name }}** wants this:
+**{{ mastermind.name }}** is ultimately after this:
 
 > {{ ambition }}
 
-They are still after this, and it does not change: **{{ objective.verb }}
-{{ objective.target }}**. You are deciding how they get there.
+And this scheme is their move toward it. It does not change:
+
+> {{ scheme }}
 
 ## What has happened so far
 
@@ -91,7 +102,8 @@ Nothing yet; the first step is the one that went wrong.
 {% if length(remaining) > 0 %}
 {% for r in remaining %}- {{ r }}
 {% endfor %}
-This is the plan that is being thrown out. Whatever you return replaces it.
+This is the plan that is being thrown out. Whatever you return replaces
+it.
 {% else %}
 Nothing — the step that failed was the last one they had.
 {% endif %}
@@ -104,26 +116,17 @@ Nothing — the step that failed was the last one they had.
 through it when it went wrong.{% endif %}
 
 {% if failure.caught %}
-They were **seen**. Whatever comes next has to account for somebody now knowing
-something they should not, and for that person having a reason to talk.
+They were **seen**. Whatever comes next has to account for somebody now
+knowing something they should not, and for that person having a reason to
+talk.
 {% else %}
 It simply did not work in time. Nobody knows it was attempted.
 {% endif %}
 
-This is attempt {{ attempt }} of at most {{ max_attempts }}. After that they
-stop whether they want to or not, so a plan that needs three more setbacks to
-pay off is not a plan.
+This is attempt {{ attempt }} of at most {{ max_attempts }}. After that
+they stop whether they want to or not, so a plan that needs three more
+setbacks to pay off is not a plan.
 
-## People
-{% for a in actors %}{{ a.index }}. {{ a.name }} — {{ a.relation }}{% if length(a.standing) > 0 %}, {{ a.standing }}{% endif %}
-{% endfor %}
-
-{% if length(items) > 0 %}
-## Objects
-{% for i in items %}{{ i.index }}. {{ i.name }} ({{ i.category }})
-{% endfor %}
-{% endif %}
-
-Decide whether {{ mastermind.name }} finds another way to the same end, or
-stops. Answer with the object.
+Decide whether {{ mastermind.name }} finds another way to the same end,
+or stops. Answer with the object.
 [ end user ]

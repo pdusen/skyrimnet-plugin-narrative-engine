@@ -1,9 +1,7 @@
 #include <PlotAdapt.h>
 
 #include <GossipGraph.h>
-#include <LLMTextSanitizer.h>
 #include <logger.h>
-#include <PlotItemPool.h>
 #include <SkyrimNetAPI.h>
 
 #include <nlohmann/json.hpp>
@@ -16,21 +14,10 @@ namespace NarrativeEngine::PlotAdapt
     namespace
     {
         constexpr const char* kPromptName = "narrative_engine_plot_adapt";
-        constexpr const char* kVariant = "narrative_engine_composer";
-
-        std::string StandingPhrase(double standing)
-        {
-            if (standing >= 0.99) {
-                return "who leads it";
-            }
-            if (standing >= 0.6) {
-                return "who is senior in it";
-            }
-            if (standing > 0.0) {
-                return "who holds a place in it";
-            }
-            return {};
-        }
+        // The director, like the three birth calls. Revise-or-concede is
+        // a bounded decision with a structured answer, not a passage of
+        // prose.
+        constexpr const char* kVariant = "narrative_engine_director";
 
         // How far through the step they got, in words rather than a
         // number. "About a third" is something a person can reason
@@ -57,31 +44,6 @@ namespace NarrativeEngine::PlotAdapt
             return "nearly all";
         }
 
-        // Where the objective sits on the menu it must be named from.
-        // The model has to be told the index, because that is the only
-        // vocabulary it has -- and if the objective is somehow NOT on
-        // the menu, that is worth knowing before the call rather than
-        // after a rejection.
-        bool ObjectiveIndex(const PlotModel::Step& objective, const PlotMenus::Menus& menus, std::size_t& out)
-        {
-            if (objective.type == PlotModel::StepType::Acquire) {
-                for (std::size_t i = 0; i < menus.items.size(); ++i) {
-                    if (menus.items[i].form == objective.target) {
-                        out = i;
-                        return true;
-                    }
-                }
-                return false;
-            }
-            for (std::size_t i = 0; i < menus.actors.size(); ++i) {
-                if (menus.actors[i].npc == objective.target) {
-                    out = i;
-                    return true;
-                }
-            }
-            return false;
-        }
-
         Outcome Concede(std::string reason)
         {
             Outcome out;
@@ -95,28 +57,9 @@ namespace NarrativeEngine::PlotAdapt
     Outcome Compose(const PlotThread::Token& pt,
                     const PlotModel::Plot& plot,
                     const PlotModel::Step& failed,
-                    const PlotMenus::Menus& menus,
                     int attempt,
                     int maxAttempts)
     {
-        PlotModel::Step objective;
-        objective.type = plot.objectiveType;
-        objective.target = plot.objectiveTarget;
-        objective.targetName = plot.objectiveTargetName;
-
-        // Not to number the objective for the response any more -- the
-        // revised plan no longer ends on it -- but as a LIVENESS check:
-        // an objective whose target has left the menu is one there is no
-        // longer any way to reach.
-        std::size_t objectiveIndex = 0;
-        if (!ObjectiveIndex(objective, menus, objectiveIndex)) {
-            // The objective is no longer nameable -- its target has left
-            // the mastermind's menu, most often because they died or the
-            // faction tie that put them there is gone. There is nothing
-            // to revise toward.
-            return Concede("what they were after had moved out of reach");
-        }
-
         nlohmann::json ctx;
 
         // Same reason as birth: adaptation is asking what THIS person
@@ -140,21 +83,19 @@ namespace NarrativeEngine::PlotAdapt
         nlohmann::json boss = nlohmann::json::object();
         boss["name"] = plot.mastermindName;
         ctx["mastermind"] = std::move(boss);
-        ctx["ambition"] = plot.ambition;
 
-        nlohmann::json obj = nlohmann::json::object();
-        obj["type"] = PlotModel::TypeId(objective.type);
-        obj["verb"] = PlotModel::Traits(objective.type).verb;
-        obj["target"] = objective.targetName;
-        ctx["objective"] = std::move(obj);
+        ctx["ambition"] = plot.ambition;
+        // The destination, as the sentence birth wrote. Not a step, and
+        // not something a revision can reach -- it is here to be aimed
+        // at, not chosen from.
+        ctx["scheme"] = plot.scheme;
 
         // THE PLAN BEING REVISED. Absent until now, which is why nothing
         // ever changed: the model was shown what had already happened
-        // and what the objective was, and then asked for a revision
-        // without ever being told what it was revising. With no plan in
-        // front of it, it re-derived one from the same inputs that
-        // produced the original, and unsurprisingly wrote the same
-        // steps back.
+        // and what the scheme was, and then asked for a revision without
+        // ever being told what it was revising. With no plan in front of
+        // it, it re-derived one from the same inputs that produced the
+        // original, and unsurprisingly wrote the same steps back.
         //
         // The failed step is NOT here -- it has already moved to
         // history. This is only what they were still intending to do.
@@ -183,29 +124,7 @@ namespace NarrativeEngine::PlotAdapt
         ctx["attempt"] = attempt;
         ctx["max_attempts"] = maxAttempts;
 
-        nlohmann::json actors = nlohmann::json::array();
-        for (std::size_t i = 0; i < menus.actors.size(); ++i) {
-            const auto& actor = menus.actors[i];
-            nlohmann::json entry = nlohmann::json::object();
-            entry["index"] = i;
-            entry["name"] = actor.name;
-            entry["relation"] = PlotMenus::RelationPhrase(actor.relation);
-            entry["standing"] = StandingPhrase(actor.standing);
-            actors.push_back(std::move(entry));
-        }
-        ctx["actors"] = std::move(actors);
-
-        nlohmann::json items = nlohmann::json::array();
-        for (std::size_t i = 0; i < menus.items.size(); ++i) {
-            const auto& item = menus.items[i];
-            nlohmann::json entry = nlohmann::json::object();
-            entry["index"] = i;
-            entry["name"] = item.displayName;
-            entry["category"] = PlotItemPool::CategoryId(item.category);
-            items.push_back(std::move(entry));
-        }
-        ctx["items"] = std::move(items);
-
+        // The manifest, verbatim, as birth does it.
         nlohmann::json stepTypes = nlohmann::json::array();
         for (const auto& traits : PlotModel::kStepTypes) {
             nlohmann::json entry = nlohmann::json::object();
@@ -215,9 +134,6 @@ namespace NarrativeEngine::PlotAdapt
         }
         ctx["step_types"] = std::move(stepTypes);
 
-        // No min_steps / max_steps in the context. They were set and
-        // never rendered, and putting a range in front of the model is
-        // how birth ended up with three plots of exactly four steps.
         const Limits limits;
 
         const auto result = SkyrimNetAPI::SendCustomPromptToLLM(pt, kPromptName, kVariant, ctx.dump());
@@ -227,7 +143,7 @@ namespace NarrativeEngine::PlotAdapt
 
         Outcome outcome;
         try {
-            outcome = Parse(result.response, menus, limits);
+            outcome = Parse(result.response, limits);
         } catch (const std::exception& e) {
             logger::warn("PlotAdapt: parsing threw for plot {}: {}", plot.id, e.what());
             return Concede("they ran out of ideas");

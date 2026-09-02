@@ -1,0 +1,110 @@
+{# narrative_engine_plot_steps.prompt — call 3 of 3. The mastermind, their
+   ambition and their scheme are all decided; this call lays out how the
+   scheme actually gets done.
+   Receives the JSON object produced by PlotBirth::PlanContext:
+     mastermind { name, hold, standing }, ambition, scheme,
+     retry — empty on the first attempt; on the second it is why the
+       first answer was refused,
+     step_types [{ id, description }],
+     npc { UUID } — required by SkyrimNet's character_profile submodules;
+                    keys every character-bio decorator.
+   NOTE: no fenced blocks and no literal braces anywhere in this file; both
+   break the render. See docs/CUSTOM_PROMPTS.md. #}
+[ system ]
+## Task
+A scheme has already been decided on. You lay out the steps it takes, in
+the order they happen, so that when the last one is done the scheme has
+succeeded.
+
+## The steps you may use
+
+Every step is one of these and nothing else. Use the `id` exactly as
+written.
+
+{% for s in step_types %}- `{{ s.id }}` — {{ s.description }}
+{% endfor %}
+
+The type is the SHAPE of the work. Alongside it you write one line saying
+what the step actually is for this scheme — who it involves, what it
+gets, why it comes where it does.
+
+## What makes a good plan
+
+**The last step is the one that accomplishes the scheme.** Everything
+before it is what makes that step possible. When the last step is done,
+the scheme is done — there is no separate finishing move afterwards, and
+no step whose only content is restating the scheme.
+
+**Each step should depend on the one before it.** A step that could just
+as easily have run first is not part of a plan, it is an item on a list.
+If you cannot say what the previous step made possible, cut it.
+
+**Take as many steps as this particular scheme needs and no more.** Some
+schemes are a couple of moves. Some need groundwork on several different
+people who each want different things. Let the scheme decide.
+
+`conceal` covers up a step already taken, so it only makes sense
+somewhere after the step it hides — and never as the last step, because
+the last step is the one that accomplishes the scheme and covering your
+tracks accomplishes nothing.
+
+## Output Format
+Return a JSON object. No markdown fences. No prose before or after the
+object.
+
+- `plan` — an array of objects, in the order the steps happen. Each has:
+  - `type` — one of the step ids above, spelled exactly.
+  - `description` — one short line, third person, saying what this step
+    is. Concrete: name the person, the place or the thing it turns on.
+    "Wait for the steward to leave the counting room", not "gather
+    information".
+
+Keep each description under about fifteen words, and do not open it with
+the schemer's name — every step is theirs, so saying so each time costs
+room that the actual content needs. These lines are read side by side in
+a narrow column, not as prose.
+
+Write plainly. No markdown, no headings, no bullet points inside a
+description. Name only people and places that exist in Skyrim, and prefer
+ones this person would actually know.
+
+## Hard Constraints
+- Output strict JSON. No markdown code fences. No prose before or after
+  the JSON object.
+- Return only the key `plan`.
+- Every `type` MUST be one of the step ids listed above, spelled exactly.
+- Every step MUST carry a non-empty `description`.
+- The last step MUST NOT be `conceal`.
+[ end system ]
+
+[ user ]
+{% if length(retry) > 0 %}
+## Your last answer was thrown away
+
+{{ retry }}
+
+Do not repeat that mistake. Everything else about the task is unchanged.
+{% endif %}
+
+## Whose scheme this is
+
+**{{ mastermind.name }}**{% if length(mastermind.standing) > 0 %}, {{ mastermind.standing }}{% endif %}.
+{% if length(mastermind.hold) > 0 %}They live in {{ mastermind.hold }}.{% endif %}
+
+{{ render_character_profile("bio_summary", npc.UUID) }}
+
+## What they are ultimately after
+
+> {{ ambition }}
+
+That is the work of a lifetime and this scheme will not finish it. It is
+here so the steps sound like this person's steps and not anyone's.
+
+## The scheme itself
+
+> {{ scheme }}
+
+This is what has to be true when the last step is done.
+
+How does {{ mastermind.name }} bring that about? Answer with the object.
+[ end user ]

@@ -1,6 +1,5 @@
 #include <PlotBirth.h>
 
-#include <EventLogUtil.h>
 #include <GossipGraph.h>
 #include <LLMTextSanitizer.h>
 #include <logger.h>
@@ -10,32 +9,54 @@
 
 #include <nlohmann/json.hpp>
 
-// The engine-bound half of plot birth: gathering what the model needs to
-// know and making the call. The response handling is in
-// PlotBirthParse.cpp and is engine-free, because that is where every
-// rule worth a fixture lives.
+#include <cstdio>
+
+// The engine-bound half of plot birth: gathering what each of the three
+// calls needs to know, and making them in order. The response handling
+// is in PlotBirthParse.cpp and is engine-free, because that is where
+// every rule worth a fixture lives.
 namespace NarrativeEngine::PlotBirth
 {
     namespace
     {
-        constexpr const char* kPromptName = "narrative_engine_plot_birth";
-        constexpr const char* kVariant = "narrative_engine_composer";
+        constexpr const char* kCastPrompt = "narrative_engine_plot_cast";
+        constexpr const char* kAmbitionPrompt = "narrative_engine_plot_ambition";
+        constexpr const char* kPlanPrompt = "narrative_engine_plot_steps";
+
+        // All three go to the DIRECTOR variant.
+        //
+        // Composition used to run on the composer, on the argument that
+        // inventing a scheme is creative writing. It is not, quite: each
+        // of these three calls is a bounded decision with a structured
+        // answer -- pick one of five, name two sentences, list some
+        // steps -- which is the director's shape. The prose that a
+        // reader eventually sees is one sentence per field, not a
+        // passage.
+        constexpr const char* kVariant = "narrative_engine_director";
+
+        // SkyrimNet speaks ACTOR REFERENCE ids for everything: profiles,
+        // memories, related-actor arrays. The population is keyed on the
+        // TESNPC base form, so the boundary gets crossed exactly once,
+        // here. GossipGraph.h says so in as many words.
+        RE::FormID RefOf(RE::FormID npc)
+        {
+            return GossipGraph::ActorRefFor(npc);
+        }
 
         // The mastermind's own recent memories, newest first.
         //
-        // Takes an ACTOR REFERENCE id, not a base form -- see
-        // BuildContext for what passing the wrong one cost.
+        // Takes an ACTOR REFERENCE id, not a base form.
         //
         // Through the FILTERED query rather than GetMemoriesForActor,
         // for the reason GossipHarvest documents at length: the old
         // endpoint ranks the whole store before truncating, so a plugin
         // that writes memories back sees its own output crowd out
-        // everything else. Plots will write memories from Step 19, and
-        // by then this would be reading its own homework.
+        // everything else. Plots will write memories later, and by then
+        // this would be reading its own homework.
         std::vector<std::string> MemoriesOf(RE::FormID actorRef)
         {
             std::vector<std::string> out;
-            if (!SkyrimNetAPI::IsMemorySystemReady()) {
+            if (actorRef == 0 || !SkyrimNetAPI::IsMemorySystemReady()) {
                 return out;
             }
 
@@ -97,90 +118,116 @@ namespace NarrativeEngine::PlotBirth
             return {};
         }
 
-        nlohmann::json BuildContext(const PlotCasting::Member& mastermind, const PlotMenus::Menus& menus)
+        double BestStanding(const PlotCasting::Member& member)
+        {
+            double best = 0.0;
+            for (const auto& faction : member.factions) {
+                best = std::max(best, faction.standing);
+            }
+            return best;
+        }
+
+        // `npc.UUID` seats SkyrimNet's character-profile submodules;
+        // it is the key render_character_profile(...) resolves against.
+        // Zero means the prompt gets a name and nothing else, which is
+        // worth a warning every time -- a scheme generated from a name
+        // is a scheme any NPC could have had.
+        std::uint64_t ProfileUUID(RE::FormID npc, const std::string& name, const char* stage)
+        {
+            const auto ref = RefOf(npc);
+            const auto uuid = ref != 0 ? SkyrimNetAPI::FormIDToUUID(ref) : 0;
+            if (uuid == 0) {
+                logger::warn("PlotBirth[{}]: no SkyrimNet UUID for {} (base 0x{:X}, ref 0x{:X}); the prompt "
+                             "will have no character profile to work from.",
+                             stage,
+                             name,
+                             npc,
+                             ref);
+            }
+            return uuid;
+        }
+
+        // --- Call 1 -------------------------------------------------------
+
+        // A form id the way every other prompt in this project renders
+        // one: a hex string with an 0x prefix. See
+        // narrative_engine_action_select's letter and visit senders.
+        std::string FormIdString(RE::FormID id)
+        {
+            char buf[16];
+            std::snprintf(buf, sizeof(buf), "0x%X", id);
+            return buf;
+        }
+
+        nlohmann::json CastContext(const PlotCasting::Population& population, const std::vector<RE::FormID>& shortlist)
         {
             nlohmann::json ctx;
 
-            // EVERY SkyrimNet endpoint speaks ACTOR REFERENCE ids --
-            // profiles, memories, related-actor arrays, all of it. The
-            // casting menus are keyed on the TESNPC base form, so the
-            // boundary gets crossed exactly once, here. GossipGraph.h
-            // says so in as many words; GossipContent already does it.
-            //
-            // This is what made every plot identical. The base form went
-            // out, FormIDToUUID handed back 0, SkyrimNet logged "No bio
-            // template found for UUID: 0", and the memory query matched
-            // nothing -- so the model met four different masterminds as
-            // four bare names with a rank phrase, and wrote the same
-            // generic caper four times. It was reading no profile
-            // because there was no profile to read.
-            const auto actorRef = GossipGraph::ActorRefFor(mastermind.npc);
-            if (actorRef == 0) {
-                logger::warn("PlotBirth: no placed reference for {} (base 0x{:X}); the prompt will have no "
-                             "character profile and no memories to work from.",
-                             mastermind.name,
-                             mastermind.npc);
+            nlohmann::json people = nlohmann::json::array();
+            for (const auto npc : shortlist) {
+                const auto* member = population.Find(npc);
+                if (member == nullptr) {
+                    continue;
+                }
+                nlohmann::json entry = nlohmann::json::object();
+                // No index. The model answers with the form id, and
+                // offering it a position as well would just be offering
+                // it a second, worse way to answer.
+                entry["form_id"] = FormIdString(member->npc);
+                entry["name"] = member->name;
+                entry["hold"] = HoldNameOf(member->hold);
+                entry["standing"] = StandingPhrase(BestStanding(*member));
+                // Each candidate carries their own UUID so the prompt can
+                // render a profile per row. That is the whole point of
+                // the call: a choice between five names is a coin toss.
+                // IsCastable has already guaranteed this resolves.
+                entry["UUID"] = ProfileUUID(member->npc, member->name, "cast");
+                people.push_back(std::move(entry));
             }
+            ctx["candidates"] = std::move(people);
+            return ctx;
+        }
 
-            // SkyrimNet's character-profile submodules key every
-            // bio decorator off `npc.UUID`. Without it the prompt can
-            // say the mastermind's name and nothing about who they are,
-            // and a scheme generated from a name is a scheme any NPC
-            // could have had.
-            const auto uuid = actorRef != 0 ? SkyrimNetAPI::FormIDToUUID(actorRef) : 0;
-            if (uuid == 0 && actorRef != 0) {
-                logger::warn("PlotBirth: FormIDToUUID(0x{:X}) returned 0 for {}; the prompt will have no "
-                             "character profile to work from.",
-                             actorRef,
-                             mastermind.name);
-            }
+        // --- Call 2 -------------------------------------------------------
+
+        nlohmann::json AmbitionContext(const PlotCasting::Member& boss)
+        {
+            nlohmann::json ctx;
+
             nlohmann::json npc = nlohmann::json::object();
-            npc["UUID"] = uuid;
+            npc["UUID"] = ProfileUUID(boss.npc, boss.name, "ambition");
             ctx["npc"] = std::move(npc);
 
-            nlohmann::json boss = nlohmann::json::object();
-            boss["name"] = mastermind.name;
-            boss["hold"] = HoldNameOf(mastermind.hold);
-            double best = 0.0;
-            for (const auto& faction : mastermind.factions) {
-                best = std::max(best, faction.standing);
-            }
-            boss["standing"] = StandingPhrase(best);
-            ctx["mastermind"] = std::move(boss);
+            nlohmann::json person = nlohmann::json::object();
+            person["name"] = boss.name;
+            person["hold"] = HoldNameOf(boss.hold);
+            person["standing"] = StandingPhrase(BestStanding(boss));
+            ctx["mastermind"] = std::move(person);
 
-            ctx["memories"] = MemoriesOf(actorRef);
+            ctx["memories"] = MemoriesOf(RefOf(boss.npc));
+            return ctx;
+        }
 
-            nlohmann::json actors = nlohmann::json::array();
-            for (std::size_t i = 0; i < menus.actors.size(); ++i) {
-                const auto& actor = menus.actors[i];
-                nlohmann::json entry = nlohmann::json::object();
-                entry["index"] = i;
-                entry["name"] = actor.name;
-                entry["relation"] = PlotMenus::RelationPhrase(actor.relation);
-                entry["standing"] = StandingPhrase(actor.standing);
-                actors.push_back(std::move(entry));
-            }
-            ctx["actors"] = std::move(actors);
+        // --- Call 3 -------------------------------------------------------
 
-            nlohmann::json items = nlohmann::json::array();
-            for (std::size_t i = 0; i < menus.items.size(); ++i) {
-                const auto& item = menus.items[i];
-                nlohmann::json entry = nlohmann::json::object();
-                entry["index"] = i;
-                entry["name"] = item.displayName;
-                entry["category"] = PlotItemPool::CategoryId(item.category);
-                items.push_back(std::move(entry));
-            }
-            ctx["items"] = std::move(items);
+        nlohmann::json PlanContext(const PlotCasting::Member& boss,
+                                   const std::string& ambition,
+                                   const std::string& scheme)
+        {
+            nlohmann::json ctx;
 
-            nlohmann::json factions = nlohmann::json::array();
-            for (std::size_t i = 0; i < menus.factions.size(); ++i) {
-                nlohmann::json entry = nlohmann::json::object();
-                entry["index"] = i;
-                entry["name"] = menus.factions[i].name;
-                factions.push_back(std::move(entry));
-            }
-            ctx["factions"] = std::move(factions);
+            nlohmann::json npc = nlohmann::json::object();
+            npc["UUID"] = ProfileUUID(boss.npc, boss.name, "steps");
+            ctx["npc"] = std::move(npc);
+
+            nlohmann::json person = nlohmann::json::object();
+            person["name"] = boss.name;
+            person["hold"] = HoldNameOf(boss.hold);
+            person["standing"] = StandingPhrase(BestStanding(boss));
+            ctx["mastermind"] = std::move(person);
+
+            ctx["ambition"] = ambition;
+            ctx["scheme"] = scheme;
 
             // The manifest, VERBATIM from the model rather than restated
             // in the template. A prompt that lists step types by hand is
@@ -195,62 +242,172 @@ namespace NarrativeEngine::PlotBirth
             }
             ctx["step_types"] = std::move(stepTypes);
 
-            // No min_steps / max_steps. Offering the model a range is
-            // how the first three plots all came back at exactly four
-            // steps: the midpoint of any stated range is where it
-            // lands. The bound is enforced in Parse, where a violation
-            // costs the response rather than shaping it.
+            // No min_steps / max_steps. Offering the model a range is how
+            // three plots in a row came back at exactly four steps: the
+            // midpoint of any stated range is where it lands. The bound
+            // is enforced in ParsePlan, where a violation costs the
+            // response rather than shaping it.
             return ctx;
+        }
+
+        // Every stage reports the same way, so a rejected birth says
+        // WHICH question went wrong. Three calls means three places a
+        // plot can die, and "rejected" without a stage is not a
+        // debuggable statement.
+        void Rejected(const std::string& who, const char* stage, const std::string& why)
+        {
+            PlotLog::BirthRejected(who, std::string(stage) + ": " + why);
+            logger::warn("PlotBirth: rejected a plot for {} at the {} stage: {}", who, stage, why);
+        }
+
+        // Ask one question, and ask it a second time if the first answer
+        // was refused -- handing back the reason it was refused.
+        //
+        // Two of the first four births under this pipeline died at the
+        // third call, one on a seventh step and one on a trailing
+        // `conceal`. Both had already paid for calls one and two, and
+        // both were the kind of mistake a model corrects immediately
+        // when told. Throwing away the whole birth over them was the
+        // most expensive possible response to the cheapest possible
+        // error.
+        //
+        // ONE retry, not a loop. A model that gets it wrong twice is not
+        // going to converge on the third go, and a plot is not worth
+        // unbounded call budget; the tick simply produces no plot, which
+        // it is already allowed to do.
+        //
+        // The context is rebuilt rather than mutated between attempts so
+        // the retry note is the ONLY difference -- a stale field carried
+        // over from the first attempt would make the second question a
+        // different question.
+        template <typename Outcome, typename Build, typename Parse>
+        Outcome AskTwice(const PlotThread::Token& pt,
+                         const char* promptName,
+                         const Build& build,
+                         const Parse& parse,
+                         const std::string& who,
+                         const char* stage)
+        {
+            Outcome outcome;
+            std::string retryNote;
+
+            for (int attempt = 0; attempt < 2; ++attempt) {
+                auto ctx = build();
+                ctx["retry"] = retryNote;
+
+                const auto call = SkyrimNetAPI::SendCustomPromptToLLM(pt, promptName, kVariant, ctx.dump());
+                if (!call.ok) {
+                    // A failed CALL is not a refused answer. There is
+                    // nothing to tell the model it did wrong, and the
+                    // most likely cause is that the endpoint is down,
+                    // so a second attempt would just wait again.
+                    outcome = Outcome{};
+                    outcome.rejection = "the call failed";
+                    return outcome;
+                }
+
+                try {
+                    outcome = parse(call.response);
+                } catch (const std::exception& e) {
+                    outcome = Outcome{};
+                    outcome.rejection = std::string("parsing threw: ") + e.what();
+                }
+                if (outcome.ok) {
+                    if (attempt > 0) {
+                        logger::info("PlotBirth[{}]: {} answered correctly on the retry", stage, who);
+                    }
+                    return outcome;
+                }
+                retryNote = outcome.rejection;
+                logger::info("PlotBirth[{}]: retrying for {} after: {}", stage, who, retryNote);
+            }
+            return outcome;
         }
     } // namespace
 
+    bool IsCastable(RE::FormID npc)
+    {
+        const auto ref = RefOf(npc);
+        return ref != 0 && SkyrimNetAPI::FormIDToUUID(ref) != 0;
+    }
+
     bool Compose(const PlotThread::Token& pt,
-                 const PlotCasting::Member& mastermind,
-                 const PlotMenus::Menus& menus,
+                 const PlotCasting::Population& population,
+                 const std::vector<RE::FormID>& shortlist,
                  PlotModel::Plot& plot)
     {
-        // A plot with nobody to involve is not worth an LLM call. This
-        // is the one rejection that happens BEFORE the call rather than
-        // after it, because it costs nothing to see coming.
-        if (menus.actors.empty()) {
-            PlotLog::BirthRejected(mastermind.name, "nobody on the menu to involve");
+        // Nothing to choose between is not an LLM's problem. This is the
+        // one rejection that happens BEFORE any call rather than after
+        // one, because it costs nothing to see coming.
+        if (shortlist.empty()) {
+            PlotLog::BirthRejected("nobody", "cast: the shortlist was empty");
             return false;
         }
 
-        const auto context = BuildContext(mastermind, menus);
-        const auto result = SkyrimNetAPI::SendCustomPromptToLLM(pt, kPromptName, kVariant, context.dump());
-        if (!result.ok) {
-            PlotLog::BirthRejected(mastermind.name, "the call failed");
+        // --- 1. Who ------------------------------------------------------
+        //
+        // Named for the log before the choice is made, because a
+        // rejection at this stage has no mastermind to name yet and
+        // "rejected a plot for nobody" is not a useful line.
+        const auto* first = population.Find(shortlist.front());
+        const std::string shortlistName = first != nullptr ? first->name : std::string("an unknown candidate");
+
+        // The prompt is rendered from `shortlist` and the answer is
+        // validated against the same object. An answer means nothing
+        // except against the list it was chosen from -- the menus made
+        // the same argument.
+        const auto cast = AskTwice<CastOutcome>(
+            pt,
+            kCastPrompt,
+            [&] { return CastContext(population, shortlist); },
+            [&](const std::string& response) { return ParseCast(response, shortlist); },
+            shortlistName,
+            "cast");
+        if (!cast.ok) {
+            Rejected(shortlistName, "cast", cast.rejection);
             return false;
         }
 
-        // Reading the response is fallible in ways the checks inside
-        // Parse cannot enumerate -- a throw from deep inside nlohmann on
-        // a shape nobody predicted. Contained here so it costs this one
-        // plot rather than unwinding the tick that asked for it.
-        Outcome outcome;
-        try {
-            outcome = Parse(result.response, menus, Limits{});
-        } catch (const std::exception& e) {
-            PlotLog::BirthRejected(mastermind.name, std::string("parsing threw: ") + e.what());
+        const PlotCasting::Member* boss = population.Find(shortlist[cast.choice]);
+        if (boss == nullptr) {
+            Rejected(shortlistName, "cast", "the chosen candidate is no longer in the population");
             return false;
         }
 
-        if (!outcome.ok) {
-            PlotLog::BirthRejected(mastermind.name, outcome.rejection);
-            logger::warn("PlotBirth: rejected a plot for {}: {}", mastermind.name, outcome.rejection);
+        // --- 2. Why, and what ---------------------------------------------
+        const auto ambition = AskTwice<AmbitionOutcome>(
+            pt,
+            kAmbitionPrompt,
+            [&] { return AmbitionContext(*boss); },
+            [](const std::string& response) { return ParseAmbition(response, TextLimits{}); },
+            boss->name,
+            "ambition");
+        if (!ambition.ok) {
+            Rejected(boss->name, "ambition", ambition.rejection);
             return false;
         }
 
-        plot.ambition = std::move(outcome.ambition);
-        plot.plan = std::move(outcome.plan);
+        // --- 3. How --------------------------------------------------------
+        auto steps = AskTwice<PlanOutcome>(
+            pt,
+            kPlanPrompt,
+            [&] { return PlanContext(*boss, ambition.ambition, ambition.scheme); },
+            [](const std::string& response) { return ParsePlan(response, PlanLimits{}); },
+            boss->name,
+            "steps");
+        if (!steps.ok) {
+            Rejected(boss->name, "steps", steps.rejection);
+            return false;
+        }
 
-        // The objective is recorded on the PLOT and never pushed into
-        // the plan. It names the scheme and anchors adaptation; the last
-        // step of the plan is what actually achieves it.
-        plot.objectiveType = outcome.objective.type;
-        plot.objectiveTarget = outcome.objective.target;
-        plot.objectiveTargetName = outcome.objective.targetName;
+        // Nothing is written into `plot` until all three have answered,
+        // so a birth that dies at call 3 leaves no half-built plot
+        // behind for the caller to have to unpick.
+        plot.mastermind = boss->npc;
+        plot.mastermindName = boss->name;
+        plot.ambition = ambition.ambition;
+        plot.scheme = ambition.scheme;
+        plot.plan = std::move(steps.plan);
         return true;
     }
 } // namespace NarrativeEngine::PlotBirth

@@ -1,0 +1,114 @@
+{# narrative_engine_plot_ambition.prompt — call 2 of 3. The mastermind is
+   already chosen; this call decides what they are ultimately after and
+   what one concrete scheme they are starting now.
+   Receives the JSON object produced by PlotBirth::AmbitionContext:
+     mastermind { name, hold, standing }, memories [string],
+     retry — empty on the first attempt; on the second it is why the
+       first answer was refused,
+     npc { UUID } — required by SkyrimNet's character_profile submodules;
+                    keys every character-bio decorator.
+   NOTE: no fenced blocks and no literal braces anywhere in this file; both
+   break the render. See docs/CUSTOM_PROMPTS.md. #}
+[ system ]
+## Task
+One person in Skyrim is working toward something they cannot pursue
+openly. You write down two things: what they are ultimately after, and
+the concrete move they are making toward it now.
+
+The decision that this person is scheming has ALREADY BEEN MADE. Do not
+second-guess it, do not refuse, and do not decide they are too decent or
+too minor for it. Ordinary people scheme, and most schemes are small.
+
+## The two things you decide
+
+**First, the ambition.** The larger thing this person is ultimately
+after. It is nebulous, it is the work of a lifetime, and nothing they do
+in one scheme will finish it — a Thalmor officer means to see Talos
+worship gone from Skyrim; a Riften brewer means to own everyone who
+matters in the hold. It comes out of who they are: their station, their
+temperament, what they command and what they resent. This is what makes
+two different people scheme differently, so it must be theirs and nobody
+else's.
+
+**Second, the scheme.** One concrete thing that, once done, plausibly
+moves them along that ambition — and that a handful of people could
+actually finish within a season. It is a step toward the ambition, not a
+measure of it, and it does not have to be an obvious one.
+
+The test that separates them: **if finishing the scheme would finish the
+ambition, one of the two is wrong.** The ambition should still be out of
+reach the morning after the scheme succeeds.
+
+A scheme does not have to be a theft. Putting someone in your debt,
+ruining what people think of a rival, wrecking an arrangement that is
+holding you back, quietly learning something you are not supposed to
+know — all of these are things a scheme can be for, and for most people
+they fit better than stealing an object does.
+
+## Output Format
+Return a JSON object. No markdown fences. No prose before or after the
+object.
+
+- `ambition` — one sentence, third person. The lifetime thing.
+- `scheme` — one sentence, third person, and concrete enough that you
+  could tell whether it had worked. This is what the scheme IS, not how
+  it is done; the steps are decided separately and are not your problem
+  here.
+
+Keep both to about twenty words, and write each as a **complete
+sentence** with a subject: "She wants the dock inspector replaced with
+someone who owes her." Not "Is arranging for the dock inspector to be
+replaced" — a sentence with its subject cut off reads as a fragment
+wherever it is shown, and the scheme is shown as the plot's title.
+
+Use a pronoun rather than the name. Whoever reads these already knows
+whose scheme it is, so "She wants the dock inspector replaced" beats
+"Bryling wants the dock inspector replaced".
+
+Write plainly. No markdown, no headings, no bullet points inside either
+sentence. Name only people and places that exist in Skyrim, and prefer
+ones this person would actually know.
+
+## Hard Constraints
+- Output strict JSON. No markdown code fences. No prose before or after
+  the JSON object.
+- Return only the keys `ambition` and `scheme`.
+- `scheme` must not be a restatement of `ambition`. Identical sentences
+  are thrown away.
+[ end system ]
+
+[ user ]
+{% if length(retry) > 0 %}
+## Your last answer was thrown away
+
+{{ retry }}
+
+Do not repeat that mistake. Everything else about the task is unchanged.
+{% endif %}
+
+## Who is scheming
+
+**{{ mastermind.name }}**{% if length(mastermind.standing) > 0 %}, {{ mastermind.standing }}{% endif %}.
+{% if length(mastermind.hold) > 0 %}They live in {{ mastermind.hold }}.{% endif %}
+
+{{ render_character_profile("bio_summary", npc.UUID) }}
+{{ render_character_profile("bio_background", npc.UUID) }}
+{{ render_character_profile("bio_personality", npc.UUID) }}
+{{ render_character_profile("bio_aspirations", npc.UUID) }}
+{{ render_character_profile("bio_relationships", npc.UUID) }}
+
+{% if length(memories) > 0 %}
+## What is also on their mind
+
+Recent memories, newest first. Use them where they fit, but they are
+extra detail rather than the point. A scheme that ignores them is fine if
+it fits the person; a scheme that fits a memory but not the person is
+not.
+
+{% for m in memories %}- {{ m }}
+{% endfor %}
+{% endif %}
+
+What is {{ mastermind.name }} ultimately after, and what is the one
+concrete thing they are doing about it now? Answer with the object.
+[ end user ]

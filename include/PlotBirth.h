@@ -3,120 +3,190 @@
 #include <string>
 #include <vector>
 
-#include <PlotMenus.h>
+#include <PlotCasting.h>
 #include <PlotModel.h>
 #include <PlotThread.h>
 
-// PlotBirth — turning one LLM response into a plot, or into nothing.
-//
-// The response is untrusted input from a system that is wrong sometimes,
-// so every way it can be wrong has to end somewhere defined. There are
-// only two outcomes here: a plot in which every noun is a resolved form,
-// or a rejection with a reason. There is deliberately no third case
-// where a partly-good response yields a partly-built plot — a plan
-// missing its middle is worse than no plan, because it looks runnable.
+// PlotBirth — inventing one scheme, in three questions instead of one.
 //
 // ---------------------------------------------------------------------
-// Validation is a MEMBERSHIP TEST
+// WHY THREE CALLS
 //
-// The model never writes a name. It writes an index into a menu the
-// plugin built, and the check is whether that index is on the menu. That
-// is why this file has no fuzzy matching, no nearest-name lookup and no
-// "did they mean" logic: those are what a system that accepts names
-// needs, and each of them is a way to accept something wrong.
+// This was one call. It was handed a mastermind, a menu of people, a
+// menu of objects, a menu of factions and the step manifest, and asked
+// for an agenda, an objective and a route in a single JSON object.
+//
+// It produced the same plot every time. Not similar plots — the same
+// four steps against different nouns, run after run, across masterminds
+// in different holds with different lives. Fixing the inputs helped (the
+// character profile was missing entirely for a while, which is its own
+// story) and fixing the prompt helped, but the shape of the failure
+// never changed, because the shape of the ASK never changed: a model
+// with one turn to answer everything answers the easy part well and
+// falls back to a template for the rest.
+//
+// So it is three questions now, each small enough to be answered on its
+// own merits:
+//
+//   1. WHO. The plugin draws a weighted shortlist of eligible people;
+//      the model picks which of them is the one with something to hide.
+//   2. WHY and WHAT. Given that person's profile and recent memories:
+//      their lifelong agenda, and one concrete scheme that is a stepping
+//      stone toward it.
+//   3. HOW. Given the agenda and the scheme: the ordered steps.
+//
+// Each call sees the previous answers, so the chain narrows rather than
+// making three independent guesses.
+//
+// ---------------------------------------------------------------------
+// NO MENUS, FOR NOW
+//
+// None of these calls is offered a list of people, objects or factions
+// to name. Steps come back as a type plus a sentence, and their targets
+// are unresolved.
+//
+// That is a deliberate, temporary loss. Menus were what made a plan
+// EXECUTABLE — a step whose target is a resolved form has somebody to
+// travel to and something to put in an inventory — and validating an
+// index against a menu is what kept the model from inventing people.
+// Both have to come back before plots can touch the world. They are out
+// right now because the question on the table is whether decomposing the
+// ASK produces better schemes, and menus are a large confound: half the
+// sameness could always have been the item pool rather than the prompt.
 //
 // See docs/prior-art/NAME_RESOLUTION_FAILURE_MODES.md for what accepting
-// names cost the project this one learned from.
+// free-text names cost the project this one learned from. Nothing here
+// accepts a name as an entity — the sentences are DESCRIPTIONS, rendered
+// and read, never resolved.
 namespace NarrativeEngine::PlotBirth
 {
-    // Why a response was thrown away. One per rejection, and specific
-    // enough to act on: "step 2 named target 7 of 4" says which step,
-    // which index, and how far out of range it was.
-    struct Outcome
+    // --- Call 1: who ------------------------------------------------------
+
+    struct CastOutcome
+    {
+        bool ok = false;
+        std::string rejection;
+        // Index into the shortlist the prompt was rendered from,
+        // recovered from the `form_id` the model named. A membership
+        // test against a small closed list, which is the one piece of
+        // this pipeline that still validates the way the menus did.
+        std::size_t choice = 0;
+    };
+
+    // Pure. Response text in, a shortlist index out.
+    //
+    // The model answers with a FORM ID, not a position -- the pattern
+    // narrative_engine_action_select already uses for choosing a letter
+    // or visit sender. Positions are free to get subtly wrong, and an
+    // off-by-one silently hands the scheme to the wrong person with
+    // nothing downstream ever looking incorrect; a form id either is one
+    // of the five it was given or it is not.
+    //
+    // Read as a hex STRING ("0x13BB3"), which is how the other prompts
+    // render one, with a bare-hex and a plain-number spelling accepted
+    // as well. Leniency is safe here precisely because the membership
+    // test follows: a mis-read cannot select the wrong candidate, only
+    // fail to select any.
+    [[nodiscard]] CastOutcome ParseCast(const std::string& response, const std::vector<RE::FormID>& shortlist);
+
+    // True when this NPC can be put in front of the casting call at all:
+    // SkyrimNet resolves them to a UUID, so a profile actually renders.
+    //
+    // SkyrimNet returns 0 for most NPCs -- roughly four in five, on the
+    // runs measured -- and a candidate it cannot describe renders as a
+    // name and a hold while the others get a paragraph each. That is not
+    // a choice between five people, it is a choice between the one the
+    // model was told about and four it was not, and the first run under
+    // this pipeline picked the described candidate three times out of
+    // four.
+    //
+    // Engine-bound; safe from the plot worker, like the other reads
+    // here.
+    [[nodiscard]] bool IsCastable(RE::FormID npc);
+
+    // --- Call 2: why, and what --------------------------------------------
+
+    struct AmbitionOutcome
     {
         bool ok = false;
         std::string rejection;
 
-        // Only meaningful when ok.
-        //
-        // The AGENDA: the larger thing this scheme ostensibly serves,
+        // The AGENDA: the larger thing this person is ultimately after,
         // and deliberately not something this system can ever finish.
         // "Eliminate Talos worship in Skyrim." "Become Queen of Skyrim."
-        //
-        // The first version of this asked for "what this person wants
-        // and why they will not ask openly", which is a paraphrase of
-        // the objective -- so ambition and objective said the same
-        // thing, nothing pulled the objective toward anything larger,
-        // and every plot came out as a small theft with a motive
-        // attached. The design always called it "the larger thing this
-        // objective serves"; that is what it is now.
         std::string ambition;
 
-        // The WHOLE scheme, in order, ending on the step that
-        // accomplishes the objective.
-        //
-        // The objective used to be appended here as an extra final
-        // step, and it read as padding: a plan that ended "deliver an
-        // incriminating letter to Kodlak Whitemane" already discredited
-        // Aela the Huntress, and tacking "Discredit Aela the Huntress"
-        // on after it said nothing the previous step had not. The
-        // objective is what the scheme is FOR, not a move in it.
-        std::vector<PlotModel::Step> plan;
-
-        // The destination, as a type and a target. Names the plot and
-        // anchors adaptation; never appears in `plan`.
-        //
-        // Still chosen by the model as its own field rather than
-        // inferred from whichever step happened to be last. Inferring
-        // it produced plots titled "Cover Tracks Sybille Stentor":
-        // `conceal` is a natural closing step, so it kept becoming the
-        // objective, and covering your tracks is never what a scheme is
-        // FOR. Choosing it explicitly also puts it in the right order --
-        // pick the destination, then the route.
-        PlotModel::Step objective;
+        // The concrete thing this one scheme exists to achieve: a
+        // stepping stone toward the agenda that does not reach it.
+        std::string scheme;
     };
 
-    struct Limits
+    struct TextLimits
     {
-        // Bounds on the whole plan. Back to 2..6 now that the objective
-        // is no longer appended on top of it -- a plot runs exactly this
-        // many steps.
+        // Hard ceilings, applied AFTER sanitizing.
         //
-        // Deliberately not stated in the prompt. Telling the model "2 to
-        // 6" produced 4, 4, 4 -- the midpoint of any range offered is
-        // where it lands. The bound belongs here, where it is enforced,
-        // rather than in the prose, where it is a suggestion that
-        // doubles as an anchor.
-        std::size_t minSteps = 2;
-        std::size_t maxSteps = 6;
-        // A hard ceiling on the free-form field, applied AFTER
-        // sanitizing. An ambition is one sentence; anything past this is
-        // the model ignoring the instruction, and letting it through
-        // would put an essay in the co-save and on the dashboard.
-        std::size_t maxAmbition = 400;
+        // Both are asked for at about twenty words. The ceilings are
+        // well clear of that, because a rejection here costs the calls
+        // already spent -- they exist to stop an essay reaching the
+        // co-save and the dashboard, not to enforce the word count.
+        std::size_t maxAmbition = 300;
+        std::size_t maxScheme = 300;
     };
 
-    // Pure. Response text in, plot-or-rejection out.
-    //
-    // Takes the menus it was built from, because the indices mean
-    // nothing without them — and takes them BY VALUE of the same object
-    // the prompt was rendered from, so a menu rebuilt between the two
-    // cannot silently renumber the answer.
-    [[nodiscard]] Outcome Parse(const std::string& response, const PlotMenus::Menus& menus, const Limits& limits);
+    [[nodiscard]] AmbitionOutcome ParseAmbition(const std::string& response, const TextLimits& limits);
 
-    // --- The engine-bound half -------------------------------------------
+    // --- Call 3: how ------------------------------------------------------
 
-    // Ask the model for a plot for `mastermind`, and fill `plot` in.
+    struct PlanOutcome
+    {
+        bool ok = false;
+        std::string rejection;
+        std::vector<PlotModel::Step> plan;
+    };
+
+    struct PlanLimits
+    {
+        // The whole plan. One step is an errand, not a scheme.
+        //
+        // NEITHER BOUND IS STATED IN THE PROMPT, and both have been
+        // stated at some point. A range anchors hardest -- offering "2
+        // to 6" produced 4, 4, 4, the midpoint every time -- but a bare
+        // ceiling anchors too: naming six produced 6, 6, 4 on the run
+        // after it. The prompt now says only "take as many steps as this
+        // scheme needs", and these exist to catch an answer that has
+        // gone wrong rather than to shape one that has not.
+        //
+        // The ceiling is correspondingly generous. Ten is not a target,
+        // it is the point past which a plan has stopped being a scheme
+        // and become a list.
+        std::size_t minSteps = 2;
+        std::size_t maxSteps = 10;
+        // Asked for at about fifteen words. Same reasoning as the two
+        // above: a generous ceiling, not a style rule.
+        std::size_t maxDescription = 160;
+    };
+
+    [[nodiscard]] PlanOutcome ParsePlan(const std::string& response, const PlanLimits& limits);
+
+    // --- The engine-bound half --------------------------------------------
+
+    // Run all three calls over `shortlist` and fill `plot` in, including
+    // which of the shortlist ended up masterminding it.
     //
-    // BLOCKS on the plot worker, which is the point: nothing else runs
-    // there, so there is nobody to yield to and no reason to hand the
-    // rest of the work to a callback. Same argument GossipContent makes
-    // for its own calls.
+    // BLOCKS on the plot worker, three times, which is the point:
+    // nothing else runs there, so there is nobody to yield to and no
+    // reason to hand the rest of the work to a callback. Same argument
+    // GossipContent makes for its own calls.
     //
-    // Returns false when the call failed or the response was rejected,
-    // having logged why. The caller frees the slot.
+    // Each call is asked TWICE at most: a refused answer is put back to
+    // the model with the reason it was refused, once. See AskTwice.
+    //
+    // Returns false when any call failed or was still wrong on its
+    // retry, having logged why and at which stage. The caller frees the
+    // slot and spends no plot id, so a birth that dies at call 3 costs
+    // call budget and nothing else.
     [[nodiscard]] bool Compose(const PlotThread::Token& pt,
-                               const PlotCasting::Member& mastermind,
-                               const PlotMenus::Menus& menus,
+                               const PlotCasting::Population& population,
+                               const std::vector<RE::FormID>& shortlist,
                                PlotModel::Plot& plot);
 } // namespace NarrativeEngine::PlotBirth

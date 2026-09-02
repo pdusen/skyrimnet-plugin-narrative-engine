@@ -97,8 +97,8 @@ namespace NarrativeEngine::PlotSerialize
             // silently reinterpret every saved step.
             const std::string typeId(PlotModel::TypeId(step.type));
             return WriteString(sink, typeId) && WritePod(sink, step.target) && WriteString(sink, step.targetName)
-                   && WritePod(sink, step.actor) && WriteString(sink, step.actorName)
-                   && WritePod(sink, static_cast<std::uint8_t>(step.state))
+                   && WriteString(sink, step.description) && WritePod(sink, step.actor)
+                   && WriteString(sink, step.actorName) && WritePod(sink, static_cast<std::uint8_t>(step.state))
                    && WritePod(sink, static_cast<std::uint8_t>(step.outcome)) && WritePod(sink, step.budget)
                    && WritePod(sink, step.elapsed) && WritePod(sink, step.threshold) && WritePod(sink, step.progress)
                    && WritePod(sink, step.heldTicks) && WritePod(sink, step.sizingTravel)
@@ -113,6 +113,10 @@ namespace NarrativeEngine::PlotSerialize
         {
             std::string typeId;
             if (!ReadString(source, typeId) || !PlotModel::ParseStepType(typeId, step.type)) {
+                return false;
+            }
+
+            if (!ReadString(source, step.description)) {
                 return false;
             }
 
@@ -195,10 +199,8 @@ namespace NarrativeEngine::PlotSerialize
             return false;
         }
         for (const auto& plot : state.plots) {
-            const std::string objectiveId(PlotModel::TypeId(plot.objectiveType));
             if (!WritePod(sink, plot.id) || !WritePod(sink, plot.mastermind) || !WriteString(sink, plot.mastermindName)
-                || !WriteString(sink, plot.ambition) || !WriteString(sink, objectiveId)
-                || !WritePod(sink, plot.objectiveTarget) || !WriteString(sink, plot.objectiveTargetName)
+                || !WriteString(sink, plot.ambition) || !WriteString(sink, plot.scheme)
                 || !WriteStepVector(sink, plot.plan) || !WritePod(sink, static_cast<std::uint32_t>(plot.cursor))
                 || !WriteStepVector(sink, plot.history) || !WritePod(sink, plot.adaptations)
                 || !WritePod(sink, static_cast<std::uint8_t>(plot.status))
@@ -262,7 +264,6 @@ namespace NarrativeEngine::PlotSerialize
             PlotModel::Plot plot;
             bool resolved = true;
 
-            std::string objectiveId;
             RE::FormID savedMastermind{};
             if (!ReadPod(source, plot.id) || !ReadPod(source, savedMastermind)) {
                 return fail();
@@ -275,17 +276,11 @@ namespace NarrativeEngine::PlotSerialize
             std::uint32_t cursor{};
             std::uint8_t plotStatus{};
             std::uint8_t plotOutcome{};
-            RE::FormID savedObjectiveTarget{};
+            // The scheme is a sentence now, not a step type plus a
+            // FormID, so there is nothing here left to resolve or to
+            // drop a plot over.
             if (!ReadString(source, plot.mastermindName) || !ReadString(source, plot.ambition)
-                || !ReadString(source, objectiveId) || !PlotModel::ParseStepType(objectiveId, plot.objectiveType)
-                || !ReadPod(source, savedObjectiveTarget)) {
-                return fail();
-            }
-            if (savedObjectiveTarget != 0 && !source.ResolveFormID(savedObjectiveTarget, plot.objectiveTarget)) {
-                plot.objectiveTarget = 0;
-                resolved = false;
-            }
-            if (!ReadString(source, plot.objectiveTargetName) || !ReadStepVector(source, plot.plan, resolved)
+                || !ReadString(source, plot.scheme) || !ReadStepVector(source, plot.plan, resolved)
                 || !ReadPod(source, cursor) || !ReadStepVector(source, plot.history, resolved)
                 || !ReadPod(source, plot.adaptations) || !ReadPod(source, plotStatus) || !ReadPod(source, plotOutcome)
                 || !ReadPod(source, plot.bornOnGameDay) || !ReadPod(source, plot.endedOnGameDay)

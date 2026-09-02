@@ -1,3 +1,0 @@
-{"ambition": "She means to be left alone by everyone who matters.",
- "objective": {"type": "acquire", "target": 0},
- "plan": []}

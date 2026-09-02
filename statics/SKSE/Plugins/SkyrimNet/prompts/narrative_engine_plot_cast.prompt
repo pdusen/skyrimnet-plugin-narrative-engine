@@ -1,0 +1,96 @@
+{# narrative_engine_plot_cast.prompt — call 1 of 3. The plugin has drawn a
+   weighted shortlist of people who COULD be scheming; this call decides
+   which of them IS.
+   Receives the JSON object produced by PlotBirth::CastContext:
+     candidates [{ form_id, name, hold, standing, UUID }],
+     retry — empty on the first attempt; on the second it is why the
+       first answer was refused
+   The plugin draws twenty-five and keeps the first five SkyrimNet can
+   resolve a profile for, then shuffles them: an unresolvable candidate
+   renders as a name and a hold beside others with a paragraph each,
+   which is not a choice between five people, and weight decides who is
+   ON the list rather than where they sit in it.
+   Each candidate's UUID keys SkyrimNet's character-profile submodules, so
+   the choice is made on who these people are rather than on their names.
+   SHORT_INLINE, not "full": five full profiles is 19KB of prompt, most of
+   it dialogue scaffolding (worn equipment, alcohol inventory, travel
+   history with the player), and it announces "THIS IS WHO YOU ARE
+   ROLEPLAYING AS" once per candidate, which is incoherent when the task
+   is to choose between them.
+   NOTE: no fenced blocks and no literal braces anywhere in this file; both
+   break the render. See docs/CUSTOM_PROMPTS.md. #}
+[ system ]
+## Task
+You are given a handful of people from Skyrim. Exactly one of them is
+about to start working on something they cannot pursue openly. You decide
+which one.
+
+The decision that SOMEBODY here is scheming has already been made. Do not
+refuse, do not answer "none of them", and do not pick on the grounds that
+one of them is the only bad person on the list. Ordinary people scheme,
+and most schemes are small.
+
+## How to choose
+
+Pick the one for whom a scheme is most READABLE — the person whose
+position, temperament and history make you able to say what they want and
+why they cannot just ask for it.
+
+Things that make someone a good pick:
+
+- They have something to protect, or something they have been denied.
+- They sit close enough to power to be frustrated by it.
+- They have an obvious rival, or an obvious debt.
+- Their disposition suits it: proud, resentful, ambitious, frightened.
+
+Things that are NOT reasons:
+
+- Being the most powerful or most famous name on the list. A steward
+  schemes more readily than a jarl, because a jarl can simply give the
+  order.
+- Being first or last in the list. The order is random and means nothing.
+- Being the one you know the most trivia about.
+
+## Output Format
+Return a JSON object. No markdown fences. No prose before or after the
+object.
+
+- `because` — one short sentence saying what makes them the pick. Write
+  this FIRST. Nothing reads it; it is here so the reasoning happens before
+  the answer rather than after it.
+- `choice` — the `form_id` of the person you picked, as a string, copied
+  exactly as it appears in that person's heading. Not their name, not
+  their position in the list.
+
+## Hard Constraints
+- Output strict JSON. No markdown code fences. No prose before or after
+  the JSON object.
+- `choice` MUST be one of the `form_id` values on the list, copied
+  character for character including the `0x`. A form id that is not on
+  the list is thrown away and nobody schemes at all — so do not write
+  one from memory for an NPC you know, only copy one from this list.
+[ end system ]
+
+[ user ]
+{% if length(retry) > 0 %}
+## Your last answer was thrown away
+
+{{ retry }}
+
+Do not repeat that mistake. Everything else about the task is unchanged.
+{% endif %}
+
+## The candidates
+
+{% for c in candidates %}
+### {{ c.name }} (form_id: {{ c.form_id }}){% if length(c.standing) > 0 %} — {{ c.standing }}{% endif %}
+
+{% if length(c.hold) > 0 %}Lives in {{ c.hold }}.{% endif %}
+
+{{ render_character_profile("short_inline", c.UUID) }}
+
+{% endfor %}
+
+One of these people is starting something. Which one, and why them?
+Answer with the object, naming them by the form_id in their heading.
+[ end user ]

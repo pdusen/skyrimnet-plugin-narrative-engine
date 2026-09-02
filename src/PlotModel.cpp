@@ -119,6 +119,6 @@ namespace NarrativeEngine::PlotModel
 
     std::string Title(const Plot& plot)
     {
-        return Label(plot.objectiveType, plot.objectiveTargetName);
+        return plot.scheme;
     }
 } // namespace NarrativeEngine::PlotModel

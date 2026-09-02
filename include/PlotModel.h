@@ -193,9 +193,21 @@ namespace NarrativeEngine::PlotModel
     {
         StepType type = StepType::Locate;
 
+        // What this step IS, in the model's own words: "wait for the
+        // steward to leave the counting room". One line, free text,
+        // sanitized at extraction.
+        //
+        // Composition currently hands the model no menu of people,
+        // objects or factions, so a step has a type and this sentence
+        // and nothing else. Without it the whole plan renders as
+        // "Watch / Recruit / Acquire" and every plot looks like every
+        // other one, which is the failure this text exists to avoid.
+        std::string description;
+
         // Pre-resolved. Never a free string from an LLM — the model
         // picks from a menu by index and this is what that index
-        // resolved to. May be 0 for a type that needs no target.
+        // resolved to. May be 0 for a type that needs no target, and is
+        // currently 0 always, because no menu is offered.
         RE::FormID target = 0;
         std::string targetName;
 
@@ -280,17 +292,20 @@ namespace NarrativeEngine::PlotModel
         // sanitized at the point of extraction.
         std::string ambition;
 
-        // THE OBJECTIVE, held separately from the plan.
+        // THE SCHEME, in one sentence: the concrete thing this plot
+        // exists to achieve, and a stepping stone toward `ambition`
+        // rather than a measure of it.
         //
-        // The plan's last step accomplishes it, so this duplicates that
-        // step's type and target — deliberately. Adaptation rewrites the
-        // remaining plan but may never change the destination, and
-        // holding the objective outside the rewritable structure is what
-        // makes that an invariant rather than a convention. It also keeps
-        // the plot's title stable across a re-plan.
-        StepType objectiveType = StepType::Acquire;
-        RE::FormID objectiveTarget = 0;
-        std::string objectiveTargetName;
+        // Held outside the plan, which is what makes "adaptation
+        // rewrites the path, never the destination" an invariant rather
+        // than a convention, and what keeps the plot's title stable
+        // across a re-plan.
+        //
+        // Free text now, where it used to be a step type plus a resolved
+        // target. A scheme that has to be expressible as one verb
+        // against one form is a much smaller space than the schemes
+        // people actually have.
+        std::string scheme;
 
         // The ladder of steps beneath the objective. Rewritten from
         // `cursor` onward on adaptation; everything before it has already
@@ -353,8 +368,14 @@ namespace NarrativeEngine::PlotModel
     // Verb plus target, or the bare verb when there is no target name.
     [[nodiscard]] std::string Label(StepType type, std::string_view targetName);
 
+    // The step's own sentence when it has one, and the verb-plus-target
+    // form when it does not. Both shapes exist: composition writes the
+    // sentence, and the seeded debug plot still writes targets.
     [[nodiscard]] inline std::string Label(const Step& step)
     {
+        if (!step.description.empty()) {
+            return step.description;
+        }
         return Label(step.type, step.targetName);
     }
 

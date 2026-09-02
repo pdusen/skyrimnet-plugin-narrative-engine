@@ -1,2 +1,2 @@
 {"decision": "escalate",
- "plan": [{"type": "acquire", "target": 1}]}
+ "plan": [{"type": "acquire", "description": "Take it by force."}]}

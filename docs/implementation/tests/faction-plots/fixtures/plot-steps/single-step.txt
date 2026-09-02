@@ -1,0 +1,1 @@
+{"plan": [{"type": "acquire", "description": "Simply take the ledger."}]}

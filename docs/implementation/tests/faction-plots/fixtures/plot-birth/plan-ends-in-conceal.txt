@@ -1,5 +1,0 @@
-{"ambition": "He means to make the Guild answer to him rather than the other way round.",
- "objective": {"type": "acquire", "target": 1},
- "plan": [{"type": "surveil", "target": 0},
-          {"type": "recruit", "target": 1},
-          {"type": "conceal", "target": 0}]}

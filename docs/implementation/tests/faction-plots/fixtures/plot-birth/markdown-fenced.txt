@@ -1,8 +1,0 @@
-Here is the plot you asked for:
-
-```json
-{"ambition": "He means to break the hold the meadery has over the docks.",
- "objective": {"type": "sabotage", "target": 1},
- "plan": [{"type": "surveil", "target": 0},
-          {"type": "sabotage", "target": 1}]}
-```

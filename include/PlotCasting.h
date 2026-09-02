@@ -130,6 +130,7 @@ namespace NarrativeEngine::PlotCasting
         OnCooldown, // free, but not yet available again for this role
         Dead,       // dead or disabled
         NoTie,      // no relationship to the mastermind (agent selection only)
+        NotViable,  // alive, but not in a state to start scheming right now
         IsMastermind
     };
 
@@ -153,6 +154,14 @@ namespace NarrativeEngine::PlotCasting
         int chosenRung = 0;
         // Everyone weighed, chosen and rejected alike.
         std::vector<Candidate> considered;
+        // Mastermind selection only: the weighted draw's whole
+        // shortlist, in draw order, `chosen` first.
+        //
+        // The plugin no longer picks the mastermind. It picks who is
+        // ELIGIBLE and how likely each of them is to be scheming, and
+        // an LLM chooses among them -- so what comes out of here is a
+        // handful of plausible people rather than one.
+        std::vector<RE::FormID> shortlist;
     };
 
     // True when the NPC is alive and enabled. Supplied by the caller so
@@ -220,6 +229,27 @@ namespace NarrativeEngine::PlotCasting
     //
     // `rng` is the caller's stream position, advanced in place, so a
     // seeded run reproduces exactly.
+    // Draw up to `count` DISTINCT candidates by weight, without
+    // replacement, strongest-weighted first by expectation.
+    //
+    // `viable` is a second liveness gate applied only here: a candidate
+    // can be alive and off cooldown and still be a bad person to start
+    // a scheme around this second -- mid-fight, following the player,
+    // in engine limbo. It is the filter the visit beat applies for the
+    // same reason, and it is separate from `alive` so a rejection says
+    // which of the two it was.
+    //
+    // An empty `viable` means everything alive is viable, which is what
+    // a probe driving the pure arithmetic wants.
+    [[nodiscard]] Result SelectMastermindShortlist(const Population& population,
+                                                   const OccupancyTable& occupancy,
+                                                   double gameDay,
+                                                   const AlivePredicate& alive,
+                                                   const AlivePredicate& viable,
+                                                   const SeatedPredicate& seated,
+                                                   std::size_t count,
+                                                   std::uint64_t& rng);
+
     [[nodiscard]] Result SelectMastermind(const Population& population,
                                           const OccupancyTable& occupancy,
                                           double gameDay,

@@ -183,6 +183,8 @@ namespace NarrativeEngine::PlotCasting
             return "dead";
         case Reject::NoTie:
             return "no_tie";
+        case Reject::NotViable:
+            return "not_viable";
         case Reject::IsMastermind:
             return "is_mastermind";
         }
@@ -254,6 +256,65 @@ namespace NarrativeEngine::PlotCasting
         }
 
         result.chosen = WeightedDraw(result.considered, rng);
+        return result;
+    }
+
+    Result SelectMastermindShortlist(const Population& population,
+                                     const OccupancyTable& occupancy,
+                                     double gameDay,
+                                     const AlivePredicate& alive,
+                                     const AlivePredicate& viable,
+                                     const SeatedPredicate& seated,
+                                     std::size_t count,
+                                     std::uint64_t& rng)
+    {
+        Result result;
+        result.considered.reserve(population.members.size());
+
+        for (const auto& member : population.members) {
+            Candidate candidate;
+            candidate.npc = member.npc;
+            candidate.reject = Screen(occupancy, member.npc, PlotModel::Role::Mastermind, gameDay, alive);
+            // Viability is checked AFTER the cheap screens and only for
+            // survivors, because it is the one that touches an Actor.
+            if (candidate.reject == Reject::None && viable && !viable(member.npc)) {
+                candidate.reject = Reject::NotViable;
+            }
+            candidate.weight = candidate.reject == Reject::None ? MastermindWeight(member, seated) : 0.0;
+            result.considered.push_back(candidate);
+        }
+
+        // Without replacement: a drawn candidate is struck out by
+        // marking it rejected, so the next draw renormalises over what
+        // is left. Drawing with replacement would hand the same person
+        // to the model twice and quietly shrink the shortlist.
+        //
+        // The strike-outs are undone afterwards. `considered` is the
+        // diagnostic record of who was ELIGIBLE, and a candidate that
+        // was eligible enough to be drawn must not read as rejected in
+        // the log.
+        std::vector<std::size_t> drawnAt;
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto npc = WeightedDraw(result.considered, rng);
+            if (npc == 0) {
+                break;
+            }
+            result.shortlist.push_back(npc);
+            for (std::size_t j = 0; j < result.considered.size(); ++j) {
+                if (result.considered[j].npc == npc) {
+                    result.considered[j].reject = Reject::Occupied;
+                    drawnAt.push_back(j);
+                    break;
+                }
+            }
+        }
+        for (const auto j : drawnAt) {
+            result.considered[j].reject = Reject::None;
+        }
+
+        if (!result.shortlist.empty()) {
+            result.chosen = result.shortlist.front();
+        }
         return result;
     }
 

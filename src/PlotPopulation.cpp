@@ -702,8 +702,48 @@ namespace NarrativeEngine::PlotPopulation
         return actor->Is3DLoaded();
     }
 
+    // Alive is not the same as available to start scheming.
+    //
+    // The same four checks the visit beat makes before warping somebody
+    // in, and for the same reason: a unique NPC who is not mid-fight,
+    // not trailing the player, and actually somewhere. A leveled bandit
+    // masterminding a scheme would be as odd here as it is there.
+    //
+    // Applied only to MASTERMIND selection. An agent is cast for a step
+    // that will take in-world days to play out, so their state this
+    // second says nothing about it; a mastermind is being chosen to have
+    // an idea right now.
+    bool IsViableMastermind(RE::FormID npc)
+    {
+        const auto* participant = GossipGraph::Find(npc);
+        if (participant == nullptr || participant->actorRef == 0) {
+            return false;
+        }
+        auto* actor = RE::TESForm::LookupByID<RE::Actor>(participant->actorRef);
+        if (actor == nullptr) {
+            return false;
+        }
+        if (auto* base = actor->GetActorBase(); base != nullptr && !base->IsUnique()) {
+            return false;
+        }
+        if (actor->IsInCombat()) {
+            return false;
+        }
+        if (actor->IsPlayerTeammate()) {
+            return false;
+        }
+        // A null current location is the engine-limbo signal: staged in
+        // a holding cell, or otherwise nowhere the world can act on.
+        return actor->GetCurrentLocation() != nullptr;
+    }
+
     PlotCasting::AlivePredicate AlivePredicate()
     {
         return [](RE::FormID npc) { return IsAlive(npc); };
+    }
+
+    PlotCasting::AlivePredicate ViablePredicate()
+    {
+        return [](RE::FormID npc) { return IsViableMastermind(npc); };
     }
 } // namespace NarrativeEngine::PlotPopulation

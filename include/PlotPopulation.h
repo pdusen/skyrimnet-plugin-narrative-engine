@@ -71,8 +71,19 @@ namespace NarrativeEngine::PlotPopulation
     // IsAlive is.
     [[nodiscard]] bool IsNearPlayer(RE::FormID npc);
 
-    // Bound form of the above, for handing to PlotCasting.
+    // Alive, and in a state to START a scheme right now: unique, not
+    // mid-fight, not trailing the player, and somewhere the world can
+    // act on. The same four checks the visit beat makes before warping
+    // somebody in.
+    //
+    // MASTERMIND selection only. An agent is cast for a step that plays
+    // out over in-world days, so their state this second says nothing
+    // about it; a mastermind is being chosen to have an idea now.
+    [[nodiscard]] bool IsViableMastermind(RE::FormID npc);
+
+    // Bound forms of the above, for handing to PlotCasting.
     [[nodiscard]] PlotCasting::AlivePredicate AlivePredicate();
+    [[nodiscard]] PlotCasting::AlivePredicate ViablePredicate();
 
     // --- Tenure: the one part of a member's standing that MOVES --------
     //

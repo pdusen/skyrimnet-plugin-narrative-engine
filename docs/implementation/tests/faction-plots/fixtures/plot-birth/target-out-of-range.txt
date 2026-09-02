@@ -1,4 +1,0 @@
-{"ambition": "He means to see his family's name restored to the standing it had before the war.",
- "objective": {"type": "discredit", "target": 0},
- "plan": [{"type": "locate", "target": 0},
-          {"type": "recruit", "target": 97}]}

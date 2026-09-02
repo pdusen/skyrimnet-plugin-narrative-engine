@@ -8,7 +8,6 @@
 #include <PlotCasting.h>
 #include <PlotDispatch.h>
 #include <PlotLog.h>
-#include <PlotMenus.h>
 #include <PlotPopulation.h>
 #include <PlotResolution.h>
 #include <PlotSchedule.h>
@@ -23,6 +22,25 @@ namespace NarrativeEngine::PlotTick
 {
     namespace
     {
+        // How many candidates reach the casting call, and how many are
+        // drawn to find them.
+        //
+        // Five is enough for the choice to be a real one and few enough
+        // that five profiles still fit in a prompt. The draw is much
+        // larger because most of it is unusable: SkyrimNet resolves a
+        // UUID for roughly one NPC in five, and a candidate it cannot
+        // describe renders as a name and a hold beside others that get a
+        // paragraph each. That is not a choice between five people. The
+        // first run under this pipeline drew five, could describe one,
+        // and picked the described one three times out of four.
+        //
+        // Twenty-five is sized off that ratio with room to spare. A draw
+        // that still comes up short goes ahead with whoever it found --
+        // a shorter shortlist is worse than a full one and much better
+        // than no plot.
+        constexpr std::size_t kShortlistSize = 5;
+        constexpr std::size_t kCandidateDraw = 25;
+
         // Plugin-thread only. Poll() is called from PollOnPluginThread,
         // which is itself serialised through AsyncDispatch, so this
         // needs no synchronisation of its own.
@@ -249,11 +267,7 @@ namespace NarrativeEngine::PlotTick
             // here.
             const PlotModel::Step& failed = plot.history.back();
 
-            // Built from the same population and world the birth call
-            // used, so an index still means what it meant then.
-            const auto menus = PlotMenus::Build(PlotPopulation::Get(), plot.mastermind, PlotMenus::CurrentWorld(), {});
-
-            const auto outcome = PlotAdapt::Compose(pt, plot, failed, menus, plot.adaptations, cap);
+            const auto outcome = PlotAdapt::Compose(pt, plot, failed, plot.adaptations, cap);
 
             if (outcome.decision == PlotAdapt::Decision::Concede) {
                 PlotLog::Concede(plot, outcome.reason);
@@ -265,10 +279,9 @@ namespace NarrativeEngine::PlotTick
             PlotLog::Adapt(plot, plot.adaptations, cap, outcome.plan.size());
 
             // Replace from the cursor onward. Everything before it has
-            // already moved to history, and the objective is NOT in the
-            // rewritable set -- Parse has already refused any plan that
-            // does not end on it, so the tail arriving here is one this
-            // assignment is safe to trust.
+            // already moved to history, and the scheme is NOT in the
+            // rewritable set -- it is a sentence on the plot, which a
+            // revision has no way to reach.
             plot.plan.erase(plot.plan.begin() + static_cast<std::ptrdiff_t>(plot.cursor), plot.plan.end());
             for (const auto& step : outcome.plan) {
                 plot.plan.push_back(step);
@@ -276,85 +289,81 @@ namespace NarrativeEngine::PlotTick
             return true;
         }
 
-        // Fill in targets for a freshly built plan from the population.
-        void AssignTargets(PlotState& state, PlotModel::Plot& plot, const PlotCasting::Population& population)
-        {
-            if (population.members.empty()) {
-                return;
-            }
-
-            // Drawn from the mastermind's OWN menu, not the province.
-            //
-            // Step 16 replaces this with the LLM picking indices off the
-            // same menu; until then a uniform draw over the menu is the
-            // stub. What changes here is not the randomness but the
-            // POOL: the previous stub drew from all 881 unique NPCs, so
-            // a Riften pickpocket's scheme could turn on a Solitude
-            // priest neither of them had ever met, and every step sized
-            // itself off a travel distance that reflected nothing.
-            const auto menus = PlotMenus::Build(population, plot.mastermind, PlotMenus::CurrentWorld(), {});
-
-            for (auto& step : plot.plan) {
-                if (step.target != 0) {
-                    continue;
-                }
-                // The menu can be empty -- an NPC in no faction, with no
-                // ties, whose hold did not resolve. Falling back to the
-                // population keeps such a plot runnable rather than
-                // leaving it targetless, which is the failure Step 12
-                // found the first time round.
-                if (!menus.actors.empty()) {
-                    const auto& pick = menus.actors[Plots::NextRandom(state) % menus.actors.size()];
-                    step.target = pick.npc;
-                    step.targetName = pick.name;
-                } else {
-                    const auto& pick = population.members[Plots::NextRandom(state) % population.members.size()];
-                    step.target = pick.npc;
-                    step.targetName = pick.name;
-                }
-            }
-        }
-
         void BirthPlot(const PlotThread::Token& pt, PlotState& state, double gameDay)
         {
             const auto& population = PlotPopulation::Get();
             if (population.members.empty()) {
+                PlotLog::BirthSkipped("the population is empty", 0, 0);
                 return;
             }
 
-            const auto cast = PlotCasting::SelectMastermind(population,
-                                                            state.occupancy,
-                                                            gameDay,
-                                                            PlotPopulation::AlivePredicate(),
-                                                            PlotPopulation::SeatedPredicate(),
-                                                            state.rngState);
-            if (cast.chosen == 0) {
+            // The plugin picks who is ELIGIBLE and how likely each of
+            // them is to be scheming; the model picks which one actually
+            // is. A weighted draw of several, rather than one, is what
+            // gives the first call something to decide.
+            const auto cast = PlotCasting::SelectMastermindShortlist(population,
+                                                                     state.occupancy,
+                                                                     gameDay,
+                                                                     PlotPopulation::AlivePredicate(),
+                                                                     PlotPopulation::ViablePredicate(),
+                                                                     PlotPopulation::SeatedPredicate(),
+                                                                     kCandidateDraw,
+                                                                     state.rngState);
+
+            // Keep the ones SkyrimNet can actually describe, strongest
+            // draw first, and stop at five. The draw is already in
+            // weighted order, so taking the front of it keeps the
+            // weighting; the filter only removes people the model could
+            // not have judged anyway.
+            //
+            // Counted rather than short-circuited, so the log can say how
+            // close the draw came. "0 castable out of 25 drawn" and "0
+            // castable out of 0 drawn" are different problems and the
+            // difference is not recoverable after the fact.
+            std::vector<RE::FormID> shortlist;
+            shortlist.reserve(kShortlistSize);
+            std::size_t castable = 0;
+            for (const auto npc : cast.shortlist) {
+                if (!PlotBirth::IsCastable(npc)) {
+                    continue;
+                }
+                ++castable;
+                if (shortlist.size() < kShortlistSize) {
+                    shortlist.push_back(npc);
+                }
+            }
+            if (shortlist.empty()) {
+                PlotLog::BirthSkipped(cast.shortlist.empty()
+                                          ? "the weighted draw found nobody eligible"
+                                          : "SkyrimNet could not describe any of the drawn candidates",
+                                      cast.shortlist.size(),
+                                      castable);
                 return;
             }
-            const PlotCasting::Member* boss = population.Find(cast.chosen);
-            if (boss == nullptr) {
-                return;
+
+            // Then shuffle, so the order the prompt lists them in carries
+            // no signal. Weight decides who is ON the list; it must not
+            // also decide who is at the top of it, because position is
+            // exactly the kind of thing a model picks up on when the
+            // real question is hard.
+            for (std::size_t i = shortlist.size(); i > 1; --i) {
+                const auto j = static_cast<std::size_t>(Plots::NextRandom(state) % i);
+                std::swap(shortlist[i - 1], shortlist[j]);
             }
 
             PlotModel::Plot plot;
-            plot.mastermind = cast.chosen;
-            plot.mastermindName = boss->name;
             plot.bornOnGameDay = gameDay;
 
-            // The menus the prompt is rendered from and the menus the
-            // response is validated against are the SAME OBJECT. Built
-            // once and passed to both, because an index means nothing
-            // except against the list it was chosen from -- rebuilding
-            // between the two would silently renumber the answer.
-            const auto menus = PlotMenus::Build(population, plot.mastermind, PlotMenus::CurrentWorld(), {});
-
-            // Blocks, on the plot worker, by design. Nothing else runs
-            // there, so there is nobody to yield to.
-            if (!PlotBirth::Compose(pt, *boss, menus, plot)) {
-                // Rejected. The slot is never taken and the id is never
-                // spent, so a run of bad responses costs call budget and
-                // nothing else -- no half-built plot, no leaked
-                // occupancy row, no gap in the numbering to explain.
+            // Blocks, on the plot worker, three times, by design.
+            // Nothing else runs there, so there is nobody to yield to.
+            // Compose fills in the mastermind as well as the scheme,
+            // because which of the shortlist it is is its first answer.
+            if (!PlotBirth::Compose(pt, population, shortlist, plot)) {
+                // Rejected at one of the three stages. The slot is never
+                // taken and the id is never spent, so a run of bad
+                // responses costs call budget and nothing else -- no
+                // half-built plot, no leaked occupancy row, no gap in
+                // the numbering to explain.
                 return;
             }
             plot.id = state.nextPlotId++;
@@ -370,7 +379,7 @@ namespace NarrativeEngine::PlotTick
             // actually steering selection or just decorating it.
             const auto pick = std::find_if(cast.considered.begin(),
                                            cast.considered.end(),
-                                           [&](const PlotCasting::Candidate& c) { return c.npc == cast.chosen; });
+                                           [&](const PlotCasting::Candidate& c) { return c.npc == plot.mastermind; });
             const double weight = pick != cast.considered.end() ? pick->weight : 0.0;
 
             PlotLog::Born(plot, weight, cast.considered.size());

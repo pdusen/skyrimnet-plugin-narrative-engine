@@ -1,4 +1,0 @@
-{"ambition": "She means to run the hold's silver without her name appearing anywhere near it.",
- "objective": {"type": "conceal", "target": 0},
- "plan": [{"type": "acquire", "target": 1},
-          {"type": "recruit", "target": 0}]}

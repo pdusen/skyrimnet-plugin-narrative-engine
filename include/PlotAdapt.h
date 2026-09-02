@@ -3,7 +3,6 @@
 #include <string>
 #include <vector>
 
-#include <PlotMenus.h>
 #include <PlotModel.h>
 #include <PlotThread.h>
 
@@ -24,16 +23,21 @@
 // A refusal the model can express is a refusal it will use.
 //
 // ---------------------------------------------------------------------
-// The objective is not writable
+// The scheme is not writable
 //
 // Adaptation rewrites the PATH, never the destination. The plot's
-// objective is fixed at birth and is the thing the whole plot is a
-// record of wanting; a system that let it drift would produce plots
-// whose ambition text no longer describes them, and no way to notice.
-// The revised plan must end on the objective it was given, and a
-// response that ends anywhere else is rejected rather than applied.
+// scheme is fixed at birth and is the thing the whole plot is a record
+// of wanting; a system that let it drift would produce plots whose
+// ambition text no longer describes them, and no way to notice.
 //
-// See docs/implementation/PHASE_14_FACTION_PLOTS.md step 17.
+// This used to be a CHECK -- the revised plan had to end on the
+// objective step, and one that ended elsewhere was rejected. It is now
+// structural: the scheme is a sentence on the Plot, it is not in the
+// plan, and a revision has no way to reach it. Stronger, and one fewer
+// rule to get wrong.
+//
+// Like birth, this call is offered no menu of people or objects; steps
+// come back as a type and a sentence.
 namespace NarrativeEngine::PlotAdapt
 {
     enum class Decision : std::uint8_t
@@ -51,29 +55,26 @@ namespace NarrativeEngine::PlotAdapt
         // Only when Concede. One sentence, already sanitized.
         std::string reason;
         // Only when Revise. The replacement TAIL -- everything from the
-        // cursor onward, ending on the objective.
+        // cursor onward.
         std::vector<PlotModel::Step> plan;
     };
 
     struct Limits
     {
-        // The replacement tail, whole. The objective is no longer a step
-        // sitting on the end of it, so one step is a legitimate
+        // The replacement tail, whole. One step is a legitimate
         // revision: "forget the groundwork, just do it".
+        //
+        // The ceiling tracks birth's. A revision that cannot be as long
+        // as the plan it replaces is a strange rule, and neither bound
+        // is stated to the model here either.
         std::size_t minSteps = 1;
-        std::size_t maxSteps = 6;
+        std::size_t maxSteps = 10;
         std::size_t maxReason = 300;
+        std::size_t maxDescription = 200;
     };
 
     // Pure. Response text in, decision-or-rejection out.
-    //
-    // Takes no objective any more. It used to, because the revised plan
-    // had to END on the objective and that was the one rule this file
-    // existed to enforce. The objective is no longer a step at all -- it
-    // lives on the Plot and names it -- so there is nothing here for a
-    // revision to overwrite, which is a stronger guarantee than the
-    // check it replaces.
-    [[nodiscard]] Outcome Parse(const std::string& response, const PlotMenus::Menus& menus, const Limits& limits);
+    [[nodiscard]] Outcome Parse(const std::string& response, const Limits& limits);
 
     // --- The engine-bound half -------------------------------------------
 
@@ -88,7 +89,6 @@ namespace NarrativeEngine::PlotAdapt
     [[nodiscard]] Outcome Compose(const PlotThread::Token& pt,
                                   const PlotModel::Plot& plot,
                                   const PlotModel::Step& failed,
-                                  const PlotMenus::Menus& menus,
                                   int attempt,
                                   int maxAttempts);
 } // namespace NarrativeEngine::PlotAdapt

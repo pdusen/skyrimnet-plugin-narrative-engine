@@ -1,3 +1,3 @@
 {"decision": "revise",
- "plan": [{"type": "recruit", "target": 0},
-          {"type": "acquire", "target": 1}]}
+ "plan": [{"type": "recruit", "description": "Buy the harbourmaster silence with a share of the season."},
+          {"type": "acquire", "description": "Take the ledger while he is looking the other way."}]}

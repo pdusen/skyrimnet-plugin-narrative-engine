@@ -19,40 +19,9 @@ namespace NarrativeEngine::PlotAdapt
             out.rejection = std::move(reason);
             return out;
         }
-
-        bool ReadIndex(const nlohmann::json& value, std::size_t& out)
-        {
-            if (value.is_number_unsigned()) {
-                out = value.get<std::size_t>();
-                return true;
-            }
-            if (value.is_number_integer()) {
-                const auto signedValue = value.get<std::int64_t>();
-                if (signedValue < 0) {
-                    return false;
-                }
-                out = static_cast<std::size_t>(signedValue);
-                return true;
-            }
-            if (value.is_string()) {
-                try {
-                    std::size_t consumed = 0;
-                    const auto text = value.get<std::string>();
-                    const auto parsed = std::stoll(text, &consumed);
-                    if (consumed != text.size() || parsed < 0) {
-                        return false;
-                    }
-                    out = static_cast<std::size_t>(parsed);
-                    return true;
-                } catch (const std::exception&) {
-                    return false;
-                }
-            }
-            return false;
-        }
     } // namespace
 
-    Outcome Parse(const std::string& response, const PlotMenus::Menus& menus, const Limits& limits)
+    Outcome Parse(const std::string& response, const Limits& limits)
     {
         const auto body = EvaluationPipeline::StripMarkdownFences(response);
         auto json = nlohmann::json::parse(body, nullptr, false);
@@ -121,50 +90,38 @@ namespace NarrativeEngine::PlotAdapt
             if (typeIt == raw.end() || !typeIt->is_string()) {
                 return Reject(where + " carried no 'type' string");
             }
-            PlotModel::StepType type{};
-            if (!PlotModel::ParseStepType(typeIt->get<std::string>(), type)) {
+            PlotModel::Step step;
+            if (!PlotModel::ParseStepType(typeIt->get<std::string>(), step.type)) {
                 return Reject(where + " named step type '" + typeIt->get<std::string>()
                               + "', which is not in the manifest");
             }
 
-            const auto targetIt = raw.find("target");
-            if (targetIt == raw.end()) {
-                return Reject(where + " carried no 'target'");
+            // Sanitized at the point of extraction, like every other
+            // free-form string we take back from a model.
+            const auto descIt = raw.find("description");
+            if (descIt == raw.end() || !descIt->is_string()) {
+                return Reject(where + " carried no 'description' string");
             }
-            std::size_t index = 0;
-            if (!ReadIndex(*targetIt, index)) {
-                return Reject(where + " had a 'target' that is not a whole number");
+            step.description = LLMTextSanitizer::Sanitize(descIt->get<std::string>());
+            if (step.description.empty()) {
+                return Reject(where + " had a 'description' that was empty after sanitizing");
             }
-
-            PlotModel::Step step;
-            step.type = type;
-            if (type == PlotModel::StepType::Acquire) {
-                if (index >= menus.items.size()) {
-                    return Reject(where + " named object " + std::to_string(index) + " of "
-                                  + std::to_string(menus.items.size()));
-                }
-                step.target = menus.items[index].form;
-                step.targetName = menus.items[index].displayName;
-            } else {
-                if (index >= menus.actors.size()) {
-                    return Reject(where + " named person " + std::to_string(index) + " of "
-                                  + std::to_string(menus.actors.size()));
-                }
-                step.target = menus.actors[index].npc;
-                step.targetName = menus.actors[index].name;
+            if (step.description.size() > limits.maxDescription) {
+                return Reject(where + " had a 'description' of " + std::to_string(step.description.size())
+                              + " characters, over the limit of " + std::to_string(limits.maxDescription));
             }
             plan.push_back(std::move(step));
         }
 
-        // Adaptation rewrites the path, never the destination -- and
-        // now it CANNOT rewrite the destination, because the objective
-        // is not in the plan for it to reach. What is left to check is
-        // the same rule birth applies: the last step is the one that
-        // accomplishes the objective, and concealment accomplishes
-        // nothing.
+        // Adaptation rewrites the path, never the destination -- and now
+        // it CANNOT rewrite the destination, because the scheme is a
+        // sentence on the Plot rather than a step in the plan. What is
+        // left to check is the same rule birth applies: the last step is
+        // the one that accomplishes the scheme, and concealment
+        // accomplishes nothing.
         if (plan.back().type == PlotModel::StepType::Conceal) {
             return Reject("the revised plan ends in 'conceal'; the last step is the one that accomplishes the "
-                          "objective, and covering your tracks accomplishes nothing");
+                          "scheme, and covering your tracks accomplishes nothing");
         }
 
         Outcome out;

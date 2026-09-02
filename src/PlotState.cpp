@@ -121,22 +121,19 @@ namespace NarrativeEngine::Plots
         plot.mastermind = 0xDEAD0001;
         plot.mastermindName = "Debug Mastermind";
         plot.ambition = "A hand-seeded plot, standing in until plot birth exists.";
-        plot.objectiveType = PlotModel::StepType::Acquire;
-        plot.objectiveTarget = 0xDEAD00FF;
-        plot.objectiveTargetName = "Amulet of Kings";
+        plot.scheme = "Get the Amulet of Kings out of the Broker's hands and into hers.";
         plot.bornOnGameDay = gameDay;
 
-        const auto addStep = [&plot](PlotModel::StepType type, RE::FormID target, const char* targetName) {
+        const auto addStep = [&plot](PlotModel::StepType type, const char* description) {
             PlotModel::Step step;
             step.type = type;
-            step.target = target;
-            step.targetName = targetName;
+            step.description = description;
             plot.plan.push_back(std::move(step));
         };
 
-        addStep(PlotModel::StepType::Locate, 0xDEAD0010, "the Broker");
-        addStep(PlotModel::StepType::Surveil, 0xDEAD0011, "the Estate");
-        addStep(plot.objectiveType, plot.objectiveTarget, plot.objectiveTargetName.c_str());
+        addStep(PlotModel::StepType::Locate, "Find out which of the Broker's rooms the amulet is kept in.");
+        addStep(PlotModel::StepType::Surveil, "Watch the estate until the household's evening routine is clear.");
+        addStep(PlotModel::StepType::Acquire, "Take the amulet during the hour the study stands empty.");
 
         auto& row = state.occupancy[plot.mastermind];
         row.plotId = plot.id;

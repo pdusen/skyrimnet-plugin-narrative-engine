@@ -96,6 +96,22 @@ namespace NarrativeEngine::PlotLog
     // one of them means the prompt needs work.
     void BirthRejected(const std::string& mastermind, const std::string& reason);
 
+    // A tick that had a free slot and produced no plot WITHOUT ever
+    // asking the model.
+    //
+    // This line exists because its absence was mistaken for a bug. A
+    // tick declined to birth, made no LLM call, wrote no REJECT, and
+    // looked from the log exactly like a tick that had never tried --
+    // there was no way to tell "nobody was eligible" from "the birth
+    // rule said no" from "something is broken", because all three were
+    // the same silence.
+    //
+    // `drawn` and `castable` are the two numbers that separate the
+    // cases: a drawn of 0 is the weighted draw finding nobody eligible,
+    // and a castable of 0 out of a healthy drawn is SkyrimNet resolving
+    // none of them to a profile.
+    void BirthSkipped(const std::string& reason, std::size_t drawn, std::size_t castable);
+
     // A plot the mastermind gave up on, and why.
     void Concede(const PlotModel::Plot& plot, const std::string& reason);
 
