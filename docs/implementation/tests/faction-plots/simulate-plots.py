@@ -41,6 +41,8 @@ ACTOR_COOLDOWN_DAYS = 1.5
 # PlotCasting::kOutrankMargin and kSelfWeightShare.
 OUTRANK_MARGIN = 0.25
 SELF_WEIGHT_SHARE = 1.0
+# PlotCasting::kRung3StandingCeiling.
+RUNG3_STANDING_CEILING = 0.75
 MAX_ADAPTATIONS = 3
 # Absolute work per tick, in the same units as a step's threshold. NOT a
 # fraction of the threshold -- see the note in Settings.h. When it was a
@@ -211,7 +213,17 @@ class Sim:
                 # Nobody a long way above the mastermind is someone they
                 # could ask. Rungs 1 and 2 already require a subordinate,
                 # which says more than this does.
-                outranks = m.standing > boss.standing + OUTRANK_MARGIN
+                # Relative AND absolute: the relative test alone is
+                # inert for a mastermind already at 1.0, which is
+                # exactly who the exponential weighting draws most.
+                #
+                # The C++ ALSO excludes hostile ties here. This harness
+                # cannot: population.json records a tie as
+                # {other, sharedFaction} and carries no relationship
+                # polarity, so its rung-3 pool is wider than the game's
+                # by however many Foe edges it contains.
+                outranks = (m.standing > boss.standing + OUTRANK_MARGIN
+                            or m.standing > RUNG3_STANDING_CEILING)
                 if (rung == 1 and subordinate and tied) or (rung == 2 and subordinate) or (
                     rung == 3 and tied and not shared_faction and not outranks
                 ):

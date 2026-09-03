@@ -67,6 +67,19 @@ namespace NarrativeEngine::PlotCasting
         // his daughter as "someone they know, in the same organisation"
         // -- word for word what it said about Aela the Huntress.
         bool household = false;
+        // GossipGraph's PersonalEdge::tierDelta, carried through rather
+        // than discarded: +1 for a hostile relationship (Rival, Foe,
+        // Enemy, Archnemesis), -1 for a close one (Lover, Ally,
+        // Confidant), 0 otherwise.
+        //
+        // Dropping it meant plot casting could not tell an ally from an
+        // archnemesis -- both were simply `tied` -- and rung 3, which
+        // wants ties that are NOT collegial, routed hostile pairs
+        // preferentially, because enemies rarely share an admitted
+        // faction. Vanilla ships `ElenwenUlfric` at rank Foe, and the
+        // ladder duly cast Ulfric Stormcloak to lift a note off a desk
+        // in the Blue Palace for the Thalmor ambassador.
+        int tierDelta = 0;
     };
 
     // What an NPC brings to a step, cached at population-build time.
@@ -261,8 +274,8 @@ namespace NarrativeEngine::PlotCasting
     //
     //   rung 1  a subordinate with a personal tie to the mastermind
     //   rung 2  any subordinate (lower rank in a shared admitted faction)
-    //   rung 3  a personal tie without a shared faction, who does not
-    //           OUTRANK the mastermind
+    //   rung 3  a personal tie without a shared faction, who is
+    //           neither HOSTILE to the mastermind nor OUTRANKS them
     //   rung 4  the mastermind themselves
     //
     // The last rung is not a failure case — it is how independents
@@ -289,9 +302,13 @@ namespace NarrativeEngine::PlotCasting
     // cook, because they share a roof: a uniform draw among three
     // acquaintances, one of whom was the Jarl.
     //
-    // Two changes, and they are complementary. The guard removes people
-    // who plainly outrank the mastermind from the pool. Rung 4 then
-    // takes half the remaining draw, because by the time a scheme is
+    // Three changes, and they are complementary. The guard removes
+    // people who plainly outrank the mastermind, or who sit at the top
+    // of any ladder at all. The hostility check removes the ones who
+    // would sooner see the scheme fail: rung 3 wants ties that are not
+    // collegial, and enemies rarely share an admitted faction, so
+    // without it hostile pairs were routed there preferentially. Rung 4
+    // then takes half of what remains, because by the time a scheme is
     // down to distant acquaintances, doing it yourself is genuinely the
     // competitive option — and a scullion with nobody to command running
     // her own errand is the CORRECT story, not a degraded one.

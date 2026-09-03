@@ -157,6 +157,23 @@ namespace NarrativeEngine::PlotCasting
         // rather than the last resort.
         constexpr double kSelfWeightShare = 1.0;
 
+        // An ABSOLUTE ceiling, on top of the relative kOutrankMargin.
+        //
+        // That margin is measured against the mastermind, which makes it
+        // inert for the people at the top of a ladder: Elenwen stands at
+        // 1.0, so nothing can exceed her by a quarter and every jarl in
+        // Skyrim sat inside her guard. That is exactly the mastermind
+        // the exponential weighting now draws most often, so the
+        // relative test failed where it was needed most.
+        //
+        // Strictly above 0.75 is the top rung of any ladder the roster
+        // declares: a jarl, a guild master, the head of a great family.
+        // Those people do not run errands for an acquaintance, whoever
+        // is asking. Rungs 1 and 2 are unaffected -- being someone's
+        // actual subordinate says more than this does, and a 1.0
+        // standing makes that nearly impossible anyway.
+        constexpr double kRung3StandingCeiling = 0.75;
+
         // The highest standing this member holds anywhere that counts.
         //
         // The same quantity MastermindWeight uses, and for the same
@@ -188,17 +205,18 @@ namespace NarrativeEngine::PlotCasting
             return standings;
         }
 
-        bool HasTieTo(const Member& member, RE::FormID other, bool* sharedFaction)
+        // The tie from `member` to `other`, or null. Returns the whole
+        // Tie rather than a bool and an out-param, because callers need
+        // more of it than "does one exist" -- whether it is collegial,
+        // and now whether it is hostile.
+        const Tie* FindTie(const Member& member, RE::FormID other)
         {
             for (const auto& tie : member.ties) {
                 if (tie.other == other) {
-                    if (sharedFaction != nullptr) {
-                        *sharedFaction = tie.sharedFaction;
-                    }
-                    return true;
+                    return &tie;
                 }
             }
-            return false;
+            return nullptr;
         }
 
         // Rejection reason for a candidate, or None if they may be cast.
@@ -411,9 +429,20 @@ namespace NarrativeEngine::PlotCasting
                     continue;
                 }
 
-                bool sharedFaction = false;
-                const bool tied =
-                    HasTieTo(*boss, member.npc, &sharedFaction) || HasTieTo(member, mastermind, &sharedFaction);
+                // Either direction: the graph writes both, but a tie
+                // recorded only one way still connects two people.
+                const Tie* tie = FindTie(*boss, member.npc);
+                if (tie == nullptr) {
+                    tie = FindTie(member, mastermind);
+                }
+                const bool tied = tie != nullptr;
+                const bool sharedFaction = tied && tie->sharedFaction;
+
+                // A Foe is not an agent. The graph knows the difference
+                // and plot casting used to throw it away, which is how
+                // the Thalmor ambassador came to send Ulfric Stormcloak
+                // on an errand.
+                const bool hostile = tied && tie->tierDelta > 0;
 
                 // A subordinate is someone whose standing is LOWER
                 // than the mastermind's in a faction they share. Equal
@@ -447,10 +476,11 @@ namespace NarrativeEngine::PlotCasting
                 // already treats anyone not on the rung: `considered`
                 // records who was WEIGHED, and someone three ranks above
                 // the mastermind was never a candidate to weigh.
-                const bool outranks = BestStanding(member, seated) > bossBest + kOutrankMargin;
+                const double memberBest = BestStanding(member, seated);
+                const bool outranks = memberBest > bossBest + kOutrankMargin || memberBest > kRung3StandingCeiling;
 
                 const bool onThisRung = (rung == 1 && subordinate && tied) || (rung == 2 && subordinate)
-                                        || (rung == 3 && tied && !sharedFaction && !outranks);
+                                        || (rung == 3 && tied && !sharedFaction && !hostile && !outranks);
                 if (!onThisRung) {
                     continue;
                 }
