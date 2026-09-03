@@ -87,7 +87,14 @@ Do not repeat that mistake. Everything else about the task is unchanged.
 
 {% if length(c.hold) > 0 %}Lives in {{ c.hold }}.{% endif %}
 
-{{ render_character_profile("short_inline", c.UUID) }}
+#### Summary
+{{ render_character_profile("bio_summary", c.UUID) }}
+
+#### Occupation
+{{ render_character_profile("bio_occupation", c.UUID) }}
+
+#### Aspirations
+{{ render_character_profile("bio_aspirations", c.UUID) }}
 
 {% endfor %}
 

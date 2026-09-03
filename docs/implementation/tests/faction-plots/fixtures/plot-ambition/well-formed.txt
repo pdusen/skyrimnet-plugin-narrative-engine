@@ -1,2 +1,2 @@
 {"ambition": "She means to own everyone in the Rift who matters, so that nothing moves through it without her leave.",
- "scheme": "She wants Riften's new dock inspector replaced with someone who already owes her."}
+ "scheme": "Get Riften's new dock inspector replaced with someone who already owes her."}

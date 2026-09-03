@@ -49,30 +49,35 @@ they fit better than stealing an object does.
 Return a JSON object. No markdown fences. No prose before or after the
 object.
 
-- `ambition` — one sentence, third person. The lifetime thing.
-- `scheme` — one sentence, third person, and concrete enough that you
-  could tell whether it had worked. This is what the scheme IS, not how
-  it is done; the steps are decided separately and are not your problem
-  here.
+- `reasoning` — a short explanation of how this scheme fits the ambition,
+  in one or two sentences. This is to explain your own reasoning.
+- `ambition` — one sentence, third person, about twenty words. The
+  lifetime thing, written as a complete sentence with a pronoun subject:
+  "She means to own everyone in the Rift who matters."
+- `scheme` — **not** a sentence about them. One short line naming the
+  concrete thing to be done, in the same voice an instruction is written
+  in, and no more than fifteen words:
 
-Keep both to about twenty words, and write each as a **complete
-sentence** with a subject: "She wants the dock inspector replaced with
-someone who owes her." Not "Is arranging for the dock inspector to be
-replaced" — a sentence with its subject cut off reads as a fragment
-wherever it is shown, and the scheme is shown as the plot's title.
+  > Complete an activity in order to make a thing happen.
 
-Use a pronoun rather than the name. Whoever reads these already knows
-whose scheme it is, so "She wants the dock inspector replaced" beats
-"Bryling wants the dock inspector replaced".
+  Not "She is completing an activity to make a thing happen." No "she is",
+  no "he is", no name — this line is shown as the plot's title, directly
+  beneath the schemer's name, so a subject in front of it is a word
+  repeated and a word wasted.
+
+  Concrete enough that you could tell whether it had worked: name the
+  person, the place or the thing it turns on. This is what the scheme
+  IS, not how it is done; the steps are decided separately and are not
+  your problem here.
 
 Write plainly. No markdown, no headings, no bullet points inside either
-sentence. Name only people and places that exist in Skyrim, and prefer
-ones this person would actually know.
+line. Name only people and places that exist in Skyrim, and prefer ones
+this person would actually know.
 
 ## Hard Constraints
 - Output strict JSON. No markdown code fences. No prose before or after
   the JSON object.
-- Return only the keys `ambition` and `scheme`.
+- Return only the keys `reasoning`, `ambition` and `scheme`.
 - `scheme` must not be a restatement of `ambition`. Identical sentences
   are thrown away.
 [ end system ]
@@ -91,10 +96,22 @@ Do not repeat that mistake. Everything else about the task is unchanged.
 **{{ mastermind.name }}**{% if length(mastermind.standing) > 0 %}, {{ mastermind.standing }}{% endif %}.
 {% if length(mastermind.hold) > 0 %}They live in {{ mastermind.hold }}.{% endif %}
 
+### Summary
 {{ render_character_profile("bio_summary", npc.UUID) }}
+
+### Background
 {{ render_character_profile("bio_background", npc.UUID) }}
+
+### Occupation
+{{ render_character_profile("bio_occupation", npc.UUID) }}
+
+### Personality
 {{ render_character_profile("bio_personality", npc.UUID) }}
+
+### Aspirations
 {{ render_character_profile("bio_aspirations", npc.UUID) }}
+
+### Relationships
 {{ render_character_profile("bio_relationships", npc.UUID) }}
 
 {% if length(memories) > 0 %}

@@ -48,16 +48,28 @@ somewhere after the step it hides — and never as the last step, because
 the last step is the one that accomplishes the scheme and covering your
 tracks accomplishes nothing.
 
+**Do not open with `surveil` out of habit.** Watching someone is what you
+do when you need to know something you cannot get any other way, and
+most schemes do not start there. Consider what this particular person
+already knows before deciding they need to learn it: a steward knows the
+household's routine, a publican knows who drinks with whom, a priest
+knows who confesses what. Some schemes open by asking a favour, some by
+laying hands on a thing, some by simply going where the answer is
+written down.
+
 ## Output Format
 Return a JSON object. No markdown fences. No prose before or after the
 object.
 
 - `plan` — an array of objects, in the order the steps happen. Each has:
+  - `reasoning` — a short explanation of how this step builds upon the
+    previous step to advance the scheme, in one or two sentences. This
+    is to explain your own reasoning.
   - `type` — one of the step ids above, spelled exactly.
   - `description` — one short line, third person, saying what this step
     is. Concrete: name the person, the place or the thing it turns on.
-    "Wait for the steward to leave the counting room", not "gather
-    information".
+    "Offer the night clerk a share of the season to look away", not
+    "gather information".
 
 Keep each description under about fifteen words, and do not open it with
 the schemer's name — every step is theirs, so saying so each time costs
@@ -91,7 +103,11 @@ Do not repeat that mistake. Everything else about the task is unchanged.
 **{{ mastermind.name }}**{% if length(mastermind.standing) > 0 %}, {{ mastermind.standing }}{% endif %}.
 {% if length(mastermind.hold) > 0 %}They live in {{ mastermind.hold }}.{% endif %}
 
+### Summary
 {{ render_character_profile("bio_summary", npc.UUID) }}
+
+### Occupation
+{{ render_character_profile("bio_occupation", npc.UUID) }}
 
 ## What they are ultimately after
 
