@@ -66,7 +66,6 @@ namespace NarrativeEngine::PlotCasting
         // scheming against Olfina Gray-Mane with the prompt describing
         // his daughter as "someone they know, in the same organisation"
         // -- word for word what it said about Aela the Huntress.
-        bool household = false;
         // GossipGraph's PersonalEdge::tierDelta, carried through rather
         // than discarded: +1 for a hostile relationship (Rival, Foe,
         // Enemy, Archnemesis), -1 for a close one (Lover, Ally,
@@ -79,6 +78,16 @@ namespace NarrativeEngine::PlotCasting
         // faction. Vanilla ships `ElenwenUlfric` at rank Foe, and the
         // ladder duly cast Ulfric Stormcloak to lift a note off a desk
         // in the Blue Palace for the Thalmor ambassador.
+        //
+        // It is also the only signal here for how CLOSE a pair are. A
+        // `household` flag briefly sat beside it, reading
+        // `edge.via == Channel::Household`, and it was never once true:
+        // RebuildEdges emits only Channel::Faction and
+        // Channel::Relationship, and Household is a gossip TRANSMISSION
+        // tier rather than an edge channel. Anything wanting to know
+        // that two people are family should read a negative tierDelta,
+        // which is what vanilla's sibling and ally relationships
+        // actually produce.
         int tierDelta = 0;
     };
 
@@ -278,6 +287,9 @@ namespace NarrativeEngine::PlotCasting
     //           neither HOSTILE to the mastermind nor OUTRANKS them
     //   rung 4  the mastermind themselves
     //
+    // `stepText` is the step's own description, and anyone it NAMES is
+    // excluded from rungs 1 to 3. See NamesPerson.
+    //
     // The last rung is not a failure case — it is how independents
     // operate by default, and it is why a Riverwood farmer's schemes
     // look different from Maven's without any rule saying so. It is also
@@ -314,6 +326,7 @@ namespace NarrativeEngine::PlotCasting
     // her own errand is the CORRECT story, not a degraded one.
     [[nodiscard]] Result SelectActor(const Population& population,
                                      RE::FormID mastermind,
+                                     std::string_view stepText,
                                      const OccupancyTable& occupancy,
                                      double gameDay,
                                      const AlivePredicate& alive,

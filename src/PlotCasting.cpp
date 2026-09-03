@@ -1,7 +1,9 @@
 #include <PlotCasting.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <string_view>
 
 namespace NarrativeEngine::PlotCasting
 {
@@ -205,6 +207,106 @@ namespace NarrativeEngine::PlotCasting
             return standings;
         }
 
+        // Is this token a word in its own right at `at`, rather than a
+        // fragment of a longer one? Hyphens and apostrophes count as
+        // word characters so "Snow-Shod" and "Ri'saad" are single words.
+        bool IsWordChar(char c)
+        {
+            const auto u = static_cast<unsigned char>(c);
+            return std::isalnum(u) != 0 || c == '-' || c == '\'';
+        }
+
+        bool WholeWordAt(std::string_view text, std::size_t at, std::size_t len)
+        {
+            const bool leftOk = at == 0 || !IsWordChar(text[at - 1]);
+            const bool rightOk = at + len >= text.size() || !IsWordChar(text[at + len]);
+            return leftOk && rightOk;
+        }
+
+        bool ContainsWord(std::string_view text, std::string_view word)
+        {
+            if (word.empty() || word.size() > text.size()) {
+                return false;
+            }
+            for (std::size_t at = 0; at + word.size() <= text.size(); ++at) {
+                bool same = true;
+                for (std::size_t i = 0; i < word.size() && same; ++i) {
+                    same = std::tolower(static_cast<unsigned char>(text[at + i]))
+                           == std::tolower(static_cast<unsigned char>(word[i]));
+                }
+                if (same && WholeWordAt(text, at, word.size())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Does this step's description NAME this person?
+        //
+        // The step that made this necessary read "Watch Asgeir and
+        // Vittoria at the Bee and Barb to learn wedding plans", and
+        // casting handed it to Asgeir Snow-Shod -- the groom, spying on
+        // his own wedding for the father sabotaging it. Casting cannot
+        // see what a step is about: targets are unresolved, so all it
+        // has is this sentence, and it was not reading it.
+        //
+        // TOKEN-WISE, because the model writes "Asgeir", not "Asgeir
+        // Snow-Shod". Tokens under four characters are ignored as too
+        // collision-prone to be evidence, and bare honorifics are
+        // ignored because "Elder Othreloth" would otherwise exclude
+        // everyone from a step mentioning any elder.
+        //
+        // This is NOT name resolution. It never turns a string into an
+        // entity -- it asks whether a KNOWN entity's name occurs in one,
+        // which has no ambiguity to get wrong. A false positive costs
+        // nothing: casting draws somebody else. See
+        // docs/prior-art/NAME_RESOLUTION_FAILURE_MODES.md for the thing
+        // this is deliberately not.
+        bool NamesPerson(std::string_view text, std::string_view name)
+        {
+            if (text.empty() || name.empty()) {
+                return false;
+            }
+            static constexpr std::string_view kTitles[] = {
+                "elder",
+                "captain",
+                "commander",
+                "general",
+                "legate",
+                "jarl",
+                "chief",
+                "thane",
+                "brother",
+                "sister",
+                "mother",
+                "father",
+                "master",
+                "lady",
+            };
+
+            std::size_t at = 0;
+            while (at < name.size()) {
+                const auto end = name.find(' ', at);
+                const auto token = name.substr(at, end == std::string_view::npos ? std::string_view::npos : end - at);
+                at = end == std::string_view::npos ? name.size() : end + 1;
+
+                if (token.size() < 4) {
+                    continue;
+                }
+                bool isTitle = false;
+                for (const auto title : kTitles) {
+                    if (title.size() == token.size() && ContainsWord(title, token)) {
+                        isTitle = true;
+                        break;
+                    }
+                }
+                if (!isTitle && ContainsWord(text, token)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         // The tie from `member` to `other`, or null. Returns the whole
         // Tie rather than a bool and an out-param, because callers need
         // more of it than "does one exist" -- whether it is collegial,
@@ -398,6 +500,7 @@ namespace NarrativeEngine::PlotCasting
 
     Result SelectActor(const Population& population,
                        RE::FormID mastermind,
+                       std::string_view stepText,
                        const OccupancyTable& occupancy,
                        double gameDay,
                        const AlivePredicate& alive,
@@ -426,6 +529,14 @@ namespace NarrativeEngine::PlotCasting
 
             for (const auto& member : population.members) {
                 if (member.npc == mastermind) {
+                    continue;
+                }
+                // The subject of a step does not carry it out. Applied
+                // to every rung, and NOT to the mastermind's own
+                // self-candidacy below -- a scheme naming its own
+                // schemer is ordinary, and excluding them there would
+                // leave some steps with nobody at all.
+                if (NamesPerson(stepText, member.name)) {
                     continue;
                 }
 

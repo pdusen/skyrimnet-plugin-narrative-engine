@@ -12,10 +12,6 @@ namespace NarrativeEngine::PlotMenus
     std::string_view RelationId(Relation r) noexcept
     {
         switch (r) {
-        case Relation::HouseholdAndColleague:
-            return "household_and_colleague";
-        case Relation::Household:
-            return "household";
         case Relation::CloseAndColleague:
             return "close_and_colleague";
         case Relation::Close:
@@ -33,10 +29,6 @@ namespace NarrativeEngine::PlotMenus
     std::string_view RelationPhrase(Relation r) noexcept
     {
         switch (r) {
-        case Relation::HouseholdAndColleague:
-            return "of their own household, and in the same organisation";
-        case Relation::Household:
-            return "of their own household";
         case Relation::CloseAndColleague:
             return "someone they know, in the same organisation";
         case Relation::Close:
@@ -68,11 +60,9 @@ namespace NarrativeEngine::PlotMenus
             standing = 0.0;
 
             bool close = false;
-            bool household = false;
             for (const auto& tie : boss.ties) {
                 if (tie.other == other.npc) {
                     close = true;
-                    household = household || tie.household;
                     break;
                 }
             }
@@ -80,7 +70,6 @@ namespace NarrativeEngine::PlotMenus
                 for (const auto& tie : other.ties) {
                     if (tie.other == boss.npc) {
                         close = true;
-                        household = household || tie.household;
                         break;
                     }
                 }
@@ -100,14 +89,6 @@ namespace NarrativeEngine::PlotMenus
                 }
             }
 
-            if (household && colleague) {
-                relation = Relation::HouseholdAndColleague;
-                return true;
-            }
-            if (household) {
-                relation = Relation::Household;
-                return true;
-            }
             if (close && colleague) {
                 relation = Relation::CloseAndColleague;
                 return true;

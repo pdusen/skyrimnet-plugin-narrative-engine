@@ -198,6 +198,10 @@ class Sim:
         # guard and the mastermind competing inside the rung-3 draw
         # rather than only beneath it. Keep this in step with the C++ or
         # the ladder split this harness reports is fiction.
+        # The C++ ALSO excludes anyone the step's description NAMES, so
+        # the subject of a step never carries it out. This harness plans
+        # in step TYPES with no descriptions, so there is nothing here to
+        # match against and that exclusion is unmodelled.
         boss_standing = {f["faction"]: f["standing"] for f in boss.factions}
         for rung in (1, 2, 3):
             pool = []

@@ -187,6 +187,7 @@ namespace NarrativeEngine::PlotTick
 
             const auto cast = PlotCasting::SelectActor(population,
                                                        plot.mastermind,
+                                                       step.description,
                                                        state.occupancy,
                                                        gameDay,
                                                        PlotPopulation::AlivePredicate(),

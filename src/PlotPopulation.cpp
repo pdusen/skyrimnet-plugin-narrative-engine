@@ -575,8 +575,7 @@ namespace NarrativeEngine::PlotPopulation
             }
 
             for (const auto& edge : GossipGraph::PersonalEdges(npcId)) {
-                member.ties.push_back(
-                    {edge.other, edge.sharedFaction, edge.via == GossipGraph::Channel::Household, edge.tierDelta});
+                member.ties.push_back({edge.other, edge.sharedFaction, edge.tierDelta});
             }
 
             g_population.members.push_back(std::move(member));
