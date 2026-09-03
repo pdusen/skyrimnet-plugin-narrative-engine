@@ -1,6 +1,7 @@
 #include <PlotCasting.h>
 
 #include <algorithm>
+#include <cmath>
 
 namespace NarrativeEngine::PlotCasting
 {
@@ -71,15 +72,31 @@ namespace NarrativeEngine::PlotCasting
 
         // How much weight an NPC's standing earns them as a mastermind.
         //
-        // Three tiers, and the gap between them is deliberately modest:
-        // a jarl should be likelier than a guard, not a hundred times
-        // likelier, or the same handful of NPCs would scheme
-        // continuously and the cooldown would be the only thing
-        // spreading the work.
-        //
         //   base            everyone, including independents
         //   + membership    belonging to any organisation at all
         //   + standing      how far up a ROSTERED one you are
+        //
+        // THE STANDING TERM IS EXPONENTIAL, doubling kStandingDoublings
+        // times across the ladder. That is a reversal: it was linear,
+        // on the argument that a jarl should be likelier than a guard
+        // and not a hundred times likelier, or the same few NPCs would
+        // scheme continuously with only the cooldown spreading the work.
+        //
+        // What that argument missed is what a mastermind NEEDS. A plot
+        // is a person with something to hide and SOMEBODY TO SEND, and
+        // the second half is not evenly distributed: a jarl has a court,
+        // a guild master has a guild, a cook has herself. Casting
+        // measured that correctly and the log said so -- once the agent
+        // ladder stopped handing Elisif to the kitchen, nearly every
+        // mastermind was executing their own steps, because nearly every
+        // mastermind drawn had nobody to send. The draw was producing
+        // schemers who could not scheme.
+        //
+        // Weighting the people with resources far more heavily is the
+        // fix at source. The concentration risk the old comment named is
+        // real and unchanged -- watch the CASTING line in the offline
+        // harness for distinct-mastermind count, and the mastermind
+        // cooldown is what has to absorb it.
         //
         // The standing term takes the MAXIMUM across factions, never the
         // sum: someone's weight should reflect the most authority they
@@ -95,7 +112,18 @@ namespace NarrativeEngine::PlotCasting
             // plot possible at all.
             constexpr double kBase = 1.0;
             constexpr double kMembershipBonus = 0.5;
-            constexpr double kPerStanding = 3.0;
+            // Doublings of the standing term across the full 0..1
+            // ladder. Four gives 2^(4s) - 1, so the term doubles for
+            // every quarter of the ladder climbed:
+            //
+            //   standing  0     0.25  0.5   0.75  1.0
+            //   term      0     1     3     7     15
+            //   weight    1.5   2.5   4.5   8.5   16.5
+            //
+            // An independent stays at 1.0, a bottom-rung member at 1.5,
+            // and a jarl is eleven times the courtier and sixteen times
+            // the farmer.
+            constexpr double kStandingDoublings = 4.0;
 
             double weight = kBase;
             double best = 0.0;
@@ -110,7 +138,39 @@ namespace NarrativeEngine::PlotCasting
             if (belongs) {
                 weight += kMembershipBonus;
             }
-            return weight + kPerStanding * std::clamp(best, 0.0, 1.0);
+            return weight + std::exp2(kStandingDoublings * std::clamp(best, 0.0, 1.0)) - 1.0;
+        }
+
+        // How far above the mastermind a rung-3 candidate may stand
+        // before they are simply not someone this person could ask.
+        //
+        // Standings are normalised 0..1, so a quarter is roughly one
+        // rung of a four-or-five rung ladder: a thane may ask a fellow
+        // thane a favour, and may not ask the housecarl. Deliberately
+        // not zero -- "never ask anyone above you" would forbid a
+        // steward leaning on a jarl, which is a thing that happens.
+        constexpr double kOutrankMargin = 0.25;
+
+        // What share of the rung-3 draw the mastermind takes for
+        // themselves. Half: by the time a scheme is down to distant
+        // acquaintances, doing it yourself is the competitive option
+        // rather than the last resort.
+        constexpr double kSelfWeightShare = 1.0;
+
+        // The highest standing this member holds anywhere that counts.
+        //
+        // The same quantity MastermindWeight uses, and for the same
+        // reason: the MAXIMUM across factions, never the sum, because it
+        // answers "how much authority does this person hold anywhere".
+        double BestStanding(const Member& member, const SeatedPredicate& seated)
+        {
+            double best = 0.0;
+            for (const auto& f : member.factions) {
+                if (Counts(seated, member.npc, f)) {
+                    best = std::max(best, f.standing);
+                }
+            }
+            return best;
         }
 
         // The mastermind's standing in each faction they belong to,
@@ -337,6 +397,7 @@ namespace NarrativeEngine::PlotCasting
         // the ladder pools candidates across all rather than picking one
         // faction first.
         const auto bossStandings = StandingsOf(*boss, seated);
+        const double bossBest = BestStanding(*boss, seated);
 
         // Walk the ladder rung by rung and stop at the first rung with
         // anyone on it. Drawing across all rungs at once would let a
@@ -375,8 +436,21 @@ namespace NarrativeEngine::PlotCasting
                     }
                 }
 
+                // Rungs 1 and 2 already require a subordinate, which is
+                // a stronger statement than this. Rung 3 required
+                // nothing at all, which is how a Blue Palace cook came
+                // to have the Jarl of Solitude in her draw: they share a
+                // roof, that is a non-collegial tie, and nothing asked
+                // whether Elisif was a person Gisli could ask.
+                //
+                // Skipped rather than screened, matching how the ladder
+                // already treats anyone not on the rung: `considered`
+                // records who was WEIGHED, and someone three ranks above
+                // the mastermind was never a candidate to weigh.
+                const bool outranks = BestStanding(member, seated) > bossBest + kOutrankMargin;
+
                 const bool onThisRung = (rung == 1 && subordinate && tied) || (rung == 2 && subordinate)
-                                        || (rung == 3 && tied && !sharedFaction);
+                                        || (rung == 3 && tied && !sharedFaction && !outranks);
                 if (!onThisRung) {
                     continue;
                 }
@@ -389,11 +463,40 @@ namespace NarrativeEngine::PlotCasting
                 rungCandidates.push_back(candidate);
             }
 
+            // At rung 3 the mastermind enters the draw rather than
+            // waiting below it. Their weight is the whole rest of the
+            // rung, so it is a coin flip between "ask one of these
+            // acquaintances" and "do it yourself" however many
+            // acquaintances there are -- an NPC with twelve neighbours
+            // should not thereby become twelve times less likely to act
+            // for themselves.
+            //
+            // Not screened for occupancy, for the reason rung 4 gives
+            // below: they are already engaged in this very plot as its
+            // mastermind, and that must not read as unavailable.
+            if (rung == 3 && (!alive || alive(mastermind))) {
+                double othersWeight = 0.0;
+                for (const auto& c : rungCandidates) {
+                    othersWeight += c.weight;
+                }
+                Candidate self;
+                self.npc = mastermind;
+                self.rung = 4;
+                // Floored at one so they remain drawable when every
+                // acquaintance was screened out, which is the case the
+                // fallback beneath used to be the only answer to.
+                self.weight = std::max(1.0, kSelfWeightShare * othersWeight);
+                rungCandidates.push_back(self);
+            }
+
             const RE::FormID picked = WeightedDraw(rungCandidates, rng);
             result.considered.insert(result.considered.end(), rungCandidates.begin(), rungCandidates.end());
             if (picked != 0) {
                 result.chosen = picked;
-                result.chosenRung = rung;
+                // The mastermind is rung 4 wherever they were drawn
+                // from. The log line says who acted and why, and "rung
+                // 3" against their own name would be a lie about which.
+                result.chosenRung = picked == mastermind ? 4 : rung;
             }
         }
 

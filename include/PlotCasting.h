@@ -261,12 +261,40 @@ namespace NarrativeEngine::PlotCasting
     //
     //   rung 1  a subordinate with a personal tie to the mastermind
     //   rung 2  any subordinate (lower rank in a shared admitted faction)
-    //   rung 3  a personal tie without a shared faction
+    //   rung 3  a personal tie without a shared faction, who does not
+    //           OUTRANK the mastermind
     //   rung 4  the mastermind themselves
     //
     // The last rung is not a failure case — it is how independents
     // operate by default, and it is why a Riverwood farmer's schemes
-    // look different from Maven's without any rule saying so.
+    // look different from Maven's without any rule saying so. It is also
+    // a live option at rung 3 rather than only a fallback beneath it;
+    // see kSelfWeightShare.
+    //
+    // ---------------------------------------------------------------------
+    // WHY RUNG 3 IS GUARDED, AND WHY RUNG 4 COMPETES WITH IT
+    //
+    // The subordinate test is a STRICT inequality against the
+    // mastermind's own standing, so two large groups can never reach
+    // rungs 1 or 2 at all: anyone at the bottom of a rostered ladder
+    // (nothing is below zero) and anyone in no rostered faction (their
+    // standings map is empty, so the lookup never hits). Both fall
+    // straight through to rung 3 every single time.
+    //
+    // Rung 3 then had no rank check whatsoever and drew uniformly. It
+    // also selects deliberately for ties that are NOT collegial, which
+    // in practice means the household channel — and in Skyrim your
+    // housemates in a palace are the court. The observed result was
+    // Elisif the Fair running surveillance for Gisli, a Blue Palace
+    // cook, because they share a roof: a uniform draw among three
+    // acquaintances, one of whom was the Jarl.
+    //
+    // Two changes, and they are complementary. The guard removes people
+    // who plainly outrank the mastermind from the pool. Rung 4 then
+    // takes half the remaining draw, because by the time a scheme is
+    // down to distant acquaintances, doing it yourself is genuinely the
+    // competitive option — and a scullion with nobody to command running
+    // her own errand is the CORRECT story, not a degraded one.
     [[nodiscard]] Result SelectActor(const Population& population,
                                      RE::FormID mastermind,
                                      const OccupancyTable& occupancy,

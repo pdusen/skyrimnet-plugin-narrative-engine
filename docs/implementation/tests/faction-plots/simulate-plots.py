@@ -38,6 +38,9 @@ TICK_HOURS = 12.0
 MAX_CONCURRENT = 10
 MASTERMIND_COOLDOWN_DAYS = 5.0
 ACTOR_COOLDOWN_DAYS = 1.5
+# PlotCasting::kOutrankMargin and kSelfWeightShare.
+OUTRANK_MARGIN = 0.25
+SELF_WEIGHT_SHARE = 1.0
 MAX_ADAPTATIONS = 3
 # Absolute work per tick, in the same units as a step's threshold. NOT a
 # fraction of the threshold -- see the note in Settings.h. When it was a
@@ -118,10 +121,15 @@ class Member:
     def mastermind_weight(self):
         # Mirrors PlotCasting::MastermindWeight: base, +membership,
         # +standing, with standing taken as the MAXIMUM across factions.
+        #
+        # The standing term is EXPONENTIAL, doubling four times across
+        # the ladder, because a mastermind needs somebody to send and
+        # that is not evenly distributed. Keep this in step with the C++
+        # or the distribution this harness reports is fiction.
         w = 1.0
         if self.factions:
             w += 0.5
-        return w + 3.0 * self.standing
+        return w + 2.0 ** (4.0 * min(max(self.standing, 0.0), 1.0)) - 1.0
 
 
 class Sim:
@@ -184,6 +192,10 @@ class Sim:
         return self.rng.choices(pool, weights=weights, k=1)[0]
 
     def pick_actor(self, boss):
+        # Mirrors PlotCasting::SelectActor, including the rung-3 outrank
+        # guard and the mastermind competing inside the rung-3 draw
+        # rather than only beneath it. Keep this in step with the C++ or
+        # the ladder split this harness reports is fiction.
         boss_standing = {f["faction"]: f["standing"] for f in boss.factions}
         for rung in (1, 2, 3):
             pool = []
@@ -196,10 +208,25 @@ class Sim:
                     f["faction"] in boss_standing and f["standing"] < boss_standing[f["faction"]]
                     for f in m.factions
                 )
+                # Nobody a long way above the mastermind is someone they
+                # could ask. Rungs 1 and 2 already require a subordinate,
+                # which says more than this does.
+                outranks = m.standing > boss.standing + OUTRANK_MARGIN
                 if (rung == 1 and subordinate and tied) or (rung == 2 and subordinate) or (
-                    rung == 3 and tied and not shared_faction
+                    rung == 3 and tied and not shared_faction and not outranks
                 ):
                     pool.append(m)
+
+            if rung == 3:
+                # The mastermind takes half the draw: by the time a
+                # scheme is down to distant acquaintances, doing it
+                # yourself is the competitive option. Weighted rather
+                # than uniform so twelve neighbours do not make an NPC
+                # twelve times less likely to act for themselves.
+                weights = [1.0] * len(pool) + [max(1.0, SELF_WEIGHT_SHARE * len(pool))]
+                pick = self.rng.choices(pool + [boss], weights=weights, k=1)[0]
+                return (boss, 4) if pick is boss else (pick, 3)
+
             if pool:
                 return self.rng.choice(pool), rung
         return boss, 4  # the mastermind does it themselves
