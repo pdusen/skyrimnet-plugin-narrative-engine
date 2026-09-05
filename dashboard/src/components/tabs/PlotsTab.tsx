@@ -78,8 +78,8 @@ export function PlotsTab({ plots }: { plots: PlotsTabState }): ReactNode {
                     <button type="button" disabled={busy} onClick={() => forceTicks(10)}>
                         Force 10
                     </button>
-                    <button type="button" disabled={busy} onClick={() => forceTicks(50)}>
-                        Force 50
+                    <button type="button" disabled={busy} onClick={() => forceTicks(20)}>
+                        Force 20
                     </button>
                     <button type="button" disabled={busy} onClick={seedPlot}>
                         Seed debug plot
