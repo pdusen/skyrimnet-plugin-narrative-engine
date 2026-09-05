@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "onnxruntime-c-api",
+  "version": "1.26.0",
+  "port-version": 1,
+  "description": "ONNX Runtime C API declarations only, for binding dynamically to a runtime supplied by another mod.",
+  "homepage": "https://github.com/microsoft/onnxruntime",
+  "license": "MIT",
+  "supports": "windows"
+}
