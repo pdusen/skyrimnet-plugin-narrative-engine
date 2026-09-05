@@ -261,8 +261,10 @@ namespace NarrativeEngine::CharacterIndex
         for (const auto& [docIndex, score] : scores) {
             if (score > 0.0f) {
                 const auto hit = hits.find(docIndex);
-                const auto covered = hit == hits.end() ? 0.0f : static_cast<float>(hit->second) / denominator;
-                matches.push_back(Match{_docs[docIndex].character, score, 0.0f, covered});
+                const auto count = hit == hits.end() ? 0u : hit->second;
+                const auto covered = static_cast<float>(count) / denominator;
+                matches.push_back(
+                    Match{_docs[docIndex].character, score, 0.0f, covered, count, static_cast<std::uint32_t>(asked)});
             }
         }
         if (matches.empty()) {

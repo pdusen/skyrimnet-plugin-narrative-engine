@@ -273,6 +273,23 @@ namespace NarrativeEngine::CharacterBios
     // The longest match wins, so a string naming somebody's steward
     // resolves to the steward rather than to their employer.
     //
+    // A WORD of a name counts too, when it belongs to exactly one
+    // person and the text capitalises it. The whole display name is
+    // often not what a prompt writes: "Arch-Mage Aren, the leader of
+    // the College" names Savos Aren and contains neither "Savos" nor
+    // "Savos Aren", so the whole-name pass missed it and the prose
+    // search answered with Ancano -- the Thalmor agent who spends his
+    // biography talking about the man, and who covers every word of
+    // that query.
+    //
+    // Two guards make this safe. The word must be UNIQUE to one member,
+    // which is what stops a family name resolving: 94% of name words
+    // are unique, and `briar`, `gray`, `mane` and `born` are among the
+    // 6% that are not, so the Black-Briars and the Gray-Manes correctly
+    // resolve to nobody. And it must be CAPITALISED where it appears,
+    // which is what separates a person called Hunter from a step asking
+    // for a hunter.
+    //
     // Returns 0 when the text names nobody, which is the normal case:
     // most targets are descriptions, and those belong to the search.
     [[nodiscard]] RE::FormID FindByName(std::string_view text);

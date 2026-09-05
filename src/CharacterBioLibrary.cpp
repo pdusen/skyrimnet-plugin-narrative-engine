@@ -1,5 +1,6 @@
 #include <CharacterBios.h>
 
+#include <cctype>
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
@@ -74,6 +75,12 @@ namespace NarrativeEngine::CharacterBios
         // actually have a biography: naming somebody this plugin cannot
         // describe is the same as naming nobody.
         std::unordered_map<std::string, RE::FormID> g_byName;
+
+        // One WORD of a display name -> the member it belongs to, but
+        // only for words belonging to exactly one of them. A word two
+        // people share resolves to neither, which is what keeps the
+        // Black-Briars and the Gray-Manes out of this.
+        std::unordered_map<std::string, RE::FormID> g_byNameWord;
         const Bio g_empty;
     } // namespace
 
@@ -82,6 +89,7 @@ namespace NarrativeEngine::CharacterBios
         g_bios.clear();
         g_search.Clear();
         g_byName.clear();
+        g_byNameWord.clear();
         g_census = Census{};
     }
 
@@ -97,6 +105,7 @@ namespace NarrativeEngine::CharacterBios
         g_bios.clear();
         g_search.Clear();
         g_byName.clear();
+        g_byNameWord.clear();
         g_census = Census{};
 
         Catalog catalog;
@@ -189,6 +198,26 @@ namespace NarrativeEngine::CharacterBios
             if (!key.empty()) {
                 g_byName.emplace(std::move(key), member.npc);
             }
+            // And each word of it separately. A word already claimed by
+            // somebody else is struck out rather than overwritten: a
+            // surname shared by six Battle-Borns identifies none of
+            // them, and quietly keeping the last one indexed would make
+            // it identify whichever happened to load last.
+            for (std::size_t at = 0; at < member.name.size();) {
+                const auto end = member.name.find(' ', at);
+                const auto word =
+                    Normalise(member.name.substr(at, end == std::string::npos ? std::string::npos : end - at));
+                at = end == std::string::npos ? member.name.size() : end + 1;
+                if (word.size() < 4) {
+                    continue;
+                }
+                const auto seen = g_byNameWord.find(word);
+                if (seen == g_byNameWord.end()) {
+                    g_byNameWord.emplace(word, member.npc);
+                } else if (seen->second != member.npc) {
+                    seen->second = 0; // shared, so it names nobody
+                }
+            }
             ++g_census.loaded;
         }
 
@@ -247,7 +276,41 @@ namespace NarrativeEngine::CharacterBios
                 bestLength = length;
             }
         }
-        return best;
+        if (best != 0) {
+            return best;
+        }
+
+        // No whole name matched. Try a distinctive WORD of one, taken
+        // from the front of the text where a name belongs, and only
+        // where the text capitalises it.
+        constexpr std::size_t kNameWordWindow = 4;
+        std::size_t at = 0;
+        for (std::size_t index = 0; index < kNameWordWindow && at < text.size(); ++index) {
+            while (at < text.size() && !std::isalpha(static_cast<unsigned char>(text[at]))) {
+                ++at;
+            }
+            const auto start = at;
+            while (at < text.size() && std::isalpha(static_cast<unsigned char>(text[at]))) {
+                ++at;
+            }
+            if (start == at) {
+                break;
+            }
+            // Capitalised, which is what tells a person called Hunter
+            // from a step asking for a hunter.
+            if (!std::isupper(static_cast<unsigned char>(text[start]))) {
+                continue;
+            }
+            const auto word = Normalise(text.substr(start, at - start));
+            if (word.size() < 4) {
+                continue;
+            }
+            const auto found = g_byNameWord.find(word);
+            if (found != g_byNameWord.end() && found->second != 0) {
+                return found->second;
+            }
+        }
+        return 0;
     }
 
     const CharacterIndex::Index& Search()

@@ -119,6 +119,15 @@ namespace NarrativeEngine::CharacterIndex
         // requirement, confidence in the match should fall. Those same
         // two queries now score 0.17 and 0.40.
         float coverage = 0.0f;
+
+        // The same thing as counts, because a RATIO is the wrong test on
+        // a short query. Coverage 0.45 sounds like a demand; against a
+        // two-term query it means "match one of them", which is how "the
+        // thane of Whiterun" resolved to a thane of Solitude -- `whiterun`
+        // was never required. A caller wanting "at least two words of
+        // this had better be true of them" has to count, not divide.
+        std::uint32_t matched = 0;
+        std::uint32_t asked = 0;
     };
 
     struct Params

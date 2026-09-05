@@ -216,6 +216,28 @@ namespace NarrativeEngine::PlotTick
         // How far down the ranked list to look before giving up.
         constexpr std::size_t kRoleCandidates = 24;
 
+        // Is this match good enough to be somebody rather than nobody?
+        //
+        // Two tests, because one ratio cannot serve both a nine-word
+        // description and a two-word one:
+        //
+        //   coverage      the share of the query that is true of them,
+        //                 which is what the sweep in kMinRoleCoverage
+        //                 was measured against;
+        //   matched >= 2  at least two of the query's words, which a
+        //                 ratio silently stops demanding as the query
+        //                 gets short. At 0.45, a two-term query passes
+        //                 on ONE term and a six-term query on three.
+        //
+        // A single word in common is not evidence about a person. The
+        // exception is a query with only one word in it, where one match
+        // is everything there was to ask for.
+        [[nodiscard]] bool AcceptableMatch(const CharacterIndex::Match& match)
+        {
+            const std::uint32_t needed = match.asked < 2 ? match.asked : 2;
+            return match.coverage >= kMinRoleCoverage && match.matched >= needed;
+        }
+
         // Fill a step's TARGET from whatever the step asked for.
         //
         // The request is one string and may be either a name or a
@@ -254,12 +276,26 @@ namespace NarrativeEngine::PlotTick
                 }
             }
 
-            // Otherwise it is a description, and description is what the
-            // index is for.
+            // Otherwise it is a description, and description is what
+            // the index is for.
+            //
+            // BEST MATCH, not first acceptable. The list arrives ordered
+            // by BM25 score and this used to take the first entry
+            // clearing the coverage floor, which made coverage a floor
+            // and never a preference -- so a biography that matched one
+            // word of the query loudly beat one that matched every word
+            // quietly. "the thane of Whiterun" duly resolved to a thane
+            // of Solitude, whose bio says "thane" a great many times,
+            // over a Whiterun housecarl whose bio said both words.
+            //
+            // Coverage decides, score breaks ties.
+            RE::FormID best = 0;
+            std::string bestName;
+            float bestCoverage = 0.0f;
+            float bestScore = 0.0f;
+
             for (const auto& match : CharacterBios::Search().Query(step.targetWanted, kRoleCandidates)) {
-                // NOT a break: the list is ordered by score, and
-                // coverage does not fall with it.
-                if (match.coverage < kMinRoleCoverage) {
+                if (!AcceptableMatch(match)) {
                     continue;
                 }
                 // A scheme is not aimed at its own schemer.
@@ -270,10 +306,19 @@ namespace NarrativeEngine::PlotTick
                 if (member == nullptr || (alive && !alive(match.character))) {
                     continue;
                 }
-                step.target = match.character;
-                step.targetName = member->name;
+                if (match.coverage > bestCoverage || (match.coverage == bestCoverage && match.score > bestScore)) {
+                    best = match.character;
+                    bestName = member->name;
+                    bestCoverage = match.coverage;
+                    bestScore = match.score;
+                }
+            }
+            if (best != 0) {
+                step.target = best;
+                step.targetName = std::move(bestName);
                 return;
             }
+
             // Nobody good enough. What the step asked for stands in for
             // them, whether that was a description or a name -- a named
             // person the search cannot place still reads correctly.
