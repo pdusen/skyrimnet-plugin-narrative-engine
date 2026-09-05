@@ -71,6 +71,15 @@ namespace NarrativeEngine::PlotStepParse
                    PlotModel::Step& step,
                    std::string& rejection)
     {
+        // The chart's caption for this step. Required: a plan whose
+        // steps all fall back to their type verb reads as a row of
+        // repeated words, which is the failure the field exists to fix.
+        std::string why;
+        if (!ReadText(raw, "label", limits.maxLabel, where, step.label, why)) {
+            rejection = why;
+            return false;
+        }
+
         // Every step needs somebody to carry it out, so the agent is
         // required.
         const auto agentIt = raw.find("agent");
@@ -83,7 +92,6 @@ namespace NarrativeEngine::PlotStepParse
             return false;
         }
 
-        std::string why;
         if (!ReadText(*agentIt, "query", limits.maxQuery, where + ", 'agent'", step.agentRole.query, why)) {
             rejection = why;
             return false;

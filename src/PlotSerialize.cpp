@@ -97,10 +97,10 @@ namespace NarrativeEngine::PlotSerialize
             // silently reinterpret every saved step.
             const std::string typeId(PlotModel::TypeId(step.type));
             return WriteString(sink, typeId) && WritePod(sink, step.target) && WriteString(sink, step.targetName)
-                   && WriteString(sink, step.description) && WriteString(sink, step.agentRole.query)
-                   && WriteString(sink, step.agentRole.label) && WriteString(sink, step.targetWanted)
-                   && WritePod(sink, step.actor) && WriteString(sink, step.actorName)
-                   && WritePod(sink, static_cast<std::uint8_t>(step.state))
+                   && WriteString(sink, step.description) && WriteString(sink, step.label)
+                   && WriteString(sink, step.agentRole.query) && WriteString(sink, step.agentRole.label)
+                   && WriteString(sink, step.targetWanted) && WritePod(sink, step.actor)
+                   && WriteString(sink, step.actorName) && WritePod(sink, static_cast<std::uint8_t>(step.state))
                    && WritePod(sink, static_cast<std::uint8_t>(step.outcome)) && WritePod(sink, step.budget)
                    && WritePod(sink, step.elapsed) && WritePod(sink, step.threshold) && WritePod(sink, step.progress)
                    && WritePod(sink, step.heldTicks) && WritePod(sink, step.sizingTravel)
@@ -144,7 +144,8 @@ namespace NarrativeEngine::PlotSerialize
                 resolved = false;
             }
 
-            if (!ReadString(source, step.targetName) || !ReadString(source, step.description)) {
+            if (!ReadString(source, step.targetName) || !ReadString(source, step.description)
+                || !ReadString(source, step.label)) {
                 return false;
             }
 

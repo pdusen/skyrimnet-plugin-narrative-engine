@@ -56,6 +56,10 @@ object.
   do not end on `conceal`. Each step has:
   - `type` — one of the step ids above, spelled exactly.
   - `description` — one short concrete line saying what the step is.
+  - `label` — one to three words naming what the step IS, with no proper
+    nouns. The caption under it on a chart, read at a glance beside the
+    others, so it says the KIND of move rather than repeating the type
+    or compressing the description.
   - `agent` — who carries it out, as an object with `query` and `label`.
   - `target` — the ONE PERSON it is done to, as a plain string. Include
     it only when the step acts on a person; most steps do not.
@@ -108,6 +112,8 @@ revision as changing the steps.
   the JSON object.
 - Every `type` MUST be one of the step ids listed above, spelled exactly.
 - Every step MUST carry a non-empty `description`.
+- Every step MUST carry a `label` of one to three words containing no
+  proper noun.
 - Every step MUST carry an `agent` with a non-empty `query` and `label`.
 - Every `agent.label` MUST be one to three words and MUST NOT contain a
   proper noun.

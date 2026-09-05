@@ -213,6 +213,19 @@ namespace NarrativeEngine::PlotModel
         // other one, which is the failure this text exists to avoid.
         std::string description;
 
+        // One to three words naming what this step IS, carrying no
+        // proper noun. The caption under its node on the chain.
+        //
+        // Not derivable from anything else the step holds. The TYPE is
+        // too coarse -- half a plan reads "Watch, Watch, Acquire" -- and
+        // the description is a sentence, which at chart scale is a wall
+        // of prose nobody reads. This is the middle the chain needed and
+        // neither end could give it.
+        //
+        // May be empty: plans predating this, and any the model answers
+        // without one, fall back to the type verb.
+        std::string label;
+
         // WHO a step needs, as the model described them.
         //
         // `query` is a sentence matched against character biographies;

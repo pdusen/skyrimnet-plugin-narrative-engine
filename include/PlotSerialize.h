@@ -44,7 +44,7 @@ namespace NarrativeEngine::PlotSerialize
     //
     // v2 (step 6) adds each step's roll history and the four numbers
     // that sized it. Nothing has shipped, so no migration is owed.
-    inline constexpr std::uint32_t kRecordVersion = 6;
+    inline constexpr std::uint32_t kRecordVersion = 7;
 
     class ByteSink
     {

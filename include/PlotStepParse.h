@@ -54,8 +54,8 @@ namespace NarrativeEngine::PlotStepParse
     // says it anyway.
     [[nodiscard]] bool NamesThePlayer(std::string_view text);
 
-    // Read the `agent` object and the optional `target` string off one
-    // step of a plan, into `step`.
+    // Read the `label`, the `agent` object and the optional `target`
+    // string off one step of a plan, into `step`.
     //
     // `where` names the step for the rejection message ("step 2",
     // "revised step 0"), which is the only thing the two callers phrase

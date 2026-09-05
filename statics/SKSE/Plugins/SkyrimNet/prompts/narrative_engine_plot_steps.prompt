@@ -70,6 +70,12 @@ object.
     is. Concrete: name the person, the place or the thing it turns on,
     and the specific move being made on them. A line that could be
     pasted into any other scheme is too vague to be worth reading.
+  - `label` — one to three words naming what this step IS, with no
+    proper nouns. It is the caption under the step on a chart, read at a
+    glance beside seven others, so it says the KIND of move: what a
+    reader would call this if they had to file it. Not the step type
+    again, which they can already see, and not a compression of the
+    description, which they can open.
   - `agent` — who carries this step out. An object with `query` and
     `label`, described below. Every step has one.
   - `target` — the ONE PERSON this step is done TO, as a plain string.
@@ -170,6 +176,8 @@ written as a name is of course a name.
 - Return only the key `plan`.
 - Every `type` MUST be one of the step ids listed above, spelled exactly.
 - Every step MUST carry a non-empty `description`.
+- Every step MUST carry a `label` of one to three words containing no
+  proper noun.
 - Every step MUST carry an `agent` with a non-empty `query` and `label`.
 - A step MUST carry a `target` only when it acts on exactly one person.
   Omit the key otherwise; do not send an empty string.

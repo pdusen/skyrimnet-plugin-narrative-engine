@@ -1448,7 +1448,10 @@ namespace NarrativeEngine::DashboardUIManager
                     // prose is unreadable at a glance, and the glance is
                     // what the chain is for.
                     {"label", PlotModel::Label(step)},
-                    {"type", PlotModel::Verb(step.type)},
+                    // The model's own caption when it wrote one, and
+                    // the type verb when it did not -- an older plan, or
+                    // an answer that omitted it.
+                    {"type", step.label.empty() ? std::string{PlotModel::Verb(step.type)} : step.label},
                     {"description", step.description},
                     {"state", state},
                     {"outcome", PlotModel::StepOutcomeId(step.outcome)},
