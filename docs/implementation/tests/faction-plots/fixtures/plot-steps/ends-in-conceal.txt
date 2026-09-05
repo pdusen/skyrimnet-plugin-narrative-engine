@@ -1,2 +1,0 @@
-{"plan": [{"type": "acquire", "description": "Take the tally sheets from the harbourmaster's office."},
-          {"type": "conceal", "description": "Burn the copies and make sure nobody connects her to the theft."}]}

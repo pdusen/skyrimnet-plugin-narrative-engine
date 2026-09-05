@@ -1,4 +1,0 @@
-{"decision": "revise",
- "plan": [{"type": "recruit", "description": "Buy the harbourmaster silence with a share of the season.",
-           "agent": {"query": "a dockhand trusted enough to carry an offer", "label": "a dockhand"}},
-          {"type": "acquire", "description": "Take the ledger while he is looking the other way."}]}

@@ -1,2 +1,0 @@
-{"because": "He has been passed over twice and says so to anyone who will listen.",
- "choice": "1B07D"}

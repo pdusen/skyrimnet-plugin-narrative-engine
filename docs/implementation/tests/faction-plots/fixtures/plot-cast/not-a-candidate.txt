@@ -1,2 +1,0 @@
-{"because": "Somebody who is not on the list.",
- "choice": "0x13BBF"}

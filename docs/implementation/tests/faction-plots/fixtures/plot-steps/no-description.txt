@@ -1,2 +1,0 @@
-{"plan": [{"type": "surveil"},
-          {"type": "recruit", "description": "Offer the harbourmaster a share."}]}

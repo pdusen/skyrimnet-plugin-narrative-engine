@@ -77,6 +77,33 @@ See [`docs/VANILLA_RECORD_REFERENCE.md`](docs/VANILLA_RECORD_REFERENCE.md) for t
 file format, efficient search recipes (Glob by EditorID; scope Grep to one record-type folder; the files are
 CRLF so `$` anchors silently fail), and what the export is *not* authoritative for.
 
+## Throwaway code and data never touch the repo
+
+Probes, harnesses, simulations, captured logs, generated fixtures, scraped reference data, one-off
+analysis scripts — anything written to answer a question rather than to ship — goes in the scratchpad
+directory named in the session prompt. **Never** under `docs/`, `src/`, `include/`, or anywhere else
+inside the working tree, and never in a commit.
+
+This is not tidiness. Throwaway code is written to a lower standard on purpose, because its whole value
+is being fast to write and quick to discard. Committing it inverts that: it now has to be maintained,
+it goes stale silently because nothing runs it, and the next person cannot tell which files are load
+bearing. This repository accumulated forty-nine such files across two phases before anyone noticed —
+probe runners, population dumps, simulation scripts, response fixtures — and by then several referred
+to code that no longer existed.
+
+Concretely:
+
+- Write probe `.cpp` files, their runners, simulation scripts and any data they need to the scratchpad.
+- Write captured or generated data (population dumps, log extracts, scraped pages) there too.
+- If a probe is worth keeping, say so and ask — do not commit it on the assumption that it is.
+- Before any `git add`, look at what is being staged. A file that exists only to have answered a
+  question does not belong in the commit, even when it is sitting in the working tree next to files
+  that do.
+
+The scratchpad is per session, so anything needed across sessions has to be either genuinely part of the
+project or re-derivable. That is the right forcing function: if it cannot survive being thrown away, it
+was not throwaway.
+
 ## Always run `format.ps1` after adding or modifying files
 
 After any batch of edits — code, docs, config, whatever — run `pwsh -File format.ps1` at the repo root

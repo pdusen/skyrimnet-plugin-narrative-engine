@@ -1,6 +1,0 @@
-Certainly. Here is the plan:
-
-```json
-{"plan": [{"type": "locate", "description": "Find out where the harbourmaster keeps last season's manifests."},
-          {"type": "sabotage", "description": "Spoil the shipment those manifests cover, so the loss lands on him."}]}
-```

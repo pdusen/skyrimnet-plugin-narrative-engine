@@ -1,2 +1,0 @@
-{"decision": "concede",
- "reason": "She decided the ledger was not worth what taking it would cost her."}

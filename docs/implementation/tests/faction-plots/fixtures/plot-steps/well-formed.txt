@@ -1,3 +1,0 @@
-{"plan": [{"type": "surveil", "description": "Learn which evenings the dock inspector drinks alone at the Bee and Barb."},
-          {"type": "acquire", "description": "Get hold of the tally sheets he has been quietly falsifying."},
-          {"type": "recruit", "description": "Show him the sheets and offer to lose them, in exchange for the ledger."}]}

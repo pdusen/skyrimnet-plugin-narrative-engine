@@ -1,7 +1,0 @@
-{"decision": "revise",
- "plan": [{"type": "acquire", "description": "Take the ledger from the counting room.",
-           "agent": {"query": "someone with reason to be in the counting room after hours",
-                     "label": "a clerk"}},
-          {"type": "conceal", "description": "Make sure nobody connects the loss to her.",
-           "agent": {"query": "someone practised at making a thing look ordinary",
-                     "label": "a fixer"}}]}

@@ -1,5 +1,0 @@
-Here is my pick:
-
-```json
-{"because": "He owes money to the only person who could ruin him.", "choice": "0x1B07D"}
-```

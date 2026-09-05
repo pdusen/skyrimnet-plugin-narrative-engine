@@ -1,2 +1,0 @@
-{"plan": [{"type": "surveil", "description": "Watch the inspector's rounds for a week."},
-          {"type": "assassinate", "description": "Have him killed on the road out of Riften."}]}

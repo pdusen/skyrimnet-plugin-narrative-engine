@@ -1,8 +1,0 @@
-{"decision": "revise",
- "plan": [{"type": "recruit", "description": "Buy the harbourmaster silence with a share of the season.",
-           "agent": {"query": "a dockhand trusted enough to carry an offer without repeating it",
-                     "label": "a dockhand"},
-           "target": "the harbourmaster who keeps the cargo books"},
-          {"type": "acquire", "description": "Take the ledger while he is looking the other way.",
-           "agent": {"query": "someone who can move through a counting room unremarked",
-                     "label": "a clerk"}}]}
