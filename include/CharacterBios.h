@@ -202,6 +202,41 @@ namespace NarrativeEngine::CharacterBios
     // Pull the blocks out of a bio file's text.
     [[nodiscard]] Bio ParseBio(std::string_view file);
 
+    // --- What other people say your job is --------------------------------
+    //
+    // A relationships block is a bulleted table, one bullet per person,
+    // and everything after the name at the head of a bullet describes
+    // THAT person. So this line in Laila Law-Giver's biography
+    //
+    //     - Anuriel (Steward): Trusts completely, unaware Anuriel...
+    //
+    // is Laila's document asserting a fact about ANURIEL: she is the
+    // steward. Collected across the corpus, those assertions answer a
+    // question no single biography does well -- see kAttributionWeight
+    // for the failure this exists to fix and the numbers behind it.
+    //
+    // Two forms, because the corpus writes both. The role is
+    // parenthesised in about a third of files and otherwise leads the
+    // description ("- Galdrus Hlervu: Attendant and apprentice whom
+    // Othreloth strictly mentors"), so both are read.
+
+    // One bullet: who it is about, and what it says their role is.
+    struct Attribution
+    {
+        // As written, for the caller to resolve -- "Anuriel", "Jarl
+        // Laila Law-Giver". Pure code cannot know who that is.
+        std::string name;
+        // The parenthetical, if there was one, plus the head of the
+        // description. Only the HEAD: past a few words a bullet stops
+        // describing the person and starts describing how the biography's
+        // owner feels about them.
+        std::string role;
+    };
+
+    // Pure. Reads a relationships block into its bullets, skipping any
+    // line that is not one.
+    [[nodiscard]] std::vector<Attribution> ParseRelationships(std::string_view block);
+
     // --- The session catalogue --------------------------------------------
     //
     // One scan, one set of reads, held for the session. Roughly 2 MB for
@@ -276,6 +311,11 @@ namespace NarrativeEngine::CharacterBios
         float lexical = 0.0f;
         float semantic = 0.0f;
 
+        // The third half, so to speak: how well what OTHER biographies
+        // say this person's role is answers the query. See
+        // kAttributionWeight.
+        float attributed = 0.0f;
+
         // Carried through from the lexical half, because a ratio is the
         // wrong test on a short query and callers still need the counts.
         std::uint32_t matched = 0;
@@ -314,6 +354,74 @@ namespace NarrativeEngine::CharacterBios
     // magnitude is real information here: a bio that matches every word
     // of a query is more than "first".
     inline constexpr float kLexicalWeight = 0.5f;
+
+    // How much of what OTHER biographies say about somebody is added to
+    // the score their own biography earned.
+    //
+    // ---------------------------------------------------------------------
+    // THE FAILURE THIS FIXES
+    //
+    // A query for a subordinate retrieves the person who runs the place,
+    // because the boss's biography is the best single document about
+    // everyone who works for them. Laila Law-Giver's lists her whole
+    // court, so it carries "steward" AND is saturated in Riften;
+    // Anuriel's own biography says she is the steward but is one
+    // person's life story. "A steward in Riften" duly returned the JARL,
+    // and "a temple attendant" returned the HEAD PRIEST.
+    //
+    // ---------------------------------------------------------------------
+    // TWO THINGS THAT DID NOT WORK, because the mistake they share is
+    // worth not repeating
+    //
+    // PROMINENCE -- push down whoever the corpus mentions most. Measured
+    // over seven weights: flipped 0 of 2 every time while the controls
+    // fell from 6/8 to 1/8. There is no gap to exploit; a head priest
+    // appears in three biographies and his own attendant in two.
+    //
+    // PROXIMITY -- take the name standing next to the role word in the
+    // winning document. The sentence is "Unmid Snow-Shod as housecarl,
+    // Anuriel as steward, and Wylandriah as court wizard", so all three
+    // promote equally and the tie broke to the housecarl. Added instead
+    // of inherited, it lifted Laila exactly as much as Anuriel, because
+    // Anuriel's biography says "steward ... serving Jarl Laila
+    // Law-Giver" too.
+    //
+    // Both read an UNDIRECTED signal for a DIRECTED fact. A bullet is
+    // directed: the role in Anuriel's bullet is Anuriel's, and the
+    // reciprocal bullet in her biography calls Laila "Employer", never
+    // "steward". So a steward query lifts Anuriel and leaves Laila where
+    // she was, while a Jarl query still finds Laila.
+    //
+    // ---------------------------------------------------------------------
+    // 0.45 IS MEASURED. Two seniority failures with answers checkable
+    // from the corpus itself -- Anuriel is "the Bosmer steward of
+    // Riften", Galdrus Hlervu is "attendant to Elder Othreloth" -- and
+    // eight ordinary queries, three of which ask those same
+    // organisations for their HEADS and so would break first:
+    //
+    //   w=0      flipped 0/2   held 6/8   (before any of this)
+    //   w=0.20   flipped 1/2   held 8/8
+    //   w=0.30   flipped 2/2   held 7/8
+    //   w=0.45   flipped 2/2   held 7/8   <-- here
+    //   w=0.60   flipped 2/2   held 7/8
+    //   w=0.80   flipped 2/2   held 5/8
+    //
+    // Case by case it is strictly better than 0: three answers improve,
+    // seven are unchanged, none get worse. The one query still not
+    // landing at rank 1 sits at rank 2, which is where it sat before --
+    // only the identity of the wrong top result changed.
+    //
+    // 0.45 is the middle of the 0.30-0.60 plateau rather than an edge of
+    // it, for the same reason kLexicalWeight is: ten cases is a small
+    // enough sample that a single-point optimum would be fitted rather
+    // than found. Past 0.80 what people say about somebody starts
+    // outvoting their own biography.
+    //
+    // Applied in Rank and NOT in Scorer, which weights its halves raw --
+    // a weight measured against normalised scores would mean something
+    // else there. The agent path keeps its old behaviour until that is
+    // measured on its own terms.
+    inline constexpr float kAttributionWeight = 0.45f;
 
     // Rank the population against a description, best first.
     //
@@ -415,5 +523,120 @@ namespace NarrativeEngine::CharacterBios
     // Returns 0 when the text names nobody, which is the normal case:
     // most targets are descriptions, and those belong to the search.
     [[nodiscard]] RE::FormID FindByName(std::string_view text);
+
+    // --- Queries defined against somebody ---------------------------------
+    //
+    // A role query that describes its subject by who they are AGAINST
+    // retrieves the person they are against, because that person's
+    // biography is where those words live. Measured on the real corpus,
+    // the referent was the top result for three of five such queries and
+    // in the top six for the other two:
+    //
+    //   "a student at the College who has spoken against the Arch-Mage"
+    //        -> Savos Aren, who IS the Arch-Mage
+    //   "a Whiterun city guard who resents the Gray-Manes"
+    //        -> Olfina Gray-Mane, who IS a Gray-Mane
+    //
+    // The obvious fix -- split the query at "who" and keep the front
+    // half -- does not work, because it cannot tell a relational clause
+    // from an ordinary one. "who runs a potion shop in Whiterun" is
+    // capitalised and clause-shaped too, and splitting on it dropped
+    // Arcadia from rank 1 to rank 58 and Hulda from 2 to 541.
+    //
+    // What separates them is the RELATION, so everything here is gated
+    // on a marker: a closed list of verbs and phrases that can only
+    // introduce a second party. Over six relational queries and nine
+    // controls, including three that name a family and still want a
+    // member of it, the gate fired on 6 of 6 and 0 of 9.
+    //
+    // The markers do NOT all mean the same thing, which a first pass
+    // treated them as doing and an in-game run disproved from both
+    // sides at once:
+    //
+    //   "a Silver-Blood housecarl who serves Thongvor" resolved to
+    //   Thongvor Silver-Blood, in a plot aimed at him -- because
+    //   `serves` had been left out of the list as too ambiguous.
+    //
+    //   "a Nord of Whiterun fiercely loyal to the Gray-Mane family"
+    //   would have had every Gray-Mane struck from it, leaving the
+    //   Battle-Borns -- the family they feud with -- as the top three.
+    //
+    // So the list is in two halves. See Kind.
+
+    // What a query says about a second party.
+    struct Relation
+    {
+        enum class Kind : std::uint8_t
+        {
+            // No marker, or a marker introducing nobody.
+            None,
+            // "resents the Gray-Manes". The referent AND their kin are
+            // out: nobody who resents a family belongs to it.
+            Antagonism,
+            // "serves Thongvor". The referent alone is out -- nobody
+            // serves themselves -- but their kin are fair game, and
+            // striking them is how a loyalty query loses its answer.
+            Allegiance
+        };
+
+        Kind kind = Kind::None;
+
+        // The phrase naming them, taken from just after the marker.
+        // Empty when the query is not relational at all, which is the
+        // normal case.
+        std::string referent;
+
+        // Its capitalised words, normalised and de-pluralised, so they
+        // compare against display names: "the Gray-Manes" gives
+        // {"graymane"}.
+        std::vector<std::string> names;
+
+        [[nodiscard]] bool Any() const noexcept
+        {
+            return kind != Kind::None;
+        }
+    };
+
+    // Pure. Reads a query and reports the second party it defines its
+    // subject against, if there is one.
+    //
+    // A marker alone is not enough -- the phrase after it must contain a
+    // proper noun. "who fears the cold" has a marker and names nobody,
+    // so it is not relational and nothing happens to it.
+    [[nodiscard]] Relation RelationOf(std::string_view query);
+
+    // Who a relational query must NOT answer with.
+    //
+    // ANTAGONISM is answered two ways at once, because each misses what
+    // the other catches:
+    //
+    //   BY RANK  whoever the referent phrase alone retrieves is who it
+    //            is about. This is what catches a TITLE -- "the
+    //            Arch-Mage" is nobody's name, so no name rule can find
+    //            Savos Aren, but a search for it returns him first.
+    //   BY NAME  everyone whose display name carries a word of the
+    //            referent. This is what catches a FAMILY -- there are
+    //            five Gray-Manes and a rank cutoff of three reaches
+    //            three of them.
+    //
+    // ALLEGIANCE is answered by FindByName and nothing else, so it
+    // strikes ONE person or nobody at all. Both halves above are wrong
+    // here. The kin sweep would take the family a loyalty query is
+    // asking about, and the rank sweep would take their household: a
+    // servant's biography names their master constantly and the master's
+    // names himself once, so ranking "Thongvor" returns his housecarls
+    // alongside him -- exactly the people the step wanted. Requiring a
+    // name that belongs to ONE person is also what keeps `serves` off
+    // "serves drinks at the Bannered Mare", which is why that marker can
+    // be in the list at all.
+    //
+    // Measured over six relational queries and nine controls: by rank
+    // alone beat the referent in 4 of 6, by name alone in 4 of 6, and
+    // the split above in 6 of 6 while leaving every control's ranking
+    // EXACTLY as it was without any of this.
+    //
+    // Empty for a query that is not relational, so a caller may apply it
+    // unconditionally.
+    [[nodiscard]] std::unordered_set<RE::FormID> Referents(std::string_view query);
 
 } // namespace NarrativeEngine::CharacterBios

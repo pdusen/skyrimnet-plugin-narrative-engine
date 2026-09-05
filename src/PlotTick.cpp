@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <limits>
 
 namespace NarrativeEngine::PlotTick
 {
@@ -309,9 +310,33 @@ namespace NarrativeEngine::PlotTick
             RE::FormID best = 0;
             std::string bestName;
             float bestScore = -1.0f;
+            CharacterBios::Ranked bestParts;
+
+            // A step asking for somebody's ENEMY must not be answered
+            // with that somebody. See CharacterBios::Referents for why
+            // the search does this on its own: a query defined against a
+            // person retrieves that person, because their biography is
+            // where the words of the query live.
+            //
+            // Empty for the ordinary query that names nobody to be
+            // against, which is nearly all of them.
+            const auto referents = CharacterBios::Referents(step.targetWanted);
+            if (!referents.empty()) {
+                // The phrase, not just the count: when this misfires the
+                // question is always WHICH marker caught WHAT, and a
+                // number cannot answer it.
+                logger::debug("PlotTick: plot={} step={} is defined against \"{}\"; {} people cannot fill it.",
+                              plot.id,
+                              plot.cursor,
+                              CharacterBios::RelationOf(step.targetWanted).referent,
+                              referents.size());
+            }
 
             for (const auto& match : CharacterBios::Rank(step.targetWanted, kRoleCandidates)) {
                 if (!AcceptableMatch(match)) {
+                    continue;
+                }
+                if (referents.contains(match.character)) {
                     continue;
                 }
                 // A scheme is not aimed at its own schemer.
@@ -332,9 +357,23 @@ namespace NarrativeEngine::PlotTick
                     best = match.character;
                     bestName = member->name;
                     bestScore = match.fused;
+                    bestParts = match;
                 }
             }
             if (best != 0) {
+                // The three signals separately, because when a match
+                // looks wrong the first question is which of them put
+                // that person there -- the words of their biography, its
+                // meaning, or what everybody else says their job is.
+                logger::debug("PlotTick: plot={} step={} target fit={:.2f} (lexical {:.2f}, semantic {:.2f}, "
+                              "attributed {:.2f}, coverage {:.2f})",
+                              plot.id,
+                              plot.cursor,
+                              bestParts.fused,
+                              bestParts.lexical,
+                              bestParts.semantic,
+                              bestParts.attributed,
+                              bestParts.coverage);
                 step.target = best;
                 step.targetName = std::move(bestName);
                 return;
@@ -390,9 +429,35 @@ namespace NarrativeEngine::PlotTick
             // Embeds the query once; the ladder then asks it about
             // every eligible candidate.
             const CharacterBios::Scorer fit{step.agentRole.query};
+
+            // An agent query is defined against somebody as readily as a
+            // target one -- more so, in practice. A single twenty-tick
+            // run produced no relational TARGET and three relational
+            // agent queries, one of them "a servant or guard loyal to
+            // Erikur in Solitude who can observe discreetly".
+            //
+            // LAST RESORT, not forbidden, which is where this parts
+            // company with ResolveTarget. A target that resolves to
+            // nobody becomes a placeholder and the step still runs; an
+            // agent has to be a real person, and the ladder often offers
+            // exactly one eligible candidate. Striking them would fail
+            // the step and end the plot. Scoring them below every real
+            // candidate gets the same answer whenever there is any other
+            // answer to get.
+            const auto agentReferents = CharacterBios::Referents(step.agentRole.query);
+            if (!agentReferents.empty()) {
+                logger::debug("PlotTick: plot={} step={} wants an agent defined against \"{}\"; {} demoted.",
+                              plot.id,
+                              plot.cursor,
+                              CharacterBios::RelationOf(step.agentRole.query).referent,
+                              agentReferents.size());
+            }
+
             PlotCasting::AgentScorer scorer;
             if (!step.agentRole.query.empty()) {
-                scorer = [&fit](RE::FormID npc) { return fit(npc); };
+                scorer = [&fit, &agentReferents](RE::FormID npc) {
+                    return agentReferents.contains(npc) ? std::numeric_limits<float>::lowest() : fit(npc);
+                };
             }
 
             const auto cast = PlotCasting::SelectActor(population,

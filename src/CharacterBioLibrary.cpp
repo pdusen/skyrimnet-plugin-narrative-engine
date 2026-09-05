@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <CharacterEmbedding.h>
 #include <GossipGraph.h>
@@ -210,6 +211,18 @@ namespace NarrativeEngine::CharacterBios
         Census g_census;
         std::unordered_map<RE::FormID, Bio> g_bios;
         CharacterIndex::Index g_search;
+
+        // A second index, over what OTHER people's relationships bullets
+        // say each person's role is rather than over their own prose.
+        //
+        // Same lifecycle as g_search and built from the same bios, but a
+        // separate index rather than extra text folded into that one:
+        // BM25 weights a term by how rare it is ACROSS THE CORPUS, and a
+        // corpus of role fragments has completely different statistics
+        // from a corpus of biographies. Concatenating them would make
+        // both worse and neither answerable on its own. See
+        // kAttributionWeight.
+        CharacterIndex::Index g_attributed;
         // Normalised display name -> population member. Only people who
         // actually have a biography: naming somebody this plugin cannot
         // describe is the same as naming nobody.
@@ -220,6 +233,13 @@ namespace NarrativeEngine::CharacterBios
         // people share resolves to neither, which is what keeps the
         // Black-Briars and the Gray-Manes out of this.
         std::unordered_map<std::string, RE::FormID> g_byNameWord;
+
+        // The same words, but keeping EVERYONE who carries each rather
+        // than striking out the shared ones. The opposite question:
+        // g_byNameWord answers "who is this", which a surname cannot,
+        // and this answers "who are these", which is exactly what a
+        // surname does. See Referents.
+        std::unordered_map<std::string, std::vector<RE::FormID>> g_byKinWord;
 
         // One vector per BIO BLOCK, not one per person.
         //
@@ -240,8 +260,10 @@ namespace NarrativeEngine::CharacterBios
     {
         g_bios.clear();
         g_search.Clear();
+        g_attributed.Clear();
         g_byName.clear();
         g_byNameWord.clear();
+        g_byKinWord.clear();
         g_vectors.clear();
         g_census = Census{};
     }
@@ -257,8 +279,10 @@ namespace NarrativeEngine::CharacterBios
         // is precisely the leak this is here to prevent.
         g_bios.clear();
         g_search.Clear();
+        g_attributed.Clear();
         g_byName.clear();
         g_byNameWord.clear();
+        g_byKinWord.clear();
         g_vectors.clear();
         g_census = Census{};
 
@@ -371,6 +395,9 @@ namespace NarrativeEngine::CharacterBios
                 } else if (seen->second != member.npc) {
                     seen->second = 0; // shared, so it names nobody
                 }
+                // The kin index keeps them all, because a shared word is
+                // exactly what a query naming a family has to match.
+                g_byKinWord[word].push_back(member.npc);
             }
             ++g_census.loaded;
         }
@@ -383,6 +410,42 @@ namespace NarrativeEngine::CharacterBios
             g_search.Add(npc, bio.Prose());
         }
         g_search.Build();
+
+        // And the attribution index: what everybody ELSE'S relationships
+        // block says each person's role is.
+        //
+        // AFTER the loop above, not inside it, because resolving a
+        // bullet's name needs g_byName complete -- a bullet in the first
+        // biography read routinely names somebody whose own biography
+        // has not been loaded yet.
+        //
+        // FindByName rather than a looser match, so that a bullet naming
+        // somebody this plugin does not know contributes nothing instead
+        // of contributing to the wrong person. Most bullets resolve;
+        // the ones that do not are family members, factions and the
+        // player, none of which hold a role anybody can be cast into.
+        std::unordered_map<RE::FormID, std::string> attributed;
+        std::size_t bullets = 0;
+        for (const auto& [owner, bio] : g_bios) {
+            for (const auto& entry : ParseRelationships(bio.relationships)) {
+                ++bullets;
+                const auto about = FindByName(entry.name);
+                // Self-reference says nothing new, and would let a
+                // biography vouch for its own subject.
+                if (about == 0 || about == owner) {
+                    continue;
+                }
+                auto& text = attributed[about];
+                text += entry.role;
+                text.push_back(' ');
+            }
+        }
+        for (const auto& [npc, text] : attributed) {
+            g_attributed.Add(npc, text);
+        }
+        g_attributed.Build();
+        logger::info(
+            "CharacterBios: {} relationship bullet(s) attributed a role to {} of them.", bullets, g_attributed.Size());
 
         // And embedded, block by block. This is the expensive part of a
         // load -- a few thousand forward passes at about a millisecond
@@ -565,6 +628,19 @@ namespace NarrativeEngine::CharacterBios
         const auto embedded =
             CharacterEmbedding::IsAvailable() ? CharacterEmbedding::Embed(query) : std::vector<float>{};
 
+        // The third signal. Scored over the SAME candidates the lexical
+        // half admitted rather than over everybody: a person whose own
+        // biography says nothing about the query has coverage 0, and
+        // PlotTick's floor would refuse them however loudly the rest of
+        // the corpus vouched for them. This reorders who is acceptable,
+        // it does not decide who is.
+        std::unordered_map<RE::FormID, float> attributed;
+        float bestAttributed = 0.0f;
+        for (const auto& said : g_attributed.Query(query, pool)) {
+            attributed.emplace(said.character, said.score);
+            bestAttributed = std::max(bestAttributed, said.score);
+        }
+
         // Both halves normalised against the best in THIS set, which is
         // the only way an unbounded BM25 score and a bounded cosine can
         // be added. Without it the weight would mean nothing.
@@ -588,10 +664,18 @@ namespace NarrativeEngine::CharacterBios
             r.matched = lexical[i].matched;
             r.asked = lexical[i].asked;
             r.coverage = lexical[i].coverage;
+            const auto said = attributed.find(r.character);
+            r.attributed = bestAttributed > 0.0f && said != attributed.end() ? said->second / bestAttributed : 0.0f;
             // With no model, the fused score IS the lexical one rather
             // than half of it -- otherwise every score would silently
             // halve and any threshold above it would stop matching.
             r.fused = embedded.empty() ? r.lexical : kLexicalWeight * r.lexical + (1.0f - kLexicalWeight) * r.semantic;
+            // ADDED, not blended in: the other two halves say how well
+            // somebody's own biography answers the query and share one
+            // budget between them. This says something a biography
+            // cannot say about itself, so it is a separate voice rather
+            // than a third share of the same one.
+            r.fused += kAttributionWeight * r.attributed;
             out.push_back(r);
         }
 
@@ -601,6 +685,44 @@ namespace NarrativeEngine::CharacterBios
                           out.end(),
                           [](const Ranked& a, const Ranked& b) { return a.fused > b.fused; });
         out.resize(keep);
+        return out;
+    }
+
+    std::unordered_set<RE::FormID> Referents(std::string_view query)
+    {
+        const auto relation = RelationOf(query);
+        if (!relation.Any()) {
+            return {};
+        }
+
+        // ALLEGIANCE strikes the master and stops. Not their household,
+        // which is who the step is asking for, and not their family. If
+        // the phrase names no single person -- a family, a title, a
+        // tavern -- it strikes nobody, and that is what makes "serves"
+        // safe to have in the list.
+        if (relation.kind == Relation::Kind::Allegiance) {
+            const auto master = FindByName(relation.referent);
+            return master != 0 ? std::unordered_set<RE::FormID>{master} : std::unordered_set<RE::FormID>{};
+        }
+
+        std::unordered_set<RE::FormID> out;
+
+        // BY RANK. Three, because the referent phrase is short and its
+        // ranking degrades quickly past the person it actually names --
+        // and because everyone struck here is somebody the answer can no
+        // longer be, so reaching further costs real candidates.
+        constexpr std::size_t kReferentDepth = 3;
+        for (const auto& match : Rank(relation.referent, kReferentDepth)) {
+            out.insert(match.character);
+        }
+
+        // BY NAME. A family is more people than that reaches.
+        for (const auto& word : relation.names) {
+            const auto found = g_byKinWord.find(word);
+            if (found != g_byKinWord.end()) {
+                out.insert(found->second.begin(), found->second.end());
+            }
+        }
         return out;
     }
 

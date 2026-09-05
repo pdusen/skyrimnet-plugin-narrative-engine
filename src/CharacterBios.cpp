@@ -1,6 +1,8 @@
 #include <CharacterBios.h>
 
 #include <algorithm>
+#include <cctype>
+#include <unordered_set>
 
 namespace NarrativeEngine::CharacterBios
 {
@@ -128,6 +130,146 @@ namespace NarrativeEngine::CharacterBios
                 ++shared;
             }
             return shared >= kMinShared ? Affinity::Prefix : Affinity::None;
+        }
+
+        // What tells a relational clause from an ordinary one.
+        //
+        // CLOSED LISTS, and deliberately so. Every entry can only
+        // introduce a second party; none of them can head a description
+        // of what somebody does. That is the whole safety property --
+        // "runs", "tends", "buys" and "works" are not here, so an
+        // ordinary role query never reaches any of this.
+
+        // The referent is an ENEMY, so neither they nor their kin can
+        // be the answer.
+        //
+        // `disgruntled with` and `dislikes` were added from observed
+        // output rather than invented: both turned up in role queries
+        // the model wrote during a twenty-tick run, alongside markers
+        // already listed here.
+        constexpr const char* kAntagonismMarkers[]{"against",          "resents",
+                                                   "resentful of",     "envies",
+                                                   "envious of",       "disapproves of",
+                                                   "opposes",          "opposed to",
+                                                   "distrusts",        "hates",
+                                                   "rival of",         "rivals",
+                                                   "defies",           "betrayed by",
+                                                   "wronged by",       "jealous of",
+                                                   "hostile to",       "blames",
+                                                   "informs on",       "spies on",
+                                                   "undermines",       "conspires against",
+                                                   "disgruntled with", "dislikes"};
+
+        // The referent is a MASTER, so only they are excluded. Their
+        // household and their family are exactly who the query wants.
+        //
+        // "serves" is in here despite heading a job as often as an
+        // allegiance ("serves the Jarl", "serves drinks"), because
+        // Referents demands a name belonging to one person before it
+        // acts on any of these -- and "drinks at the Bannered Mare"
+        // names nobody. Leaving it out cost a real target: a step
+        // wanting "a Silver-Blood housecarl who serves Thongvor"
+        // resolved to Thongvor himself.
+        constexpr const char* kAllegianceMarkers[]{"serves",
+                                                   "serving",
+                                                   "works for",
+                                                   "working for",
+                                                   "loyal to",
+                                                   "sworn to",
+                                                   "beholden to",
+                                                   "answers to",
+                                                   "reports to",
+                                                   "in debt to",
+                                                   "in the service of",
+                                                   "retainer of",
+                                                   "apprenticed to"};
+
+        // How much of a bullet's description counts as the role.
+        //
+        // "Attendant and apprentice whom Othreloth strictly mentors" puts
+        // the job first and the biographer's opinion after it, which is
+        // the usual shape. Six words keeps the first and mostly drops the
+        // second; a whole description pulls in how the owner FEELS about
+        // the person, which answers no role query.
+        constexpr std::size_t kRoleLeadWords = 6;
+
+        // The first `limit` words of a text, punctuation flattened to
+        // spaces.
+        [[nodiscard]] std::string LeadWords(std::string_view text, std::size_t limit)
+        {
+            std::string out;
+            std::size_t words = 0;
+            bool inWord = false;
+            for (const char c : text) {
+                const bool alpha = std::isalpha(static_cast<unsigned char>(c)) != 0;
+                if (alpha && !inWord) {
+                    if (++words > limit) {
+                        break;
+                    }
+                    inWord = true;
+                } else if (!alpha) {
+                    inWord = false;
+                }
+                out.push_back(alpha ? c : ' ');
+            }
+            return out;
+        }
+
+        // Words that look like a proper noun and name a PEOPLE rather
+        // than a person.
+        //
+        // A faction is a legitimate referent -- striking Thalmor for "a
+        // spy against the Thalmor" is right, and they are a group anyone
+        // can be counted out of. A RACE is not: everybody has one, so
+        // "a Reachman prisoner with a grudge against Nords" struck three
+        // arbitrary Nords off a query that was not about them. Observed
+        // in a run, harmless there only because one candidate was
+        // eligible at all.
+        //
+        // Stored as ProperWords leaves them -- normalised, and
+        // de-pluralised where the plural is regular. The irregulars are
+        // spelled out; the list is the common races of Tamriel and is
+        // not meant to be exhaustive, because a race it misses costs one
+        // spurious demotion rather than a wrong answer.
+        const std::unordered_set<std::string> kRaceWords{"nord",     "breton",   "imperial", "redguard", "altmer",
+                                                         "dunmer",   "bosmer",   "orsimer",  "khajiit",  "argonian",
+                                                         "reachman", "reachmen", "falmer",   "dwemer",   "orcs",
+                                                         "elves",    "nordic",   "mer",      "manmer",   "snowelve"};
+
+        // The words of a phrase that name somebody: capitalised, four
+        // letters or more, normalised and de-pluralised so they compare
+        // against a display name. "the Gray-Manes" gives {"graymane"}.
+        //
+        // Capitalisation is the test because it is the one the prose
+        // itself provides. Four letters because shorter ones collide
+        // with ordinary words once the case is gone.
+        [[nodiscard]] std::vector<std::string> ProperWords(std::string_view phrase)
+        {
+            std::vector<std::string> out;
+            std::string word;
+            for (std::size_t i = 0; i <= phrase.size(); ++i) {
+                const char c = i < phrase.size() ? phrase[i] : ' ';
+                const auto u = static_cast<unsigned char>(c);
+                if (std::isalnum(u) != 0 || c == '-' || c == '\'') {
+                    word.push_back(c);
+                    continue;
+                }
+                if (!word.empty() && std::isupper(static_cast<unsigned char>(word.front())) != 0) {
+                    auto normalised = Normalise(word);
+                    // A plural names the family rather than the person:
+                    // "the Gray-Manes" has to match "Gray-Mane". Guarded
+                    // by length so a four-letter name ending in s keeps
+                    // its last letter.
+                    if (normalised.size() > 4 && normalised.back() == 's') {
+                        normalised.pop_back();
+                    }
+                    if (normalised.size() >= 4) {
+                        out.push_back(std::move(normalised));
+                    }
+                }
+                word.clear();
+            }
+            return out;
         }
     } // namespace
 
@@ -284,6 +426,115 @@ namespace NarrativeEngine::CharacterBios
     std::array<const std::string*, 7> Bio::Blocks() const
     {
         return {&summary, &background, &personality, &aspirations, &relationships, &occupation, &skills};
+    }
+
+    Relation RelationOf(std::string_view query)
+    {
+        Relation relation;
+        std::string lowered;
+        lowered.reserve(query.size());
+        for (const char c : query) {
+            lowered.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        }
+
+        // Earliest marker wins, whichever list it came from: a query
+        // saying both things says the first one about its subject.
+        std::size_t at = std::string::npos;
+        std::size_t after = 0;
+        auto kind = Relation::Kind::None;
+        const auto scan = [&](const auto& markers, Relation::Kind which) {
+            for (const auto* marker : markers) {
+                const auto found = lowered.find(marker);
+                if (found != std::string::npos && found < at) {
+                    at = found;
+                    after = found + std::char_traits<char>::length(marker);
+                    kind = which;
+                }
+            }
+        };
+        scan(kAntagonismMarkers, Relation::Kind::Antagonism);
+        scan(kAllegianceMarkers, Relation::Kind::Allegiance);
+        if (at == std::string::npos) {
+            return relation;
+        }
+
+        // Up to the next comma, where a second clause would begin.
+        auto stop = query.find(',', after);
+        if (stop == std::string_view::npos) {
+            stop = query.size();
+        }
+        std::string phrase{query.substr(after, stop - after)};
+
+        // A marker with no proper noun after it introduces nobody: "who
+        // fears the cold" is not a query about a second party.
+        relation.names = ProperWords(phrase);
+        if (relation.names.empty()) {
+            return relation;
+        }
+        // Nor does a marker followed only by a RACE. "against Nords"
+        // names four million people and excludes none of them; a phrase
+        // that also names somewhere or somebody is still a referent, so
+        // this refuses only the ones that are nothing but race.
+        if (std::all_of(relation.names.begin(), relation.names.end(), [](const std::string& word) {
+                return kRaceWords.count(word) != 0;
+            })) {
+            relation.names.clear();
+            return relation;
+        }
+        relation.referent = std::move(phrase);
+        relation.kind = kind;
+        return relation;
+    }
+
+    std::vector<Attribution> ParseRelationships(std::string_view block)
+    {
+        std::vector<Attribution> out;
+        std::size_t at = 0;
+        while (at < block.size()) {
+            auto start = block.find("- ", at);
+            if (start == std::string_view::npos) {
+                break;
+            }
+            // A bullet BEGINS a line. Anywhere else, "- " is a dash in
+            // the middle of a sentence.
+            if (start != 0 && block[start - 1] != '\n') {
+                at = start + 2;
+                continue;
+            }
+            start += 2;
+            auto stop = block.find('\n', start);
+            if (stop == std::string_view::npos) {
+                stop = block.size();
+            }
+            const auto line = block.substr(start, stop - start);
+            at = stop + 1;
+
+            // "Name (Role): description" or "Name: description". The
+            // colon is what separates who the bullet is about from what
+            // it says, so a line without one is not a bullet of this
+            // shape and is left alone.
+            const auto colon = line.find(':');
+            if (colon == std::string_view::npos) {
+                continue;
+            }
+            const auto open = line.find('(');
+            const auto close = line.find(')');
+            const bool parenthesised =
+                open != std::string_view::npos && close != std::string_view::npos && close > open && open < colon;
+
+            Attribution entry;
+            entry.name = std::string{line.substr(0, parenthesised ? open : colon)};
+            if (parenthesised) {
+                entry.role = std::string{line.substr(open + 1, close - open - 1)};
+                entry.role.push_back(' ');
+            }
+            entry.role += LeadWords(line.substr(colon + 1), kRoleLeadWords);
+            if (entry.name.empty() || entry.role.find_first_not_of(' ') == std::string::npos) {
+                continue;
+            }
+            out.push_back(std::move(entry));
+        }
+        return out;
     }
 
     Bio ParseBio(std::string_view file)
