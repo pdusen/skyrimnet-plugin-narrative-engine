@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -183,10 +184,19 @@ namespace NarrativeEngine::CharacterBios
 
         [[nodiscard]] bool Empty() const noexcept;
 
-        // Every block, concatenated. What the retrieval index is built
+        // Every block, concatenated. What the LEXICAL index is built
         // from, where the headings are meaningless and only the words
         // matter.
         [[nodiscard]] std::string Prose() const;
+
+        // The blocks individually, in a fixed order, skipping none.
+        //
+        // What the SEMANTIC index is built from, one vector each. The
+        // embedding model truncates at about ninety words, so a
+        // concatenated bio would embed as its summary and nothing else;
+        // separately, each block fits and each is a different thing to
+        // match against.
+        [[nodiscard]] std::array<const std::string*, 7> Blocks() const;
     };
 
     // Pull the blocks out of a bio file's text.
@@ -242,7 +252,103 @@ namespace NarrativeEngine::CharacterBios
     //
     // Empty until OnSessionStart runs, and querying an unbuilt index
     // returns nothing rather than asserting.
+    //
+    // The LEXICAL half only. Prefer Rank and Scorer below, which fuse
+    // it with the semantic half; this is exposed for the cases that
+    // genuinely want words rather than meaning.
     [[nodiscard]] const CharacterIndex::Index& Search();
+
+    // One candidate, fused.
+    struct Ranked
+    {
+        RE::FormID character = 0;
+
+        // What the ranking is ordered by, 0..1. Not comparable between
+        // queries -- both halves are normalised against the best in
+        // THIS result set, which is the only way an unbounded BM25
+        // score and a bounded cosine can be added at all.
+        float fused = 0.0f;
+
+        // The two halves that produced it, kept so a log can say WHICH
+        // one found somebody. They disagree often, and when a match
+        // looks wrong the first question is always whether the words or
+        // the meaning put it there.
+        float lexical = 0.0f;
+        float semantic = 0.0f;
+
+        // Carried through from the lexical half, because a ratio is the
+        // wrong test on a short query and callers still need the counts.
+        std::uint32_t matched = 0;
+        std::uint32_t asked = 0;
+        float coverage = 0.0f;
+    };
+
+    // How much of the fused score is lexical. The rest is semantic.
+    //
+    // MEASURED, not chosen. Twenty queries with one known-correct answer
+    // each, swept from pure cosine to pure BM25:
+    //
+    //   w=0.0  top-1  9   MRR 0.619     (cosine alone)
+    //   w=0.2  top-1 14   MRR 0.764
+    //   w=0.5  top-1 14   MRR 0.783     <-- here
+    //   w=0.8  top-1 12   MRR 0.707
+    //   w=1.0  top-1 11   MRR 0.658     (BM25 alone)
+    //
+    // Fusion beats both parents, which was the thing that had to be true
+    // and was not guaranteed. 0.5 is taken over the equally-scoring 0.2
+    // because it wins on top-3, top-10 and MRR, and because it sits in
+    // the middle of a plateau running from 0.2 to 0.6 rather than on its
+    // edge -- twenty queries is a small enough sample that a single-point
+    // optimum would be fitted rather than found.
+    //
+    // Reciprocal rank fusion was tried too and lost (best k gave MRR
+    // 0.715). RRF discards score MAGNITUDE and keeps only position, and
+    // magnitude is real information here: a bio that matches every word
+    // of a query is more than "first".
+    inline constexpr float kLexicalWeight = 0.5f;
+
+    // Rank the population against a description, best first.
+    //
+    // At most `limit` results. Falls back to the lexical half alone when
+    // the embedding model is unavailable, which is a real degradation
+    // rather than an error -- the model is downloaded at runtime and a
+    // fresh install may not have it.
+    [[nodiscard]] std::vector<Ranked> Rank(std::string_view query, std::size_t limit);
+
+    // Scores many candidates against ONE description, fused the same
+    // way. For a caller that has already decided who is eligible and
+    // only needs them ordered -- the casting ladder's shape.
+    //
+    // An OBJECT rather than a function because the query is embedded
+    // once, in the constructor. A forward pass is about a millisecond,
+    // and the ladder asks about every eligible candidate in turn, so a
+    // per-call Embed would re-encode identical text a dozen times for
+    // one step and put that on the plot worker's critical path.
+    //
+    // Scores are NOT comparable to Rank()'s: with candidates arriving
+    // one at a time there is no result set to normalise against, so both
+    // halves are weighted raw. Comparable BETWEEN candidates of one
+    // query, which is all an ordering needs.
+    class Scorer
+    {
+    public:
+        explicit Scorer(std::string_view query);
+
+        [[nodiscard]] float operator()(RE::FormID npc) const;
+
+        // Whether the semantic half is actually contributing. False when
+        // the model is absent or the query embedded to nothing, in which
+        // case this is pure BM25 -- worth logging, because it is the
+        // difference between two quite different rankings.
+        [[nodiscard]] bool Semantic() const noexcept
+        {
+            return !_embedded.empty();
+        }
+
+    private:
+        std::string _query;
+        std::vector<float> _embedded;
+    };
 
     // Does `normalisedText` name the person whose normalised display
     // name is `normalisedName`? Returns the length of the match, or 0.

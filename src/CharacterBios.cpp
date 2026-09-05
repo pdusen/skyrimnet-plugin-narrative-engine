@@ -281,6 +281,11 @@ namespace NarrativeEngine::CharacterBios
         return out;
     }
 
+    std::array<const std::string*, 7> Bio::Blocks() const
+    {
+        return {&summary, &background, &personality, &aspirations, &relationships, &occupation, &skills};
+    }
+
     Bio ParseBio(std::string_view file)
     {
         Bio bio;

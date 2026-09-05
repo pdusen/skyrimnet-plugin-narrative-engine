@@ -232,7 +232,7 @@ namespace NarrativeEngine::PlotTick
         // A single word in common is not evidence about a person. The
         // exception is a query with only one word in it, where one match
         // is everything there was to ask for.
-        [[nodiscard]] bool AcceptableMatch(const CharacterIndex::Match& match)
+        [[nodiscard]] bool AcceptableMatch(const CharacterBios::Ranked& match)
         {
             const std::uint32_t needed = match.asked < 2 ? match.asked : 2;
             return match.coverage >= kMinRoleCoverage && match.matched >= needed;
@@ -291,10 +291,9 @@ namespace NarrativeEngine::PlotTick
             // Coverage decides, score breaks ties.
             RE::FormID best = 0;
             std::string bestName;
-            float bestCoverage = 0.0f;
-            float bestScore = 0.0f;
+            float bestScore = -1.0f;
 
-            for (const auto& match : CharacterBios::Search().Query(step.targetWanted, kRoleCandidates)) {
+            for (const auto& match : CharacterBios::Rank(step.targetWanted, kRoleCandidates)) {
                 if (!AcceptableMatch(match)) {
                     continue;
                 }
@@ -306,11 +305,16 @@ namespace NarrativeEngine::PlotTick
                 if (member == nullptr || (alive && !alive(match.character))) {
                     continue;
                 }
-                if (match.coverage > bestCoverage || (match.coverage == bestCoverage && match.score > bestScore)) {
+                // Coverage still ADMITS -- it is the only figure
+                // comparable between queries, and the thing that says
+                // whether the corpus can confirm what was asked. Among
+                // those admitted the FUSED score orders, because that
+                // is what the sweep measured and coverage cannot tell
+                // two acceptable candidates apart.
+                if (match.fused > bestScore) {
                     best = match.character;
                     bestName = member->name;
-                    bestCoverage = match.coverage;
-                    bestScore = match.score;
+                    bestScore = match.fused;
                 }
             }
             if (best != 0) {
@@ -360,11 +364,12 @@ namespace NarrativeEngine::PlotTick
             // needs then chooses among them. See PlotCasting::SelectActor
             // for why this way round, and why there is no minimum match
             // quality on this side.
-            const auto& search = CharacterBios::Search();
-            const auto& query = step.agentRole.query;
+            // Embeds the query once; the ladder then asks it about
+            // every eligible candidate.
+            const CharacterBios::Scorer fit{step.agentRole.query};
             PlotCasting::AgentScorer scorer;
-            if (!query.empty()) {
-                scorer = [&search, &query](RE::FormID npc) { return search.ScoreFor(npc, query); };
+            if (!step.agentRole.query.empty()) {
+                scorer = [&fit](RE::FormID npc) { return fit(npc); };
             }
 
             const auto cast = PlotCasting::SelectActor(population,
@@ -382,11 +387,12 @@ namespace NarrativeEngine::PlotTick
             if (cast.chosen == 0) {
                 return false;
             }
-            logger::debug("PlotTick: plot={} step={} agent=\"{}\" fit={:.2f} eligible={} rung={} query=\"{}\"",
+            logger::debug("PlotTick: plot={} step={} agent=\"{}\" fit={:.2f} {} eligible={} rung={} query=\"{}\"",
                           plot.id,
                           plot.cursor,
                           step.agentRole.label,
                           scorer ? scorer(cast.chosen) : 0.0f,
+                          fit.Semantic() ? "(fused)" : "(lexical only)",
                           cast.considered.size(),
                           cast.chosenRung,
                           step.agentRole.query);

@@ -1,10 +1,12 @@
 #include <CharacterBios.h>
 
+#include <algorithm>
 #include <cctype>
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
 
+#include <CharacterEmbedding.h>
 #include <GossipGraph.h>
 #include <logger.h>
 #include <PlotPopulation.h>
@@ -28,6 +30,7 @@ namespace NarrativeEngine::CharacterBios
     namespace
     {
         const std::filesystem::path kPromptRoot{"Data/SKSE/Plugins/SkyrimNet/prompts"};
+        const std::filesystem::path kModelDirectory{"Data/SKSE/Plugins/SkyrimNet/models"};
         const std::filesystem::path kSharedBios = kPromptRoot / "characters";
 
         // Where a save keeps its OWN copies of the profiles it has
@@ -81,6 +84,19 @@ namespace NarrativeEngine::CharacterBios
         // people share resolves to neither, which is what keeps the
         // Black-Briars and the Gray-Manes out of this.
         std::unordered_map<std::string, RE::FormID> g_byNameWord;
+
+        // One vector per BIO BLOCK, not one per person.
+        //
+        // The tokenizer caps at 128 tokens, roughly ninety words, and a
+        // biography runs to several hundred -- so a single vector per
+        // character would be a vector of their summary and nothing else,
+        // discarding the occupation and relationships blocks that carry
+        // most of what a role query is actually asking about.
+        //
+        // A character's score is the best of their blocks, because a
+        // query describing what somebody DOES should match their
+        // occupation without being diluted by their personality.
+        std::unordered_map<RE::FormID, std::vector<std::vector<float>>> g_vectors;
         const Bio g_empty;
     } // namespace
 
@@ -90,6 +106,7 @@ namespace NarrativeEngine::CharacterBios
         g_search.Clear();
         g_byName.clear();
         g_byNameWord.clear();
+        g_vectors.clear();
         g_census = Census{};
     }
 
@@ -106,6 +123,7 @@ namespace NarrativeEngine::CharacterBios
         g_search.Clear();
         g_byName.clear();
         g_byNameWord.clear();
+        g_vectors.clear();
         g_census = Census{};
 
         Catalog catalog;
@@ -230,6 +248,35 @@ namespace NarrativeEngine::CharacterBios
         }
         g_search.Build();
 
+        // And embedded, block by block. This is the expensive part of a
+        // load -- a few thousand forward passes at about a millisecond
+        // each -- and it happens here, on the main thread during the
+        // load, deliberately: a plot born before the vectors exist would
+        // cast from half a retrieval system without anything saying so.
+        //
+        // Skipped entirely when the model is absent, which leaves
+        // retrieval lexical rather than broken.
+        if (CharacterEmbedding::Initialize(kModelDirectory)) {
+            std::size_t vectors = 0;
+            for (const auto& [npc, bio] : g_bios) {
+                std::vector<std::vector<float>> blocks;
+                for (const auto* block : bio.Blocks()) {
+                    if (block->empty()) {
+                        continue;
+                    }
+                    auto v = CharacterEmbedding::Embed(*block);
+                    if (!v.empty()) {
+                        blocks.push_back(std::move(v));
+                    }
+                }
+                if (!blocks.empty()) {
+                    vectors += blocks.size();
+                    g_vectors.emplace(npc, std::move(blocks));
+                }
+            }
+            logger::info("CharacterBios: embedded {} block(s) across {} character(s).", vectors, g_vectors.size());
+        }
+
         logger::info("CharacterBios: {} bio(s) loaded for {} population member(s) from {} file(s) ({} of them this "
                      "save's own, id '{}') -- {} confirmed by name, {} EXCLUDED as suffix-only matches, {} ambiguous, "
                      "{} with no file, {} with no reference id, {} unreadable.",
@@ -318,4 +365,102 @@ namespace NarrativeEngine::CharacterBios
         return g_search;
     }
 
+    namespace
+    {
+        // A character's semantic score is the BEST of their blocks. A
+        // query about what somebody does should match their occupation
+        // without being averaged against their personality.
+        float BestBlock(RE::FormID npc, const std::vector<float>& query)
+        {
+            const auto found = g_vectors.find(npc);
+            if (found == g_vectors.end()) {
+                return 0.0f;
+            }
+            float best = 0.0f;
+            for (const auto& block : found->second) {
+                best = std::max(best, CharacterEmbedding::Similarity(query, block));
+            }
+            return best;
+        }
+    } // namespace
+
+    std::vector<Ranked> Rank(std::string_view query, std::size_t limit)
+    {
+        if (limit == 0 || query.empty()) {
+            return {};
+        }
+
+        // The lexical half decides WHO is considered. Taking a wider
+        // slice than the caller asked for and re-ordering it is what
+        // lets the semantic half promote somebody BM25 ranked poorly --
+        // which is the whole point, since its best case is a query whose
+        // distinguishing word appears in no biography at all.
+        constexpr std::size_t kPoolMultiple = 8;
+        constexpr std::size_t kMinimumPool = 64;
+        const auto pool = std::max(kMinimumPool, limit * kPoolMultiple);
+        const auto lexical = g_search.Query(query, pool);
+        if (lexical.empty()) {
+            return {};
+        }
+
+        const auto embedded =
+            CharacterEmbedding::IsAvailable() ? CharacterEmbedding::Embed(query) : std::vector<float>{};
+
+        // Both halves normalised against the best in THIS set, which is
+        // the only way an unbounded BM25 score and a bounded cosine can
+        // be added. Without it the weight would mean nothing.
+        const auto bestLexical = lexical.front().score;
+        float bestSemantic = 0.0f;
+        std::vector<float> semantic(lexical.size(), 0.0f);
+        if (!embedded.empty()) {
+            for (std::size_t i = 0; i < lexical.size(); ++i) {
+                semantic[i] = BestBlock(lexical[i].character, embedded);
+                bestSemantic = std::max(bestSemantic, semantic[i]);
+            }
+        }
+
+        std::vector<Ranked> out;
+        out.reserve(lexical.size());
+        for (std::size_t i = 0; i < lexical.size(); ++i) {
+            Ranked r;
+            r.character = lexical[i].character;
+            r.lexical = bestLexical > 0.0f ? lexical[i].score / bestLexical : 0.0f;
+            r.semantic = bestSemantic > 0.0f ? semantic[i] / bestSemantic : 0.0f;
+            r.matched = lexical[i].matched;
+            r.asked = lexical[i].asked;
+            r.coverage = lexical[i].coverage;
+            // With no model, the fused score IS the lexical one rather
+            // than half of it -- otherwise every score would silently
+            // halve and any threshold above it would stop matching.
+            r.fused = embedded.empty() ? r.lexical : kLexicalWeight * r.lexical + (1.0f - kLexicalWeight) * r.semantic;
+            out.push_back(r);
+        }
+
+        const auto keep = std::min(limit, out.size());
+        std::partial_sort(out.begin(),
+                          out.begin() + static_cast<std::ptrdiff_t>(keep),
+                          out.end(),
+                          [](const Ranked& a, const Ranked& b) { return a.fused > b.fused; });
+        out.resize(keep);
+        return out;
+    }
+
+    Scorer::Scorer(std::string_view query) : _query(query)
+    {
+        if (!_query.empty() && CharacterEmbedding::IsAvailable()) {
+            _embedded = CharacterEmbedding::Embed(_query);
+        }
+    }
+
+    float Scorer::operator()(RE::FormID npc) const
+    {
+        if (_query.empty()) {
+            return 0.0f;
+        }
+        const auto lexical = g_search.ScoreFor(npc, _query);
+        if (_embedded.empty()) {
+            return lexical;
+        }
+        return kLexicalWeight * lexical + (1.0f - kLexicalWeight) * BestBlock(npc, _embedded);
+    }
 } // namespace NarrativeEngine::CharacterBios
