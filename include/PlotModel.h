@@ -124,6 +124,15 @@ namespace NarrativeEngine::PlotModel
         return Traits(t).id;
     }
 
+    // The display verb on its own, without a target composed onto it.
+    // What the dashboard puts under a step node: the SHAPE of the work,
+    // where the sentence saying what the work actually is belongs behind
+    // the node rather than under it.
+    [[nodiscard]] constexpr std::string_view Verb(StepType t) noexcept
+    {
+        return Traits(t).verb;
+    }
+
     [[nodiscard]] constexpr bool IsPlayerDeliverable(StepType t) noexcept
     {
         return Traits(t).playerDeliverable;

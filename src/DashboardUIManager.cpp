@@ -1441,7 +1441,15 @@ namespace NarrativeEngine::DashboardUIManager
                 }
                 return nlohmann::json{
                     {"number", number},
+                    // The node's caption is the step TYPE. Its own
+                    // sentence goes in `description`, which the widget
+                    // shows only when the node is expanded: a chain of
+                    // eight nodes each captioned with fifteen words of
+                    // prose is unreadable at a glance, and the glance is
+                    // what the chain is for.
                     {"label", PlotModel::Label(step)},
+                    {"type", PlotModel::Verb(step.type)},
+                    {"description", step.description},
                     {"state", state},
                     {"outcome", PlotModel::StepOutcomeId(step.outcome)},
                     {"actor", step.actorName},

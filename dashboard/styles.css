@@ -1113,8 +1113,11 @@ body {
     color: #e5484d; font-size: 30px; font-weight: 700; pointer-events: none;
 }
 .plot-connector { height: 3px; flex: none; }
+/* One short verb rather than a wrapped sentence, so it is centred under
+   the node it belongs to instead of ranging left across the connector. */
 .plot-node-label {
     font-size: 11px; color: #b6bdc6; line-height: 1.25; padding-top: 8px; padding-right: 10px;
+    text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 .plot-node-detail {
@@ -1130,6 +1133,15 @@ body {
 }
 .plot-roll.held { color: #7d8590; }
 .plot-roll.caught { color: #e5484d; }
+
+/* The step's own sentence, last in the panel and the only prose in it.
+   Separated and italic so it does not read as another measurement, and
+   given a rule above because it belongs to a different register than the
+   numbers. */
+.plot-detail-description {
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid #2b313a;
+}
+.plot-detail-description span:last-child { color: #c8ced6; font-style: italic; }
 
 .plot-section-heading { margin: 20px 0 10px; font-size: 13px; color: #98a0ab; text-transform: uppercase; }
 .plot-empty { color: #98a0ab; font-size: 13px; }

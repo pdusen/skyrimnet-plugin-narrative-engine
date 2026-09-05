@@ -293,7 +293,16 @@ export type PlotNodeState = 'completed' | 'failed' | 'in_progress' | 'pending';
 // re-planned.
 export interface PlotNode {
     number: number;
+    // Verb plus target name, e.g. "Watch Erikur". Still used for the
+    // node's accessible name, where a screen reader benefits from the
+    // longer form.
     label: string;
+    // The step type's display verb on its own. The node's visible
+    // caption.
+    type: string;
+    // What the step actually is, in the model's own words. Shown only
+    // in the expanded detail.
+    description: string;
     state: PlotNodeState;
     outcome: string;
     actor: string;

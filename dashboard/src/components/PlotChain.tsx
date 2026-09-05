@@ -140,6 +140,16 @@ function NodeDetail({ node }: { node: PlotNode }) {
                     </span>
                 </div>
             )}
+            {/* LAST, deliberately. The rows above are the arithmetic
+                that decided the outcome, which is what the panel is
+                opened to read; the sentence is context for them, and a
+                line of prose at the top pushes the numbers down. */}
+            {node.description && (
+                <div className="plot-detail-row plot-detail-description">
+                    <span className="plot-detail-label">step</span>
+                    <span>{node.description}</span>
+                </div>
+            )}
         </div>
     );
 }
@@ -156,9 +166,6 @@ function ChainNode({
     onToggle: () => void;
 }) {
     const c = colours(node.state);
-    const label = node.label.split(' ');
-    const firstLine = label.slice(0, Math.ceil(label.length / 2)).join(' ');
-    const secondLine = label.slice(Math.ceil(label.length / 2)).join(' ');
 
     return (
         <div className="plot-node-column">
@@ -191,9 +198,11 @@ function ChainNode({
                     aria-hidden="true"
                 />
             </div>
+            {/* The TYPE, not the description. Two words under a 44px
+                node stays scannable across a chain of eight; a sentence
+                does not, and the sentence is one click away. */}
             <div className="plot-node-label" style={{ width: NODE + GAP }}>
-                <div>{firstLine}</div>
-                {secondLine && <div>{secondLine}</div>}
+                <div>{node.type}</div>
             </div>
         </div>
     );
