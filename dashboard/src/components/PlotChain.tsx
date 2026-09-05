@@ -15,7 +15,16 @@ import type { PlotEntry, PlotNode } from '../types';
 // distinguishable without relying on hue.
 
 const NODE = 44; // diameter, px
-const GAP = 34; // connector length between nodes
+// Connector length, and with it the column pitch the captions have to
+// live inside. Widened from 34 once the caption became a phrase the
+// model writes rather than the step type's one-word verb: at a 78px
+// pitch every two-word caption wrapped to two cramped lines.
+const GAP = 52;
+// A caption gets one whole column, centred on its node rather than on
+// the column -- so it is pulled half a connector left of the node it
+// follows. Bounded, unlike the old caption, because nothing constrains
+// how long a written label is.
+const LABEL = NODE + GAP;
 const RING = 3.5;
 const BORDER = 2; // .plot-node border width; ProgressRing has to cancel it
 
@@ -198,11 +207,16 @@ function ChainNode({
                     aria-hidden="true"
                 />
             </div>
-            {/* The TYPE, not the description. Two words under a 44px
-                node stays scannable across a chain of eight; a sentence
-                does not, and the sentence is one click away. */}
-            <div className="plot-node-label" style={{ width: NODE }}>
-                <div>{node.type}</div>
+            {/* The step's short caption, not its description. A phrase
+                under a 44px node stays scannable across a chain of
+                eight; a sentence does not, and the sentence is one
+                click away.
+
+                `title` because the caption is clamped to two lines: a
+                model that answers with a clause instead of a phrase
+                should still be readable rather than silently cut. */}
+            <div className="plot-node-label" style={{ width: LABEL, marginLeft: -GAP / 2 }} title={node.type}>
+                {node.type}
             </div>
         </div>
     );
@@ -227,7 +241,12 @@ export function PlotChain({ plot }: { plot: PlotEntry }): ReactNode {
             {/* A chain wider than its card scrolls horizontally; nodes keep
                 their size rather than shrinking to fit. */}
             <div className="plot-chain-scroll">
-                <div className="plot-chain">
+                {/* Half a connector of room on the left, because the
+                    first node's caption is the one thing in the chain
+                    that reaches back past its own column. The right
+                    needs none: the last node still draws a full-width
+                    transparent connector after it. */}
+                <div className="plot-chain" style={{ paddingLeft: GAP / 2 }}>
                     {plot.chain.map((n, i) => (
                         <ChainNode
                             key={n.number}
