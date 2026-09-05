@@ -407,6 +407,27 @@ namespace NarrativeEngine::GossipGraph
             if (!race || !actorTypeNpc || !race->HasKeyword(actorTypeNpc)) {
                 return false;
             }
+            // NOT THE DEAD. The ACBS IsGhost flag, which vanilla sets on
+            // about seventy records: Savos Aren's Ghost, Kodlak's,
+            // Sinding's, the barrow shades, and the Daedric princes'
+            // avatars.
+            //
+            // They pass every other test -- unique, named, ActorTypeNPC,
+            // resident somewhere -- and several carry the display name
+            // of somebody still alive, which is the specific harm. The
+            // population held "Savos Aren" the apparition rather than
+            // Savos Aren the Arch-Mage, and everything downstream took
+            // it at face value: his reference id belongs to the ghost
+            // record, so it addressed a stranger's biography, and the
+            // living Arch-Mage was in no plot at all because he was
+            // never a participant.
+            //
+            // A shade also cannot do the things a scheme asks of a
+            // person. It has no household to be bribed in and nothing
+            // to gain.
+            if (npc->IsGhost()) {
+                return false;
+            }
             if (const char* eid = npc->GetFormEditorID(); eid && *eid) {
                 const auto lowered = ToLower(eid);
                 if (lowered.find("preset") != std::string::npos || lowered.rfind("test", 0) == 0
@@ -573,7 +594,11 @@ namespace NarrativeEngine::GossipGraph
                 }
                 ++g_census.uniqueNpcsScanned;
                 if (!IsGossipEligiblePerson(npc, actorTypeNpc)) {
-                    ++g_census.rejectedNotPerson;
+                    if (npc->IsGhost()) {
+                        ++g_census.rejectedGhost;
+                    } else {
+                        ++g_census.rejectedNotPerson;
+                    }
                     continue;
                 }
                 const auto id = npc->GetFormID();
@@ -760,10 +785,12 @@ namespace NarrativeEngine::GossipGraph
                          c.factionsAdmitted,
                          c.factionPairs,
                          c.participantsWithPersonalEdge);
-            logger::info("GossipGraph: census -- uniqueScanned={} rejectedNotPerson={} rejectedNoLocation={}",
-                         c.uniqueNpcsScanned,
-                         c.rejectedNotPerson,
-                         c.rejectedNoLocation);
+            logger::info(
+                "GossipGraph: census -- uniqueScanned={} rejectedNotPerson={} rejectedGhost={} rejectedNoLocation={}",
+                c.uniqueNpcsScanned,
+                c.rejectedNotPerson,
+                c.rejectedGhost,
+                c.rejectedNoLocation);
             // The bridge into SkyrimNet's id space. A participant with no
             // placed reference cannot be matched against an engagement row
             // or be written a memory without an engine lookup, so a large

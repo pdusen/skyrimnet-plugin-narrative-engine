@@ -207,6 +207,11 @@ namespace NarrativeEngine::GossipGraph
         std::size_t participantsWithPersonalEdge = 0;
         std::size_t uniqueNpcsScanned = 0;
         std::size_t rejectedNotPerson = 0;
+        // Ghosts, shades and apparitions -- the ACBS IsGhost flag. Split
+        // out from rejectedNotPerson because it is the one rejection
+        // that removes people who otherwise pass every test, and the
+        // count is worth watching if a hold's population looks thin.
+        std::size_t rejectedGhost = 0;
         std::size_t rejectedNoLocation = 0;
         // Participants whose LCUN row carried a usable refID. Anything
         // short of `participants` is the number that cannot be addressed
