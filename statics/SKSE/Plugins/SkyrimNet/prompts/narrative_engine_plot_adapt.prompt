@@ -51,10 +51,46 @@ object.
 **If `"revise"`**, add:
 
 - `plan` — what they do INSTEAD, in order: as many steps as this new way
-  to the scheme actually needs and no more. Each has a `type` from the
-  list above and a `description`, one short concrete line. The last step
-  is the one that accomplishes the scheme; do not add a step that merely
-  restates it, and do not end on `conceal`.
+  to the scheme actually needs and no more. The last step is the one that
+  accomplishes the scheme; do not add a step that merely restates it, and
+  do not end on `conceal`. Each step has:
+  - `type` — one of the step ids above, spelled exactly.
+  - `description` — one short concrete line saying what the step is.
+  - `agent` — who carries it out, as an object with `query` and `label`.
+  - `target` — the ONE PERSON it is done to, as a plain string. Include
+    it only when the step acts on a person; most steps do not.
+
+## Describing the people a revised step needs
+
+The plugin searches the biographies of everyone in the world for whoever
+best fits what you asked for. It never takes a name on trust, so nothing
+you write here can conjure a person who does not exist.
+
+`agent.query` is a sentence describing that person, matched against
+their biography. Write it as narrowly as the step actually requires and
+no narrower: every word you add rules people out, so a requirement the
+step never draws on costs you candidates and buys nothing. Say where
+they have to be, what they need access to, who has to trust them — and
+do not name skills the step does not exercise.
+
+`agent.label` is one to three words naming that kind of person, with NO
+proper nouns of any sort.
+
+`target` is a single string and may be either a description of a kind of
+person or the name of a specific one; prefer the description. It is
+always a single living person — never an object, a place, a document, an
+organisation or a group. If what the step acts on is a thing or a place,
+it has no target: put it in the description and leave the key out.
+
+A name on its own is not enough. A person's name appears in the
+biography of everyone who knows them just as it does in their own, so a
+bare name finds their household and their rivals before it finds them.
+When you name somebody, say in the same string who they are and what
+they do for a living.
+
+**Changing who does the work is a revision in itself.** If the last
+attempt was seen, the answer is often the same step given to somebody
+less conspicuous rather than a different step entirely.
 
 **This replaces the steps they had left, so it has to be different from
 them.** You are shown what those were. Handing back the same steps in the
@@ -72,6 +108,13 @@ revision as changing the steps.
   the JSON object.
 - Every `type` MUST be one of the step ids listed above, spelled exactly.
 - Every step MUST carry a non-empty `description`.
+- Every step MUST carry an `agent` with a non-empty `query` and `label`.
+- Every `agent.label` MUST be one to three words and MUST NOT contain a
+  proper noun.
+- A step MUST carry a `target` only when it acts on exactly one person.
+  Omit the key otherwise; do not send an empty string.
+- `target` MUST be a plain string, not an object, and MUST NOT name an
+  object, a place, a document, an organisation, or a group of people.
 - The last step MUST NOT be `conceal`.
 [ end system ]
 

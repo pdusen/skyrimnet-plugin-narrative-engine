@@ -2,6 +2,7 @@
 
 #include <EvaluationPipeline.h>
 #include <LLMTextSanitizer.h>
+#include <PlotStepParse.h>
 
 #include <nlohmann/json.hpp>
 
@@ -100,46 +101,6 @@ namespace NarrativeEngine::PlotBirth
             if (out.size() > limit) {
                 rejection = std::string("'") + key + "' was " + std::to_string(out.size())
                             + " characters, over the limit of " + std::to_string(limit);
-                return false;
-            }
-            return true;
-        }
-
-        // One role on one step: an object carrying a search `query` and
-        // a display `label`, or absent.
-        //
-        // Absent is legal for an optional role and means the step acts
-        // on nobody. Present but half-filled is not: a query with no
-        // label cannot degrade when nothing matches, and a label with no
-        // query can never match anything in the first place. Both or
-        // neither.
-        bool ReadRole(const nlohmann::json& raw,
-                      const char* key,
-                      bool required,
-                      const PlanLimits& limits,
-                      const std::string& where,
-                      PlotModel::Step::Role& out,
-                      std::string& rejection)
-        {
-            const auto it = raw.find(key);
-            if (it == raw.end() || it->is_null()) {
-                if (required) {
-                    rejection = where + " needs an '" + key + "' and carried none";
-                    return false;
-                }
-                return true;
-            }
-            if (!it->is_object()) {
-                rejection = where + ": '" + key + "' was not an object with a query and a label";
-                return false;
-            }
-            std::string why;
-            if (!ReadText(*it, "query", limits.maxRoleQuery, out.query, why)) {
-                rejection = where + ", '" + key + "': " + why;
-                return false;
-            }
-            if (!ReadText(*it, "label", limits.maxRoleLabel, out.label, why)) {
-                rejection = where + ", '" + key + "': " + why;
                 return false;
             }
             return true;
@@ -305,22 +266,9 @@ namespace NarrativeEngine::PlotBirth
                 return out;
             }
 
-            // Every step needs somebody to carry it out, so an agent is
-            // required. A target is not: most steps act on a place or a
-            // thing, and the prompt is explicit that inventing a person
-            // for those is worse than leaving the key out.
-            if (!ReadRole(raw, "agent", true, limits, where, step.agentRole, out.rejection)) {
+            if (!PlotStepParse::ReadRoles(
+                    raw, {limits.maxRoleQuery, limits.maxRoleLabel}, where, step, out.rejection)) {
                 return out;
-            }
-            // Optional, and a plain string: a name or a description of
-            // a kind of person. Absent means the step acts on nobody.
-            const auto targetIt = raw.find("target");
-            if (targetIt != raw.end() && !targetIt->is_null()) {
-                std::string why;
-                if (!ReadText(raw, "target", limits.maxRoleQuery, step.targetWanted, why)) {
-                    out.rejection = where + ": " + why;
-                    return out;
-                }
             }
             plan.push_back(std::move(step));
         }

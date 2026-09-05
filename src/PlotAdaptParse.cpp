@@ -2,6 +2,7 @@
 
 #include <EvaluationPipeline.h>
 #include <LLMTextSanitizer.h>
+#include <PlotStepParse.h>
 
 #include <nlohmann/json.hpp>
 
@@ -109,6 +110,14 @@ namespace NarrativeEngine::PlotAdapt
             if (step.description.size() > limits.maxDescription) {
                 return Reject(where + " had a 'description' of " + std::to_string(step.description.size())
                               + " characters, over the limit of " + std::to_string(limits.maxDescription));
+            }
+            // The same roles a step gets at birth. A revision that
+            // carried none used to fall through to a random draw --
+            // the old behaviour, silently, in the middle of a plot
+            // that had been casting deliberately until then.
+            std::string why;
+            if (!PlotStepParse::ReadRoles(raw, {limits.maxRoleQuery, limits.maxRoleLabel}, where, step, why)) {
+                return Reject(why);
             }
             plan.push_back(std::move(step));
         }

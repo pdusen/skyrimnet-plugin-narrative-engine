@@ -1,7 +1,8 @@
 # Plot adaptation fixtures
 
-Adaptation is a fourth call with the same shape as the third: no menu of people or objects, steps returned as
-a type plus a sentence. Its parser is `PlotAdapt::Parse`.
+Adaptation is a fourth call with the same shape as the third: no menu of people or objects, and a step
+returned as a type, a sentence, and a description of who carries it out. Its parser is `PlotAdapt::Parse`,
+which shares `PlotStepParse::ReadRoles` with birth so the two cannot disagree about what a step carries.
 
 | Fixture                  | Must produce                                                                  |
 | ------------------------ | ------------------------------------------------------------------------------ |
@@ -11,6 +12,7 @@ a type plus a sentence. Its parser is `PlotAdapt::Parse`.
 | `ends-in-conceal.txt`    | **rejection** — the last step is the one that accomplishes the scheme            |
 | `decision-unknown.txt`   | rejection — `escalate` is neither `revise` nor `concede`                         |
 | `revise-no-plan.txt`     | rejection — a revision with nothing to revise to                                 |
+| `revised-step-no-agent.txt` | rejection — a revised step that describes nobody to carry it out              |
 
 ## The two fixtures that used to be here
 

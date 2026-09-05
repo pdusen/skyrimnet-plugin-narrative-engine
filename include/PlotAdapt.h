@@ -71,6 +71,11 @@ namespace NarrativeEngine::PlotAdapt
         std::size_t maxSteps = 10;
         std::size_t maxReason = 300;
         std::size_t maxDescription = 200;
+
+        // Roles, matching birth's. A revised step describes who carries
+        // it out exactly as an original one does.
+        std::size_t maxRoleQuery = 200;
+        std::size_t maxRoleLabel = 40;
     };
 
     // Pure. Response text in, decision-or-rejection out.
