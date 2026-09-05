@@ -239,13 +239,12 @@ namespace NarrativeEngine::CharacterBios
                 affinity != Affinity::None ? Outcome::Confirmed : Outcome::BySuffixAlone, only.stem, only.path};
         }
 
-        // More than one file shares the suffix, so the name has to
-        // decide. If it cannot, refuse: one of these biographies belongs
-        // to somebody else, and picking the first would be picking at
-        // random.
-        // The CLOSEST, not the first. With a graded test more than one
-        // candidate can agree, and taking whichever the directory listed
-        // first would decide by filename order.
+        // More than one file shares the suffix, so the name decides --
+        // and it picks the CLOSEST, not the first. With a graded test
+        // several candidates can agree, and taking whichever the
+        // directory happened to list first would settle by filename
+        // order. If none agrees at all, refuse: one of these
+        // biographies belongs to somebody else.
         const Entry* best = nullptr;
         auto bestAffinity = Affinity::None;
         for (const auto& candidate : candidates) {
