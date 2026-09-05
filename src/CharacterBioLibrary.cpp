@@ -31,6 +31,142 @@ namespace NarrativeEngine::CharacterBios
     {
         const std::filesystem::path kPromptRoot{"Data/SKSE/Plugins/SkyrimNet/prompts"};
         const std::filesystem::path kModelDirectory{"Data/SKSE/Plugins/SkyrimNet/models"};
+
+        // --- the vector cache -------------------------------------------
+        //
+        // Embedding the corpus costs about forty-five seconds of load,
+        // and the answer never changes unless the prose does. So it is
+        // written once and read back thereafter.
+        //
+        // Keyed by SAVE, because a save carries its own edited profiles
+        // and two saves of one playthrough can legitimately hold
+        // different vectors for the same person. Validated by a DIGEST
+        // of the prose, because the files can also change underneath a
+        // save -- a mod update, an edit through SkyrimNet -- and a
+        // cache that answered with the old vectors would be wrong in a
+        // way nothing else would ever notice.
+        constexpr std::uint32_t kCacheMagic = 0x4E455643; // 'NEVC'
+        constexpr std::uint32_t kCacheVersion = 1;
+
+        std::uint64_t g_digest = 0;
+
+        std::filesystem::path CachePath(const std::string& saveId)
+        {
+            const auto dir = SKSE::log::log_directory();
+            if (!dir) {
+                return {};
+            }
+            // A save with no id still gets a file, because the shared
+            // profiles it read are themselves worth not re-embedding.
+            const auto stem = saveId.empty() ? std::string{"shared"} : saveId;
+            return *dir / ("NarrativeEngine_Vectors_" + stem + ".bin");
+        }
+
+        // FNV-1a over every block of every bio, in FormID order so the
+        // digest does not depend on hash-table iteration order.
+        std::uint64_t DigestOf(const std::unordered_map<RE::FormID, Bio>& bios)
+        {
+            std::vector<RE::FormID> ids;
+            ids.reserve(bios.size());
+            for (const auto& [npc, bio] : bios) {
+                ids.push_back(npc);
+            }
+            std::sort(ids.begin(), ids.end());
+
+            std::uint64_t hash = 1469598103934665603ULL;
+            const auto eat = [&hash](std::string_view text) {
+                for (const char c : text) {
+                    hash ^= static_cast<unsigned char>(c);
+                    hash *= 1099511628211ULL;
+                }
+            };
+            for (const auto npc : ids) {
+                eat(std::string_view{reinterpret_cast<const char*>(&npc), sizeof(npc)});
+                for (const auto* block : bios.at(npc).Blocks()) {
+                    eat(*block);
+                }
+            }
+            return hash;
+        }
+
+        template <typename T> void Put(std::ofstream& out, const T& value)
+        {
+            out.write(reinterpret_cast<const char*>(&value), sizeof(value));
+        }
+
+        template <typename T> bool Take(std::ifstream& in, T& value)
+        {
+            return static_cast<bool>(in.read(reinterpret_cast<char*>(&value), sizeof(value)));
+        }
+
+        bool ReadCache(const std::filesystem::path& path,
+                       std::uint64_t digest,
+                       std::unordered_map<RE::FormID, std::vector<std::vector<float>>>& out)
+        {
+            std::ifstream in{path, std::ios::binary};
+            if (!in) {
+                return false;
+            }
+            std::uint32_t magic = 0;
+            std::uint32_t version = 0;
+            std::uint64_t stored = 0;
+            std::uint32_t people = 0;
+            std::uint32_t dims = 0;
+            if (!Take(in, magic) || !Take(in, version) || !Take(in, stored) || !Take(in, people) || !Take(in, dims)) {
+                return false;
+            }
+            if (magic != kCacheMagic || version != kCacheVersion || dims != CharacterEmbedding::kDimensions) {
+                return false;
+            }
+            if (stored != digest) {
+                logger::info("CharacterBios: the cached vectors were made from different prose; re-embedding.");
+                return false;
+            }
+
+            for (std::uint32_t i = 0; i < people; ++i) {
+                RE::FormID npc = 0;
+                std::uint32_t blocks = 0;
+                if (!Take(in, npc) || !Take(in, blocks)) {
+                    return false;
+                }
+                std::vector<std::vector<float>> vectors;
+                vectors.reserve(blocks);
+                for (std::uint32_t b = 0; b < blocks; ++b) {
+                    std::vector<float> v(CharacterEmbedding::kDimensions);
+                    if (!in.read(reinterpret_cast<char*>(v.data()),
+                                 static_cast<std::streamsize>(v.size() * sizeof(float)))) {
+                        return false;
+                    }
+                    vectors.push_back(std::move(v));
+                }
+                out.emplace(npc, std::move(vectors));
+            }
+            return true;
+        }
+
+        void WriteCache(const std::filesystem::path& path,
+                        std::uint64_t digest,
+                        const std::unordered_map<RE::FormID, std::vector<std::vector<float>>>& vectors)
+        {
+            std::ofstream out{path, std::ios::binary | std::ios::trunc};
+            if (!out) {
+                logger::warn("CharacterBios: could not write the vector cache to {}.", path.string());
+                return;
+            }
+            Put(out, kCacheMagic);
+            Put(out, kCacheVersion);
+            Put(out, digest);
+            Put(out, static_cast<std::uint32_t>(vectors.size()));
+            Put(out, static_cast<std::uint32_t>(CharacterEmbedding::kDimensions));
+            for (const auto& [npc, blocks] : vectors) {
+                Put(out, npc);
+                Put(out, static_cast<std::uint32_t>(blocks.size()));
+                for (const auto& v : blocks) {
+                    out.write(reinterpret_cast<const char*>(v.data()),
+                              static_cast<std::streamsize>(v.size() * sizeof(float)));
+                }
+            }
+        }
         const std::filesystem::path kSharedBios = kPromptRoot / "characters";
 
         // Where a save keeps its OWN copies of the profiles it has
@@ -257,24 +393,42 @@ namespace NarrativeEngine::CharacterBios
         // Skipped entirely when the model is absent, which leaves
         // retrieval lexical rather than broken.
         if (CharacterEmbedding::Initialize(kModelDirectory)) {
-            std::size_t vectors = 0;
-            for (const auto& [npc, bio] : g_bios) {
-                std::vector<std::vector<float>> blocks;
-                for (const auto* block : bio.Blocks()) {
-                    if (block->empty()) {
-                        continue;
+            g_digest = DigestOf(g_bios);
+            const auto cache = CachePath(g_census.saveId);
+
+            if (!cache.empty() && ReadCache(cache, g_digest, g_vectors)) {
+                logger::info("CharacterBios: reused {} cached vector set(s) from {}.",
+                             g_vectors.size(),
+                             cache.filename().string());
+            } else {
+                g_vectors.clear();
+                const auto started = std::chrono::steady_clock::now();
+                std::size_t vectors = 0;
+                for (const auto& [npc, bio] : g_bios) {
+                    std::vector<std::vector<float>> blocks;
+                    for (const auto* block : bio.Blocks()) {
+                        if (block->empty()) {
+                            continue;
+                        }
+                        auto v = CharacterEmbedding::Embed(*block);
+                        if (!v.empty()) {
+                            blocks.push_back(std::move(v));
+                        }
                     }
-                    auto v = CharacterEmbedding::Embed(*block);
-                    if (!v.empty()) {
-                        blocks.push_back(std::move(v));
+                    if (!blocks.empty()) {
+                        vectors += blocks.size();
+                        g_vectors.emplace(npc, std::move(blocks));
                     }
                 }
-                if (!blocks.empty()) {
-                    vectors += blocks.size();
-                    g_vectors.emplace(npc, std::move(blocks));
+                const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+                logger::info("CharacterBios: embedded {} block(s) across {} character(s) in {:.1f}s.",
+                             vectors,
+                             g_vectors.size(),
+                             seconds);
+                if (!cache.empty()) {
+                    WriteCache(cache, g_digest, g_vectors);
                 }
             }
-            logger::info("CharacterBios: embedded {} block(s) across {} character(s).", vectors, g_vectors.size());
         }
 
         logger::info("CharacterBios: {} bio(s) loaded for {} population member(s) from {} file(s) ({} of them this "
@@ -358,6 +512,11 @@ namespace NarrativeEngine::CharacterBios
             }
         }
         return 0;
+    }
+
+    std::uint64_t CorpusDigest()
+    {
+        return g_digest;
     }
 
     const CharacterIndex::Index& Search()

@@ -125,11 +125,15 @@ namespace NarrativeEngine::CharacterEmbedding
             Shutdown();
             return false;
         }
-        // One thread. This runs on the plot worker while the game is
-        // loading, and a runtime that fans out across every core to
-        // shave milliseconds off a call we make a few thousand times is
-        // competing with the engine for no benefit we can perceive.
-        Succeeded(g_api->SetIntraOpNumThreads(g_options, 1), "SetIntraOpNumThreads");
+        // Let the runtime use the machine.
+        //
+        // This was pinned to one thread, on the reasoning that competing
+        // with the engine during a load was the greater cost. That was
+        // the wrong trade: a pass measured 1.2 ms on a quiet machine and
+        // 8 ms during an actual load, turning 5,558 blocks into
+        // forty-five seconds of stall. Left to itself the runtime is
+        // several times faster, and with the cache below the whole cost
+        // only lands once per save anyway.
 
         if (!Succeeded(g_api->CreateSession(g_env, modelPath.c_str(), g_options, &g_session), "CreateSession")
             || !Succeeded(g_api->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &g_memory),

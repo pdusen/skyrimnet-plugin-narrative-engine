@@ -283,6 +283,14 @@ namespace NarrativeEngine::CharacterBios
         float coverage = 0.0f;
     };
 
+    // A 64-bit digest of every biography that went into the vectors.
+    //
+    // Exposed for the cache: the vectors on disk are only valid for the
+    // prose they were made from, and a save-specific profile edited
+    // between sessions has to invalidate them. Comparing the digest is
+    // how that is noticed without re-embedding to find out.
+    [[nodiscard]] std::uint64_t CorpusDigest();
+
     // How much of the fused score is lexical. The rest is semantic.
     //
     // MEASURED, not chosen. Twenty queries with one known-correct answer
