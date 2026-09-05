@@ -163,7 +163,18 @@ namespace NarrativeEngine::PlotBirth
         std::size_t maxSteps = 10;
         // Asked for at about fifteen words. Same reasoning as the two
         // above: a generous ceiling, not a style rule.
-        std::size_t maxDescription = 160;
+        //
+        // 200 rather than 160, which is what it was, because 160 was not
+        // generous enough to be that. A whole plan for Korir -- five
+        // steps and the call that wrote them -- was discarded because
+        // one description came to 161 characters. Rejection here throws
+        // away everything, so the ceiling has to sit where only an
+        // answer that has genuinely gone wrong reaches it.
+        //
+        // 200 is also PlotAdapt::Limits::maxDescription, whose comment
+        // already claimed to track this one. A revised step being
+        // allowed to say more than an original was never intended.
+        std::size_t maxDescription = 200;
 
         // A role's search sentence. Generous, like the others: the
         // prompt asks for it to be no narrower than the step requires,

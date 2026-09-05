@@ -10,12 +10,18 @@ namespace NarrativeEngine::PlotStepParse
     {
         // One free-text field: present, a string, non-empty after
         // sanitizing, within its ceiling.
+        //
+        // `optional` relaxes only the non-empty test, leaving the
+        // ceiling and the player check exactly where they are. It exists
+        // for `target`, which the model may legitimately decline to
+        // fill -- see the caller.
         bool ReadText(const nlohmann::json& json,
                       const char* key,
                       std::size_t limit,
                       const std::string& where,
                       std::string& out,
-                      std::string& rejection)
+                      std::string& rejection,
+                      bool optional = false)
         {
             const auto it = json.find(key);
             if (it == json.end() || !it->is_string()) {
@@ -26,7 +32,7 @@ namespace NarrativeEngine::PlotStepParse
             // retrieval index, the co-save and the dashboard, and a
             // smart quote survives all three to become a missing glyph.
             out = LLMTextSanitizer::Sanitize(it->get<std::string>());
-            if (out.empty()) {
+            if (out.empty() && !optional) {
                 rejection = where + " had a '" + std::string{key} + "' that was empty after sanitizing";
                 return false;
             }
@@ -106,9 +112,19 @@ namespace NarrativeEngine::PlotStepParse
         // for those is worse than leaving the key out. A plain string,
         // which may be a name or a description of a kind of person --
         // both are only ever text to search the biographies for.
+        //
+        // THREE WAYS TO SAY NOBODY, all of which mean the same thing:
+        // the key absent, the key null, and the key an empty string.
+        // Only the first two used to be tolerated, and a model that
+        // wrote `"target": ""` lost a whole plan for it -- one plot
+        // birth and one adaptation in a single twenty-tick run.
+        // PlotModel::Step documents an empty targetWanted as a
+        // supported state ("the step acts on no person") and
+        // PlotTick::ResolveTarget opens by handling it, so rejecting it
+        // here contradicted both.
         const auto targetIt = raw.find("target");
         if (targetIt != raw.end() && !targetIt->is_null()) {
-            if (!ReadText(raw, "target", limits.maxQuery, where, step.targetWanted, why)) {
+            if (!ReadText(raw, "target", limits.maxQuery, where, step.targetWanted, why, true)) {
                 rejection = why;
                 return false;
             }
