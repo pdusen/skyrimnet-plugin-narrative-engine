@@ -7,7 +7,6 @@
 #include <BeatSystem.h>
 #include <BeatWorkDispatch.h>
 #include <CharacterBios.h>
-#include <CharacterIndexSmokeTest.h>
 #include <CombatEventLog.h>
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
@@ -334,8 +333,6 @@ namespace NarrativeEngine
                 // Per save, not per session: a save can carry its own
                 // edited character profiles, so this purges and reloads.
                 CharacterBios::OnSessionStart();
-                // Throwaway. After CharacterBios, whose bios it indexes.
-                CharacterIndexSmokeTest::OnSessionStart();
                 PlotTick::OnSessionStart();
                 PlotLog::OnSessionStart();
                 PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
@@ -415,7 +412,6 @@ namespace NarrativeEngine
                 // actually loaded.
                 PlotPopulation::OnSessionStart();
                 CharacterBios::OnSessionStart();
-                CharacterIndexSmokeTest::OnSessionStart();
                 // Rotate + open the history log for the loaded
                 // session BEFORE Tick starts polling.
                 EventHistoryWriter::OnSessionStart();

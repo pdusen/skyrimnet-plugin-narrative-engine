@@ -216,8 +216,6 @@ namespace NarrativeEngine::CharacterBios
     // the player happened to start another game.
     void OnRevert();
 
-    [[nodiscard]] bool IsReady();
-
     // Does this NPC have a biography we can actually read? The
     // replacement for "does SkyrimNet happen to know them".
     [[nodiscard]] bool Has(RE::FormID npc);
@@ -279,23 +277,4 @@ namespace NarrativeEngine::CharacterBios
     // most targets are descriptions, and those belong to the search.
     [[nodiscard]] RE::FormID FindByName(std::string_view text);
 
-    // What Build managed, for the log.
-    struct Census
-    {
-        // The save whose overrides were read, or empty when none was
-        // available and only the shared directory was used.
-        std::string saveId;
-        std::size_t saveFiles = 0;     // catalogued from this save's own directory
-        std::size_t files = 0;         // catalogued in total, with a usable suffix
-        std::size_t generic = 0;       // shared templates, skipped
-        std::size_t confirmed = 0;     // matched, name agreed
-        std::size_t bySuffixAlone = 0; // matched on the suffix, name did not agree
-        std::size_t ambiguous = 0;     // several candidates, none matched -- refused
-        std::size_t noFile = 0;
-        std::size_t noRef = 0;
-        std::size_t unreadable = 0;
-        std::size_t loaded = 0;
-    };
-
-    [[nodiscard]] const Census& GetCensus();
 } // namespace NarrativeEngine::CharacterBios

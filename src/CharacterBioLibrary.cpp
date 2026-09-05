@@ -48,7 +48,25 @@ namespace NarrativeEngine::CharacterBios
             buffer << in.rdbuf();
             return buffer.str();
         }
-        bool g_ready = false;
+        // What Build managed, for the one line it logs. Internal: the
+        // only consumer outside this file was the smoke test.
+        struct Census
+        {
+            // The save whose overrides were read, or empty when only the
+            // shared directory was used.
+            std::string saveId;
+            std::size_t saveFiles = 0;     // catalogued from this save's own directory
+            std::size_t files = 0;         // catalogued in total, with a usable suffix
+            std::size_t generic = 0;       // shared templates, skipped
+            std::size_t confirmed = 0;     // matched, name agreed
+            std::size_t bySuffixAlone = 0; // matched on the suffix alone -- excluded
+            std::size_t ambiguous = 0;     // several candidates, none matched -- refused
+            std::size_t noFile = 0;
+            std::size_t noRef = 0;
+            std::size_t unreadable = 0;
+            std::size_t loaded = 0;
+        };
+
         Census g_census;
         std::unordered_map<RE::FormID, Bio> g_bios;
         CharacterIndex::Index g_search;
@@ -64,7 +82,6 @@ namespace NarrativeEngine::CharacterBios
         g_bios.clear();
         g_search.Clear();
         g_byName.clear();
-        g_ready = false;
         g_census = Census{};
     }
 
@@ -80,7 +97,6 @@ namespace NarrativeEngine::CharacterBios
         g_bios.clear();
         g_search.Clear();
         g_byName.clear();
-        g_ready = false;
         g_census = Census{};
 
         Catalog catalog;
@@ -106,7 +122,6 @@ namespace NarrativeEngine::CharacterBios
         if (g_census.files == 0) {
             logger::warn("CharacterBios: no bio files under {}; plots will have no character prose to work from.",
                          kSharedBios.string());
-            g_ready = true;
             return;
         }
 
@@ -186,7 +201,6 @@ namespace NarrativeEngine::CharacterBios
         }
         g_search.Build();
 
-        g_ready = true;
         logger::info("CharacterBios: {} bio(s) loaded for {} population member(s) from {} file(s) ({} of them this "
                      "save's own, id '{}') -- {} confirmed by name, {} EXCLUDED as suffix-only matches, {} ambiguous, "
                      "{} with no file, {} with no reference id, {} unreadable.",
@@ -201,11 +215,6 @@ namespace NarrativeEngine::CharacterBios
                      g_census.noFile,
                      g_census.noRef,
                      g_census.unreadable);
-    }
-
-    bool IsReady()
-    {
-        return g_ready;
     }
 
     bool Has(RE::FormID npc)
@@ -246,8 +255,4 @@ namespace NarrativeEngine::CharacterBios
         return g_search;
     }
 
-    const Census& GetCensus()
-    {
-        return g_census;
-    }
 } // namespace NarrativeEngine::CharacterBios
