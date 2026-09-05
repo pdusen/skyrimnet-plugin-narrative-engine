@@ -20,11 +20,19 @@ const NODE = 44; // diameter, px
 // model writes rather than the step type's one-word verb: at a 78px
 // pitch every two-word caption wrapped to two cramped lines.
 const GAP = 52;
-// A caption gets one whole column, centred on its node rather than on
-// the column -- so it is pulled half a connector left of the node it
-// follows. Bounded, unlike the old caption, because nothing constrains
-// how long a written label is.
-const LABEL = NODE + GAP;
+// Blank space held between one caption and the next.
+//
+// Bounding the captions to a column stopped them OVERLAPPING, but a
+// column is exactly the distance between two nodes -- so two captions
+// that both fill their width end up touching, and "obtain records" and
+// "find gaps" read as one phrase. This is the gutter that keeps them
+// legible as two.
+const GUTTER = 14;
+// A caption gets one whole column less the gutter, centred on its node
+// rather than on the column -- so it is pulled left of the node it
+// follows by half of what is left over. Bounded, unlike the old
+// caption, because nothing constrains how long a written label is.
+const LABEL = NODE + GAP - GUTTER;
 const RING = 3.5;
 const BORDER = 2; // .plot-node border width; ProgressRing has to cancel it
 
@@ -215,7 +223,11 @@ function ChainNode({
                 `title` because the caption is clamped to two lines: a
                 model that answers with a clause instead of a phrase
                 should still be readable rather than silently cut. */}
-            <div className="plot-node-label" style={{ width: LABEL, marginLeft: -GAP / 2 }} title={node.type}>
+            <div
+                className="plot-node-label"
+                style={{ width: LABEL, marginLeft: -(GAP - GUTTER) / 2 }}
+                title={node.type}
+            >
                 {node.type}
             </div>
         </div>
@@ -241,12 +253,12 @@ export function PlotChain({ plot }: { plot: PlotEntry }): ReactNode {
             {/* A chain wider than its card scrolls horizontally; nodes keep
                 their size rather than shrinking to fit. */}
             <div className="plot-chain-scroll">
-                {/* Half a connector of room on the left, because the
-                    first node's caption is the one thing in the chain
-                    that reaches back past its own column. The right
-                    needs none: the last node still draws a full-width
+                {/* Room on the left for the overhang, because the first
+                    node's caption is the one thing in the chain that
+                    reaches back past its own column. The right needs
+                    none: the last node still draws a full-width
                     transparent connector after it. */}
-                <div className="plot-chain" style={{ paddingLeft: GAP / 2 }}>
+                <div className="plot-chain" style={{ paddingLeft: (GAP - GUTTER) / 2 }}>
                     {plot.chain.map((n, i) => (
                         <ChainNode
                             key={n.number}
