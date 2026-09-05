@@ -72,6 +72,9 @@ export function PlotsTab({ plots }: { plots: PlotsTabState }): ReactNode {
                     <button type="button" disabled={busy} onClick={() => forceTicks(1)}>
                         Force tick
                     </button>
+                    <button type="button" disabled={busy} onClick={() => forceTicks(5)}>
+                        Force 5
+                    </button>
                     <button type="button" disabled={busy} onClick={() => forceTicks(10)}>
                         Force 10
                     </button>
