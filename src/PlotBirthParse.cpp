@@ -98,6 +98,12 @@ namespace NarrativeEngine::PlotBirth
                 rejection = std::string("'") + key + "' was empty after sanitizing";
                 return false;
             }
+            if (PlotStepParse::NamesThePlayer(out)) {
+                rejection = "the '" + std::string{key}
+                            + "' named the Dragonborn; these plots run among the people of Skyrim and cannot "
+                              "involve the player";
+                return false;
+            }
             if (out.size() > limit) {
                 rejection = std::string("'") + key + "' was " + std::to_string(out.size())
                             + " characters, over the limit of " + std::to_string(limit);

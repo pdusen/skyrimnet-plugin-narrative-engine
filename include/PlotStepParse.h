@@ -37,6 +37,23 @@ namespace NarrativeEngine::PlotStepParse
         std::size_t maxLabel = 40;
     };
 
+    // Does this text name the player?
+    //
+    // Only one word, deliberately. "Dragonborn" is what a model reaches
+    // for when it means the player, and it is the one title no NPC in
+    // Skyrim wears -- Miraak is the first Dragonborn and is still called
+    // Miraak. So it is a reliable marker and costs nothing legitimate.
+    //
+    // Whole-word and case-insensitive, so "dragonborn" and "Dragonborn's"
+    // both count and "Dragonborne" does not.
+    //
+    // A plot that turns on the player cannot run: the simulation has
+    // nobody to point it at, and the last one that tried resolved "the
+    // Dragonborn" to a Dremora Butler because that bio happened to say
+    // the word. Both prompts now forbid it; this refuses the answer that
+    // says it anyway.
+    [[nodiscard]] bool NamesThePlayer(std::string_view text);
+
     // Read the `agent` object and the optional `target` string off one
     // step of a plan, into `step`.
     //

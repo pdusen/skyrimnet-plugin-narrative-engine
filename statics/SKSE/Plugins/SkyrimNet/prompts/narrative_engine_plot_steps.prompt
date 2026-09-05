@@ -108,6 +108,13 @@ step would work just as well against any person of the right sort, say
 what sort, because a description can find somebody and a name that is
 not in this world finds nobody.
 
+**The target is never the player.** The Dragonborn, the Listener, the
+Champion, whatever the player has become in this game -- they are not
+somebody a scheme can be aimed at. These plots run among the people of
+Skyrim whether or not anyone is watching, and a step aimed at the player
+is a step that cannot happen, because the simulation has nobody to point
+it at.
+
 **A target is always a single living person.** It is never an object,
 a place, a building, a document or a thing to be obtained; it is never
 an organisation, a guild, a household or a faction; and it is never a
@@ -168,6 +175,7 @@ written as a name is of course a name.
   Omit the key otherwise; do not send an empty string.
 - `target` MUST NOT name an object, a place, a document, an
   organisation, a faction, or a group of people.
+- `target` MUST NOT be the player, under any of their titles.
 - `target` MUST be a plain string, not an object.
 - A `target` that names a person MUST also say who they are and what
   their occupation is. A bare name is not acceptable.

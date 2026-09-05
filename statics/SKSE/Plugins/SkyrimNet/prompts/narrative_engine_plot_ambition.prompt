@@ -47,6 +47,31 @@ holding you back, quietly learning something you are not supposed to
 know — all of these are things a scheme can be for, and for most people
 they fit better than stealing an object does.
 
+## Not a quest that already exists
+
+The scheme must be something this person is doing OF THEIR OWN ACCORD,
+not a retelling of a story the game already tells. Skyrim's own quests
+are already happening; a scheme that restages one produces a plot that
+either duplicates events the player has seen or contradicts them, and
+either way it reads as the world repeating itself.
+
+So: no civil war turning points, no Dark Brotherhood contract that is
+already written, no Thieves Guild job from the Guild's own ledger, no
+retrieval of an artefact somebody is already sent to retrieve. If the
+scheme could be summarised as "the events of a quest I know", pick a
+different one.
+
+What is wanted is smaller and unwritten: the grudge nobody has acted on
+yet, the debt coming due, the position somebody wants and has not been
+given.
+
+## Not about the player
+
+The player is not part of this. Whoever they are in this game -- the
+Dragonborn, the Listener, the Guild Master -- they are not somebody
+these people scheme against, for, or around. A scheme that turns on them
+cannot run, because the simulation has nobody to point it at.
+
 ## Output Format
 Return a JSON object. No markdown fences. No prose before or after the
 object.
@@ -83,6 +108,8 @@ this person would actually know.
 ## Hard Constraints
 - Output strict JSON. No markdown code fences. No prose before or after
   the JSON object.
+- The scheme MUST NOT restage a quest that already exists in the game.
+- Neither the ambition nor the scheme may involve the player.
 - Return only the keys `reasoning`, `ambition` and `scheme`.
 - `scheme` must not be a restatement of `ambition`. Identical sentences
   are thrown away.

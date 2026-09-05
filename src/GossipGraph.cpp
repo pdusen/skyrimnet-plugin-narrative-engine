@@ -428,6 +428,27 @@ namespace NarrativeEngine::GossipGraph
             if (npc->IsGhost()) {
                 return false;
             }
+            // And the ones the flag misses. "Dunmer Ghost", "Helgi's
+            // Ghost", the Sovngarde heroes: apparitions built without
+            // the ACBS bit, usually because their spectral quality comes
+            // from an ability or a race instead. Sixty-eight records
+            // carry the flag and several more plainly do not.
+            //
+            // Matched as the final WORD of the display name, so a
+            // Ghostblade's owner or a Ghost Sea fisherman is untouched.
+            if (name != nullptr) {
+                const std::string_view display{name};
+                constexpr std::string_view kGhost = "Ghost";
+                if (display.size() >= kGhost.size()) {
+                    const auto tail = display.substr(display.size() - kGhost.size());
+                    const bool standalone =
+                        display.size() == kGhost.size()
+                        || !std::isalpha(static_cast<unsigned char>(display[display.size() - kGhost.size() - 1]));
+                    if (standalone && ToLower(std::string{tail}) == "ghost") {
+                        return false;
+                    }
+                }
+            }
             if (const char* eid = npc->GetFormEditorID(); eid && *eid) {
                 const auto lowered = ToLower(eid);
                 if (lowered.find("preset") != std::string::npos || lowered.rfind("test", 0) == 0

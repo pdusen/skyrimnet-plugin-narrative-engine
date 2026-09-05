@@ -111,6 +111,11 @@ namespace NarrativeEngine::PlotAdapt
                 return Reject(where + " had a 'description' of " + std::to_string(step.description.size())
                               + " characters, over the limit of " + std::to_string(limits.maxDescription));
             }
+            if (PlotStepParse::NamesThePlayer(step.description)) {
+                return Reject(where
+                              + " named the Dragonborn; these plots run among the people of Skyrim "
+                                "and cannot involve the player");
+            }
             // The same roles a step gets at birth. A revision that
             // carried none used to fall through to a random draw --
             // the old behaviour, silently, in the middle of a plot
