@@ -74,10 +74,18 @@ namespace NarrativeEngine::CharacterBios
     {
         // Matched, and the name agreed with the slug.
         Confirmed,
-        // Exactly one file carried the suffix, and its slug does NOT
-        // look like this NPC's name. Accepted, because a legitimately
-        // differently-named file is a real case, but counted separately:
-        // a coincidental collision would land here too.
+        // Exactly one file carried the suffix and its slug bears no
+        // resemblance to this NPC's name. Almost always a coincidence:
+        // twelve bits of suffix across 2237 files collide readily, and
+        // of 35 such matches in one session, 29 were a different
+        // character outright -- the Arch-Mage of Winterhold carrying a
+        // Tel Mithryn alchemist's life story.
+        //
+        // A file named for the same person under ANOTHER name does not
+        // land here. That is what the affinity test is for, and the six
+        // real cases it rescues are the reason it is loose: Brand-Shei's
+        // file is "brandish", Siddgeir's is "jarl_siddgeir", the Voice
+        // of Namira's is "namira".
         BySuffixAlone,
         // No file carries that suffix.
         NoFile,

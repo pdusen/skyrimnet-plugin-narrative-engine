@@ -70,27 +70,64 @@ namespace NarrativeEngine::CharacterBios
             return true;
         }
 
-        // Do these two names plausibly denote the same person?
+        // How strongly do these two names denote the same person?
         //
-        // Deliberately loose in one direction and strict in the other.
-        // A prefix match catches "Aela" against "aela_the_huntress" and
-        // "Captain Veleth" against "veleth", which are the common
-        // shapes; it will not match two unrelated names, which is the
-        // failure that matters.
-        [[nodiscard]] bool NamesAgree(std::string_view a, std::string_view b)
+        // 0 is no resemblance. Higher is a better match, so a caller
+        // choosing between candidates can prefer the closest rather than
+        // the first, which matters because more than one file can carry
+        // the same suffix.
+        //
+        // WHY THIS IS LOOSE. A bio file is often not named for the
+        // display name the game shows. Measured over the 35 real
+        // suffix-only collisions from one session, the file said
+        // "brandish" for Brand-Shei, "jarl_siddgeir" for Siddgeir,
+        // "namira" for the Voice of Namira, "bujold_the_unworthy" for
+        // Bujold the Intrepid, and "arniel_s_shade" for Arniel Gane.
+        // All five are the same person under another name, and a strict
+        // test threw all five away.
+        //
+        // WHY IT IS STILL SAFE. The same 35 cases contain 29 genuine
+        // collisions -- Savos Aren against "elynea_mothren", Miraak
+        // against "lemkil" -- and the separation is not close. Every
+        // true pair shares a five-character prefix or contains the
+        // other outright; every false pair shares at most ONE leading
+        // character. There is nothing in the gap, so the thresholds
+        // below are not tuned to a boundary, they sit in a chasm.
+        enum class Affinity : std::uint8_t
+        {
+            None = 0,
+            Prefix = 1,    // a five-character head in common
+            Contained = 2, // one name is the whole of the other
+            Exact = 3
+        };
+
+        [[nodiscard]] Affinity NameAffinity(std::string_view a, std::string_view b)
         {
             if (a.empty() || b.empty()) {
-                return false;
+                return Affinity::None;
             }
             if (a == b) {
-                return true;
+                return Affinity::Exact;
             }
-            constexpr std::size_t kMinPrefix = 6;
+
+            // A title or an epithet wrapped around the name: "Siddgeir"
+            // inside "jarl_siddgeir", "namira" inside "voice_of_namira".
+            // Length-guarded, because a three-letter name is a substring
+            // of a great deal of ordinary text.
+            constexpr std::size_t kMinShared = 5;
             const auto shortest = std::min(a.size(), b.size());
-            if (shortest < kMinPrefix) {
-                return false;
+            if (shortest >= kMinShared
+                && (a.find(b) != std::string_view::npos || b.find(a) != std::string_view::npos)) {
+                return Affinity::Contained;
             }
-            return a.compare(0, shortest, b, 0, shortest) == 0;
+
+            // A shared head: "brandish" against "brandshei", "bujold the
+            // unworthy" against "bujold the intrepid". Same guard.
+            std::size_t shared = 0;
+            while (shared < shortest && a[shared] == b[shared]) {
+                ++shared;
+            }
+            return shared >= kMinShared ? Affinity::Prefix : Affinity::None;
         }
     } // namespace
 
@@ -197,18 +234,29 @@ namespace NarrativeEngine::CharacterBios
 
         if (candidates.size() == 1) {
             const auto& only = candidates.front();
+            const auto affinity = NameAffinity(wanted, only.slug);
             return Lookup{
-                NamesAgree(wanted, only.slug) ? Outcome::Confirmed : Outcome::BySuffixAlone, only.stem, only.path};
+                affinity != Affinity::None ? Outcome::Confirmed : Outcome::BySuffixAlone, only.stem, only.path};
         }
 
         // More than one file shares the suffix, so the name has to
         // decide. If it cannot, refuse: one of these biographies belongs
         // to somebody else, and picking the first would be picking at
         // random.
+        // The CLOSEST, not the first. With a graded test more than one
+        // candidate can agree, and taking whichever the directory listed
+        // first would decide by filename order.
+        const Entry* best = nullptr;
+        auto bestAffinity = Affinity::None;
         for (const auto& candidate : candidates) {
-            if (NamesAgree(wanted, candidate.slug)) {
-                return Lookup{Outcome::Confirmed, candidate.stem, candidate.path};
+            const auto affinity = NameAffinity(wanted, candidate.slug);
+            if (affinity > bestAffinity) {
+                best = &candidate;
+                bestAffinity = affinity;
             }
+        }
+        if (best != nullptr) {
+            return Lookup{Outcome::Confirmed, best->stem, best->path};
         }
         return Lookup{Outcome::Ambiguous, {}, {}};
     }
