@@ -267,13 +267,30 @@ namespace NarrativeEngine::PlotTick
             // is reading -- see CharacterBios::FindByName for what that
             // costs when it is left to BM25.
             const auto named = CharacterBios::FindByName(step.targetWanted);
-            if (named != 0 && named != plot.mastermind) {
-                const auto* member = population.Find(named);
+            if (named != 0) {
+                const auto* member = named != plot.mastermind ? population.Find(named) : nullptr;
                 if (member != nullptr && (!alive || alive(named))) {
                     step.target = named;
                     step.targetName = member->name;
                     return;
                 }
+                // NAMED, BUT UNUSABLE -- not in the population, dead, or
+                // the schemer themselves. The step still meant that one
+                // person, so it gets the placeholder rather than falling
+                // through to the description search.
+                //
+                // Falling through is what it used to do, and the search
+                // answered confidently with somebody else: a step naming
+                // Rulindil was aimed at Gissur, another Thalmor, because
+                // the prose fit and nothing had recorded that a specific
+                // person was asked for. A placeholder reads correctly
+                // and points at nobody; a substitute reads correctly and
+                // points at the wrong person.
+                logger::debug("PlotTick: plot={} step={} named somebody unusable; using the text as written.",
+                              plot.id,
+                              plot.cursor);
+                step.targetName = step.targetWanted;
+                return;
             }
 
             // Otherwise it is a description, and description is what
@@ -343,7 +360,13 @@ namespace NarrativeEngine::PlotTick
                           step.targetWanted,
                           step.target != 0 ? "resolved" : "PLACEHOLDER",
                           step.targetName,
-                          CharacterBios::FindByName(step.targetWanted) != 0);
+                          // Whether the NAME path produced this target,
+                          // not merely whether a name was recognised.
+                          // Those differ when a name resolves to
+                          // somebody unusable, and reporting the second
+                          // made a fallthrough look like a lookup
+                          // failure.
+                          step.target != 0 && CharacterBios::FindByName(step.targetWanted) == step.target);
         }
 
         // Cast an actor and size the step. Returns false when nobody can
