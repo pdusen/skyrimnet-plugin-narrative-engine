@@ -201,7 +201,7 @@ function ChainNode({
             {/* The TYPE, not the description. Two words under a 44px
                 node stays scannable across a chain of eight; a sentence
                 does not, and the sentence is one click away. */}
-            <div className="plot-node-label" style={{ width: NODE + GAP }}>
+            <div className="plot-node-label" style={{ width: NODE }}>
                 <div>{node.type}</div>
             </div>
         </div>

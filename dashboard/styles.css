@@ -1115,9 +1115,19 @@ body {
 .plot-connector { height: 3px; flex: none; }
 /* One short verb rather than a wrapped sentence, so it is centred under
    the node it belongs to instead of ranging left across the connector. */
+/* Centred on the NODE, not on the node-plus-connector column.
+   The box is the node's own width and the text is allowed to overflow
+   it, so a caption wider than 44px grows equally into the gap on both
+   sides and stays under the circle it belongs to. Sizing the box to the
+   whole column and centring inside it put every caption half a
+   connector to the right.
+
+   No clipping: the longest verb in the manifest is "Cover Tracks", and
+   at 11px that is still narrower than the 78px node pitch, so captions
+   cannot collide with each other. */
 .plot-node-label {
-    font-size: 11px; color: #b6bdc6; line-height: 1.25; padding-top: 8px; padding-right: 10px;
-    text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-size: 11px; color: #b6bdc6; line-height: 1.25; padding-top: 8px;
+    text-align: center; white-space: nowrap; overflow: visible;
 }
 
 .plot-node-detail {
