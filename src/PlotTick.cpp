@@ -788,22 +788,28 @@ namespace NarrativeEngine::PlotTick
         // it was closed and reopened. Every other thing that changes
         // plot state pushes, and so must this.
         //
-        // Only the tick that empties the queue pushes: forcing ten
-        // should redraw the tab once, not compose the full state ten
-        // times. The decrement happens FIRST so the composed state
-        // reports zero outstanding and the Plots tab unlocks its
-        // buttons -- doing it the other way round leaves the last push
-        // racing the dispatcher's own retirement, and losing that race
-        // means the buttons never come back.
+        // EVERY tick pushes, not only the one that empties the queue.
+        //
+        // Pushing once at the end was cheaper and made a forced twenty
+        // useless to watch: the tab sat still for the minute the burst
+        // took and then jumped to the end state, so the thing the button
+        // exists to show -- plots being born, steps resolving, a chain
+        // advancing -- happened entirely off screen. Composing the state
+        // twenty times over a minute is not a cost worth that.
+        //
+        // The decrement happens FIRST so the composed state reports the
+        // right number outstanding, and so the last one reports zero and
+        // unlocks the buttons. Doing it the other way round leaves that
+        // push racing the dispatcher's own retirement, and losing that
+        // race means the buttons never come back.
         //
         // Runs on every path out of RunTick, cancellation included: a
         // cancelled burst that never decremented would lock the tab for
         // the rest of the session.
         void RetireTick()
         {
-            if (g_outstandingTicks.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-                DashboardUIManager::PushFullState();
-            }
+            g_outstandingTicks.fetch_sub(1, std::memory_order_acq_rel);
+            DashboardUIManager::PushFullState();
         }
 
         void Enqueue(double asOfGameHours)
