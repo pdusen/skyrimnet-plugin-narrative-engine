@@ -1,5 +1,6 @@
 #include <PlotTick.h>
 
+#include <CharacterBios.h>
 #include <DashboardUIManager.h>
 #include <EngineUtils.h>
 #include <logger.h>
@@ -177,6 +178,125 @@ namespace NarrativeEngine::PlotTick
             }
         }
 
+        // How well a biography has to match a TARGET's description
+        // before the person it belongs to is used at all.
+        //
+        // Targets only. Agents are chosen from the people the casting
+        // ladder already permits, which is a handful rather than a
+        // thousand, so the best fit among them is usually poor in
+        // absolute terms and a threshold there would just hand the work
+        // back to the mastermind. A target is drawn from the whole
+        // population, so it needs one.
+        //
+        // Measured as COVERAGE -- the share of the query's terms that
+        // person's bio carries -- because it is the only figure
+        // comparable between two different queries. A raw BM25 score
+        // scales with how many words the query had, and a relative score
+        // is normalised against the result set, so its top entry is 1.0
+        // even when every candidate is wrong.
+        //
+        // 0.45 IS MEASURED, not guessed. Swept over the real corpus (851
+        // population bios) with eighteen role queries whose correct
+        // answers are checkable from the bios themselves, plus five
+        // roles nobody in Skyrim could fill:
+        //
+        //   worst genuine match accepted   0.50  (a scholar, at rank 3)
+        //   best impostor offered          0.40  (a general-goods
+        //                                         merchant answering a
+        //                                         stockbroker query)
+        //
+        // So anything in (0.40, 0.50] fills every real role correctly
+        // and refuses every invented one; 0.45 is the middle of that
+        // window. Below 0.42 impostors start being accepted; at 0.52 the
+        // first genuine role starts falling back. The window is narrow,
+        // so if role queries change character it is worth re-running the
+        // sweep rather than assuming this still holds.
+        constexpr float kMinRoleCoverage = 0.45f;
+
+        // How far down the ranked list to look before giving up.
+        constexpr std::size_t kRoleCandidates = 24;
+
+        // Fill a step's TARGET from whatever the step asked for.
+        //
+        // The request is one string and may be either a name or a
+        // description of a kind of person; both are handled the same
+        // way, because both are just text to search the biographies for.
+        // Somebody matching well enough becomes the target; if nobody
+        // does, the string itself is what gets rendered.
+        //
+        // See PlotModel::Step for the invariant that makes the fallback
+        // safe -- everything with a side effect gates on `target != 0`,
+        // so a placeholder is inert rather than pointing at somebody
+        // arbitrary.
+        void ResolveTarget(const PlotCasting::Population& population,
+                           const PlotModel::Plot& plot,
+                           PlotModel::Step& step)
+        {
+            step.target = 0;
+            step.targetName.clear();
+            if (step.targetWanted.empty()) {
+                return; // The step acts on no person at all.
+            }
+
+            const auto alive = PlotPopulation::AlivePredicate();
+
+            // A NAME first, if the string carries one. Exact identity
+            // beats a prose search that cannot tell whose biography it
+            // is reading -- see CharacterBios::FindByName for what that
+            // costs when it is left to BM25.
+            const auto named = CharacterBios::FindByName(step.targetWanted);
+            if (named != 0 && named != plot.mastermind) {
+                const auto* member = population.Find(named);
+                if (member != nullptr && (!alive || alive(named))) {
+                    step.target = named;
+                    step.targetName = member->name;
+                    return;
+                }
+            }
+
+            // Otherwise it is a description, and description is what the
+            // index is for.
+            for (const auto& match : CharacterBios::Search().Query(step.targetWanted, kRoleCandidates)) {
+                // NOT a break: the list is ordered by score, and
+                // coverage does not fall with it.
+                if (match.coverage < kMinRoleCoverage) {
+                    continue;
+                }
+                // A scheme is not aimed at its own schemer.
+                if (match.character == plot.mastermind) {
+                    continue;
+                }
+                const auto* member = population.Find(match.character);
+                if (member == nullptr || (alive && !alive(match.character))) {
+                    continue;
+                }
+                step.target = match.character;
+                step.targetName = member->name;
+                return;
+            }
+            // Nobody good enough. What the step asked for stands in for
+            // them, whether that was a description or a name -- a named
+            // person the search cannot place still reads correctly.
+            step.targetName = step.targetWanted;
+        }
+
+        // What the target resolution actually did. Without this the
+        // placeholder path is unobservable: a step reads the same
+        // whether it found a person or fell back to a phrase.
+        void LogTarget(const PlotModel::Plot& plot, const PlotModel::Step& step)
+        {
+            if (step.targetWanted.empty()) {
+                return;
+            }
+            logger::debug("PlotTick: plot={} step={} wanted=\"{}\" -> {} \"{}\" (named={})",
+                          plot.id,
+                          plot.cursor,
+                          step.targetWanted,
+                          step.target != 0 ? "resolved" : "PLACEHOLDER",
+                          step.targetName,
+                          CharacterBios::FindByName(step.targetWanted) != 0);
+        }
+
         // Cast an actor and size the step. Returns false when nobody can
         // be found at all, which ends the plot rather than leaving it
         // stuck.
@@ -185,17 +305,46 @@ namespace NarrativeEngine::PlotTick
             const auto& population = PlotPopulation::Get();
             PlotModel::Step& step = plot.plan[plot.cursor];
 
+            ResolveTarget(population, plot, step);
+            LogTarget(plot, step);
+
+            // WHO CARRIES IT OUT.
+            //
+            // Eligibility first, description second. The ladder decides
+            // who may be asked; the step's description of the person it
+            // needs then chooses among them. See PlotCasting::SelectActor
+            // for why this way round, and why there is no minimum match
+            // quality on this side.
+            const auto& search = CharacterBios::Search();
+            const auto& query = step.agentRole.query;
+            PlotCasting::AgentScorer scorer;
+            if (!query.empty()) {
+                scorer = [&search, &query](RE::FormID npc) { return search.ScoreFor(npc, query); };
+            }
+
             const auto cast = PlotCasting::SelectActor(population,
                                                        plot.mastermind,
                                                        step.description,
                                                        state.occupancy,
                                                        gameDay,
                                                        PlotPopulation::AlivePredicate(),
+                                                       // Resolved just above, so the person this step is
+                                                       // done to cannot also be the one doing it.
+                                                       step.target,
                                                        PlotPopulation::SeatedPredicate(),
-                                                       state.rngState);
+                                                       state.rngState,
+                                                       scorer);
             if (cast.chosen == 0) {
                 return false;
             }
+            logger::debug("PlotTick: plot={} step={} agent=\"{}\" fit={:.2f} eligible={} rung={} query=\"{}\"",
+                          plot.id,
+                          plot.cursor,
+                          step.agentRole.label,
+                          scorer ? scorer(cast.chosen) : 0.0f,
+                          cast.considered.size(),
+                          cast.chosenRung,
+                          step.agentRole.query);
 
             const PlotCasting::Member* actor = population.Find(cast.chosen);
             const PlotCasting::Member* target = population.Find(step.target);

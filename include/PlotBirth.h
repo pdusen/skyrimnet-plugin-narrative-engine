@@ -164,6 +164,19 @@ namespace NarrativeEngine::PlotBirth
         // Asked for at about fifteen words. Same reasoning as the two
         // above: a generous ceiling, not a style rule.
         std::size_t maxDescription = 160;
+
+        // A role's search sentence. Generous, like the others: the
+        // prompt asks for it to be no narrower than the step requires,
+        // and this is here to stop an essay reaching the index rather
+        // than to enforce that.
+        std::size_t maxRoleQuery = 200;
+
+        // A role's fallback label, asked for at one to three words. This
+        // one is TIGHT on purpose, because unlike the fields above the
+        // label is rendered directly into a step's title where a long
+        // string does not fit -- and a model that answers a whole clause
+        // here has misread the field rather than merely overrun it.
+        std::size_t maxRoleLabel = 40;
     };
 
     [[nodiscard]] PlanOutcome ParsePlan(const std::string& response, const PlanLimits& limits);

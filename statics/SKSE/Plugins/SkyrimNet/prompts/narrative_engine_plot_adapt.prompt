@@ -7,8 +7,9 @@
        same plan,
      failure { step, outcome, progress, caught }, attempt, max_attempts,
      step_types [{ id, description }],
-     npc { UUID } — required by SkyrimNet's character_profile submodules;
-                    keys every character-bio decorator.
+     bio { summary, personality } — the mastermind's biography, read
+       straight from their bio file by CharacterBios. Plain text, already
+       rendered; no character-profile decorator is involved.
    NOTE: no fenced blocks and no literal braces anywhere in this file; both
    break the render. See docs/CUSTOM_PROMPTS.md. #}
 [ system ]
@@ -77,8 +78,8 @@ revision as changing the steps.
 [ user ]
 ## Whose scheme this is
 
-{{ render_character_profile("bio_summary", npc.UUID) }}
-{{ render_character_profile("bio_personality", npc.UUID) }}
+{{ bio.summary }}
+{{ bio.personality }}
 
 **{{ mastermind.name }}** is ultimately after this:
 

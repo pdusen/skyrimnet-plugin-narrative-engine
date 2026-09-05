@@ -219,7 +219,22 @@ namespace NarrativeEngine::PlotCasting
         bool WholeWordAt(std::string_view text, std::size_t at, std::size_t len)
         {
             const bool leftOk = at == 0 || !IsWordChar(text[at - 1]);
-            const bool rightOk = at + len >= text.size() || !IsWordChar(text[at + len]);
+
+            // An apostrophe ENDS a name and does not begin one, so the
+            // two boundaries are not symmetric.
+            //
+            // This was symmetric, and possessives were the commonest way
+            // a step names its subject -- "Erikur's quarters", "Captain
+            // Veleth's movements", "the guard captain's footlocker". The
+            // trailing apostrophe counted as a word character, so the
+            // match was rejected, so the exclusion never fired, so the
+            // person the step was ABOUT was eligible to carry it out.
+            // Captain Veleth was duly cast to shadow Captain Veleth.
+            //
+            // The left side keeps the apostrophe, because there it is
+            // genuinely part of the word: an O'Ryan is not a Ryan.
+            const auto after = at + len;
+            const bool rightOk = after >= text.size() || !IsWordChar(text[after]) || text[after] == '\'';
             return leftOk && rightOk;
         }
 
@@ -498,14 +513,97 @@ namespace NarrativeEngine::PlotCasting
         return result;
     }
 
+    Qualification QualifyAgent(const Population& population,
+                               RE::FormID mastermind,
+                               RE::FormID candidate,
+                               std::string_view stepText,
+                               RE::FormID subject,
+                               const OccupancyTable& occupancy,
+                               double gameDay,
+                               const AlivePredicate& alive,
+                               const SeatedPredicate& seated)
+    {
+        Qualification out;
+
+        const Member* boss = population.Find(mastermind);
+        const Member* member = population.Find(candidate);
+        if (boss == nullptr || member == nullptr || candidate == mastermind) {
+            return out;
+        }
+
+        // The subject of a step does not carry it out.
+        //
+        // Twice over, because reading it out of the prose is best-effort
+        // and the resolved target is not. The text test catches people
+        // the step mentions without targeting; `subject` catches the one
+        // it is actually aimed at, whether or not the sentence spells
+        // their name the way this parser expects.
+        if (subject != 0 && candidate == subject) {
+            return out;
+        }
+        if (NamesPerson(stepText, member->name)) {
+            return out;
+        }
+
+        // Either direction: the graph writes both, but a tie recorded
+        // only one way still connects two people.
+        const Tie* tie = FindTie(*boss, member->npc);
+        if (tie == nullptr) {
+            tie = FindTie(*member, mastermind);
+        }
+        const bool tied = tie != nullptr;
+        const bool sharedFaction = tied && tie->sharedFaction;
+
+        // A Foe is not an agent. The graph knows the difference and plot
+        // casting used to throw it away, which is how the Thalmor
+        // ambassador came to send Ulfric Stormcloak on an errand.
+        const bool hostile = tied && tie->tierDelta > 0;
+
+        // A subordinate is someone whose standing is LOWER than the
+        // mastermind's in a faction they share. Equal standing is not
+        // subordinate: a fellow Circle member is a colleague, and
+        // ordering them about is a different social act.
+        const auto bossStandings = StandingsOf(*boss, seated);
+        bool subordinate = false;
+        for (const auto& f : member->factions) {
+            if (!Counts(seated, member->npc, f)) {
+                continue;
+            }
+            const auto it = bossStandings.find(f.faction);
+            if (it != bossStandings.end() && f.standing < it->second) {
+                subordinate = true;
+                break;
+            }
+        }
+
+        const double bossBest = BestStanding(*boss, seated);
+        const double memberBest = BestStanding(*member, seated);
+        const bool outranks = memberBest > bossBest + kOutrankMargin || memberBest > kRung3StandingCeiling;
+
+        if (subordinate && tied) {
+            out.rung = 1;
+        } else if (subordinate) {
+            out.rung = 2;
+        } else if (tied && !sharedFaction && !hostile && !outranks) {
+            out.rung = 3;
+        } else {
+            return out;
+        }
+
+        out.reject = Screen(occupancy, member->npc, PlotModel::Role::Actor, gameDay, alive);
+        return out;
+    }
+
     Result SelectActor(const Population& population,
                        RE::FormID mastermind,
                        std::string_view stepText,
                        const OccupancyTable& occupancy,
                        double gameDay,
                        const AlivePredicate& alive,
+                       RE::FormID subject,
                        const SeatedPredicate& seated,
-                       std::uint64_t& rng)
+                       std::uint64_t& rng,
+                       const AgentScorer& score)
     {
         Result result;
 
@@ -513,13 +611,6 @@ namespace NarrativeEngine::PlotCasting
         if (boss == nullptr) {
             return result;
         }
-        // Every faction the mastermind belongs to, rostered or not. A
-        // mastermind in several may draw subordinates from ANY of them:
-        // the ladder pools candidates across all rather than picking one
-        // faction first.
-        const auto bossStandings = StandingsOf(*boss, seated);
-        const double bossBest = BestStanding(*boss, seated);
-
         // Walk the ladder rung by rung and stop at the first rung with
         // anyone on it. Drawing across all rungs at once would let a
         // large pool of distant acquaintances drown out the one
@@ -528,78 +619,22 @@ namespace NarrativeEngine::PlotCasting
             std::vector<Candidate> rungCandidates;
 
             for (const auto& member : population.members) {
-                if (member.npc == mastermind) {
-                    continue;
-                }
-                // The subject of a step does not carry it out. Applied
-                // to every rung, and NOT to the mastermind's own
+                // One definition of who may act, shared with the
+                // description-ranked path. The name exclusion inside it
+                // applies to every rung, and NOT to the mastermind's own
                 // self-candidacy below -- a scheme naming its own
                 // schemer is ordinary, and excluding them there would
                 // leave some steps with nobody at all.
-                if (NamesPerson(stepText, member.name)) {
-                    continue;
-                }
-
-                // Either direction: the graph writes both, but a tie
-                // recorded only one way still connects two people.
-                const Tie* tie = FindTie(*boss, member.npc);
-                if (tie == nullptr) {
-                    tie = FindTie(member, mastermind);
-                }
-                const bool tied = tie != nullptr;
-                const bool sharedFaction = tied && tie->sharedFaction;
-
-                // A Foe is not an agent. The graph knows the difference
-                // and plot casting used to throw it away, which is how
-                // the Thalmor ambassador came to send Ulfric Stormcloak
-                // on an errand.
-                const bool hostile = tied && tie->tierDelta > 0;
-
-                // A subordinate is someone whose standing is LOWER
-                // than the mastermind's in a faction they share. Equal
-                // standing is not subordinate: a fellow Circle member is
-                // a colleague, and ordering them about is a different
-                // social act.
-                //
-                // In a faction the roster does not list, every standing
-                // is 0, so this is false for everyone — its members are
-                // peers, exactly as intended, with no special case.
-                bool subordinate = false;
-                for (const auto& f : member.factions) {
-                    if (!Counts(seated, member.npc, f)) {
-                        continue;
-                    }
-                    const auto it = bossStandings.find(f.faction);
-                    if (it != bossStandings.end() && f.standing < it->second) {
-                        subordinate = true;
-                        break;
-                    }
-                }
-
-                // Rungs 1 and 2 already require a subordinate, which is
-                // a stronger statement than this. Rung 3 required
-                // nothing at all, which is how a Blue Palace cook came
-                // to have the Jarl of Solitude in her draw: they share a
-                // roof, that is a non-collegial tie, and nothing asked
-                // whether Elisif was a person Gisli could ask.
-                //
-                // Skipped rather than screened, matching how the ladder
-                // already treats anyone not on the rung: `considered`
-                // records who was WEIGHED, and someone three ranks above
-                // the mastermind was never a candidate to weigh.
-                const double memberBest = BestStanding(member, seated);
-                const bool outranks = memberBest > bossBest + kOutrankMargin || memberBest > kRung3StandingCeiling;
-
-                const bool onThisRung = (rung == 1 && subordinate && tied) || (rung == 2 && subordinate)
-                                        || (rung == 3 && tied && !sharedFaction && !hostile && !outranks);
-                if (!onThisRung) {
+                const auto qualified = QualifyAgent(
+                    population, mastermind, member.npc, stepText, subject, occupancy, gameDay, alive, seated);
+                if (qualified.rung != rung) {
                     continue;
                 }
 
                 Candidate candidate;
                 candidate.npc = member.npc;
                 candidate.rung = rung;
-                candidate.reject = Screen(occupancy, member.npc, PlotModel::Role::Actor, gameDay, alive);
+                candidate.reject = qualified.reject;
                 candidate.weight = candidate.reject == Reject::None ? 1.0 : 0.0;
                 rungCandidates.push_back(candidate);
             }
@@ -628,9 +663,33 @@ namespace NarrativeEngine::PlotCasting
                 // fallback beneath used to be the only answer to.
                 self.weight = std::max(1.0, kSelfWeightShare * othersWeight);
                 rungCandidates.push_back(self);
+                // Under a scorer the coin flip does not apply: the
+                // mastermind is scored against the step's description
+                // like everybody else, so they do the work themselves
+                // only when they genuinely fit it better than any
+                // acquaintance does. The weight above still governs the
+                // undescribed case.
             }
 
-            const RE::FormID picked = WeightedDraw(rungCandidates, rng);
+            // Best fit among the eligible, or a weighted draw when the
+            // step described nobody. Either way the POOL is whatever
+            // this rung admitted -- the description never widens it.
+            RE::FormID picked = 0;
+            if (score) {
+                float best = -1.0f;
+                for (const auto& c : rungCandidates) {
+                    if (c.reject != Reject::None) {
+                        continue;
+                    }
+                    const auto fit = score(c.npc);
+                    if (fit > best) {
+                        best = fit;
+                        picked = c.npc;
+                    }
+                }
+            } else {
+                picked = WeightedDraw(rungCandidates, rng);
+            }
             result.considered.insert(result.considered.end(), rungCandidates.begin(), rungCandidates.end());
             if (picked != 0) {
                 result.chosen = picked;

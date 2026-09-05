@@ -5,8 +5,10 @@
      mastermind { name, hold, standing }, memories [string],
      retry — empty on the first attempt; on the second it is why the
        first answer was refused,
-     npc { UUID } — required by SkyrimNet's character_profile submodules;
-                    keys every character-bio decorator.
+     bio { summary, background, personality, aspirations, relationships,
+       occupation } — the mastermind's biography, read straight from their
+       bio file by CharacterBios. Plain text, already rendered; no
+       character-profile decorator is involved.
    NOTE: no fenced blocks and no literal braces anywhere in this file; both
    break the render. See docs/CUSTOM_PROMPTS.md. #}
 [ system ]
@@ -101,22 +103,22 @@ Do not repeat that mistake. Everything else about the task is unchanged.
 {% if length(mastermind.hold) > 0 %}They live in {{ mastermind.hold }}.{% endif %}
 
 ### Summary
-{{ render_character_profile("bio_summary", npc.UUID) }}
+{{ bio.summary }}
 
 ### Background
-{{ render_character_profile("bio_background", npc.UUID) }}
+{{ bio.background }}
 
 ### Occupation
-{{ render_character_profile("bio_occupation", npc.UUID) }}
+{{ bio.occupation }}
 
 ### Personality
-{{ render_character_profile("bio_personality", npc.UUID) }}
+{{ bio.personality }}
 
 ### Aspirations
-{{ render_character_profile("bio_aspirations", npc.UUID) }}
+{{ bio.aspirations }}
 
 ### Relationships
-{{ render_character_profile("bio_relationships", npc.UUID) }}
+{{ bio.relationships }}
 
 {% if length(memories) > 0 %}
 ## What is also on their mind

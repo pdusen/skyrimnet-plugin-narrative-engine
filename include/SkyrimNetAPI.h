@@ -184,6 +184,30 @@ namespace NarrativeEngine::SkyrimNetAPI
     // SkyrimNet is unavailable or the actor is unknown to SkyrimNet.
     std::uint64_t FormIDToUUID(std::uint32_t formId);
 
+    // The name of the bio template SkyrimNet has assigned to an actor:
+    // the stem of a file under `prompts/characters/`, e.g.
+    // "brynjolf_545". Empty when SkyrimNet is unavailable or has no
+    // template for them.
+    //
+    // Takes an ACTOR REFERENCE id, like everything else SkyrimNet
+    // exposes -- cross a base NPC through GossipGraph::ActorRefFor
+    // first.
+    //
+    // This is the only bio-adjacent thing the public API offers: there
+    // is no export that returns the template's CONTENT, so a caller
+    // that wants the prose reads the file itself. What this buys is the
+    // mapping, which is the part that cannot be reconstructed -- the
+    // "_545" suffix is not derivable from the base form id, and
+    // guessing at it would silently attach the wrong biography to the
+    // wrong person.
+    std::string GetBioTemplateName(std::uint32_t formId);
+
+    // The current save's unique id, e.g. "1771459571413-900550" -- the
+    // name SkyrimNet gives that save's folder under `prompts/_saves/`.
+    // Empty when no save is loaded, when SkyrimNet is unavailable, or
+    // when it predates API v7.
+    std::string GetSaveUniqueID();
+
     // Returns per-actor engagement statistics as a JSON array, ranked
     // by SkyrimNet's internal scoring. Used by NPCLetterBeat to pick a
     // sender pool. Empty array if SkyrimNet or its memory system isn't

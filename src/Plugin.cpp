@@ -6,6 +6,8 @@
 #include <BeatRegistry.h>
 #include <BeatSystem.h>
 #include <BeatWorkDispatch.h>
+#include <CharacterBios.h>
+#include <CharacterIndexSmokeTest.h>
 #include <CombatEventLog.h>
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
@@ -329,6 +331,11 @@ namespace NarrativeEngine
                 // schedule: the first tick after it should already have
                 // real travel distances rather than the hold proxy.
                 PlotPopulation::OnSessionStart();
+                // Per save, not per session: a save can carry its own
+                // edited character profiles, so this purges and reloads.
+                CharacterBios::OnSessionStart();
+                // Throwaway. After CharacterBios, whose bios it indexes.
+                CharacterIndexSmokeTest::OnSessionStart();
                 PlotTick::OnSessionStart();
                 PlotLog::OnSessionStart();
                 PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
@@ -407,6 +414,8 @@ namespace NarrativeEngine
                 // references it reads do not resolve until a save is
                 // actually loaded.
                 PlotPopulation::OnSessionStart();
+                CharacterBios::OnSessionStart();
+                CharacterIndexSmokeTest::OnSessionStart();
                 // Rotate + open the history log for the loaded
                 // session BEFORE Tick starts polling.
                 EventHistoryWriter::OnSessionStart();
@@ -528,6 +537,11 @@ namespace NarrativeEngine
         void OnRevert(SKSE::SerializationInterface*)
         {
             logger::debug("OnRevert");
+            // Biographies are per SAVE, not per process: a save can
+            // carry its own edited copies. Dropped here rather than at
+            // load because revert also fires on quit to main menu,
+            // where nothing loads afterwards.
+            CharacterBios::OnRevert();
             PhaseTracker::OnRevert();
             DecisionLog::OnRevert();
             CombatEventLog::OnRevert();

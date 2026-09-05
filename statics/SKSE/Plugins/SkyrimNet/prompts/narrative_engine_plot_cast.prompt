@@ -2,21 +2,22 @@
    weighted shortlist of people who COULD be scheming; this call decides
    which of them IS.
    Receives the JSON object produced by PlotBirth::CastContext:
-     candidates [{ form_id, name, hold, standing, UUID }],
+     candidates [{ form_id, name, hold, standing,
+                   bio { summary, occupation, aspirations, ... } }],
      retry — empty on the first attempt; on the second it is why the
        first answer was refused
-   The plugin draws twenty-five and keeps the first five SkyrimNet can
-   resolve a profile for, then shuffles them: an unresolvable candidate
-   renders as a name and a hold beside others with a paragraph each,
-   which is not a choice between five people, and weight decides who is
-   ON the list rather than where they sit in it.
-   Each candidate's UUID keys SkyrimNet's character-profile submodules, so
-   the choice is made on who these people are rather than on their names.
-   SHORT_INLINE, not "full": five full profiles is 19KB of prompt, most of
-   it dialogue scaffolding (worn equipment, alcohol inventory, travel
-   history with the player), and it announces "THIS IS WHO YOU ARE
-   ROLEPLAYING AS" once per candidate, which is incoherent when the task
-   is to choose between them.
+   The plugin draws twenty-five, keeps the first five with a biography on
+   file, and shuffles them: a candidate with no biography renders as a
+   name and a hold beside others with a paragraph each, which is not a
+   choice between five people, and weight decides who is ON the list
+   rather than where they sit in it.
+   Each candidate carries their own `bio`, read straight from their bio
+   file by CharacterBios, so the choice is made on who these people are
+   rather than on their names.
+   Selected BLOCKS, not the whole file: the appearance and speech-style
+   sections say how somebody looks and sounds, which does not bear on who
+   would be scheming, and five whole profiles is a great deal of prompt
+   spent on the parts that cannot answer the question.
    NOTE: no fenced blocks and no literal braces anywhere in this file; both
    break the render. See docs/CUSTOM_PROMPTS.md. #}
 [ system ]
@@ -88,13 +89,13 @@ Do not repeat that mistake. Everything else about the task is unchanged.
 {% if length(c.hold) > 0 %}Lives in {{ c.hold }}.{% endif %}
 
 #### Summary
-{{ render_character_profile("bio_summary", c.UUID) }}
+{{ c.bio.summary }}
 
 #### Occupation
-{{ render_character_profile("bio_occupation", c.UUID) }}
+{{ c.bio.occupation }}
 
 #### Aspirations
-{{ render_character_profile("bio_aspirations", c.UUID) }}
+{{ c.bio.aspirations }}
 
 {% endfor %}
 

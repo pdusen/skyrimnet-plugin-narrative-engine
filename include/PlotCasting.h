@@ -324,12 +324,94 @@ namespace NarrativeEngine::PlotCasting
     // down to distant acquaintances, doing it yourself is genuinely the
     // competitive option — and a scullion with nobody to command running
     // her own errand is the CORRECT story, not a degraded one.
+    // May this specific person act for this mastermind on this step?
+    //
+    // The eligibility half of the ladder, pulled out so that a caller
+    // with its OWN preference order -- a retrieval index ranking people
+    // by how well they match the step's description of who it needs --
+    // can apply the same rules without also inheriting the ladder's
+    // ordering. SelectActor is written in terms of this, so the two
+    // cannot drift into disagreeing about who is allowed.
+    //
+    // `rung` is the BEST rung the candidate reaches: 1 for a tied
+    // subordinate, 2 for any subordinate, 3 for a non-collegial,
+    // non-hostile tie that does not outrank the mastermind. 0 means they
+    // reach no rung at all and are not an agent for this step under any
+    // circumstances.
+    //
+    // `reject` is separate on purpose. Reaching a rung is about the
+    // relationship, which does not change minute to minute; being
+    // screened out is about right now -- occupied, on cooldown, dead.
+    // A caller that wants to log WHY somebody was passed over needs to
+    // tell those apart.
+    struct Qualification
+    {
+        int rung = 0;
+        Reject reject = Reject::None;
+
+        // Both halves must hold. A tied subordinate who is already busy
+        // is not an agent today.
+        [[nodiscard]] bool Eligible() const noexcept
+        {
+            return rung != 0 && reject == Reject::None;
+        }
+    };
+
+    // How well one candidate fits the step's description of who it
+    // needs. Higher is better; 0 means no shared vocabulary at all.
+    //
+    // Comparable only WITHIN one selection, which is all this is used
+    // for: the same query scored against different people. There is no
+    // threshold and there deliberately is not one -- see SelectActor.
+    using AgentScorer = std::function<float(RE::FormID)>;
+
+    // `subject` is the person the step is done TO, once resolved, or 0.
+    // Excluded outright: a step is never carried out by the person it is
+    // aimed at. The prose test on `stepText` covers the same ground but
+    // only when the sentence spells the name the way it expects, and it
+    // does not always -- a possessive defeated it for a long time, and
+    // Captain Veleth was cast to watch Captain Veleth.
+    [[nodiscard]] Qualification QualifyAgent(const Population& population,
+                                             RE::FormID mastermind,
+                                             RE::FormID candidate,
+                                             std::string_view stepText,
+                                             RE::FormID subject,
+                                             const OccupancyTable& occupancy,
+                                             double gameDay,
+                                             const AlivePredicate& alive,
+                                             const SeatedPredicate& seated);
+
+    // WHY `score` NARROWS RATHER THAN ORDERS
+    //
+    // The step says what kind of person it needs, and it is tempting to
+    // search the whole population for the best match and then check
+    // whether that person is allowed to act. That was tried and it does
+    // not work: across a measured run, 47% of steps found candidates
+    // matching the description well -- one at a perfect 1.00, another
+    // with 24 acceptable matches -- and the ladder refused every single
+    // one, because a stranger who happens to be the right KIND of person
+    // is still a stranger. 40% of steps ended with the mastermind doing
+    // the work themselves, which is the failure this whole mechanism
+    // exists to avoid.
+    //
+    // So eligibility comes first and the description only ever chooses
+    // among people who were already going to be asked. That also means
+    // there is no minimum match quality here: the pool is a handful of
+    // subordinates and acquaintances rather than a thousand strangers,
+    // the best fit among them is usually a poor one in absolute terms,
+    // and refusing it would just put the work back on the mastermind.
+    // A weak match to the right kind of person still beats a coin toss.
+    //
+    // With no scorer the rung is drawn from at random, weighted, which
+    // is what happens when a step carries no description of its agent.
     [[nodiscard]] Result SelectActor(const Population& population,
                                      RE::FormID mastermind,
                                      std::string_view stepText,
                                      const OccupancyTable& occupancy,
                                      double gameDay,
                                      const AlivePredicate& alive,
+                                     RE::FormID subject,
                                      const SeatedPredicate& seated,
-                                     std::uint64_t& rng);
+                                     std::uint64_t& rng,
+                                     const AgentScorer& score = {});
 } // namespace NarrativeEngine::PlotCasting

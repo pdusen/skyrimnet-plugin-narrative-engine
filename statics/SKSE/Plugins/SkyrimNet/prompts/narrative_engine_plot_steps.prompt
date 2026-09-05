@@ -6,8 +6,9 @@
      retry — empty on the first attempt; on the second it is why the
        first answer was refused,
      step_types [{ id, description }],
-     npc { UUID } — required by SkyrimNet's character_profile submodules;
-                    keys every character-bio decorator.
+     bio { summary, occupation } — the mastermind's biography, read
+       straight from their bio file by CharacterBios. Plain text, already
+       rendered; no character-profile decorator is involved.
    NOTE: no fenced blocks and no literal braces anywhere in this file; both
    break the render. See docs/CUSTOM_PROMPTS.md. #}
 [ system ]
@@ -50,12 +51,11 @@ tracks accomplishes nothing.
 
 **Do not open with `surveil` out of habit.** Watching someone is what you
 do when you need to know something you cannot get any other way, and
-most schemes do not start there. Consider what this particular person
-already knows before deciding they need to learn it: a steward knows the
-household's routine, a publican knows who drinks with whom, a priest
-knows who confesses what. Some schemes open by asking a favour, some by
-laying hands on a thing, some by simply going where the answer is
-written down.
+most schemes do not start there. Weigh what this particular person
+already knows, through their position and their trade, before deciding
+they need to learn it. A scheme can open by asking a favour, by laying
+hands on a thing, or by going where the answer is already written
+down.
 
 ## Output Format
 Return a JSON object. No markdown fences. No prose before or after the
@@ -67,9 +67,16 @@ object.
     is to explain your own reasoning.
   - `type` — one of the step ids above, spelled exactly.
   - `description` — one short line, third person, saying what this step
-    is. Concrete: name the person, the place or the thing it turns on.
-    "Offer the night clerk a share of the season to look away", not
-    "gather information".
+    is. Concrete: name the person, the place or the thing it turns on,
+    and the specific move being made on them. A line that could be
+    pasted into any other scheme is too vague to be worth reading.
+  - `agent` — who carries this step out. An object with `query` and
+    `label`, described below. Every step has one.
+  - `target` — the ONE PERSON this step is done TO, as a plain string.
+    Include it ONLY when the step acts on a person: somebody it is done
+    to, rather than a place it happens or a thing it obtains. Many steps
+    have no such person. Leave the key out entirely rather than
+    inventing one.
 
 Keep each description under about fifteen words, and do not open it with
 the schemer's name — every step is theirs, so saying so each time costs
@@ -80,12 +87,92 @@ Write plainly. No markdown, no headings, no bullet points inside a
 description. Name only people and places that exist in Skyrim, and prefer
 ones this person would actually know.
 
+## Describing the people a step needs
+
+The plugin searches the biographies of everyone in the world for
+whoever best fits what you asked for. It never takes a name on trust, so
+nothing you write here can conjure a person who does not exist.
+
+`agent` carries two properties:
+
+- `query` — a sentence describing that person, matched against their
+  biography.
+- `label` — one to three words naming that kind of person.
+
+`target` is a single string, and it may be either a DESCRIPTION of a
+kind of person or the NAME of a specific one. **Prefer the
+description.** Use a name only when the step genuinely turns on that one
+individual and would make no sense aimed at anybody else — when it is
+their secret, their possession, or their reputation at stake. If the
+step would work just as well against any person of the right sort, say
+what sort, because a description can find somebody and a name that is
+not in this world finds nobody.
+
+**A target is always a single living person.** It is never an object,
+a place, a building, a document or a thing to be obtained; it is never
+an organisation, a guild, a household or a faction; and it is never a
+group of people, however small. The search will answer with a person
+whatever you write, so a step that names a key as its target gets a
+person who happens to work near one, and a step that names a guild gets
+one arbitrary member of it. Neither is what the step meant.
+
+If what the step acts on is a thing or a place, it has no target — put
+it in the description and leave the key out. If it acts on several
+people, or on a group as a whole, it also has no target: say so in the
+description instead. Only name a target when there is exactly one person
+on the receiving end.
+
+**A name on its own is not enough.** The search reads biographies, and
+a person's name appears in the biography of everyone who knows them just
+as it does in their own — often more densely, because a servant mentions
+their master far more than that master mentions himself. A bare name
+therefore finds the household, the rivals and the relatives before it
+finds the person. So when you name somebody, say in the same string who
+they are and what they do for a living, which is the part that is true
+of them and of nobody else.
+
+Either way, if the search turns up nobody suitable the string is used as
+written, so make it read naturally at the end of a sentence.
+
+**Write the query as narrowly as the step actually requires, and no
+narrower.** Every word you add rules people out, so a word that is not
+genuinely required discards somebody who could have carried the step out
+perfectly well. A query nobody satisfies finds nobody at all.
+
+So ask what the step genuinely turns on — where the person has to be,
+what they have to have access to, who they have to be trusted by — and
+say that much. Do not name skills the step does not exercise, traits it
+does not depend on, or standing it does not use. Requirements the step
+never draws on cost you candidates and buy nothing.
+
+Places, factions and trades belong in a query where the step depends on
+them; that is how people are described. What does not belong is a
+requirement the step would succeed without.
+
+**The label names the kind of person the agent is.** One to three
+words, with NO proper nouns of any sort — no personal, place, faction or
+guild names. Name the kind of person, not their situation and not what
+they would be persuaded to do.
+
+A target written as a description follows the same rule; a target
+written as a name is of course a name.
+
 ## Hard Constraints
 - Output strict JSON. No markdown code fences. No prose before or after
   the JSON object.
 - Return only the key `plan`.
 - Every `type` MUST be one of the step ids listed above, spelled exactly.
 - Every step MUST carry a non-empty `description`.
+- Every step MUST carry an `agent` with a non-empty `query` and `label`.
+- A step MUST carry a `target` only when it acts on exactly one person.
+  Omit the key otherwise; do not send an empty string.
+- `target` MUST NOT name an object, a place, a document, an
+  organisation, a faction, or a group of people.
+- `target` MUST be a plain string, not an object.
+- A `target` that names a person MUST also say who they are and what
+  their occupation is. A bare name is not acceptable.
+- Every `agent.label` MUST be one to three words and MUST NOT contain a
+  proper noun.
 - The last step MUST NOT be `conceal`.
 [ end system ]
 
@@ -104,10 +191,10 @@ Do not repeat that mistake. Everything else about the task is unchanged.
 {% if length(mastermind.hold) > 0 %}They live in {{ mastermind.hold }}.{% endif %}
 
 ### Summary
-{{ render_character_profile("bio_summary", npc.UUID) }}
+{{ bio.summary }}
 
 ### Occupation
-{{ render_character_profile("bio_occupation", npc.UUID) }}
+{{ bio.occupation }}
 
 ## What they are ultimately after
 

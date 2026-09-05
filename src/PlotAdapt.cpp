@@ -1,5 +1,6 @@
 #include <PlotAdapt.h>
 
+#include <CharacterBios.h>
 #include <GossipGraph.h>
 #include <logger.h>
 #include <SkyrimNetAPI.h>
@@ -64,21 +65,20 @@ namespace NarrativeEngine::PlotAdapt
 
         // Same reason as birth: adaptation is asking what THIS person
         // does next, and that needs the profile as much as the first
-        // call did -- and via the ACTOR REFERENCE, for the same reason.
-        // `plot.mastermind` is a base form; SkyrimNet does not know
-        // those, and hands back 0 for every one of them.
-        const auto actorRef = GossipGraph::ActorRefFor(plot.mastermind);
-        const auto uuid = actorRef != 0 ? SkyrimNetAPI::FormIDToUUID(actorRef) : 0;
-        if (uuid == 0) {
-            logger::warn("PlotAdapt: no SkyrimNet UUID for {} (base 0x{:X}, ref 0x{:X}); the revision will be "
-                         "judged without a character profile",
+        // call did. Read from the bio file rather than through
+        // SkyrimNet, whose UUIDs only exist for actors the player has
+        // already met -- see CharacterBios.
+        const auto& bio = CharacterBios::For(plot.mastermind);
+        if (bio.Empty()) {
+            logger::warn("PlotAdapt: no biography for {} (base 0x{:X}); the revision will be judged without a "
+                         "character profile",
                          plot.mastermindName,
-                         plot.mastermind,
-                         actorRef);
+                         plot.mastermind);
         }
-        nlohmann::json npc = nlohmann::json::object();
-        npc["UUID"] = uuid;
-        ctx["npc"] = std::move(npc);
+        nlohmann::json profile = nlohmann::json::object();
+        profile["summary"] = bio.summary;
+        profile["personality"] = bio.personality;
+        ctx["bio"] = std::move(profile);
 
         nlohmann::json boss = nlohmann::json::object();
         boss["name"] = plot.mastermindName;

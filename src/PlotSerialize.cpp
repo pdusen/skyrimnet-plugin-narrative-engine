@@ -97,8 +97,10 @@ namespace NarrativeEngine::PlotSerialize
             // silently reinterpret every saved step.
             const std::string typeId(PlotModel::TypeId(step.type));
             return WriteString(sink, typeId) && WritePod(sink, step.target) && WriteString(sink, step.targetName)
-                   && WriteString(sink, step.description) && WritePod(sink, step.actor)
-                   && WriteString(sink, step.actorName) && WritePod(sink, static_cast<std::uint8_t>(step.state))
+                   && WriteString(sink, step.description) && WriteString(sink, step.agentRole.query)
+                   && WriteString(sink, step.agentRole.label) && WriteString(sink, step.targetWanted)
+                   && WritePod(sink, step.actor) && WriteString(sink, step.actorName)
+                   && WritePod(sink, static_cast<std::uint8_t>(step.state))
                    && WritePod(sink, static_cast<std::uint8_t>(step.outcome)) && WritePod(sink, step.budget)
                    && WritePod(sink, step.elapsed) && WritePod(sink, step.threshold) && WritePod(sink, step.progress)
                    && WritePod(sink, step.heldTicks) && WritePod(sink, step.sizingTravel)
@@ -116,20 +118,43 @@ namespace NarrativeEngine::PlotSerialize
                 return false;
             }
 
-            if (!ReadString(source, step.description)) {
-                return false;
-            }
-
+            // ORDER MUST MATCH WriteStep EXACTLY. It did not, until the
+            // roles below were added and forced a look: the writer put
+            // target and targetName ahead of description, the reader
+            // took description first. The stream stayed in sync purely
+            // because target was always 0 and targetName always empty,
+            // and a zeroed form id and a zero-length string are the same
+            // four bytes -- so a loaded step came back with an empty
+            // description and its text sitting in targetName, which is
+            // what the dashboard was rendering after a load.
+            //
+            // Once a target resolves to a real person that coincidence
+            // ends: a non-zero form id read as a string length asks for
+            // megabytes, fails the sanity check, and drops the plot.
             RE::FormID savedTarget{};
             if (!ReadPod(source, savedTarget)) {
                 return false;
             }
             if (savedTarget != 0 && !source.ResolveFormID(savedTarget, step.target)) {
+                // The person is gone -- an uninstalled mod, most often.
+                // The NAME survives, which turns the step into exactly
+                // the placeholder an unmatched role produces, so a plot
+                // outlives the disappearance of who it was aimed at.
                 step.target = 0;
                 resolved = false;
             }
 
-            if (!ReadString(source, step.targetName)) {
+            if (!ReadString(source, step.targetName) || !ReadString(source, step.description)) {
+                return false;
+            }
+
+            // The role DESCRIPTIONS, not just what they resolved to.
+            // A step re-dispatched after a load has to search again --
+            // whoever it found last session may be dead, busy, or gone
+            // with the mod they came from -- and the query is the only
+            // record of what it was looking for.
+            if (!ReadString(source, step.agentRole.query) || !ReadString(source, step.agentRole.label)
+                || !ReadString(source, step.targetWanted)) {
                 return false;
             }
 

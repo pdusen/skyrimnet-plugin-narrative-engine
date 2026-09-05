@@ -223,6 +223,30 @@ namespace NarrativeEngine::SkyrimNetAPI
         }
     }
 
+    std::string GetBioTemplateName(std::uint32_t formId)
+    {
+        if (!::PublicGetBioTemplateName)
+            return {};
+        try {
+            return ::PublicGetBioTemplateName(formId);
+        } catch (...) {
+            logger::warn("SkyrimNetAPI::GetBioTemplateName: exception across DLL boundary");
+            return {};
+        }
+    }
+
+    std::string GetSaveUniqueID()
+    {
+        if (!::PublicGetSaveUniqueID)
+            return {};
+        try {
+            return ::PublicGetSaveUniqueID();
+        } catch (...) {
+            logger::warn("SkyrimNetAPI::GetSaveUniqueID: exception across DLL boundary");
+            return {};
+        }
+    }
+
     std::string GetActorEngagement(int maxCount,
                                    bool excludePlayer,
                                    bool playerEventsOnly,

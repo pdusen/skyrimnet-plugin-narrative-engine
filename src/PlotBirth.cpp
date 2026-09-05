@@ -1,5 +1,6 @@
 #include <PlotBirth.h>
 
+#include <CharacterBios.h>
 #include <GossipGraph.h>
 #include <LLMTextSanitizer.h>
 #include <logger.h>
@@ -127,24 +128,43 @@ namespace NarrativeEngine::PlotBirth
             return best;
         }
 
-        // `npc.UUID` seats SkyrimNet's character-profile submodules;
-        // it is the key render_character_profile(...) resolves against.
-        // Zero means the prompt gets a name and nothing else, which is
-        // worth a warning every time -- a scheme generated from a name
-        // is a scheme any NPC could have had.
-        std::uint64_t ProfileUUID(RE::FormID npc, const std::string& name, const char* stage)
+        // The character prose the prompts render, straight from the bio
+        // file rather than through SkyrimNet.
+        //
+        // This used to be `npc.UUID`, which keyed
+        // render_character_profile(...) inside the template. It worked,
+        // for the one NPC in nine SkyrimNet had already met: the UUID
+        // is minted when an actor is ENCOUNTERED, so a fresh save
+        // resolved 93 of 881 and every other candidate reached the model
+        // as a name and a hold. That is what IsCastable existed to
+        // filter out, and why the shortlist was drawn five-from-25.
+        //
+        // The bios are files. CharacterBios reads them for 840 of the
+        // same 881 with no reference to SkyrimNet at all, so the profile
+        // is simply passed in as text and the template does no lookup.
+        //
+        // Sections are kept apart rather than concatenated because the
+        // prompts head them separately; a single blob was tried and read
+        // as a wall of text.
+        nlohmann::json BioSections(RE::FormID npc, const std::string& name, const char* stage)
         {
-            const auto ref = RefOf(npc);
-            const auto uuid = ref != 0 ? SkyrimNetAPI::FormIDToUUID(ref) : 0;
-            if (uuid == 0) {
-                logger::warn("PlotBirth[{}]: no SkyrimNet UUID for {} (base 0x{:X}, ref 0x{:X}); the prompt "
-                             "will have no character profile to work from.",
+            const auto& bio = CharacterBios::For(npc);
+            if (bio.Empty()) {
+                logger::warn("PlotBirth[{}]: no biography for {} (base 0x{:X}); the prompt will have no character "
+                             "profile to work from.",
                              stage,
                              name,
-                             npc,
-                             ref);
+                             npc);
             }
-            return uuid;
+            nlohmann::json out = nlohmann::json::object();
+            out["summary"] = bio.summary;
+            out["background"] = bio.background;
+            out["personality"] = bio.personality;
+            out["aspirations"] = bio.aspirations;
+            out["relationships"] = bio.relationships;
+            out["occupation"] = bio.occupation;
+            out["skills"] = bio.skills;
+            return out;
         }
 
         // --- Call 1 -------------------------------------------------------
@@ -177,11 +197,11 @@ namespace NarrativeEngine::PlotBirth
                 entry["name"] = member->name;
                 entry["hold"] = HoldNameOf(member->hold);
                 entry["standing"] = StandingPhrase(BestStanding(*member));
-                // Each candidate carries their own UUID so the prompt can
-                // render a profile per row. That is the whole point of
-                // the call: a choice between five names is a coin toss.
-                // IsCastable has already guaranteed this resolves.
-                entry["UUID"] = ProfileUUID(member->npc, member->name, "cast");
+                // Each candidate carries their own prose so the prompt
+                // can render a profile per row. That is the whole point
+                // of the call: a choice between five names is a coin
+                // toss. IsCastable has already guaranteed this is here.
+                entry["bio"] = BioSections(member->npc, member->name, "cast");
                 people.push_back(std::move(entry));
             }
             ctx["candidates"] = std::move(people);
@@ -194,9 +214,7 @@ namespace NarrativeEngine::PlotBirth
         {
             nlohmann::json ctx;
 
-            nlohmann::json npc = nlohmann::json::object();
-            npc["UUID"] = ProfileUUID(boss.npc, boss.name, "ambition");
-            ctx["npc"] = std::move(npc);
+            ctx["bio"] = BioSections(boss.npc, boss.name, "ambition");
 
             nlohmann::json person = nlohmann::json::object();
             person["name"] = boss.name;
@@ -216,9 +234,7 @@ namespace NarrativeEngine::PlotBirth
         {
             nlohmann::json ctx;
 
-            nlohmann::json npc = nlohmann::json::object();
-            npc["UUID"] = ProfileUUID(boss.npc, boss.name, "steps");
-            ctx["npc"] = std::move(npc);
+            ctx["bio"] = BioSections(boss.npc, boss.name, "steps");
 
             nlohmann::json person = nlohmann::json::object();
             person["name"] = boss.name;
@@ -327,8 +343,7 @@ namespace NarrativeEngine::PlotBirth
 
     bool IsCastable(RE::FormID npc)
     {
-        const auto ref = RefOf(npc);
-        return ref != 0 && SkyrimNetAPI::FormIDToUUID(ref) != 0;
+        return CharacterBios::Has(npc);
     }
 
     bool Compose(const PlotThread::Token& pt,

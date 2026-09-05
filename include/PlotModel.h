@@ -204,14 +204,74 @@ namespace NarrativeEngine::PlotModel
         // other one, which is the failure this text exists to avoid.
         std::string description;
 
-        // Pre-resolved. Never a free string from an LLM — the model
-        // picks from a menu by index and this is what that index
-        // resolved to. May be 0 for a type that needs no target, and is
-        // currently 0 always, because no menu is offered.
+        // WHO a step needs, as the model described them.
+        //
+        // `query` is a sentence matched against character biographies;
+        // `label` is a one-to-three-word noun phrase naming that kind of
+        // person, carrying no proper noun. Both come back from the plan
+        // call, both are sanitized at extraction, and NEITHER is ever
+        // resolved as a name -- the query is searched for, and the label
+        // is only ever displayed.
+        struct Role
+        {
+            std::string query;
+            std::string label;
+
+            [[nodiscard]] bool Empty() const noexcept
+            {
+                return query.empty() && label.empty();
+            }
+        };
+
+        // Every step has an agent.
+        Role agentRole;
+
+        // WHO the step acts on, as the model wrote it: either a specific
+        // person's name or a description of a kind of person, with the
+        // prompt asking for the description unless the step genuinely
+        // turns on one individual. Empty when the step acts on nobody,
+        // which most steps do.
+        //
+        // One string rather than a search query and a display label,
+        // because the two were the same thing wearing different hats.
+        // Whatever it says is searched for; if somebody matches well
+        // enough they become the target, and if nobody does the string
+        // itself is what gets rendered. A name that resolves and a
+        // description that resolves are the same operation, and a name
+        // that does NOT resolve still reads correctly as a placeholder.
+        std::string targetWanted;
+
+        // THE RESOLVED TARGET, and the invariant the rest of the plugin
+        // depends on:
+        //
+        //   target != 0                        a real person
+        //   target == 0 && !targetName.empty() a PLACEHOLDER -- the role's
+        //                                      label, standing in for
+        //                                      somebody who does not exist
+        //   target == 0 && targetName.empty()  the step acts on no person
+        //
+        // Anything with a side effect -- a memory written to the target,
+        // an item planted on them, a relationship rank moved -- MUST gate
+        // on `target != 0`, never on `targetName` being non-empty. The
+        // two tests read identically at the call site and differ only
+        // for placeholders, which is exactly the case that would
+        // otherwise try to write a memory to nobody.
+        //
+        // Display is the opposite: render `targetName` whichever it is.
+        // That is what makes an unmatched role read as "a dock worker"
+        // rather than as a blank.
+        //
+        // PlotSerialize already produces the placeholder state on its
+        // own: a saved target whose form no longer resolves is zeroed
+        // while its name survives, so a plot outlives the uninstall of
+        // the mod its target came from.
         RE::FormID target = 0;
         std::string targetName;
 
         // Who is doing it. 0 until the step is dispatched and cast.
+        // Always a real person -- an agent that cannot be found falls
+        // back to the mastermind rather than to a placeholder, because
+        // somebody has to actually carry the step out.
         RE::FormID actor = 0;
         std::string actorName;
 
