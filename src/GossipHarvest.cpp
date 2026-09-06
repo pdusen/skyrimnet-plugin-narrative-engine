@@ -310,6 +310,76 @@ namespace NarrativeEngine::GossipHarvest
             }
         }
 
+        // How many of the bucket's actors the empty-sweep probe asks about.
+        // Enough that a few NPCs the player happens never to have met cannot
+        // fake an empty store, few enough to cost nothing on the only path
+        // it ever runs.
+        constexpr std::size_t kEmptySweepProbeActors = 8;
+
+        // Why a sweep that examined NOTHING examined nothing.
+        //
+        // The sweep's own counters cannot say. An empty memory store and a
+        // filter that excludes every row both leave `memories=0` on the
+        // HARVEST line with every rejection counter at zero, and the two
+        // call for opposite responses. Telling them apart has taken three
+        // separate misdiagnoses, each costing a round trip with a tester,
+        // so the answer is worth one query on the failure path.
+        //
+        // The probe drops every filter BuildQuery sets - the importance
+        // floor, the game-time window, the ne_gossip exclusion - and also
+        // isActive, which defaults to active-only. The question is whether
+        // SkyrimNet holds ANY row for these actors, not a usable one.
+        void ProbeEmptySweep(const std::vector<RE::FormID>& members, const Settings::Config& cfg)
+        {
+            MemoryQuery probe;
+            probe.maxCount = 5;
+            probe.isActive = std::nullopt;
+
+            std::size_t probed = 0;
+            std::size_t rows = 0;
+            for (const auto npc : members) {
+                if (probed >= kEmptySweepProbeActors) {
+                    break;
+                }
+                const auto* p = GossipGraph::Find(npc);
+                if (!p || !p->actorRef) {
+                    continue;
+                }
+                ++probed;
+                const auto raw = SkyrimNetAPI::QueryMemoriesForActor(p->actorRef, probe);
+                const auto j = nlohmann::json::parse(raw, nullptr, false);
+                if (j.is_array()) {
+                    rows += j.size();
+                }
+            }
+
+            if (probed == 0) {
+                return;
+            }
+            // Mirrored to the plugin log for the same reason the readiness
+            // gate is: which of the two this turns out to be is plugin
+            // health, and bGossipLogEnabled can take the trace away.
+            if (rows > 0) {
+                const auto why = std::format(
+                    "harvest: sweep examined 0 memories, but an unfiltered probe of {} actor(s) found {} row(s) - "
+                    "the query filters are excluding everything (importance >= {}, window {}d, excluding tag '{}')",
+                    probed,
+                    rows,
+                    cfg.gossipMinMemoryImportance,
+                    cfg.gossipHarvestWindowDays,
+                    kOwnOutputTag);
+                GossipLog::Note(why);
+                logger::warn("GossipHarvest: {}", why);
+            } else {
+                const auto why =
+                    std::format("harvest: sweep examined 0 memories and an unfiltered probe of {} actor(s) found none "
+                                "either - SkyrimNet holds nothing for this bucket",
+                                probed);
+                GossipLog::Note(why);
+                logger::info("GossipHarvest: {}", why);
+            }
+        }
+
         // Session totals. The log carries per-sweep numbers; these are the
         // "how has this session behaved overall" view.
         void Accumulate(const GossipThread::Token& gt, const GossipLog::HarvestStats& sweep)
@@ -511,6 +581,12 @@ namespace NarrativeEngine::GossipHarvest
                 CollectFrom(gt, *p, cfg, nowGameDay * 86400.0, sweep, candidates);
             }
             sweep.candidates = candidates.size();
+
+            // Nothing came back at all. Ask why once, here, rather than
+            // leaving a `memories=0` line that cannot be acted on.
+            if (sweep.memoriesExamined == 0) {
+                ProbeEmptySweep(members, cfg);
+            }
 
             std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
                 return a.importance > b.importance;
