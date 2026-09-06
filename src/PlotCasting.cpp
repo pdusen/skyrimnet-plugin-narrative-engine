@@ -115,17 +115,46 @@ namespace NarrativeEngine::PlotCasting
             constexpr double kBase = 1.0;
             constexpr double kMembershipBonus = 0.5;
             // Doublings of the standing term across the full 0..1
-            // ladder. Four gives 2^(4s) - 1, so the term doubles for
-            // every quarter of the ladder climbed:
+            // ladder. 6.24 gives 2^(6.24s) - 1, so the term doubles
+            // about every sixth of the ladder climbed:
             //
             //   standing  0     0.25  0.5   0.75  1.0
-            //   term      0     1     3     7     15
-            //   weight    1.5   2.5   4.5   8.5   16.5
+            //   term      0     1.9   7.7   24.6  74.6
+            //   weight    1.5   3.4   9.2   26.1  76.1
             //
             // An independent stays at 1.0, a bottom-rung member at 1.5,
-            // and a jarl is eleven times the courtier and sixteen times
+            // and a jarl is three times the thane and seventy-six times
             // the farmer.
-            constexpr double kStandingDoublings = 4.0;
+            //
+            // 6.24 IS SOLVED FOR, not chosen. Every BORN line records
+            // the chosen mastermind's weight, and those weights land on
+            // this ladder cleanly enough to invert -- so 67 plots born
+            // across six runs recover the pool's shape: 43% independent,
+            // 34% bottom-rung, and 3.3% at the top of some ladder.
+            //
+            // Against that pool the constant sets who schemes:
+            //
+            //                    d=4     d=6.24
+            //   independent     16.4%      6.8%
+            //   bottom rung     19.4%      8.1%
+            //   s=0.50          17.9%     15.2%
+            //   s=0.75          11.9%     15.3%
+            //   LEADER          20.9%     40.0%
+            //
+            // Four in ten plots run by somebody who leads an
+            // organisation is the wanted shape, and 6.24 is the value
+            // that produces it. The bottom of the ladder pays for it:
+            // the farmer's plot drops to roughly a third of what it was,
+            // which is the deliberate cost of the top taking a share
+            // that size.
+            //
+            // EXPECT THE FIRST RUN TO LAND UNDER 40%. Leaders are about
+            // 3% of the pool, so drawing them twice as often runs them
+            // into the mastermind cooldown far more, and that feedback
+            // is not in the arithmetic above -- the pool was inferred
+            // from draws the cooldown had already thinned. If a run
+            // settles nearer a third, 6.5 is the next value to try.
+            constexpr double kStandingDoublings = 6.24;
 
             double weight = kBase;
             double best = 0.0;
