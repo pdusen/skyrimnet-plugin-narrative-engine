@@ -30,28 +30,55 @@ namespace NarrativeEngine::Plots
         std::optional<PlotState> g_pending;
     } // namespace
 
+    namespace
+    {
+        // What a state with no history of its own starts from.
+        //
+        // iPlotRandomSeed = 0 means "nondeterministic": derive from the
+        // clock so two runs differ. Any other value reproduces a run
+        // exactly, which is what the offline harness and any bug report
+        // both want.
+        std::uint64_t FreshSeed()
+        {
+            const auto& cfg = Settings::Get();
+            if (cfg.plotRandomSeed != 0) {
+                return static_cast<std::uint64_t>(cfg.plotRandomSeed);
+            }
+            return static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+        }
+    } // namespace
+
     void Initialize()
     {
-        const auto& cfg = Settings::Get();
-
         g_live = PlotState{};
-
-        // 0 means "nondeterministic": derive from the clock so two runs
-        // differ. Any other value reproduces a run exactly, which is
-        // what the offline harness and any bug report both want.
-        if (cfg.plotRandomSeed != 0) {
-            g_live.rngState = static_cast<std::uint64_t>(cfg.plotRandomSeed);
-        } else {
-            g_live.rngState = static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
-        }
-
+        g_live.rngState = FreshSeed();
         g_published.store(std::make_shared<const PlotState>(g_live));
 
-        logger::info("Plots: state initialised (enabled={}, seed={})", cfg.plotsEnabled, cfg.plotRandomSeed);
+        logger::info("Plots: state initialised (enabled={}, seed={})",
+                     Settings::Get().plotsEnabled,
+                     Settings::Get().plotRandomSeed);
     }
 
     void StageLoadedState(PlotState state)
     {
+        // A STATE WITH NO GENERATOR GETS A FRESH ONE.
+        //
+        // Initialize seeds the clock once at startup, and this then
+        // threw that away on every single load: a discarded co-save and
+        // a revert both stage a default-constructed PlotState, whose
+        // rngState is 0, and TakePendingState installs it wholesale. So
+        // every session began from the same generator and replayed the
+        // same sequence -- across four runs the third plot was
+        // masterminded by Korir in four of four, the first by Weylin in
+        // three of four. The seed was never static by configuration; it
+        // was being overwritten.
+        //
+        // A state RESTORED from a co-save carries a generator that has
+        // already been drawn from, and keeps it: resuming a save should
+        // continue its sequence rather than start a new one.
+        if (state.rngState == 0) {
+            state.rngState = FreshSeed();
+        }
         {
             std::scoped_lock lock(g_pendingMutex);
             g_pending = state;

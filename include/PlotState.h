@@ -111,6 +111,13 @@ namespace NarrativeEngine
         // splitmix64 state. A plain integer rather than a std::mt19937
         // so that publishing a snapshot stays a cheap copy and the
         // stream position round-trips through the co-save as one field.
+        //
+        // ZERO MEANS UNSEEDED, and Plots::StageLoadedState reads it that
+        // way: a state that arrives with 0 gets a fresh generator. That
+        // is what a default-constructed PlotState is -- the one staged
+        // when a co-save is discarded or a game is reverted -- and
+        // installing it verbatim used to overwrite the seed Initialize
+        // had drawn, so every session replayed one sequence.
         std::uint64_t rngState = 0;
 
         // --- Reserved for Phase D ------------------------------------
