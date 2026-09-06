@@ -200,11 +200,16 @@ namespace NarrativeEngine
         std::unordered_map<std::uint32_t, GossipState_::Rumor> rumors;
         GossipState_::EventQueue queue;
         std::uint32_t nextRumorId = 1;
-        // The simulation's own clock. Under Milestone 3 this is SET to the
-        // scheduled time of the tick being executed rather than sampled
-        // from the game clock, which is what lets a late tick still be a
-        // correct tick.
-        double simGameDay = 0.0;
+        // The simulation's own clock, and the schedule's anchor across
+        // sessions. Under Milestone 3 this is SET to the scheduled time of
+        // the tick being executed rather than sampled from the game clock,
+        // which is what lets a late tick still be a correct tick.
+        //
+        // Negative means this world has never run a tick. Because it is
+        // persisted, it is also the ONLY record of when gossip last ran,
+        // so GossipTick seeds its next due time from it rather than from
+        // the game clock at load — see GossipTick::OnSessionStart.
+        double simGameDay = -1.0;
         // Last sampled game day, kept only so a session start can re-base
         // without reading a multi-year jump on the first tick.
         double lastGameDaySample = -1.0;

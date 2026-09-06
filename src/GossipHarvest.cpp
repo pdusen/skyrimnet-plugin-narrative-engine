@@ -448,6 +448,17 @@ namespace NarrativeEngine::GossipHarvest
                                                 SkyrimNetAPI::IsMemorySystemReady(),
                                                 SkyrimNetAPI::GetVersion(),
                                                 kMinApiVersion));
+                    // Mirrored to the plugin log because this is a
+                    // readiness failure, not simulation detail — and
+                    // because the gossip trace can be switched off with
+                    // bGossipLogEnabled, which would otherwise take the
+                    // only record of it with them.
+                    logger::warn("GossipHarvest: sweep deferred — graph ready={}, memory system ready={}, "
+                                 "SkyrimNet API v{} (need v{}+ for the filtered memory query)",
+                                 GossipGraph::IsReady(),
+                                 SkyrimNetAPI::IsMemorySystemReady(),
+                                 SkyrimNetAPI::GetVersion(),
+                                 kMinApiVersion);
                 }
                 return false;
             }

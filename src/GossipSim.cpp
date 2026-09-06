@@ -844,8 +844,32 @@ namespace NarrativeEngine::GossipSim
     void PublishSnapshot()
     {
         auto fresh = std::make_shared<const GossipState>(State());
+        // Names the SOURCE, not just the counts. Publishing the wrong
+        // state is a silent, total loss — the snapshot is what the
+        // dashboard renders and what OnSave serialises — and the only way
+        // to see it in a log is to know which state each publish came
+        // from. OnSessionStart logs its own line for the staged publish.
+        logger::debug("GossipSim: published snapshot from live state ({} rumors, {} claims, clock day {:.3f})",
+                      fresh->rumors.size(),
+                      fresh->claims.size(),
+                      fresh->simGameDay);
         std::scoped_lock lock(g_snapshotMutex);
         g_snapshot = std::move(fresh);
+    }
+
+    double LastSimulatedGameDay()
+    {
+        // Staging area first. Between OnLoad and the first tick of the new
+        // session it holds the incoming world's clock while the live state
+        // and the published snapshot still describe the outgoing one, and
+        // the scheduler is asking precisely during that window.
+        {
+            std::scoped_lock lock(g_pendingMutex);
+            if (g_pending) {
+                return g_pending->simGameDay;
+            }
+        }
+        return Snapshot()->simGameDay;
     }
 
     void Initialize()
@@ -877,12 +901,66 @@ namespace NarrativeEngine::GossipSim
         // this MODIFIES the pending state rather than replacing it: the
         // record dispatch has already filled it by now.
         //
-        // The clock re-base that used to live here is gone. Nothing needs
-        // it: SetHorizon stamps the simulation clock from the tick's own
-        // schedule, and GossipTick re-bases its schedule separately.
-        auto& pending = PendingState();
-        pending.counters = {};
-        pending.harvest = {};
+        // The clock re-base that used to live here is gone, and has to
+        // stay gone: SetHorizon stamps the simulation clock from the
+        // tick's own schedule, and GossipTick now DERIVES its schedule
+        // from that same clock. Re-basing simGameDay here would destroy
+        // the one record of when gossip last ran, which is what restarts
+        // the interval on every load.
+        //
+        // This is also the one point where the incoming world is COMPLETE:
+        // it runs at kPostLoadGame, after both record callbacks have
+        // filled the staging area, so the image taken below holds the
+        // rumors and the claims that belong to them.
+        std::shared_ptr<const GossipState> incoming;
+        {
+            std::scoped_lock lock(g_pendingMutex);
+            if (!g_pending) {
+                g_pending.emplace();
+            }
+            g_pending->counters = {};
+            g_pending->harvest = {};
+
+            // A world that has never run a tick gets its schedule anchored
+            // HERE, once, rather than at every load. Without this the
+            // countdown to the first tick restarts on every load, and a
+            // player who reloads more often than the interval never sees a
+            // single tick — the original bug, surviving in the one case the
+            // anchor could not cover.
+            //
+            // Honest as a simulation clock, too: a world with no rumors in
+            // it is trivially simulated up to date, so "simulated through
+            // now" is exactly true. It persists because the image below
+            // becomes the snapshot, and the snapshot is what OnSave writes.
+            if (g_pending->simGameDay < 0.0) {
+                g_pending->simGameDay = NowGameDay();
+                logger::info("GossipSim: no prior simulation clock; anchoring the schedule at day {:.3f}",
+                             g_pending->simGameDay);
+            }
+
+            incoming = std::make_shared<const GossipState>(*g_pending);
+        }
+
+        // Published before anything can read or re-save it: the dashboard
+        // and OnSave both go through the snapshot, and until it carries the
+        // world that was just loaded they are looking at the wrong one.
+        // The live state stays untouched — the gossip thread owns it and
+        // adopts the staging area at the top of its next job.
+        const auto rumors = incoming->rumors.size();
+        const auto claims = incoming->claims.size();
+        const auto clock = incoming->simGameDay;
+        {
+            std::scoped_lock lock(g_snapshotMutex);
+            g_snapshot = std::move(incoming);
+        }
+        // The session's opening fingerprint, and deliberately info rather
+        // than debug: this one line says what the incoming world actually
+        // contains, and every "gossip stopped working" report starts by
+        // needing it.
+        logger::info("GossipSim: session start — published staged state ({} rumors, {} claims, clock day {:.3f})",
+                     rumors,
+                     claims,
+                     clock);
     }
 
     void OnSessionEnd()
@@ -895,6 +973,17 @@ namespace NarrativeEngine::GossipSim
         const auto snap = Snapshot();
         const auto& g_rumors = snap->rumors;
         const auto& g_counters = snap->counters;
+        // Unconditional, and before the empty-world bail below. A session
+        // that produced nothing has to be distinguishable in the plugin log
+        // from one where the subsystem never ran at all — that ambiguity is
+        // what made an idle gossip system look identical to a broken one.
+        logger::info("GossipSim: session end — {} live rumors, {} claims, clock day {:.3f}, {} memories written "
+                     "({} failed)",
+                     g_rumors.size(),
+                     snap->claims.size(),
+                     snap->simGameDay,
+                     g_counters.memoriesWritten,
+                     g_counters.memoryWriteFailures);
         if (g_rumors.empty()) {
             return;
         }
@@ -977,6 +1066,10 @@ namespace NarrativeEngine::GossipSim
                                             "iGossipMaxEventsPerTick is too low or something is looping",
                                             cap,
                                             g_queue.size()));
+                logger::warn("GossipSim: drain stopped at the {}-event backstop with {} still due; "
+                             "iGossipMaxEventsPerTick is too low or something is looping",
+                             cap,
+                             g_queue.size());
                 break;
             }
             // THE cancellation checkpoint that matters. Every step past
@@ -1040,6 +1133,7 @@ namespace NarrativeEngine::GossipSim
             // to a third of its configured seeding rate, and took log analysis
             // rather than a log line to find.
             GossipLog::Note(std::format("seed refused - {} live rumors at the iGossipMaxLiveRumors cap", liveCount));
+            logger::warn("GossipSim: seed refused — {} live rumors at the iGossipMaxLiveRumors cap", liveCount);
             return 0;
         }
 
@@ -1297,7 +1391,10 @@ namespace NarrativeEngine::GossipSim
                 intfc->WriteRecordData(recovered);
             }
         }
-        logger::debug("GossipSim::OnSave: wrote {} live rumors ({} in memory)", rumorCount, state.rumors.size());
+        logger::debug("GossipSim::OnSave: wrote {} live rumors ({} in memory), clock day {:.3f}",
+                      rumorCount,
+                      state.rumors.size(),
+                      state.simGameDay);
     }
 
     void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t)
@@ -1477,8 +1574,29 @@ namespace NarrativeEngine::GossipSim
             g_rumors.emplace(r.id, std::move(r));
         }
 
-        logger::info("GossipSim::OnLoad: restored {} rumors, {} queued events", g_rumors.size(), g_queue.size());
-        PublishSnapshot();
+        // The clock belongs on this line: it is the schedule's anchor, and
+        // whether it survived a round trip decides whether ticks ever fire
+        // again. A rumor count alone cannot tell you that.
+        logger::info("GossipSim::OnLoad: restored {} rumors, {} queued events, clock day {:.3f}",
+                     g_rumors.size(),
+                     g_queue.size(),
+                     g_simGameDay);
+
+        // Deliberately does NOT publish. PublishSnapshot copies the LIVE
+        // state, and everything above was written into the STAGING area —
+        // so publishing here put the outgoing world in front of readers,
+        // or in a fresh process a default-constructed one.
+        //
+        // That was not cosmetic. The snapshot is what the dashboard
+        // renders AND what Plugin.cpp's OnSave serialises, so a load
+        // followed by a save wrote an empty gossip world over a populated
+        // co-save and the rumors were gone for good.
+        //
+        // Publishing also cannot happen here even with the right state:
+        // GossipSim and GossipClaims load as two separate records into the
+        // same staging area, and an image taken between them would hold
+        // rumors whose claims had not arrived yet. OnSessionStart runs at
+        // kPostLoadGame, after the whole dispatch, and publishes there.
     }
 
     void OnRevert()
@@ -1498,12 +1616,18 @@ namespace NarrativeEngine::GossipSim
             g_pending->queue = {};
             g_pending->nextRumorId = 1;
             g_pending->lastGameDaySample = -1.0;
-            g_pending->simGameDay = 0.0;
+            g_pending->simGameDay = -1.0;
             g_pending->counters = {};
             g_pending->harvest = {};
             g_pending->bucketHistory.clear();
             g_pending->bucketCount = 0;
         }
+        // A revert wipes the staging area, so one that fires unexpectedly,
+        // twice, or out of order with OnLoad destroys the incoming world
+        // before anything can adopt it. Silent, that is invisible; the
+        // ordering of revert / load / session start is exactly where this
+        // subsystem's persistence bugs have lived.
+        logger::info("GossipSim::OnRevert: simulation staging area cleared");
         // The contact cache is derived rather than owned, so it is not in
         // the pending state. AdoptPendingState clears it on the gossip
         // thread, which is the only thread allowed to touch it — dropping

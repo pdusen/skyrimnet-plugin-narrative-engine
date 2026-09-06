@@ -120,9 +120,27 @@ namespace NarrativeEngine::GossipSim
     // scheduled tick.
     void PublishSnapshot();
 
-    // kNewGame / kPostLoadGame. Refreshes the graph's relationship
-    // layer and re-bases the game-time sample so a load does not look
-    // like a colossal time jump.
+    // The game day the last completed tick was stamped for, or negative
+    // when this world has never run one.
+    //
+    // Reads the STAGED state whenever a load has just filled it, because
+    // nothing adopts that into the live state until the next tick runs —
+    // and the scheduler has to know the incoming world's clock before it
+    // can decide when that tick is due. Falls back to the published
+    // snapshot when nothing is staged. Safe to call from any thread.
+    double LastSimulatedGameDay();
+
+    // kNewGame / kPostLoadGame, after the whole record dispatch.
+    // Refreshes the graph's relationship layer, then PUBLISHES the staged
+    // state as the snapshot.
+    //
+    // That publish is load-bearing rather than tidy: the snapshot is what
+    // the dashboard renders and what Plugin.cpp's OnSave serialises, so
+    // until it carries the world that was just loaded, a save writes an
+    // empty gossip world over a populated co-save.
+    //
+    // Also anchors the schedule for a world that has never ticked, so the
+    // countdown to its first tick survives a reload instead of restarting.
     void OnSessionStart();
 
     // kPreLoadGame. Writes the live-rumor census into the gossip log
@@ -307,9 +325,10 @@ namespace NarrativeEngine::GossipSim
     // Move any staged state into the live one and publish it. Returns
     // true if there was something to adopt.
     //
-    // Called at the top of every unit of gossip work AND at
-    // OnSessionStart, which runs at kPostLoadGame — after the record
-    // dispatch that filled the staging area, and before anything re-bases
-    // the simulation clock against state that is about to be replaced.
+    // Called at the top of every unit of gossip work, and nowhere else:
+    // the gossip thread owns the live state, so adoption has to happen on
+    // it. A session start therefore cannot see its own freshly-loaded
+    // state through Snapshot() — it reads LastSimulatedGameDay(), which
+    // consults the staging area directly.
     bool AdoptPendingState();
 } // namespace NarrativeEngine::GossipSim

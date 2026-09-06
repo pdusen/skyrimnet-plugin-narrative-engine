@@ -18,15 +18,22 @@ namespace NarrativeEngine::GossipTick
 {
     namespace
     {
-        // Plugin-thread only. This is scheduler state, not world state —
-        // it deliberately does NOT live in GossipState, because it
-        // describes when work should run rather than what the world looks
-        // like, and a load must not restore a stale schedule.
+        // Plugin-thread only, and session-local — but DERIVED from world
+        // state rather than re-based onto the game clock at load. What a
+        // load must not restore is a schedule belonging to a different
+        // world; what it must not discard is how long the incoming world
+        // has gone without a tick. GossipState::simGameDay is persisted
+        // and is exactly that record, so OnSessionStart reads it and the
+        // schedule resumes from where the saved world left off.
         std::mutex g_mutex;
         double g_secondsSinceCheck = 0.0;
         // The game day the next tick is due for. Negative until the first
-        // check seeds it from the clock.
+        // check seeds it from the session anchor below.
         double g_nextDueGameDay = -1.0;
+        // The simulation clock of the world this session started with,
+        // captured at OnSessionStart before any tick can move it off it.
+        // Negative when that world has never run a tick.
+        double g_sessionAnchorGameDay = -1.0;
 
         double NowGameDay()
         {
@@ -93,11 +100,29 @@ namespace NarrativeEngine::GossipTick
 
     void OnSessionStart()
     {
+        // Read before taking our own lock — the accessor takes GossipSim's.
+        const double anchor = GossipSim::LastSimulatedGameDay();
+
         std::scoped_lock lock(g_mutex);
         g_secondsSinceCheck = 0.0;
-        // Re-based rather than preserved: a day-200 save loaded after a
-        // day-3 one would otherwise owe 197 days of ticks.
+        // Re-derived rather than preserved OR blanked. Preserving it would
+        // owe a day-3 schedule against a day-200 world. Blanking it — what
+        // this used to do — restarted the entire interval on every load,
+        // so a player whose sessions were shorter than one interval of
+        // unpaused play never saw a single tick no matter how many in-game
+        // days they played. The anchor gives both cases the right answer.
         g_nextDueGameDay = -1.0;
+        g_sessionAnchorGameDay = anchor;
+
+        // Logged HERE as well as at the first Poll, because Poll returns
+        // early while the graph is not ready and would then never say
+        // anything at all — leaving a gossip system that is scheduled to do
+        // nothing indistinguishable from one that was never scheduled.
+        if (anchor < 0.0) {
+            logger::info("GossipTick: session start — no prior tick to anchor to; a full interval will be waited out");
+        } else {
+            logger::info("GossipTick: session start — schedule anchored at day {:.3f}", anchor);
+        }
     }
 
     void Poll(const PluginThread::Token&, double unpausedElapsedSeconds)
@@ -124,11 +149,38 @@ namespace NarrativeEngine::GossipTick
             const double interval = std::max(0.1f, cfg.gossipHarvestIntervalGameHours) / 24.0;
 
             if (g_nextDueGameDay < 0.0) {
-                // First check of the session. The first tick is due one
-                // full interval from now — not immediately, which would
-                // sweep a world the player has not touched yet.
-                g_nextDueGameDay = now + interval;
-                return;
+                // First check of the session.
+                if (g_sessionAnchorGameDay < 0.0 || now < g_sessionAnchorGameDay) {
+                    // Either this world has never run a tick, or its clock
+                    // sits behind the anchor's — an older save, a console
+                    // time change. Nothing is owed, and the first tick is
+                    // due one full interval from now rather than
+                    // immediately, which would sweep a world the player has
+                    // not touched yet.
+                    g_nextDueGameDay = now + interval;
+                    logger::debug("GossipTick: no prior tick to resume from; first tick due at day {:.3f} (now {:.3f})",
+                                  g_nextDueGameDay,
+                                  now);
+                    return;
+                }
+                // Resume the saved world's schedule. When more than one
+                // interval has gone by since the last tick the boundary is
+                // owed exactly ONCE, stamped for the present rather than
+                // replayed once per missed interval: re-harvesting the same
+                // memory corpus N times finds the same memories N times,
+                // and one tick stamped `now` still drains every carrier
+                // step in between, because Advance processes each queued
+                // event at its own due time rather than at the horizon.
+                g_nextDueGameDay = std::max(g_sessionAnchorGameDay + interval, now);
+                logger::debug(
+                    "GossipTick: resuming schedule; last tick day {:.3f}, next due day {:.3f} (now {:.3f}, interval "
+                    "{:.3f}d)",
+                    g_sessionAnchorGameDay,
+                    g_nextDueGameDay,
+                    now,
+                    interval);
+                // Deliberately no early return: a resumed schedule can
+                // already be due, and the loop below is what fires it.
             }
             if (now < g_nextDueGameDay - interval) {
                 // Clock went backwards further than drift explains: a load
@@ -169,6 +221,9 @@ namespace NarrativeEngine::GossipTick
         if (dropped > 0) {
             GossipLog::Note(std::format(
                 "schedule: dropped {} tick(s) beyond the {}-tick backlog cap", dropped, kMaxOutstandingTicks));
+            logger::warn("GossipTick: dropped {} scheduled tick(s) beyond the {}-tick backlog cap",
+                         dropped,
+                         kMaxOutstandingTicks);
         }
     }
 } // namespace NarrativeEngine::GossipTick

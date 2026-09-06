@@ -58,8 +58,13 @@ namespace NarrativeEngine::GossipTick
 
     void Initialize();
 
-    // kNewGame / kPostLoadGame. Re-bases the schedule onto the current
-    // game clock so a load does not read as a colossal backlog.
+    // kNewGame / kPostLoadGame — after the co-save records have been
+    // staged, so the incoming world's simulation clock is readable.
+    //
+    // Re-DERIVES the schedule from that clock rather than re-basing it
+    // onto the current game time. In-world time that passed while gossip
+    // was not running still counts toward the next tick, so a load
+    // neither restarts the interval nor reads as a colossal backlog.
     void OnSessionStart();
 
     // The plugin-thread cadence check, and the ONLY gossip work that
