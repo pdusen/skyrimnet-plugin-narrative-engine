@@ -1287,13 +1287,26 @@ namespace NarrativeEngine::BeatSystem
         // Recency filter — runs on plugin thread, briefly acquires the
         // session-only g_recentMutex.
         if (!prep.candidates.empty()) {
-            const double now = NowUnixSeconds();
-            std::scoped_lock lock(g_recentMutex);
-            TrimRecentlyFiredLocked(now);
-            prep.candidates.erase(std::remove_if(prep.candidates.begin(),
-                                                 prep.candidates.end(),
-                                                 [now](IBeat* b) { return WasFiredRecentlyLocked(b->Name(), now); }),
-                                  prep.candidates.end());
+            const auto before = prep.candidates.size();
+            {
+                const double now = NowUnixSeconds();
+                std::scoped_lock lock(g_recentMutex);
+                TrimRecentlyFiredLocked(now);
+                prep.candidates.erase(
+                    std::remove_if(prep.candidates.begin(),
+                                   prep.candidates.end(),
+                                   [now](IBeat* b) { return WasFiredRecentlyLocked(b->Name(), now); }),
+                    prep.candidates.end());
+            }
+            // The last place a candidate can disappear before the gate
+            // below reports a count. Without this, a beat the registry
+            // offered and that dropped out here looked exactly like a beat
+            // the registry never offered at all.
+            if (debug && prep.candidates.size() != before) {
+                logger::debug("BeatSystem::ConsiderBeat: {} of {} candidate(s) dropped as recently fired",
+                              before - prep.candidates.size(),
+                              before);
+            }
         }
 
         if (prep.candidates.empty()) {

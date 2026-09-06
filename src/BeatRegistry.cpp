@@ -13,6 +13,22 @@ namespace NarrativeEngine::BeatRegistry
 {
     namespace
     {
+        // For the log lines below. A polarity mismatch is one of the two
+        // ways a beat leaves this filter without the beat itself getting a
+        // say, so the message has to name both sides of the comparison.
+        const char* PolarityName(BeatPolarity p)
+        {
+            switch (p) {
+            case BeatPolarity::Raise:
+                return "Raise";
+            case BeatPolarity::Lower:
+                return "Lower";
+            case BeatPolarity::Either:
+                return "Either";
+            }
+            return "?";
+        }
+
         // Per-registration state. Wrapped in unique_ptr because atomics
         // are non-movable, so we can't hold Entry values directly in a
         // std::vector that may reallocate.
@@ -157,21 +173,45 @@ namespace NarrativeEngine::BeatRegistry
 
     std::vector<IBeat*> AvailableMatching(const BeatContext& ctx, BeatPolarity desired)
     {
+        // Two of the three ways out of this loop used to be silent, and
+        // they are the two the beat cannot report on itself: a disabled
+        // beat and a polarity mismatch never reach IsAvailable. That left
+        // "0 candidates" downstream with no account of what was considered.
+        const bool debug = Settings::Get().debugMode;
+
         std::vector<IBeat*> out;
         std::scoped_lock lock(g_mutex);
         out.reserve(g_entries.size());
         for (const auto& e : g_entries) {
             if (!e || !e->beat)
                 continue;
-            if (!e->enabled.load(std::memory_order_acquire))
+            if (!e->enabled.load(std::memory_order_acquire)) {
+                if (debug) {
+                    logger::debug("BeatRegistry: '{}' not offered — disabled", e->beat->Name());
+                }
                 continue;
+            }
             const auto pol = e->beat->Polarity();
             const bool polarityFits = (pol == BeatPolarity::Either) || (pol == desired);
-            if (!polarityFits)
+            if (!polarityFits) {
+                if (debug) {
+                    logger::debug("BeatRegistry: '{}' not offered — polarity {} does not answer a request to {}",
+                                  e->beat->Name(),
+                                  PolarityName(pol),
+                                  PolarityName(desired));
+                }
                 continue;
+            }
+            // No line here: a beat that declines logs its own reason.
             if (!e->beat->IsAvailable(ctx))
                 continue;
             out.push_back(e->beat.get());
+        }
+        if (debug) {
+            logger::debug("BeatRegistry: {} of {} beat(s) available to {} tension",
+                          out.size(),
+                          g_entries.size(),
+                          PolarityName(desired));
         }
         return out;
     }
