@@ -1,6 +1,6 @@
 # It's recommended to set a minimum CMake version.
 # If you use CMake features from higher versions, update this to match.
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.24)
 
 # Set your project name. This will be the name of your SKSE .dll file.
 project(NarrativeEngine VERSION 0.0.1 LANGUAGES CXX)
@@ -50,6 +50,35 @@ find_package(CommonLibSSE CONFIG REQUIRED)
 find_package(minhook CONFIG REQUIRED)
 # simpleini ships as a header-only library — no CMake config, just an include path.
 find_path(SIMPLEINI_INCLUDE_DIRS "SimpleIni.h" REQUIRED)
+# ---------------------------------------------------------------------------
+# Warnings are errors
+# ---------------------------------------------------------------------------
+#
+# An option rather than a hard-coded ON, because -Werror / /WX bakes THIS
+# toolchain's warning set into everyone's build. A newer MSVC that adds a
+# warning, or a different compiler entirely, then fails to compile code that
+# is perfectly fine — and the person it fails for is usually someone who just
+# wants to build the mod, not someone in a position to fix our diagnostics.
+# Defaulting ON keeps our own builds honest; -DNARRATIVEENGINE_WARNINGS_AS_ERRORS=OFF
+# is the way out, and CMake's own `--compile-no-warning-as-error` turns it off
+# for a single build without reconfiguring.
+#
+# CMAKE_COMPILE_WARNING_AS_ERROR is read when a target is CREATED, so it has
+# to be set before add_commonlibsse_plugin below. It needs CMake 3.24, which
+# is why the minimum at the top of this file is 3.24 — on an older CMake the
+# variable is silently ignored, which would look enabled while doing nothing.
+#
+# The compiler-agnostic property rather than a bare /WX so the flag stays
+# correct if this ever builds under anything but MSVC. Warning LEVEL is not
+# set here: add_commonlibsse_plugin already applies /W4 plus CommonLibSSE's
+# own suppression list, and that is the level these errors are judged at.
+option(
+    NARRATIVEENGINE_WARNINGS_AS_ERRORS
+    "Treat compiler warnings as errors"
+    ON
+)
+set(CMAKE_COMPILE_WARNING_AS_ERROR ${NARRATIVEENGINE_WARNINGS_AS_ERRORS})
+
 add_commonlibsse_plugin(${PROJECT_NAME} SOURCES ${source_files} plugin.cpp)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23) # <--- use C++23 standard
 target_precompile_headers(${PROJECT_NAME} PRIVATE PCH.h) # <--- PCH.h is required!

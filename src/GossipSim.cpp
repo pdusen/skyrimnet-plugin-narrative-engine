@@ -971,40 +971,40 @@ namespace NarrativeEngine::GossipSim
         // unwinding. The snapshot is immutable and cannot be pulled out
         // from under this.
         const auto snap = Snapshot();
-        const auto& g_rumors = snap->rumors;
-        const auto& g_counters = snap->counters;
+        const auto& snapRumors = snap->rumors;
+        const auto& snapCounters = snap->counters;
         // Unconditional, and before the empty-world bail below. A session
         // that produced nothing has to be distinguishable in the plugin log
         // from one where the subsystem never ran at all — that ambiguity is
         // what made an idle gossip system look identical to a broken one.
         logger::info("GossipSim: session end — {} live rumors, {} claims, clock day {:.3f}, {} memories written "
                      "({} failed)",
-                     g_rumors.size(),
+                     snapRumors.size(),
                      snap->claims.size(),
                      snap->simGameDay,
-                     g_counters.memoriesWritten,
-                     g_counters.memoryWriteFailures);
-        if (g_rumors.empty()) {
+                     snapCounters.memoriesWritten,
+                     snapCounters.memoryWriteFailures);
+        if (snapRumors.empty()) {
             return;
         }
         // The session-level counterpart of the per-rumor BURNOUT line: the
         // five outcomes sum to every conversation held this session, so a
         // quiet session says whether nobody spoke or nothing landed.
-        const auto conversations = g_counters.transmissions + g_counters.wasted + g_counters.notCaught
-                                   + g_counters.unavailable + g_counters.capped + g_counters.silent;
+        const auto conversations = snapCounters.transmissions + snapCounters.wasted + snapCounters.notCaught
+                                   + snapCounters.unavailable + snapCounters.capped + snapCounters.silent;
         GossipLog::Note(std::format("CENSUS  live rumors={}  conversations={} ({} told, {} knew, {} missed, "
                                     "{} away, {} capped, {} silent)  memories={} (failed {})",
-                                    g_rumors.size(),
+                                    snapRumors.size(),
                                     conversations,
-                                    g_counters.transmissions,
-                                    g_counters.wasted,
-                                    g_counters.notCaught,
-                                    g_counters.unavailable,
-                                    g_counters.capped,
-                                    g_counters.silent,
-                                    g_counters.memoriesWritten,
-                                    g_counters.memoryWriteFailures));
-        for (const auto& [id, rumor] : g_rumors) {
+                                    snapCounters.transmissions,
+                                    snapCounters.wasted,
+                                    snapCounters.notCaught,
+                                    snapCounters.unavailable,
+                                    snapCounters.capped,
+                                    snapCounters.silent,
+                                    snapCounters.memoriesWritten,
+                                    snapCounters.memoryWriteFailures));
+        for (const auto& [id, rumor] : snapRumors) {
             const auto liveCarriers = std::count_if(
                 rumor.carriers.begin(), rumor.carriers.end(), [](const auto& kv) { return !kv.second.recovered; });
             GossipLog::Note(std::format("CENSUS  r{:02} {}  carriers={} (live {})  depth={}  transmissions={}",
@@ -1413,25 +1413,31 @@ namespace NarrativeEngine::GossipSim
         if (!g_pending) {
             g_pending.emplace();
         }
-        auto& g_rumors = g_pending->rumors;
-        auto& g_queue = g_pending->queue;
-        auto& g_nextRumorId = g_pending->nextRumorId;
-        auto& g_simGameDay = g_pending->simGameDay;
-        g_rumors.clear();
-        g_queue = {};
+        // Named for the state they alias, not for the fields they happen to
+        // be. These used to shadow the namespace-scope aliases of the same
+        // names, which point at the LIVE state — so this function read as
+        // though it were filling live while it was filling staging, and the
+        // publish at the end of it took the wrong one. That cost a tester
+        // their whole gossip history. C4459 flagged it the entire time.
+        auto& pendingRumors = g_pending->rumors;
+        auto& pendingQueue = g_pending->queue;
+        auto& pendingNextRumorId = g_pending->nextRumorId;
+        auto& pendingSimGameDay = g_pending->simGameDay;
+        pendingRumors.clear();
+        pendingQueue = {};
         g_pending->bucketHistory.clear();
         g_pending->bucketCount = 0;
 
         std::uint32_t savedBucketCount = 0;
         std::uint32_t historyCount = 0;
         std::uint32_t rumorCount = 0;
-        if (intfc->ReadRecordData(g_nextRumorId) != sizeof(g_nextRumorId)
-            || intfc->ReadRecordData(g_simGameDay) != sizeof(g_simGameDay)
+        if (intfc->ReadRecordData(pendingNextRumorId) != sizeof(pendingNextRumorId)
+            || intfc->ReadRecordData(pendingSimGameDay) != sizeof(pendingSimGameDay)
             || intfc->ReadRecordData(savedBucketCount) != sizeof(savedBucketCount)
             || intfc->ReadRecordData(historyCount) != sizeof(historyCount)) {
             logger::error("GossipSim::OnLoad: short read on header; reverting");
-            g_rumors.clear();
-            g_queue = {};
+            pendingRumors.clear();
+            pendingQueue = {};
             return;
         }
 
@@ -1444,8 +1450,8 @@ namespace NarrativeEngine::GossipSim
             std::uint32_t b = 0;
             if (intfc->ReadRecordData(b) != sizeof(b)) {
                 logger::error("GossipSim::OnLoad: short read on bucket history; reverting");
-                g_rumors.clear();
-                g_queue = {};
+                pendingRumors.clear();
+                pendingQueue = {};
                 return;
             }
             history.push_back(b);
@@ -1471,8 +1477,8 @@ namespace NarrativeEngine::GossipSim
 
         if (intfc->ReadRecordData(rumorCount) != sizeof(rumorCount)) {
             logger::error("GossipSim::OnLoad: short read on rumor count; reverting");
-            g_rumors.clear();
-            g_queue = {};
+            pendingRumors.clear();
+            pendingQueue = {};
             return;
         }
 
@@ -1499,8 +1505,8 @@ namespace NarrativeEngine::GossipSim
                 || intfc->ReadRecordData(r.lastActivityGameDay) != sizeof(r.lastActivityGameDay)
                 || intfc->ReadRecordData(live) != sizeof(live)) {
                 logger::error("GossipSim::OnLoad: short read on rumor {}; reverting", i);
-                g_rumors.clear();
-                g_queue = {};
+                pendingRumors.clear();
+                pendingQueue = {};
                 return;
             }
             std::uint32_t bandCount = 0;
@@ -1508,16 +1514,16 @@ namespace NarrativeEngine::GossipSim
                 || intfc->ReadRecordData(r.sourceActor) != sizeof(r.sourceActor)
                 || intfc->ReadRecordData(bandCount) != sizeof(bandCount)) {
                 logger::error("GossipSim::OnLoad: short read on rumor provenance; reverting");
-                g_rumors.clear();
-                g_queue = {};
+                pendingRumors.clear();
+                pendingQueue = {};
                 return;
             }
             r.bands.resize(bandCount);
             for (auto& b : r.bands) {
                 if (!EventLogUtil::ReadString(intfc, b)) {
                     logger::error("GossipSim::OnLoad: short read on band text; reverting");
-                    g_rumors.clear();
-                    g_queue = {};
+                    pendingRumors.clear();
+                    pendingQueue = {};
                     return;
                 }
             }
@@ -1533,8 +1539,8 @@ namespace NarrativeEngine::GossipSim
             std::uint32_t carrierCount = 0;
             if (intfc->ReadRecordData(carrierCount) != sizeof(carrierCount)) {
                 logger::error("GossipSim::OnLoad: short read on carrier count; reverting");
-                g_rumors.clear();
-                g_queue = {};
+                pendingRumors.clear();
+                pendingQueue = {};
                 return;
             }
             for (std::uint32_t c = 0; c < carrierCount; ++c) {
@@ -1549,8 +1555,8 @@ namespace NarrativeEngine::GossipSim
                     || intfc->ReadRecordData(carrier.nextStepGameDay) != sizeof(carrier.nextStepGameDay)
                     || intfc->ReadRecordData(recovered) != sizeof(recovered)) {
                     logger::error("GossipSim::OnLoad: short read on carrier; reverting");
-                    g_rumors.clear();
-                    g_queue = {};
+                    pendingRumors.clear();
+                    pendingQueue = {};
                     return;
                 }
                 carrier.recovered = recovered != 0;
@@ -1571,16 +1577,16 @@ namespace NarrativeEngine::GossipSim
             if (intfc->ResolveFormID(r.originNpc, resolvedOrigin)) {
                 r.originNpc = resolvedOrigin;
             }
-            g_rumors.emplace(r.id, std::move(r));
+            pendingRumors.emplace(r.id, std::move(r));
         }
 
         // The clock belongs on this line: it is the schedule's anchor, and
         // whether it survived a round trip decides whether ticks ever fire
         // again. A rumor count alone cannot tell you that.
         logger::info("GossipSim::OnLoad: restored {} rumors, {} queued events, clock day {:.3f}",
-                     g_rumors.size(),
-                     g_queue.size(),
-                     g_simGameDay);
+                     pendingRumors.size(),
+                     pendingQueue.size(),
+                     pendingSimGameDay);
 
         // Deliberately does NOT publish. PublishSnapshot copies the LIVE
         // state, and everything above was written into the STAGING area —

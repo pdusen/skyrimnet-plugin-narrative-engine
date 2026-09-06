@@ -280,18 +280,18 @@ namespace NarrativeEngine::LetterComposer
                 // something other than the known role literals (older
                 // SkyrimNet builds carried a display name here).
                 if (auto it = e.find("speaker"); it != e.end() && it->is_string()) {
-                    const auto raw = it->get<std::string>();
+                    const auto speakerRaw = it->get<std::string>();
                     std::string mapped;
-                    if (raw == "player") {
+                    if (speakerRaw == "player") {
                         mapped = playerName;
-                    } else if (raw == "npc") {
+                    } else if (speakerRaw == "npc") {
                         std::string npcNameField;
                         if (auto nit = e.find("npcName"); nit != e.end() && nit->is_string()) {
                             npcNameField = LLMTextSanitizer::Sanitize(nit->get<std::string>());
                         }
                         mapped = !npcNameField.empty() ? npcNameField : senderName;
                     } else {
-                        mapped = LLMTextSanitizer::Sanitize(raw);
+                        mapped = LLMTextSanitizer::Sanitize(speakerRaw);
                     }
                     if (!mapped.empty())
                         out["speaker"] = std::move(mapped);

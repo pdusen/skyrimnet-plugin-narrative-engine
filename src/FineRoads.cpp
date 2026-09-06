@@ -186,7 +186,9 @@ namespace NarrativeEngine::FineRoads
 
                 const auto& verts = mesh->vertices;
                 const auto& tris = mesh->triangles;
-                for (std::size_t t = 0; t < tris.size(); ++t) {
+                // 32-bit to match BSTArray's size_type; the triangle index
+                // is narrowed to uint16 for RawNode below either way.
+                for (std::uint32_t t = 0; t < tris.size(); ++t) {
                     const auto& tri = tris[t];
                     if (!tri.triangleFlags.any(TriangleFlag::kPreferred)) {
                         continue;
