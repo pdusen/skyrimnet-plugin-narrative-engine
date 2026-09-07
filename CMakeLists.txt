@@ -720,6 +720,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/ConsoleCommand.cpp"
         "${CMAKE_SOURCE_DIR}/src/CourierUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/EvalDispatch.cpp"
+        "${CMAKE_SOURCE_DIR}/src/FactionDesignationUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/MainThread.cpp"
         "${CMAKE_SOURCE_DIR}/src/SKSECosaveIO.cpp"
     )

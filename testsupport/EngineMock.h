@@ -3,14 +3,17 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace RE
 {
     class Actor;
     class BGSBaseAlias;
+    class TESFaction;
     class TESObjectREFR;
     class TESQuest;
     class Calendar;
@@ -202,11 +205,6 @@ namespace NarrativeEngine::Testing
             bool actorIsDisabled = false;
         } forms;
 
-        // Put a stand-in Actor into the engine's form table under `formID`, so
-        // TESForm::LookupByID finds it and As<Actor>() accepts it. The table is
-        // emptied when this EngineMock is destroyed.
-        RE::Actor* AddActor(std::uint32_t formID);
-
         // The vanilla WICourier resolution: the quest, the container alias on
         // it, and the staging container's inventory.
         struct CourierState
@@ -234,6 +232,42 @@ namespace NarrativeEngine::Testing
 
         // Register a bound object (a book) in the form table under `formID`.
         RE::TESForm* AddBook(std::uint32_t formID);
+
+        // Faction ranks, and the loaded-actor lists a sweep walks.
+        //
+        // Ranks are keyed by (actor form id, faction form id). An absent pair
+        // means "not in the faction", which the engine reports as -1 and which
+        // several guards below treat differently from rank 0.
+        struct FactionState
+        {
+            std::map<std::pair<std::uint32_t, std::uint32_t>, int> ranks;
+
+            struct AddToFactionCall
+            {
+                std::uint32_t actorFormID = 0;
+                std::uint32_t factionFormID = 0;
+                int rank = 0;
+            };
+
+            // Recorded because the sweep's correctness is about WHO it demotes
+            // and to what, not about a return value it does not have.
+            std::vector<AddToFactionCall> addToFactionCalls;
+        } factions;
+
+        // Put a stand-in Actor in the form table under `formID`. Each call
+        // makes a distinct actor, so a test can tell two of them apart.
+        RE::Actor* AddActor(std::uint32_t formID);
+
+        // As AddActor, and also list the actor among ProcessLists' loaded
+        // actors, which is what a faction sweep walks.
+        RE::Actor* AddLoadedActor(std::uint32_t formID);
+
+        // A stand-in faction to hold ranks against.
+        RE::TESFaction* AddFaction(std::uint32_t formID);
+
+        // Convenience over `factions.ranks`.
+        void SetFactionRank(RE::Actor* actor, RE::TESFaction* faction, int rank);
+        int FactionRank(RE::Actor* actor, RE::TESFaction* faction) const;
 
         Runtime runtime() const
         {

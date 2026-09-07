@@ -12,7 +12,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <new>
+#include <unordered_map>
+#include <vector>
 
 // Definitions for the CommonLibSSE functions production code calls.
 //
@@ -25,6 +28,10 @@
 
 namespace NarrativeEngine::Testing
 {
+    // Defined further down, next to the registry they operate on.
+    std::vector<RE::Actor*>& LoadedActors();
+    void ClearActorRegistry();
+
     namespace
     {
         // TESForm::AsReference() forwards to the virtual AsReference1 at slot
@@ -119,6 +126,7 @@ namespace NarrativeEngine::Testing
         // cannot be found by a later one.
         FormTable().clear();
         EditorIDTable().clear();
+        ClearActorRegistry();
 
         g_installed = this;
     }
@@ -127,6 +135,7 @@ namespace NarrativeEngine::Testing
     {
         FormTable().clear();
         EditorIDTable().clear();
+        ClearActorRegistry();
         g_installed = nullptr;
         // The REL module singleton is left mocked rather than reset. Resetting
         // would arm `REL::Module::get()` to re-initialise from a real process
@@ -526,19 +535,98 @@ bool RE::TESObjectREFR::IsDisabled() const
 
 namespace NarrativeEngine::Testing
 {
+    namespace
+    {
+        // Fabricated actors, kept in a deque so their addresses stay stable as
+        // more are added, plus the subset ProcessLists reports as loaded.
+        struct ActorRegistry
+        {
+            std::deque<FakeObject> objects;
+            std::unordered_map<std::uint32_t, RE::Actor*> byFormID;
+            std::vector<RE::Actor*> loaded;
+
+            void Clear()
+            {
+                objects.clear();
+                byFormID.clear();
+                loaded.clear();
+            }
+        };
+
+        ActorRegistry& Actors()
+        {
+            static ActorRegistry registry;
+            return registry;
+        }
+
+        std::deque<FakeObject>& FactionObjects()
+        {
+            static std::deque<FakeObject> objects;
+            return objects;
+        }
+    } // namespace
+
     RE::Actor* EngineMock::AddActor(std::uint32_t formID)
     {
-        // One fabricated Actor, reused for every id a test registers. No test
-        // needs two distinguishable actors yet, and sharing keeps the liveness
-        // flags on EngineMock rather than per-object.
-        static FakeObject actor{sizeof(RE::Actor), 256};
-        WireFormDefaults(actor, true);
-        auto* form = actor.As<RE::TESForm>();
+        auto& registry = Actors();
+        if (const auto it = registry.byFormID.find(formID); it != registry.byFormID.end())
+            return it->second;
+
+        auto& object = registry.objects.emplace_back(sizeof(RE::Actor), 256);
+        WireFormDefaults(object, true);
+        auto* form = object.As<RE::TESForm>();
         // As<Actor>() switches on this, so it is what makes the cast succeed.
         form->formType = RE::FormType::ActorCharacter;
         form->formID = formID;
         FormTable().insert({formID, form});
-        return actor.As<RE::Actor>();
+
+        auto* actor = object.As<RE::Actor>();
+        registry.byFormID.emplace(formID, actor);
+        return actor;
+    }
+
+    RE::Actor* EngineMock::AddLoadedActor(std::uint32_t formID)
+    {
+        auto* actor = AddActor(formID);
+        Actors().loaded.push_back(actor);
+        return actor;
+    }
+
+    RE::TESFaction* EngineMock::AddFaction(std::uint32_t formID)
+    {
+        auto& object = FactionObjects().emplace_back(sizeof(RE::TESFaction), 256);
+        WireFormDefaults(object, false);
+        auto* form = object.As<RE::TESForm>();
+        form->formType = RE::FormType::Faction;
+        form->formID = formID;
+        FormTable().insert({formID, form});
+        return object.As<RE::TESFaction>();
+    }
+
+    void EngineMock::SetFactionRank(RE::Actor* actor, RE::TESFaction* faction, int rank)
+    {
+        if (!actor || !faction)
+            return;
+        factions.ranks[{actor->GetFormID(), faction->GetFormID()}] = rank;
+    }
+
+    int EngineMock::FactionRank(RE::Actor* actor, RE::TESFaction* faction) const
+    {
+        if (!actor || !faction)
+            return -1;
+        const auto it = factions.ranks.find({actor->GetFormID(), faction->GetFormID()});
+        return it != factions.ranks.end() ? it->second : -1;
+    }
+
+    std::vector<RE::Actor*>& LoadedActors()
+    {
+        return Actors().loaded;
+    }
+
+    void ClearActorRegistry()
+    {
+        Actors().Clear();
+        FactionObjects().clear();
     }
 } // namespace NarrativeEngine::Testing
 
@@ -636,3 +724,91 @@ namespace NarrativeEngine::Testing
         return form;
     }
 } // namespace NarrativeEngine::Testing
+
+// ---------------------------------------------------------------------------
+// RE::ProcessLists / actor handles / faction ranks
+// ---------------------------------------------------------------------------
+
+namespace NarrativeEngine::Testing
+{
+    namespace
+    {
+        FakeObject& FakeProcessLists()
+        {
+            static FakeObject lists{sizeof(RE::ProcessLists), 64};
+            return lists;
+        }
+    } // namespace
+} // namespace NarrativeEngine::Testing
+
+RE::ProcessLists* RE::ProcessLists::GetSingleton()
+{
+    using namespace NarrativeEngine::Testing;
+    auto* mock = EngineMock::Current();
+    if (!mock)
+        return nullptr;
+
+    auto* lists = FakeProcessLists().As<RE::ProcessLists>();
+    lists->highActorHandles.clear();
+    lists->middleHighActorHandles.clear();
+    lists->middleLowActorHandles.clear();
+    lists->lowActorHandles.clear();
+
+    // Handles are index+1 into LoadedActors(), so a zero handle reads as
+    // "nothing" -- which is what an unset ActorHandle means in the engine too.
+    //
+    // Everything goes in the high list. The sweep walks all four in turn and
+    // treats them identically, so spreading actors across them would be testing
+    // the engine's bucketing rather than ours.
+    for (std::size_t i = 0; i < LoadedActors().size(); ++i) {
+        RE::ActorHandle handle;
+        const auto raw = static_cast<std::uint32_t>(i + 1);
+        std::memcpy(static_cast<void*>(&handle), &raw, sizeof(raw));
+        lists->highActorHandles.push_back(handle);
+    }
+    return lists;
+}
+
+bool RE::BSPointerHandle<RE::Actor, RE::BSUntypedPointerHandle<21, 5>>::get_smartptr(
+    RE::NiPointer<RE::Actor>& a_smartPointerOut) const
+{
+    using namespace NarrativeEngine::Testing;
+    // The handle is a single uint32; reading it directly avoids depending on
+    // accessors of a base class we do not own.
+    std::uint32_t raw = 0;
+    std::memcpy(&raw, static_cast<const void*>(this), sizeof(raw));
+    if (raw == 0 || raw > LoadedActors().size()) {
+        a_smartPointerOut.reset();
+        return false;
+    }
+    a_smartPointerOut.reset(LoadedActors()[raw - 1]);
+    return true;
+}
+
+void RE::BSHandleRefObject::IncRefCount()
+{
+    // See DecRefCount: the registry owns fabricated actors outright.
+}
+
+void RE::BSHandleRefObject::DecRefCount()
+{
+    // Fabricated actors are owned by the registry, not by the smart pointers
+    // handed out over them, so releasing one must not touch the object.
+}
+
+int RE::Actor::GetFactionRank(RE::TESFaction* a_faction, bool)
+{
+    // The `a_isPlayer` argument only steers the engine's player-crime path,
+    // which nothing here models.
+    auto* mock = NarrativeEngine::Testing::EngineMock::Current();
+    return mock ? mock->FactionRank(this, a_faction) : -1;
+}
+
+void RE::Actor::AddToFaction(RE::TESFaction* a_faction, std::int8_t a_rank)
+{
+    auto* mock = NarrativeEngine::Testing::EngineMock::Current();
+    if (!mock || !a_faction)
+        return;
+    mock->factions.addToFactionCalls.push_back({GetFormID(), a_faction->GetFormID(), a_rank});
+    mock->SetFactionRank(this, a_faction, a_rank);
+}
