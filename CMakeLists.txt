@@ -715,6 +715,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/EngineUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/QuestUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/ConsoleCommand.cpp"
+        "${CMAKE_SOURCE_DIR}/src/MainThread.cpp"
         "${CMAKE_SOURCE_DIR}/src/SKSECosaveIO.cpp"
     )
 
@@ -758,9 +759,12 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         # Same forced PCH as the DLL, so these sources compile exactly as they
         # do in production rather than in some near-miss configuration.
         target_precompile_headers(NarrativeEngineEngineMockTests PRIVATE PCH.h)
+        # NarrativeEngineCore is engine-free, so linking it here costs nothing
+        # and lets a mocked module use a core one (ThreadRole, JsonUtils, ...)
+        # without listing it as a mocked source and compiling it a third time.
         target_link_libraries(
             NarrativeEngineEngineMockTests
-            PRIVATE Catch2::Catch2WithMain spdlog::spdlog
+            PRIVATE Catch2::Catch2WithMain spdlog::spdlog NarrativeEngineCore
         )
 
         catch_discover_tests(NarrativeEngineEngineMockTests)

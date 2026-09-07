@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -173,6 +174,21 @@ namespace NarrativeEngine::Testing
             std::vector<std::string> commandsSet;
             std::vector<const void*> compileTargets;
         } console;
+
+        // SKSE's main-thread task queue.
+        struct TaskState
+        {
+            bool interfacePresent = true;
+
+            // Queued tasks run inline, standing in for the main thread picking
+            // them up on the next frame. Holding them instead would deadlock
+            // MainThread::Run, which blocks on a future only the task
+            // completes -- so deferral is opt-in and for FireAndForget only.
+            bool runImmediately = true;
+
+            int queued = 0;
+            std::vector<std::function<void()>> held;
+        } tasks;
 
         Runtime runtime() const
         {

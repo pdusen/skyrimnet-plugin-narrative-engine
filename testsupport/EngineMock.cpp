@@ -442,3 +442,28 @@ void RE::Script::CompileAndRun(RE::TESObjectREFR* a_targetRef, RE::COMPILER_NAME
     if (auto* mock = EngineMock::Current())
         mock->console.compileTargets.push_back(static_cast<const void*>(a_targetRef));
 }
+
+// ---------------------------------------------------------------------------
+// SKSE::TaskInterface
+// ---------------------------------------------------------------------------
+
+const SKSE::TaskInterface* SKSE::GetTaskInterface() noexcept
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->tasks.interfacePresent)
+        return nullptr;
+    return NarrativeEngine::Testing::OpaqueSingleton<SKSE::TaskInterface>();
+}
+
+void SKSE::TaskInterface::AddTask(TaskFn a_task) const
+{
+    auto* mock = EngineMock::Current();
+    if (!mock)
+        return;
+    ++mock->tasks.queued;
+    if (mock->tasks.runImmediately) {
+        a_task();
+    } else {
+        mock->tasks.held.push_back(std::move(a_task));
+    }
+}
