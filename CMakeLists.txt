@@ -89,6 +89,7 @@ set(NARRATIVEENGINE_CORE_SOURCES
     "${CMAKE_SOURCE_DIR}/src/JsonUtils.cpp"
     "${CMAKE_SOURCE_DIR}/src/LLMTextSanitizer.cpp"
     "${CMAKE_SOURCE_DIR}/src/SenderCooldownTable.cpp"
+    "${CMAKE_SOURCE_DIR}/src/SkyrimNetEvents.cpp"
     "${CMAKE_SOURCE_DIR}/src/ThreadRole.cpp"
 )
 
