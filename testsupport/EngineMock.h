@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -141,6 +142,24 @@ namespace NarrativeEngine::Testing
             std::vector<Dispatch> dispatches;
             std::vector<std::int32_t> packedInts;
         } papyrus;
+
+        // SKSE's co-save stream. Byte-accurate rather than value-accurate:
+        // ReadRecordData returns a short count at the end of a record, which
+        // is the whole shape of the failure handling that reads it.
+        struct CosaveState
+        {
+            bool writeSucceeds = true;
+            std::vector<std::byte> written;
+
+            std::vector<std::byte> readable;
+            std::size_t readCursor = 0;
+
+            bool resolveSucceeds = true;
+            // What ResolveFormID hands back. Distinct from any id a test writes
+            // so a passthrough would be visible.
+            std::uint32_t resolvedFormID = 0x0BADF00Du;
+            std::vector<std::uint32_t> resolveRequests;
+        } cosave;
 
         Runtime runtime() const
         {

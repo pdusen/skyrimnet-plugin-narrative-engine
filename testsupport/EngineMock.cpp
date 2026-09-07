@@ -2,6 +2,7 @@
 
 #include <RE/Skyrim.h>
 #include <REL/Module.h>
+#include <SKSE/Interfaces.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -318,4 +319,48 @@ void RE::BSScript::Variable::SetSInt(std::int32_t a_val)
     // number actually got packed for the Papyrus call.
     if (auto* mock = EngineMock::Current())
         mock->papyrus.packedInts.push_back(a_val);
+}
+
+// ---------------------------------------------------------------------------
+// SKSE::SerializationInterface
+// ---------------------------------------------------------------------------
+//
+// The three co-save calls SKSECosaveIO forwards to. All out-of-line in
+// CommonLibSSE.lib, so these definitions are what the linker binds.
+
+bool SKSE::SerializationInterface::WriteRecordData(const void* a_buf, std::uint32_t a_length) const
+{
+    auto* mock = EngineMock::Current();
+    if (!mock)
+        return false;
+    const auto* first = static_cast<const std::byte*>(a_buf);
+    mock->cosave.written.insert(mock->cosave.written.end(), first, first + a_length);
+    return mock->cosave.writeSucceeds;
+}
+
+std::uint32_t SKSE::SerializationInterface::ReadRecordData(void* a_buf, std::uint32_t a_length) const
+{
+    auto* mock = EngineMock::Current();
+    if (!mock)
+        return 0;
+    auto& state = mock->cosave;
+    const auto remaining = static_cast<std::uint32_t>(state.readable.size() - state.readCursor);
+    const auto n = a_length < remaining ? a_length : remaining;
+    if (n > 0) {
+        std::memcpy(a_buf, state.readable.data() + state.readCursor, n);
+        state.readCursor += n;
+    }
+    return n;
+}
+
+bool SKSE::SerializationInterface::ResolveFormID(RE::FormID a_oldFormID, RE::FormID& a_newFormID) const
+{
+    auto* mock = EngineMock::Current();
+    if (!mock)
+        return false;
+    mock->cosave.resolveRequests.push_back(a_oldFormID);
+    if (!mock->cosave.resolveSucceeds)
+        return false;
+    a_newFormID = mock->cosave.resolvedFormID;
+    return true;
 }

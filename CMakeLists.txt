@@ -714,6 +714,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
     set(NARRATIVEENGINE_MOCKED_SOURCES
         "${CMAKE_SOURCE_DIR}/src/EngineUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/QuestUtils.cpp"
+        "${CMAKE_SOURCE_DIR}/src/SKSECosaveIO.cpp"
     )
 
     if(engine_test_sources)
