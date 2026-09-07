@@ -9,6 +9,7 @@
 
 namespace RE
 {
+    class Actor;
     class Calendar;
     class PlayerCharacter;
     class ScriptEventSourceHolder;
@@ -189,6 +190,19 @@ namespace NarrativeEngine::Testing
             int queued = 0;
             std::vector<std::function<void()>> held;
         } tasks;
+
+        // The engine's form table, and the liveness flags the dispatch gates
+        // read off an actor found in it.
+        struct FormsState
+        {
+            bool actorIsDead = false;
+            bool actorIsDisabled = false;
+        } forms;
+
+        // Put a stand-in Actor into the engine's form table under `formID`, so
+        // TESForm::LookupByID finds it and As<Actor>() accepts it. The table is
+        // emptied when this EngineMock is destroyed.
+        RE::Actor* AddActor(std::uint32_t formID);
 
         Runtime runtime() const
         {

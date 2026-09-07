@@ -124,6 +124,25 @@ namespace NarrativeEngine::Testing
         }
 
         // ------------------------------------------------------------------
+        // The engine's form table
+        // ------------------------------------------------------------------
+        //
+        // Not a function: `TESForm::LookupByID` reaches the table through DATA
+        // relocations, and REL::Relocation resolves those the same way. The
+        // registered address is the address of a pointer variable we own, so
+        // the lookup walks a real map that a test filled in.
+
+        RE::BSTHashMap<RE::FormID, RE::TESForm*>& FormTableStorage()
+        {
+            static RE::BSTHashMap<RE::FormID, RE::TESForm*> table;
+            return table;
+        }
+
+        // What the relocation actually points at: a pointer TO the table.
+        RE::BSTHashMap<RE::FormID, RE::TESForm*>* g_formTable = &FormTableStorage();
+        RE::BSReadWriteLock g_formTableLock;
+
+        // ------------------------------------------------------------------
         // The table
         // ------------------------------------------------------------------
         //
@@ -135,9 +154,9 @@ namespace NarrativeEngine::Testing
             return reinterpret_cast<std::uintptr_t>(fn);
         }
 
-        const std::array<RelocationMock, 12>& Table()
+        const std::array<RelocationMock, 16>& Table()
         {
-            static const std::array<RelocationMock, 12> table = {{
+            static const std::array<RelocationMock, 16> table = {{
                 // BSFixedString::ctor8 — SE 67819, AE 69161
                 {67819u, Addr(&FixedStringCtor8)},
                 {69161u, Addr(&FixedStringCtor8)},
@@ -156,6 +175,12 @@ namespace NarrativeEngine::Testing
                 // MemoryManager::Reallocate — SE 66860, AE 68116
                 {66860u, Addr(&MemoryManagerReallocate)},
                 {68116u, Addr(&MemoryManagerReallocate)},
+                // TESForm::GetAllForms table pointer — SE 514351, AE 400507
+                {514351u, reinterpret_cast<std::uintptr_t>(&g_formTable)},
+                {400507u, reinterpret_cast<std::uintptr_t>(&g_formTable)},
+                // ...and its lock — SE 514360, AE 400517
+                {514360u, reinterpret_cast<std::uintptr_t>(&g_formTableLock)},
+                {400517u, reinterpret_cast<std::uintptr_t>(&g_formTableLock)},
             }};
             return table;
         }
@@ -164,6 +189,11 @@ namespace NarrativeEngine::Testing
     std::span<const RelocationMock> RelocationMockTable()
     {
         return Table();
+    }
+
+    RE::BSTHashMap<RE::FormID, RE::TESForm*>& FormTable()
+    {
+        return FormTableStorage();
     }
 
     void UnregisteredRelocation()

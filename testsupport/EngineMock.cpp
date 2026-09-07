@@ -1,6 +1,7 @@
 #include "EngineMock.h"
 
 #include "FakeVTable.h"
+#include "RelocationMocks.h"
 
 #include <RE/Skyrim.h>
 #include <REL/Module.h>
@@ -89,11 +90,16 @@ namespace NarrativeEngine::Testing
             std::abort();
         }
 
+        // Start from an empty form table so ids registered by an earlier test
+        // cannot be found by a later one.
+        FormTable().clear();
+
         g_installed = this;
     }
 
     EngineMock::~EngineMock()
     {
+        FormTable().clear();
         g_installed = nullptr;
         // The REL module singleton is left mocked rather than reset. Resetting
         // would arm `REL::Module::get()` to re-initialise from a real process
@@ -467,3 +473,43 @@ void SKSE::TaskInterface::AddTask(TaskFn a_task) const
         mock->tasks.held.push_back(std::move(a_task));
     }
 }
+
+// ---------------------------------------------------------------------------
+// RE::BSReadWriteLock / RE::TESObjectREFR liveness
+// ---------------------------------------------------------------------------
+
+RE::BSReadWriteLock::BSReadWriteLock()
+{
+    // The real one zeroes its wait-count word. Nothing in a single-threaded
+    // test contends for it, so default-constructing is the whole job.
+    std::memset(static_cast<void*>(this), 0, sizeof(*this));
+}
+
+bool RE::TESObjectREFR::IsDead(bool) const
+{
+    auto* mock = EngineMock::Current();
+    return mock != nullptr && mock->forms.actorIsDead;
+}
+
+bool RE::TESObjectREFR::IsDisabled() const
+{
+    auto* mock = EngineMock::Current();
+    return mock != nullptr && mock->forms.actorIsDisabled;
+}
+
+namespace NarrativeEngine::Testing
+{
+    RE::Actor* EngineMock::AddActor(std::uint32_t formID)
+    {
+        // One fabricated Actor, reused for every id a test registers. No test
+        // needs two distinguishable actors yet, and sharing keeps the liveness
+        // flags on EngineMock rather than per-object.
+        static FakeObject actor{sizeof(RE::Actor), 256};
+        auto* form = actor.As<RE::TESForm>();
+        // As<Actor>() switches on this, so it is what makes the cast succeed.
+        form->formType = RE::FormType::ActorCharacter;
+        form->formID = formID;
+        FormTable().insert({formID, form});
+        return actor.As<RE::Actor>();
+    }
+} // namespace NarrativeEngine::Testing

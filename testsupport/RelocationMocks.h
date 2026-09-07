@@ -1,5 +1,8 @@
 #pragma once
 
+#include <RE/B/BSCoreTypes.h>
+#include <RE/B/BSTHashMap.h>
+
 #include <cstdint>
 #include <span>
 
@@ -50,6 +53,11 @@
 // and calls it. A sentinel catches every id above the highest registered one,
 // which is the common shape, but the gap case is real: keep this table small,
 // and treat a mysterious crash inside engine code as a missing registration.
+namespace RE
+{
+    class TESForm;
+}
+
 namespace NarrativeEngine::Testing
 {
     struct RelocationMock
@@ -67,6 +75,10 @@ namespace NarrativeEngine::Testing
     // Every registered stand-in, in no particular order. The database sorts a
     // copy by id, which is what the binary search in `id2offset` requires.
     std::span<const RelocationMock> RelocationMockTable();
+
+    // The engine's form table, reachable so EngineMock can put fabricated
+    // forms into it. TESForm::LookupByID walks this exact map.
+    RE::BSTHashMap<RE::FormID, RE::TESForm*>& FormTable();
 
     // Called when a relocation resolves past everything registered. Aborts with
     // a message naming the situation, because the alternative is jumping into
