@@ -161,6 +161,19 @@ namespace NarrativeEngine::Testing
             std::vector<std::uint32_t> resolveRequests;
         } cosave;
 
+        // The console-command path: the engine's form factory, the transient
+        // Script form it hands back, and what was compiled through it.
+        struct ConsoleState
+        {
+            bool formFactoryPresent = true;
+            // A factory that refuses to build a form. Rare, and essentially
+            // only at shutdown, which is exactly why it never gets exercised.
+            bool scriptCreationSucceeds = true;
+
+            std::vector<std::string> commandsSet;
+            std::vector<const void*> compileTargets;
+        } console;
+
         Runtime runtime() const
         {
             return runtime_;

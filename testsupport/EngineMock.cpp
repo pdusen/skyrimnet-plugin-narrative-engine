@@ -1,5 +1,7 @@
 #include "EngineMock.h"
 
+#include "FakeVTable.h"
+
 #include <RE/Skyrim.h>
 #include <REL/Module.h>
 #include <SKSE/Interfaces.h>
@@ -363,4 +365,80 @@ bool SKSE::SerializationInterface::ResolveFormID(RE::FormID a_oldFormID, RE::For
         return false;
     a_newFormID = mock->cosave.resolvedFormID;
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// RE::IFormFactory / RE::Script — the console-command path
+// ---------------------------------------------------------------------------
+//
+// The factory is the harness's first object that has to survive a virtual
+// call: `ConcreteFormFactory<T, F>::Create()` is inline and forwards to the
+// virtual `CreateImpl()` at slot 01, so opaque storage is not enough. The
+// Script form it returns needs a vtable too, because production `delete`s it
+// and that runs the virtual destructor at slot 00.
+
+namespace NarrativeEngine::Testing
+{
+    namespace
+    {
+        // The transient Script form. Slot 00 is the scalar deleting
+        // destructor; ours deliberately does not free, because the storage
+        // belongs to the FakeObject and outlives the `delete`.
+        void ScriptDeletingDestructor(void*, unsigned int) {}
+
+        FakeObject& FakeScript()
+        {
+            // sizeof(RE::Script) with TESForm's virtual interface; only slot 00
+            // is ever reached from here, but the table is sized generously so a
+            // later caller touching another slot aborts by name instead of
+            // running off the end.
+            static FakeObject script{sizeof(RE::Script), 64};
+            static bool wired = false;
+            if (!wired) {
+                script.Slot(0, reinterpret_cast<void*>(&ScriptDeletingDestructor));
+                wired = true;
+            }
+            return script;
+        }
+
+        RE::TESForm* FormFactoryCreateImpl(void*)
+        {
+            auto* mock = EngineMock::Current();
+            if (!mock || !mock->console.scriptCreationSucceeds)
+                return nullptr;
+            return FakeScript().As<RE::TESForm>();
+        }
+
+        FakeObject& FakeFormFactory()
+        {
+            static FakeObject factory{sizeof(RE::ConcreteFormFactory<RE::Script, RE::FormType::Script>), 8};
+            static bool wired = false;
+            if (!wired) {
+                // Slot 01 per IFormFactory's header comments.
+                factory.Slot(1, reinterpret_cast<void*>(&FormFactoryCreateImpl));
+                wired = true;
+            }
+            return factory;
+        }
+    } // namespace
+} // namespace NarrativeEngine::Testing
+
+RE::IFormFactory* RE::IFormFactory::GetFormFactoryByType(RE::FormType)
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->console.formFactoryPresent)
+        return nullptr;
+    return NarrativeEngine::Testing::FakeFormFactory().As<RE::IFormFactory>();
+}
+
+void RE::Script::SetCommand(std::string_view a_command)
+{
+    if (auto* mock = EngineMock::Current())
+        mock->console.commandsSet.emplace_back(a_command);
+}
+
+void RE::Script::CompileAndRun(RE::TESObjectREFR* a_targetRef, RE::COMPILER_NAME)
+{
+    if (auto* mock = EngineMock::Current())
+        mock->console.compileTargets.push_back(static_cast<const void*>(a_targetRef));
 }
