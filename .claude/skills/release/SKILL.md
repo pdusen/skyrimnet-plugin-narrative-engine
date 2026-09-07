@@ -404,5 +404,76 @@ Format the final output as:
 
 > Release published: **[NarrativeEngine v$Version](<url>)**
 
-Do NOT perform any post-release actions (editing the release, uploading
+Keep the URL — step 11 needs it.
+
+## 11. Write the condensed release notes to `out/`
+
+This step runs LAST, after the GitHub release exists and its URL is known —
+it needs both. Do not attempt it earlier.
+
+Some places the release gets announced take a short changelog with a hard
+character limit rather than the full notes. Write that condensed version to:
+
+```text
+out/NarrativeEngine-v<Version>-release-notes.md
+```
+
+`out/` is gitignored, so this file is never committed — same as the packaged
+archive it sits beside.
+
+### What goes in it
+
+Derive it from the notes published in step 9. It is a shortened form of the
+same release, not a rewrite: do not introduce a claim the published notes do
+not make.
+
+- **A title on the first line** — `# NarrativeEngine v<Version>`.
+- **The Summary**, kept or tightened.
+- **"What's New"**, with its feature-domain subsections and their callouts.
+- **"Fixes"**, itemized as published.
+- **A link to the full notes on the last line**, as
+  `Full release notes: <url>` using the URL from step 10.
+
+Two things are dropped:
+
+- **"For Developers" comes out entirely.** Not trimmed, not summarised into
+  one line — the audience for this file is players, and every bullet in that
+  section is by definition something no player notices.
+- **"Notes" keeps only what someone upgrading from the previous release has
+  to act on**: a hard requirement, a migration step, a save-compat warning,
+  a known issue that will bite them. Background, restatements of unchanged
+  requirements, and "nice to know" context all come out. If nothing in Notes
+  survives that test, drop the section.
+
+### The 1900-character limit
+
+The finished file MUST be 1900 characters or fewer. Measure it — do not
+estimate:
+
+```powershell
+(Get-Content -Raw -LiteralPath "out/NarrativeEngine-v$Version-release-notes.md").Length
+```
+
+If it is over, cut in this order and re-measure after each cut:
+
+1. Whatever survived from "Notes", unless it is a hard requirement or an
+   upgrade step.
+2. The Summary, down to one sentence, then out entirely.
+3. The weakest bullets, lowest-value first — a shorter list of whole bullets
+   beats a full list of truncated ones.
+4. Tighten the wording of what remains.
+
+The title and the full-notes link are never cut; they are what make the file
+usable when everything else has been squeezed. If the release cannot be told
+in 1900 characters even after step 4, stop and report rather than shipping a
+file over the limit.
+
+The same unwrapped-line rule from step 4 applies here — one line per bullet,
+one line per paragraph, since this text is pasted into renderers that treat a
+soft newline as a break.
+
+### Finishing
+
+Report the path and the measured character count. Then stop: do NOT perform
+any post-release actions beyond this step (editing the release, uploading
 additional assets, drafting the next tag) unless the user asks.
