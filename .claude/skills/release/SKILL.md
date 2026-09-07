@@ -55,8 +55,9 @@ git log --no-merges --format='commit %h%n%s%n%n%b%n---' <range>
 
 Authors put `IMPORTANT:` warnings, save-compat notes, and "users must do X
 before updating" caveats in the body. `--pretty=format:'%h %s'` (subject-only)
-hides all of that, and any of it that exists MUST be surfaced in the Notes
-section of the draft in step 4.
+hides all of that, and any of it that exists MUST appear in the draft in
+step 4 — as a callout at the end of the feature subsection it belongs to,
+or in the trailing "Notes" section when it belongs to no single feature.
 
 **Level 2 — the actual diff, not just `--stat`.** Read `--stat` first for a
 map of what changed, then inspect the actual diff content for player-facing
@@ -127,64 +128,119 @@ prefix) — `package.ps1` and `gh release create` both want the bare form; the
 
 ## 4. Draft release notes and iterate to approval
 
-Draft in this shape (skip sections that would have zero bullets — don't ship
-an empty "Fixes" header just to keep the template):
+Draft in this shape:
 
 ```markdown
 ## Summary
 
 <one or two sentences describing what this release is about>
 
-## What's New — Player-Facing
+## What's New
 
-- <bullet per change the player can see or interact with in-game or in the
-  dashboard: new beats, dashboard controls, tunables that shift Director
-  behavior, event sources feeding the LLM's context, MCM entries, Major
-  performance improvements, etc.>
+### <Feature domain>
+
+- <bullet per user-facing change within this domain>
+
+> **Note:** <callout tied to THIS feature — a requirement, a caveat, an
+> expectation to set, an upgrade step it forces. Goes at the END of the
+> feature's subsection, after its bullets.>
+
+### <Next feature domain>
+
+- <bullets>
 
 ## Fixes
 
-- <bullet per user-visible bug fix>
+- <one bullet per individual user-visible bug fix>
 
-## What's New — Internals and Debug Aids
+## For Developers
 
-- <bullet per change that doesn't directly change what the player sees
-  during normal play: internal subsystems, testing aids that ship off
-  by default, release/packaging tooling improvements, engine-level
-  scaffolding, etc.>
+- <bullet per change aimed at someone working on the mod rather than
+  playing it: internal subsystems, debug and diagnostic tooling, testing
+  aids that ship off by default, fixes to any of those, build and
+  packaging configuration, engine-level scaffolding.>
 
 ## Notes
 
-<optional caveats — known issues, upgrade steps, etc.>
+<optional — release-wide caveats only: known issues, upgrade steps, or
+requirements that belong to no single feature. Anything tied to one
+feature belongs in that feature's subsection instead.>
 ```
 
-Section order is fixed and MUST NOT be rearranged: Summary, What's New —
-Player-Facing, Fixes, What's New — Internals and Debug Aids, Notes. The
-ordering principle is "everything the player notices comes before anything
-they don't" — so "Internals and Debug Aids" is always the LAST content
-section, below "Fixes". Never place internals above fixes; a reader scanning
-the mod page for what changed for them has to get through the plumbing to
-reach the bug fixes, which is exactly backwards.
+Section order is fixed and MUST NOT be rearranged: Summary, What's New,
+Fixes, For Developers, Notes. The ordering principle is "everything the
+player notices comes before anything they don't" — so "For Developers" is
+always the LAST content section, below "Fixes". Never place it above
+fixes; a reader scanning the mod page for what changed for them has to get
+through the plumbing to reach the bug fixes, which is exactly backwards.
 
-The two-way split under "What's New" is required, not optional — a flat
-"What's New" list buries player-facing features behind internal plumbing
-and makes the release read like a changelog. When a change straddles both
-(e.g. a new dashboard control backed by a new subsystem), put the visible
-symptom in the player-facing section and the subsystem in the internals
-section, cross-referencing briefly if it helps.
+Drop any section that would have zero bullets — don't ship an empty
+"Fixes" or "For Developers" header just to keep the template.
 
-If either subsection would have zero bullets, drop the whole subsection
-header (don't ship an empty "Internals and Debug Aids" just to keep the
-template). Same rule applies to "Fixes" — omit the header entirely if
-nothing landed there.
+"For Developers" is deliberately broad. It is not a "debug tools" section
+— it is everything in the release whose audience is someone working on the
+mod rather than someone playing it, whatever form that takes: a new
+subsystem, a diagnostic dump, a fix to a debug-only path, a compiler flag,
+a change to how the mod is packaged. If a change is real but no player
+will ever notice it, this is where it goes.
+
+### What's New: one subsection per feature domain
+
+"What's New" is never a flat list. Group the release's new user-facing
+surface into feature domains — the subsystem, mechanic, or area of the mod
+a player would name if they were talking about it ("Gossip", "The
+Director", "The Dashboard", "Beat Authoring") — and give each one an `###`
+subsection. Order the domains by how much of the release they represent,
+largest first.
+
+A domain earns a subsection when a player can see or interact with it: new
+beats, dashboard controls, tunables that shift Director behavior, event
+sources feeding the LLM's context, MCM entries, major performance
+improvements. A change that only a developer notices does NOT get a
+subsection here — it belongs in "For Developers".
+
+Within a subsection, lead with what the feature does for the player, then
+the bullets that qualify it. A one-bullet domain is fine; do not pad it.
+Do not create a "Miscellaneous" or "Other" domain — if a change fits no
+domain, it is either its own small domain or it belongs in Fixes or
+For Developers.
+
+### Callouts go at the end of the feature they belong to
+
+A callout is anything a reader has to know to use the feature correctly: a
+hard requirement (a minimum SkyrimNet version, a companion mod), a
+limitation, an expectation about pacing or visibility, an upgrade or
+migration step, a save-compat warning. Every `IMPORTANT:` note, save-compat
+caveat, and "users must do X before updating" line found in the commit
+bodies in step 2 MUST land somewhere in the draft.
+
+Place each callout as a blockquote at the END of its feature's subsection,
+after that feature's bullets — not inline among them, and not collected
+into a shared section at the bottom of the notes. A reader who only cares
+about one feature reads its subsection and gets everything that applies to
+it, including the caveats.
+
+Only a caveat that belongs to no single feature — a global upgrade step, a
+known issue spanning the whole mod — goes in the trailing "Notes" section.
+If every caveat found a feature to attach to, omit "Notes" entirely.
+
+### Fixes: one bullet per fix
+
+Itemize. Each bullet is one individual user-visible bug fix, stating what
+was wrong from the player's side and what now happens instead. Do not roll
+several fixes into a "various fixes to X" bullet, and do not group fixes
+under feature subheadings — "Fixes" is a flat list.
+
+A fix that a player could never have observed is not a fix for this
+purpose; it goes in "For Developers".
 
 Framing rules:
 
-- Player-facing framing in the player-facing subsection, not engineer framing.
-  "The Director now respects a minimum phase-dwell floor before advancing"
-  beats "Refactor `PhaseTracker::EvaluateAdvance` signature." The internals
-  subsection can be a bit more technical, but still avoids raw file paths
-  and symbol names when a behavior description works.
+- Player-facing framing under "What's New" and "Fixes", not engineer
+  framing. "The Director now respects a minimum phase-dwell floor before
+  advancing" beats "Refactor `PhaseTracker::EvaluateAdvance` signature."
+  "For Developers" can be more technical, but still avoids raw file
+  paths and symbol names when a behavior description works.
 - Cite behaviors, not file paths or symbol names.
 - Keep it tight. A short list beats a wall of prose.
 
@@ -194,7 +250,8 @@ in the source. Do NOT wrap prose at 80/100/120 columns inside a bullet or
 paragraph — GitHub will render every soft newline as a `<br>`, breaking
 sentences mid-thought on the published page. Only insert a newline where
 you want the rendered output to actually break (between bullets, between
-paragraphs, before/after headers).
+paragraphs, before/after headers). A multi-line blockquote callout is the
+one exception in the template above; write it as a single `>` line too.
 
 The draft you present to the user in chat can be wrapped for readability,
 but the release notes you eventually write to disk in step 9 must be
