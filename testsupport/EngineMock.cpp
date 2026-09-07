@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <new>
 
 // Definitions for the CommonLibSSE functions production code calls.
@@ -195,3 +196,108 @@ RE::ScriptEventSourceHolder* RE::ScriptEventSourceHolder::GetSingleton()
 RE::BSSpinLockGuard::BSSpinLockGuard(BSSpinLock& a_lock) : _lock(a_lock) {}
 
 RE::BSSpinLockGuard::~BSSpinLockGuard() = default;
+
+// ---------------------------------------------------------------------------
+// RE::BSScript — the Papyrus virtual machine
+// ---------------------------------------------------------------------------
+//
+// The three that matter (GetSingleton, GetObjectHandlePolicy,
+// DispatchMethodCall) are non-virtual wrappers in CommonLibSSE, so standing in
+// for them needs no vtable on the opaque singleton storage. The rest are the
+// argument-packing machinery `RE::MakeFunctionArguments` drags in.
+
+RE::BSScript::Internal::VirtualMachine* RE::BSScript::Internal::VirtualMachine::GetSingleton()
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->papyrus.vmPresent)
+        return nullptr;
+    return NarrativeEngine::Testing::OpaqueSingleton<RE::BSScript::Internal::VirtualMachine>();
+}
+
+RE::BSScript::IObjectHandlePolicy* RE::BSScript::IVirtualMachine::GetObjectHandlePolicy()
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->papyrus.handlePolicyPresent)
+        return nullptr;
+    return NarrativeEngine::Testing::OpaqueSingleton<RE::BSScript::IObjectHandlePolicy>();
+}
+
+RE::VMHandle RE::BSScript::IObjectHandlePolicy::GetHandleForObject(RE::FormType a_typeID, const RE::TESForm* a_srcData)
+{
+    auto* mock = EngineMock::Current();
+    if (!mock)
+        return 0;
+    mock->papyrus.handleRequests.push_back({static_cast<std::uint32_t>(a_typeID), static_cast<const void*>(a_srcData)});
+    return mock->papyrus.handle;
+}
+
+bool RE::BSScript::IVirtualMachine::DispatchMethodCall(
+    RE::VMHandle a_handle,
+    const RE::BSFixedString& a_className,
+    const RE::BSFixedString& a_fnName,
+    RE::BSScript::IFunctionArguments* a_args,
+    RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor>& a_result)
+{
+    (void)a_result;
+    auto* mock = EngineMock::Current();
+    if (!mock)
+        return false;
+    mock->papyrus.dispatches.push_back({a_handle,
+                                        a_className.c_str() ? a_className.c_str() : "",
+                                        a_fnName.c_str() ? a_fnName.c_str() : "",
+                                        a_args != nullptr});
+    return mock->papyrus.dispatchSucceeds;
+}
+
+// Argument packing. `MakeFunctionArguments` builds a scrap-allocated array of
+// Variables and sets each one; none of it is read back here, so the Variable
+// bodies only have to be safe, and SetSInt only has to record what was packed.
+
+void* RE::BSScrapArrayAllocator::allocate(std::size_t a_size)
+{
+    void* mem = std::malloc(a_size);
+    if (mem)
+        std::memset(mem, 0, a_size);
+    return mem;
+}
+
+void RE::BSScrapArrayAllocator::deallocate(void* a_ptr)
+{
+    std::free(a_ptr);
+}
+
+// Variable's own members are out-of-line too, so standing in for its
+// constructor means standing in for theirs. All three are trivial: the
+// Variable body zeroes everything they set anyway.
+
+RE::BSScript::TypeInfo::TypeInfo()
+{
+    std::memset(static_cast<void*>(this), 0, sizeof(*this));
+}
+
+RE::BSScript::Variable::Value::Value(void* a_val)
+{
+    std::memset(static_cast<void*>(this), 0, sizeof(*this));
+    p = a_val;
+}
+
+RE::BSScript::Variable::Value::~Value() {}
+
+RE::BSScript::Variable::Variable()
+{
+    // The real default constructor leaves a None-typed, zero-valued variable.
+    // Zeroing reproduces that without depending on the layout of the union,
+    // and matters because these live in scrap memory the caller allocated.
+    std::memset(static_cast<void*>(this), 0, sizeof(*this));
+}
+
+RE::BSScript::Variable::~Variable() = default;
+
+void RE::BSScript::Variable::SetSInt(std::int32_t a_val)
+{
+    // Deliberately does not write into the Variable: nothing in a test reads
+    // one back, and recording the value is what lets a test assert which stage
+    // number actually got packed for the Papyrus call.
+    if (auto* mock = EngineMock::Current())
+        mock->papyrus.packedInts.push_back(a_val);
+}

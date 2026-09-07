@@ -100,6 +100,48 @@ namespace NarrativeEngine::Testing
             bool holderPresent = true;
         } events;
 
+        // The Papyrus virtual machine. Anything that pokes a quest script goes
+        // through here, and every failure in the chain — no VM, no handle
+        // policy, a form the policy won't hand back a handle for, a VM that
+        // refuses to queue the call — is a branch production code guards
+        // against and a running game never shows you.
+        struct PapyrusState
+        {
+            bool vmPresent = true;
+            bool handlePolicyPresent = true;
+
+            // What GetHandleForObject returns. Zero is what the policy gives
+            // for a form it cannot make a handle for.
+            std::uint64_t handle = 0x0000BEEF0000CAFEull;
+
+            // What DispatchMethodCall returns: whether the VM accepted the
+            // call onto its queue. It says nothing about the call later
+            // succeeding, and neither does the code under test.
+            bool dispatchSucceeds = true;
+
+            struct HandleRequest
+            {
+                std::uint32_t formType = 0;
+                const void* form = nullptr;
+            };
+
+            struct Dispatch
+            {
+                std::uint64_t handle = 0;
+                std::string className;
+                std::string methodName;
+                bool hadArguments = false;
+            };
+
+            // Recorded interactions. Which script and method were named, and
+            // with what arguments, is most of what correctness means here —
+            // dispatching `Quest.SetStage` with the wrong stage number returns
+            // true just as happily as the right one.
+            std::vector<HandleRequest> handleRequests;
+            std::vector<Dispatch> dispatches;
+            std::vector<std::int32_t> packedInts;
+        } papyrus;
+
         Runtime runtime() const
         {
             return runtime_;

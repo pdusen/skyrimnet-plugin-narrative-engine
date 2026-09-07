@@ -706,6 +706,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
     #     test should behave.
     set(NARRATIVEENGINE_MOCKED_SOURCES
         "${CMAKE_SOURCE_DIR}/src/EngineUtils.cpp"
+        "${CMAKE_SOURCE_DIR}/src/QuestUtils.cpp"
     )
 
     if(engine_test_sources)
