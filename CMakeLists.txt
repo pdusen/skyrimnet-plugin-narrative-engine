@@ -86,6 +86,7 @@ endif()
 # src/SKSECosaveIO.cpp (which stays out of this list, being the adapter).
 set(NARRATIVEENGINE_CORE_SOURCES
     "${CMAKE_SOURCE_DIR}/src/LLMTextSanitizer.cpp"
+    "${CMAKE_SOURCE_DIR}/src/JsonUtils.cpp"
     "${CMAKE_SOURCE_DIR}/src/SenderCooldownTable.cpp"
     "${CMAKE_SOURCE_DIR}/src/ThreadRole.cpp"
 )
@@ -174,6 +175,9 @@ set(CMAKE_COMPILE_WARNING_AS_ERROR ${NARRATIVEENGINE_WARNINGS_AS_ERRORS})
 add_library(NarrativeEngineCore STATIC ${NARRATIVEENGINE_CORE_SOURCES})
 target_compile_features(NarrativeEngineCore PUBLIC cxx_std_23)
 target_include_directories(NarrativeEngineCore PUBLIC include)
+# nlohmann_json is header-only and carries nothing engine-specific, so a core
+# source may parse JSON without breaking the "runs with no Skyrim" rule.
+target_link_libraries(NarrativeEngineCore PUBLIC nlohmann_json::nlohmann_json)
 
 add_commonlibsse_plugin(${PROJECT_NAME} SOURCES ${source_files} plugin.cpp)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23) # <--- use C++23 standard
