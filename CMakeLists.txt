@@ -87,6 +87,7 @@ endif()
 set(NARRATIVEENGINE_CORE_SOURCES
     "${CMAKE_SOURCE_DIR}/src/LLMTextSanitizer.cpp"
     "${CMAKE_SOURCE_DIR}/src/SenderCooldownTable.cpp"
+    "${CMAKE_SOURCE_DIR}/src/ThreadRole.cpp"
 )
 
 # Everything the plugin DLL compiles directly: all of src/ minus the tests
