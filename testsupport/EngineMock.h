@@ -10,6 +10,9 @@
 namespace RE
 {
     class Actor;
+    class BGSBaseAlias;
+    class TESObjectREFR;
+    class TESQuest;
     class Calendar;
     class PlayerCharacter;
     class ScriptEventSourceHolder;
@@ -203,6 +206,34 @@ namespace NarrativeEngine::Testing
         // TESForm::LookupByID finds it and As<Actor>() accepts it. The table is
         // emptied when this EngineMock is destroyed.
         RE::Actor* AddActor(std::uint32_t formID);
+
+        // The vanilla WICourier resolution: the quest, the container alias on
+        // it, and the staging container's inventory.
+        struct CourierState
+        {
+            bool questIsRunning = true;
+            std::uint16_t questStage = 10;
+
+            // What the Container alias's live reference resolves to. Null is a
+            // mod that repointed the alias at nothing, which is the case the
+            // fallback REFR exists for.
+            bool aliasHasReference = true;
+
+            // Absolute count the staging container reports for the one book a
+            // test asks about. Negative means "the book is not in there at
+            // all", which is a different answer from a count of zero.
+            int inventoryCount = 3;
+            int getInventoryCountsCalls = 0;
+        } courier;
+
+        // Build the vanilla WICourier quest, its `Container` alias, and the
+        // `WICourierContainerRef` staging container, registering each under the
+        // editor ID production looks it up by. Omit a piece to exercise the
+        // resolution path that copes without it.
+        RE::TESQuest* AddCourierQuest(bool withContainerAlias, bool withContainerRef);
+
+        // Register a bound object (a book) in the form table under `formID`.
+        RE::TESForm* AddBook(std::uint32_t formID);
 
         Runtime runtime() const
         {

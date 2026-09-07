@@ -27,6 +27,31 @@ namespace NarrativeEngine::Testing
 {
     namespace
     {
+        // TESForm::AsReference() forwards to the virtual AsReference1 at slot
+        // 0x2B (AsReference2 at 0x2C is its const twin). A form that IS a
+        // reference answers with itself; everything else answers null, which
+        // is what the engine's own default does.
+        RE::TESObjectREFR* FormAsReferenceSelf(void* self)
+        {
+            return static_cast<RE::TESObjectREFR*>(self);
+        }
+
+        RE::TESObjectREFR* FormAsReferenceNull(void*)
+        {
+            return nullptr;
+        }
+
+        void WireFormDefaults(FakeObject& form, bool isReference)
+        {
+            void* asReference = isReference ? reinterpret_cast<void*>(&FormAsReferenceSelf)
+                                            : reinterpret_cast<void*>(&FormAsReferenceNull);
+            form.Slot(0x2B, asReference);
+            form.Slot(0x2C, asReference);
+        }
+    } // namespace
+
+    namespace
+    {
         EngineMock* g_installed = nullptr;
 
         // Storage standing in for an engine singleton.
@@ -90,9 +115,10 @@ namespace NarrativeEngine::Testing
             std::abort();
         }
 
-        // Start from an empty form table so ids registered by an earlier test
+        // Start from empty form tables so anything an earlier test registered
         // cannot be found by a later one.
         FormTable().clear();
+        EditorIDTable().clear();
 
         g_installed = this;
     }
@@ -100,6 +126,7 @@ namespace NarrativeEngine::Testing
     EngineMock::~EngineMock()
     {
         FormTable().clear();
+        EditorIDTable().clear();
         g_installed = nullptr;
         // The REL module singleton is left mocked rather than reset. Resetting
         // would arm `REL::Module::get()` to re-initialise from a real process
@@ -505,11 +532,107 @@ namespace NarrativeEngine::Testing
         // needs two distinguishable actors yet, and sharing keeps the liveness
         // flags on EngineMock rather than per-object.
         static FakeObject actor{sizeof(RE::Actor), 256};
+        WireFormDefaults(actor, true);
         auto* form = actor.As<RE::TESForm>();
         // As<Actor>() switches on this, so it is what makes the cast succeed.
         form->formType = RE::FormType::ActorCharacter;
         form->formID = formID;
         FormTable().insert({formID, form});
         return actor.As<RE::Actor>();
+    }
+} // namespace NarrativeEngine::Testing
+
+// ---------------------------------------------------------------------------
+// RE::TESQuest / RE::BGSRefAlias / RE::TESObjectREFR — the courier path
+// ---------------------------------------------------------------------------
+
+bool RE::TESQuest::IsRunning() const
+{
+    auto* mock = EngineMock::Current();
+    return mock != nullptr && mock->courier.questIsRunning;
+}
+
+std::uint16_t RE::TESQuest::GetCurrentStageID() const
+{
+    auto* mock = EngineMock::Current();
+    return mock ? mock->courier.questStage : std::uint16_t{0};
+}
+
+RE::TESObjectREFR* RE::BGSRefAlias::GetReference() const
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->courier.aliasHasReference)
+        return nullptr;
+    return NarrativeEngine::Testing::OpaqueSingleton<RE::TESObjectREFR>();
+}
+
+std::map<RE::TESBoundObject*, int> RE::TESObjectREFR::GetInventoryCounts(
+    std::function<bool(RE::TESBoundObject&)> a_filter,
+    bool)
+{
+    std::map<RE::TESBoundObject*, int> counts;
+    auto* mock = EngineMock::Current();
+    if (!mock)
+        return counts;
+    ++mock->courier.getInventoryCountsCalls;
+    if (mock->courier.inventoryCount < 0)
+        return counts; // the book simply is not in the container
+
+    // The filter is what production uses to ask about one specific book, so
+    // run it against the registered books rather than inventing an entry: a
+    // filter that matched the wrong object would otherwise go unnoticed.
+    for (auto& entry : NarrativeEngine::Testing::FormTable()) {
+        auto* form = entry.second;
+        auto* bound = form ? form->As<RE::TESBoundObject>() : nullptr;
+        if (bound && a_filter(*bound))
+            counts.emplace(bound, mock->courier.inventoryCount);
+    }
+    return counts;
+}
+
+namespace NarrativeEngine::Testing
+{
+
+    RE::TESQuest* EngineMock::AddCourierQuest(bool withContainerAlias, bool withContainerRef)
+    {
+        static FakeObject quest{sizeof(RE::TESQuest), 256};
+        static FakeObject alias{sizeof(RE::BGSRefAlias), 64};
+        static FakeObject containerRef{sizeof(RE::TESObjectREFR), 256};
+
+        WireFormDefaults(quest, false);
+        auto* questForm = quest.As<RE::TESForm>();
+        questForm->formType = RE::FormType::Quest;
+        questForm->formID = 0x0002C6BFu;
+
+        auto* q = quest.As<RE::TESQuest>();
+        q->aliases.clear();
+        if (withContainerAlias) {
+            auto* a = alias.As<RE::BGSBaseAlias>();
+            a->aliasName = "Container";
+            q->aliases.push_back(a);
+        }
+
+        EditorIDTable().insert({RE::BSFixedString("WICourier"), questForm});
+
+        if (withContainerRef) {
+            WireFormDefaults(containerRef, true);
+            auto* refForm = containerRef.As<RE::TESForm>();
+            refForm->formType = RE::FormType::Reference;
+            refForm->formID = 0x0004D8F1u;
+            EditorIDTable().insert({RE::BSFixedString("WICourierContainerRef"), refForm});
+        }
+        return q;
+    }
+
+    RE::TESForm* EngineMock::AddBook(std::uint32_t formID)
+    {
+        static FakeObject book{sizeof(RE::TESObjectBOOK), 256};
+        WireFormDefaults(book, false);
+        auto* form = book.As<RE::TESForm>();
+        // Book is a bound object, which is what As<TESBoundObject>() checks.
+        form->formType = RE::FormType::Book;
+        form->formID = formID;
+        FormTable().insert({formID, form});
+        return form;
     }
 } // namespace NarrativeEngine::Testing

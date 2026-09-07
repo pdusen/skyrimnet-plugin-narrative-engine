@@ -41,4 +41,13 @@ namespace NarrativeEngine::CourierUtils
     // (bookFormID==0, courier not resolved, book isn't a bound object,
     // etc.).
     std::int32_t GetCourierInventoryCount(RE::FormID bookFormID);
+
+    // Drop the cached resolution so the next call resolves afresh.
+    //
+    // Called from the SKSE revert / post-load handler alongside every other
+    // module that caches state, which this one was missing. The quest form
+    // itself is static for the process, but the `Container` alias's live
+    // reference and the `WICourierContainerRef` REFR are per-save: a pointer
+    // cached under one save has no business being handed out under another.
+    void OnRevert();
 } // namespace NarrativeEngine::CourierUtils

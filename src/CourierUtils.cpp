@@ -91,4 +91,14 @@ namespace NarrativeEngine::CourierUtils
         auto it = counts.find(book);
         return it != counts.end() ? it->second : 0;
     }
+
+    void OnRevert()
+    {
+        g_containerAlias = nullptr;
+        g_containerRefFallback = nullptr;
+        g_quest = nullptr;
+        // Released last, so a concurrent reader either sees the whole previous
+        // resolution or re-resolves; it can never see a half-cleared one.
+        g_resolved.store(false, std::memory_order_release);
+    }
 } // namespace NarrativeEngine::CourierUtils

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <RE/B/BSCoreTypes.h>
+#include <RE/B/BSFixedString.h>
 #include <RE/B/BSTHashMap.h>
 
 #include <cstdint>
@@ -79,6 +80,10 @@ namespace NarrativeEngine::Testing
     // The engine's form table, reachable so EngineMock can put fabricated
     // forms into it. TESForm::LookupByID walks this exact map.
     RE::BSTHashMap<RE::FormID, RE::TESForm*>& FormTable();
+
+    // The editor-ID table TESForm::LookupByEditorID walks, reached through the
+    // same kind of data relocation.
+    RE::BSTHashMap<RE::BSFixedString, RE::TESForm*>& EditorIDTable();
 
     // Called when a relocation resolves past everything registered. Aborts with
     // a message naming the situation, because the alternative is jumping into

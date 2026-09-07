@@ -7,6 +7,7 @@
 #include <BeatSystem.h>
 #include <BeatWorkDispatch.h>
 #include <CombatEventLog.h>
+#include <CourierUtils.h>
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
 #include <Decorators.h>
@@ -270,6 +271,7 @@ namespace NarrativeEngine
             case SKSE::MessagingInterface::kNewGame:
                 logger::info("OnMessage: kNewGame");
                 DecisionLog::Clear();
+                CourierUtils::OnRevert();
                 CombatEventLog::OnRevert();
                 WeatherEventLog::OnRevert();
                 TravelEventLog::OnRevert();
@@ -319,6 +321,7 @@ namespace NarrativeEngine
                 GossipSim::OnSessionEnd();
                 GossipLog::OnSessionEnd();
                 DecisionLog::Clear();
+                CourierUtils::OnRevert();
                 CombatEventLog::OnRevert();
                 WeatherEventLog::OnRevert();
                 TravelEventLog::OnRevert();
