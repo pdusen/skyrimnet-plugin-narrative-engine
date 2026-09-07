@@ -3,6 +3,7 @@
   "name": "narrative-engine",
   "version-string": "0.0.1",
   "dependencies": [
+    "catch2",
     "commonlibsse-ng-fork",
     "directxtk",
     "simpleini",

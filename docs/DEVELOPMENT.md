@@ -61,6 +61,8 @@ These rules apply to **every** C++ source file in this repo:
 
 - `.cpp` files go in `src/`.
 - `.h` files go in `include/`.
+- Unit tests are **co-located**: the tests for `src/Foo.cpp` go in `src/Foo.test.cpp`, beside the code they
+  test. There is no `tests/` tree and there should not be one. See [Unit tests](#unit-tests) below.
 
 The CMake build picks up `src/*.cpp` automatically (via the glob in `CMakeLists.txt`) and puts `include/` on the
 include path. That means our own headers should be included with angle brackets — `#include <Foo.h>` — to match the
@@ -216,6 +218,129 @@ Notes:
 - Release builds still produce `.pdb` files (CMake's release config emits them), so Visual Studio's
   debugger can attach to a release build with mostly-meaningful stack traces. You lose some local-variable
   visibility to optimization, but it's enough for the rare interactive-debug session.
+
+## Unit tests
+
+Tests use **Catch2 v3**, pulled in through the same vcpkg manifest as every other dependency, and run under
+CTest. Run them with:
+
+```sh
+pwsh -File build.ps1 test
+```
+
+That builds only the `NarrativeEngineTests` target — no ESP sync, no Papyrus compile, no dashboard bundle —
+and then runs `ctest --output-on-failure`. `catch_discover_tests` registers every `TEST_CASE` with CTest
+individually, so `ctest -R LLMTextSanitizer` selects one and a failure names the case rather than "the test
+binary". You can also run `build/local-release/NarrativeEngineTests.exe` directly for Catch2's own CLI
+(`--list-tests`, tag filters like `[LLMTextSanitizer]`, `-s` for passing assertions).
+
+### Two test executables
+
+There are two, because engine-free code and engine-coupled code need different link closures:
+
+| File | Target | Notes |
+| --- | --- | --- |
+| `src/Foo.cpp` | `NarrativeEngine` (the SKSE DLL) | Picked up by the glob, compiled with `PCH.h`, may touch the engine freely. |
+| `src/Foo.test.cpp` | `NarrativeEngineTests` | Pure-core test. Excluded from the DLL glob by an `EXCLUDE REGEX`, so a co-located test can never end up in the shipped plugin. |
+| `src/Foo.engine.test.cpp` | `NarrativeEngineEngineMockTests` | Test for code that calls CommonLibSSE. Also matches `*.test.cpp`, so the same exclusion keeps it out of the DLL. |
+| Files in `NARRATIVEENGINE_CORE_SOURCES` | `NarrativeEngineCore` (static lib), linked into both the DLL and the core tests | Engine-free production code, compiled once and shared. |
+| Files in `NARRATIVEENGINE_MOCKED_SOURCES` | Compiled into `NarrativeEngineEngineMockTests` (and, separately, into the DLL) | Engine-coupled production code under test. |
+
+Adding a test needs no CMake edit — write the file and the glob finds it. Making a *new module* testable
+does, and which list you add it to is the decision described in the next two sections.
+
+### Mocking CommonLibSSE
+
+Production code that genuinely calls `RE::` functions can be unit-tested without being reshaped to avoid
+them, and without a Skyrim process. `src/EngineUtils.engine.test.cpp` is the worked example.
+
+The mechanism rests on how CommonLibSSE is built. Most of it is headers: struct layouts, member offsets and
+inline helpers all compile straight into our object files. Only some functions are out-of-line, and those
+live in `CommonLibSSE.lib`, where each one resolves its address inside a running `SkyrimSE.exe` through the
+address library. Those out-of-line functions are the only part a test process can't execute — and they are
+ordinary symbols, so the linker will take a different definition if one is offered.
+
+So `NarrativeEngineEngineMockTests` compiles production sources against the **real** CommonLibSSE headers,
+with the same defines and the same forced `PCH.h` as the DLL, and then **does not link `CommonLibSSE.lib`**.
+`testsupport/EngineMock.cpp` defines the engine functions instead. Production code is compiled unmodified:
+`EngineUtils.cpp` still calls `RE::Calendar::GetSingleton()`, and reaches our definition rather than
+Bethesda's.
+
+Three things make this pleasant to live with:
+
+- **The linker is the checklist.** Any engine function the code under test touches that nobody has mocked is
+  an unresolved external, and the build fails naming it. There is no silent fallthrough into real engine
+  code and no way to miss a dependency.
+- **`REL::Module::mock()`.** CommonLibSSE-NG ships its own unit-testing hook, unlocked by
+  `ENABLE_COMMONLIBSSE_TESTING`, which fills in the module singleton so the inline `REL::Module::IsAE()` /
+  `IsVR()` branches throughout the headers resolve deterministically. That is what lets a test pick a
+  runtime — and therefore reach the SE-vs-VR divergence that `EngineUtils::AddFastTravelEndSink` exists to
+  guard against, which otherwise needs a VR install to exercise.
+- **Engine singletons are opaque storage.** The mocked accessors answer out of `EngineMock` rather than by
+  reading through the pointers they hand back, so the "objects" only need a stable, correctly-aligned,
+  suitably-sized address. Nothing has to construct a real `RE::UI`.
+
+`testsupport/CommonLibSSERuntimeStubs.cpp` supplies the rest: `REX::W32` (CommonLibSSE's private Win32
+re-declaration) forwards to the real Win32 API, and the `REL` address-library entry points abort with a
+message telling you to add a mock. Reaching one of those means production code called an engine function
+nothing stands in for.
+
+To put a module under mocked-engine test: add its `.cpp` to `NARRATIVEENGINE_MOCKED_SOURCES`, write
+`src/Foo.engine.test.cpp`, build, and add whatever engine functions the linker names to
+`testsupport/EngineMock.cpp`.
+
+**Known limits.** Inline engine functions can't be replaced — they are already in our object file — though
+that is usually fine, since they mostly read data members of memory the test owns. Anything that calls a
+*virtual* on a fabricated engine object needs that object's vtable, which is a much larger undertaking than
+mocking a free function. And engine code that allocates through Bethesda's memory manager will pull in more
+symbols; that is tractable but nobody has needed it yet.
+
+**When not to reach for this.** Mocking keeps production code unchanged, which is exactly right when the
+module's engine coupling *is* its job. It is the wrong tool when the coupling is incidental — see the next
+section.
+
+### Testing code that talks to the engine
+
+Most of `src/` can't join the core list as written, because engine access is woven through the logic rather
+than sitting at its edges. The way in is to move the engine dependency to the module's boundary, so the
+module keeps its behaviour and the caller supplies what only the game can provide. Two shapes cover almost
+everything, and `SenderCooldownTable` is the worked example of both:
+
+**Reading ambient engine state → make it a parameter.** The table used to call
+`EngineUtils::GetCurrentGameHours()` itself; now `Stamp` and `IsOnCooldown` take a `nowGameHours` argument
+and the beats read the clock. No interface, no injection machinery — "what time is it" became an ordinary
+value a test passes. Reach for this whenever the module only *reads* something (the clock, a setting, a
+player position): gather it at the call site, pass it in.
+
+**Calling an engine service → define a narrow port.** Some dependencies can't be reduced to a value, because
+the behaviour worth testing *is* the conversation. Co-save serialization is the clear case: what matters is
+how many bytes came back, what happens when a record is truncated mid-entry, and what becomes of a FormID
+whose plugin has left the load order. For those, declare an interface naming only the operations the module
+actually uses — `include/CosaveIO.h` is three methods — and let the DLL bind it to the real API
+(`src/SKSECosaveIO.cpp`) while tests bind it to a fake.
+
+Keep the production adapter a straight transcription with no branching of its own. It is the one part that
+unit tests can't reach, so anything that could be wrong belongs on the other side of the port. If an adapter
+starts growing decisions, that's the signal the port is drawn in the wrong place.
+
+What this does **not** justify is inventing a port for everything. A module that merely reads engine data to
+decide something is better served by gathering a plain snapshot and testing the decision — cheaper, and it
+leaves no interface to maintain. Ports are for behaviour you have to stand in for, not for data you can
+simply hand over.
+
+### Test style
+
+Tests are organised as nested `TEST_CASE` / `SECTION` blocks, read like `describe` / `it`. Catch2 re-runs
+everything above a `SECTION` for each leaf path beneath it, so setup written at the top of a `TEST_CASE`
+behaves like a `beforeEach` and each expectation gets fresh state. Nested sections name contextual
+conditions (`"when the response is malformed UTF-8"`, `"and a stray continuation byte appears on its own"`);
+leaf sections name one observable behaviour (`"should drop the orphan byte and keep the rest"`). A failure
+prints the whole path, which is what makes the naming worth the trouble.
+
+Use ordinary values and RAII rather than mocks. Objects constructed in a section are destroyed when that
+section's path finishes; there is no reset hook to write and none is wanted.
+
+`src/LLMTextSanitizer.test.cpp` is the worked example of all of the above.
 
 ## Using the `statics/` folder
 

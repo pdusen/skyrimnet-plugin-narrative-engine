@@ -13,6 +13,7 @@
 #include <SenderCandidatePool.h>
 #include <SenderCooldownTable.h>
 #include <Settings.h>
+#include <SKSECosaveIO.h>
 #include <SkyrimNetAPI.h>
 #include <VisitComposer.h>
 #include <VisitConclusionPoll.h>
@@ -1656,7 +1657,7 @@ namespace NarrativeEngine
         {
             if (senderNpcFormID == 0)
                 return;
-            g_senderCooldowns.Stamp(senderNpcFormID);
+            g_senderCooldowns.Stamp(senderNpcFormID, EngineUtils::GetCurrentGameHours());
             logger::info("NPCVisitBeat: per-sender cooldown stamp set for 0x{:08X}", senderNpcFormID);
         }
 
@@ -1664,14 +1665,15 @@ namespace NarrativeEngine
         {
             if (senderNpcFormID == 0)
                 return;
-            g_senderMemoryWatermarks.Stamp(senderNpcFormID);
+            g_senderMemoryWatermarks.Stamp(senderNpcFormID, EngineUtils::GetCurrentGameHours());
             logger::info("NPCVisitBeat: per-sender memory watermark stamped at Valediction for 0x{:08X}",
                          senderNpcFormID);
         }
 
         bool IsSenderOnCooldown(RE::FormID senderNpcFormID)
         {
-            return g_senderCooldowns.IsOnCooldown(senderNpcFormID, Settings::Get().visitSenderCooldownGameHours);
+            return g_senderCooldowns.IsOnCooldown(
+                senderNpcFormID, Settings::Get().visitSenderCooldownGameHours, EngineUtils::GetCurrentGameHours());
         }
 
         std::optional<double> GetSenderMemoryWatermarkGameHours(RE::FormID senderNpcFormID)
@@ -1706,8 +1708,9 @@ namespace NarrativeEngine
                 logger::error("NPCVisitBeat::OnSave: OpenRecord failed");
                 return;
             }
-            g_senderCooldowns.Serialize(intfc);
-            g_senderMemoryWatermarks.Serialize(intfc);
+            SKSECosaveIO io{intfc};
+            g_senderCooldowns.Serialize(io);
+            g_senderMemoryWatermarks.Serialize(io);
         }
 
         void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length)
@@ -1722,7 +1725,8 @@ namespace NarrativeEngine
                 OnRevert();
                 return;
             }
-            if (!g_senderCooldowns.Deserialize(intfc)) {
+            SKSECosaveIO io{intfc};
+            if (!g_senderCooldowns.Deserialize(io)) {
                 logger::error("NPCVisitBeat::OnLoad: sender-cooldown deserialize failed; "
                               "cleared");
                 g_senderMemoryWatermarks.Clear();
@@ -1732,7 +1736,7 @@ namespace NarrativeEngine
             // trailing bytes so we skip the read and leave the table
             // empty.
             if (version >= 2) {
-                if (!g_senderMemoryWatermarks.Deserialize(intfc)) {
+                if (!g_senderMemoryWatermarks.Deserialize(io)) {
                     logger::error("NPCVisitBeat::OnLoad: sender-memory-watermark deserialize failed; cleared");
                     g_senderMemoryWatermarks.Clear();
                 }

@@ -14,6 +14,7 @@
 #include <QuestUtils.h>
 #include <SenderCooldownTable.h>
 #include <Settings.h>
+#include <SKSECosaveIO.h>
 #include <SkyrimNetAPI.h>
 
 #include <nlohmann/json.hpp>
@@ -916,7 +917,8 @@ namespace NarrativeEngine
         {
             if (senderNpcFormID == 0)
                 return;
-            g_senderCooldowns.Stamp(senderNpcFormID);
+            const double nowHours = EngineUtils::GetCurrentGameHours();
+            g_senderCooldowns.Stamp(senderNpcFormID, nowHours);
             // LetterPool::MarkDelivered runs FireMemoryWrite *before*
             // calling this function, so the watermark stamp lands
             // strictly after the delivery memory's own timestamp. The
@@ -926,13 +928,14 @@ namespace NarrativeEngine
             // memory tail on the next letter-beat candidate build —
             // "I sent Faralda a letter" doesn't become fresh
             // ammunition for another letter to Faralda.
-            g_senderMemoryWatermarks.Stamp(senderNpcFormID);
+            g_senderMemoryWatermarks.Stamp(senderNpcFormID, nowHours);
             logger::info("NPCLetterBeat: per-sender cooldown + memory watermark stamped for 0x{:08X}", senderNpcFormID);
         }
 
         bool IsSenderOnCooldown(RE::FormID senderNpcFormID)
         {
-            return g_senderCooldowns.IsOnCooldown(senderNpcFormID, Settings::Get().letterSenderCooldownGameHours);
+            return g_senderCooldowns.IsOnCooldown(
+                senderNpcFormID, Settings::Get().letterSenderCooldownGameHours, EngineUtils::GetCurrentGameHours());
         }
 
         std::optional<double> GetSenderMemoryWatermarkGameHours(RE::FormID senderNpcFormID)
@@ -975,8 +978,9 @@ namespace NarrativeEngine
                 lastDispatch = g_lastDispatchGameHours;
             }
             intfc->WriteRecordData(lastDispatch);
-            g_senderCooldowns.Serialize(intfc);
-            g_senderMemoryWatermarks.Serialize(intfc);
+            SKSECosaveIO io{intfc};
+            g_senderCooldowns.Serialize(io);
+            g_senderMemoryWatermarks.Serialize(io);
         }
 
         void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length)
@@ -997,7 +1001,8 @@ namespace NarrativeEngine
                 OnRevert();
                 return;
             }
-            if (!g_senderCooldowns.Deserialize(intfc)) {
+            SKSECosaveIO io{intfc};
+            if (!g_senderCooldowns.Deserialize(io)) {
                 logger::error("NPCLetterBeat::OnLoad: sender-cooldown deserialize failed; "
                               "cleared");
                 {
@@ -1011,7 +1016,7 @@ namespace NarrativeEngine
             // trailing bytes; skip the read and leave the in-memory
             // table empty.
             if (version >= 2) {
-                if (!g_senderMemoryWatermarks.Deserialize(intfc)) {
+                if (!g_senderMemoryWatermarks.Deserialize(io)) {
                     logger::error("NPCLetterBeat::OnLoad: sender-memory-watermark deserialize failed; cleared");
                     g_senderMemoryWatermarks.Clear();
                 }

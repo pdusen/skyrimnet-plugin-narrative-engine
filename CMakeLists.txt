@@ -30,14 +30,89 @@ endif()
 # Otherwise, you can set OUTPUT_FOLDER to any place you'd like :)
 # set(OUTPUT_FOLDER "C:/path/to/any/folder")
 
-# Get the .cpp files from your src/ directory
-# to be passed into add_commonlibsse_plugin
+# ---------------------------------------------------------------------------
+# Source layout: production, core, and co-located tests
+# ---------------------------------------------------------------------------
 #
-# This helper automatically finds all of your .cpp files for you
+# Four kinds of .cpp live under src/, and every one of them is classified by
+# this block alone. Adding a file requires no edit here unless it belongs to
+# the core list below.
 #
-# Please note: the official recommendation is to list our every .cpp
-# file individually after SOURCES
+#   src/Foo.cpp       production. Compiled into the SKSE plugin DLL, with
+#                     PCH.h (RE/Skyrim.h + SKSE/SKSE.h) force-included, so it
+#                     may touch the engine freely.
+#
+#   src/Foo.test.cpp  unit test. Compiled ONLY into the NarrativeEngineTests
+#                     executable, never into the DLL — the EXCLUDE REGEX below
+#                     is what keeps a co-located test out of the shipped
+#                     plugin. Tests live beside the code they test on purpose;
+#                     there is no tests/ tree.
+#
+#   core sources      production code listed in NARRATIVEENGINE_CORE_SOURCES.
+#                     Compiled once into the NarrativeEngineCore static library
+#                     and linked into BOTH the DLL and the test executable, so
+#                     a test can exercise the real production object file
+#                     rather than a recompiled copy.
+#
+#   src/Foo.engine.test.cpp
+#                     unit test for engine-coupled code. Also matches the
+#                     `*.test.cpp` glob, so the same exclusion keeps it out of
+#                     the DLL, but it builds into a SECOND executable that
+#                     compiles production sources against the real CommonLibSSE
+#                     headers and links mocks in place of CommonLibSSE.lib. See
+#                     the mocked-engine section at the bottom of this file.
+#
+# Membership in the core list is not a quality judgement — it is a hard
+# technical constraint: a core source must compile and run with no Skyrim
+# process, no SKSE, no CommonLibSSE, and no PCH. Anything that touches RE::,
+# SKSE::, relocation addresses, hooks, or engine globals cannot go in the list.
+# Such code is not untestable, though — it belongs to the mocked-engine target
+# instead, which stands in for the engine rather than doing without it.
 file(GLOB_RECURSE source_files CONFIGURE_DEPENDS src/*.cpp)
+file(GLOB_RECURSE test_sources CONFIGURE_DEPENDS src/*.test.cpp)
+file(GLOB_RECURSE engine_test_sources CONFIGURE_DEPENDS src/*.engine.test.cpp)
+
+# `*.engine.test.cpp` also matches the `*.test.cpp` glob, so split them apart:
+# whatever is left in test_sources is a pure-core test.
+if(engine_test_sources)
+    list(REMOVE_ITEM test_sources ${engine_test_sources})
+endif()
+
+# Engine-free production sources shared by the DLL and the unit tests.
+#
+# SenderCooldownTable qualifies because its two engine dependencies were pushed
+# out to its call boundaries: the clock is a `nowGameHours` parameter, and the
+# co-save arrives as an `ICosaveIO&` that the DLL binds to SKSE via
+# src/SKSECosaveIO.cpp (which stays out of this list, being the adapter).
+set(NARRATIVEENGINE_CORE_SOURCES
+    "${CMAKE_SOURCE_DIR}/src/LLMTextSanitizer.cpp"
+    "${CMAKE_SOURCE_DIR}/src/SenderCooldownTable.cpp"
+)
+
+# Everything the plugin DLL compiles directly: all of src/ minus the tests
+# (which belong to the test executable) and minus the core sources (which
+# arrive via the NarrativeEngineCore link instead).
+list(FILTER source_files EXCLUDE REGEX "\\.test\\.cpp$")
+list(REMOVE_ITEM source_files ${NARRATIVEENGINE_CORE_SOURCES})
+
+# REMOVE_ITEM matches strings, not files, so a core entry written in a
+# different path form than the glob produces would silently stay in the DLL's
+# list and get compiled twice. Fail the configure instead of shipping that.
+foreach(coreSource IN LISTS NARRATIVEENGINE_CORE_SOURCES)
+    if(NOT EXISTS "${coreSource}")
+        message(
+            FATAL_ERROR
+            "NARRATIVEENGINE_CORE_SOURCES names a file that does not exist: ${coreSource}"
+        )
+    endif()
+    if(coreSource IN_LIST source_files)
+        message(
+            FATAL_ERROR
+            "Core source '${coreSource}' was not removed from the plugin source list. "
+            "Write it as \${CMAKE_SOURCE_DIR}/src/<name>.cpp so it matches the glob."
+        )
+    endif()
+endforeach()
 
 find_package(directxtk CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
@@ -79,6 +154,26 @@ option(
 )
 set(CMAKE_COMPILE_WARNING_AS_ERROR ${NARRATIVEENGINE_WARNINGS_AS_ERRORS})
 
+# ---------------------------------------------------------------------------
+# NarrativeEngineCore — engine-free production code, shared with the tests
+# ---------------------------------------------------------------------------
+#
+# A plain static library so the sources in NARRATIVEENGINE_CORE_SOURCES are
+# compiled once and linked into both the SKSE plugin DLL and the unit-test
+# executable. Without it there is nothing for a test to link against: every
+# production object file would live inside the DLL target, and a test
+# executable would have to recompile the .cpp itself — which tests a copy of
+# the code rather than the artifact that ships.
+#
+# Deliberately minimal. It gets `include/` and C++23 and nothing else: no PCH
+# (PCH.h pulls in RE/Skyrim.h), no CommonLibSSE, no SkyrimNet or PrismaUI
+# headers. That is what makes the library linkable into a console executable
+# that never loads the game, and the constraint is enforced by the compiler —
+# a `RE::` reference in a core source simply fails to build here.
+add_library(NarrativeEngineCore STATIC ${NARRATIVEENGINE_CORE_SOURCES})
+target_compile_features(NarrativeEngineCore PUBLIC cxx_std_23)
+target_include_directories(NarrativeEngineCore PUBLIC include)
+
 add_commonlibsse_plugin(${PROJECT_NAME} SOURCES ${source_files} plugin.cpp)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23) # <--- use C++23 standard
 target_precompile_headers(${PROJECT_NAME} PRIVATE PCH.h) # <--- PCH.h is required!
@@ -88,7 +183,7 @@ target_include_directories(
 )
 target_link_libraries(
     ${PROJECT_NAME}
-    PRIVATE nlohmann_json::nlohmann_json minhook::minhook
+    PRIVATE nlohmann_json::nlohmann_json minhook::minhook NarrativeEngineCore
 )
 
 # ---------------------------------------------------------------------------
@@ -524,4 +619,147 @@ if(DEFINED OUTPUT_FOLDER)
     else()
         message(STATUS "Papyrus compile: no .psc files yet; step dormant")
     endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Unit tests (Catch2 v3 + CTest)
+# ---------------------------------------------------------------------------
+#
+# Tests are co-located: `src/Foo.test.cpp` sits beside `src/Foo.cpp`, and the
+# glob at the top of this file is what routes it here instead of into the
+# plugin DLL. There is no tests/ directory and there should not be one.
+#
+# The test executable links NarrativeEngineCore and NOT CommonLibSSE, so it
+# runs as an ordinary x64 console program with no Skyrim, no SKSE load order,
+# and no relocation database. That boundary is the point: whatever a test can
+# reach is by construction code that works outside the game.
+#
+# Catch2 comes from vcpkg (see vcpkg.json) — the same manifest that already
+# provides CommonLibSSE, nlohmann_json and the rest — rather than FetchContent,
+# so there is one dependency mechanism in this project and not two.
+option(NARRATIVEENGINE_BUILD_TESTS "Build the Catch2 unit tests" ON)
+
+if(NARRATIVEENGINE_BUILD_TESTS)
+    find_package(Catch2 3 CONFIG REQUIRED)
+    enable_testing()
+
+    # Catch.cmake (which defines catch_discover_tests) ships beside the
+    # package config rather than on the module path, so point CMake at it.
+    list(APPEND CMAKE_MODULE_PATH "${Catch2_DIR}")
+    include(Catch)
+
+    if(NOT test_sources)
+        message(
+            FATAL_ERROR
+            "NARRATIVEENGINE_BUILD_TESTS is ON but no src/*.test.cpp files were found."
+        )
+    endif()
+
+    add_executable(NarrativeEngineTests ${test_sources})
+    target_compile_features(NarrativeEngineTests PRIVATE cxx_std_23)
+    target_link_libraries(
+        NarrativeEngineTests
+        PRIVATE NarrativeEngineCore Catch2::Catch2WithMain
+    )
+
+    # Register each TEST_CASE with CTest individually, so `ctest -R` can
+    # select one and a failure names the case rather than "the test binary".
+    catch_discover_tests(NarrativeEngineTests)
+
+    list(LENGTH test_sources NARRATIVEENGINE_TEST_SOURCE_COUNT)
+    message(
+        STATUS
+        "Unit tests: enabled (${NARRATIVEENGINE_TEST_SOURCE_COUNT} co-located *.test.cpp file(s))"
+    )
+
+    # -----------------------------------------------------------------------
+    # Mocked-engine tests
+    # -----------------------------------------------------------------------
+    #
+    # A second executable, for production code that genuinely calls
+    # CommonLibSSE and should not be reshaped to avoid it.
+    #
+    # The trick is that CommonLibSSE is mostly headers. Struct layouts, member
+    # offsets and inline helpers compile straight into our object files; only
+    # some functions are out-of-line, and those live in CommonLibSSE.lib where
+    # each one resolves an address inside a running SkyrimSE.exe. Those are the
+    # functions a test process cannot execute -- and they are exactly the ones
+    # the linker will take from somewhere else if somewhere else defines them.
+    #
+    # So this target compiles the production sources named in
+    # NARRATIVEENGINE_MOCKED_SOURCES against the REAL CommonLibSSE headers,
+    # with the same defines and the same PCH as the DLL, and then simply does
+    # NOT link CommonLibSSE.lib. testsupport/EngineMock.cpp supplies the engine
+    # functions instead. Production code is compiled unmodified and still calls
+    # `RE::Calendar::GetSingleton()`; it just reaches our definition.
+    #
+    # Consequences worth knowing:
+    #
+    #   * Any engine function the code under test touches that nobody has
+    #     mocked is an unresolved external, so the build fails by name. There
+    #     is no silent fallthrough into real engine code.
+    #   * Sources listed here are compiled TWICE -- once into the DLL, once
+    #     here -- because the two need different link closures. That is the
+    #     cost of not rewriting production code, and it is the right trade.
+    #   * spdlog and fmt are linked for real: they are ordinary libraries with
+    #     nothing Skyrim-specific in them, and logging calls in the code under
+    #     test should behave.
+    set(NARRATIVEENGINE_MOCKED_SOURCES
+        "${CMAKE_SOURCE_DIR}/src/EngineUtils.cpp"
+    )
+
+    if(engine_test_sources)
+        find_package(spdlog CONFIG REQUIRED)
+
+        add_executable(
+            NarrativeEngineEngineMockTests
+            ${engine_test_sources}
+            ${NARRATIVEENGINE_MOCKED_SOURCES}
+            testsupport/EngineMock.cpp
+            testsupport/CommonLibSSERuntimeStubs.cpp
+        )
+        target_compile_features(
+            NarrativeEngineEngineMockTests
+            PRIVATE cxx_std_23
+        )
+        target_include_directories(
+            NarrativeEngineEngineMockTests
+            PRIVATE include testsupport
+        )
+        # CommonLibSSE's include dirs and compile definitions WITHOUT its
+        # library: the headers are what we want, the .lib is what we replace.
+        target_include_directories(
+            NarrativeEngineEngineMockTests
+            SYSTEM
+            PRIVATE
+                $<TARGET_PROPERTY:CommonLibSSE::CommonLibSSE,INTERFACE_INCLUDE_DIRECTORIES>
+        )
+        target_compile_definitions(
+            NarrativeEngineEngineMockTests
+            PRIVATE
+                $<TARGET_PROPERTY:CommonLibSSE::CommonLibSSE,INTERFACE_COMPILE_DEFINITIONS>
+                # Unlocks REL::Module::mock(), CommonLibSSE-NG's own hook for
+                # running its headers with no Skyrim process behind them.
+                ENABLE_COMMONLIBSSE_TESTING
+        )
+        # Same forced PCH as the DLL, so these sources compile exactly as they
+        # do in production rather than in some near-miss configuration.
+        target_precompile_headers(NarrativeEngineEngineMockTests PRIVATE PCH.h)
+        target_link_libraries(
+            NarrativeEngineEngineMockTests
+            PRIVATE Catch2::Catch2WithMain spdlog::spdlog
+        )
+
+        catch_discover_tests(NarrativeEngineEngineMockTests)
+
+        list(LENGTH engine_test_sources NARRATIVEENGINE_ENGINE_TEST_COUNT)
+        message(
+            STATUS
+            "Mocked-engine tests: enabled (${NARRATIVEENGINE_ENGINE_TEST_COUNT} *.engine.test.cpp file(s))"
+        )
+    else()
+        message(STATUS "Mocked-engine tests: no *.engine.test.cpp files yet")
+    endif()
+else()
+    message(STATUS "Unit tests: SKIPPED (NARRATIVEENGINE_BUILD_TESTS=OFF)")
 endif()

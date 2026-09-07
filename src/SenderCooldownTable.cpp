@@ -1,25 +1,20 @@
 #include <SenderCooldownTable.h>
 
-#include <EngineUtils.h>
-
-#include <SKSE/Interfaces.h>
-
 #include <cstdint>
 #include <utility>
 #include <vector>
 
 namespace NarrativeEngine
 {
-    void SenderCooldownTable::Stamp(RE::FormID senderFormID)
+    void SenderCooldownTable::Stamp(FormID senderFormID, double nowGameHours)
     {
         if (senderFormID == 0)
             return;
-        const double nowHours = EngineUtils::GetCurrentGameHours();
         std::scoped_lock lock(mutex_);
-        stamps_[senderFormID] = nowHours;
+        stamps_[senderFormID] = nowGameHours;
     }
 
-    bool SenderCooldownTable::IsOnCooldown(RE::FormID senderFormID, int cooldownHours) const
+    bool SenderCooldownTable::IsOnCooldown(FormID senderFormID, int cooldownHours, double nowGameHours) const
     {
         if (cooldownHours <= 0 || senderFormID == 0)
             return false;
@@ -33,11 +28,11 @@ namespace NarrativeEngine
         }
         if (stamp <= 0.0)
             return false;
-        const double elapsed = EngineUtils::GetCurrentGameHours() - stamp;
+        const double elapsed = nowGameHours - stamp;
         return elapsed < static_cast<double>(cooldownHours);
     }
 
-    std::optional<double> SenderCooldownTable::GetStampGameHours(RE::FormID senderFormID) const
+    std::optional<double> SenderCooldownTable::GetStampGameHours(FormID senderFormID) const
     {
         if (senderFormID == 0)
             return std::nullopt;
@@ -54,11 +49,9 @@ namespace NarrativeEngine
         stamps_.clear();
     }
 
-    void SenderCooldownTable::Serialize(SKSE::SerializationInterface* intfc) const
+    void SenderCooldownTable::Serialize(ICosaveIO& io) const
     {
-        if (!intfc)
-            return;
-        std::vector<std::pair<RE::FormID, double>> snapshot;
+        std::vector<std::pair<FormID, double>> snapshot;
         {
             std::scoped_lock lock(mutex_);
             snapshot.reserve(stamps_.size());
@@ -67,33 +60,31 @@ namespace NarrativeEngine
             }
         }
         const std::uint32_t count = static_cast<std::uint32_t>(snapshot.size());
-        intfc->WriteRecordData(count);
+        io.Write(count);
         for (const auto& kv : snapshot) {
-            intfc->WriteRecordData(kv.first);
-            intfc->WriteRecordData(kv.second);
+            io.Write(kv.first);
+            io.Write(kv.second);
         }
     }
 
-    bool SenderCooldownTable::Deserialize(SKSE::SerializationInterface* intfc)
+    bool SenderCooldownTable::Deserialize(ICosaveIO& io)
     {
-        if (!intfc)
-            return false;
         std::uint32_t count = 0;
-        if (intfc->ReadRecordData(count) != sizeof(count)) {
+        if (!io.Read(count)) {
             Clear();
             return false;
         }
-        std::unordered_map<RE::FormID, double> loaded;
+        std::unordered_map<FormID, double> loaded;
         loaded.reserve(count);
         for (std::uint32_t i = 0; i < count; ++i) {
-            RE::FormID fid = 0;
+            FormID fid = 0;
             double h = 0.0;
-            if (intfc->ReadRecordData(fid) != sizeof(fid) || intfc->ReadRecordData(h) != sizeof(h)) {
+            if (!io.Read(fid) || !io.Read(h)) {
                 Clear();
                 return false;
             }
-            RE::FormID resolved = 0;
-            if (intfc->ResolveFormID(fid, resolved) && resolved != 0) {
+            FormID resolved = 0;
+            if (io.ResolveFormID(fid, resolved) && resolved != 0) {
                 loaded[resolved] = h;
             }
         }

@@ -8,6 +8,7 @@
 #   pwsh -File build.ps1 configure              # cmake --preset local-release
 #   pwsh -File build.ps1 build                  # cmake --build build/local-release
 #   pwsh -File build.ps1 rebuild                # configure + build (no clean)
+#   pwsh -File build.ps1 test                   # build + run the Catch2 unit tests
 #   pwsh -File build.ps1 clean                  # remove build/<preset>
 #   pwsh -File build.ps1 build -Preset local-debug
 #
@@ -37,7 +38,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('configure', 'build', 'rebuild', 'clean')]
+    [ValidateSet('configure', 'build', 'rebuild', 'test', 'clean')]
     [string]$Verb = 'build',
 
     [string]$Preset = 'local-release'
@@ -141,6 +142,28 @@ function Invoke-PapyrusPrune {
     }
 }
 
+# Build and run the Catch2 unit tests.
+#
+# Builds only the two test executables rather than the whole project, so the
+# test loop doesn't pay for the ESP sync, the Papyrus compile, or the Rollup
+# dashboard bundle — none of which any unit test can reach. ctest needs the
+# Developer environment for the same reason cmake does, which is why this is a
+# verb here instead of something you type by hand.
+function Invoke-Test {
+    if (-not (Test-Path "$buildDir/CMakeCache.txt")) {
+        Write-Host "==> build dir not configured; running configure first" -ForegroundColor Yellow
+        Invoke-Configure
+    }
+    $testTargets = @('NarrativeEngineTests', 'NarrativeEngineEngineMockTests')
+    Write-Host "==> cmake --build $buildDir --target $($testTargets -join ' ')" -ForegroundColor Cyan
+    cmake --build $buildDir --target @testTargets
+    if ($LASTEXITCODE -ne 0) { throw "Test build failed (exit $LASTEXITCODE)." }
+
+    Write-Host "==> ctest --test-dir $buildDir" -ForegroundColor Cyan
+    ctest --test-dir $buildDir --output-on-failure
+    if ($LASTEXITCODE -ne 0) { throw "Tests failed (exit $LASTEXITCODE)." }
+}
+
 function Invoke-Clean {
     if (Test-Path $buildDir) {
         Write-Host "==> removing $buildDir" -ForegroundColor Cyan
@@ -155,6 +178,7 @@ switch ($Verb) {
     'configure' { Invoke-Configure }
     'build' { Invoke-Build }
     'rebuild' { Invoke-Configure; Invoke-Build }
+    'test' { Invoke-Test }
     'clean' { Invoke-Clean }
 }
 
