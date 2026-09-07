@@ -715,9 +715,11 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/EngineUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/QuestUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/AsyncDispatch.cpp"
+        "${CMAKE_SOURCE_DIR}/src/BeatWorkDispatch.cpp"
         "${CMAKE_SOURCE_DIR}/src/BeatParamHelpers.cpp"
         "${CMAKE_SOURCE_DIR}/src/ConsoleCommand.cpp"
         "${CMAKE_SOURCE_DIR}/src/CourierUtils.cpp"
+        "${CMAKE_SOURCE_DIR}/src/EvalDispatch.cpp"
         "${CMAKE_SOURCE_DIR}/src/MainThread.cpp"
         "${CMAKE_SOURCE_DIR}/src/SKSECosaveIO.cpp"
     )
@@ -731,6 +733,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
             ${NARRATIVEENGINE_MOCKED_SOURCES}
             testsupport/EngineMock.cpp
             testsupport/CommonLibSSERuntimeStubs.cpp
+            testsupport/DispatcherContract.cpp
             testsupport/FakeVTable.cpp
             testsupport/RelocationMocks.cpp
             testsupport/RelocationMocks.test.cpp
