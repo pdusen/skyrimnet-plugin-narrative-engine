@@ -249,3 +249,95 @@ TEST_CASE("JsonUtils::StringOr", "[JsonUtils]")
         }
     }
 }
+
+TEST_CASE("JsonUtils::NumberOr", "[JsonUtils]")
+{
+    // Same shape as StringOr's happy path: an object whose key holds an
+    // ordinary number, with a default distinct from every value used below so
+    // a case expecting the fallback cannot pass on a coincidence.
+    const std::string kKey = "gameTime";
+    constexpr double kDefault = -1.0;
+    json obj = json::object({{kKey, 4321.5}});
+
+    SECTION("when the value is a number")
+    {
+        SECTION("should return it")
+        {
+            REQUIRE(JsonUtils::NumberOr(obj, kKey, kDefault) == 4321.5);
+        }
+    }
+
+    SECTION("when the value is an integer")
+    {
+        obj[kKey] = 7;
+
+        SECTION("should return it as a double")
+        {
+            REQUIRE(JsonUtils::NumberOr(obj, kKey, kDefault) == 7.0);
+        }
+    }
+
+    SECTION("when the key is present holding null")
+    {
+        obj[kKey] = nullptr;
+
+        SECTION("should return the default rather than throw")
+        {
+            // The case the helper exists for. A SkyrimNet event carrying
+            // "gameTime":null threw out of the whole timeline merge.
+            REQUIRE(JsonUtils::NumberOr(obj, kKey, kDefault) == kDefault);
+        }
+    }
+
+    SECTION("when the value is a boolean")
+    {
+        obj[kKey] = true;
+
+        SECTION("should return the default")
+        {
+            // nlohmann would happily convert a bool to 1.0; is_number() does
+            // not, and a timestamp of "true" is not a timestamp.
+            REQUIRE(JsonUtils::NumberOr(obj, kKey, kDefault) == kDefault);
+        }
+    }
+
+    SECTION("when the value is a numeric string")
+    {
+        obj[kKey] = "4321.5";
+
+        SECTION("should return the default")
+        {
+            REQUIRE(JsonUtils::NumberOr(obj, kKey, kDefault) == kDefault);
+        }
+    }
+
+    SECTION("when the key is absent")
+    {
+        obj = json::object({{"somethingElse", 1.0}});
+
+        SECTION("should return the default")
+        {
+            REQUIRE(JsonUtils::NumberOr(obj, kKey, kDefault) == kDefault);
+        }
+    }
+
+    SECTION("when the value is not an object")
+    {
+        obj = json::array({1, 2, 3});
+
+        SECTION("should return the default")
+        {
+            REQUIRE(JsonUtils::NumberOr(obj, kKey, kDefault) == kDefault);
+        }
+    }
+
+    SECTION("when no default is given")
+    {
+        obj = json::object({{"somethingElse", 1.0}});
+
+        SECTION("should return zero")
+        {
+            REQUIRE(JsonUtils::NumberOr(obj, kKey) == 0.0);
+        }
+    }
+}

@@ -104,8 +104,14 @@ namespace NarrativeEngine::SkyrimNetEvents
             if (auto it = evt.find("data"); it != evt.end() && it->is_object()) {
                 data = &(*it);
             }
+            // JsonUtils::StringOr rather than nlohmann's own value(). value()
+            // falls back only on an ABSENT key: a key that is PRESENT holding
+            // null -- or any non-string -- throws type_error.302 instead, and
+            // the throw escapes this whole loop, so one malformed field costs
+            // every event in the batch. SkyrimNet emits explicit nulls as a
+            // matter of course.
             const auto str = [&](const char* key) -> std::string {
-                return data ? data->value(key, std::string{}) : std::string{};
+                return data ? JsonUtils::StringOr(*data, key) : std::string{};
             };
 
             std::string text;
@@ -352,8 +358,8 @@ namespace NarrativeEngine::SkyrimNetEvents
         nlohmann::json BuildCondensedEntry(const std::vector<nlohmann::json>& hits, double currentGameTimeSeconds)
         {
             const auto& tail = hits.back();
-            const double localTime = tail.value("localTime", 0.0);
-            const double gameTime = tail.value("gameTime", 0.0);
+            const double localTime = JsonUtils::NumberOr(tail, "localTime");
+            const double gameTime = JsonUtils::NumberOr(tail, "gameTime");
             const double delta = currentGameTimeSeconds - gameTime;
 
             const std::string body = RenderCondensedBody(hits);
@@ -417,7 +423,7 @@ namespace NarrativeEngine::SkyrimNetEvents
                                     [currentGameTimeSeconds](const nlohmann::json& e) {
                                         if (!e.is_object())
                                             return true;
-                                        const double gt = e.value("gameTime", 0.0);
+                                        const double gt = JsonUtils::NumberOr(e, "gameTime");
                                         return (currentGameTimeSeconds - gt) > kMaxEventAgeGameSeconds;
                                     }),
                      merged.end());
@@ -426,8 +432,8 @@ namespace NarrativeEngine::SkyrimNetEvents
         // input order (SkyrimNet events tend to precede our internal events
         // when they share a tick boundary).
         std::stable_sort(merged.begin(), merged.end(), [](const nlohmann::json& a, const nlohmann::json& b) {
-            const double at = a.is_object() ? a.value("localTime", 0.0) : 0.0;
-            const double bt = b.is_object() ? b.value("localTime", 0.0) : 0.0;
+            const double at = JsonUtils::NumberOr(a, "localTime");
+            const double bt = JsonUtils::NumberOr(b, "localTime");
             return at < bt;
         });
 
@@ -468,7 +474,7 @@ namespace NarrativeEngine::SkyrimNetEvents
             sinceSeconds = -1.0;
         } else {
             const auto& last = out.back();
-            const double gt = last.is_object() ? last.value("gameTime", 0.0) : 0.0;
+            const double gt = JsonUtils::NumberOr(last, "gameTime");
             const double delta = currentGameTimeSeconds - gt;
             if (delta > kIdleMarkerThresholdGameSeconds) {
                 needMarker = true;

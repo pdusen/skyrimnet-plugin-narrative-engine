@@ -21,21 +21,12 @@
 // too big blows the request, and a stale event the merge failed to drop keeps
 // tension pinned high after a fight has ended. Each of those has happened.
 //
-// KNOWN DEFECT, DELIBERATELY NOT COVERED
-//
-// `FormatEventsText` reads its per-event fields with `data->value(key, "")`
-// rather than `JsonUtils::StringOr`. nlohmann's `value()` falls back only on an
-// ABSENT key: a key that is PRESENT holding null -- or any non-string -- throws
-// type_error.302 instead. So an event whose `speaker`, `line`, `book_text` or
-// any other data field is null throws straight out of FormatEventsText, and
-// because the throw happens mid-loop the caller gets an exception plus an array
-// where earlier events were rendered and later ones were not.
-//
-// That is the exact failure JsonUtils::StringOr was written to prevent, and its
-// header records a null field throwing out of a whole gossip tick once already.
-// SkyrimNet emits explicit nulls routinely. This file does NOT assert the
-// current behaviour, because a test that pins a throw would have to be deleted
-// the day the bug is fixed; the affected branches simply have no cases.
+// Malformed field handling is a first-class concern here, not an edge case.
+// SkyrimNet emits explicit nulls routinely, and reading a field with nlohmann's
+// own `value(key, def)` throws type_error.302 on a present-but-null key rather
+// than falling back. That defect lived in this module until these tests found
+// it: one null field threw out of the whole batch, taking every other event's
+// rendering with it. The cases below pin the fixed behaviour.
 
 namespace
 {
@@ -488,6 +479,93 @@ TEST_CASE("SkyrimNetEvents::FormatEventsText handles book_read", "[SkyrimNetEven
                     == "Maxxor read \"The Lusty Argonian Maid\":\nChapter One\nLifts-Her-Tail");
         }
     }
+
+    SECTION("when the body is not a string")
+    {
+        event["data"]["book_text"] = 42;
+
+        SECTION("should leave the body untouched under Render")
+        {
+            const json out = FormatOne(event, kNow, BookTextPolicy::Render, "Maxxor");
+            REQUIRE(out.at("data").at("book_text") == 42);
+        }
+
+        SECTION("should still render the title line")
+        {
+            // Before the StringOr fix this threw type_error.302 and the caller
+            // lost the entire batch rather than one unusable field.
+            REQUIRE(RenderOne(event, BookTextPolicy::Render) == "Maxxor read \"The Lusty Argonian Maid\"");
+        }
+    }
+}
+
+TEST_CASE("SkyrimNetEvents::FormatEventsText survives malformed event data", "[SkyrimNetEvents]")
+{
+    // Happy path: an ordinary dialogue event. Each case below corrupts exactly
+    // one field, the way a SkyrimNet payload or a third-party plugin does.
+    json event = json::object(
+        {{"type", "dialogue"},
+         {"data", json::object({{"speaker", "Ysolda"}, {"listener", "Carlotta"}, {"dialogue", "Good morning."}})}});
+
+    SECTION("when a field is present holding null")
+    {
+        event["data"]["speaker"] = nullptr;
+
+        SECTION("should treat it as absent and render the rest")
+        {
+            // The headline case. SkyrimNet's own rows carry "display_name":null
+            // and "condition_expr":null as a matter of course.
+            REQUIRE(RenderOne(event) == " -> Carlotta: \"Good morning.\"");
+        }
+    }
+
+    SECTION("when a field holds the wrong type")
+    {
+        event["data"]["speaker"] = 42;
+
+        SECTION("should treat it as absent and render the rest")
+        {
+            REQUIRE(RenderOne(event) == " -> Carlotta: \"Good morning.\"");
+        }
+    }
+
+    SECTION("when a field that steers the layout is null")
+    {
+        event["data"]["listener"] = nullptr;
+
+        SECTION("should take the branch for an absent field")
+        {
+            // A null listener has to read as "no listener", not as a listener
+            // whose name is empty, or the line gains a dangling arrow.
+            REQUIRE(RenderOne(event) == "Ysolda: \"Good morning.\"");
+        }
+    }
+
+    SECTION("when one event in a batch is malformed")
+    {
+        json events = json::array();
+        events.push_back(event);
+        json broken = event;
+        broken["data"]["dialogue"] = nullptr;
+        events.push_back(std::move(broken));
+        events.push_back(
+            json::object({{"type", "death"}, {"data", json::object({{"killer", "Hans"}, {"victim", "Luke"}})}}));
+        Events::FormatEventsText(events, kNow, BookTextPolicy::Omit, "Maxxor");
+
+        SECTION("should render every other event in the batch")
+        {
+            // The failure this guards: the throw used to escape mid-loop, so
+            // events before the bad one kept their text, events after got none,
+            // and the caller got an exception instead of a timeline.
+            REQUIRE(events[0].at("text") == "Ysolda -> Carlotta: \"Good morning.\"");
+            REQUIRE(events[2].at("text") == "Hans killed Luke");
+        }
+
+        SECTION("should render the malformed one with the field left empty")
+        {
+            REQUIRE(events[1].at("text") == "Ysolda -> Carlotta: \"\"");
+        }
+    }
 }
 
 TEST_CASE("SkyrimNetEvents::FormatEventsText falls back for unknown types", "[SkyrimNetEvents]")
@@ -639,6 +717,33 @@ TEST_CASE("SkyrimNetEvents::BuildMergedTimeline merges and filters", "[SkyrimNet
             const json out = Events::BuildMergedTimeline(skyrimNet, combat, weather, travel, kNow);
             REQUIRE(out.size() == 1);
             REQUIRE(out[0].at("type") == "fresh");
+        }
+    }
+
+    SECTION("when an event carries a null timestamp")
+    {
+        json bad = Plain(kNow - 10.0, "bad_time");
+        bad["gameTime"] = nullptr;
+        skyrimNet.push_back(bad);
+        skyrimNet.push_back(Plain(kNow - 5.0, "good"));
+
+        SECTION("should treat the timestamp as missing rather than throw")
+        {
+            // The numeric twin of the null-field defect above: reading
+            // gameTime with nlohmann's value() threw type_error.302 on a
+            // present-but-null key and took the entire merge down with it.
+            REQUIRE_NOTHROW(Events::BuildMergedTimeline(skyrimNet, combat, weather, travel, kNow));
+        }
+
+        SECTION("should keep the well-formed events around it")
+        {
+            const json out = Events::BuildMergedTimeline(skyrimNet, combat, weather, travel, kNow);
+            bool sawGood = false;
+            for (const auto& e : out) {
+                if (e.value("type", std::string{}) == "good")
+                    sawGood = true;
+            }
+            REQUIRE(sawGood);
         }
     }
 

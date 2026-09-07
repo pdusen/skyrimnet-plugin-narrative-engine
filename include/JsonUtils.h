@@ -32,4 +32,19 @@ namespace NarrativeEngine::JsonUtils
     // claims. Absent and null mean the same thing to every caller here, so
     // they are read the same way.
     std::string StringOr(const nlohmann::json& obj, std::string_view key, std::string def = {});
+
+    // Read numeric field `key` from `obj`; return `def` if `obj` is not an
+    // object, the key is absent, or the value is not a number.
+    //
+    // The numeric counterpart of StringOr, and it exists for the same reason:
+    // nlohmann's `value(key, def)` falls back only on an ABSENT key, so a key
+    // holding an explicit `null` throws type_error.302 instead. A SkyrimNet
+    // event carrying `"gameTime":null` threw straight out of the timeline
+    // merge -- losing every event in the batch, not just the malformed one --
+    // until this existed. Use it for ANY numeric field on a payload that came
+    // from an LLM, from SkyrimNet, or from a third-party plugin.
+    //
+    // Returns a double because every call site works in game seconds; callers
+    // wanting an integer should clamp through ClampParameterInt instead.
+    double NumberOr(const nlohmann::json& obj, std::string_view key, double def = 0.0);
 } // namespace NarrativeEngine::JsonUtils
