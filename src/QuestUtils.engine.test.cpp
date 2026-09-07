@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string_view>
 
 // Mocked-engine tests for the Papyrus VM dispatch wrappers.
@@ -21,22 +22,11 @@
 // (quest, VM, handle policy) is the behaviour under test, and every one of
 // those failure branches is unreachable in a running game.
 //
-// WHAT IS NOT COVERED, AND WHY
-//
-// The dispatch itself -- everything past the guard chain -- cannot run here.
-// The final statement constructs two `RE::BSFixedString`s, and
-// `BSFixedString::ctor8` is an inline member that resolves
-// `RELOCATION_ID(67819, 69161)` through the address library at RUNTIME. That is
-// not a link-time symbol, so the mocked-engine harness cannot substitute it:
-// the linker never sees it, and `testsupport/CommonLibSSERuntimeStubs.cpp`
-// aborts when production code reaches relocation.
-//
-// So these branches have no cases below: the successful dispatch, the VM
-// refusing a call, the handle travelling from the policy to the dispatch, the
-// script and method names arriving intact, the packed argument, and everything
-// in VMDispatchQuestSetStage except its null-quest guard. Standing in for a
-// relocated inline function needs a relocation-mock layer that does not exist
-// yet -- see docs/DEVELOPMENT.md, "Known limits".
+// The dispatch itself reaches `RE::BSFixedString`, whose constructor is inline
+// CommonLibSSE code resolving RELOCATION_ID(67819, 69161) through the address
+// library at runtime -- past anything the linker can substitute. It is reachable
+// here because testsupport/RelocationMocks.cpp registers a stand-in against that
+// id, so the string builds against memory the harness owns.
 
 namespace
 {
@@ -58,6 +48,10 @@ namespace
     constexpr std::string_view kScriptName = "_ne_VisitQuest";
     constexpr std::string_view kMethodName = "RunSenderSilentSceneEvent";
     constexpr std::int32_t kArgument = 7;
+
+    // Distinctive enough that finding it on the dispatch proves it travelled
+    // from the handle policy rather than being a zero that happened to match.
+    constexpr std::uint64_t kHandle = 0x00ABCDEF12345678ull;
 } // namespace
 
 TEST_CASE("QuestUtils::VMDispatchOnQuest", "[QuestUtils][engine]")
@@ -68,6 +62,7 @@ TEST_CASE("QuestUtils::VMDispatchOnQuest", "[QuestUtils][engine]")
     // overrides only the one thing it is about.
     EngineMock engine;
     RE::TESQuest* quest = FakeQuest();
+    engine.papyrus.handle = kHandle;
 
     SECTION("when the quest is null")
     {
@@ -119,19 +114,111 @@ TEST_CASE("QuestUtils::VMDispatchOnQuest", "[QuestUtils][engine]")
             REQUIRE(engine.papyrus.dispatches.empty());
         }
     }
+
+    SECTION("when everything the dispatch needs is available")
+    {
+        const bool queued = QuestUtils::VMDispatchOnQuest(quest, kScriptName, kMethodName, kArgument);
+
+        SECTION("should report the call was queued")
+        {
+            REQUIRE(queued);
+        }
+
+        SECTION("should take the handle from the quest it was given")
+        {
+            REQUIRE(engine.papyrus.handleRequests.size() == 1);
+            REQUIRE(engine.papyrus.handleRequests[0].formType == static_cast<std::uint32_t>(RE::TESQuest::FORMTYPE));
+            REQUIRE(engine.papyrus.handleRequests[0].form == static_cast<const RE::TESForm*>(quest));
+        }
+
+        SECTION("should dispatch against that handle")
+        {
+            REQUIRE(engine.papyrus.dispatches.size() == 1);
+            REQUIRE(engine.papyrus.dispatches[0].handle == kHandle);
+        }
+
+        SECTION("should name the script and method it was given")
+        {
+            // The failure this catches is a dispatch that queues happily
+            // against the wrong Papyrus function: the VM accepts it, the
+            // return value is true, and nothing happens in game.
+            REQUIRE(engine.papyrus.dispatches.size() == 1);
+            REQUIRE(engine.papyrus.dispatches[0].className == kScriptName);
+            REQUIRE(engine.papyrus.dispatches[0].methodName == kMethodName);
+        }
+
+        SECTION("should pass the packed arguments along")
+        {
+            REQUIRE(engine.papyrus.dispatches.size() == 1);
+            REQUIRE(engine.papyrus.dispatches[0].hadArguments);
+            REQUIRE(engine.papyrus.packedInts.size() == 1);
+            REQUIRE(engine.papyrus.packedInts[0] == kArgument);
+        }
+    }
+
+    SECTION("when the virtual machine refuses the call")
+    {
+        // Everything else is in order, so a false result here can only be the
+        // VM's own answer being reported rather than swallowed.
+        engine.papyrus.dispatchSucceeds = false;
+
+        SECTION("should report the call was not queued")
+        {
+            REQUIRE_FALSE(QuestUtils::VMDispatchOnQuest(quest, kScriptName, kMethodName, kArgument));
+        }
+    }
 }
 
 TEST_CASE("QuestUtils::VMDispatchQuestSetStage", "[QuestUtils][engine]")
 {
     EngineMock engine;
+    RE::TESQuest* quest = FakeQuest();
+    constexpr std::uint32_t kStage = 40;
+
+    SECTION("when the quest is available")
+    {
+        const bool queued = QuestUtils::VMDispatchQuestSetStage(quest, kStage);
+
+        SECTION("should report the call was queued")
+        {
+            REQUIRE(queued);
+        }
+
+        SECTION("should dispatch Quest.SetStage")
+        {
+            REQUIRE(engine.papyrus.dispatches.size() == 1);
+            REQUIRE(engine.papyrus.dispatches[0].className == "Quest");
+            REQUIRE(engine.papyrus.dispatches[0].methodName == "SetStage");
+        }
+
+        SECTION("should pack the stage number as the argument")
+        {
+            REQUIRE(engine.papyrus.packedInts.size() == 1);
+            REQUIRE(engine.papyrus.packedInts[0] == static_cast<std::int32_t>(kStage));
+        }
+    }
+
+    SECTION("when the stage number exceeds the signed range")
+    {
+        // The wrapper takes a std::uint32_t and narrows it to the signed int
+        // Papyrus wants, so a stage above INT32_MAX arrives negative. Real
+        // quest stages are two digits and this never bites, but the conversion
+        // is real: pinning it means widening the Papyrus argument later is a
+        // deliberate change rather than a silent one.
+        (void)QuestUtils::VMDispatchQuestSetStage(quest, 0x80000000u);
+
+        SECTION("should pack the wrapped value")
+        {
+            REQUIRE(engine.papyrus.packedInts.size() == 1);
+            REQUIRE(engine.papyrus.packedInts[0] == std::numeric_limits<std::int32_t>::min());
+        }
+    }
 
     SECTION("when the quest is null")
     {
-        // The only branch of the SetStage wrapper that stops short of building
-        // a BSFixedString, and so the only one reachable without a game.
         SECTION("should refuse to dispatch")
         {
-            REQUIRE_FALSE(QuestUtils::VMDispatchQuestSetStage(nullptr, 40));
+            REQUIRE_FALSE(QuestUtils::VMDispatchQuestSetStage(nullptr, kStage));
         }
     }
 }

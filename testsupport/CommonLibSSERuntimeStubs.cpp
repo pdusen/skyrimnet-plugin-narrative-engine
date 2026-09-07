@@ -25,15 +25,20 @@
 // Nothing here is ever compiled into the shipped DLL — this directory is not
 // on the plugin target's source list.
 
+#include "RelocationMocks.h"
+
 #include <REL/Relocation.h>
 #include <REX/W32/KERNEL32.h>
 #include <REX/W32/USER32.h>
 
 #include <Windows.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <optional>
+#include <vector>
 
 namespace
 {
@@ -152,14 +157,58 @@ namespace REL::detail
 namespace REL
 {
 
+    // Serve a synthetic address table instead of a real address-library file.
+    //
+    // These are member definitions, which is the whole trick: `mapping_t` and
+    // `_id2offset` are both private, and only a member may name them.
+    //
+    // The module base is zero (EngineMock's REL::Module::mock() leaves it
+    // there), so each "offset" below is the absolute address of one of our
+    // stand-ins and `REL::Relocation` resolves straight to it. The table must
+    // be sorted by id because `id2offset` binary-searches it. See
+    // RelocationMocks.h for the reasoning and the limits.
     bool IDDatabase::load_file(stl::zwstring, Version, std::uint8_t, bool)
     {
-        AbortUnmocked("REL::IDDatabase::load_file");
+        static std::vector<mapping_t> table = [] {
+            std::vector<mapping_t> t;
+            for (const auto& mock : NarrativeEngine::Testing::RelocationMockTable()) {
+                t.push_back(mapping_t{mock.id, static_cast<std::uint64_t>(mock.address)});
+            }
+            // Off VR, id2offset does NOT check that the entry its binary
+            // search landed on carries the id it was asked for -- it just
+            // returns that entry's offset. An unregistered id would therefore
+            // resolve to some neighbouring stand-in and call it with the wrong
+            // signature, which is a silent crash rather than a diagnosis.
+            //
+            // Poisoning closes that hole completely. For every registered id X
+            // we also register X-1 pointing at the abort handler. Ask for an
+            // unregistered Y and the search cannot reach a real entry: any Y
+            // below a real X satisfies Y <= X-1, so the poison at X-1 is found
+            // first. Ask for a registered X and the exact match still wins.
+            // A final sentinel catches every id above the whole table.
+            const auto poison = reinterpret_cast<std::uint64_t>(&NarrativeEngine::Testing::UnregisteredRelocation);
+            std::vector<std::uint64_t> registered;
+            registered.reserve(t.size());
+            for (const auto& entry : t)
+                registered.push_back(entry.id);
+            for (const auto id : registered) {
+                // Skip when X-1 is itself registered, which would shadow it.
+                if (id > 0 && std::find(registered.begin(), registered.end(), id - 1) == registered.end()) {
+                    t.push_back(mapping_t{id - 1, poison});
+                }
+            }
+            t.push_back(mapping_t{(std::numeric_limits<std::uint64_t>::max)(), poison});
+            std::sort(t.begin(), t.end(), [](const mapping_t& a, const mapping_t& b) { return a.id < b.id; });
+            return t;
+        }();
+        _id2offset = std::span<mapping_t>(table);
+        return true;
     }
 
-    bool IDDatabase::load_csv(stl::zwstring, Version, bool)
+    bool IDDatabase::load_csv(stl::zwstring a_filename, Version a_version, bool a_failOnError)
     {
-        AbortUnmocked("REL::IDDatabase::load_csv");
+        // The VR path into the same table.
+        return load_file(a_filename, a_version, 1, a_failOnError);
     }
 
     std::optional<Version> GetFileVersion(stl::zwstring)

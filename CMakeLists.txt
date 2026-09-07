@@ -725,6 +725,8 @@ if(NARRATIVEENGINE_BUILD_TESTS)
             ${NARRATIVEENGINE_MOCKED_SOURCES}
             testsupport/EngineMock.cpp
             testsupport/CommonLibSSERuntimeStubs.cpp
+            testsupport/RelocationMocks.cpp
+            testsupport/RelocationMocks.test.cpp
         )
         target_compile_features(
             NarrativeEngineEngineMockTests

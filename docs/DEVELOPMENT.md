@@ -289,11 +289,46 @@ To put a module under mocked-engine test: add its `.cpp` to `NARRATIVEENGINE_MOC
 `src/Foo.engine.test.cpp`, build, and add whatever engine functions the linker names to
 `testsupport/EngineMock.cpp`.
 
-**Known limits.** Inline engine functions can't be replaced — they are already in our object file — though
-that is usually fine, since they mostly read data members of memory the test owns. Anything that calls a
-*virtual* on a fabricated engine object needs that object's vtable, which is a much larger undertaking than
-mocking a free function. And engine code that allocates through Bethesda's memory manager will pull in more
-symbols; that is tractable but nobody has needed it yet.
+### Relocated inline functions
+
+The linker is only half the checklist. CommonLibSSE also has functions declared **inline in a header**
+whose body resolves an address library id at runtime:
+
+```cpp
+inline BSFixedString* ctor8(const char* a_data)
+{
+    using func_t = decltype(&BSFixedString::ctor8);
+    REL::Relocation<func_t> func{ RELOCATION_ID(67819, 69161) };
+    return func(this, a_data);
+}
+```
+
+There is no symbol, so the linker says nothing and the substitution above cannot reach it. It surfaces only
+when a test runs. `testsupport/RelocationMocks.cpp` handles this second kind.
+
+`REL::Relocation` resolves an id to `Module::base() + IDDatabase::id2offset(id)`, and three facts make that
+interceptable: `Module::mock()` leaves the base at zero; `mapping_t::offset` is a full 64 bits; and
+`IDDatabase::_id2offset` is a plain `std::span` that `CommonLibSSERuntimeStubs.cpp` can assign, because it
+defines `IDDatabase::load_file` itself and a member definition reaches private members. With a base of zero
+an "offset" *is* an absolute address, so the table is literally `{id, &OurFunction}` — no executable memory,
+no hand-written thunks. CommonLibSSE's own source notes that "member functions == free functions in x64",
+which is why a free function taking the object as its first argument stands in for a relocated member.
+
+Registered today: `BSFixedString`'s constructor and its pool release, and `MemoryManager`'s singleton,
+allocate, deallocate and reallocate. Between them those cover string construction and `new` on any engine
+type, which is what most code needs. To add one, put the function and **both** of its `RELOCATION_ID` values
+(SE and AE) in the table in `RelocationMocks.cpp`.
+
+`id2offset` binary-searches the table and, off VR, does **not** verify the entry it landed on carries the id
+it asked for — so an unregistered id would otherwise resolve to a neighbouring stand-in and call it with the
+wrong signature. The table closes that by poisoning: every registered id `X` also registers `X-1` pointing at
+an abort handler, so any unregistered id is found by a poison entry first and dies with a message naming the
+problem. `testsupport/RelocationMocks.test.cpp` is the harness's own self-test.
+
+**Known limits.** Anything that calls a *virtual* on a fabricated engine object needs that object's vtable,
+which is a much larger undertaking than mocking a free function — that is the real remaining ceiling.
+Interning is not reproduced for strings (two equal `BSFixedString`s get two allocations), which no caller can
+observe because nothing compares them by pointer identity.
 
 **When not to reach for this.** Mocking keeps production code unchanged, which is exactly right when the
 module's engine coupling *is* its job. It is the wrong tool when the coupling is incidental — see the next

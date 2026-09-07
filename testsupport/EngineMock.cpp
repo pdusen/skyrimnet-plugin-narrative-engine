@@ -246,6 +246,17 @@ bool RE::BSScript::IVirtualMachine::DispatchMethodCall(
                                         a_className.c_str() ? a_className.c_str() : "",
                                         a_fnName.c_str() ? a_fnName.c_str() : "",
                                         a_args != nullptr});
+
+    // Actually run the argument functor, as the real VM does when it pulls a
+    // queued call off the stack. MakeFunctionArguments only captures the
+    // arguments in a tuple; nothing is converted into Papyrus Variables until
+    // someone asks. Skipping this would leave the recorded argument list empty
+    // and quietly make every assertion about what was passed meaningless.
+    if (a_args) {
+        RE::BSScrapArray<RE::BSScript::Variable> packed;
+        (*a_args)(packed);
+    }
+
     return mock->papyrus.dispatchSucceeds;
 }
 
@@ -264,6 +275,13 @@ void* RE::BSScrapArrayAllocator::allocate(std::size_t a_size)
 void RE::BSScrapArrayAllocator::deallocate(void* a_ptr)
 {
     std::free(a_ptr);
+}
+
+RE::BSScrapArrayAllocator::~BSScrapArrayAllocator()
+{
+    // The real one returns the block to the thread's scrap heap. Ours came
+    // from the CRT, so it goes back there.
+    deallocate(_data);
 }
 
 // Variable's own members are out-of-line too, so standing in for its
