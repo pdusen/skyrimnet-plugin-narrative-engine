@@ -669,6 +669,13 @@ namespace NarrativeEngine::Testing
         worldSpace->worldMapData.nwCellY = 64;
         worldSpace->worldMapData.seCellX = 64;
         worldSpace->worldMapData.seCellY = -64;
+        // The cell map is a real C++ container sitting in zeroed storage, so
+        // its members never got their defaults -- and one of them, the
+        // end-of-chain sentinel, is a non-zero magic value the iterator tests
+        // against. Left at zero the map accepts inserts and reports the right
+        // size while yielding nothing from a range-for, which is what a grid
+        // builder walking it would see. Constructing it in place fixes that.
+        new (&worldSpace->cellMap) RE::BSTHashMap<RE::CellID, RE::TESObjectCELL*>();
         pool.worldForms.push_back(object.As<RE::TESForm>());
         FormTable().insert({formID, object.As<RE::TESForm>()});
         return worldSpace;

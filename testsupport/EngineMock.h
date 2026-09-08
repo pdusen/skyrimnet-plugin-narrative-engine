@@ -364,14 +364,16 @@ namespace NarrativeEngine::Testing
         // Add an exterior cell to a worldspace's cell map at the given grid
         // coordinates, optionally belonging to a location.
         //
-        // KNOWN LIMIT: a cell added this way is findable by lookup but NOT by
-        // iteration. CommonLibSSE's BSTScatterTable reports the right size()
-        // afterwards and yet yields nothing from a range-for, so any engine
-        // code that WALKS a cellMap — HoldGrid's grid builder is the one that
-        // matters — sees an empty world. Fixing that means building the
-        // scatter table the way the engine's own iterator expects rather than
-        // through insert(), and until then HoldGrid cannot be driven from a
-        // test. Lookup-shaped uses of this API are unaffected.
+        // The map is constructed in place first, because a container sitting
+        // in zeroed storage never got the non-zero end-of-chain sentinel its
+        // own iterator tests against — without that it accepts inserts and
+        // reports the right size while yielding nothing from a range-for.
+        //
+        // KNOWN LIMIT: even so, HoldGrid's builder still seeds nothing from a
+        // world built this way — its LocTypeHold match fails on a location the
+        // same keyword check accepts everywhere else, and that is not yet
+        // diagnosed. HoldGrid is therefore not in the mocked-engine target and
+        // has no tests. Everything else here is used and covered.
         RE::TESObjectCELL* AddExteriorCell(RE::TESWorldSpace* worldSpace,
                                            std::int16_t cellX,
                                            std::int16_t cellY,
