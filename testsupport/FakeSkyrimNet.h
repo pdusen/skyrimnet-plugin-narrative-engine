@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 // Shared state between the fake SkyrimNet.dll and the test that drives it.
@@ -88,13 +89,17 @@ namespace NarrativeEngine::Testing
         char lastTagsJson[256]{};
         char lastRelatedActorsJson[256]{};
 
-        // What the query endpoints hand back.
-        char eventsJson[512] = "[]";
-        char memoriesJson[512] = "[]";
-        char queryMemoriesJson[512] = "[]";
-        char dialogueJson[512] = "[]";
-        char engagementJson[512] = "[]";
-        char promptResponse[512] = "the response";
+        // What the query endpoints hand back. Sized for a realistic answer
+        // rather than a token one: SkyrimNet returns tens of rows per call, and
+        // a buffer that truncated one would hand the module unparseable JSON
+        // and look exactly like a query that found nothing.
+        static constexpr std::size_t kAnswerCapacity = 8192;
+        char eventsJson[kAnswerCapacity] = "[]";
+        char memoriesJson[kAnswerCapacity] = "[]";
+        char queryMemoriesJson[kAnswerCapacity] = "[]";
+        char dialogueJson[kAnswerCapacity] = "[]";
+        char engagementJson[kAnswerCapacity] = "[]";
+        char promptResponse[1024] = "the response";
 
         // Clears the per-call record. Leaves `version` and `versionQueries`
         // alone: FindFunctions runs once per process and its record is evidence
