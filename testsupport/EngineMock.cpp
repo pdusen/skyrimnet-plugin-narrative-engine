@@ -31,6 +31,7 @@ namespace NarrativeEngine::Testing
     // Defined further down, next to the registry they operate on.
     std::vector<RE::Actor*>& LoadedActors();
     void ClearActorRegistry();
+    void ClearLocationPool();
 
     namespace
     {
@@ -127,6 +128,7 @@ namespace NarrativeEngine::Testing
         FormTable().clear();
         EditorIDTable().clear();
         ClearActorRegistry();
+        ClearLocationPool();
 
         g_installed = this;
     }
@@ -136,6 +138,7 @@ namespace NarrativeEngine::Testing
         FormTable().clear();
         EditorIDTable().clear();
         ClearActorRegistry();
+        ClearLocationPool();
         g_installed = nullptr;
         // The REL module singleton is left mocked rather than reset. Resetting
         // would arm `REL::Module::get()` to re-initialise from a real process
@@ -840,6 +843,28 @@ namespace NarrativeEngine::Testing
             return static_cast<RE::TESFullName*>(self)->fullName.c_str();
         }
 
+        // BGSKeywordForm::HasKeyword is slot 04 of ITS vtable, and
+        // BGSKeywordForm is another base past the first. Walks the same span
+        // the engine's own override walks.
+        bool HasKeywordImpl(void* self, const RE::BGSKeyword* keyword)
+        {
+            auto* form = static_cast<RE::BGSKeywordForm*>(self);
+            for (auto* candidate : form->GetKeywords()) {
+                if (candidate == keyword)
+                    return true;
+            }
+            return false;
+        }
+
+        template <class T> void WireKeywordForm(FakeObject& object)
+        {
+            auto* whole = object.As<T>();
+            const auto offset =
+                static_cast<std::size_t>(reinterpret_cast<std::byte*>(static_cast<RE::BGSKeywordForm*>(whole))
+                                         - reinterpret_cast<std::byte*>(whole));
+            object.BaseSlot(offset, 8, 4, reinterpret_cast<void*>(&HasKeywordImpl));
+        }
+
         template <class T> void WireFullName(FakeObject& object)
         {
             auto* whole = object.As<T>();
@@ -1002,3 +1027,122 @@ float RE::Calendar::GetHour() const
     auto* mock = EngineMock::Current();
     return mock ? mock->calendar.hour : 0.0f;
 }
+
+// ---------------------------------------------------------------------------
+// Keywords and locations
+// ---------------------------------------------------------------------------
+
+namespace NarrativeEngine::Testing
+{
+    namespace
+    {
+        // Editor IDs by form, since a TESForm does not carry one at runtime
+        // without powerofthree's Tweaks -- which is exactly the dependency
+        // LocationKeywords documents.
+        std::unordered_map<const void*, std::string>& EditorIDsByForm()
+        {
+            static std::unordered_map<const void*, std::string> ids;
+            return ids;
+        }
+
+        const char* FormEditorIDImpl(void* self)
+        {
+            const auto& ids = EditorIDsByForm();
+            const auto it = ids.find(self);
+            return it != ids.end() ? it->second.c_str() : "";
+        }
+
+        // Deliberately never cleared: see EngineMock::AddKeyword.
+        struct KeywordPool
+        {
+            std::deque<FakeObject> objects;
+            std::unordered_map<std::string, RE::BGSKeyword*> byEditorID;
+        };
+
+        KeywordPool& Keywords()
+        {
+            static KeywordPool pool;
+            return pool;
+        }
+
+        struct LocationPool
+        {
+            std::deque<FakeObject> objects;
+            std::deque<std::vector<RE::BGSKeyword*>> keywordArrays;
+
+            void Clear()
+            {
+                objects.clear();
+                keywordArrays.clear();
+            }
+        };
+
+        LocationPool& Locations()
+        {
+            static LocationPool pool;
+            return pool;
+        }
+    } // namespace
+
+    void ClearLocationPool()
+    {
+        Locations().Clear();
+    }
+
+    RE::BGSKeyword* EngineMock::AddKeyword(std::string_view editorID)
+    {
+        auto& pool = Keywords();
+        const std::string key{editorID};
+        auto it = pool.byEditorID.find(key);
+        if (it == pool.byEditorID.end()) {
+            auto& object = pool.objects.emplace_back(sizeof(RE::BGSKeyword), 128);
+            WireFormDefaults(object, false);
+            // GetFormEditorID is slot 0x32 on TESForm.
+            object.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
+            auto* form = object.As<RE::TESForm>();
+            form->formType = RE::FormType::Keyword;
+            form->formID = 0x0F000000u + static_cast<std::uint32_t>(pool.objects.size());
+            EditorIDsByForm()[static_cast<const void*>(form)] = key;
+            it = pool.byEditorID.emplace(key, object.As<RE::BGSKeyword>()).first;
+        }
+
+        // Re-registered on every call, because the editor-ID table is emptied
+        // per EngineMock while the keyword itself is not.
+        EditorIDTable().insert({RE::BSFixedString(key.c_str()), reinterpret_cast<RE::TESForm*>(it->second)});
+        return it->second;
+    }
+
+    RE::BGSLocation* EngineMock::AddLocation(std::uint32_t formID,
+                                             std::string name,
+                                             std::vector<std::string> keywordEditorIDs)
+    {
+        auto& pool = Locations();
+        auto& object = pool.objects.emplace_back(sizeof(RE::BGSLocation), 256);
+        WireFormDefaults(object, false);
+        WireFullName<RE::BGSLocation>(object);
+        WireKeywordForm<RE::BGSLocation>(object);
+
+        auto* location = object.As<RE::BGSLocation>();
+        location->formType = RE::FormType::Location;
+        location->formID = formID;
+        // A non-empty display name keeps the module's own label helper off the
+        // editor-ID path, which needs a dependency the harness does not model.
+        location->fullName = name.c_str();
+        location->parentLoc = nullptr;
+
+        auto& keywords = pool.keywordArrays.emplace_back();
+        for (const auto& edid : keywordEditorIDs)
+            keywords.push_back(AddKeyword(edid));
+        location->keywords = keywords.empty() ? nullptr : keywords.data();
+        location->numKeywords = static_cast<std::uint32_t>(keywords.size());
+
+        FormTable().insert({formID, object.As<RE::TESForm>()});
+        return location;
+    }
+
+    void EngineMock::SetLocationParent(RE::BGSLocation* child, RE::BGSLocation* parent)
+    {
+        if (child)
+            child->parentLoc = parent;
+    }
+} // namespace NarrativeEngine::Testing

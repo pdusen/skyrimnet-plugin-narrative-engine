@@ -723,6 +723,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/EvalDispatch.cpp"
         "${CMAKE_SOURCE_DIR}/src/EventLogUtil.cpp"
         "${CMAKE_SOURCE_DIR}/src/FactionDesignationUtils.cpp"
+        "${CMAKE_SOURCE_DIR}/src/LocationKeywords.cpp"
         "${CMAKE_SOURCE_DIR}/src/MainThread.cpp"
         "${CMAKE_SOURCE_DIR}/src/MainThreadEngine.cpp"
         "${CMAKE_SOURCE_DIR}/src/SKSECosaveIO.cpp"

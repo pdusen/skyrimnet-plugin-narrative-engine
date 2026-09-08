@@ -13,6 +13,7 @@ namespace RE
 {
     class Actor;
     class BGSBaseAlias;
+    class BGSKeyword;
     class BGSLocation;
     class Sky;
     class TESFaction;
@@ -320,6 +321,22 @@ namespace NarrativeEngine::Testing
             std::uint8_t windSpeed = 40;
             std::int8_t thunderLightningFrequency = 7;
         } sky;
+
+        // Vanilla keywords and the locations that carry them.
+        //
+        // Keywords live in a pool that OUTLIVES this EngineMock, because
+        // LocationKeywords resolves its whole table once per process behind a
+        // function-local static and never re-resolves. That cache is correct
+        // for the game — keyword forms are static vanilla data — but it means
+        // a pointer handed out under one mock is still held under the next, so
+        // the objects must not be destroyed with it.
+        RE::BGSKeyword* AddKeyword(std::string_view editorID);
+
+        // A location carrying the named keywords, registered in the form table.
+        RE::BGSLocation* AddLocation(std::uint32_t formID, std::string name, std::vector<std::string> keywordEditorIDs);
+
+        // Point `child` at `parent` for the parentLoc walk.
+        void SetLocationParent(RE::BGSLocation* child, RE::BGSLocation* parent);
 
         Runtime runtime() const
         {
