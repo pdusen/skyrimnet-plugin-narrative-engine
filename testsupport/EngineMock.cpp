@@ -11,6 +11,7 @@
 #include <SKSE/Interfaces.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -37,6 +38,7 @@ namespace NarrativeEngine::Testing
     void ClearActorRegistry();
     void ClearLocationPool();
     void ClearEditorIDsByForm();
+    RE::TESObjectCELL* FabricatedCell();
 
     namespace
     {
@@ -72,6 +74,7 @@ namespace NarrativeEngine::Testing
         // out-of-line definition of it would never be called: the caller goes
         // through the vtable, so the stand-in has to live in a slot.
         RE::BGSScene* GetCurrentSceneImpl(void*);
+        void Update3DPositionImpl(void*, bool);
 
         void WireFormDefaults(FakeObject& form, bool isReference)
         {
@@ -79,8 +82,14 @@ namespace NarrativeEngine::Testing
                                             : reinterpret_cast<void*>(&FormAsReferenceNull);
             form.Slot(0x2B, asReference);
             form.Slot(0x2C, asReference);
-            if (isReference)
+            if (isReference) {
                 form.Slot(0x4A, reinterpret_cast<void*>(&GetCurrentSceneImpl));
+                // Update3DPosition, slot 0x3F. Placement code calls it right
+                // after SetPosition to drag the physics body along; without it
+                // the actor's capsule stays behind. Nothing here has a physics
+                // body, so recording the call is the whole of the stand-in.
+                form.Slot(0x3F, reinterpret_cast<void*>(&Update3DPositionImpl));
+            }
         }
     } // namespace
 
@@ -544,6 +553,83 @@ void RE::Script::CompileAndRun(RE::TESObjectREFR* a_targetRef, RE::COMPILER_NAME
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// The world: terrain, water, and moving an actor through it
+// ---------------------------------------------------------------------------
+//
+// A flat plane with an optional rectangular hole, rather than any real
+// geometry. What placement code has to get right is which points it asks about
+// and what it does with a refusal, and a synthetic world makes both of those
+// answerable exactly.
+
+float RE::NiPoint3::GetDistance(const NiPoint3& a_rhs) const noexcept
+{
+    const float dx = x - a_rhs.x;
+    const float dy = y - a_rhs.y;
+    const float dz = z - a_rhs.z;
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+RE::TES* RE::TES::GetSingleton()
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->terrain.tesPresent)
+        return nullptr;
+    return NarrativeEngine::Testing::OpaqueSingleton<RE::TES>();
+}
+
+RE::TESObjectCELL* RE::TES::GetCell(const NiPoint3&) const
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->terrain.cellPresent)
+        return nullptr;
+    return NarrativeEngine::Testing::FabricatedCell();
+}
+
+bool RE::TES::GetLandHeight(const NiPoint3&, float& a_height)
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->terrain.landHeightResolves)
+        return false;
+    a_height = mock->terrain.landHeight;
+    return true;
+}
+
+bool RE::TESObjectCELL::GetWaterHeight(const NiPoint3&, float& a_height)
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->terrain.hasWater)
+        return false;
+    a_height = mock->terrain.waterHeight;
+    return true;
+}
+
+const char* RE::TESObjectREFR::GetName() const
+{
+    auto* mock = EngineMock::Current();
+    return mock ? mock->placement.actorName.c_str() : "";
+}
+
+void RE::Actor::EvaluatePackage(bool, bool)
+{
+    if (auto* mock = EngineMock::Current())
+        ++mock->placement.packageEvaluations;
+}
+
+void RE::Actor::SetPosition(const NiPoint3& a_pos, bool)
+{
+    // Writes through to the object as well as recording, so a later
+    // GetPosition -- which is inline and reads data.location directly --
+    // agrees with where the code just put the actor.
+    data.location = a_pos;
+    auto* mock = EngineMock::Current();
+    if (!mock)
+        return;
+    const EngineMock::PlacementState::Move move{GetFormID(), a_pos.x, a_pos.y, a_pos.z};
+    mock->placement.moves.push_back(move);
+    mock->placement.positions[GetFormID()] = move;
+}
+
+// ---------------------------------------------------------------------------
 // SKSE's ModEvent source
 // ---------------------------------------------------------------------------
 //
@@ -978,6 +1064,27 @@ namespace NarrativeEngine::Testing
             return cell;
         }
 
+        // The cell TES::GetCell hands back for any position. The same object
+        // the player stands in, wired up whether or not a test gave the player
+        // a cell of its own: placement code asks the world for the cell at a
+        // coordinate, not for the player's.
+        RE::TESObjectCELL* FabricatedCellImpl()
+        {
+            auto* mock = EngineMock::Current();
+            auto& cellObject = FakeCell();
+            WireFormDefaults(cellObject, false);
+            WireFullName<RE::TESObjectCELL>(cellObject);
+            cellObject.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
+            auto* cell = cellObject.As<RE::TESObjectCELL>();
+            cell->formType = RE::FormType::Cell;
+            if (mock) {
+                cell->formID = mock->world.cellFormID;
+                cell->fullName = mock->world.cellName.c_str();
+                SetEditorID(cell, mock->world.cellEditorID);
+            }
+            return cell;
+        }
+
         FakeObject& FakeLocation()
         {
             static FakeObject location{sizeof(RE::BGSLocation), 128};
@@ -1002,6 +1109,11 @@ namespace NarrativeEngine::Testing
             return location;
         }
     } // namespace
+
+    RE::TESObjectCELL* FabricatedCell()
+    {
+        return FabricatedCellImpl();
+    }
 } // namespace NarrativeEngine::Testing
 
 RE::BGSLocation* RE::TESObjectREFR::GetCurrentLocation() const
@@ -1308,6 +1420,12 @@ namespace NarrativeEngine::Testing
 {
     namespace
     {
+        void Update3DPositionImpl(void*, bool)
+        {
+            if (auto* mock = EngineMock::Current())
+                ++mock->placement.warpUpdates;
+        }
+
         RE::BGSScene* GetCurrentSceneImpl(void*)
         {
             auto* mock = EngineMock::Current();

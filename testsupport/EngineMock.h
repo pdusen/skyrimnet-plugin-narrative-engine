@@ -206,6 +206,63 @@ namespace NarrativeEngine::Testing
         // register a production sink and then dispatch to it exactly as the
         // Papyrus VM would — which is the only way to reach a sink that lives
         // in an anonymous namespace.
+        // The world's terrain, water and navmesh, as far as placement code is
+        // concerned. Deliberately a flat plane with a rectangular no-navmesh
+        // patch rather than anything cleverer: what the code under test has to
+        // get right is which points it ASKS about and what it does with a
+        // refusal, not any real geometry.
+        struct TerrainState
+        {
+            bool tesPresent = true;
+            bool cellPresent = true;
+
+            // Ground height everywhere, and whether it resolves at all. A
+            // position over the void, or in an unloaded cell, has no ground.
+            bool landHeightResolves = true;
+            float landHeight = 0.0f;
+
+            // Water surface. Below it is underwater; a cell with no water
+            // reports none.
+            bool hasWater = false;
+            float waterHeight = 0.0f;
+
+            // Points inside this axis-aligned box carry no navmesh, which is
+            // how a test makes a candidate position unstandable.
+            bool hasNavmeshHole = false;
+            float holeMinX = 0.0f;
+            float holeMaxX = 0.0f;
+            float holeMinY = 0.0f;
+            float holeMaxY = 0.0f;
+            // When false nothing anywhere is on navmesh.
+            bool navmeshEverywhere = true;
+        } terrain;
+
+        // What an actor did when placement code moved it.
+        struct PlacementState
+        {
+            struct Move
+            {
+                std::uint32_t formID = 0;
+                float x = 0.0f;
+                float y = 0.0f;
+                float z = 0.0f;
+            };
+
+            std::vector<Move> moves;
+            int packageEvaluations = 0;
+            // Update3DPosition calls. Required alongside the position write, or
+            // the physics body stays where it was and the actor walks straight
+            // back into the geometry it was pulled out of.
+            int warpUpdates = 0;
+
+            // Where each tracked actor stands. Keyed by form id so several can
+            // be escorted at once.
+            std::map<std::uint32_t, Move> positions;
+
+            // What TESObjectREFR::GetName answers for any actor.
+            std::string actorName = "Bandit";
+        } placement;
+
         // Where SKSE says its log directory is. Modules that keep their own
         // trace file write there for real, so a test can read back exactly what
         // a player would send in with a bug report.
