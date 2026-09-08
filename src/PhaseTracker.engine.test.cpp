@@ -28,11 +28,11 @@
 // bytes.
 //
 // Two things had to be stood in for. The module notifies three event logs on
-// every advance; two of those are still stand-ins, in
+// every advance; one of those is still a stand-in, in
 // testsupport/EventLogSpies.cpp, and they are spies as much as stand-ins —
 // "did the advance tell the logs" is real behaviour and is asserted below. The
-// third, WeatherEventLog, is compiled in for real and is not counted here; its
-// own tests cover what an advance does to it. The other stand-in is the co-save
+// other two, the combat and weather logs, are compiled in for real and are not
+// counted here; their own tests cover what an advance does to them. The other stand-in is the co-save
 // interface, which EngineMock already backs with a byte-accurate stream.
 //
 // The tracker's state is process-wide, so every TEST_CASE that touches it
@@ -427,7 +427,6 @@ TEST_CASE("PhaseTracker::AdvanceTo", "[PhaseTracker][engine]")
             // Each log holds a per-phase window of its own and clears it here.
             // A log that is not told keeps reporting last phase's weather.
             PhaseTracker::AdvanceTo(Phase::FallingAction);
-            REQUIRE(NarrativeEngine::Testing::EventLogSpies().combatPhaseAdvances.load() == 1);
             REQUIRE(NarrativeEngine::Testing::EventLogSpies().travelPhaseAdvances.load() == 1);
         }
     }

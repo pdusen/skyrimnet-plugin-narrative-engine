@@ -1,6 +1,5 @@
 #include "EventLogSpies.h"
 
-#include <CombatEventLog.h>
 #include <EvaluationPipeline.h>
 #include <FineRoads.h>
 #include <PluginThread.h>
@@ -35,27 +34,6 @@ namespace NarrativeEngine::Testing
     }
 } // namespace NarrativeEngine::Testing
 
-namespace NarrativeEngine::CombatEventLog
-{
-    void Poll(const PluginThread::Token&)
-    {
-        ++Testing::EventLogSpies().combatPolls;
-    }
-
-    std::vector<EventLogUtil::HistoryEntry> DrainHistoryTail()
-    {
-        auto& spies = Testing::EventLogSpies();
-        ++spies.drainCalls;
-        std::scoped_lock lock(spies.mutex);
-        return std::exchange(spies.combatQueue, {});
-    }
-
-    void OnPhaseAdvanced()
-    {
-        ++Testing::EventLogSpies().combatPhaseAdvances;
-    }
-} // namespace NarrativeEngine::CombatEventLog
-
 namespace NarrativeEngine::TravelEventLog
 {
     void Poll(const PluginThread::Token&, double elapsedSeconds)
@@ -68,6 +46,10 @@ namespace NarrativeEngine::TravelEventLog
     std::vector<EventLogUtil::HistoryEntry> DrainHistoryTail()
     {
         auto& spies = Testing::EventLogSpies();
+        // Counted here because this is the last drain still stood in for, and
+        // the history writer calls every drain in one flush — so one counter
+        // is enough to say the writer's poll was reached.
+        ++spies.drainCalls;
         std::scoped_lock lock(spies.mutex);
         return std::exchange(spies.travelQueue, {});
     }

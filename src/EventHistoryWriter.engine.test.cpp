@@ -117,7 +117,7 @@ namespace
         for (int slot = 1; slot <= 5; ++slot) {
             std::filesystem::remove(kLogDir / ("NarrativeEngine_EventHistory." + std::to_string(slot) + ".log"), ec);
         }
-        NarrativeEngine::Testing::EventLogSpies().combatQueue.clear();
+        NarrativeEngine::Testing::EventLogSpies().travelQueue.clear();
         NarrativeEngine::Testing::EventLogSpies().travelQueue.clear();
     }
 
@@ -141,8 +141,8 @@ TEST_CASE("EventHistoryWriter::OnSessionStart", "[EventHistoryWriter][engine]")
             "[EventHistory]\nbEventHistoryEnabled=1\niEventHistoryFlushIntervalSeconds=5\n"};
         ClearHistoryFiles();
         EventHistoryWriter::OnSessionStart();
-        NarrativeEngine::Testing::EventLogSpies().combatQueue.push_back(
-            Entry(1.0, "internal/combat_event", "Hans strikes Luke."));
+        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
+            Entry(1.0, "internal/travel_event", "Hans left Whiterun."));
         PollWith(60.0);
         EventHistoryWriter::OnSessionEnd();
 
@@ -164,8 +164,8 @@ TEST_CASE("EventHistoryWriter::OnSessionStart", "[EventHistoryWriter][engine]")
             // The master switch has to stop the file being opened, not merely
             // the lines being written: this archive grows without bound by
             // design, and a player who turned it off should get no file.
-            NarrativeEngine::Testing::EventLogSpies().combatQueue.push_back(
-                Entry(1.0, "internal/combat_event", "Hans strikes Luke."));
+            NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
+                Entry(1.0, "internal/travel_event", "Hans left Whiterun."));
             PollWith(60.0);
             REQUIRE(HistoryLines().empty());
         }
@@ -187,8 +187,8 @@ TEST_CASE("EventHistoryWriter flushes on the tick accumulator", "[EventHistoryWr
     const ConfiguredSettings settings{"[EventHistory]\nbEventHistoryEnabled=1\niEventHistoryFlushIntervalSeconds=5\n"};
     ClearHistoryFiles();
     EventHistoryWriter::OnSessionStart();
-    NarrativeEngine::Testing::EventLogSpies().combatQueue.push_back(
-        Entry(1.0, "internal/combat_event", "Hans strikes Luke."));
+    NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
+        Entry(1.0, "internal/travel_event", "Hans left Whiterun."));
 
     SECTION("when too little time has passed")
     {
@@ -220,7 +220,7 @@ TEST_CASE("EventHistoryWriter flushes on the tick accumulator", "[EventHistoryWr
         {
             const auto lines = HistoryLines();
             REQUIRE(lines.size() == 1);
-            REQUIRE(lines[0].find("Hans strikes Luke.") != std::string::npos);
+            REQUIRE(lines[0].find("Hans left Whiterun.") != std::string::npos);
         }
 
         SECTION("should prefix the line with the in-game time and the source")
@@ -229,13 +229,14 @@ TEST_CASE("EventHistoryWriter flushes on the tick accumulator", "[EventHistoryWr
             // this file is read against the player's account of when something
             // happened, and a relative stamp is meaningless once written down.
             const auto lines = HistoryLines();
-            REQUIRE(lines[0].starts_with("[4E 201, Last Seed 17, 09:00:00] internal/combat_event: "));
+            REQUIRE(lines.size() == 1);
+            REQUIRE(lines[0].starts_with("[4E 201, Last Seed 17, 09:00:00] internal/travel_event: "));
         }
     }
 
     SECTION("when there is nothing to write")
     {
-        NarrativeEngine::Testing::EventLogSpies().combatQueue.clear();
+        NarrativeEngine::Testing::EventLogSpies().travelQueue.clear();
         PollWith(60.0);
         EventHistoryWriter::OnSessionEnd();
 
@@ -254,9 +255,9 @@ TEST_CASE("EventHistoryWriter flushes on the tick accumulator", "[EventHistoryWr
             // Poll runs from the tick whether or not a save is loaded. Draining
             // here would consume events into a file nobody opened, and they
             // would never appear once one was.
-            const auto queued = NarrativeEngine::Testing::EventLogSpies().combatQueue.size();
+            const auto queued = NarrativeEngine::Testing::EventLogSpies().travelQueue.size();
             PollWith(60.0);
-            REQUIRE(NarrativeEngine::Testing::EventLogSpies().combatQueue.size() == queued);
+            REQUIRE(NarrativeEngine::Testing::EventLogSpies().travelQueue.size() == queued);
         }
     }
 }
@@ -273,10 +274,10 @@ TEST_CASE("EventHistoryWriter merges its four sources by time", "[EventHistoryWr
 
     SECTION("when events arrive from several sources out of order")
     {
-        NarrativeEngine::Testing::EventLogSpies().combatQueue.push_back(Entry(300.0, "internal/combat_event", "third"));
+        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(Entry(300.0, "internal/travel_event", "third"));
         NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(Entry(100.0, "internal/travel_event", "first"));
-        NarrativeEngine::Testing::EventLogSpies().combatQueue.push_back(
-            Entry(200.0, "internal/combat_event", "second"));
+        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
+            Entry(200.0, "internal/travel_event", "second"));
         PollWith(60.0);
         EventHistoryWriter::OnSessionEnd();
         const auto lines = HistoryLines();
@@ -292,8 +293,8 @@ TEST_CASE("EventHistoryWriter merges its four sources by time", "[EventHistoryWr
 
     SECTION("when two events share an instant")
     {
-        NarrativeEngine::Testing::EventLogSpies().combatQueue.push_back(
-            Entry(100.0, "internal/combat_event", "combat at 100"));
+        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
+            Entry(100.0, "internal/travel_event", "travel at 100"));
         NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
             Entry(100.0, "internal/travel_event", "travel at 100"));
         PollWith(60.0);
@@ -306,14 +307,14 @@ TEST_CASE("EventHistoryWriter merges its four sources by time", "[EventHistoryWr
             // its cause.
             const auto lines = HistoryLines();
             REQUIRE(lines.size() == 2);
-            REQUIRE(lines[0].find("combat at 100") != std::string::npos);
+            REQUIRE(lines[0].find("travel at 100") != std::string::npos);
         }
     }
 
     SECTION("when a body spans several lines")
     {
-        NarrativeEngine::Testing::EventLogSpies().combatQueue.push_back(
-            Entry(100.0, "internal/combat_event", "line one\nline two"));
+        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
+            Entry(100.0, "internal/travel_event", "line one\nline two"));
         PollWith(60.0);
         EventHistoryWriter::OnSessionEnd();
 
@@ -385,8 +386,8 @@ TEST_CASE("EventHistoryWriter deduplicates SkyrimNet's stream", "[EventHistoryWr
     SECTION("when SkyrimNet answers with nothing")
     {
         SetJson(fake.eventsJson, "[]");
-        NarrativeEngine::Testing::EventLogSpies().combatQueue.push_back(
-            Entry(1.0, "internal/combat_event", "Hans strikes Luke."));
+        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
+            Entry(1.0, "internal/travel_event", "Hans left Whiterun."));
         PollWith(60.0);
         EventHistoryWriter::OnSessionEnd();
 
@@ -401,8 +402,8 @@ TEST_CASE("EventHistoryWriter deduplicates SkyrimNet's stream", "[EventHistoryWr
     SECTION("when SkyrimNet answers with something unparseable")
     {
         SetJson(fake.eventsJson, "not json at all");
-        NarrativeEngine::Testing::EventLogSpies().combatQueue.push_back(
-            Entry(1.0, "internal/combat_event", "Hans strikes Luke."));
+        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
+            Entry(1.0, "internal/travel_event", "Hans left Whiterun."));
         PollWith(60.0);
         EventHistoryWriter::OnSessionEnd();
 
@@ -422,8 +423,8 @@ TEST_CASE("EventHistoryWriter rotates its files", "[EventHistoryWriter][engine]"
     SECTION("when a second session starts")
     {
         EventHistoryWriter::OnSessionStart();
-        NarrativeEngine::Testing::EventLogSpies().combatQueue.push_back(
-            Entry(1.0, "internal/combat_event", "first session"));
+        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
+            Entry(1.0, "internal/travel_event", "first session"));
         PollWith(60.0);
         EventHistoryWriter::OnSessionEnd();
         EventHistoryWriter::OnSessionStart();

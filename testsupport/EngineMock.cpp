@@ -653,6 +653,14 @@ namespace NarrativeEngine::Testing
         return it == facts.end() ? nullptr : &it->second;
     }
 
+    void EngineMock::SetActorBleedingOut(RE::Actor* actor, bool bleedingOut)
+    {
+        if (!actor)
+            return;
+        actor->AsActorState()->actorState1.lifeState =
+            bleedingOut ? RE::ACTOR_LIFE_STATE::kBleedout : RE::ACTOR_LIFE_STATE::kAlive;
+    }
+
     RE::TESWorldSpace* EngineMock::AddWorldSpace(std::uint32_t formID)
     {
         auto& pool = Worlds();
@@ -938,6 +946,32 @@ RE::ExtraAliasInstanceArray::~ExtraAliasInstanceArray() = default;
 RE::ExtraDataType RE::ExtraAliasInstanceArray::GetType() const
 {
     return ExtraDataType::kAliasInstanceArray;
+}
+
+// ---------------------------------------------------------------------------
+// The high-process actor list
+// ---------------------------------------------------------------------------
+//
+// The engine's set of loaded, actively-simulated actors. Anything that sweeps
+// the world for actors near the player walks this rather than the form table,
+// so the harness answers it from the registry AddLoadedActor fills.
+
+void RE::ProcessLists::ForEachHighActor(std::function<RE::BSContainer::ForEachResult(RE::Actor*)> a_callback)
+{
+    if (!a_callback)
+        return;
+    for (auto* actor : NarrativeEngine::Testing::LoadedActors()) {
+        if (a_callback(actor) == RE::BSContainer::ForEachResult::kStop)
+            return;
+    }
+}
+
+// Whether a spell or shout is hostile. Answered globally: what the callers here
+// need is the distinction between an attack and a heal, not a spell registry.
+bool RE::MagicItem::IsHostile() const
+{
+    auto* mock = EngineMock::Current();
+    return mock != nullptr && mock->magic.spellIsHostile;
 }
 
 // ---------------------------------------------------------------------------

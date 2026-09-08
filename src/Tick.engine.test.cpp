@@ -24,11 +24,12 @@
 // paused or disabled time to its accumulator fires a burst the moment play
 // resumes.
 //
-// The six collaborators the poll body calls are our own modules, and linking
-// them would drag most of the plugin into this executable, so the test defines
-// their poll entry points itself. That makes them spies as well as stand-ins:
-// which polls ran, and with what elapsed, is exactly what the cases below are
-// about.
+// The collaborators the poll body calls are our own modules. Two of them are
+// still stand-ins, in testsupport/EventLogSpies.cpp, and they double as spies:
+// which polls ran, and with what elapsed, is what the cases below are about.
+// The rest — the combat and weather logs, the gossip scheduler, the history
+// writer — are compiled in for real, and are observed through the cheapest
+// effect each one has rather than through a counter.
 //
 // These cases spend real time on purpose. The driver samples a steady clock at
 // a fixed cadence and the tick interval floors at one second, so there is no
@@ -167,7 +168,7 @@ TEST_CASE("Tick polls the event logs", "[Tick][engine]")
         {
             // All six, every poll. Missing one is a subsystem that silently
             // stops observing the world while everything else carries on.
-            REQUIRE(Eventually([] { return NarrativeEngine::Testing::EventLogSpies().combatPolls.load() > 0; },
+            REQUIRE(Eventually([] { return NarrativeEngine::Testing::EventLogSpies().travelPolls.load() > 0; },
                                kPollTimeout));
             REQUIRE(NarrativeEngine::Testing::EventLogSpies().travelPolls.load() > 0);
             // Waited for separately: the history writer flushes on its own
@@ -201,7 +202,7 @@ TEST_CASE("Tick polls the event logs", "[Tick][engine]")
             // Menus, the console and dialogue all pause. Polling through a
             // pause would have the event logs report weather changes and travel
             // the player never experienced.
-            REQUIRE_FALSE(Eventually([] { return NarrativeEngine::Testing::EventLogSpies().combatPolls.load() > 0; },
+            REQUIRE_FALSE(Eventually([] { return NarrativeEngine::Testing::EventLogSpies().travelPolls.load() > 0; },
                                      kPollTimeout));
         }
     }
@@ -241,7 +242,7 @@ TEST_CASE("Tick fires the Director", "[Tick][engine]")
             // Deliberate: the logs do edge detection, so a span they did not
             // observe would make the first event after a re-enable read as a
             // change that never happened.
-            REQUIRE(Eventually([] { return NarrativeEngine::Testing::EventLogSpies().combatPolls.load() > 0; },
+            REQUIRE(Eventually([] { return NarrativeEngine::Testing::EventLogSpies().travelPolls.load() > 0; },
                                kPollTimeout));
         }
 
@@ -270,7 +271,7 @@ TEST_CASE("Tick fires the Director", "[Tick][engine]")
         {
             // The accumulator is not consumed by a skip, so the tick that was
             // held back is not lost either.
-            REQUIRE(Eventually([] { return NarrativeEngine::Testing::EventLogSpies().combatPolls.load() > 2; },
+            REQUIRE(Eventually([] { return NarrativeEngine::Testing::EventLogSpies().travelPolls.load() > 2; },
                                kPollTimeout));
             NarrativeEngine::Testing::EventLogSpies().evaluationInFlight = false;
             REQUIRE(Eventually([] { return NarrativeEngine::Testing::EventLogSpies().evaluations.load() > 0; },
@@ -295,11 +296,11 @@ TEST_CASE("Tick::Start and Stop", "[Tick][engine]")
         {
             // Two drivers would double every event log's elapsed accounting and
             // halve the effective tick interval, and nothing would say so.
-            REQUIRE(Eventually([] { return NarrativeEngine::Testing::EventLogSpies().combatPolls.load() >= 2; },
+            REQUIRE(Eventually([] { return NarrativeEngine::Testing::EventLogSpies().travelPolls.load() >= 2; },
                                kPollTimeout));
-            const int combatBefore = NarrativeEngine::Testing::EventLogSpies().combatPolls.load();
+            const int travelBefore = NarrativeEngine::Testing::EventLogSpies().travelPolls.load();
             const int fineRoadsBefore = NarrativeEngine::Testing::EventLogSpies().fineRoadsPolls.load();
-            REQUIRE(combatBefore == fineRoadsBefore);
+            REQUIRE(travelBefore == fineRoadsBefore);
         }
 
         Tick::Stop();
@@ -321,7 +322,7 @@ TEST_CASE("Tick::Start and Stop", "[Tick][engine]")
         AsyncDispatch::Start();
         Tick::Start();
         REQUIRE(
-            Eventually([] { return NarrativeEngine::Testing::EventLogSpies().combatPolls.load() > 0; }, kPollTimeout));
+            Eventually([] { return NarrativeEngine::Testing::EventLogSpies().travelPolls.load() > 0; }, kPollTimeout));
         Tick::Stop();
         AsyncDispatch::Stop();
 
@@ -329,9 +330,9 @@ TEST_CASE("Tick::Start and Stop", "[Tick][engine]")
         {
             // Stop is called from kPreLoadGame, so a poll that landed after it
             // would run against a world mid-deserialization.
-            const int after = NarrativeEngine::Testing::EventLogSpies().combatPolls.load();
+            const int after = NarrativeEngine::Testing::EventLogSpies().travelPolls.load();
             std::this_thread::sleep_for(std::chrono::milliseconds{750});
-            REQUIRE(NarrativeEngine::Testing::EventLogSpies().combatPolls.load() == after);
+            REQUIRE(NarrativeEngine::Testing::EventLogSpies().travelPolls.load() == after);
         }
     }
 }

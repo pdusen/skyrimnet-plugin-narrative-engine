@@ -335,6 +335,21 @@ namespace NarrativeEngine::Testing
             std::map<std::string, bool> namedNodes;
         } visibility;
 
+        // The engine's high-process actor list. Anything that sweeps the
+        // loaded actors walks this; the harness hands back whatever a test
+        // registered with AddLoadedActor.
+        struct ProcessListState
+        {
+            bool present = true;
+        } processLists;
+
+        // Magic, as far as anything watching combat needs it: whether the
+        // spell that just landed was meant to hurt.
+        struct MagicState
+        {
+            bool spellIsHostile = true;
+        } magic;
+
         // Where SKSE says its log directory is. Modules that keep their own
         // trace file write there for real, so a test can read back exactly what
         // a player would send in with a bug report.
@@ -356,6 +371,12 @@ namespace NarrativeEngine::Testing
         // outlive any single EngineMock: a sink registered on it is a pointer
         // to a process-wide static that nothing ever unregisters.
         static RE::BSTEventSource<SKSE::ModCallbackEvent>& ModEventSource();
+
+        // Put an actor into (or out of) bleedout. Written into the actor's own
+        // life-state bitfield rather than answered from a mock flag, because
+        // IsBleedingOut is inline: it reads the object, so a flag beside it
+        // would be a value nothing consults.
+        static void SetActorBleedingOut(RE::Actor* actor, bool bleedingOut);
 
         // Fabricate a worldspace the data handler will hand back when asked for
         // every WorldSpace form. Its cell map starts empty.
