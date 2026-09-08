@@ -4,6 +4,7 @@
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
 #include <EvalDispatch.h>
+#include <GossipSpies.h>
 #include <PluginThread.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -55,7 +56,6 @@ namespace
         std::atomic<int> travel{0};
         std::atomic<int> history{0};
         std::atomic<int> fineRoads{0};
-        std::atomic<int> gossip{0};
         std::atomic<int> evaluations{0};
         std::atomic<bool> evaluationInFlight{false};
         // Elapsed seconds the last poll was told about. The event logs use this
@@ -70,7 +70,6 @@ namespace
             travel = 0;
             history = 0;
             fineRoads = 0;
-            gossip = 0;
             evaluations = 0;
             evaluationInFlight = false;
             lastElapsed = 0.0;
@@ -117,8 +116,10 @@ namespace
 } // namespace
 
 // The poll entry points the driver calls, and the pipeline it fires into.
-// Defining them here keeps six modules out of this link closure and turns each
-// into a spy.
+// Defining them here keeps five modules out of this link closure and turns each
+// into a spy. GossipTick is deliberately NOT among them: it is compiled into
+// this executable for its own tests, and its collaborators are stood in for
+// once, in testsupport/GossipSpies.cpp.
 namespace NarrativeEngine::CombatEventLog
 {
     void Poll(const PluginThread::Token&)
@@ -155,13 +156,6 @@ namespace NarrativeEngine::FineRoads
         ++g_spies.fineRoads;
     }
 } // namespace NarrativeEngine::FineRoads
-namespace NarrativeEngine::GossipTick
-{
-    void Poll(const PluginThread::Token&, double)
-    {
-        ++g_spies.gossip;
-    }
-} // namespace NarrativeEngine::GossipTick
 namespace NarrativeEngine::EvaluationPipeline
 {
     bool IsEvaluationInFlight()
@@ -237,6 +231,7 @@ TEST_CASE("Tick polls the event logs", "[Tick][engine]")
     EngineMock engine;
     const ConfiguredSettings settings{"[Director]\nbTickEnabled=1\niTickIntervalSeconds=1\n"};
     g_spies.Reset();
+    NarrativeEngine::Testing::GossipSpies().Reset();
     Tick::SetEnabled(true);
 
     SECTION("when the game is running")
@@ -252,7 +247,10 @@ TEST_CASE("Tick polls the event logs", "[Tick][engine]")
             REQUIRE(g_spies.travel.load() > 0);
             REQUIRE(g_spies.history.load() > 0);
             REQUIRE(g_spies.fineRoads.load() > 0);
-            REQUIRE(g_spies.gossip.load() > 0);
+            // The gossip scheduler is the real one here, so it is observed
+            // through the collaborator spies it shares with its own tests: its
+            // first act is to ask whether the graph is ready.
+            REQUIRE(NarrativeEngine::Testing::GossipSpies().graphReadyQueries > 0);
         }
 
         SECTION("should tell them how much time passed")
@@ -285,6 +283,7 @@ TEST_CASE("Tick fires the Director", "[Tick][engine]")
     EngineMock engine;
     const ConfiguredSettings settings{"[Director]\nbTickEnabled=1\niTickIntervalSeconds=1\n"};
     g_spies.Reset();
+    NarrativeEngine::Testing::GossipSpies().Reset();
     Tick::SetEnabled(true);
 
     SECTION("when the interval elapses")
@@ -360,8 +359,8 @@ TEST_CASE("Tick::Start and Stop", "[Tick][engine]")
             // halve the effective tick interval, and nothing would say so.
             REQUIRE(Eventually([] { return g_spies.combat.load() >= 2; }, kPollTimeout));
             const int combatBefore = g_spies.combat.load();
-            const int gossipBefore = g_spies.gossip.load();
-            REQUIRE(combatBefore == gossipBefore);
+            const int fineRoadsBefore = g_spies.fineRoads.load();
+            REQUIRE(combatBefore == fineRoadsBefore);
         }
 
         Tick::Stop();
