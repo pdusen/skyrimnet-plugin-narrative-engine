@@ -26,14 +26,20 @@ namespace NarrativeEngine::Testing
 
         // Poll counts, one per source the driver is supposed to reach.
         std::atomic<int> combatPolls{0};
-        std::atomic<int> weatherPolls{0};
         std::atomic<int> travelPolls{0};
         std::atomic<int> fineRoadsPolls{0};
 
         // Elapsed seconds the last poll was told about. The logs accumulate
         // against this rather than sampling their own clocks, so a driver that
-        // passed zero would freeze every one of them at once.
+        // passed zero would freeze every one of them at once. Recorded by the
+        // travel log, which is still stood in for.
         std::atomic<double> lastElapsed{0.0};
+
+        // Phase-advance notifications. The tracker tells every event log when
+        // the story moves on so each can drop the window it had been keeping,
+        // and a log that is not told keeps reporting the last phase's weather.
+        std::atomic<int> combatPhaseAdvances{0};
+        std::atomic<int> travelPhaseAdvances{0};
 
         // The evaluation pipeline the driver fires into.
         std::atomic<int> evaluations{0};
@@ -43,7 +49,6 @@ namespace NarrativeEngine::Testing
         // times it was asked. Consumed rather than copied, as the real drains
         // are.
         std::vector<EventLogUtil::HistoryEntry> combatQueue;
-        std::vector<EventLogUtil::HistoryEntry> weatherQueue;
         std::vector<EventLogUtil::HistoryEntry> travelQueue;
         std::atomic<int> drainCalls{0};
 

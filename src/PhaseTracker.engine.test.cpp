@@ -2,6 +2,7 @@
 
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
+#include <EventLogSpies.h>
 #include <PluginThread.h>
 #include <ThreadRole.h>
 
@@ -27,10 +28,11 @@
 // bytes.
 //
 // Two things had to be stood in for. The module notifies three event logs on
-// every advance; those are our own modules, and linking them would drag most of
-// the plugin into this executable, so the test defines the three notification
-// symbols itself. That is a spy as much as a stand-in — "did the advance tell
-// the logs" is real behaviour and is asserted below. The other is the co-save
+// every advance; two of those are still stand-ins, in
+// testsupport/EventLogSpies.cpp, and they are spies as much as stand-ins —
+// "did the advance tell the logs" is real behaviour and is asserted below. The
+// third, WeatherEventLog, is compiled in for real and is not counted here; its
+// own tests cover what an advance does to it. The other stand-in is the co-save
 // interface, which EngineMock already backs with a byte-accurate stream.
 //
 // The tracker's state is process-wide, so every TEST_CASE that touches it
@@ -58,12 +60,6 @@ namespace
     constexpr int kSleepMilliseconds = 40;
     constexpr float kHalfSleepSeconds = 0.020f;
 
-    // Counts of the event-log notifications the tracker fires on every phase
-    // change. Zeroed by FreshTracker below.
-    int g_combatNotifications = 0;
-    int g_weatherNotifications = 0;
-    int g_travelNotifications = 0;
-
     // A non-null interface pointer; the mocked SKSE methods answer out of
     // EngineMock and never read through it.
     SKSE::SerializationInterface* FakeInterface()
@@ -80,9 +76,7 @@ namespace
         FreshTracker()
         {
             PhaseTracker::Reset();
-            g_combatNotifications = 0;
-            g_weatherNotifications = 0;
-            g_travelNotifications = 0;
+            NarrativeEngine::Testing::EventLogSpies().Reset();
         }
 
         FreshTracker(const FreshTracker&) = delete;
@@ -129,30 +123,6 @@ namespace
         return payload;
     }
 } // namespace
-
-// The three notifications the tracker fires outside its own mutex. Defining
-// them here is what keeps the event logs out of this link closure.
-namespace NarrativeEngine::CombatEventLog
-{
-    void OnPhaseAdvanced()
-    {
-        ++g_combatNotifications;
-    }
-} // namespace NarrativeEngine::CombatEventLog
-namespace NarrativeEngine::WeatherEventLog
-{
-    void OnPhaseAdvanced()
-    {
-        ++g_weatherNotifications;
-    }
-} // namespace NarrativeEngine::WeatherEventLog
-namespace NarrativeEngine::TravelEventLog
-{
-    void OnPhaseAdvanced()
-    {
-        ++g_travelNotifications;
-    }
-} // namespace NarrativeEngine::TravelEventLog
 
 TEST_CASE("PhaseTracker::PhaseName", "[PhaseTracker][engine]")
 {
@@ -457,9 +427,8 @@ TEST_CASE("PhaseTracker::AdvanceTo", "[PhaseTracker][engine]")
             // Each log holds a per-phase window of its own and clears it here.
             // A log that is not told keeps reporting last phase's weather.
             PhaseTracker::AdvanceTo(Phase::FallingAction);
-            REQUIRE(g_combatNotifications == 1);
-            REQUIRE(g_weatherNotifications == 1);
-            REQUIRE(g_travelNotifications == 1);
+            REQUIRE(NarrativeEngine::Testing::EventLogSpies().combatPhaseAdvances.load() == 1);
+            REQUIRE(NarrativeEngine::Testing::EventLogSpies().travelPhaseAdvances.load() == 1);
         }
     }
 }

@@ -169,7 +169,6 @@ TEST_CASE("Tick polls the event logs", "[Tick][engine]")
             // stops observing the world while everything else carries on.
             REQUIRE(Eventually([] { return NarrativeEngine::Testing::EventLogSpies().combatPolls.load() > 0; },
                                kPollTimeout));
-            REQUIRE(NarrativeEngine::Testing::EventLogSpies().weatherPolls.load() > 0);
             REQUIRE(NarrativeEngine::Testing::EventLogSpies().travelPolls.load() > 0);
             // Waited for separately: the history writer flushes on its own
             // accumulator, so its drain lands a poll or two after the others.
@@ -186,7 +185,7 @@ TEST_CASE("Tick polls the event logs", "[Tick][engine]")
         {
             // The logs accumulate against this rather than sampling their own
             // clocks, so a zero would freeze all of their cadences at once.
-            REQUIRE(Eventually([] { return NarrativeEngine::Testing::EventLogSpies().weatherPolls.load() > 0; },
+            REQUIRE(Eventually([] { return NarrativeEngine::Testing::EventLogSpies().travelPolls.load() > 0; },
                                kPollTimeout));
             REQUIRE(NarrativeEngine::Testing::EventLogSpies().lastElapsed.load() > 0.0);
         }

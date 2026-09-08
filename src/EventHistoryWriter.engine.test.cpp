@@ -118,7 +118,6 @@ namespace
             std::filesystem::remove(kLogDir / ("NarrativeEngine_EventHistory." + std::to_string(slot) + ".log"), ec);
         }
         NarrativeEngine::Testing::EventLogSpies().combatQueue.clear();
-        NarrativeEngine::Testing::EventLogSpies().weatherQueue.clear();
         NarrativeEngine::Testing::EventLogSpies().travelQueue.clear();
     }
 
@@ -275,10 +274,9 @@ TEST_CASE("EventHistoryWriter merges its four sources by time", "[EventHistoryWr
     SECTION("when events arrive from several sources out of order")
     {
         NarrativeEngine::Testing::EventLogSpies().combatQueue.push_back(Entry(300.0, "internal/combat_event", "third"));
-        NarrativeEngine::Testing::EventLogSpies().weatherQueue.push_back(
-            Entry(100.0, "internal/weather_event", "first"));
-        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
-            Entry(200.0, "internal/travel_event", "second"));
+        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(Entry(100.0, "internal/travel_event", "first"));
+        NarrativeEngine::Testing::EventLogSpies().combatQueue.push_back(
+            Entry(200.0, "internal/combat_event", "second"));
         PollWith(60.0);
         EventHistoryWriter::OnSessionEnd();
         const auto lines = HistoryLines();
@@ -296,8 +294,8 @@ TEST_CASE("EventHistoryWriter merges its four sources by time", "[EventHistoryWr
     {
         NarrativeEngine::Testing::EventLogSpies().combatQueue.push_back(
             Entry(100.0, "internal/combat_event", "combat at 100"));
-        NarrativeEngine::Testing::EventLogSpies().weatherQueue.push_back(
-            Entry(100.0, "internal/weather_event", "weather at 100"));
+        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
+            Entry(100.0, "internal/travel_event", "travel at 100"));
         PollWith(60.0);
         EventHistoryWriter::OnSessionEnd();
 

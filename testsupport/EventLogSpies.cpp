@@ -5,7 +5,6 @@
 #include <FineRoads.h>
 #include <PluginThread.h>
 #include <TravelEventLog.h>
-#include <WeatherEventLog.h>
 
 #include <utility>
 
@@ -17,16 +16,16 @@ namespace NarrativeEngine::Testing
     {
         std::scoped_lock lock(mutex);
         combatPolls = 0;
-        weatherPolls = 0;
         travelPolls = 0;
         fineRoadsPolls = 0;
         lastElapsed = 0.0;
         evaluations = 0;
         evaluationInFlight = false;
         combatQueue.clear();
-        weatherQueue.clear();
         travelQueue.clear();
         drainCalls = 0;
+        combatPhaseAdvances = 0;
+        travelPhaseAdvances = 0;
     }
 
     EventLogSpyState& EventLogSpies()
@@ -50,14 +49,19 @@ namespace NarrativeEngine::CombatEventLog
         std::scoped_lock lock(spies.mutex);
         return std::exchange(spies.combatQueue, {});
     }
+
+    void OnPhaseAdvanced()
+    {
+        ++Testing::EventLogSpies().combatPhaseAdvances;
+    }
 } // namespace NarrativeEngine::CombatEventLog
 
-namespace NarrativeEngine::WeatherEventLog
+namespace NarrativeEngine::TravelEventLog
 {
     void Poll(const PluginThread::Token&, double elapsedSeconds)
     {
         auto& spies = Testing::EventLogSpies();
-        ++spies.weatherPolls;
+        ++spies.travelPolls;
         spies.lastElapsed = elapsedSeconds;
     }
 
@@ -65,22 +69,12 @@ namespace NarrativeEngine::WeatherEventLog
     {
         auto& spies = Testing::EventLogSpies();
         std::scoped_lock lock(spies.mutex);
-        return std::exchange(spies.weatherQueue, {});
-    }
-} // namespace NarrativeEngine::WeatherEventLog
-
-namespace NarrativeEngine::TravelEventLog
-{
-    void Poll(const PluginThread::Token&, double)
-    {
-        ++Testing::EventLogSpies().travelPolls;
-    }
-
-    std::vector<EventLogUtil::HistoryEntry> DrainHistoryTail()
-    {
-        auto& spies = Testing::EventLogSpies();
-        std::scoped_lock lock(spies.mutex);
         return std::exchange(spies.travelQueue, {});
+    }
+
+    void OnPhaseAdvanced()
+    {
+        ++Testing::EventLogSpies().travelPhaseAdvances;
     }
 } // namespace NarrativeEngine::TravelEventLog
 
