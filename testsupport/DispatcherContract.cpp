@@ -1,7 +1,5 @@
 #include "DispatcherContract.h"
 
-#include <ThreadRole.h>
-
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
@@ -62,7 +60,7 @@ namespace NarrativeEngine::Testing
             {
                 std::promise<int> done;
                 auto arrived = done.get_future();
-                ops.enqueue([&](const PluginThread::Token&) { done.set_value(7); });
+                ops.enqueue([&]() { done.set_value(7); });
                 REQUIRE(Arrived(arrived));
                 REQUIRE(arrived.get() == 7);
             }
@@ -74,7 +72,7 @@ namespace NarrativeEngine::Testing
                 // worker loop claims Plugin on its behalf.
                 std::promise<ThreadRole> done;
                 auto arrived = done.get_future();
-                ops.enqueue([&](const PluginThread::Token&) { done.set_value(CurrentThreadRole()); });
+                ops.enqueue([&]() { done.set_value(CurrentThreadRole()); });
                 REQUIRE(Arrived(arrived));
                 REQUIRE(arrived.get() == ThreadRole::Plugin);
             }
@@ -85,7 +83,7 @@ namespace NarrativeEngine::Testing
                 // foreign engine thread, or a poll that must not be delayed.
                 std::promise<std::thread::id> done;
                 auto arrived = done.get_future();
-                ops.enqueue([&](const PluginThread::Token&) { done.set_value(std::this_thread::get_id()); });
+                ops.enqueue([&]() { done.set_value(std::this_thread::get_id()); });
                 REQUIRE(Arrived(arrived));
                 REQUIRE(arrived.get() != std::this_thread::get_id());
             }
@@ -97,9 +95,9 @@ namespace NarrativeEngine::Testing
                 auto arrived = done.get_future();
                 int first = 0;
                 int second = 0;
-                ops.enqueue([&](const PluginThread::Token&) { first = ++order; });
-                ops.enqueue([&](const PluginThread::Token&) { second = ++order; });
-                ops.enqueue([&](const PluginThread::Token&) { done.set_value(); });
+                ops.enqueue([&]() { first = ++order; });
+                ops.enqueue([&]() { second = ++order; });
+                ops.enqueue([&]() { done.set_value(); });
                 REQUIRE(Arrived(arrived));
                 REQUIRE(first == 1);
                 REQUIRE(second == 2);
@@ -109,8 +107,8 @@ namespace NarrativeEngine::Testing
             {
                 std::promise<void> done;
                 auto arrived = done.get_future();
-                ops.enqueue(nullptr);
-                ops.enqueue([&](const PluginThread::Token&) { done.set_value(); });
+                ops.enqueueEmpty();
+                ops.enqueue([&]() { done.set_value(); });
                 REQUIRE(Arrived(arrived));
             }
         }
@@ -125,12 +123,12 @@ namespace NarrativeEngine::Testing
                 // closure and everything it captured for the rest of the
                 // session, and run it at a moment nobody expected.
                 std::atomic<bool> ran{false};
-                ops.enqueue([&](const PluginThread::Token&) { ran = true; });
+                ops.enqueue([&]() { ran = true; });
 
                 ops.start();
                 std::promise<void> done;
                 auto arrived = done.get_future();
-                ops.enqueue([&](const PluginThread::Token&) { done.set_value(); });
+                ops.enqueue([&]() { done.set_value(); });
                 REQUIRE(Arrived(arrived));
                 ops.stop();
 
@@ -150,7 +148,7 @@ namespace NarrativeEngine::Testing
                 // far from the second Start that caused it.
                 std::promise<void> done;
                 auto arrived = done.get_future();
-                ops.enqueue([&](const PluginThread::Token&) { done.set_value(); });
+                ops.enqueue([&]() { done.set_value(); });
                 REQUIRE(Arrived(arrived));
             }
 
@@ -179,7 +177,7 @@ namespace NarrativeEngine::Testing
                 // accepted has been promised to whoever queued it.
                 std::atomic<int> completed{0};
                 for (int i = 0; i < 32; ++i) {
-                    ops.enqueue([&](const PluginThread::Token&) { ++completed; });
+                    ops.enqueue([&]() { ++completed; });
                 }
                 ops.stop();
                 REQUIRE(completed.load() == 32);
@@ -196,8 +194,8 @@ namespace NarrativeEngine::Testing
                 // that reaches plugin-thread land shares this one thread.
                 std::promise<void> done;
                 auto arrived = done.get_future();
-                ops.enqueue([](const PluginThread::Token&) { throw std::runtime_error("boom"); });
-                ops.enqueue([&](const PluginThread::Token&) { done.set_value(); });
+                ops.enqueue([]() { throw std::runtime_error("boom"); });
+                ops.enqueue([&]() { done.set_value(); });
                 REQUIRE(Arrived(arrived));
             }
 
@@ -205,8 +203,8 @@ namespace NarrativeEngine::Testing
             {
                 std::promise<void> done;
                 auto arrived = done.get_future();
-                ops.enqueue([](const PluginThread::Token&) { throw 42; });
-                ops.enqueue([&](const PluginThread::Token&) { done.set_value(); });
+                ops.enqueue([]() { throw 42; });
+                ops.enqueue([&]() { done.set_value(); });
                 REQUIRE(Arrived(arrived));
             }
         }

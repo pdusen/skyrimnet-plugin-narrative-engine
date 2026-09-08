@@ -110,8 +110,17 @@ namespace NarrativeEngine::Testing
 
         void* MemoryManagerAllocate(RE::MemoryManager*, std::size_t size, std::int32_t alignment, bool aligned)
         {
-            return aligned ? _aligned_malloc(size, alignment > 0 ? static_cast<std::size_t>(alignment) : 16u)
-                           : std::malloc(size);
+            void* mem = aligned ? _aligned_malloc(size, alignment > 0 ? static_cast<std::size_t>(alignment) : 16u)
+                                : std::malloc(size);
+            // Zeroed, which the CRT heap does not promise and the game's
+            // allocator effectively does for a fresh block. BSTScatterTable
+            // grows by allocating an entry array and then treating an
+            // all-zero entry as empty, so uninitialised bytes make a rehash
+            // read a stale entry as live -- a crash that depends on what was
+            // last on the heap and so appears at random.
+            if (mem)
+                std::memset(mem, 0, size);
+            return mem;
         }
 
         void MemoryManagerDeallocate(RE::MemoryManager*, void* mem, bool aligned)
@@ -131,9 +140,17 @@ namespace NarrativeEngine::Testing
                                       std::int32_t alignment,
                                       bool aligned)
         {
-            return aligned
-                       ? _aligned_realloc(oldMem, newSize, alignment > 0 ? static_cast<std::size_t>(alignment) : 16u)
-                       : std::realloc(oldMem, newSize);
+            const std::size_t align = alignment > 0 ? static_cast<std::size_t>(alignment) : 16u;
+            const std::size_t oldSize = oldMem ? (aligned ? _aligned_msize(oldMem, align, 0) : _msize(oldMem)) : 0u;
+            void* mem = aligned ? _aligned_realloc(oldMem, newSize, align) : std::realloc(oldMem, newSize);
+            // Zero the grown tail, for the same reason Allocate zeroes:
+            // BSTScatterTable grows its entry array and then reads the new
+            // slots expecting them to be empty. Uninitialised bytes there make
+            // a rehash — and the destructor's later walk — treat heap litter as
+            // a live entry, which crashes at whatever address it litters with.
+            if (mem && newSize > oldSize)
+                std::memset(static_cast<std::byte*>(mem) + oldSize, 0, newSize - oldSize);
+            return mem;
         }
 
         // ------------------------------------------------------------------
@@ -146,10 +163,18 @@ namespace NarrativeEngine::Testing
         // pointer variable we own, so the lookup walks a real map a test filled
         // in.
 
+        // Both tables are deliberately never destroyed, for the same reason
+        // the string pool is not. A BSTHashMap frees its bucket array through
+        // the mocked MemoryManager, which it reaches through a relocation --
+        // and at static-destruction time there is no guaranteed order between
+        // these tables and the relocation machinery they depend on. Getting
+        // that order wrong is a crash AFTER the last assertion has already
+        // passed, which reads as a flaky test rather than as what it is. A test
+        // process is short enough that leaking two maps beats ordering them.
         RE::BSTHashMap<RE::FormID, RE::TESForm*>& FormTableStorage()
         {
-            static RE::BSTHashMap<RE::FormID, RE::TESForm*> table;
-            return table;
+            static auto* table = new RE::BSTHashMap<RE::FormID, RE::TESForm*>();
+            return *table;
         }
 
         // What the relocation actually points at: a pointer TO the table.
@@ -158,8 +183,8 @@ namespace NarrativeEngine::Testing
 
         RE::BSTHashMap<RE::BSFixedString, RE::TESForm*>& EditorIDTableStorage()
         {
-            static RE::BSTHashMap<RE::BSFixedString, RE::TESForm*> table;
-            return table;
+            static auto* table = new RE::BSTHashMap<RE::BSFixedString, RE::TESForm*>();
+            return *table;
         }
 
         RE::BSTHashMap<RE::BSFixedString, RE::TESForm*>* g_editorIDTable = &EditorIDTableStorage();
