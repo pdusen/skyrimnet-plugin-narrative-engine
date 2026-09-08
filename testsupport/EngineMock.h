@@ -11,6 +11,7 @@
 
 namespace RE
 {
+    template <class Event> class BSTEventSource;
     class Actor;
     class BGSBaseAlias;
     class BGSKeyword;
@@ -25,6 +26,11 @@ namespace RE
     class ScriptEventSourceHolder;
     class UI;
 } // namespace RE
+
+namespace SKSE
+{
+    struct ModCallbackEvent;
+}
 
 // EngineMock — stands in for the CommonLibSSE functions production code calls,
 // so a test can drive engine-coupled code with no Skyrim process.
@@ -193,6 +199,25 @@ namespace NarrativeEngine::Testing
             std::uint32_t resolvedFormID = 0x0BADF00Du;
             std::vector<std::uint32_t> resolveRequests;
         } cosave;
+
+        // SKSE's ModEvent source, which Papyrus scripts send through. Backed by
+        // a REAL BSTEventSource rather than opaque storage: AddEventSink and
+        // SendEvent are both inline header code, so a genuine one lets a test
+        // register a production sink and then dispatch to it exactly as the
+        // Papyrus VM would — which is the only way to reach a sink that lives
+        // in an anonymous namespace.
+        struct ModEventState
+        {
+            bool sourcePresent = true;
+            // What TESForm::GetName answers, which the sink logs to say which
+            // script sent an event.
+            std::string senderName = "_ne_MCM";
+        } modEvents;
+
+        // The source itself. Not inside the state struct because it must
+        // outlive any single EngineMock: a sink registered on it is a pointer
+        // to a process-wide static that nothing ever unregisters.
+        static RE::BSTEventSource<SKSE::ModCallbackEvent>& ModEventSource();
 
         // The console-command path: the engine's form factory, the transient
         // Script form it hands back, and what was compiled through it.

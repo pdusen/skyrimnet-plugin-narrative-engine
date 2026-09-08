@@ -277,6 +277,13 @@ RE::BSSpinLockGuard::BSSpinLockGuard(BSSpinLock& a_lock) : _lock(a_lock) {}
 
 RE::BSSpinLockGuard::~BSSpinLockGuard() = default;
 
+// The lock itself, for the engine structures the harness builds for real
+// rather than as opaque storage -- BSTEventSource holds one by value. Zeroed
+// like the engine's own constructor; Lock and Unlock are no-ops for the same
+// reason the guard is.
+
+RE::BSSpinLock::BSSpinLock() : _owningThread(0), _lockCount(0) {}
+
 // ---------------------------------------------------------------------------
 // RE::BSScript — the Papyrus virtual machine
 // ---------------------------------------------------------------------------
@@ -532,6 +539,37 @@ void RE::Script::CompileAndRun(RE::TESObjectREFR* a_targetRef, RE::COMPILER_NAME
 // ---------------------------------------------------------------------------
 // SKSE::TaskInterface
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// SKSE's ModEvent source
+// ---------------------------------------------------------------------------
+//
+// A real BSTEventSource, not opaque storage. AddEventSink and SendEvent are
+// both inline header code that walk the source's own arrays, so a genuine one
+// lets a test register a production sink and then dispatch to it the way the
+// Papyrus VM does. That is the only route to a sink defined in an anonymous
+// namespace.
+//
+// Function-local static so it outlives every EngineMock: a registered sink is
+// never unregistered, and the source would otherwise be left holding a pointer
+// into a destroyed object.
+
+namespace NarrativeEngine::Testing
+{
+    RE::BSTEventSource<SKSE::ModCallbackEvent>& EngineMock::ModEventSource()
+    {
+        static RE::BSTEventSource<SKSE::ModCallbackEvent> source;
+        return source;
+    }
+} // namespace NarrativeEngine::Testing
+
+RE::BSTEventSource<SKSE::ModCallbackEvent>* SKSE::GetModCallbackEventSource() noexcept
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->modEvents.sourcePresent)
+        return nullptr;
+    return &EngineMock::ModEventSource();
+}
 
 const SKSE::TaskInterface* SKSE::GetTaskInterface() noexcept
 {
@@ -995,6 +1033,16 @@ bool RE::TESObjectCELL::IsInteriorCell() const
 {
     auto* mock = NarrativeEngine::Testing::EngineMock::Current();
     return mock != nullptr && mock->world.cellIsInterior;
+}
+
+// TESForm::GetName is out-of-line, and the ModEvent sink reads it off an
+// event's sender to say who sent it. Answers out of the mock so a test can put
+// a name on the sender without fabricating a whole form.
+
+const char* RE::TESForm::GetName() const
+{
+    auto* mock = NarrativeEngine::Testing::EngineMock::Current();
+    return mock ? mock->modEvents.senderName.c_str() : "";
 }
 
 const char* RE::TESObjectREFR::GetDisplayFullName()
