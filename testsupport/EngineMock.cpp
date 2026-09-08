@@ -1,5 +1,8 @@
 #include "EngineMock.h"
 
+#include <filesystem>
+#include <optional>
+
 #include "FakeVTable.h"
 #include "RelocationMocks.h"
 
@@ -562,6 +565,21 @@ namespace NarrativeEngine::Testing
         return source;
     }
 } // namespace NarrativeEngine::Testing
+
+// SKSE's log directory. Out-of-line, and pointed at a directory under the test
+// working tree so a module that keeps its own trace file writes a real one a
+// test can read back.
+
+std::optional<std::filesystem::path> SKSE::log::log_directory()
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->logging.directoryPresent)
+        return std::nullopt;
+    std::filesystem::path dir{mock->logging.directory};
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    return dir;
+}
 
 RE::BSTEventSource<SKSE::ModCallbackEvent>* SKSE::GetModCallbackEventSource() noexcept
 {

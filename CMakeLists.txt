@@ -730,6 +730,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/PrismaUI.cpp"
         "${CMAKE_SOURCE_DIR}/src/SkyrimNetAPI.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipDispatch.cpp"
+        "${CMAKE_SOURCE_DIR}/src/GossipLog.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipTick.cpp"
         "${CMAKE_SOURCE_DIR}/src/EventLogUtil.cpp"
         "${CMAKE_SOURCE_DIR}/src/FactionDesignationUtils.cpp"

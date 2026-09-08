@@ -7,6 +7,10 @@
 #include <GossipSim.h>
 #include <GossipThread.h>
 
+#include <filesystem>
+#include <fstream>
+#include <system_error>
+
 // See GossipSpies.h for why these live beside the harness rather than in a
 // test file.
 
@@ -40,7 +44,8 @@ namespace NarrativeEngine::Testing
         std::scoped_lock lock(mutex);
         calls.clear();
         stampedHorizons.clear();
-        notes.clear();
+        npcNames.clear();
+        locationNames.clear();
         graphReadyQueries = 0;
         graphReady = true;
         sweepSucceeds = true;
@@ -53,6 +58,41 @@ namespace NarrativeEngine::Testing
         static GossipSpyState state;
         return state;
     }
+
+    namespace
+    {
+        // Mirrors GossipLog's own naming. Duplicated rather than shared on
+        // purpose: a test that read the path from the module under test would
+        // still pass if the module wrote somewhere nobody looks.
+        std::filesystem::path TracePath()
+        {
+            return std::filesystem::path{"Data/SKSE/Plugins/NarrativeEngineTestLogs"} / "NarrativeEngine_Gossip.log";
+        }
+    } // namespace
+
+    std::vector<std::string> GossipTraceLines()
+    {
+        std::vector<std::string> lines;
+        std::ifstream in{TracePath()};
+        std::string line;
+        while (std::getline(in, line)) {
+            lines.push_back(line);
+        }
+        return lines;
+    }
+
+    void ClearGossipTrace()
+    {
+        GossipLog::OnSessionEnd();
+        std::error_code ec;
+        for (int slot = 0; slot <= 5; ++slot) {
+            auto path = TracePath();
+            if (slot > 0) {
+                path.replace_filename("NarrativeEngine_Gossip." + std::to_string(slot) + ".log");
+            }
+            std::filesystem::remove(path, ec);
+        }
+    }
 } // namespace NarrativeEngine::Testing
 
 namespace NarrativeEngine::GossipGraph
@@ -64,17 +104,28 @@ namespace NarrativeEngine::GossipGraph
         ++spies.graphReadyQueries;
         return spies.graphReady;
     }
-} // namespace NarrativeEngine::GossipGraph
 
-namespace NarrativeEngine::GossipLog
-{
-    void Note(std::string_view text)
+    // Names the trace lines render. Answered from a table a test fills in, so a
+    // line can be checked for the name a reader would actually see rather than
+    // for a FormID.
+    const std::string& NpcName(RE::FormID formID)
     {
         auto& spies = Testing::GossipSpies();
         std::scoped_lock lock(spies.mutex);
-        spies.notes.emplace_back(text);
+        static const std::string empty;
+        const auto it = spies.npcNames.find(formID);
+        return it == spies.npcNames.end() ? empty : it->second;
     }
-} // namespace NarrativeEngine::GossipLog
+
+    const std::string& LocationName(RE::FormID formID)
+    {
+        auto& spies = Testing::GossipSpies();
+        std::scoped_lock lock(spies.mutex);
+        static const std::string empty;
+        const auto it = spies.locationNames.find(formID);
+        return it == spies.locationNames.end() ? empty : it->second;
+    }
+} // namespace NarrativeEngine::GossipGraph
 
 namespace NarrativeEngine::GossipSim
 {

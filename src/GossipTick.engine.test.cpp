@@ -3,12 +3,14 @@
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
 #include <GossipDispatch.h>
+#include <GossipLog.h>
 #include <GossipSpies.h>
 #include <GossipThread.h>
 #include <ThreadRole.h>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <future>
 #include <mutex>
@@ -317,10 +319,15 @@ TEST_CASE("GossipTick::Poll enqueues one job per crossed boundary", "[GossipTick
 TEST_CASE("GossipTick::Poll caps the backlog", "[GossipTick][engine]")
 {
     EngineMock engine;
-    const ConfiguredSettings settings{
-        "[Gossip]\nbGossipEnabled=1\niGossipTickIntervalSeconds=1\nfGossipHarvestIntervalGameHours=1.0\n"};
+    // The trace is switched on here and nowhere else in this file: the
+    // dropped-tick report is the one thing the scheduler says out loud, and
+    // reading it back off the real file is the only way to check it was said.
+    const ConfiguredSettings settings{"[Gossip]\nbGossipEnabled=1\nbGossipLogEnabled=1\n"
+                                      "iGossipTickIntervalSeconds=1\nfGossipHarvestIntervalGameHours=1.0\n"};
     const RunningGossip gossip;
     GossipSpies().Reset();
+    NarrativeEngine::Testing::ClearGossipTrace();
+    NarrativeEngine::GossipLog::OnSessionStart();
     GossipSpies().lastSimulatedGameDay = -1.0;
     SetGameDay(engine, 10.0);
     GossipTick::OnSessionStart();
@@ -345,10 +352,13 @@ TEST_CASE("GossipTick::Poll caps the backlog", "[GossipTick][engine]")
         {
             // Dropped ticks are deliberate, which makes them exactly the kind
             // of thing that has to be reported: silence here reads identically
-            // to a scheduler that stopped working.
-            std::scoped_lock lock(GossipSpies().mutex);
-            REQUIRE_FALSE(GossipSpies().notes.empty());
-            REQUIRE(GossipSpies().notes.back().find("dropped") != std::string::npos);
+            // to a scheduler that stopped working. Read back off the real trace
+            // file, which is what a player would attach to a bug report.
+            const auto lines = NarrativeEngine::Testing::GossipTraceLines();
+            const bool reported = std::any_of(lines.begin(), lines.end(), [](const std::string& line) {
+                return line.find("dropped") != std::string::npos;
+            });
+            REQUIRE(reported);
         }
     }
 }

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
+#include <map>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -30,8 +32,10 @@ namespace NarrativeEngine::Testing
         std::vector<std::string> calls;
         // The game day each tick was stamped for.
         std::vector<double> stampedHorizons;
-        // What the scheduler reported to the gossip log.
-        std::vector<std::string> notes;
+        // Display names the gossip trace renders. Filled in by a test so a
+        // line can be checked for the name a reader would see.
+        std::map<std::uint32_t, std::string> npcNames;
+        std::map<std::uint32_t, std::string> locationNames;
 
         // How many times the scheduler asked whether the graph was ready. The
         // cheapest evidence that anything reached GossipTick::Poll at all,
@@ -52,4 +56,14 @@ namespace NarrativeEngine::Testing
     };
 
     GossipSpyState& GossipSpies();
+
+    // Every line the real gossip trace has written this session, read back off
+    // disk. GossipLog is compiled for real into the test executable and writes
+    // under EngineMock's log directory, so this is exactly the file a player
+    // would attach to a bug report.
+    std::vector<std::string> GossipTraceLines();
+
+    // Removes the trace files so a case starts from an empty one. Closes the
+    // current session first, because the stream holds the file open.
+    void ClearGossipTrace();
 } // namespace NarrativeEngine::Testing

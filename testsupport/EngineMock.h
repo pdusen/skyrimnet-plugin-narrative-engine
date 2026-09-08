@@ -206,6 +206,15 @@ namespace NarrativeEngine::Testing
         // register a production sink and then dispatch to it exactly as the
         // Papyrus VM would — which is the only way to reach a sink that lives
         // in an anonymous namespace.
+        // Where SKSE says its log directory is. Modules that keep their own
+        // trace file write there for real, so a test can read back exactly what
+        // a player would send in with a bug report.
+        struct LoggingState
+        {
+            bool directoryPresent = true;
+            std::string directory = "Data/SKSE/Plugins/NarrativeEngineTestLogs";
+        } logging;
+
         struct ModEventState
         {
             bool sourcePresent = true;
