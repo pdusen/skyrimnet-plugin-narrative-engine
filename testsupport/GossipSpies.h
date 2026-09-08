@@ -1,5 +1,7 @@
 #pragma once
 
+#include <GossipState.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -24,6 +26,8 @@
 // simulation.
 namespace NarrativeEngine::Testing
 {
+    using NarrativeEngine::GossipState;
+
     struct GossipSpyState
     {
         std::mutex mutex;
@@ -56,6 +60,14 @@ namespace NarrativeEngine::Testing
     };
 
     GossipSpyState& GossipSpies();
+
+    // The simulation's live and staged state. Real GossipState objects the
+    // harness owns, because GossipState is a plain struct and the modules that
+    // read it walk it field by field — a genuine one is simpler than a stand-in
+    // and exactly faithful. Cleared by ResetGossipState.
+    GossipState& LiveGossipState();
+    GossipState& StagedGossipState();
+    void ResetGossipState();
 
     // Every line the real gossip trace has written this session, read back off
     // disk. GossipLog is compiled for real into the test executable and writes

@@ -731,6 +731,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/EvalDispatch.cpp"
         "${CMAKE_SOURCE_DIR}/src/PrismaUI.cpp"
         "${CMAKE_SOURCE_DIR}/src/SkyrimNetAPI.cpp"
+        "${CMAKE_SOURCE_DIR}/src/GossipClaims.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipDispatch.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipLog.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipTick.cpp"

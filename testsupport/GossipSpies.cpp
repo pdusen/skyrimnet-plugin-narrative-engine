@@ -127,8 +127,54 @@ namespace NarrativeEngine::GossipGraph
     }
 } // namespace NarrativeEngine::GossipGraph
 
+namespace NarrativeEngine::Testing
+{
+    namespace
+    {
+        // Leaked, like every other static holding a CommonLibSSE-adjacent
+        // container: see the note on the form tables in RelocationMocks.cpp.
+        GossipState*& LiveStorage()
+        {
+            static auto* state = new GossipState();
+            return state;
+        }
+
+        GossipState*& StagedStorage()
+        {
+            static auto* state = new GossipState();
+            return state;
+        }
+    } // namespace
+
+    GossipState& LiveGossipState()
+    {
+        return *LiveStorage();
+    }
+
+    GossipState& StagedGossipState()
+    {
+        return *StagedStorage();
+    }
+
+    void ResetGossipState()
+    {
+        *LiveStorage() = GossipState{};
+        *StagedStorage() = GossipState{};
+    }
+} // namespace NarrativeEngine::Testing
+
 namespace NarrativeEngine::GossipSim
 {
+    GossipState& MutableState(const GossipThread::Token&)
+    {
+        return Testing::LiveGossipState();
+    }
+
+    GossipState& PendingState()
+    {
+        return Testing::StagedGossipState();
+    }
+
     bool AdoptPendingState()
     {
         Testing::GossipSpies().Record("adopt");
