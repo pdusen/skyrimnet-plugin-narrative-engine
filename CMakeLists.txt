@@ -723,6 +723,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/BeatWorkDispatch.cpp"
         "${CMAKE_SOURCE_DIR}/src/BeatParamHelpers.cpp"
         "${CMAKE_SOURCE_DIR}/src/BeatRegistry.cpp"
+        "${CMAKE_SOURCE_DIR}/src/CameraVisibility.cpp"
         "${CMAKE_SOURCE_DIR}/src/ConsoleCommand.cpp"
         "${CMAKE_SOURCE_DIR}/src/CourierUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/Decorators.cpp"

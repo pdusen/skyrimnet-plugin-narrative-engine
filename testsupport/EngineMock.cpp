@@ -553,6 +553,116 @@ void RE::Script::CompileAndRun(RE::TESObjectREFR* a_targetRef, RE::COMPILER_NAME
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// What the player can see
+// ---------------------------------------------------------------------------
+//
+// The visibility fan asks one question of the engine, many times: did a ray
+// from the camera reach this point. Standing in at that level rather than
+// building geometry is what makes the answer exact — a hit fraction says
+// everything an occluder would, and the fan's own logic is what is under test.
+
+namespace NarrativeEngine::Testing
+{
+    namespace
+    {
+        // The target's 3D. A real NiNode is not needed: the fan reads the
+        // node's world bound and asks for children by name, and both are
+        // reachable through zeroed storage plus one stand-in.
+        FakeObject& FakeTarget3D()
+        {
+            static FakeObject node{sizeof(RE::NiNode), 128};
+            return node;
+        }
+
+        FakeObject& FakeCameraRoot()
+        {
+            static FakeObject node{sizeof(RE::NiNode), 128};
+            return node;
+        }
+    } // namespace
+
+    RE::NiNode* FabricatedCameraRoot()
+    {
+        return FakeCameraRoot().As<RE::NiNode>();
+    }
+
+    RE::NiAVObject* Fabricated3D()
+    {
+        auto* mock = EngineMock::Current();
+        auto& object = FakeTarget3D();
+        auto* node = object.As<RE::NiAVObject>();
+        if (mock) {
+            node->worldBound.radius = mock->visibility.targetBoundRadius;
+            node->worldBound.center = RE::NiPoint3{};
+        }
+        return node;
+    }
+} // namespace NarrativeEngine::Testing
+
+RE::NiAVObject* RE::TESObjectREFR::Get3D() const
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->visibility.target3DPresent)
+        return nullptr;
+    return NarrativeEngine::Testing::Fabricated3D();
+}
+
+RE::NiAVObject* RE::NiAVObject::GetObjectByName(const RE::BSFixedString& a_name)
+{
+    auto* mock = EngineMock::Current();
+    if (!mock)
+        return nullptr;
+    const char* raw = a_name.c_str();
+    const auto it = mock->visibility.namedNodes.find(raw ? raw : "");
+    if (it == mock->visibility.namedNodes.end() || !it->second)
+        return nullptr;
+    // Answering with the root itself is enough: the fan only reads the node's
+    // world translate, and a distinct object would add nothing to check.
+    return NarrativeEngine::Testing::Fabricated3D();
+}
+
+RE::PlayerCamera* RE::PlayerCamera::GetSingleton()
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->visibility.cameraPresent)
+        return nullptr;
+    auto* camera = NarrativeEngine::Testing::OpaqueSingleton<RE::PlayerCamera>();
+    if (!mock->visibility.cameraRootPresent) {
+        // Written through the raw pointer: NiPointer refcounts, and these
+        // fabricated nodes are process-lifetime statics with no refcount to
+        // manage.
+        std::memset(static_cast<void*>(&camera->cameraRoot), 0, sizeof(camera->cameraRoot));
+        return camera;
+    }
+    auto* root = NarrativeEngine::Testing::FabricatedCameraRoot();
+    root->world.translate = RE::NiPoint3{mock->visibility.cameraX, mock->visibility.cameraY, mock->visibility.cameraZ};
+    std::memcpy(static_cast<void*>(&camera->cameraRoot), &root, sizeof(root));
+    return camera;
+}
+
+bool RE::Actor::HasLineOfSight(RE::TESObjectREFR*, bool&)
+{
+    auto* mock = EngineMock::Current();
+    return mock != nullptr && mock->visibility.engineLineOfSight;
+}
+
+RE::NiAVObject* RE::TES::Pick(RE::bhkPickData& a_pickData)
+{
+    auto* mock = EngineMock::Current();
+    if (!mock)
+        return nullptr;
+    ++mock->visibility.pickCalls;
+    a_pickData.rayOutput.hitFraction = mock->visibility.pickHitFraction;
+    return nullptr;
+}
+
+RE::hkVector4& RE::hkVector4::operator=(const RE::hkVector4& a_rhs)
+{
+    quad = a_rhs.quad;
+    return *this;
+}
+
+// ---------------------------------------------------------------------------
 // The world: terrain, water, and moving an actor through it
 // ---------------------------------------------------------------------------
 //

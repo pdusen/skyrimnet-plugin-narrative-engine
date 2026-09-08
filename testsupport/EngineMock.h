@@ -263,6 +263,38 @@ namespace NarrativeEngine::Testing
             std::string actorName = "Bandit";
         } placement;
 
+        // What the player can see, as far as the visibility fan is concerned.
+        // Modelled at the raycast rather than as geometry: the module's whole
+        // question is "did a ray reach its endpoint", so one hit fraction says
+        // everything a world of obstacles would.
+        struct VisibilityState
+        {
+            bool cameraPresent = true;
+            bool cameraRootPresent = true;
+            float cameraX = 0.0f;
+            float cameraY = 0.0f;
+            float cameraZ = 0.0f;
+
+            // Whether the target has 3D loaded, and how big its bound is. A
+            // zero radius is a real state on freshly-attached 3D.
+            bool target3DPresent = true;
+            float targetBoundRadius = 64.0f;
+
+            // What the engine's own line-of-sight call answers. Trusted as a
+            // positive short-circuit only, so `false` here is not "invisible".
+            bool engineLineOfSight = false;
+
+            // What every raycast reports reaching. 1.0 is unobstructed; a low
+            // fraction is geometry in the way.
+            float pickHitFraction = 1.0f;
+            int pickCalls = 0;
+
+            // Skeleton nodes the fan looks for by name. Empty means none
+            // resolve and the fan falls back to the bounding box, which is the
+            // usual case for a non-actor reference.
+            std::map<std::string, bool> namedNodes;
+        } visibility;
+
         // Where SKSE says its log directory is. Modules that keep their own
         // trace file write there for real, so a test can read back exactly what
         // a player would send in with a bug report.
