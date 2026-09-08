@@ -712,6 +712,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
     #     nothing Skyrim-specific in them, and logging calls in the code under
     #     test should behave.
     set(NARRATIVEENGINE_MOCKED_SOURCES
+        "${CMAKE_SOURCE_DIR}/src/DecisionLog.cpp"
         "${CMAKE_SOURCE_DIR}/src/EngineUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/PhaseTracker.cpp"
         "${CMAKE_SOURCE_DIR}/src/QuestUtils.cpp"
