@@ -66,6 +66,17 @@ namespace NarrativeEngine::Testing
         char lastQueryJson[1024]{};
         char lastDecoratorName[128]{};
         char lastDecoratorDescription[256]{};
+
+        // Every decorator registered this session, with what its callback
+        // answered when the fake called it. Recorded per registration rather
+        // than as a "last" pair because a single Register() call installs
+        // several, and each one's value is a separate contract with the prompt
+        // template that renders it. The callbacks are anonymous-namespace
+        // statics, so what SkyrimNet was handed is the only way to reach them.
+        static constexpr int kMaxRecordedDecorators = 8;
+        int recordedDecorators = 0;
+        char decoratorNames[kMaxRecordedDecorators][128]{};
+        char decoratorResults[kMaxRecordedDecorators][256]{};
         char lastMemoryText[512]{};
         char lastMemoryType[64]{};
         char lastEmotion[64]{};

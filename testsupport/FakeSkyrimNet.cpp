@@ -143,9 +143,14 @@ extern "C"
         CopyInto(s.lastDecoratorDescription, sizeof(s.lastDecoratorDescription), description);
         // Call it once with a null actor, the way SkyrimNet's prompt renderer
         // eventually will. Decorators are documented to ignore the actor, so a
-        // decorator that dereferenced it would fault here rather than in game.
-        if (callback) {
-            (void)callback(nullptr);
+        // decorator that dereferenced it would fault here rather than in game --
+        // and what it returned is recorded, because the callbacks are otherwise
+        // unreachable from a test.
+        if (callback && s.recordedDecorators < FakeSkyrimNetState::kMaxRecordedDecorators) {
+            const int slot = s.recordedDecorators++;
+            CopyInto(s.decoratorNames[slot], sizeof(s.decoratorNames[slot]), name);
+            const std::string result = callback(nullptr);
+            CopyInto(s.decoratorResults[slot], sizeof(s.decoratorResults[slot]), result.c_str());
         }
         return s.registerDecoratorSucceeds;
     }
