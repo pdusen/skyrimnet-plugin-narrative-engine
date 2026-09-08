@@ -19,6 +19,7 @@ namespace RE
     class Sky;
     class TESFaction;
     class TESObjectCELL;
+    class TESWorldSpace;
     class TESObjectREFR;
     class TESQuest;
     class Calendar;
@@ -356,6 +357,30 @@ namespace NarrativeEngine::Testing
         // to a process-wide static that nothing ever unregisters.
         static RE::BSTEventSource<SKSE::ModCallbackEvent>& ModEventSource();
 
+        // Fabricate a worldspace the data handler will hand back when asked for
+        // every WorldSpace form. Its cell map starts empty.
+        RE::TESWorldSpace* AddWorldSpace(std::uint32_t formID);
+
+        // Add an exterior cell to a worldspace's cell map at the given grid
+        // coordinates, optionally belonging to a location.
+        //
+        // KNOWN LIMIT: a cell added this way is findable by lookup but NOT by
+        // iteration. CommonLibSSE's BSTScatterTable reports the right size()
+        // afterwards and yet yields nothing from a range-for, so any engine
+        // code that WALKS a cellMap — HoldGrid's grid builder is the one that
+        // matters — sees an empty world. Fixing that means building the
+        // scatter table the way the engine's own iterator expects rather than
+        // through insert(), and until then HoldGrid cannot be driven from a
+        // test. Lookup-shaped uses of this API are unaffected.
+        RE::TESObjectCELL* AddExteriorCell(RE::TESWorldSpace* worldSpace,
+                                           std::int16_t cellX,
+                                           std::int16_t cellY,
+                                           RE::BGSLocation* location);
+
+        // Stand the player in an exterior cell of `worldSpace` at the given
+        // grid coordinates, so a precomputed cell-to-hold grid can find them.
+        void StandPlayerInCell(RE::TESWorldSpace* worldSpace, std::int16_t cellX, std::int16_t cellY);
+
         // Fabricate a quest whose state the mocked TESQuest predicates answer
         // from, authored in the named ESP. Kept alive for the process: an alias
         // instance holds a bare pointer to it.
@@ -486,6 +511,14 @@ namespace NarrativeEngine::Testing
             std::uint32_t cellFormID = 0x0001A26Fu;
             std::string cellName = "Whiterun Bannered Mare";
             bool cellIsInterior = true;
+            // Whether the engine's record store is up. Absent before data load.
+            bool dataHandlerPresent = true;
+
+            // The exterior the player's cell belongs to, and where in it. Only
+            // a cell with all three can be looked up in a precomputed grid.
+            RE::TESWorldSpace* playerCellWorldSpace = nullptr;
+            std::int16_t playerCellX = 0;
+            std::int16_t playerCellY = 0;
 
             // Editor IDs, which the engine only retains at runtime with
             // powerofthree's Tweaks installed. Empty is the no-Tweaks case, and

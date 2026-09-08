@@ -39,6 +39,27 @@ namespace NarrativeEngine::Testing
     void ClearLocationPool();
     void ClearEditorIDsByForm();
     void ClearQuestAndAliasPools();
+    void ClearWorldPool();
+
+    // What the harness knows about a fabricated cell that the engine's own
+    // out-of-line accessors have to answer from.
+    struct ExteriorCellFacts
+    {
+        RE::EXTERIOR_DATA coordinates{};
+        RE::BGSLocation* location = nullptr;
+        bool isInterior = false;
+    };
+
+    const ExteriorCellFacts* FactsFor(const void* cell);
+
+    // Cells are fabricated with headroom past sizeof(TESObjectCELL).
+    // TESObjectCELL::GetRuntimeData() hands back a view whose members sit at
+    // offsets beyond the type's own size -- the block is relocated per runtime,
+    // and CommonLibSSE's static_assert covers the record's fixed part only.
+    // Writing worldSpace through that view runs off the end of an
+    // exactly-sized object and corrupts whatever follows it.
+    inline constexpr std::size_t kCellStorageBytes = sizeof(RE::TESObjectCELL) + 0x200;
+    void RegisterCellFacts(const void* cell, std::int16_t cellX, std::int16_t cellY, RE::BGSLocation* location);
     const EngineMock::QuestState* QuestStateFor(const void* quest);
     RE::TESObjectCELL* FabricatedCell();
 
@@ -171,6 +192,11 @@ namespace NarrativeEngine::Testing
         // can land where a named one was and inherit its editor ID.
         ClearEditorIDsByForm();
         ClearQuestAndAliasPools();
+        // The world pool is deliberately NOT cleared. Worldspaces and their
+        // exterior cells are long-lived record data that a save does not
+        // reset, and the hold grid built over them latches once per process
+        // and keeps pointers into them — exactly as it does in game. Clearing
+        // between tests would leave that grid pointing at freed cells.
 
         g_installed = this;
     }
@@ -554,6 +580,157 @@ void RE::Script::CompileAndRun(RE::TESObjectREFR* a_targetRef, RE::COMPILER_NAME
 // ---------------------------------------------------------------------------
 // SKSE::TaskInterface
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Worldspaces and their exterior cells
+// ---------------------------------------------------------------------------
+//
+// Built for real: the grid builder walks a worldspace's cellMap the engine's
+// own way, and BSTHashMap is a container the harness already knows how to keep
+// alive. What is stood in for is only the two out-of-line cell accessors, whose
+// answers come from a side table keyed by the cell's address.
+
+namespace NarrativeEngine::Testing
+{
+    namespace
+    {
+        std::unordered_map<const void*, ExteriorCellFacts>& CellFacts()
+        {
+            static auto* facts = new std::unordered_map<const void*, ExteriorCellFacts>();
+            return *facts;
+        }
+
+        struct WorldPool
+        {
+            std::deque<FakeObject> worldObjects;
+            std::deque<FakeObject> cellObjects;
+            RE::BSTArray<RE::TESForm*> worldForms;
+        };
+
+        // Leaked, like the form tables: it holds CommonLibSSE containers that
+        // free through a relocation.
+        WorldPool& Worlds()
+        {
+            static auto* pool = new WorldPool();
+            return *pool;
+        }
+    } // namespace
+
+    void ClearWorldPool()
+    {
+        CellFacts().clear();
+        Worlds().worldObjects.clear();
+        Worlds().cellObjects.clear();
+        Worlds().worldForms.clear();
+    }
+
+    RE::BSTArray<RE::TESForm*>& WorldSpaceForms()
+    {
+        return Worlds().worldForms;
+    }
+
+    void RegisterCellFacts(const void* cell, std::int16_t cellX, std::int16_t cellY, RE::BGSLocation* location)
+    {
+        ExteriorCellFacts facts;
+        facts.coordinates.cellX = cellX;
+        facts.coordinates.cellY = cellY;
+        facts.location = location;
+        CellFacts()[cell] = facts;
+    }
+
+    void EngineMock::StandPlayerInCell(RE::TESWorldSpace* worldSpace, std::int16_t cellX, std::int16_t cellY)
+    {
+        world.playerCellWorldSpace = worldSpace;
+        world.playerCellX = cellX;
+        world.playerCellY = cellY;
+        world.cellIsInterior = false;
+    }
+
+    const ExteriorCellFacts* FactsFor(const void* cell)
+    {
+        const auto& facts = CellFacts();
+        const auto it = facts.find(cell);
+        return it == facts.end() ? nullptr : &it->second;
+    }
+
+    RE::TESWorldSpace* EngineMock::AddWorldSpace(std::uint32_t formID)
+    {
+        auto& pool = Worlds();
+        // Headroom past sizeof, for the same reason cells get it.
+        auto& object = pool.worldObjects.emplace_back(sizeof(RE::TESWorldSpace) + 0x200, 128);
+        WireFormDefaults(object, false);
+        auto* worldSpace = object.As<RE::TESWorldSpace>();
+        worldSpace->formType = RE::FormType::WorldSpace;
+        worldSpace->formID = formID;
+        // Map bounds wide enough for any test grid. A worldspace whose bounds
+        // are all zero is a one-cell world, and a grid builder reads that as
+        // degenerate and skips it.
+        worldSpace->worldMapData.nwCellX = -64;
+        worldSpace->worldMapData.nwCellY = 64;
+        worldSpace->worldMapData.seCellX = 64;
+        worldSpace->worldMapData.seCellY = -64;
+        pool.worldForms.push_back(object.As<RE::TESForm>());
+        FormTable().insert({formID, object.As<RE::TESForm>()});
+        return worldSpace;
+    }
+
+    RE::TESObjectCELL* EngineMock::AddExteriorCell(RE::TESWorldSpace* worldSpace,
+                                                   std::int16_t cellX,
+                                                   std::int16_t cellY,
+                                                   RE::BGSLocation* location)
+    {
+        if (!worldSpace)
+            return nullptr;
+        auto& pool = Worlds();
+        auto& object = pool.cellObjects.emplace_back(kCellStorageBytes, 128);
+        WireFormDefaults(object, false);
+        auto* cell = object.As<RE::TESObjectCELL>();
+        cell->formType = RE::FormType::Cell;
+        cell->formID = 0x00C00000u + static_cast<std::uint32_t>(pool.cellObjects.size());
+
+        ExteriorCellFacts facts;
+        facts.coordinates.cellX = cellX;
+        facts.coordinates.cellY = cellY;
+        facts.location = location;
+        CellFacts()[static_cast<const void*>(cell)] = facts;
+
+        // CellID takes (y, x), in that order.
+        worldSpace->cellMap.insert({RE::CellID{cellY, cellX}, cell});
+        return cell;
+    }
+} // namespace NarrativeEngine::Testing
+
+RE::TESDataHandler* RE::TESDataHandler::GetSingleton(bool)
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->world.dataHandlerPresent)
+        return nullptr;
+    return NarrativeEngine::Testing::OpaqueSingleton<RE::TESDataHandler>();
+}
+
+RE::BSTArray<RE::TESForm*>& RE::TESDataHandler::GetFormArray(RE::FormType a_formType)
+{
+    // Only the worldspace array is populated; anything else answers empty,
+    // which is what an install with none of that record type looks like.
+    static auto* empty = new RE::BSTArray<RE::TESForm*>();
+    if (a_formType != RE::FormType::WorldSpace)
+        return *empty;
+    return NarrativeEngine::Testing::WorldSpaceForms();
+}
+
+RE::EXTERIOR_DATA* RE::TESObjectCELL::GetCoordinates()
+{
+    const auto* facts = NarrativeEngine::Testing::FactsFor(this);
+    if (!facts)
+        return nullptr;
+    return const_cast<RE::EXTERIOR_DATA*>(&facts->coordinates);
+}
+
+RE::BGSLocation* RE::TESObjectCELL::GetLocation() const
+{
+    const auto* facts = NarrativeEngine::Testing::FactsFor(this);
+    return facts ? facts->location : nullptr;
+}
 
 // ---------------------------------------------------------------------------
 // Quests, aliases, and the extra data that records a fill
@@ -1385,7 +1562,7 @@ namespace NarrativeEngine::Testing
 
         FakeObject& FakeCell()
         {
-            static FakeObject cell{sizeof(RE::TESObjectCELL), 128};
+            static FakeObject cell{kCellStorageBytes, 128};
             return cell;
         }
 
@@ -1486,6 +1663,12 @@ RE::BGSLocation* RE::TESObjectREFR::GetCurrentLocation() const
 
 bool RE::TESObjectCELL::IsInteriorCell() const
 {
+    // Per-cell when the harness fabricated this one as an exterior: a grid
+    // builder walks many cells at once and has to tell them apart. The global
+    // answer remains for the player's own cell, which most tests steer through
+    // world.cellIsInterior without caring about any others.
+    if (const auto* facts = NarrativeEngine::Testing::FactsFor(this))
+        return facts->isInterior;
     auto* mock = NarrativeEngine::Testing::EngineMock::Current();
     return mock != nullptr && mock->world.cellIsInterior;
 }
@@ -1559,6 +1742,15 @@ namespace NarrativeEngine::Testing
             cell->formType = RE::FormType::Cell;
             cell->fullName = mock->world.cellName.c_str();
             SetEditorID(cell, mock->world.cellEditorID);
+            // Where the cell sits in its exterior, and only when a test has
+            // actually placed the player there. A grid lookup needs the
+            // worldspace and the coordinates together; without either the
+            // player is simply not in the grid, which is the state every test
+            // that does not care about the grid wants.
+            if (mock->world.playerCellWorldSpace) {
+                cell->GetRuntimeData().worldSpace = mock->world.playerCellWorldSpace;
+                RegisterCellFacts(cell, mock->world.playerCellX, mock->world.playerCellY, nullptr);
+            }
             pc->parentCell = cell;
         } else {
             pc->parentCell = nullptr;
