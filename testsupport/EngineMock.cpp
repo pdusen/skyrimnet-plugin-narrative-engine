@@ -666,6 +666,12 @@ namespace NarrativeEngine::Testing
         std::memcpy(raw + sizeof(dataPointer), &count, sizeof(count));
         quest->sourceFiles.array = &files;
 
+        // Registered by editor ID as well, because modules that hold a quest
+        // resolve it with LookupByEditorID exactly once per process.
+        if (!state.editorID.empty())
+            EditorIDTable().insert({RE::BSFixedString(state.editorID.c_str()), object.As<RE::TESForm>()});
+        FormTable().insert({state.formID, object.As<RE::TESForm>()});
+
         QuestStates()[static_cast<const void*>(quest)] = state;
         return quest;
     }
