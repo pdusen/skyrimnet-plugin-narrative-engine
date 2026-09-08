@@ -303,6 +303,22 @@ namespace NarrativeEngine::Testing
             std::string cellName = "Whiterun Bannered Mare";
             bool cellIsInterior = true;
 
+            // Editor IDs, which the engine only retains at runtime with
+            // powerofthree's Tweaks installed. Empty is the no-Tweaks case, and
+            // several predicates degrade open on it by design.
+            std::string cellEditorID = "WhiterunBanneredMare";
+            std::string locationEditorID = "WhiterunLocation";
+
+            // The player location's parentLoc, if any. Vanilla nests these —
+            // SovngardeHallofHeroesLocation sits under SovngardeLocation — and
+            // several predicates walk the chain rather than reading only the
+            // leaf. Empty means the leaf has no parent.
+            std::string locationParentEditorID;
+
+            // The scripted scene the player is standing in, if any.
+            bool playerInScene = false;
+            bool sceneIsPlaying = true;
+
             // Per-actor state the snapshot reads beyond the liveness flags.
             std::string actorDisplayName = "Ysolda";
             bool actorIsPlayerTeammate = false;

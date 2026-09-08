@@ -30,11 +30,26 @@ namespace NarrativeEngine::Testing
 {
     // Defined further down, next to the registry they operate on.
     std::vector<RE::Actor*>& LoadedActors();
+    void SetEditorID(const void* form, const std::string& editorID);
     void ClearActorRegistry();
     void ClearLocationPool();
 
     namespace
     {
+        // LocationKeywords documents.
+        std::unordered_map<const void*, std::string>& EditorIDsByForm()
+        {
+            static std::unordered_map<const void*, std::string> ids;
+            return ids;
+        }
+
+        const char* FormEditorIDImpl(void* self)
+        {
+            const auto& ids = EditorIDsByForm();
+            const auto it = ids.find(self);
+            return it != ids.end() ? it->second.c_str() : "";
+        }
+
         // TESForm::AsReference() forwards to the virtual AsReference1 at slot
         // 0x2B (AsReference2 at 0x2C is its const twin). A form that IS a
         // reference answers with itself; everything else answers null, which
@@ -49,12 +64,19 @@ namespace NarrativeEngine::Testing
             return nullptr;
         }
 
+        // TESObjectREFR::GetCurrentScene is VIRTUAL, at slot 0x4A. An
+        // out-of-line definition of it would never be called: the caller goes
+        // through the vtable, so the stand-in has to live in a slot.
+        RE::BGSScene* GetCurrentSceneImpl(void*);
+
         void WireFormDefaults(FakeObject& form, bool isReference)
         {
             void* asReference = isReference ? reinterpret_cast<void*>(&FormAsReferenceSelf)
                                             : reinterpret_cast<void*>(&FormAsReferenceNull);
             form.Slot(0x2B, asReference);
             form.Slot(0x2C, asReference);
+            if (isReference)
+                form.Slot(0x4A, reinterpret_cast<void*>(&GetCurrentSceneImpl));
         }
     } // namespace
 
@@ -903,6 +925,12 @@ namespace NarrativeEngine::Testing
             static FakeObject weather{sizeof(RE::TESWeather), 128};
             return weather;
         }
+
+        FakeObject& FakeParentLocation()
+        {
+            static FakeObject location{sizeof(RE::BGSLocation), 128};
+            return location;
+        }
     } // namespace
 } // namespace NarrativeEngine::Testing
 
@@ -916,10 +944,34 @@ RE::BGSLocation* RE::TESObjectREFR::GetCurrentLocation() const
     auto& object = FakeLocation();
     WireFormDefaults(object, false);
     WireFullName<RE::BGSLocation>(object);
+    WireKeywordForm<RE::BGSLocation>(object);
+    object.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
     auto* location = object.As<RE::BGSLocation>();
     location->formID = mock->world.locationFormID;
     location->formType = RE::FormType::Location;
     location->fullName = mock->world.locationName.c_str();
+    location->keywords = nullptr;
+    location->numKeywords = 0;
+    SetEditorID(location, mock->world.locationEditorID);
+
+    if (mock->world.locationParentEditorID.empty()) {
+        location->parentLoc = nullptr;
+    } else {
+        auto& parentObject = FakeParentLocation();
+        WireFormDefaults(parentObject, false);
+        WireFullName<RE::BGSLocation>(parentObject);
+        WireKeywordForm<RE::BGSLocation>(parentObject);
+        parentObject.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
+        auto* parent = parentObject.As<RE::BGSLocation>();
+        parent->formID = mock->world.locationFormID + 1u;
+        parent->formType = RE::FormType::Location;
+        parent->fullName = mock->world.locationName.c_str();
+        parent->parentLoc = nullptr;
+        parent->keywords = nullptr;
+        parent->numKeywords = 0;
+        SetEditorID(parent, mock->world.locationParentEditorID);
+        location->parentLoc = parent;
+    }
     return location;
 }
 
@@ -982,10 +1034,12 @@ namespace NarrativeEngine::Testing
             auto& cellObject = FakeCell();
             WireFormDefaults(cellObject, false);
             WireFullName<RE::TESObjectCELL>(cellObject);
+            cellObject.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
             auto* cell = cellObject.As<RE::TESObjectCELL>();
             cell->formID = mock->world.cellFormID;
             cell->formType = RE::FormType::Cell;
             cell->fullName = mock->world.cellName.c_str();
+            SetEditorID(cell, mock->world.cellEditorID);
             pc->parentCell = cell;
         } else {
             pc->parentCell = nullptr;
@@ -1038,19 +1092,6 @@ namespace NarrativeEngine::Testing
     {
         // Editor IDs by form, since a TESForm does not carry one at runtime
         // without powerofthree's Tweaks -- which is exactly the dependency
-        // LocationKeywords documents.
-        std::unordered_map<const void*, std::string>& EditorIDsByForm()
-        {
-            static std::unordered_map<const void*, std::string> ids;
-            return ids;
-        }
-
-        const char* FormEditorIDImpl(void* self)
-        {
-            const auto& ids = EditorIDsByForm();
-            const auto it = ids.find(self);
-            return it != ids.end() ? it->second.c_str() : "";
-        }
 
         // Deliberately never cleared: see EngineMock::AddKeyword.
         struct KeywordPool
@@ -1145,4 +1186,46 @@ namespace NarrativeEngine::Testing
         if (child)
             child->parentLoc = parent;
     }
+} // namespace NarrativeEngine::Testing
+
+// ---------------------------------------------------------------------------
+// Editor IDs and the scripted scene
+// ---------------------------------------------------------------------------
+
+namespace NarrativeEngine::Testing
+{
+    void SetEditorID(const void* form, const std::string& editorID)
+    {
+        EditorIDsByForm()[form] = editorID;
+    }
+
+    namespace
+    {
+        FakeObject& FakeScene()
+        {
+            static FakeObject scene{sizeof(RE::BGSScene), 128};
+            return scene;
+        }
+    } // namespace
+} // namespace NarrativeEngine::Testing
+
+namespace NarrativeEngine::Testing
+{
+    namespace
+    {
+        RE::BGSScene* GetCurrentSceneImpl(void*)
+        {
+            auto* mock = EngineMock::Current();
+            if (!mock || !mock->world.playerInScene)
+                return nullptr;
+
+            auto& object = FakeScene();
+            WireFormDefaults(object, false);
+            auto* scene = object.As<RE::BGSScene>();
+            scene->formType = RE::FormType::Scene;
+            scene->formID = 0x0004E5C1u;
+            scene->isPlaying = mock->world.sceneIsPlaying;
+            return scene;
+        }
+    } // namespace
 } // namespace NarrativeEngine::Testing
