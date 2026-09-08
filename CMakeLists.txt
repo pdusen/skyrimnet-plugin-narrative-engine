@@ -715,6 +715,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/DecisionLog.cpp"
         "${CMAKE_SOURCE_DIR}/src/EngineUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/PhaseTracker.cpp"
+        "${CMAKE_SOURCE_DIR}/src/Region.cpp"
         "${CMAKE_SOURCE_DIR}/src/QuestUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/Settings.cpp"
         "${CMAKE_SOURCE_DIR}/src/AlphaCanon.cpp"

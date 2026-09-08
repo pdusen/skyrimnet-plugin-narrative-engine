@@ -327,6 +327,12 @@ namespace NarrativeEngine::Testing
             // leaf. Empty means the leaf has no parent.
             std::string locationParentEditorID;
 
+            // Stand the player in a location the test built with AddLocation,
+            // rather than in the one fabricated from the fields above. The
+            // fabricated location has no keywords and no parent worth walking,
+            // so any module that reads either needs this.
+            RE::BGSLocation* playerLocationOverride = nullptr;
+
             // The scripted scene the player is standing in, if any.
             bool playerInScene = false;
             bool sceneIsPlaying = true;
@@ -361,7 +367,14 @@ namespace NarrativeEngine::Testing
         RE::BGSKeyword* AddKeyword(std::string_view editorID);
 
         // A location carrying the named keywords, registered in the form table.
-        RE::BGSLocation* AddLocation(std::uint32_t formID, std::string name, std::vector<std::string> keywordEditorIDs);
+        // Fabricate a BGSLocation. `editorID` is optional because most callers
+        // only need the display name, but a module that looks a location up by
+        // editor ID — or falls back to one when the display name is empty —
+        // needs it registered in both the editor-ID table and the per-form map.
+        RE::BGSLocation* AddLocation(std::uint32_t formID,
+                                     std::string name,
+                                     std::vector<std::string> keywordEditorIDs,
+                                     std::string editorID = {});
 
         // Point `child` at `parent` for the parentLoc walk.
         void SetLocationParent(RE::BGSLocation* child, RE::BGSLocation* parent);

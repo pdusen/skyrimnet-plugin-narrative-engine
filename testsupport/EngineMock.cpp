@@ -33,6 +33,7 @@ namespace NarrativeEngine::Testing
     void SetEditorID(const void* form, const std::string& editorID);
     void ClearActorRegistry();
     void ClearLocationPool();
+    void ClearEditorIDsByForm();
 
     namespace
     {
@@ -151,6 +152,10 @@ namespace NarrativeEngine::Testing
         EditorIDTable().clear();
         ClearActorRegistry();
         ClearLocationPool();
+        // Editor IDs are keyed by form ADDRESS, and the location pool recycles
+        // addresses between tests. Left uncleared, a fresh nameless location
+        // can land where a named one was and inherit its editor ID.
+        ClearEditorIDsByForm();
 
         g_installed = this;
     }
@@ -949,6 +954,8 @@ RE::BGSLocation* RE::TESObjectREFR::GetCurrentLocation() const
     auto* mock = EngineMock::Current();
     if (!mock || !mock->world.playerHasLocation)
         return nullptr;
+    if (mock->world.playerLocationOverride)
+        return mock->world.playerLocationOverride;
 
     auto& object = FakeLocation();
     WireFormDefaults(object, false);
@@ -1139,6 +1146,11 @@ namespace NarrativeEngine::Testing
         Locations().Clear();
     }
 
+    void ClearEditorIDsByForm()
+    {
+        EditorIDsByForm().clear();
+    }
+
     RE::BGSKeyword* EngineMock::AddKeyword(std::string_view editorID)
     {
         auto& pool = Keywords();
@@ -1156,21 +1168,25 @@ namespace NarrativeEngine::Testing
             it = pool.byEditorID.emplace(key, object.As<RE::BGSKeyword>()).first;
         }
 
-        // Re-registered on every call, because the editor-ID table is emptied
-        // per EngineMock while the keyword itself is not.
+        // Both re-registered on every call, because the editor-ID tables are
+        // emptied per EngineMock while the keyword itself is not.
+        EditorIDsByForm()[static_cast<const void*>(it->second)] = key;
         EditorIDTable().insert({RE::BSFixedString(key.c_str()), reinterpret_cast<RE::TESForm*>(it->second)});
         return it->second;
     }
 
     RE::BGSLocation* EngineMock::AddLocation(std::uint32_t formID,
                                              std::string name,
-                                             std::vector<std::string> keywordEditorIDs)
+                                             std::vector<std::string> keywordEditorIDs,
+                                             std::string editorID)
     {
         auto& pool = Locations();
         auto& object = pool.objects.emplace_back(sizeof(RE::BGSLocation), 256);
         WireFormDefaults(object, false);
         WireFullName<RE::BGSLocation>(object);
         WireKeywordForm<RE::BGSLocation>(object);
+        // GetFormEditorID is slot 0x32 on TESForm.
+        object.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
 
         auto* location = object.As<RE::BGSLocation>();
         location->formType = RE::FormType::Location;
@@ -1187,6 +1203,10 @@ namespace NarrativeEngine::Testing
         location->numKeywords = static_cast<std::uint32_t>(keywords.size());
 
         FormTable().insert({formID, object.As<RE::TESForm>()});
+        if (!editorID.empty()) {
+            SetEditorID(location, editorID);
+            EditorIDTable().insert({RE::BSFixedString(editorID.c_str()), object.As<RE::TESForm>()});
+        }
         return location;
     }
 
