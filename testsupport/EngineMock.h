@@ -263,6 +263,45 @@ namespace NarrativeEngine::Testing
             std::string actorName = "Bandit";
         } placement;
 
+        // Quests, the aliases they fill actors into, and the scene an actor is
+        // playing. What the sender-viability walk reads to decide whether some
+        // other mod's authored content already owns an NPC.
+        struct QuestState
+        {
+            bool stopped = false;
+            bool completed = false;
+            bool running = true;
+            // The ESP a quest was authored in. Ours is self-excluded, so this
+            // is what tells a foreign quest from one of our own.
+            std::string sourceFile = "SomeOtherMod.esp";
+            std::string editorID = "SomeOtherModQuest";
+            std::uint32_t formID = 0x000AA001u;
+        };
+
+        struct AliasState
+        {
+            // Quests an actor is filled into, in the order the walk sees them.
+            // Each entry is one (quest, alias) pair on the actor's extra data.
+            struct Instance
+            {
+                QuestState quest;
+                bool reserves = false;
+                bool questObject = false;
+                // Whether the alias contributes AI packages to the actor, which
+                // is the engine's own record that it is being puppeteered.
+                bool dispensesPackages = false;
+            };
+
+            // Absent means the actor carries no ExtraAliasInstanceArray at all,
+            // which is the common case for an NPC nobody has filled.
+            bool arrayPresent = false;
+            std::vector<Instance> instances;
+
+            // The quest that owns the scene the actor is playing, if any. Read
+            // together with world.playerInScene.
+            QuestState sceneQuest;
+        } aliases;
+
         // What the player can see, as far as the visibility fan is concerned.
         // Modelled at the raycast rather than as geometry: the module's whole
         // question is "did a ray reach its endpoint", so one hit fraction says
@@ -316,6 +355,16 @@ namespace NarrativeEngine::Testing
         // outlive any single EngineMock: a sink registered on it is a pointer
         // to a process-wide static that nothing ever unregisters.
         static RE::BSTEventSource<SKSE::ModCallbackEvent>& ModEventSource();
+
+        // Fabricate a quest whose state the mocked TESQuest predicates answer
+        // from, authored in the named ESP. Kept alive for the process: an alias
+        // instance holds a bare pointer to it.
+        RE::TESQuest* AddQuest(const QuestState& state);
+
+        // Fill `actor` into the aliases described by `aliases.instances`,
+        // building the ExtraAliasInstanceArray the engine would have built.
+        // Call after setting them up.
+        void FillAliasInstances(RE::Actor* actor);
 
         // The console-command path: the engine's form factory, the transient
         // Script form it hands back, and what was compiled through it.

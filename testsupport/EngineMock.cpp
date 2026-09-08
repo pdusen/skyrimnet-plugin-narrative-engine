@@ -38,6 +38,8 @@ namespace NarrativeEngine::Testing
     void ClearActorRegistry();
     void ClearLocationPool();
     void ClearEditorIDsByForm();
+    void ClearQuestAndAliasPools();
+    const EngineMock::QuestState* QuestStateFor(const void* quest);
     RE::TESObjectCELL* FabricatedCell();
 
     namespace
@@ -168,6 +170,7 @@ namespace NarrativeEngine::Testing
         // addresses between tests. Left uncleared, a fresh nameless location
         // can land where a named one was and inherit its editor ID.
         ClearEditorIDsByForm();
+        ClearQuestAndAliasPools();
 
         g_installed = this;
     }
@@ -553,6 +556,201 @@ void RE::Script::CompileAndRun(RE::TESObjectREFR* a_targetRef, RE::COMPILER_NAME
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// Quests, aliases, and the extra data that records a fill
+// ---------------------------------------------------------------------------
+//
+// Built for real rather than as opaque storage. ExtraAliasInstanceArray is a
+// plain struct of arrays, and the walk under test reads it field by field, so a
+// genuine one is both simpler than a stand-in and exactly faithful. What is
+// mocked is only the handful of out-of-line predicates around it.
+
+namespace NarrativeEngine::Testing
+{
+    namespace
+    {
+        // Fabricated quests, by address, so the mocked predicates below can
+        // answer per-quest rather than globally. A walk over several aliases
+        // sees several quests and has to tell them apart.
+        std::unordered_map<const void*, EngineMock::QuestState>& QuestStates()
+        {
+            static std::unordered_map<const void*, EngineMock::QuestState> states;
+            return states;
+        }
+
+        struct QuestPool
+        {
+            std::deque<FakeObject> objects;
+            std::deque<RE::TESFile> files;
+            // TESFileArray's members are private, so the array is built as
+            // raw storage and its pointer/size written at their documented
+            // offsets -- the same technique the string-pool stand-in uses.
+            std::deque<RE::TESFileArray> fileArrays;
+            std::deque<RE::TESFile*> filePointers;
+        };
+
+        // Leaked for the same reason as the event source above: these pools
+        // hold CommonLibSSE containers that free through a relocation.
+        QuestPool& Quests()
+        {
+            static auto* pool = new QuestPool();
+            return *pool;
+        }
+
+        struct AliasPool
+        {
+            std::deque<FakeObject> aliasObjects;
+            std::deque<RE::BGSRefAliasInstanceData> instances;
+            std::deque<RE::BSTArray<RE::TESPackage*>> packageArrays;
+            std::deque<RE::ExtraAliasInstanceArray> arrays;
+        };
+
+        AliasPool& Aliases()
+        {
+            static auto* pool = new AliasPool();
+            return *pool;
+        }
+
+    } // namespace
+
+    // The one array the mocked ExtraDataList::GetByType hands back.
+    RE::ExtraAliasInstanceArray*& CurrentAliasArray()
+    {
+        static RE::ExtraAliasInstanceArray* array = nullptr;
+        return array;
+    }
+
+    void ClearQuestAndAliasPools()
+    {
+        QuestStates().clear();
+        Quests().objects.clear();
+        Quests().files.clear();
+        Quests().fileArrays.clear();
+        Aliases().aliasObjects.clear();
+        Aliases().instances.clear();
+        Aliases().packageArrays.clear();
+        Aliases().arrays.clear();
+        CurrentAliasArray() = nullptr;
+    }
+
+    const EngineMock::QuestState* QuestStateFor(const void* quest)
+    {
+        const auto& states = QuestStates();
+        const auto it = states.find(quest);
+        return it == states.end() ? nullptr : &it->second;
+    }
+
+    RE::TESQuest* EngineMock::AddQuest(const QuestState& state)
+    {
+        auto& pool = Quests();
+        auto& object = pool.objects.emplace_back(sizeof(RE::TESQuest), 128);
+        WireFormDefaults(object, false);
+        object.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
+        auto* quest = object.As<RE::TESQuest>();
+        quest->formType = RE::FormType::Quest;
+        quest->formID = state.formID;
+        SetEditorID(quest, state.editorID);
+
+        // GetFile is inline over sourceFiles.array, so the file list is built
+        // for real; the ESP name is what self-exclusion compares against.
+        auto& file = pool.files.emplace_back();
+        std::memset(static_cast<void*>(&file), 0, sizeof(file));
+        const auto n = state.sourceFile.copy(file.fileName, sizeof(file.fileName) - 1);
+        file.fileName[n] = '\0';
+        auto& filePointer = pool.filePointers.emplace_back(&file);
+        auto& files = pool.fileArrays.emplace_back();
+        // { TESFile** _data; uint32 _size; } at offsets 0 and 8.
+        auto* raw = reinterpret_cast<std::byte*>(&files);
+        RE::TESFile** dataPointer = &filePointer;
+        std::memcpy(raw, &dataPointer, sizeof(dataPointer));
+        const std::uint32_t count = 1;
+        std::memcpy(raw + sizeof(dataPointer), &count, sizeof(count));
+        quest->sourceFiles.array = &files;
+
+        QuestStates()[static_cast<const void*>(quest)] = state;
+        return quest;
+    }
+
+    void EngineMock::FillAliasInstances(RE::Actor*)
+    {
+        auto& pool = Aliases();
+        auto& array = pool.arrays.emplace_back();
+        for (const auto& described : aliases.instances) {
+            auto& aliasObject = pool.aliasObjects.emplace_back(sizeof(RE::BGSBaseAlias), 32);
+            auto* alias = aliasObject.As<RE::BGSBaseAlias>();
+            using F = RE::BGSBaseAlias::FLAGS;
+            alias->flags = F::kNone;
+            if (described.reserves)
+                alias->flags.set(F::kReserves);
+            if (described.questObject)
+                alias->flags.set(F::kQuestObject);
+
+            auto& instance = pool.instances.emplace_back();
+            instance.quest = AddQuest(described.quest);
+            instance.alias = alias;
+            if (described.dispensesPackages) {
+                auto& packages = pool.packageArrays.emplace_back();
+                // One non-null entry is enough: the walk asks only whether the
+                // alias dispenses anything, never what.
+                packages.push_back(reinterpret_cast<RE::TESPackage*>(&packages));
+                instance.instancedPackages = &packages;
+            } else {
+                instance.instancedPackages = nullptr;
+            }
+            array.aliases.push_back(&instance);
+        }
+        CurrentAliasArray() = &array;
+    }
+} // namespace NarrativeEngine::Testing
+
+RE::BSExtraData* RE::ExtraDataList::GetByType(RE::ExtraDataType a_type)
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->aliases.arrayPresent)
+        return nullptr;
+    if (a_type != RE::ExtraDataType::kAliasInstanceArray)
+        return nullptr;
+    return NarrativeEngine::Testing::CurrentAliasArray();
+}
+
+bool RE::TESQuest::IsStopped() const
+{
+    const auto* state = NarrativeEngine::Testing::QuestStateFor(this);
+    return state != nullptr && state->stopped;
+}
+
+bool RE::TESQuest::IsCompleted() const
+{
+    const auto* state = NarrativeEngine::Testing::QuestStateFor(this);
+    return state != nullptr && state->completed;
+}
+
+// A no-op read guard. The tests are single-threaded, and taking a real lock on
+// fabricated storage would only be a way to hang.
+RE::BSReadLockGuard::BSReadLockGuard(BSReadWriteLock& a_lock) : _lock(a_lock) {}
+
+RE::BSReadLockGuard::~BSReadLockGuard() = default;
+
+// The extra-data node itself. Its constructor is out-of-line in the engine, and
+// what it does there is set the base's vtable and next pointer; a zeroed object
+// with an empty array is the same state, and the walk never asks it for its
+// type through the vtable because GetByType is stood in for above.
+RE::BSExtraData::BSExtraData() = default;
+
+bool RE::BSExtraData::IsNotEqual(const BSExtraData*) const
+{
+    return true;
+}
+
+RE::ExtraAliasInstanceArray::ExtraAliasInstanceArray() = default;
+
+RE::ExtraAliasInstanceArray::~ExtraAliasInstanceArray() = default;
+
+RE::ExtraDataType RE::ExtraAliasInstanceArray::GetType() const
+{
+    return ExtraDataType::kAliasInstanceArray;
+}
+
+// ---------------------------------------------------------------------------
 // What the player can see
 // ---------------------------------------------------------------------------
 //
@@ -757,8 +955,14 @@ namespace NarrativeEngine::Testing
 {
     RE::BSTEventSource<SKSE::ModCallbackEvent>& EngineMock::ModEventSource()
     {
-        static RE::BSTEventSource<SKSE::ModCallbackEvent> source;
-        return source;
+        // Deliberately never destroyed. See the note on the form tables in
+        // RelocationMocks.cpp: a CommonLibSSE container frees its storage
+        // through the mocked memory manager, which it reaches through a
+        // relocation, and at static-destruction time there is no guaranteed
+        // order between the two. Getting it wrong is a crash after the last
+        // assertion has already passed, which reads as a flaky test.
+        static auto* source = new RE::BSTEventSource<SKSE::ModCallbackEvent>();
+        return *source;
     }
 } // namespace NarrativeEngine::Testing
 
@@ -932,6 +1136,11 @@ namespace NarrativeEngine::Testing
 
 bool RE::TESQuest::IsRunning() const
 {
+    // Per-quest when the harness fabricated this one, because a single alias
+    // walk sees several quests and has to tell them apart. The global answer
+    // remains for the courier's own quest, which is fabricated elsewhere.
+    if (const auto* state = NarrativeEngine::Testing::QuestStateFor(this))
+        return state->running;
     auto* mock = EngineMock::Current();
     return mock != nullptr && mock->courier.questIsRunning;
 }
@@ -1548,6 +1757,9 @@ namespace NarrativeEngine::Testing
             scene->formType = RE::FormType::Scene;
             scene->formID = 0x0004E5C1u;
             scene->isPlaying = mock->world.sceneIsPlaying;
+            // The quest that authored the scene. Whether it is one of ours is
+            // what decides self-exclusion for anything reading the scene.
+            scene->parentQuest = mock->AddQuest(mock->aliases.sceneQuest);
             return scene;
         }
     } // namespace
