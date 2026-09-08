@@ -727,6 +727,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/CourierUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/EvalDispatch.cpp"
         "${CMAKE_SOURCE_DIR}/src/PrismaUI.cpp"
+        "${CMAKE_SOURCE_DIR}/src/SkyrimNetAPI.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipDispatch.cpp"
         "${CMAKE_SOURCE_DIR}/src/EventLogUtil.cpp"
         "${CMAKE_SOURCE_DIR}/src/FactionDesignationUtils.cpp"
@@ -758,7 +759,14 @@ if(NARRATIVEENGINE_BUILD_TESTS)
             NarrativeEngineEngineMockTests
             # PRISMA_UI_INCLUDE because src/PrismaUI.cpp includes the upstream
             # header; the wrapper is compiled here exactly as it is in the DLL.
-            PRIVATE include testsupport "${PRISMA_UI_INCLUDE}"
+            # PRISMA_UI_INCLUDE and SKYRIMNET_DIR because src/PrismaUI.cpp and
+            # src/SkyrimNetAPI.cpp include their upstream headers; both wrappers
+            # are compiled here exactly as they are in the DLL.
+            PRIVATE
+                include
+                testsupport
+                "${PRISMA_UI_INCLUDE}"
+                "${SKYRIMNET_DIR}/CppAPI"
         )
         # CommonLibSSE's include dirs and compile definitions WITHOUT its
         # library: the headers are what we want, the .lib is what we replace.
@@ -809,6 +817,33 @@ if(NARRATIVEENGINE_BUILD_TESTS)
                 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
         )
         add_dependencies(NarrativeEngineEngineMockTests PrismaUIFake)
+
+        # The same trick for SkyrimNet, whose header resolves itself with
+        # LoadLibraryA("SkyrimNet") and a GetProcAddress per export. Building a
+        # DLL of that name also reaches the version gate: the header only
+        # resolves an export when the version the DLL reports is high enough,
+        # so a fake reporting an old version is a genuinely older install.
+        add_library(
+            SkyrimNetFake
+            SHARED
+            "${CMAKE_SOURCE_DIR}/testsupport/FakeSkyrimNet.cpp"
+        )
+        target_compile_features(SkyrimNetFake PRIVATE cxx_std_23)
+        target_include_directories(SkyrimNetFake PRIVATE testsupport)
+        # C4190: an extern "C" function returning std::string. That is what the
+        # real SkyrimNet exports do -- the API is C-linkage for undecorated
+        # GetProcAddress names but C++ by value across the boundary, which works
+        # only because both modules share a dynamically-linked CRT. The fake has
+        # to match the real signatures exactly, so the warning is suppressed
+        # here and nowhere else.
+        target_compile_options(SkyrimNetFake PRIVATE /wd4190)
+        set_target_properties(
+            SkyrimNetFake
+            PROPERTIES
+                OUTPUT_NAME SkyrimNet
+                RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+        )
+        add_dependencies(NarrativeEngineEngineMockTests SkyrimNetFake)
 
         catch_discover_tests(NarrativeEngineEngineMockTests)
 
