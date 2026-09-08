@@ -735,6 +735,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/GossipDispatch.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipLog.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipTick.cpp"
+        "${CMAKE_SOURCE_DIR}/src/EventHistoryWriter.cpp"
         "${CMAKE_SOURCE_DIR}/src/EventLogUtil.cpp"
         "${CMAKE_SOURCE_DIR}/src/FactionDesignationUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/LocationKeywords.cpp"
@@ -758,6 +759,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
             testsupport/CommonLibSSERuntimeStubs.cpp
             testsupport/DispatcherContract.cpp
             testsupport/FakeVTable.cpp
+            testsupport/EventLogSpies.cpp
             testsupport/GossipSpies.cpp
             testsupport/RelocationMocks.cpp
             testsupport/RelocationMocks.test.cpp
