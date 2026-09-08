@@ -91,6 +91,15 @@ namespace NarrativeEngine::Testing
             bool present = true;
             float hoursPassed = 0.0f;
             int getHoursPassedCalls = 0;
+
+            // The calendar reading the timestamp formatters render. Defaults
+            // to the canonical game start, 17 Last Seed 4E 201, so a test that
+            // does not set a date still gets a date that means something.
+            float daysPassed = 0.0f;
+            std::uint32_t year = 201;
+            std::uint32_t month = 7; // Last Seed, 0-indexed
+            float day = 17.0f;
+            float hour = 12.0f;
         } calendar;
 
         struct UIState

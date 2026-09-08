@@ -968,3 +968,37 @@ namespace NarrativeEngine::Testing
         return pc;
     }
 } // namespace NarrativeEngine::Testing
+
+// ---------------------------------------------------------------------------
+// RE::Calendar — the rest of the reading
+// ---------------------------------------------------------------------------
+
+float RE::Calendar::GetDaysPassed() const
+{
+    auto* mock = EngineMock::Current();
+    return mock ? mock->calendar.daysPassed : 0.0f;
+}
+
+std::uint32_t RE::Calendar::GetYear() const
+{
+    auto* mock = EngineMock::Current();
+    return mock ? mock->calendar.year : 0u;
+}
+
+std::uint32_t RE::Calendar::GetMonth() const
+{
+    auto* mock = EngineMock::Current();
+    return mock ? mock->calendar.month : 0u;
+}
+
+float RE::Calendar::GetDay() const
+{
+    auto* mock = EngineMock::Current();
+    return mock ? mock->calendar.day : 0.0f;
+}
+
+float RE::Calendar::GetHour() const
+{
+    auto* mock = EngineMock::Current();
+    return mock ? mock->calendar.hour : 0.0f;
+}
