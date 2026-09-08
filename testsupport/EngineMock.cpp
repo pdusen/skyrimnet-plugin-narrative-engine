@@ -204,12 +204,17 @@ bool RE::UI::IsMenuOpen(const std::string_view& a_menuName)
 // RE::PlayerCharacter / RE::Actor
 // ---------------------------------------------------------------------------
 
+namespace NarrativeEngine::Testing
+{
+    RE::PlayerCharacter* BuildFakePlayer();
+}
+
 RE::PlayerCharacter* RE::PlayerCharacter::GetSingleton()
 {
     auto* mock = EngineMock::Current();
     if (!mock || !mock->player.present)
         return nullptr;
-    return NarrativeEngine::Testing::OpaqueSingleton<RE::PlayerCharacter>();
+    return NarrativeEngine::Testing::BuildFakePlayer();
 }
 
 bool RE::Actor::IsInCombat() const
@@ -812,3 +817,154 @@ void RE::Actor::AddToFaction(RE::TESFaction* a_faction, std::int8_t a_rank)
     mock->factions.addToFactionCalls.push_back({GetFormID(), a_faction->GetFormID(), a_rank});
     mock->SetFactionRank(this, a_faction, a_rank);
 }
+
+// ---------------------------------------------------------------------------
+// The main-thread engine reads: player, cell, location, sky
+// ---------------------------------------------------------------------------
+//
+// These are the harness's first fabricated objects with a SECONDARY vtable.
+// `TESFullName::GetFullName` is slot 05 of the TESFullName vtable, and
+// BGSLocation and TESObjectCELL each inherit TESFullName as a base past the
+// first, so its vptr sits at its own offset rather than at zero. FakeObject's
+// BaseSlot writes it there; see testsupport/FakeVTable.h.
+
+namespace NarrativeEngine::Testing
+{
+    namespace
+    {
+        // Returns `fullName`, exactly as the engine's own override does. The
+        // `self` a virtual call passes here is already adjusted to the
+        // TESFullName subobject, so no further fixing up is needed.
+        const char* FullNameImpl(void* self)
+        {
+            return static_cast<RE::TESFullName*>(self)->fullName.c_str();
+        }
+
+        template <class T> void WireFullName(FakeObject& object)
+        {
+            auto* whole = object.As<T>();
+            const auto offset =
+                static_cast<std::size_t>(reinterpret_cast<std::byte*>(static_cast<RE::TESFullName*>(whole))
+                                         - reinterpret_cast<std::byte*>(whole));
+            object.BaseSlot(offset, 8, 5, reinterpret_cast<void*>(&FullNameImpl));
+        }
+
+        FakeObject& FakePlayer()
+        {
+            static FakeObject player{sizeof(RE::PlayerCharacter), 256};
+            return player;
+        }
+
+        FakeObject& FakeCell()
+        {
+            static FakeObject cell{sizeof(RE::TESObjectCELL), 128};
+            return cell;
+        }
+
+        FakeObject& FakeLocation()
+        {
+            static FakeObject location{sizeof(RE::BGSLocation), 128};
+            return location;
+        }
+
+        FakeObject& FakeSky()
+        {
+            static FakeObject sky{sizeof(RE::Sky), 64};
+            return sky;
+        }
+
+        FakeObject& FakeWeather()
+        {
+            static FakeObject weather{sizeof(RE::TESWeather), 128};
+            return weather;
+        }
+    } // namespace
+} // namespace NarrativeEngine::Testing
+
+RE::BGSLocation* RE::TESObjectREFR::GetCurrentLocation() const
+{
+    using namespace NarrativeEngine::Testing;
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->world.playerHasLocation)
+        return nullptr;
+
+    auto& object = FakeLocation();
+    WireFormDefaults(object, false);
+    WireFullName<RE::BGSLocation>(object);
+    auto* location = object.As<RE::BGSLocation>();
+    location->formID = mock->world.locationFormID;
+    location->formType = RE::FormType::Location;
+    location->fullName = mock->world.locationName.c_str();
+    return location;
+}
+
+bool RE::TESObjectCELL::IsInteriorCell() const
+{
+    auto* mock = NarrativeEngine::Testing::EngineMock::Current();
+    return mock != nullptr && mock->world.cellIsInterior;
+}
+
+const char* RE::TESObjectREFR::GetDisplayFullName()
+{
+    auto* mock = NarrativeEngine::Testing::EngineMock::Current();
+    return mock ? mock->world.actorDisplayName.c_str() : "";
+}
+
+bool RE::Actor::IsPlayerTeammate() const
+{
+    auto* mock = NarrativeEngine::Testing::EngineMock::Current();
+    return mock != nullptr && mock->world.actorIsPlayerTeammate;
+}
+
+RE::Sky* RE::Sky::GetSingleton()
+{
+    using namespace NarrativeEngine::Testing;
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->sky.present)
+        return nullptr;
+
+    auto* sky = FakeSky().As<RE::Sky>();
+    sky->mode = static_cast<RE::Sky::Mode>(mock->sky.mode);
+    if (mock->sky.hasWeather) {
+        auto& object = FakeWeather();
+        WireFormDefaults(object, false);
+        auto* weather = object.As<RE::TESWeather>();
+        weather->formID = mock->sky.weatherFormID;
+        weather->formType = RE::FormType::Weather;
+        weather->data.flags = static_cast<RE::TESWeather::WeatherDataFlag>(mock->sky.weatherFlags);
+        weather->data.windSpeed = mock->sky.windSpeed;
+        weather->data.thunderLightningFrequency = mock->sky.thunderLightningFrequency;
+        sky->currentWeather = weather;
+    } else {
+        sky->currentWeather = nullptr;
+    }
+    return sky;
+}
+
+namespace NarrativeEngine::Testing
+{
+    RE::PlayerCharacter* BuildFakePlayer()
+    {
+        auto* mock = EngineMock::Current();
+        auto& object = FakePlayer();
+        WireFormDefaults(object, true);
+        auto* pc = object.As<RE::PlayerCharacter>();
+        pc->formType = RE::FormType::ActorCharacter;
+        pc->formID = mock->world.playerFormID;
+        pc->data.location = RE::NiPoint3{mock->world.playerX, mock->world.playerY, mock->world.playerZ};
+
+        if (mock->world.playerHasCell) {
+            auto& cellObject = FakeCell();
+            WireFormDefaults(cellObject, false);
+            WireFullName<RE::TESObjectCELL>(cellObject);
+            auto* cell = cellObject.As<RE::TESObjectCELL>();
+            cell->formID = mock->world.cellFormID;
+            cell->formType = RE::FormType::Cell;
+            cell->fullName = mock->world.cellName.c_str();
+            pc->parentCell = cell;
+        } else {
+            pc->parentCell = nullptr;
+        }
+        return pc;
+    }
+} // namespace NarrativeEngine::Testing

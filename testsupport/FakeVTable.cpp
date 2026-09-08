@@ -38,6 +38,29 @@ namespace NarrativeEngine::Testing
         vtable_[index] = fn;
     }
 
+    void FakeObject::BaseSlot(std::size_t byteOffset, std::size_t virtualSlots, std::size_t index, void* fn)
+    {
+        if (byteOffset + sizeof(void*) > storage_.size() || index >= virtualSlots) {
+            std::fprintf(stderr,
+                         "[EngineMock] FATAL: base vtable at offset %zu slot %zu does not fit this "
+                         "object.\n",
+                         byteOffset,
+                         index);
+            std::fflush(stderr);
+            std::abort();
+        }
+
+        auto& table = baseVTables_[byteOffset];
+        if (table.size() < virtualSlots)
+            table.resize(virtualSlots, reinterpret_cast<void*>(&UnimplementedVirtual));
+        table[index] = fn;
+
+        // Write the subobject's vtable pointer at its own offset, alongside the
+        // primary one at offset 0.
+        void* address = table.data();
+        std::memcpy(storage_.data() + byteOffset, &address, sizeof(address));
+    }
+
     void* FakeObject::Storage() noexcept
     {
         // Written on every call rather than once in the constructor, so a
@@ -45,6 +68,10 @@ namespace NarrativeEngine::Testing
         // reproducing a zero-initialised engine object.
         void* table = vtable_.data();
         std::memcpy(storage_.data(), &table, sizeof(table));
+        for (auto& [offset, base] : baseVTables_) {
+            void* address = base.data();
+            std::memcpy(storage_.data() + offset, &address, sizeof(address));
+        }
         return storage_.data();
     }
 } // namespace NarrativeEngine::Testing

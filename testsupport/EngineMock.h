@@ -13,7 +13,10 @@ namespace RE
 {
     class Actor;
     class BGSBaseAlias;
+    class BGSLocation;
+    class Sky;
     class TESFaction;
+    class TESObjectCELL;
     class TESObjectREFR;
     class TESQuest;
     class Calendar;
@@ -268,6 +271,46 @@ namespace NarrativeEngine::Testing
         // Convenience over `factions.ranks`.
         void SetFactionRank(RE::Actor* actor, RE::TESFaction* faction, int rank);
         int FactionRank(RE::Actor* actor, RE::TESFaction* faction) const;
+
+        // What the main-thread engine wrappers read back. These snapshots are
+        // the only shape a worker thread ever sees of engine state, so what
+        // matters is that each field arrives, not how the engine stores it.
+        struct WorldState
+        {
+            std::uint32_t playerFormID = 0x00000014u;
+            float playerX = 100.0f;
+            float playerY = 200.0f;
+            float playerZ = 300.0f;
+
+            // Unmarked wilderness has no BGSLocation, which is a real and
+            // common state rather than an error.
+            bool playerHasLocation = true;
+            std::uint32_t locationFormID = 0x00018A56u;
+            std::string locationName = "Whiterun";
+
+            bool playerHasCell = true;
+            std::uint32_t cellFormID = 0x0001A26Fu;
+            std::string cellName = "Whiterun Bannered Mare";
+            bool cellIsInterior = true;
+
+            // Per-actor state the snapshot reads beyond the liveness flags.
+            std::string actorDisplayName = "Ysolda";
+            bool actorIsPlayerTeammate = false;
+            bool actorIsBleedingOut = false;
+        } world;
+
+        struct SkyState
+        {
+            bool present = true;
+            // RE::Sky::Mode as a raw value, so this header stays free of
+            // engine enums: kNone 0, kInterior 1, kSkyDomeOnly 2, kFull 3.
+            std::uint32_t mode = 3; // kFull
+            bool hasWeather = true;
+            std::uint32_t weatherFormID = 0x00010E1Cu;
+            std::uint8_t weatherFlags = 0x02;
+            std::uint8_t windSpeed = 40;
+            std::int8_t thunderLightningFrequency = 7;
+        } sky;
 
         Runtime runtime() const
         {
