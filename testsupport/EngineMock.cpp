@@ -402,6 +402,15 @@ void RE::BSScript::Variable::SetSInt(std::int32_t a_val)
 // The three co-save calls SKSECosaveIO forwards to. All out-of-line in
 // CommonLibSSE.lib, so these definitions are what the linker binds.
 
+bool SKSE::SerializationInterface::OpenRecord(std::uint32_t a_type, std::uint32_t a_version) const
+{
+    auto* mock = EngineMock::Current();
+    if (!mock)
+        return false;
+    mock->cosave.opened.push_back({a_type, a_version});
+    return mock->cosave.openRecordSucceeds;
+}
+
 bool SKSE::SerializationInterface::WriteRecordData(const void* a_buf, std::uint32_t a_length) const
 {
     auto* mock = EngineMock::Current();

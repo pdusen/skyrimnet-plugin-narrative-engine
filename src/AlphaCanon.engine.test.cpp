@@ -1,12 +1,10 @@
 #include <AlphaCanon.h>
 
+#include <ConfiguredSettings.h>
 #include <EngineMock.h>
-#include <Settings.h>
 
 #include <catch2/catch_test_macros.hpp>
 
-#include <filesystem>
-#include <fstream>
 #include <string>
 #include <vector>
 
@@ -27,33 +25,9 @@ namespace
 {
     using NarrativeEngine::Testing::EngineMock;
     namespace AlphaCanon = NarrativeEngine::AlphaCanon;
-    namespace Settings = NarrativeEngine::Settings;
     using AlphaCanon::Signal;
 
-    const std::filesystem::path kPluginIni{"Data/SKSE/Plugins/NarrativeEngine.ini"};
-
-    // The two CSV blocklists live in settings, so a case that wants one has to
-    // put it on disk and reload. Removed again on the way out.
-    struct ConfiguredSettings
-    {
-        explicit ConfiguredSettings(const std::string& body)
-        {
-            std::filesystem::create_directories(kPluginIni.parent_path());
-            std::ofstream out{kPluginIni, std::ios::binary | std::ios::trunc};
-            out << body;
-            out.close();
-            Settings::Load();
-        }
-
-        ~ConfiguredSettings()
-        {
-            std::error_code ec;
-            std::filesystem::remove(kPluginIni, ec);
-            for (const char* dir : {"Data/SKSE/Plugins", "Data/SKSE", "Data"})
-                std::filesystem::remove(dir, ec);
-            Settings::Load();
-        }
-    };
+    using NarrativeEngine::Testing::ConfiguredSettings;
 
     bool Contains(const std::vector<std::string>& names, std::string_view wanted)
     {

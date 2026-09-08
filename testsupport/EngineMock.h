@@ -172,6 +172,18 @@ namespace NarrativeEngine::Testing
             bool writeSucceeds = true;
             std::vector<std::byte> written;
 
+            // Records opened, in order. A module that opens the wrong record
+            // type or stamps the wrong version writes a payload no loader will
+            // ever recognise, and nothing else about the save looks wrong.
+            struct OpenedRecord
+            {
+                std::uint32_t type = 0;
+                std::uint32_t version = 0;
+            };
+
+            bool openRecordSucceeds = true;
+            std::vector<OpenedRecord> opened;
+
             std::vector<std::byte> readable;
             std::size_t readCursor = 0;
 

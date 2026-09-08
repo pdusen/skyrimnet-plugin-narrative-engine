@@ -713,6 +713,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
     #     test should behave.
     set(NARRATIVEENGINE_MOCKED_SOURCES
         "${CMAKE_SOURCE_DIR}/src/EngineUtils.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PhaseTracker.cpp"
         "${CMAKE_SOURCE_DIR}/src/QuestUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/Settings.cpp"
         "${CMAKE_SOURCE_DIR}/src/AlphaCanon.cpp"
