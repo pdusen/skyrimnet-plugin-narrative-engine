@@ -726,6 +726,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/ConsoleCommand.cpp"
         "${CMAKE_SOURCE_DIR}/src/CourierUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/EvalDispatch.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PrismaUI.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipDispatch.cpp"
         "${CMAKE_SOURCE_DIR}/src/EventLogUtil.cpp"
         "${CMAKE_SOURCE_DIR}/src/FactionDesignationUtils.cpp"
@@ -755,7 +756,9 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         )
         target_include_directories(
             NarrativeEngineEngineMockTests
-            PRIVATE include testsupport
+            # PRISMA_UI_INCLUDE because src/PrismaUI.cpp includes the upstream
+            # header; the wrapper is compiled here exactly as it is in the DLL.
+            PRIVATE include testsupport "${PRISMA_UI_INCLUDE}"
         )
         # CommonLibSSE's include dirs and compile definitions WITHOUT its
         # library: the headers are what we want, the .lib is what we replace.
@@ -783,6 +786,29 @@ if(NARRATIVEENGINE_BUILD_TESTS)
             NarrativeEngineEngineMockTests
             PRIVATE Catch2::Catch2WithMain spdlog::spdlog NarrativeEngineCore
         )
+
+        # A stand-in PrismaUI.dll, built under the real name and dropped beside
+        # the test executable. PrismaUI is found through GetModuleHandle and
+        # GetProcAddress with no seam in between, so the only faithful way to
+        # exercise the "PrismaUI is installed" half of the wrapper is to put a
+        # DLL of that name where the loader will find it.
+        add_library(
+            PrismaUIFake
+            SHARED
+            "${CMAKE_SOURCE_DIR}/testsupport/FakePrismaUI.cpp"
+        )
+        target_compile_features(PrismaUIFake PRIVATE cxx_std_23)
+        target_include_directories(
+            PrismaUIFake
+            PRIVATE testsupport "${PRISMA_UI_INCLUDE}"
+        )
+        set_target_properties(
+            PrismaUIFake
+            PROPERTIES
+                OUTPUT_NAME PrismaUI
+                RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+        )
+        add_dependencies(NarrativeEngineEngineMockTests PrismaUIFake)
 
         catch_discover_tests(NarrativeEngineEngineMockTests)
 
