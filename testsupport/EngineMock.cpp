@@ -48,6 +48,10 @@ namespace NarrativeEngine::Testing
         RE::EXTERIOR_DATA coordinates{};
         RE::BGSLocation* location = nullptr;
         bool isInterior = false;
+        // The streaming system has finished with it. Cells appear in the grid
+        // before their contents arrive, and the default matches what a test
+        // that never says otherwise means: a cell that is fully there.
+        bool attached = true;
     };
 
     const ExteriorCellFacts* FactsFor(const void* cell);
@@ -715,9 +719,200 @@ namespace NarrativeEngine::Testing
         facts.location = location;
         CellFacts()[static_cast<const void*>(cell)] = facts;
 
+        // The cell knows its own worldspace. Anything sweeping the loaded grid
+        // reads it from here rather than from whatever map it was found in.
+        cell->GetRuntimeData().worldSpace = worldSpace;
+
         // CellID takes (y, x), in that order.
         worldSpace->cellMap.insert({RE::CellID{cellY, cellX}, cell});
         return cell;
+    }
+
+    void EngineMock::SetCellAttached(RE::TESObjectCELL* cell, bool attached)
+    {
+        if (!cell)
+            return;
+        CellFacts()[static_cast<const void*>(cell)].attached = attached;
+    }
+
+    void EngineMock::SetCellInterior(RE::TESObjectCELL* cell, bool interior)
+    {
+        if (!cell)
+            return;
+        CellFacts()[static_cast<const void*>(cell)].isInterior = interior;
+    }
+
+    namespace
+    {
+        // Navmesh storage. Leaked in full, and deliberately: every piece of it
+        // is a CommonLibSSE container that frees through a relocation, and the
+        // meshes are held by intrusive smart pointers that would delete
+        // through a fabricated vtable the moment the last one went away.
+        struct NavMeshPool
+        {
+            std::deque<FakeObject> meshObjects;
+            std::deque<RE::NavMeshArray*> lists;
+        };
+
+        NavMeshPool& NavMeshes()
+        {
+            static auto* pool = new NavMeshPool();
+            return *pool;
+        }
+
+        // The engine holds its meshes by intrusive smart pointer, and that
+        // pointer releases with `delete`, which does not compile for a type
+        // inheriting operator delete from more than one base -- and would be
+        // wrong here anyway, since these meshes are fabricated storage the
+        // harness owns. A BSTSmartPointer is one raw pointer and nothing else,
+        // so the array is filled through a reference of the layout-identical
+        // raw type. Production code only ever calls get() on an element.
+        RE::BSTArray<RE::NavMesh*>& MeshSlots(RE::NavMeshArray& list)
+        {
+            return reinterpret_cast<RE::BSTArray<RE::NavMesh*>&>(list.navMeshes);
+        }
+
+        // The navmesh list for a cell, made on first use. Every array inside is
+        // constructed in place: a BSTArray in zeroed storage is not an empty
+        // BSTArray, and the difference shows up as a container that accepts
+        // pushes and then yields nothing.
+        RE::NavMeshArray& ListFor(RE::TESObjectCELL* cell)
+        {
+            auto*& list = cell->GetRuntimeData().navMeshes;
+            if (!list) {
+                // Zeroed bytes rather than a constructed NavMeshArray: its
+                // constructor would instantiate the smart-pointer array's
+                // destructor, which is the very thing that does not compile.
+                list = reinterpret_cast<RE::NavMeshArray*>(new std::byte[sizeof(RE::NavMeshArray)]{});
+                new (&MeshSlots(*list)) RE::BSTArray<RE::NavMesh*>();
+                NavMeshes().lists.push_back(list);
+            }
+            return *list;
+        }
+
+        RE::NavMesh* NewMesh(RE::TESObjectCELL* cell, std::uint32_t meshFormID)
+        {
+            auto& object = NavMeshes().meshObjects.emplace_back(sizeof(RE::NavMesh) + 0x100, 128);
+            WireFormDefaults(object, false);
+            auto* mesh = object.As<RE::NavMesh>();
+            mesh->formType = RE::FormType::NavMesh;
+            mesh->formID = meshFormID;
+            new (&mesh->vertices) RE::BSTArray<RE::BSNavmeshVertex>();
+            new (&mesh->triangles) RE::BSTArray<RE::BSNavmeshTriangle>();
+            new (&mesh->extraEdgeInfo) RE::BSTArray<RE::BSNavmeshEdgeExtraInfo>();
+            MeshSlots(ListFor(cell)).push_back(mesh);
+            return mesh;
+        }
+    } // namespace
+
+    void EngineMock::AddEmptyNavMeshList(RE::TESObjectCELL* cell)
+    {
+        if (cell)
+            (void)ListFor(cell);
+    }
+
+    RE::NavMesh* EngineMock::AddNavMesh(RE::TESObjectCELL* cell,
+                                        std::uint32_t meshFormID,
+                                        const std::vector<FakeTriangle>& triangles)
+    {
+        if (!cell)
+            return nullptr;
+        auto* mesh = NewMesh(cell, meshFormID);
+
+        using TriangleFlag = RE::BSNavmeshTriangle::TriangleFlag;
+        constexpr std::array<TriangleFlag, 3> kEdgeLinkFlags = {
+            TriangleFlag::kEdge0_Link,
+            TriangleFlag::kEdge1_Link,
+            TriangleFlag::kEdge2_Link,
+        };
+        constexpr std::uint16_t kNoTriangle = 0xFFFF;
+
+        for (const auto& spec : triangles) {
+            RE::BSNavmeshTriangle tri{};
+            // Three vertices of its own, all on the spot asked for, so the
+            // centroid the extractor computes lands exactly there.
+            const auto base = static_cast<std::uint16_t>(mesh->vertices.size());
+            for (int v = 0; v < 3; ++v) {
+                RE::BSNavmeshVertex vertex{};
+                vertex.location = RE::NiPoint3{spec.x, spec.y, spec.z};
+                mesh->vertices.push_back(vertex);
+                tri.vertices[v] = static_cast<std::uint16_t>(base + v);
+            }
+            if (spec.preferred)
+                tri.triangleFlags.set(TriangleFlag::kPreferred);
+            if (spec.deleted)
+                tri.triangleFlags.set(TriangleFlag::kDeleted);
+
+            for (int e = 0; e < 3; ++e) {
+                tri.triangles[e] = kNoTriangle;
+                if (spec.danglingLink[e]) {
+                    // The link flag with an index past the end of the extra
+                    // edge array: nothing to read, and nothing to follow.
+                    tri.triangleFlags.set(kEdgeLinkFlags[e]);
+                    tri.triangles[e] = 0xFFFEu;
+                    continue;
+                }
+                if (spec.ledge[e] || spec.portalMesh[e] != 0) {
+                    RE::BSNavmeshEdgeExtraInfo info{};
+                    if (spec.ledge[e]) {
+                        info.type = RE::EDGE_EXTRA_INFO_TYPE::kLedgeUp;
+                    } else {
+                        info.type = RE::EDGE_EXTRA_INFO_TYPE::kPortal;
+                        info.portal.otherMeshID = spec.portalMesh[e];
+                        info.portal.triangle = static_cast<std::uint16_t>(spec.portalTriangle[e]);
+                    }
+                    tri.triangleFlags.set(kEdgeLinkFlags[e]);
+                    tri.triangles[e] = static_cast<std::uint16_t>(mesh->extraEdgeInfo.size());
+                    mesh->extraEdgeInfo.push_back(info);
+                    continue;
+                }
+                if (spec.neighbor[e] >= 0)
+                    tri.triangles[e] = static_cast<std::uint16_t>(spec.neighbor[e]);
+            }
+            mesh->triangles.push_back(tri);
+        }
+        return mesh;
+    }
+
+    RE::NavMesh* EngineMock::AddNavMeshWithBadVertexIndex(RE::TESObjectCELL* cell, std::uint32_t meshFormID)
+    {
+        if (!cell)
+            return nullptr;
+        auto* mesh = NewMesh(cell, meshFormID);
+        RE::BSNavmeshTriangle tri{};
+        tri.triangleFlags.set(RE::BSNavmeshTriangle::TriangleFlag::kPreferred);
+        tri.vertices[0] = 0;
+        tri.vertices[1] = 1;
+        tri.vertices[2] = 900; // the mesh has no such vertex
+        tri.triangles[0] = 0xFFFFu;
+        tri.triangles[1] = 0xFFFFu;
+        tri.triangles[2] = 0xFFFFu;
+        for (int v = 0; v < 2; ++v) {
+            RE::BSNavmeshVertex vertex{};
+            mesh->vertices.push_back(vertex);
+        }
+        mesh->triangles.push_back(tri);
+        return mesh;
+    }
+
+    void EngineMock::LoadGrid(const std::vector<RE::TESObjectCELL*>& cells)
+    {
+        // Leaked with everything else here, and for the same reason: the grid
+        // the engine hands out is never taken down inside a session.
+        static auto* pool = new std::deque<std::vector<RE::TESObjectCELL*>>();
+
+        std::uint32_t length = 0;
+        while (static_cast<std::size_t>(length) * length < cells.size())
+            ++length;
+
+        auto& slots = pool->emplace_back(static_cast<std::size_t>(length) * length, nullptr);
+        for (std::size_t i = 0; i < cells.size(); ++i)
+            slots[i] = cells[i];
+
+        auto* array = OpaqueSingleton<RE::GridCellArray>();
+        array->length = length;
+        array->cells = slots.empty() ? nullptr : slots.data();
+        grid.present = true;
     }
 } // namespace NarrativeEngine::Testing
 
@@ -1112,7 +1307,21 @@ RE::TES* RE::TES::GetSingleton()
     auto* mock = EngineMock::Current();
     if (!mock || !mock->terrain.tesPresent)
         return nullptr;
-    return NarrativeEngine::Testing::OpaqueSingleton<RE::TES>();
+    // Two of TES's members are read directly rather than through an accessor,
+    // so they are written into the storage here on every fetch instead of
+    // being answered from a stand-in function.
+    auto* tes = NarrativeEngine::Testing::OpaqueSingleton<RE::TES>();
+    tes->interiorCell = mock->grid.playerIndoors ? NarrativeEngine::Testing::FabricatedCell() : nullptr;
+    tes->gridCells = mock->grid.present ? NarrativeEngine::Testing::OpaqueSingleton<RE::GridCellArray>() : nullptr;
+    return tes;
+}
+
+bool RE::TESObjectCELL::IsAttached() const
+{
+    const auto* facts = NarrativeEngine::Testing::FactsFor(this);
+    // A cell the harness never fabricated is the player's own, which is by
+    // definition loaded.
+    return facts == nullptr || facts->attached;
 }
 
 RE::TESObjectCELL* RE::TES::GetCell(const NiPoint3&) const

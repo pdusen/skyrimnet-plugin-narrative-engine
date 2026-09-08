@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -16,6 +17,7 @@ namespace RE
     class BGSBaseAlias;
     class BGSKeyword;
     class BGSLocation;
+    class NavMesh;
     class Sky;
     class TESFaction;
     class TESObjectCELL;
@@ -238,6 +240,19 @@ namespace NarrativeEngine::Testing
             bool navmeshEverywhere = true;
         } terrain;
 
+        // The loaded exterior cell grid — the square of cells the streaming
+        // system keeps around the player, and the only place navmesh geometry
+        // can be read from.
+        struct GridState
+        {
+            // TES::gridCells. Absent for the window between a load starting
+            // and the first grid being built.
+            bool present = true;
+            // TES::interiorCell. Set means indoors, where there is no exterior
+            // grid at all rather than an empty one.
+            bool playerIndoors = false;
+        } grid;
+
         // What an actor did when placement code moved it.
         struct PlacementState
         {
@@ -403,6 +418,74 @@ namespace NarrativeEngine::Testing
         // Stand the player in an exterior cell of `worldSpace` at the given
         // grid coordinates, so a precomputed cell-to-hold grid can find them.
         void StandPlayerInCell(RE::TESWorldSpace* worldSpace, std::int16_t cellX, std::int16_t cellY);
+
+        // Whether the streaming system has finished loading a cell. Cells sit
+        // in the grid before their contents arrive, and code that reads a
+        // cell's navmesh or references has to wait for this.
+        void SetCellAttached(RE::TESObjectCELL* cell, bool attached);
+
+        // Turn a fabricated cell into an interior one. Interiors reach the
+        // loaded grid the same way exteriors do and have to be told apart
+        // there, because most of what reads the grid is about the open world.
+        void SetCellInterior(RE::TESObjectCELL* cell, bool interior);
+
+        // One navmesh triangle, as a test describes it. Extraction reduces a
+        // triangle to its centroid and to what lies across each of its three
+        // edges, so that is the whole of what a test gets to say about one.
+        struct FakeTriangle
+        {
+            float x = 0.0f;
+            float y = 0.0f;
+            float z = 0.0f;
+
+            // Road surface. The road graph is built from these and ignores
+            // every other triangle in the mesh.
+            bool preferred = true;
+            // Retired by an edit but still present in the record.
+            bool deleted = false;
+
+            // Per edge: the index of another triangle in the SAME mesh, or -1
+            // for an edge with nothing across it.
+            std::array<int, 3> neighbor{-1, -1, -1};
+
+            // Per edge: a portal across to another navmesh — the FormID of the
+            // mesh and the triangle index within it. Zero mesh means no portal.
+            std::array<std::uint32_t, 3> portalMesh{0, 0, 0};
+            std::array<int, 3> portalTriangle{-1, -1, -1};
+
+            // Per edge: an edge link that is not a portal. The record format
+            // puts ledges in the same slot, and a dangling link is what a
+            // corrupt or misread record looks like. Both are edges the graph
+            // must decline to follow rather than trust.
+            std::array<bool, 3> ledge{false, false, false};
+            std::array<bool, 3> danglingLink{false, false, false};
+        };
+
+        // Give `cell` a navmesh built from these triangles. The mesh is added
+        // to whatever the cell already has, so a cell can carry several.
+        //
+        // Each triangle gets three vertices of its own, all at the position
+        // asked for, which puts the centroid there. A triangle asking for a
+        // vertex index past the end of the array is a separate concern and is
+        // reached with `AddNavMeshWithBadVertexIndex`.
+        RE::NavMesh* AddNavMesh(RE::TESObjectCELL* cell,
+                                std::uint32_t meshFormID,
+                                const std::vector<FakeTriangle>& triangles);
+
+        // A navmesh whose one road triangle names a vertex that does not
+        // exist. Malformed data the extractor has to survive, and unreachable
+        // through AddNavMesh because that one always writes matching vertices.
+        RE::NavMesh* AddNavMeshWithBadVertexIndex(RE::TESObjectCELL* cell, std::uint32_t meshFormID);
+
+        // Give `cell` an empty navmesh list, which is what an ocean or border
+        // cell genuinely has. Distinct from a cell that was never given one:
+        // that cell reports no list at all.
+        void AddEmptyNavMeshList(RE::TESObjectCELL* cell);
+
+        // Put these cells in the loaded exterior grid, in row-major order over
+        // the smallest square that fits them. Slots past the end stay null,
+        // which is what a grid the streaming system has not filled looks like.
+        void LoadGrid(const std::vector<RE::TESObjectCELL*>& cells);
 
         // Fabricate a quest whose state the mocked TESQuest predicates answer
         // from, authored in the named ESP. Kept alive for the process: an alias

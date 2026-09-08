@@ -731,6 +731,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/CourierUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/Decorators.cpp"
         "${CMAKE_SOURCE_DIR}/src/EvalDispatch.cpp"
+        "${CMAKE_SOURCE_DIR}/src/FineRoads.cpp"
         "${CMAKE_SOURCE_DIR}/src/PrismaUI.cpp"
         "${CMAKE_SOURCE_DIR}/src/SkyrimNetAPI.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipClaims.cpp"
@@ -763,7 +764,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
             testsupport/CommonLibSSERuntimeStubs.cpp
             testsupport/DispatcherContract.cpp
             testsupport/FakeVTable.cpp
-            testsupport/EventLogSpies.cpp
+            testsupport/EvaluationSpies.cpp
             testsupport/GossipSpies.cpp
             testsupport/RelocationMocks.cpp
             testsupport/RelocationMocks.test.cpp
