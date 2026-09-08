@@ -1,12 +1,14 @@
 #include <PhaseTracker.h>
 
+#include <CombatEventLog.h>
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
-#include <EventLogSpies.h>
 #include <PluginThread.h>
 #include <ThreadRole.h>
 
 #include <SKSE/Interfaces.h>
+
+#include <nlohmann/json.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -27,13 +29,11 @@
 // field means something different from v3's while occupying the same eight
 // bytes.
 //
-// Two things had to be stood in for. The module notifies three event logs on
-// every advance; one of those is still a stand-in, in
-// testsupport/EventLogSpies.cpp, and they are spies as much as stand-ins —
-// "did the advance tell the logs" is real behaviour and is asserted below. The
-// other two, the combat and weather logs, are compiled in for real and are not
-// counted here; their own tests cover what an advance does to them. The other stand-in is the co-save
-// interface, which EngineMock already backs with a byte-accurate stream.
+// The tracker notifies three event logs on every advance, and all three are
+// compiled in for real — so the notification is checked through what one of
+// them actually does with it: the combat log drops the window it was holding.
+// The only stand-in here is the co-save interface, which EngineMock already
+// backs with a byte-accurate stream.
 //
 // The tracker's state is process-wide, so every TEST_CASE that touches it
 // begins by resetting. Reset is public and is the same call the plugin makes on
@@ -76,12 +76,20 @@ namespace
         FreshTracker()
         {
             PhaseTracker::Reset();
-            NarrativeEngine::Testing::EventLogSpies().Reset();
         }
 
         FreshTracker(const FreshTracker&) = delete;
         FreshTracker& operator=(const FreshTracker&) = delete;
     };
+
+    // Drives one combat poll, which is how the combat log gets something in
+    // its window for the notification case below to watch disappear.
+    void PollCombat()
+    {
+        const NarrativeEngine::ScopedThreadRole role{NarrativeEngine::ThreadRole::Plugin};
+        PluginThread::detail::JobDispatcher::Invoke(
+            [](const PluginThread::Token& pt) { NarrativeEngine::CombatEventLog::Poll(pt); });
+    }
 
     // The tracker's clock only advances on Tick, which needs a plugin token.
     void TickOnPluginThread()
@@ -426,8 +434,21 @@ TEST_CASE("PhaseTracker::AdvanceTo", "[PhaseTracker][engine]")
         {
             // Each log holds a per-phase window of its own and clears it here.
             // A log that is not told keeps reporting last phase's weather.
+            //
+            // Checked through the combat log's own window rather than a
+            // counter: the logs are compiled in for real, so what proves the
+            // notification is that one of them actually dropped what it held.
+            NarrativeEngine::CombatEventLog::OnRevert();
+            engine.player.inCombat = false;
+            PollCombat();
+            engine.player.inCombat = true;
+            PollCombat();
+            engine.player.inCombat = false;
+            PollCombat();
+            REQUIRE(NarrativeEngine::CombatEventLog::GetRenderedTail(0.0).size() == 2);
+
             PhaseTracker::AdvanceTo(Phase::FallingAction);
-            REQUIRE(NarrativeEngine::Testing::EventLogSpies().travelPhaseAdvances.load() == 1);
+            REQUIRE(NarrativeEngine::CombatEventLog::GetRenderedTail(0.0).empty());
         }
     }
 }

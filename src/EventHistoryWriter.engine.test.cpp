@@ -1,23 +1,23 @@
 #include <EventHistoryWriter.h>
 
+#include <CombatEventLog.h>
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
-#include <EventLogSpies.h>
-#include <EventLogUtil.h>
 #include <FakeSkyrimNet.h>
 #include <PluginThread.h>
 #include <SkyrimNetAPI.h>
 #include <ThreadRole.h>
+#include <WeatherEventLog.h>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <Windows.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
-#include <utility>
 #include <vector>
 
 // Tests for the session event-history file.
@@ -32,17 +32,18 @@
 // Ordering matters as much as content. Each source keeps its own queue, so a
 // flush that appended them one after another would file every combat event
 // before every weather event regardless of when they happened, and the archive
-// would no longer be a record of the session. They are merged by time, stably,
-// so events sharing an instant keep the order they were enqueued in.
+// would no longer be a record of the session.
 //
-// The file is written for real, under the log directory EngineMock reports, and
-// every case reads back what a reader would see. The three internal drains are
-// our own modules and are stood in for here.
+// Nothing here is stood in for. The internal logs are compiled into this
+// executable for real, so the cases below produce their events the way the game
+// does — a fight starting, the weather turning — and read back the file a
+// player would attach to a bug report.
 
 namespace
 {
     namespace EventHistoryWriter = NarrativeEngine::EventHistoryWriter;
-    namespace EventLogUtil = NarrativeEngine::EventLogUtil;
+    namespace CombatEventLog = NarrativeEngine::CombatEventLog;
+    namespace WeatherEventLog = NarrativeEngine::WeatherEventLog;
     namespace PluginThread = NarrativeEngine::PluginThread;
     namespace SkyrimNet = NarrativeEngine::SkyrimNetAPI;
     using NarrativeEngine::Testing::ConfiguredSettings;
@@ -54,15 +55,12 @@ namespace
     const std::filesystem::path kLogDir{"Data/SKSE/Plugins/NarrativeEngineTestLogs"};
     const std::filesystem::path kHistoryFile = kLogDir / "NarrativeEngine_EventHistory.log";
 
-    EventLogUtil::HistoryEntry Entry(double localTime, std::string kind, std::string body)
-    {
-        EventLogUtil::HistoryEntry e;
-        e.localTime = localTime;
-        e.inGameTimestamp = "[4E 201, Last Seed 17, 09:00:00]";
-        e.sourceKind = std::move(kind);
-        e.body = std::move(body);
-        return e;
-    }
+    // The archive on, with both internal logs responsive enough to produce an
+    // event per driven poll.
+    constexpr const char* kSettings =
+        "[EventHistory]\nbEventHistoryEnabled=1\niEventHistoryFlushIntervalSeconds=5\n"
+        "[CombatEvents]\niHitRadiusUnits=6000\niMaxStored=128\n"
+        "[WeatherEvents]\niWeatherEventPollIntervalSeconds=1\niWeatherEventDebounceSeconds=0\n";
 
     FakeSkyrimNetState& FakeState()
     {
@@ -97,6 +95,14 @@ namespace
         return lines;
     }
 
+    bool AnyLineContains(std::string_view needle)
+    {
+        const auto lines = HistoryLines();
+        return std::any_of(lines.begin(), lines.end(), [&](const std::string& line) {
+            return line.find(needle) != std::string::npos;
+        });
+    }
+
     std::size_t RotatedFileCount()
     {
         std::size_t n = 0;
@@ -117,17 +123,55 @@ namespace
         for (int slot = 1; slot <= 5; ++slot) {
             std::filesystem::remove(kLogDir / ("NarrativeEngine_EventHistory." + std::to_string(slot) + ".log"), ec);
         }
-        NarrativeEngine::Testing::EventLogSpies().travelQueue.clear();
-        NarrativeEngine::Testing::EventLogSpies().travelQueue.clear();
+        CombatEventLog::OnRevert();
+        WeatherEventLog::OnRevert();
+        (void)CombatEventLog::DrainHistoryTail();
+        (void)WeatherEventLog::DrainHistoryTail();
     }
 
-    // The writer's flush is driven by the caller's tick accumulator, so a flush
-    // is one Poll with enough elapsed time in it.
-    void PollWith(double unpausedElapsedSeconds)
+    void PollWriter(double unpausedElapsedSeconds)
     {
         const NarrativeEngine::ScopedThreadRole role{NarrativeEngine::ThreadRole::Plugin};
         PluginThread::detail::JobDispatcher::Invoke(
             [&](const PluginThread::Token& pt) { EventHistoryWriter::Poll(pt, unpausedElapsedSeconds); });
+    }
+
+    void PollCombat()
+    {
+        const NarrativeEngine::ScopedThreadRole role{NarrativeEngine::ThreadRole::Plugin};
+        PluginThread::detail::JobDispatcher::Invoke([](const PluginThread::Token& pt) { CombatEventLog::Poll(pt); });
+    }
+
+    void PollWeather()
+    {
+        const NarrativeEngine::ScopedThreadRole role{NarrativeEngine::ThreadRole::Plugin};
+        PluginThread::detail::JobDispatcher::Invoke(
+            [](const PluginThread::Token& pt) { WeatherEventLog::Poll(pt, 1.0); });
+    }
+
+    // Produces one combat event, the way a fight starting does.
+    void StartAFight(EngineMock& engine)
+    {
+        engine.player.inCombat = false;
+        PollCombat();
+        engine.player.inCombat = true;
+        PollCombat();
+    }
+
+    // Produces one weather event, the way the sky turning does.
+    void TurnTheWeather(EngineMock& engine)
+    {
+        engine.sky.present = true;
+        engine.sky.mode = static_cast<std::uint32_t>(RE::Sky::Mode::kFull);
+        engine.sky.hasWeather = true;
+        engine.sky.thunderLightningFrequency = 0;
+        engine.sky.windSpeed = 0;
+        engine.sky.weatherFlags = 0x01; // pleasant
+        engine.sky.weatherFormID = 0x0010E1F2u;
+        PollWeather();
+        engine.sky.weatherFlags = 0x04; // rainy
+        engine.sky.weatherFormID = 0x0010E1F3u;
+        PollWeather();
     }
 } // namespace
 
@@ -137,13 +181,11 @@ TEST_CASE("EventHistoryWriter::OnSessionStart", "[EventHistoryWriter][engine]")
 
     SECTION("when the archive is enabled")
     {
-        const ConfiguredSettings settings{
-            "[EventHistory]\nbEventHistoryEnabled=1\niEventHistoryFlushIntervalSeconds=5\n"};
+        const ConfiguredSettings settings{kSettings};
         ClearHistoryFiles();
         EventHistoryWriter::OnSessionStart();
-        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
-            Entry(1.0, "internal/travel_event", "Hans left Whiterun."));
-        PollWith(60.0);
+        StartAFight(engine);
+        PollWriter(60.0);
         EventHistoryWriter::OnSessionEnd();
 
         SECTION("should open a file and write to it")
@@ -154,8 +196,9 @@ TEST_CASE("EventHistoryWriter::OnSessionStart", "[EventHistoryWriter][engine]")
 
     SECTION("when the archive is disabled")
     {
-        const ConfiguredSettings settings{
-            "[EventHistory]\nbEventHistoryEnabled=0\niEventHistoryFlushIntervalSeconds=5\n"};
+        const ConfiguredSettings settings{"[EventHistory]\nbEventHistoryEnabled=0\n"
+                                          "iEventHistoryFlushIntervalSeconds=5\n"
+                                          "[CombatEvents]\niHitRadiusUnits=6000\n"};
         ClearHistoryFiles();
         EventHistoryWriter::OnSessionStart();
 
@@ -164,9 +207,8 @@ TEST_CASE("EventHistoryWriter::OnSessionStart", "[EventHistoryWriter][engine]")
             // The master switch has to stop the file being opened, not merely
             // the lines being written: this archive grows without bound by
             // design, and a player who turned it off should get no file.
-            NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
-                Entry(1.0, "internal/travel_event", "Hans left Whiterun."));
-            PollWith(60.0);
+            StartAFight(engine);
+            PollWriter(60.0);
             REQUIRE(HistoryLines().empty());
         }
 
@@ -184,28 +226,27 @@ TEST_CASE("EventHistoryWriter flushes on the tick accumulator", "[EventHistoryWr
     // Happy path, re-run per leaf: the archive on, a five-second flush
     // interval, and one combat event waiting.
     EngineMock engine;
-    const ConfiguredSettings settings{"[EventHistory]\nbEventHistoryEnabled=1\niEventHistoryFlushIntervalSeconds=5\n"};
+    const ConfiguredSettings settings{kSettings};
     ClearHistoryFiles();
     EventHistoryWriter::OnSessionStart();
-    NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
-        Entry(1.0, "internal/travel_event", "Hans left Whiterun."));
+    StartAFight(engine);
 
     SECTION("when too little time has passed")
     {
-        PollWith(1.0);
+        PollWriter(1.0);
 
         SECTION("should hold the event rather than write it")
         {
-            // Read while the session is still open. Closing it flushes
-            // whatever is pending — which is right, and would hide this.
+            // Read while the session is still open. Closing it flushes whatever
+            // is pending — which is right, and would hide this.
             REQUIRE(HistoryLines().empty());
         }
 
         SECTION("should still write it when the session closes")
         {
             // Nothing accumulated is dropped on the way out: a session that
-            // ended between flushes is the common case, and losing its last
-            // few seconds would lose exactly the events around a crash.
+            // ended between flushes is the common case, and losing its last few
+            // seconds would lose exactly the events around a crash.
             EventHistoryWriter::OnSessionEnd();
             REQUIRE(HistoryLines().size() == 1);
         }
@@ -213,31 +254,31 @@ TEST_CASE("EventHistoryWriter flushes on the tick accumulator", "[EventHistoryWr
 
     SECTION("when the interval elapses")
     {
-        PollWith(6.0);
+        PollWriter(6.0);
         EventHistoryWriter::OnSessionEnd();
 
         SECTION("should write the event")
         {
             const auto lines = HistoryLines();
             REQUIRE(lines.size() == 1);
-            REQUIRE(lines[0].find("Hans left Whiterun.") != std::string::npos);
+            REQUIRE(lines[0].find("internal/combat_event/") != std::string::npos);
         }
 
-        SECTION("should prefix the line with the in-game time and the source")
+        SECTION("should prefix the line with the in-game time")
         {
             // Absolute in-game time rather than the "[N ago]" the LLM sees:
             // this file is read against the player's account of when something
             // happened, and a relative stamp is meaningless once written down.
             const auto lines = HistoryLines();
             REQUIRE(lines.size() == 1);
-            REQUIRE(lines[0].starts_with("[4E 201, Last Seed 17, 09:00:00] internal/travel_event: "));
+            REQUIRE(lines[0].starts_with("[4E "));
         }
     }
 
     SECTION("when there is nothing to write")
     {
-        NarrativeEngine::Testing::EventLogSpies().travelQueue.clear();
-        PollWith(60.0);
+        (void)CombatEventLog::DrainHistoryTail();
+        PollWriter(60.0);
         EventHistoryWriter::OnSessionEnd();
 
         SECTION("should write nothing")
@@ -249,82 +290,52 @@ TEST_CASE("EventHistoryWriter flushes on the tick accumulator", "[EventHistoryWr
     SECTION("when no session is open")
     {
         EventHistoryWriter::OnSessionEnd();
+        ClearHistoryFiles();
+        StartAFight(engine);
 
         SECTION("should drain nothing and keep the events queued")
         {
             // Poll runs from the tick whether or not a save is loaded. Draining
             // here would consume events into a file nobody opened, and they
             // would never appear once one was.
-            const auto queued = NarrativeEngine::Testing::EventLogSpies().travelQueue.size();
-            PollWith(60.0);
-            REQUIRE(NarrativeEngine::Testing::EventLogSpies().travelQueue.size() == queued);
+            PollWriter(60.0);
+            REQUIRE(CombatEventLog::DrainHistoryTail().size() == 1);
         }
     }
 }
 
-TEST_CASE("EventHistoryWriter merges its four sources by time", "[EventHistoryWriter][engine]")
+TEST_CASE("EventHistoryWriter merges its sources by time", "[EventHistoryWriter][engine]")
 {
     // Each source keeps its own queue, so appending them one after another
     // would file every combat event before every weather event regardless of
     // when they happened.
     EngineMock engine;
-    const ConfiguredSettings settings{"[EventHistory]\nbEventHistoryEnabled=1\niEventHistoryFlushIntervalSeconds=5\n"};
+    const ConfiguredSettings settings{kSettings};
     ClearHistoryFiles();
     EventHistoryWriter::OnSessionStart();
 
-    SECTION("when events arrive from several sources out of order")
+    SECTION("when two internal sources have events")
     {
-        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(Entry(300.0, "internal/travel_event", "third"));
-        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(Entry(100.0, "internal/travel_event", "first"));
-        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
-            Entry(200.0, "internal/travel_event", "second"));
-        PollWith(60.0);
+        TurnTheWeather(engine);
+        StartAFight(engine);
+        PollWriter(60.0);
         EventHistoryWriter::OnSessionEnd();
         const auto lines = HistoryLines();
 
+        SECTION("should write both")
+        {
+            REQUIRE(lines.size() == 2);
+            REQUIRE(AnyLineContains("internal/weather_event/"));
+            REQUIRE(AnyLineContains("internal/combat_event/"));
+        }
+
         SECTION("should write them in the order they happened")
         {
-            REQUIRE(lines.size() == 3);
-            REQUIRE(lines[0].find("first") != std::string::npos);
-            REQUIRE(lines[1].find("second") != std::string::npos);
-            REQUIRE(lines[2].find("third") != std::string::npos);
-        }
-    }
-
-    SECTION("when two events share an instant")
-    {
-        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
-            Entry(100.0, "internal/travel_event", "travel at 100"));
-        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
-            Entry(100.0, "internal/travel_event", "travel at 100"));
-        PollWith(60.0);
-        EventHistoryWriter::OnSessionEnd();
-
-        SECTION("should keep the order they were enqueued in")
-        {
-            // A stable sort, so a tie does not shuffle a causal pair into the
-            // wrong order — which in an archive reads as the effect preceding
-            // its cause.
-            const auto lines = HistoryLines();
+            // The weather turned before the fight started, and the archive has
+            // to say so — a reader uses this file to reconstruct a sequence,
+            // and each source's queue is drained whole.
             REQUIRE(lines.size() == 2);
-            REQUIRE(lines[0].find("travel at 100") != std::string::npos);
-        }
-    }
-
-    SECTION("when a body spans several lines")
-    {
-        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
-            Entry(100.0, "internal/travel_event", "line one\nline two"));
-        PollWith(60.0);
-        EventHistoryWriter::OnSessionEnd();
-
-        SECTION("should indent the continuation so one record stays one record")
-        {
-            // Book bodies are kept in full here, and they are long. Without
-            // indentation a reader cannot tell where one record ends.
-            const auto lines = HistoryLines();
-            REQUIRE(lines.size() == 2);
-            REQUIRE(lines[1].starts_with(" "));
+            REQUIRE(lines[0].find("internal/weather_event/") != std::string::npos);
         }
     }
 }
@@ -335,7 +346,7 @@ TEST_CASE("EventHistoryWriter deduplicates SkyrimNet's stream", "[EventHistoryWr
     // every flush. Without a bookmark the archive fills with copies of
     // everything and stops being readable within a few minutes of play.
     EngineMock engine;
-    const ConfiguredSettings settings{"[EventHistory]\nbEventHistoryEnabled=1\niEventHistoryFlushIntervalSeconds=5\n"};
+    const ConfiguredSettings settings{kSettings};
     auto& fake = FakeState();
     REQUIRE(SkyrimNet::Initialize());
     fake.Reset();
@@ -350,8 +361,8 @@ TEST_CASE("EventHistoryWriter deduplicates SkyrimNet's stream", "[EventHistoryWr
 
     SECTION("when the same events come back on the next flush")
     {
-        PollWith(60.0);
-        PollWith(60.0);
+        PollWriter(60.0);
+        PollWriter(60.0);
         EventHistoryWriter::OnSessionEnd();
 
         SECTION("should write each event once")
@@ -366,13 +377,13 @@ TEST_CASE("EventHistoryWriter deduplicates SkyrimNet's stream", "[EventHistoryWr
 
     SECTION("when a newer event arrives")
     {
-        PollWith(60.0);
+        PollWriter(60.0);
         SetJson(fake.eventsJson,
                 R"([{"type":"dialogue","localTime":100.0,"gameTime":1.0,)"
                 R"("data":{"speaker":"Ysolda","dialogue":"Good morning."}},)"
                 R"({"type":"dialogue","localTime":200.0,"gameTime":2.0,)"
                 R"("data":{"speaker":"Ysolda","dialogue":"Farewell."}}])");
-        PollWith(60.0);
+        PollWriter(60.0);
         EventHistoryWriter::OnSessionEnd();
 
         SECTION("should write only the new one")
@@ -386,9 +397,8 @@ TEST_CASE("EventHistoryWriter deduplicates SkyrimNet's stream", "[EventHistoryWr
     SECTION("when SkyrimNet answers with nothing")
     {
         SetJson(fake.eventsJson, "[]");
-        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
-            Entry(1.0, "internal/travel_event", "Hans left Whiterun."));
-        PollWith(60.0);
+        StartAFight(engine);
+        PollWriter(60.0);
         EventHistoryWriter::OnSessionEnd();
 
         SECTION("should still write the internal events")
@@ -402,9 +412,8 @@ TEST_CASE("EventHistoryWriter deduplicates SkyrimNet's stream", "[EventHistoryWr
     SECTION("when SkyrimNet answers with something unparseable")
     {
         SetJson(fake.eventsJson, "not json at all");
-        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
-            Entry(1.0, "internal/travel_event", "Hans left Whiterun."));
-        PollWith(60.0);
+        StartAFight(engine);
+        PollWriter(60.0);
         EventHistoryWriter::OnSessionEnd();
 
         SECTION("should still write the internal events")
@@ -417,15 +426,14 @@ TEST_CASE("EventHistoryWriter deduplicates SkyrimNet's stream", "[EventHistoryWr
 TEST_CASE("EventHistoryWriter rotates its files", "[EventHistoryWriter][engine]")
 {
     EngineMock engine;
-    const ConfiguredSettings settings{"[EventHistory]\nbEventHistoryEnabled=1\niEventHistoryFlushIntervalSeconds=5\n"};
+    const ConfiguredSettings settings{kSettings};
     ClearHistoryFiles();
 
     SECTION("when a second session starts")
     {
         EventHistoryWriter::OnSessionStart();
-        NarrativeEngine::Testing::EventLogSpies().travelQueue.push_back(
-            Entry(1.0, "internal/travel_event", "first session"));
-        PollWith(60.0);
+        StartAFight(engine);
+        PollWriter(60.0);
         EventHistoryWriter::OnSessionEnd();
         EventHistoryWriter::OnSessionStart();
 

@@ -746,6 +746,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/MCMEventSink.cpp"
         "${CMAKE_SOURCE_DIR}/src/StuckRecovery.cpp"
         "${CMAKE_SOURCE_DIR}/src/SKSECosaveIO.cpp"
+        "${CMAKE_SOURCE_DIR}/src/TravelEventLog.cpp"
         "${CMAKE_SOURCE_DIR}/src/Tick.cpp"
         "${CMAKE_SOURCE_DIR}/src/WeatherEventLog.cpp"
         "${CMAKE_SOURCE_DIR}/src/VisitState.cpp"

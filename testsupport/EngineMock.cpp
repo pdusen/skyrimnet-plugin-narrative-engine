@@ -59,6 +59,12 @@ namespace NarrativeEngine::Testing
     // Writing worldSpace through that view runs off the end of an
     // exactly-sized object and corrupts whatever follows it.
     inline constexpr std::size_t kCellStorageBytes = sizeof(RE::TESObjectCELL) + 0x200;
+
+    // Actors get the same treatment, and for the same reason: several of their
+    // accessors -- AsActorState among them -- are relocated views whose members
+    // sit past the type's own size, so an exactly-sized object is written off
+    // the end of.
+    inline constexpr std::size_t kActorStorageBytes = sizeof(RE::Actor) + 0x400;
     void RegisterCellFacts(const void* cell, std::int16_t cellX, std::int16_t cellY, RE::BGSLocation* location);
     const EngineMock::QuestState* QuestStateFor(const void* quest);
     RE::TESObjectCELL* FabricatedCell();
@@ -1296,7 +1302,7 @@ namespace NarrativeEngine::Testing
         if (const auto it = registry.byFormID.find(formID); it != registry.byFormID.end())
             return it->second;
 
-        auto& object = registry.objects.emplace_back(sizeof(RE::Actor), 256);
+        auto& object = registry.objects.emplace_back(kActorStorageBytes, 256);
         WireFormDefaults(object, true);
         auto* form = object.As<RE::TESForm>();
         // As<Actor>() switches on this, so it is what makes the cast succeed.
