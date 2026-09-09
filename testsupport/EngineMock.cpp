@@ -679,7 +679,7 @@ namespace NarrativeEngine::Testing
             bleedingOut ? RE::ACTOR_LIFE_STATE::kBleedout : RE::ACTOR_LIFE_STATE::kAlive;
     }
 
-    RE::TESWorldSpace* EngineMock::AddWorldSpace(std::uint32_t formID)
+    RE::TESWorldSpace* EngineMock::AddWorldSpace(std::uint32_t formID, std::string editorID)
     {
         auto& pool = Worlds();
         // Headroom past sizeof, for the same reason cells get it.
@@ -706,6 +706,10 @@ namespace NarrativeEngine::Testing
         // size while yielding nothing from a range-for, which is what a grid
         // builder walking it would see. Constructing it in place fixes that.
         new (&worldSpace->cellMap) RE::BSTHashMap<RE::CellID, RE::TESObjectCELL*>();
+        if (!editorID.empty()) {
+            SetEditorID(worldSpace, editorID);
+            EditorIDTable().insert({RE::BSFixedString(editorID.c_str()), object.As<RE::TESForm>()});
+        }
         pool.worldForms.push_back(object.As<RE::TESForm>());
         FormTable().insert({formID, object.As<RE::TESForm>()});
         return worldSpace;
@@ -2339,6 +2343,11 @@ namespace NarrativeEngine::Testing
             if (mock->world.playerCellWorldSpace) {
                 cell->GetRuntimeData().worldSpace = mock->world.playerCellWorldSpace;
                 RegisterCellFacts(cell, mock->world.playerCellX, mock->world.playerCellY, nullptr);
+                // Registering facts is what makes IsInteriorCell answer per
+                // cell rather than from the mock-wide flag, so the flag has to
+                // be carried onto them or a test that puts the player indoors
+                // after placing them in the grid would be ignored.
+                mock->SetCellInterior(cell, mock->world.cellIsInterior);
             }
             pc->parentCell = cell;
         } else {

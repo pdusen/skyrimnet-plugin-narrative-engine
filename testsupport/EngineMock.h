@@ -410,7 +410,11 @@ namespace NarrativeEngine::Testing
 
         // Fabricate a worldspace the data handler will hand back when asked for
         // every WorldSpace form. Its cell map starts empty.
-        RE::TESWorldSpace* AddWorldSpace(std::uint32_t formID);
+        //
+        // The editor ID is optional and only matters where something names the
+        // worldspace in a file or a log — worldspaces are otherwise identified
+        // by their FormID.
+        RE::TESWorldSpace* AddWorldSpace(std::uint32_t formID, std::string editorID = {});
 
         // Add an exterior cell to a worldspace's cell map at the given grid
         // coordinates, optionally belonging to a location.

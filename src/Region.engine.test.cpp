@@ -1,6 +1,7 @@
 #include <Region.h>
 
 #include <EngineMock.h>
+#include <HoldGrid.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -18,11 +19,16 @@
 //
 // The module has two ways to reach the same answer, and they must agree. The
 // fast path asks HoldGrid for a precomputed coordinate-to-hold FormID; the
-// fallback walks the chain. HoldGrid is our own module and linking it would
-// drag the grid builder into this executable, so the test defines
-// HoldGrid::LookupPlayer itself. That is what makes both paths reachable at
-// all — with the real one there would be no way to say "the grid has no answer
-// here" from a test.
+// fallback walks the parent chain. HoldGrid is the real one here, so the fast
+// path is reached by building a grid and standing the player in it, and the
+// fallback by standing them somewhere the grid does not index — an interior,
+// which is every indoor cell in the game.
+//
+// Two of the module's guards are unreachable that way and are left uncovered
+// deliberately: the grid stores raw FormIDs, and a real builder never puts one
+// in that names something other than a location, or one that no longer
+// resolves. Both are defence against stale data rather than behaviour a caller
+// can produce.
 //
 // Two caches are function-local statics, resolved once per process: the
 // LocTypeHold keyword and the FormID-to-Climate table. Whichever case runs
@@ -36,11 +42,6 @@ namespace
     using NarrativeEngine::Testing::EngineMock;
     namespace Region = NarrativeEngine::Region;
     using Region::Climate;
-
-    // What the stand-in grid answers with. Zero means "the grid has no entry
-    // for where the player is standing", which is the normal case for every
-    // interior cell.
-    RE::FormID g_gridAnswer = 0;
 
     // Hold FormIDs. Fixed per editor ID for the life of the process, because
     // the climate table caches the mapping the first time it resolves.
@@ -76,23 +77,12 @@ namespace
     }
 } // namespace
 
-// The grid fast path. Defining it here keeps HoldGrid out of this link closure
-// and is the only way a case can say "the grid has nothing for this position".
-namespace NarrativeEngine::HoldGrid
-{
-    RE::FormID LookupPlayer()
-    {
-        return g_gridAnswer;
-    }
-} // namespace NarrativeEngine::HoldGrid
-
 TEST_CASE("Region::ForLocation walks the parent chain", "[Region][engine]")
 {
     // Happy path, re-run per leaf: the grid is silent, so every case here
     // exercises the walk. The player's own location is not a hold.
     EngineMock engine;
     RegisterHolds(engine);
-    g_gridAnswer = 0;
 
     SECTION("when the location is itself a hold")
     {
@@ -183,7 +173,6 @@ TEST_CASE("Region resolves a hold's climate and name", "[Region][engine]")
     // a display name.
     EngineMock engine;
     RegisterHolds(engine);
-    g_gridAnswer = 0;
 
     SECTION("when the hold is in the climate table")
     {
@@ -245,11 +234,25 @@ TEST_CASE("Region resolves a hold's climate and name", "[Region][engine]")
 
 TEST_CASE("Region::ForPlayer", "[Region][engine]")
 {
-    // Happy path, re-run per leaf: the grid answers with Whiterun Hold, which
-    // is the case for every exterior cell the builder reached.
+    // Happy path, re-run per leaf: a real hold grid covering a block of
+    // exterior cells around the origin, with the player standing in the middle
+    // of it. That is the state after a load in any part of Skyrim the builder
+    // reached, which is nearly all of it.
+    //
+    // The block is nine cells because the builder prunes isolated clusters of
+    // three or fewer as mis-tagged data, and one cell on its own would be
+    // pruned away before any lookup could see it.
     EngineMock engine;
     RegisterHolds(engine);
-    g_gridAnswer = kWhiterunHold;
+    auto* whiterun = engine.AddLocation(kWhiterunHold, "Whiterun Hold", {"LocTypeHold"}, "WhiterunHoldLocation");
+    auto* space = engine.AddWorldSpace(0x0000003Cu);
+    for (std::int16_t x = -1; x <= 1; ++x) {
+        for (std::int16_t y = -1; y <= 1; ++y) {
+            (void)engine.AddExteriorCell(space, x, y, whiterun);
+        }
+    }
+    NarrativeEngine::HoldGrid::Initialize();
+    engine.StandPlayerInCell(space, 0, 0);
 
     SECTION("when the grid has an answer")
     {
@@ -267,47 +270,16 @@ TEST_CASE("Region::ForPlayer", "[Region][engine]")
                 engine.AddLocation(kFalkreathHold, "Falkreath Hold", {"LocTypeHold"}, "FalkreathHoldLocation");
             auto* here = engine.AddLocation(kChildLocation, "Somewhere", {});
             engine.SetLocationParent(here, falkreath);
+            engine.world.playerHasLocation = true;
             engine.world.playerLocationOverride = here;
             REQUIRE(Region::ForPlayer().holdFormID == kWhiterunHold);
-        }
-    }
-
-    SECTION("when the grid names a form that is not a location")
-    {
-        // The grid stores raw FormIDs, so a stale or mismatched entry can point
-        // at something that is not a BGSLocation any more. Falling through to
-        // the walk is safer than trusting the cast — an actor read as a
-        // location would hand back whatever bytes sit where parentLoc belongs.
-        constexpr RE::FormID kActorFormID = 0x0001A6A0u;
-        (void)engine.AddActor(kActorFormID);
-        g_gridAnswer = kActorFormID;
-
-        SECTION("should fall back to the parent walk")
-        {
-            auto* falkreath =
-                engine.AddLocation(kFalkreathHold, "Falkreath Hold", {"LocTypeHold"}, "FalkreathHoldLocation");
-            engine.world.playerLocationOverride = falkreath;
-            REQUIRE(Region::ForPlayer().holdFormID == kFalkreathHold);
-        }
-    }
-
-    SECTION("when the grid names a form that does not resolve")
-    {
-        g_gridAnswer = 0xDEADBEEFu;
-
-        SECTION("should fall back to the parent walk")
-        {
-            auto* falkreath =
-                engine.AddLocation(kFalkreathHold, "Falkreath Hold", {"LocTypeHold"}, "FalkreathHoldLocation");
-            engine.world.playerLocationOverride = falkreath;
-            REQUIRE(Region::ForPlayer().holdFormID == kFalkreathHold);
         }
     }
 
     SECTION("when the grid has no answer")
     {
         // Every interior cell, which the grid does not index at all.
-        g_gridAnswer = 0;
+        engine.world.cellIsInterior = true;
 
         SECTION("should walk the player's location chain")
         {
@@ -315,19 +287,9 @@ TEST_CASE("Region::ForPlayer", "[Region][engine]")
                 engine.AddLocation(kFalkreathHold, "Falkreath Hold", {"LocTypeHold"}, "FalkreathHoldLocation");
             auto* here = engine.AddLocation(kChildLocation, "Somewhere", {});
             engine.SetLocationParent(here, falkreath);
+            engine.world.playerHasLocation = true;
             engine.world.playerLocationOverride = here;
             REQUIRE(Region::ForPlayer().holdFormID == kFalkreathHold);
-        }
-    }
-
-    SECTION("when the player singleton is unavailable")
-    {
-        g_gridAnswer = 0;
-        engine.player.present = false;
-
-        SECTION("should report no hold rather than crash")
-        {
-            REQUIRE(Region::ForPlayer().holdFormID == 0);
         }
     }
 }

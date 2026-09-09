@@ -2,7 +2,6 @@
 
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
-#include <HoldGrid.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -181,19 +180,6 @@ namespace
         return NodeAt(x, y) != TravelGraph::kInvalidNode;
     }
 } // namespace
-
-// HoldGrid's cell-to-hold partition, which the debug bitmap tints its
-// background with. Defined here so the grid builder stays out of this link
-// closure, and so a case can say what the map says without building one.
-namespace NarrativeEngine::HoldGrid
-{
-    RE::FormID LookupCell(RE::TESWorldSpace*, std::int16_t cellX, std::int16_t)
-    {
-        // Two holds meeting at cell 12, so the bitmap has more than one colour
-        // to lay down and the palette assignment runs.
-        return cellX < 12 ? 0x00A0F001u : 0x00A0F002u;
-    }
-} // namespace NarrativeEngine::HoldGrid
 
 TEST_CASE("TravelGraph builds a road from the precomputed routes", "[TravelGraph][engine]")
 {
@@ -603,7 +589,9 @@ TEST_CASE("TravelGraph draws the road on request", "[TravelGraph][engine]")
         SECTION("should write one image per worldspace")
         {
             // Named for the worldspace rather than numbered, because the whole
-            // point is opening one and recognising the province in it.
+            // point is opening one and recognising the province in it. Its
+            // background is tinted per hold, and no hold grid was built here,
+            // so what is checked is the graph drawing rather than the tint.
             REQUIRE(std::filesystem::exists(mainland));
         }
     }
