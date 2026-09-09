@@ -736,6 +736,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/RoadRoute.cpp"
         "${CMAKE_SOURCE_DIR}/src/HoldGrid.cpp"
         "${CMAKE_SOURCE_DIR}/src/AmbushSpawnPoints.cpp"
+        "${CMAKE_SOURCE_DIR}/src/EvaluationPipeline.cpp"
         "${CMAKE_SOURCE_DIR}/src/PrismaUI.cpp"
         "${CMAKE_SOURCE_DIR}/src/SkyrimNetAPI.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipClaims.cpp"
@@ -768,7 +769,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
             testsupport/CommonLibSSERuntimeStubs.cpp
             testsupport/DispatcherContract.cpp
             testsupport/FakeVTable.cpp
-            testsupport/EvaluationSpies.cpp
+            testsupport/DownstreamSpies.cpp
             testsupport/GossipSpies.cpp
             testsupport/RelocationMocks.cpp
             testsupport/RelocationMocks.test.cpp

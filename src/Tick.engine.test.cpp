@@ -3,13 +3,14 @@
 #include <AsyncDispatch.h>
 #include <CombatEventLog.h>
 #include <ConfiguredSettings.h>
+#include <DownstreamSpies.h>
 #include <EngineMock.h>
 #include <EvalDispatch.h>
-#include <EvaluationSpies.h>
 #include <EventHistoryWriter.h>
 #include <FineRoads.h>
 #include <GossipSpies.h>
 #include <PluginThread.h>
+#include <SkyrimNetAPI.h>
 
 #include <nlohmann/json.hpp>
 
@@ -33,12 +34,18 @@
 // paused or disabled time to its accumulator fires a burst the moment play
 // resumes.
 //
-// The collaborators the poll body calls are our own modules, and all but one of
-// them are compiled in for real, so each is observed through the cheapest
-// effect it has rather than through a counter: the combat log through the event
-// it emits, the road graph through the nodes it extracts, the history writer
-// through the file it flushes. Only the evaluation pipeline is still a stand-in
-// (testsupport/EvaluationSpies.cpp), because what it really does is call an LLM.
+// The collaborators the poll body calls are our own modules and every one of
+// them is compiled in for real, so each is observed through the cheapest effect
+// it has rather than through a counter: the combat log through the event it
+// emits, the road graph through the nodes it extracts, the history writer
+// through the file it flushes, and the evaluation through the decision it hands
+// to the beat system.
+//
+// That last handoff is a stand-in (testsupport/DownstreamSpies.cpp), and it is
+// also the lever for the in-flight cases. The beat system owns a decision once
+// it is given one, and the callback it eventually makes is what lets the next
+// evaluation start — so a stand-in that keeps the callback puts the pipeline in
+// the state a slow LLM would, without anything having to be slow.
 //
 // The per-poll heartbeat is the gossip scheduler's first act, asking whether
 // the graph is ready. That question is asked once per poll and its answer comes
@@ -78,6 +85,13 @@ namespace
         auto& spies = NarrativeEngine::Testing::GossipSpies();
         std::scoped_lock lock(spies.mutex);
         return spies.graphReadyQueries;
+    }
+
+    // How many decisions have reached the beat system, which is one per
+    // evaluation the driver has run to completion.
+    int Evaluations()
+    {
+        return NarrativeEngine::Testing::DownstreamSpies().beatsConsidered.load();
     }
 
     bool HistoryFileHasContent()
@@ -188,7 +202,7 @@ TEST_CASE("Tick polls the event logs", "[Tick][engine]")
                                       "[Gossip]\nbGossipEnabled=1\n"
                                       "[FineRoads]\nbFineRoadsEnabled=1\n"
                                       "[EventHistory]\nbEventHistoryEnabled=1\niEventHistoryFlushIntervalSeconds=1\n"};
-    NarrativeEngine::Testing::EvaluationSpies().Reset();
+    NarrativeEngine::Testing::DownstreamSpies().Reset();
     NarrativeEngine::Testing::GossipSpies().Reset();
     Tick::SetEnabled(true);
     // The history writer is compiled in for real, so a session is opened here
@@ -264,9 +278,13 @@ TEST_CASE("Tick fires the Director", "[Tick][engine]")
     EngineMock engine;
     const ConfiguredSettings settings{"[Director]\nbTickEnabled=1\niTickIntervalSeconds=1\n"
                                       "[Gossip]\nbGossipEnabled=1\n"};
-    NarrativeEngine::Testing::EvaluationSpies().Reset();
+    NarrativeEngine::Testing::DownstreamSpies().Reset();
     NarrativeEngine::Testing::GossipSpies().Reset();
     Tick::SetEnabled(true);
+    // The evaluation ends in a call to the LLM, so the wrapper has to have
+    // resolved against the stand-in SkyrimNet beside the executable. Without
+    // it every evaluation fails at that call and never reaches the beat system.
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
 
     SECTION("when the interval elapses")
     {
@@ -274,8 +292,7 @@ TEST_CASE("Tick fires the Director", "[Tick][engine]")
 
         SECTION("should begin an evaluation")
         {
-            REQUIRE(Eventually([] { return NarrativeEngine::Testing::EvaluationSpies().evaluations.load() > 0; },
-                               kFireTimeout));
+            REQUIRE(Eventually([] { return Evaluations() > 0; }, kFireTimeout));
         }
     }
 
@@ -296,33 +313,33 @@ TEST_CASE("Tick fires the Director", "[Tick][engine]")
 
         SECTION("should begin no evaluation")
         {
-            REQUIRE_FALSE(Eventually([] { return NarrativeEngine::Testing::EvaluationSpies().evaluations.load() > 0; },
-                                     kFireTimeout));
+            REQUIRE_FALSE(Eventually([] { return Evaluations() > 0; }, kFireTimeout));
         }
     }
 
     SECTION("when the previous evaluation is still running")
     {
-        NarrativeEngine::Testing::EvaluationSpies().inFlight = true;
+        // The beat system keeps the decision rather than finishing with it,
+        // which is what a round trip that outlasts the interval looks like.
+        NarrativeEngine::Testing::DownstreamSpies().holdCompletion = true;
         const RunningDriver driver;
 
         SECTION("should skip rather than queue a catch-up burst")
         {
-            // An LLM round trip outlasts several intervals. Queueing one
-            // evaluation per missed interval would fire a burst of them the
-            // moment the first returned.
-            REQUIRE_FALSE(Eventually([] { return NarrativeEngine::Testing::EvaluationSpies().evaluations.load() > 0; },
-                                     kFireTimeout));
+            // One evaluation gets through and is still running; every interval
+            // after it must pass without starting another. Queueing one per
+            // missed interval would fire the whole backlog the moment the
+            // first returned.
+            REQUIRE(Eventually([] { return Evaluations() >= 1; }, kFireTimeout));
+            REQUIRE_FALSE(Eventually([] { return Evaluations() > 1; }, kFireTimeout));
         }
 
         SECTION("should fire again once it finishes")
         {
-            // The accumulator is not consumed by a skip, so the tick that was
-            // held back is not lost either.
-            REQUIRE(Eventually([] { return PollCount() > 2; }, kPollTimeout));
-            NarrativeEngine::Testing::EvaluationSpies().inFlight = false;
-            REQUIRE(Eventually([] { return NarrativeEngine::Testing::EvaluationSpies().evaluations.load() > 0; },
-                               kFireTimeout));
+            REQUIRE(Eventually([] { return Evaluations() >= 1; }, kFireTimeout));
+            NarrativeEngine::Testing::DownstreamSpies().holdCompletion = false;
+            NarrativeEngine::Testing::DownstreamSpies().ReleaseHeld();
+            REQUIRE(Eventually([] { return Evaluations() > 1; }, kFireTimeout));
         }
     }
 }
@@ -332,7 +349,7 @@ TEST_CASE("Tick::Start and Stop", "[Tick][engine]")
     EngineMock engine;
     const ConfiguredSettings settings{"[Director]\nbTickEnabled=1\niTickIntervalSeconds=1\n"
                                       "[Gossip]\nbGossipEnabled=1\n"};
-    NarrativeEngine::Testing::EvaluationSpies().Reset();
+    NarrativeEngine::Testing::DownstreamSpies().Reset();
     NarrativeEngine::Testing::GossipSpies().Reset();
 
     SECTION("when start is called twice")
