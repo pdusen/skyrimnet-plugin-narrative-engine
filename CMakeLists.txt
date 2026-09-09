@@ -740,6 +740,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/GossipContent.cpp"
         "${CMAKE_SOURCE_DIR}/src/VisitComposer.cpp"
         "${CMAKE_SOURCE_DIR}/src/VisitConclusionPoll.cpp"
+        "${CMAKE_SOURCE_DIR}/src/LetterComposer.cpp"
         "${CMAKE_SOURCE_DIR}/src/PrismaUI.cpp"
         "${CMAKE_SOURCE_DIR}/src/SkyrimNetAPI.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipClaims.cpp"

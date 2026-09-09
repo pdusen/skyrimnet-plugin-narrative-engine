@@ -2221,6 +2221,15 @@ RE::SEXES::SEX RE::TESNPC::GetSex() const
     return actorData.actorBaseFlags.any(RE::ACTOR_BASE_DATA::Flag::kFemale) ? RE::SEXES::kFemale : RE::SEXES::kMale;
 }
 
+bool RE::TESObjectREFR::Is3DLoaded() const
+{
+    // Whether the reference's model is in memory. Distinct from whether it
+    // exists: a persistent NPC on the other side of the province is a live
+    // object with nothing rendered.
+    auto* mock = NarrativeEngine::Testing::EngineMock::Current();
+    return mock != nullptr && mock->visibility.target3DPresent;
+}
+
 float RE::TESObjectREFR::GetAngleZ() const
 {
     // Which way a reference is facing. Read off the object rather than from a

@@ -6,14 +6,18 @@
 #include <optional>
 #include <set>
 
-// Stand-in for the visit beat's own bookkeeping, which the composer consults
-// while working out who could plausibly turn up.
+// Stand-in for the bookkeeping the visit and letter beats each keep, which
+// their composers consult while working out who could plausibly get in touch.
 //
-// Beside the harness rather than inside one test file because the composer's
-// tests and the beat's own will both want it. Two things are asked of it and
-// both are about not asking the same person twice: whether a sender has visited
-// recently enough to be off the list, and how far through their memories the
-// last visit already read.
+// Beside the harness rather than inside one test file because the composers'
+// tests and the beats' own will both want it. Two things are asked of it and
+// both are about not asking the same person twice: whether a sender has been in
+// touch recently enough to be off the list, and how far through their memories
+// the last approach already read.
+//
+// One state serves both beats. They are separate ledgers in the shipping build
+// and nothing here needs them told apart — a test that wanted to would be
+// asking about the beats rather than about the composers.
 namespace NarrativeEngine::Testing
 {
     struct VisitSpyState

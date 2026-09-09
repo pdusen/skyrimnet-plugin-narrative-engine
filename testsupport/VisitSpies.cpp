@@ -1,5 +1,6 @@
 #include "VisitSpies.h"
 
+#include <NPCLetterBeat.h>
 #include <NPCVisitBeat.h>
 
 // See VisitSpies.h for why these live beside the harness.
@@ -37,3 +38,16 @@ namespace NarrativeEngine::NPCVisitBeat_Cooldowns
         return it == spies.memoryWatermarks.end() ? std::nullopt : std::optional<double>{it->second};
     }
 } // namespace NarrativeEngine::NPCVisitBeat_Cooldowns
+
+namespace NarrativeEngine::NPCLetterBeat_Cooldowns
+{
+    bool IsSenderOnCooldown(RE::FormID sender)
+    {
+        return NPCVisitBeat_Cooldowns::IsSenderOnCooldown(sender);
+    }
+
+    std::optional<double> GetSenderMemoryWatermarkGameHours(RE::FormID sender)
+    {
+        return NPCVisitBeat_Cooldowns::GetSenderMemoryWatermarkGameHours(sender);
+    }
+} // namespace NarrativeEngine::NPCLetterBeat_Cooldowns
