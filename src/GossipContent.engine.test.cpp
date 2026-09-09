@@ -7,6 +7,7 @@
 #include <GossipGraph.h>
 #include <GossipSpies.h>
 #include <GossipThread.h>
+#include <GossipWorld.h>
 #include <SkyrimNetAPI.h>
 #include <ThreadRole.h>
 
@@ -68,6 +69,7 @@ namespace
     namespace GossipGraph = NarrativeEngine::GossipGraph;
     namespace GossipThread = NarrativeEngine::GossipThread;
     namespace SkyrimNetAPI = NarrativeEngine::SkyrimNetAPI;
+    using NarrativeEngine::Testing::BuildGossipWorld;
     using NarrativeEngine::Testing::ConfiguredSettings;
     using NarrativeEngine::Testing::EngineMock;
     using NarrativeEngine::Testing::FakeSkyrimNetState;
@@ -78,39 +80,15 @@ namespace
 
     constexpr const char* kSettings = "[Gossip]\niGossipContentBands=3\n";
 
-    constexpr std::uint32_t kTeller = 0x00D00001u;
-    constexpr std::uint32_t kListener = 0x00D00002u;
-    constexpr std::uint32_t kThirdParty = 0x00D00003u;
-
-    constexpr std::uint32_t kHousehold = 0x00D10001u;
-    constexpr std::uint32_t kOtherHousehold = 0x00D10002u;
-    constexpr std::uint32_t kRiverwood = 0x00D20001u;
-    constexpr std::uint32_t kFalkreath = 0x00D20002u;
-    constexpr std::uint32_t kWhiterunHold = 0x00D30001u;
-    constexpr std::uint32_t kFalkreathHold = 0x00D30002u;
-
     const std::string kBand = "A College mage was caught. The Arch-Mage covered it up.";
 
-    // Puts somebody in the graph with the ties that decide how they are
-    // spoken about, and gives them a name to be spoken about by.
-    void Place(std::uint32_t npc,
-               const char* name,
-               std::uint32_t household,
-               std::uint32_t settlement,
-               std::uint32_t hold)
-    {
-        auto& spies = GossipSpies();
-        std::scoped_lock lock(spies.mutex);
-        GossipGraph::Participant p;
-        p.npc = npc;
-        p.actorRef = npc + 0x00010000u;
-        p.household = household;
-        p.settlement = settlement;
-        p.hold = hold;
-        p.name = name;
-        spies.participants[npc] = p;
-        spies.npcNames[npc] = name;
-    }
+    // The people the framing cases talk about, taken from the shared harness
+    // world. Two of them share an inn (a household), a third is elsewhere in
+    // the same town (a settlement), and the fourth is a hold away.
+    constexpr std::uint32_t kHulda = 0x0001A67Au;
+    constexpr std::uint32_t kSaadia = 0x0001A67Bu;
+    constexpr std::uint32_t kYsolda = 0x0001A6A0u;
+    constexpr std::uint32_t kValga = 0x0001A6A1u;
 
     // Memories and the happenings behind them. Claims are keyed on both, and
     // which of the two a refusal keeps is the thing most of the walk cases are
@@ -153,7 +131,7 @@ namespace
     {
         GossipContent::Candidate c;
         c.memoryId = memoryId;
-        c.owner = kTeller;
+        c.owner = kHulda;
         c.importance = 0.7f;
         c.text = "A College mage was caught in the Arcanaeum after hours.";
         c.locationName = "Winterhold";
@@ -205,110 +183,100 @@ namespace
         return std::string{FakeLLM().lastPromptName};
     }
 
-    void NameLocation(std::uint32_t form, const char* name)
-    {
-        auto& spies = GossipSpies();
-        std::scoped_lock lock(spies.mutex);
-        spies.locationNames[form] = name;
-    }
 } // namespace
 
 TEST_CASE("GossipContent frames how a listener remembers hearing it", "[GossipContent][engine]")
 {
-    // Happy path, re-run per leaf: two strangers in the same hold and nothing
-    // else in common, which is how most gossip travels. Each case adds the one
-    // tie it is about.
+    // Happy path, re-run per leaf: the harness world with its graph built, and
+    // Hulda telling somebody something. Who that somebody is decides the
+    // framing, and every case here changes only that.
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
     GossipSpies().Reset();
-    NameLocation(kRiverwood, "Riverwood");
-    NameLocation(kFalkreath, "Falkreath");
-    Place(kTeller, "Sven", kHousehold, kRiverwood, kWhiterunHold);
-    Place(kListener, "Camilla", kOtherHousehold, kFalkreath, kWhiterunHold);
+    BuildGossipWorld(engine);
+    GossipGraph::Initialize();
+    REQUIRE(GossipGraph::IsReady());
 
     SECTION("when the two are barely connected")
     {
-        Place(kTeller, "Sven", kHousehold, kRiverwood, kWhiterunHold);
-        Place(kListener, "Camilla", kOtherHousehold, kFalkreath, kFalkreathHold);
-
         SECTION("should call it a rumor going round")
         {
-            // The common case by a wide margin, and it is genuinely how most
-            // gossip arrives — from nobody in particular.
-            const auto heard = GossipContent::ComposeHeard(kBand, kTeller, kListener);
+            // Valga is a hold away and no relation. This is the common case by
+            // a wide margin, and it is genuinely how most gossip arrives —
+            // from nobody in particular.
+            const auto heard = GossipContent::ComposeHeard(kBand, kHulda, kValga);
             REQUIRE(heard == "I heard a rumor going round: " + kBand);
         }
     }
 
     SECTION("when the two live in the same town")
     {
-        Place(kListener, "Camilla", kOtherHousehold, kRiverwood, kWhiterunHold);
-
         SECTION("should name who told them")
         {
-            const auto heard = GossipContent::ComposeHeard(kBand, kTeller, kListener);
-            REQUIRE(heard == "Sven told me this: " + kBand);
+            // Ysolda lives in Whiterun but not in the inn.
+            const auto heard = GossipContent::ComposeHeard(kBand, kHulda, kYsolda);
+            REQUIRE(heard == "Hulda told me this: " + kBand);
         }
     }
 
     SECTION("when the two share a house")
     {
-        Place(kListener, "Camilla", kHousehold, kRiverwood, kWhiterunHold);
-
         SECTION("should place it over supper")
         {
-            // The household tie is checked before the settlement one, because
-            // people who live together heard it somewhere more specific than
-            // "in town".
-            const auto heard = GossipContent::ComposeHeard(kBand, kTeller, kListener);
-            REQUIRE(heard == "Sven mentioned this over supper: " + kBand);
+            // Saadia works at the same inn, which the graph reads as a
+            // household. The household tie is checked before the settlement
+            // one, because people who live together heard it somewhere more
+            // specific than "in town".
+            const auto heard = GossipContent::ComposeHeard(kBand, kHulda, kSaadia);
+            REQUIRE(heard == "Hulda mentioned this over supper: " + kBand);
         }
     }
 
     SECTION("when the two are family in the same hold")
     {
-        auto* teller = engine.AddNPC(kTeller);
-        auto* listener = engine.AddNPC(kListener, /*female=*/true);
+        auto* teller = RE::TESForm::LookupByID<RE::TESNPC>(kHulda);
+        auto* listener = RE::TESForm::LookupByID<RE::TESNPC>(kYsolda);
+        REQUIRE(teller != nullptr);
+        REQUIRE(listener != nullptr);
         engine.AddRelationship(teller, listener, "brother", "sister");
-        Place(kListener, "Camilla", kOtherHousehold, kFalkreath, kWhiterunHold);
 
         SECTION("should use the word the record uses for them")
         {
             // Not a word this test chose. Kinship terms are gendered and come
             // off BGSAssociationType, so a mod that renames them renames them
-            // here too.
-            const auto heard = GossipContent::ComposeHeard(kBand, kTeller, kListener);
-            REQUIRE(heard == "My sister Sven told me this: " + kBand);
+            // here too. Kinship is checked before the settlement tie they also
+            // have.
+            const auto heard = GossipContent::ComposeHeard(kBand, kHulda, kYsolda);
+            REQUIRE(heard == "My sister Hulda told me this: " + kBand);
         }
     }
 
     SECTION("when the two are family in different holds")
     {
-        auto* teller = engine.AddNPC(kTeller);
-        auto* listener = engine.AddNPC(kListener, /*female=*/true);
+        auto* teller = RE::TESForm::LookupByID<RE::TESNPC>(kHulda);
+        auto* listener = RE::TESForm::LookupByID<RE::TESNPC>(kValga);
+        REQUIRE(teller != nullptr);
+        REQUIRE(listener != nullptr);
         engine.AddRelationship(teller, listener, "brother", "sister");
-        Place(kListener, "Camilla", kOtherHousehold, kFalkreath, kFalkreathHold);
 
         SECTION("should make it news from away")
         {
             // Which is the point of the distinction: a rumor that crossed a
             // hold border to reach someone arrived with a person, and saying
             // where from is what makes the distance readable.
-            const auto heard = GossipContent::ComposeHeard(kBand, kTeller, kListener);
-            REQUIRE(heard == "My sister came from Riverwood with news: " + kBand);
+            const auto heard = GossipContent::ComposeHeard(kBand, kHulda, kValga);
+            REQUIRE(heard == "My sister came from Whiterun with news: " + kBand);
         }
     }
 
     SECTION("when neither is in the graph")
     {
-        GossipSpies().Reset();
-
         SECTION("should still say something")
         {
             // The memory is written whether or not the graph can describe the
             // pair, because a rumor that produced no memory did not happen as
             // far as anyone in the world is concerned.
-            const auto heard = GossipContent::ComposeHeard(kBand, kTeller, kListener);
+            const auto heard = GossipContent::ComposeHeard(kBand, 0x00DEAD01u, 0x00DEAD02u);
             REQUIRE(heard == "I heard a rumor going round: " + kBand);
         }
     }
@@ -317,7 +285,7 @@ TEST_CASE("GossipContent frames how a listener remembers hearing it", "[GossipCo
     {
         SECTION("should carry the rumor's own words through")
         {
-            REQUIRE(GossipContent::ComposeHeard(kBand, kTeller, kListener).ends_with(kBand));
+            REQUIRE(GossipContent::ComposeHeard(kBand, kHulda, kYsolda).ends_with(kBand));
         }
 
         SECTION("should end its lead-in with a colon")
@@ -325,7 +293,7 @@ TEST_CASE("GossipContent frames how a listener remembers hearing it", "[GossipCo
             // Band text is up to six standalone sentences. A "told me that"
             // clause governs only the first of them and reads as a grammatical
             // error from the second on.
-            const auto heard = GossipContent::ComposeHeard(kBand, kTeller, kListener);
+            const auto heard = GossipContent::ComposeHeard(kBand, kHulda, kYsolda);
             REQUIRE(heard.find(": ") != std::string::npos);
             REQUIRE(heard.find(" that ") == std::string::npos);
         }
@@ -341,15 +309,14 @@ TEST_CASE("GossipContent names everyone a teller told", "[GossipContent][engine]
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
     GossipSpies().Reset();
-    Place(kTeller, "Sven", kHousehold, kRiverwood, kWhiterunHold);
-    Place(kListener, "Camilla", kOtherHousehold, kRiverwood, kWhiterunHold);
-    Place(kThirdParty, "Lucan", kOtherHousehold, kRiverwood, kWhiterunHold);
+    BuildGossipWorld(engine);
+    GossipGraph::Initialize();
 
     SECTION("when they told one person")
     {
         SECTION("should name them")
         {
-            REQUIRE(GossipContent::ComposeTold(kBand, {kListener}) == "I told Camilla this: " + kBand);
+            REQUIRE(GossipContent::ComposeTold(kBand, {kYsolda}) == "I told Ysolda this: " + kBand);
         }
     }
 
@@ -357,8 +324,7 @@ TEST_CASE("GossipContent names everyone a teller told", "[GossipContent][engine]
     {
         SECTION("should join the names with an and")
         {
-            REQUIRE(GossipContent::ComposeTold(kBand, {kListener, kThirdParty})
-                    == "I told Camilla and Lucan this: " + kBand);
+            REQUIRE(GossipContent::ComposeTold(kBand, {kYsolda, kSaadia}) == "I told Ysolda and Saadia this: " + kBand);
         }
     }
 
@@ -369,8 +335,8 @@ TEST_CASE("GossipContent names everyone a teller told", "[GossipContent][engine]
             // No Oxford comma: these are spoken-voice memories rather than
             // prose, and an NPC recalling their afternoon does not punctuate
             // like an editor.
-            REQUIRE(GossipContent::ComposeTold(kBand, {kListener, kThirdParty, kTeller})
-                    == "I told Camilla, Lucan and Sven this: " + kBand);
+            REQUIRE(GossipContent::ComposeTold(kBand, {kYsolda, kSaadia, kHulda})
+                    == "I told Ysolda, Saadia and Hulda this: " + kBand);
         }
     }
 
@@ -382,8 +348,8 @@ TEST_CASE("GossipContent names everyone a teller told", "[GossipContent][engine]
             // memory being written — they died, or the cell they were in went
             // away. Dropping the whole memory over one name would lose the
             // others too.
-            REQUIRE(GossipContent::ComposeTold(kBand, {kListener, 0x00DEAD01u})
-                    == "I told Camilla and someone this: " + kBand);
+            REQUIRE(GossipContent::ComposeTold(kBand, {kYsolda, 0x00DEAD01u})
+                    == "I told Ysolda and someone this: " + kBand);
         }
     }
 }
@@ -457,7 +423,8 @@ TEST_CASE("GossipContent walks a pool one candidate at a time", "[GossipContent]
     llm.sendPromptSucceeds = true;
     llm.sendPromptCalls = 0;
     Say(llm.promptResponse, R"({"verdict":"seed","bands":["first","second","third"]})");
-    Place(kTeller, "Sven", kHousehold, kRiverwood, kWhiterunHold);
+    BuildGossipWorld(engine);
+    GossipGraph::Initialize();
 
     SECTION("when the model approves a candidate")
     {
@@ -478,7 +445,7 @@ TEST_CASE("GossipContent walks a pool one candidate at a time", "[GossipContent]
             // The simulation records this so the harvester never offers the
             // same memory again, and so a rumor can be traced back.
             REQUIRE(LastSeeded().sourceMemoryId == kFirstMemory);
-            REQUIRE(LastSeeded().originNpc == kTeller);
+            REQUIRE(LastSeeded().originNpc == kHulda);
         }
 
         SECTION("should leave the memory claimed")

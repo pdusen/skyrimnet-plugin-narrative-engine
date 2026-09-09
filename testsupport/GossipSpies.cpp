@@ -44,14 +44,9 @@ namespace NarrativeEngine::Testing
         std::scoped_lock lock(mutex);
         calls.clear();
         stampedHorizons.clear();
-        npcNames.clear();
-        locationNames.clear();
-        graphReadyQueries = 0;
-        graphReady = true;
         sweepSucceeds = true;
         lastSimulatedGameDay = -1.0;
         cancelAfter.clear();
-        participants.clear();
         circulating.clear();
         seeded.clear();
         nextRumorID = 1;
@@ -98,54 +93,6 @@ namespace NarrativeEngine::Testing
         }
     }
 } // namespace NarrativeEngine::Testing
-
-namespace NarrativeEngine::GossipGraph
-{
-    const Participant* Find(RE::FormID npc)
-    {
-        auto& spies = Testing::GossipSpies();
-        std::scoped_lock lock(spies.mutex);
-        const auto it = spies.participants.find(npc);
-        return it == spies.participants.end() ? nullptr : &it->second;
-    }
-
-    RE::FormID ActorRefFor(RE::FormID npc)
-    {
-        auto& spies = Testing::GossipSpies();
-        std::scoped_lock lock(spies.mutex);
-        const auto it = spies.participants.find(npc);
-        return it == spies.participants.end() ? 0 : it->second.actorRef;
-    }
-
-    bool IsReady()
-    {
-        auto& spies = Testing::GossipSpies();
-        std::scoped_lock lock(spies.mutex);
-        ++spies.graphReadyQueries;
-        return spies.graphReady;
-    }
-
-    // Names the trace lines render. Answered from a table a test fills in, so a
-    // line can be checked for the name a reader would actually see rather than
-    // for a FormID.
-    const std::string& NpcName(RE::FormID formID)
-    {
-        auto& spies = Testing::GossipSpies();
-        std::scoped_lock lock(spies.mutex);
-        static const std::string empty;
-        const auto it = spies.npcNames.find(formID);
-        return it == spies.npcNames.end() ? empty : it->second;
-    }
-
-    const std::string& LocationName(RE::FormID formID)
-    {
-        auto& spies = Testing::GossipSpies();
-        std::scoped_lock lock(spies.mutex);
-        static const std::string empty;
-        const auto it = spies.locationNames.find(formID);
-        return it == spies.locationNames.end() ? empty : it->second;
-    }
-} // namespace NarrativeEngine::GossipGraph
 
 namespace NarrativeEngine::Testing
 {

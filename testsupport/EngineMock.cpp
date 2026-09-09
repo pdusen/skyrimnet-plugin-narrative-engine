@@ -19,6 +19,7 @@
 #include <deque>
 #include <map>
 #include <new>
+#include <set>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -63,6 +64,15 @@ namespace NarrativeEngine::Testing
     // engine functions further down the file.
     const std::vector<RE::TESObjectREFR*>& ReferencesIn(const void* cell);
     RE::TESNPC* BaseFormOf(const void* actor);
+    std::deque<FakeObject>& SimpleFormObjects();
+    RE::TESRace* RaceOf(const void* npc);
+    RE::BGSLocation* EditorLocationOf(const void* ref);
+    const char* FormName(const void* form);
+    void SetFormName(const void* form, std::string name);
+
+    // Every form the harness has fabricated of one record type, which is what
+    // the data handler hands back when asked for that type's array.
+    RE::BSTArray<RE::TESForm*>& FormsOfType(RE::FormType type);
     bool ActorHasKeyword(const void* actor, const RE::BGSKeyword* keyword);
     RE::TESObjectREFR* ReferenceForHandle(std::uint32_t raw);
     RE::BSExtraData* TeleportDataOn(const void* extraList);
@@ -279,7 +289,10 @@ RE::UI* RE::UI::GetSingleton()
 bool RE::UI::GameIsPaused()
 {
     auto* mock = EngineMock::Current();
-    return mock != nullptr && mock->ui.gameIsPaused;
+    if (!mock)
+        return false;
+    ++mock->ui.pausedQueries;
+    return mock->ui.gameIsPaused;
 }
 
 bool RE::UI::IsMenuOpen(const std::string_view& a_menuName)
@@ -650,6 +663,17 @@ namespace NarrativeEngine::Testing
         return Worlds().worldForms;
     }
 
+    RE::BSTArray<RE::TESForm*>& FormsOfType(RE::FormType type)
+    {
+        // Leaked with the rest of the form tables: these are CommonLibSSE
+        // containers that free through a relocation.
+        static auto* byType = new std::map<RE::FormType, RE::BSTArray<RE::TESForm*>*>();
+        auto*& array = (*byType)[type];
+        if (!array)
+            array = new RE::BSTArray<RE::TESForm*>();
+        return *array;
+    }
+
     void RegisterCellFacts(const void* cell, std::int16_t cellX, std::int16_t cellY, RE::BGSLocation* location)
     {
         ExteriorCellFacts facts;
@@ -900,17 +924,82 @@ namespace NarrativeEngine::Testing
         return nullptr;
     }
 
-    RE::TESNPC* EngineMock::AddNPC(std::uint32_t formID, bool female)
+    namespace
+    {
+        std::map<const void*, RE::TESRace*>& Races()
+        {
+            static auto* table = new std::map<const void*, RE::TESRace*>();
+            return *table;
+        }
+
+        std::map<const void*, RE::BGSLocation*>& EditorLocations()
+        {
+            static auto* table = new std::map<const void*, RE::BGSLocation*>();
+            return *table;
+        }
+    } // namespace
+
+    RE::TESRace* RaceOf(const void* npc)
+    {
+        const auto& table = Races();
+        const auto it = table.find(npc);
+        return it == table.end() ? nullptr : it->second;
+    }
+
+    RE::BGSLocation* EditorLocationOf(const void* ref)
+    {
+        const auto& table = EditorLocations();
+        const auto it = table.find(ref);
+        return it == table.end() ? nullptr : it->second;
+    }
+
+    void EngineMock::SetEditorIDOf(RE::TESForm* form, std::string editorID)
+    {
+        if (!form || editorID.empty())
+            return;
+        SetEditorID(form, editorID);
+        EditorIDTable().insert({RE::BSFixedString(editorID.c_str()), form});
+    }
+
+    void EngineMock::SetNPCRace(RE::TESNPC* npc, RE::TESRace* race)
+    {
+        if (npc)
+            Races()[static_cast<const void*>(npc)] = race;
+    }
+
+    void EngineMock::SetEditorLocation(RE::TESObjectREFR* ref, RE::BGSLocation* location)
+    {
+        if (ref)
+            EditorLocations()[static_cast<const void*>(ref)] = location;
+    }
+
+    RE::TESNPC* EngineMock::AddNPC(std::uint32_t formID, std::string name, bool female)
     {
         auto& pool = Relationships();
         auto& object = pool.npcs.emplace_back(sizeof(RE::TESNPC) + 0x100, 256);
         WireFormDefaults(object, false);
+        // GetFormEditorID is slot 0x32 on TESForm. Anything filtering
+        // records by name pattern reads it.
+        object.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
         auto* npc = object.As<RE::TESNPC>();
         npc->formType = RE::FormType::NPC;
         npc->formID = formID;
         if (female)
             npc->actorData.actorBaseFlags.set(RE::ACTOR_BASE_DATA::Flag::kFemale);
+        // The engine's own arrays hold every record of a type; a fabricated
+        // one has to join its array or a sweep of the load order misses it.
+        new (&npc->factions) RE::BSTArray<RE::FACTION_RANK>();
         FormTable().insert({formID, object.As<RE::TESForm>()});
+        FormsOfType(RE::FormType::NPC).push_back(object.As<RE::TESForm>());
+        // Registered even when empty, so an NPC a test deliberately left
+        // nameless reads as nameless rather than falling through to the
+        // mock-wide name the ModEvent sink's sender uses.
+        SetFormName(object.As<RE::TESForm>(), std::move(name));
+        // Everyone is a person unless a test says otherwise. The keyword on an
+        // NPC's race is how anything tells a person from a wolf, and giving
+        // every fabricated NPC a race that carries it keeps that out of the
+        // way of tests that are not about it.
+        SetNPCRace(npc, DefaultPeopleRace());
         return npc;
     }
 
@@ -1276,12 +1365,12 @@ RE::TESDataHandler* RE::TESDataHandler::GetSingleton(bool)
 
 RE::BSTArray<RE::TESForm*>& RE::TESDataHandler::GetFormArray(RE::FormType a_formType)
 {
-    // Only the worldspace array is populated; anything else answers empty,
-    // which is what an install with none of that record type looks like.
-    static auto* empty = new RE::BSTArray<RE::TESForm*>();
-    if (a_formType != RE::FormType::WorldSpace)
-        return *empty;
-    return NarrativeEngine::Testing::WorldSpaceForms();
+    // One array per record type, holding whatever the harness has fabricated
+    // of that type. A type nothing has made answers empty, which is what an
+    // install carrying none of that record looks like.
+    if (a_formType == RE::FormType::WorldSpace)
+        return NarrativeEngine::Testing::WorldSpaceForms();
+    return NarrativeEngine::Testing::FormsOfType(a_formType);
 }
 
 RE::EXTERIOR_DATA* RE::TESObjectCELL::GetCoordinates()
@@ -2028,10 +2117,12 @@ namespace NarrativeEngine::Testing
     {
         auto& object = FactionObjects().emplace_back(sizeof(RE::TESFaction), 256);
         WireFormDefaults(object, false);
+        object.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
         auto* form = object.As<RE::TESForm>();
         form->formType = RE::FormType::Faction;
         form->formID = formID;
         FormTable().insert({formID, form});
+        FormsOfType(RE::FormType::Faction).push_back(form);
         if (!editorID.empty()) {
             SetEditorID(form, editorID);
             EditorIDTable().insert({RE::BSFixedString(editorID.c_str()), form});
@@ -2051,10 +2142,16 @@ namespace NarrativeEngine::Testing
         }
     } // namespace
 
+    std::deque<FakeObject>& SimpleFormObjects()
+    {
+        return SimpleForms();
+    }
+
     RE::TESLevCharacter* EngineMock::AddLeveledCharacter(std::uint32_t formID, std::string editorID)
     {
         auto& object = SimpleForms().emplace_back(sizeof(RE::TESLevCharacter) + 0x40, 128);
         WireFormDefaults(object, false);
+        object.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
         auto* form = object.As<RE::TESForm>();
         form->formType = RE::FormType::LeveledNPC;
         form->formID = formID;
@@ -2070,6 +2167,7 @@ namespace NarrativeEngine::Testing
     {
         auto& object = SimpleForms().emplace_back(sizeof(RE::TESGlobal) + 0x40, 128);
         WireFormDefaults(object, false);
+        object.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
         auto* form = object.As<RE::TESForm>();
         form->formType = RE::FormType::Global;
         form->formID = formID;
@@ -2318,6 +2416,19 @@ bool RE::Actor::HasKeyword(const RE::BGSKeyword* a_keyword) const
     return NarrativeEngine::Testing::ActorHasKeyword(this, a_keyword);
 }
 
+RE::TESRace* RE::TESNPC::GetRace()
+{
+    return NarrativeEngine::Testing::RaceOf(this);
+}
+
+RE::BGSLocation* RE::TESObjectREFR::GetEditorLocation() const
+{
+    // Where a reference was placed in the editor, which is not where it is
+    // now. Nothing here moves references, so a fabricated one has an editor
+    // location only if a test gave it one.
+    return NarrativeEngine::Testing::EditorLocationOf(this);
+}
+
 bool RE::TESObjectREFR::Is3DLoaded() const
 {
     // Whether the reference's model is in memory. Distinct from whether it
@@ -2549,6 +2660,11 @@ bool RE::TESObjectCELL::IsInteriorCell() const
 
 const char* RE::TESForm::GetName() const
 {
+    // Per-form first, because anything naming several people at once needs
+    // them told apart. The mock-wide name remains the answer for a form
+    // nobody gave one to, which is how the ModEvent sink's sender is set.
+    if (const char* named = NarrativeEngine::Testing::FormName(this))
+        return named;
     auto* mock = NarrativeEngine::Testing::EngineMock::Current();
     return mock ? mock->modEvents.senderName.c_str() : "";
 }
@@ -2745,6 +2861,45 @@ namespace NarrativeEngine::Testing
         return it->second;
     }
 
+    // Everyone's race unless a test names another. Made once and kept, so
+    // every NPC in a process shares one — which is also true in the game.
+    RE::TESRace* EngineMock::DefaultPeopleRace()
+    {
+        static RE::TESRace* race = nullptr;
+        if (!race)
+            race = AddRace(0x00013746u, "NordRace", {"ActorTypeNPC"});
+        return race;
+    }
+
+    RE::TESRace* EngineMock::AddRace(std::uint32_t formID,
+                                     std::string editorID,
+                                     std::vector<std::string> keywordEditorIDs)
+    {
+        auto& pool = SimpleFormObjects();
+        auto& object = pool.emplace_back(sizeof(RE::TESRace) + 0x100, 256);
+        WireFormDefaults(object, false);
+        WireKeywordForm<RE::TESRace>(object);
+        object.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
+        auto* race = object.As<RE::TESRace>();
+        race->formType = RE::FormType::Race;
+        race->formID = formID;
+
+        static auto* keywordArrays = new std::deque<std::vector<RE::BGSKeyword*>>();
+        auto& keywords = keywordArrays->emplace_back();
+        for (const auto& edid : keywordEditorIDs)
+            keywords.push_back(AddKeyword(edid));
+        race->keywords = keywords.empty() ? nullptr : keywords.data();
+        race->numKeywords = static_cast<std::uint32_t>(keywords.size());
+
+        FormTable().insert({formID, object.As<RE::TESForm>()});
+        FormsOfType(RE::FormType::Race).push_back(object.As<RE::TESForm>());
+        if (!editorID.empty()) {
+            SetEditorID(race, editorID);
+            EditorIDTable().insert({RE::BSFixedString(editorID.c_str()), object.As<RE::TESForm>()});
+        }
+        return race;
+    }
+
     RE::BGSLocation* EngineMock::AddLocation(std::uint32_t formID,
                                              std::string name,
                                              std::vector<std::string> keywordEditorIDs,
@@ -2773,11 +2928,42 @@ namespace NarrativeEngine::Testing
         location->numKeywords = static_cast<std::uint32_t>(keywords.size());
 
         FormTable().insert({formID, object.As<RE::TESForm>()});
+        FormsOfType(RE::FormType::Location).push_back(object.As<RE::TESForm>());
         if (!editorID.empty()) {
             SetEditorID(location, editorID);
             EditorIDTable().insert({RE::BSFixedString(editorID.c_str()), object.As<RE::TESForm>()});
         }
         return location;
+    }
+
+    void EngineMock::AddResident(RE::BGSLocation* location, RE::TESNPC* npc, RE::BGSLocation* editorLocation)
+    {
+        if (!location || !npc)
+            return;
+        // The array is a real container in zeroed storage, so it is built in
+        // place the first time a location is given anybody.
+        static auto* built = new std::set<const void*>();
+        if (built->insert(static_cast<const void*>(location)).second)
+            new (&location->uniqueNPCs) RE::BSTArray<RE::UniqueNPCData>();
+
+        RE::UniqueNPCData row{};
+        // The row's `actor` field holds the BASE form despite its type — which
+        // is how the engine's own records are laid out, and what everything
+        // reading LCUN expects.
+        row.actor = reinterpret_cast<RE::Actor*>(npc);
+        row.refID = 0;
+        row.editorLoc = editorLocation;
+        location->uniqueNPCs.push_back(row);
+    }
+
+    void EngineMock::JoinFaction(RE::TESNPC* npc, RE::TESFaction* faction, std::int8_t rank)
+    {
+        if (!npc || !faction)
+            return;
+        RE::FACTION_RANK row{};
+        row.faction = faction;
+        row.rank = rank;
+        npc->factions.push_back(row);
     }
 
     void EngineMock::SetLocationParent(RE::BGSLocation* child, RE::BGSLocation* parent)
@@ -2796,6 +2982,27 @@ namespace NarrativeEngine::Testing
     void SetEditorID(const void* form, const std::string& editorID)
     {
         EditorIDsByForm()[form] = editorID;
+    }
+
+    namespace
+    {
+        std::map<const void*, std::string>& FormNames()
+        {
+            static auto* table = new std::map<const void*, std::string>();
+            return *table;
+        }
+    } // namespace
+
+    const char* FormName(const void* form)
+    {
+        const auto& table = FormNames();
+        const auto it = table.find(form);
+        return it == table.end() ? nullptr : it->second.c_str();
+    }
+
+    void SetFormName(const void* form, std::string name)
+    {
+        FormNames()[form] = std::move(name);
     }
 
     namespace

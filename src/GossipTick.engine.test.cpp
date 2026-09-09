@@ -3,9 +3,11 @@
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
 #include <GossipDispatch.h>
+#include <GossipGraph.h>
 #include <GossipLog.h>
 #include <GossipSpies.h>
 #include <GossipThread.h>
+#include <GossipWorld.h>
 #include <ThreadRole.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -50,6 +52,8 @@ namespace
     namespace PluginThread = NarrativeEngine::PluginThread;
     using NarrativeEngine::Testing::ConfiguredSettings;
     using NarrativeEngine::Testing::EngineMock;
+    namespace GossipGraph = NarrativeEngine::GossipGraph;
+    using NarrativeEngine::Testing::BuildGossipWorld;
     using NarrativeEngine::Testing::GossipSpies;
 
     constexpr auto kTimeout = std::chrono::seconds{5};
@@ -96,6 +100,33 @@ namespace
     };
 } // namespace
 
+TEST_CASE("GossipTick waits for a graph to exist", "[GossipTick][engine]")
+{
+    // Deliberately its own case with no world in it. The graph is built once
+    // at kDataLoaded and there is no way to take one down, so the window
+    // before it exists can only be reached by never building one.
+    EngineMock engine;
+    const ConfiguredSettings settings{
+        "[Gossip]\nbGossipEnabled=1\niGossipTickIntervalSeconds=1\nfGossipHarvestIntervalGameHours=1.0\n"};
+    const RunningGossip gossip;
+    GossipSpies().Reset();
+    SetGameDay(engine, 10.0);
+    GossipTick::OnSessionStart();
+
+    SECTION("when the graph is not ready yet")
+    {
+        SECTION("should wait rather than sweep an empty world")
+        {
+            // The graph is built after a load, and sweeping before it is ready
+            // would qualify no actors and spend the boundary anyway.
+            REQUIRE_FALSE(GossipGraph::IsReady());
+            PollWith(60.0);
+            DrainTicks();
+            REQUIRE(GossipSpies().Calls().empty());
+        }
+    }
+}
+
 TEST_CASE("GossipTick::Poll refuses to schedule", "[GossipTick][engine]")
 {
     // Happy path, re-run per leaf: gossip on, graph ready, a one-second check
@@ -105,6 +136,8 @@ TEST_CASE("GossipTick::Poll refuses to schedule", "[GossipTick][engine]")
         "[Gossip]\nbGossipEnabled=1\niGossipTickIntervalSeconds=1\nfGossipHarvestIntervalGameHours=1.0\n"};
     const RunningGossip gossip;
     GossipSpies().Reset();
+    BuildGossipWorld(engine);
+    GossipGraph::Initialize();
     SetGameDay(engine, 10.0);
     GossipTick::OnSessionStart();
 
@@ -115,20 +148,6 @@ TEST_CASE("GossipTick::Poll refuses to schedule", "[GossipTick][engine]")
 
         SECTION("should not even sample the clock")
         {
-            PollWith(60.0);
-            DrainTicks();
-            REQUIRE(GossipSpies().Calls().empty());
-        }
-    }
-
-    SECTION("when the graph is not ready yet")
-    {
-        GossipSpies().graphReady = false;
-
-        SECTION("should wait rather than sweep an empty world")
-        {
-            // The graph builds asynchronously after a load. Sweeping before it
-            // is ready would qualify no actors and spend the boundary anyway.
             PollWith(60.0);
             DrainTicks();
             REQUIRE(GossipSpies().Calls().empty());
@@ -155,6 +174,8 @@ TEST_CASE("GossipTick::Poll anchors a new schedule", "[GossipTick][engine]")
         "[Gossip]\nbGossipEnabled=1\niGossipTickIntervalSeconds=1\nfGossipHarvestIntervalGameHours=24.0\n"};
     const RunningGossip gossip;
     GossipSpies().Reset();
+    BuildGossipWorld(engine);
+    GossipGraph::Initialize();
 
     SECTION("when this world has never run a tick")
     {
@@ -251,6 +272,8 @@ TEST_CASE("GossipTick::Poll enqueues one job per crossed boundary", "[GossipTick
         "[Gossip]\nbGossipEnabled=1\niGossipTickIntervalSeconds=1\nfGossipHarvestIntervalGameHours=1.0\n"};
     const RunningGossip gossip;
     GossipSpies().Reset();
+    BuildGossipWorld(engine);
+    GossipGraph::Initialize();
     GossipSpies().lastSimulatedGameDay = -1.0;
     SetGameDay(engine, 10.0);
     GossipTick::OnSessionStart();
@@ -326,6 +349,8 @@ TEST_CASE("GossipTick::Poll caps the backlog", "[GossipTick][engine]")
                                       "iGossipTickIntervalSeconds=1\nfGossipHarvestIntervalGameHours=1.0\n"};
     const RunningGossip gossip;
     GossipSpies().Reset();
+    BuildGossipWorld(engine);
+    GossipGraph::Initialize();
     NarrativeEngine::Testing::ClearGossipTrace();
     NarrativeEngine::GossipLog::OnSessionStart();
     GossipSpies().lastSimulatedGameDay = -1.0;
@@ -370,6 +395,8 @@ TEST_CASE("GossipTick runs a tick in order", "[GossipTick][engine]")
         "[Gossip]\nbGossipEnabled=1\niGossipTickIntervalSeconds=1\nfGossipHarvestIntervalGameHours=1.0\n"};
     const RunningGossip gossip;
     GossipSpies().Reset();
+    BuildGossipWorld(engine);
+    GossipGraph::Initialize();
     GossipSpies().lastSimulatedGameDay = 9.0;
     SetGameDay(engine, 10.0);
     GossipTick::OnSessionStart();

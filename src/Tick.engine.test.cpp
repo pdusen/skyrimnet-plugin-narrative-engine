@@ -47,9 +47,9 @@
 // evaluation start — so a stand-in that keeps the callback puts the pipeline in
 // the state a slow LLM would, without anything having to be slow.
 //
-// The per-poll heartbeat is the gossip scheduler's first act, asking whether
-// the graph is ready. That question is asked once per poll and its answer comes
-// from a spy, which makes it the one thing here that counts polls exactly.
+// The per-poll heartbeat is the driver's own first act: asking whether the game
+// is paused. The harness counts that question, which makes it an exact measure
+// of the loop rather than of anything the loop happens to call.
 //
 // These cases spend real time on purpose. The driver samples a steady clock at
 // a fixed cadence and the tick interval floors at one second, so there is no
@@ -77,14 +77,13 @@ namespace
     const std::filesystem::path kLogDir{"Data/SKSE/Plugins/NarrativeEngineTestLogs"};
     const std::filesystem::path kHistoryFile = kLogDir / "NarrativeEngine_EventHistory.log";
 
-    // How many polls the driver has run. The gossip scheduler asks whether the
-    // graph is ready once per poll before doing anything else, and that
-    // question goes to a spy, so it counts polls and nothing else.
+    // How many polls the driver has run. Its first act on every one is to ask
+    // whether the game is paused, and the harness counts that — which makes it
+    // an exact measure of the loop rather than of anything the loop calls.
     int PollCount()
     {
-        auto& spies = NarrativeEngine::Testing::GossipSpies();
-        std::scoped_lock lock(spies.mutex);
-        return spies.graphReadyQueries;
+        auto* mock = EngineMock::Current();
+        return mock ? mock->ui.pausedQueries.load() : 0;
     }
 
     // How many decisions have reached the beat system, which is one per
@@ -263,9 +262,16 @@ TEST_CASE("Tick polls the event logs", "[Tick][engine]")
         SECTION("should poll nothing")
         {
             // Menus, the console and dialogue all pause. Polling through a
-            // pause would have the event logs report weather changes and travel
-            // the player never experienced.
-            REQUIRE_FALSE(Eventually([] { return PollCount() > 0; }, kPollTimeout));
+            // pause would have the event logs report weather changes and
+            // travel the player never experienced.
+            //
+            // Observed through the combat log rather than the poll counter:
+            // the driver's loop keeps turning while paused and keeps asking
+            // whether it still is, so what has to be absent is the work, not
+            // the loop. The player is already fighting, so a single poll of
+            // the combat log would put an event in it.
+            REQUIRE_FALSE(Eventually([] { return !NarrativeEngine::CombatEventLog::GetRenderedTail(0.0).empty(); },
+                                     kPollTimeout));
         }
     }
 

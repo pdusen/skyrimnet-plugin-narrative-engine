@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -22,6 +23,7 @@ namespace RE
     class TESGlobal;
     class TESLevCharacter;
     class TESNPC;
+    class TESRace;
     struct BSNavmeshInfo;
     class Sky;
     class TESFaction;
@@ -121,6 +123,11 @@ namespace NarrativeEngine::Testing
         {
             bool present = true;
             bool gameIsPaused = false;
+
+            // How many times anything has asked. Every cadenced loop in the
+            // plugin checks this before doing anything else, so the count is
+            // the cheapest exact measure of how often one of them ran.
+            std::atomic<int> pausedQueries{0};
             std::vector<std::string> openMenus;
             std::vector<std::string> isMenuOpenQueries;
         } ui;
@@ -518,7 +525,9 @@ namespace NarrativeEngine::Testing
 
         // Fabricate an NPC base form, which is what the gossip graph and every
         // relationship record are keyed on rather than the placed reference.
-        RE::TESNPC* AddNPC(std::uint32_t formID, bool female = false);
+        // The display name is what anything rendering a line about this person
+        // reads, so an NPC without one shows up as a blank in a sentence.
+        RE::TESNPC* AddNPC(std::uint32_t formID, std::string name = {}, bool female = false);
 
         // Say which base form an actor was made from. Unique NPCs each have
         // their own; anything else in the world shares one with everybody of
@@ -825,6 +834,36 @@ namespace NarrativeEngine::Testing
 
         // Point `child` at `parent` for the parentLoc walk.
         void SetLocationParent(RE::BGSLocation* child, RE::BGSLocation* parent);
+
+        // File a unique NPC as living at a location, the way the LCUN
+        // subrecord does. `editorLocation` is the finer-grained place inside
+        // it — a town's row for a family names their house — and is optional.
+        void AddResident(RE::BGSLocation* location, RE::TESNPC* npc, RE::BGSLocation* editorLocation = nullptr);
+
+        // Put an NPC in a faction at a rank, as their base record does.
+        // Distinct from SetFactionRank, which answers the runtime question an
+        // Actor is asked; this is the authored membership a sweep of the
+        // records reads.
+        void JoinFaction(RE::TESNPC* npc, RE::TESFaction* faction, std::int8_t rank = 0);
+
+        // A race, carrying whatever keywords a test names. The keyword on a
+        // race is how anything tells a person from a wolf, so a fabricated NPC
+        // is given one that carries ActorTypeNPC unless a test says otherwise.
+        RE::TESRace* AddRace(std::uint32_t formID, std::string editorID, std::vector<std::string> keywordEditorIDs);
+
+        // The race every fabricated NPC gets. Made on first use and shared,
+        // which is how a race works in the game too.
+        RE::TESRace* DefaultPeopleRace();
+        void SetNPCRace(RE::TESNPC* npc, RE::TESRace* race);
+
+        // Give a form an editor ID after the fact. Records left in a file for
+        // testing are recognised by theirs, which is the only thing marking
+        // them out from the real ones.
+        void SetEditorIDOf(RE::TESForm* form, std::string editorID);
+
+        // Where a reference was placed in the editor, which is not where it is
+        // standing now. Only the placement is authored data.
+        void SetEditorLocation(RE::TESObjectREFR* ref, RE::BGSLocation* location);
 
         Runtime runtime() const
         {

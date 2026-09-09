@@ -38,28 +38,11 @@ namespace NarrativeEngine::Testing
         std::vector<std::string> calls;
         // The game day each tick was stamped for.
         std::vector<double> stampedHorizons;
-        // Display names the gossip trace renders. Filled in by a test so a
-        // line can be checked for the name a reader would see.
-        std::map<std::uint32_t, std::string> npcNames;
-        std::map<std::uint32_t, std::string> locationNames;
-
-        // How many times the scheduler asked whether the graph was ready. The
-        // cheapest evidence that anything reached GossipTick::Poll at all,
-        // which is what Tick's own tests need.
-        int graphReadyQueries = 0;
-
-        bool graphReady = true;
         bool sweepSucceeds = true;
         double lastSimulatedGameDay = -1.0;
         // Which step should observe a cancellation, so each of a tick's three
         // checkpoints can be reached in turn.
         std::string cancelAfter;
-
-        // Who is in the graph. A rumor is only ever about participants, and
-        // what the content layer wants from one is its name, where it lives
-        // and who its people are — so the harness holds whole participants
-        // rather than answering field by field.
-        std::map<std::uint32_t, NarrativeEngine::GossipGraph::Participant> participants;
 
         // Rumors already circulating, which the evaluation is shown so it can
         // recognise one it has already heard.

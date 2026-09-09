@@ -2,7 +2,9 @@
 
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
+#include <GossipGraph.h>
 #include <GossipSpies.h>
+#include <GossipWorld.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -29,7 +31,8 @@
 // start is a filesystem behaviour, not a formatting one.
 //
 // The two name lookups it renders come from GossipGraph, which is stood in for
-// in testsupport/GossipSpies.cpp, so a case can decide whether a name resolves.
+// out of the graph, which is built here from the shared harness world so a line
+// can be checked for the name a reader would actually see.
 
 namespace
 {
@@ -37,13 +40,18 @@ namespace
     using NarrativeEngine::Testing::ClearGossipTrace;
     using NarrativeEngine::Testing::ConfiguredSettings;
     using NarrativeEngine::Testing::EngineMock;
+    namespace GossipGraph = NarrativeEngine::GossipGraph;
+    using NarrativeEngine::Testing::BuildGossipWorld;
     using NarrativeEngine::Testing::GossipSpies;
     using NarrativeEngine::Testing::GossipTraceLines;
 
+    // Everyone and everywhere the lines below name. These are the shared
+    // harness world's own FormIDs, because the names a line renders now come
+    // out of a real graph built over that world rather than from a table.
     constexpr std::uint32_t kYsolda = 0x0001A6A0u;
-    constexpr std::uint32_t kCarlotta = 0x0001A6A1u;
-    constexpr std::uint32_t kWhiterun = 0x00018A56u;
-    constexpr std::uint32_t kFalkreath = 0x00018A57u;
+    constexpr std::uint32_t kCarlotta = 0x0001A6A1u; // Valga, in the harness world
+    constexpr std::uint32_t kWhiterun = 0x00013163u;
+    constexpr std::uint32_t kFalkreath = 0x00018A56u;
 
     const std::filesystem::path kLogDir{"Data/SKSE/Plugins/NarrativeEngineTestLogs"};
 
@@ -75,15 +83,7 @@ namespace
         OpenTrace()
         {
             ClearGossipTrace();
-            auto& spies = GossipSpies();
-            spies.Reset();
-            {
-                std::scoped_lock lock(spies.mutex);
-                spies.npcNames[kYsolda] = "Ysolda";
-                spies.npcNames[kCarlotta] = "Carlotta Valentia";
-                spies.locationNames[kWhiterun] = "Whiterun";
-                spies.locationNames[kFalkreath] = "Falkreath";
-            }
+            GossipSpies().Reset();
             GossipLog::OnSessionStart();
         }
 
@@ -113,6 +113,8 @@ TEST_CASE("GossipLog::OnSessionStart", "[GossipLog][engine]")
 {
     // Happy path, re-run per leaf: gossip on and the trace switched on with it.
     EngineMock engine;
+    BuildGossipWorld(engine);
+    GossipGraph::Initialize();
     const ConfiguredSettings settings{"[Gossip]\nbGossipEnabled=1\nbGossipLogEnabled=1\n"};
 
     SECTION("when the trace is enabled")
@@ -175,6 +177,8 @@ TEST_CASE("GossipLog::OnSessionStart", "[GossipLog][engine]")
 TEST_CASE("GossipLog rotates its files", "[GossipLog][engine]")
 {
     EngineMock engine;
+    BuildGossipWorld(engine);
+    GossipGraph::Initialize();
     const ConfiguredSettings settings{"[Gossip]\nbGossipEnabled=1\nbGossipLogEnabled=1\n"};
     ClearGossipTrace();
 
@@ -222,6 +226,8 @@ TEST_CASE("GossipLog renders each line shape", "[GossipLog][engine]")
 {
     // Happy path, re-run per leaf: an open trace with both names resolvable.
     EngineMock engine;
+    BuildGossipWorld(engine);
+    GossipGraph::Initialize();
     const ConfiguredSettings settings{"[Gossip]\nbGossipEnabled=1\nbGossipLogEnabled=1\n"};
     const OpenTrace trace;
 
@@ -381,6 +387,8 @@ TEST_CASE("GossipLog renders each line shape", "[GossipLog][engine]")
 TEST_CASE("GossipLog names what it can", "[GossipLog][engine]")
 {
     EngineMock engine;
+    BuildGossipWorld(engine);
+    GossipGraph::Initialize();
     const ConfiguredSettings settings{"[Gossip]\nbGossipEnabled=1\nbGossipLogEnabled=1\n"};
     const OpenTrace trace;
 
@@ -411,6 +419,8 @@ TEST_CASE("GossipLog names what it can", "[GossipLog][engine]")
 TEST_CASE("GossipLog::OnSessionEnd", "[GossipLog][engine]")
 {
     EngineMock engine;
+    BuildGossipWorld(engine);
+    GossipGraph::Initialize();
     const ConfiguredSettings settings{"[Gossip]\nbGossipEnabled=1\nbGossipLogEnabled=1\n"};
 
     SECTION("when a session ends")

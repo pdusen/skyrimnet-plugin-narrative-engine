@@ -742,6 +742,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/VisitConclusionPoll.cpp"
         "${CMAKE_SOURCE_DIR}/src/LetterComposer.cpp"
         "${CMAKE_SOURCE_DIR}/src/AmbushAttackerGroups.cpp"
+        "${CMAKE_SOURCE_DIR}/src/GossipGraph.cpp"
         "${CMAKE_SOURCE_DIR}/src/PrismaUI.cpp"
         "${CMAKE_SOURCE_DIR}/src/SkyrimNetAPI.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipClaims.cpp"
@@ -776,6 +777,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
             testsupport/FakeVTable.cpp
             testsupport/DownstreamSpies.cpp
             testsupport/VisitSpies.cpp
+            testsupport/GossipWorld.cpp
             testsupport/GossipSpies.cpp
             testsupport/RelocationMocks.cpp
             testsupport/RelocationMocks.test.cpp
