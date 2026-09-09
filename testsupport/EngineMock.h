@@ -702,6 +702,63 @@ namespace NarrativeEngine::Testing
             bool actorIsDisabled = false;
         } forms;
 
+        // Actor values written through an actor's value owner. Aggression is
+        // the one that matters here: it decides whether a spawned attacker
+        // fights on its own initiative or waits to be told.
+        struct ActorValueState
+        {
+            struct SetCall
+            {
+                std::uint32_t actorFormID = 0;
+                int actorValue = 0;
+                float value = 0.0f;
+            };
+
+            std::vector<SetCall> setCalls;
+        } actorValues;
+
+        // Putting a new reference into the world from a base object, which is
+        // how an ambush's attackers arrive.
+        struct SpawnState
+        {
+            // Whether the placement hands back a reference at all. The engine
+            // answers with nothing when the base is unusable.
+            bool placeSucceeds = true;
+
+            // How many placements succeed before it starts refusing.
+            // Negative means it never does. A partial spawn is the case the
+            // teardown path exists for, and refusing the first one does not
+            // reach it.
+            int placeSucceedsCount = -1;
+
+            // Whether a placed reference has a usable engine handle. The alias
+            // fill rejects one that does not, and nothing downstream would say
+            // why, so the beat checks it up front.
+            bool refHandleIsValid = true;
+
+            // Whether a placed actor reads as standing in water once it has
+            // settled -- the positive evidence a pre-spawn height check
+            // cannot give, and the reason a shoreline spawn is retried.
+            bool placedInWater = false;
+
+            struct Placement
+            {
+                const void* base = nullptr;
+                std::uint32_t refFormID = 0;
+                float x = 0.0f;
+                float y = 0.0f;
+                float z = 0.0f;
+            };
+
+            // Every reference placed this session, in order, with where it
+            // ended up. Placing an attacker and then failing to move them off
+            // the player is the failure this records.
+            std::vector<Placement> placed;
+
+            // Where the next placed reference's FormID comes from.
+            std::uint32_t nextRefFormID = 0x0F000001u;
+        } spawn;
+
         // Starting, stopping and resetting a quest, which is how a beat drives
         // its own delivery quest through a run.
         struct QuestControlState
@@ -798,6 +855,13 @@ namespace NarrativeEngine::Testing
         // is the actor anything asking whether that person is alive resolves.
         // Null for an NPC who was never made a resident of anywhere.
         RE::Actor* PlacedActorFor(std::uint32_t npcFormID);
+
+        // What a leveled character list resolves to. The engine walks the
+        // list's own flags and level filtering; the harness answers from what
+        // a test declared, because what the code under test has to get right
+        // is what it does with the answer -- including a list that resolves to
+        // another list, and one that resolves to nothing.
+        void SetLeveledResult(RE::TESLevCharacter* list, RE::TESForm* result);
 
         // A stand-in faction to hold ranks against.
         // The editor ID is optional and only matters when something names the

@@ -93,6 +93,8 @@ namespace NarrativeEngine::Testing
     void RegisterCellFacts(const void* cell, std::int16_t cellX, std::int16_t cellY, RE::BGSLocation* location);
     const EngineMock::QuestState* QuestStateFor(const void* quest);
     EngineMock::QuestState* MutableQuestStateFor(const void* quest);
+    std::unordered_map<const void*, RE::TESForm*>& LeveledResults();
+    std::unordered_map<const void*, RE::TESBoundObject*>& PlacedBases();
     std::unordered_map<const void*, RE::TESObjectREFR*>& AliasReferences();
     RE::TESObjectCELL* FabricatedCell();
 
@@ -137,6 +139,29 @@ namespace NarrativeEngine::Testing
         // through the vtable, so the stand-in has to live in a slot.
         RE::BGSScene* GetCurrentSceneImpl(void*);
         void Update3DPositionImpl(void*, bool);
+
+        // Which actor each ActorValueOwner subobject belongs to. The subobject
+        // sits at a fixed offset inside the actor, but the stand-in is handed
+        // only that address, so the mapping is recorded when the actor is made.
+        std::map<const void*, std::uint32_t>& ActorsByValueOwner()
+        {
+            static auto* owners = new std::map<const void*, std::uint32_t>();
+            return *owners;
+        }
+
+        // ActorValueOwner::SetActorValue, slot 07 of its own table. Recorded
+        // rather than stored: nothing reads a value back, and which value was
+        // written to which actor is the whole of what a test asks.
+        void SetActorValueImpl(void* self, RE::ActorValue a_value, float a_amount)
+        {
+            auto* mock = EngineMock::Current();
+            if (!mock)
+                return;
+            const auto& owners = ActorsByValueOwner();
+            const auto it = owners.find(self);
+            mock->actorValues.setCalls.push_back(
+                {it == owners.end() ? 0u : it->second, static_cast<int>(a_value), a_amount});
+        }
 
         // TESForm::SetDelete, slot 0x23. The engine's own body is the flag bit
         // and nothing else, so the stand-in is too -- and setting it for real
@@ -1507,6 +1532,21 @@ namespace NarrativeEngine::Testing
         CurrentAliasArray() = nullptr;
     }
 
+    // What each fabricated leveled list resolves to, and the base each placed
+    // reference was made from. Both outlive the mock for the same reason the
+    // form table's own storage does.
+    std::unordered_map<const void*, RE::TESForm*>& LeveledResults()
+    {
+        static auto* results = new std::unordered_map<const void*, RE::TESForm*>();
+        return *results;
+    }
+
+    std::unordered_map<const void*, RE::TESBoundObject*>& PlacedBases()
+    {
+        static auto* bases = new std::unordered_map<const void*, RE::TESBoundObject*>();
+        return *bases;
+    }
+
     const EngineMock::QuestState* QuestStateFor(const void* quest)
     {
         return MutableQuestStateFor(quest);
@@ -2089,6 +2129,17 @@ namespace NarrativeEngine::Testing
 
         auto& object = registry.objects.emplace_back(kActorStorageBytes, 256);
         WireFormDefaults(object, true);
+        // ActorValueOwner is not a base of Actor on AE -- it is a relocated
+        // member -- so SetActorValue is slot 07 of ITS table at ITS offset,
+        // and the accessor is the only thing that knows where that is.
+        {
+            auto* asActor = object.As<RE::Actor>();
+            auto* owner = asActor->AsActorValueOwner();
+            const auto offset =
+                static_cast<std::size_t>(reinterpret_cast<std::byte*>(owner) - reinterpret_cast<std::byte*>(asActor));
+            object.BaseSlot(offset, 16, 7, reinterpret_cast<void*>(&SetActorValueImpl));
+            ActorsByValueOwner()[static_cast<const void*>(owner)] = formID;
+        }
         auto* form = object.As<RE::TESForm>();
         // As<Actor>() switches on this, so it is what makes the cast succeed.
         form->formType = RE::FormType::ActorCharacter;
@@ -2289,6 +2340,14 @@ namespace NarrativeEngine::Testing
         return object.As<RE::TESLevCharacter>();
     }
 
+    void EngineMock::SetLeveledResult(RE::TESLevCharacter* list, RE::TESForm* result)
+    {
+        // Keyed by the TESLeveledList SUBOBJECT, which is where the resolver
+        // is called on and sits well past the start of the record.
+        if (list)
+            LeveledResults()[static_cast<const void*>(static_cast<RE::TESLeveledList*>(list))] = result;
+    }
+
     RE::TESGlobal* EngineMock::AddGlobal(std::uint32_t formID, std::string editorID, float value)
     {
         auto& object = SimpleForms().emplace_back(sizeof(RE::TESGlobal) + 0x40, 128);
@@ -2407,6 +2466,115 @@ void RE::TESQuest::Reset()
         if (alias)
             NarrativeEngine::Testing::AliasReferences()[static_cast<const void*>(alias)] = nullptr;
     }
+}
+
+// The engine's own resolver walks the list's flags, its level filtering and
+// any nesting. The harness answers from one declared result per list, which is
+// enough to exercise both the accept path and the recursion into a nested one.
+void RE::TESLeveledList::CalculateCurrentFormList(std::uint16_t,
+                                                  std::int16_t,
+                                                  RE::BSTArray<RE::CALCED_OBJECT, RE::BSScrapArrayAllocator>& a_result,
+                                                  std::uint32_t,
+                                                  bool)
+{
+    auto& results = NarrativeEngine::Testing::LeveledResults();
+    const auto it = results.find(static_cast<const void*>(this));
+    if (it == results.end() || !it->second)
+        return;
+    RE::CALCED_OBJECT entry{};
+    entry.form = it->second;
+    entry.count = 1;
+    a_result.push_back(entry);
+}
+
+// PlaceObjectAtMe is the engine's PlaceAtMe: it builds a reference of the class
+// the base calls for, in the placer's own cell, at the placer's position. An
+// NPC base yields an Actor, which is the whole reason production reaches for
+// this rather than CreateReferenceAtLocation.
+RE::NiPointer<RE::TESObjectREFR> RE::TESObjectREFR::PlaceObjectAtMe(RE::TESBoundObject* a_base, bool) const
+{
+    using namespace NarrativeEngine::Testing;
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->spawn.placeSucceeds || !a_base)
+        return RE::NiPointer<RE::TESObjectREFR>{};
+    if (mock->spawn.placeSucceedsCount >= 0
+        && mock->spawn.placed.size() >= static_cast<std::size_t>(mock->spawn.placeSucceedsCount))
+        return RE::NiPointer<RE::TESObjectREFR>{};
+
+    const auto placedID = mock->spawn.nextRefFormID++;
+    const bool isActor = a_base->GetFormType() == RE::FormType::NPC;
+    auto* ref = isActor ? static_cast<RE::TESObjectREFR*>(mock->AddActor(placedID))
+                        : mock->AddReference(nullptr, placedID, data.location);
+    if (isActor)
+        ref->data.location = data.location;
+    ref->parentCell = parentCell;
+    PlacedBases()[static_cast<const void*>(ref)] = a_base;
+    mock->spawn.placed.push_back(
+        {static_cast<const void*>(a_base), placedID, ref->data.location.x, ref->data.location.y, ref->data.location.z});
+    return RE::NiPointer<RE::TESObjectREFR>{ref};
+}
+
+RE::TESBoundObject* RE::TESObjectREFR::GetBaseObject()
+{
+    auto& bases = NarrativeEngine::Testing::PlacedBases();
+    const auto it = bases.find(static_cast<const void*>(this));
+    return it == bases.end() ? nullptr : it->second;
+}
+
+// The handle the alias fill is given. A reference with no valid handle is
+// rejected there, silently, which is why production asks here instead.
+RE::BSPointerHandle<RE::TESObjectREFR> RE::TESObjectREFR::CreateRefHandle()
+{
+    RE::BSPointerHandle<RE::TESObjectREFR> handle{};
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->spawn.refHandleIsValid)
+        return handle;
+    // A handle is a packed index and generation; any non-zero value reads as
+    // valid, and nothing here dereferences one.
+    const std::uint32_t raw = 1u;
+    std::memcpy(static_cast<void*>(&handle), &raw, sizeof(raw));
+    return handle;
+}
+
+bool RE::TESObjectREFR::IsInWater() const
+{
+    auto* mock = EngineMock::Current();
+    return mock != nullptr && mock->spawn.placedInWater;
+}
+
+void RE::TESObjectREFR::SetPosition(RE::NiPoint3 a_pos)
+{
+    data.location = a_pos;
+    if (auto* mock = EngineMock::Current()) {
+        for (auto& placement : mock->spawn.placed) {
+            if (placement.refFormID == GetFormID()) {
+                placement.x = a_pos.x;
+                placement.y = a_pos.y;
+                placement.z = a_pos.z;
+            }
+        }
+    }
+}
+
+// The alias's own actor accessor, which is GetReference narrowed. Answers null
+// for a reference that is not an actor, exactly as the engine's does.
+RE::Actor* RE::BGSRefAlias::GetActorReference() const
+{
+    auto* ref = GetReference();
+    return ref ? ref->As<RE::Actor>() : nullptr;
+}
+
+// Constructed as part of the extra-data list a placed reference carries. Both
+// its body and its nested Conditional's set a vtable and zero their members in
+// the engine, and zeroed storage is the same state.
+RE::ContainerItemExtra::Conditional::Conditional()
+{
+    std::memset(static_cast<void*>(this), 0, sizeof(*this));
+}
+
+RE::ContainerItemExtra::ContainerItemExtra()
+{
+    std::memset(static_cast<void*>(this), 0, sizeof(*this));
 }
 
 void RE::TESObjectREFR::MoveTo(RE::TESObjectREFR* a_target)
