@@ -738,6 +738,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/AmbushSpawnPoints.cpp"
         "${CMAKE_SOURCE_DIR}/src/EvaluationPipeline.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipContent.cpp"
+        "${CMAKE_SOURCE_DIR}/src/VisitComposer.cpp"
         "${CMAKE_SOURCE_DIR}/src/PrismaUI.cpp"
         "${CMAKE_SOURCE_DIR}/src/SkyrimNetAPI.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipClaims.cpp"
@@ -771,6 +772,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
             testsupport/DispatcherContract.cpp
             testsupport/FakeVTable.cpp
             testsupport/DownstreamSpies.cpp
+            testsupport/VisitSpies.cpp
             testsupport/GossipSpies.cpp
             testsupport/RelocationMocks.cpp
             testsupport/RelocationMocks.test.cpp

@@ -518,6 +518,12 @@ namespace NarrativeEngine::Testing
         // relationship record are keyed on rather than the placed reference.
         RE::TESNPC* AddNPC(std::uint32_t formID, bool female = false);
 
+        // Say which base form an actor was made from. Unique NPCs each have
+        // their own; anything else in the world shares one with everybody of
+        // its kind, which is why so much is keyed on the base rather than on
+        // the placed reference.
+        void SetActorBase(RE::Actor* actor, RE::TESNPC* base);
+
         // Declare a kinship between two NPCs, with the label the record would
         // carry. Labels are gendered and are read off the record rather than
         // invented, so both are given: `labelForMale` is what `a` calls `b`

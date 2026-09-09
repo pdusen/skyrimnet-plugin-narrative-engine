@@ -62,6 +62,7 @@ namespace NarrativeEngine::Testing
     // an extra-data list carries teleport data. Reached from the out-of-line
     // engine functions further down the file.
     const std::vector<RE::TESObjectREFR*>& ReferencesIn(const void* cell);
+    RE::TESNPC* BaseFormOf(const void* actor);
     RE::TESObjectREFR* ReferenceForHandle(std::uint32_t raw);
     RE::BSExtraData* TeleportDataOn(const void* extraList);
 
@@ -910,6 +911,31 @@ namespace NarrativeEngine::Testing
             npc->actorData.actorBaseFlags.set(RE::ACTOR_BASE_DATA::Flag::kFemale);
         FormTable().insert({formID, object.As<RE::TESForm>()});
         return npc;
+    }
+
+    namespace
+    {
+        // Which base form each fabricated actor was made from. Kept beside the
+        // actor rather than written into it, because the field the engine
+        // keeps it in sits inside a relocated block.
+        std::map<const void*, RE::TESNPC*>& ActorBases()
+        {
+            static auto* table = new std::map<const void*, RE::TESNPC*>();
+            return *table;
+        }
+    } // namespace
+
+    RE::TESNPC* BaseFormOf(const void* actor)
+    {
+        const auto& table = ActorBases();
+        const auto it = table.find(actor);
+        return it == table.end() ? nullptr : it->second;
+    }
+
+    void EngineMock::SetActorBase(RE::Actor* actor, RE::TESNPC* base)
+    {
+        if (actor)
+            ActorBases()[static_cast<const void*>(actor)] = base;
     }
 
     void EngineMock::AddRelationship(RE::TESNPC* a, RE::TESNPC* b, const char* labelForMale, const char* labelForFemale)
@@ -2181,6 +2207,11 @@ bool RE::BSPointerHandle<RE::TESObjectREFR, RE::BSUntypedPointerHandle<21, 5>>::
     auto* ref = NarrativeEngine::Testing::ReferenceForHandle(raw);
     a_smartPointerOut.reset(ref);
     return ref != nullptr;
+}
+
+RE::TESNPC* RE::Actor::GetActorBase()
+{
+    return NarrativeEngine::Testing::BaseFormOf(this);
 }
 
 RE::SEXES::SEX RE::TESNPC::GetSex() const
