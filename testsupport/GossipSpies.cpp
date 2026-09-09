@@ -44,7 +44,8 @@ namespace NarrativeEngine::Testing
         std::scoped_lock lock(mutex);
         calls.clear();
         stampedHorizons.clear();
-        sweepSucceeds = true;
+        contactShare = 1.0f;
+        contactAvailability = "everybody";
         lastSimulatedGameDay = -1.0;
         cancelAfter.clear();
         circulating.clear();
@@ -132,6 +133,20 @@ namespace NarrativeEngine::Testing
 
 namespace NarrativeEngine::GossipSim
 {
+    float AvailableContactShare(const GossipThread::Token&, RE::FormID)
+    {
+        auto& spies = Testing::GossipSpies();
+        std::scoped_lock lock(spies.mutex);
+        return spies.contactShare;
+    }
+
+    std::string DescribeContactAvailability(const GossipThread::Token&, RE::FormID)
+    {
+        auto& spies = Testing::GossipSpies();
+        std::scoped_lock lock(spies.mutex);
+        return spies.contactAvailability;
+    }
+
     std::uint32_t SeedRumor(const GossipThread::Token&,
                             RE::FormID originNpc,
                             float notability,
@@ -154,6 +169,11 @@ namespace NarrativeEngine::GossipSim
 
     GossipState& MutableState(const GossipThread::Token&)
     {
+        // The harvest's very first act, and the only thing it does before any
+        // of its readiness gates. Recording it is how the scheduler's tests
+        // see that a sweep started at all, now that the sweep itself is real.
+        Testing::GossipSpies().Record("sweep");
+
         return Testing::LiveGossipState();
     }
 
@@ -176,9 +196,22 @@ namespace NarrativeEngine::GossipSim
         spies.stampedHorizons.push_back(asOfGameDay);
     }
 
-    void Advance(const GossipThread::Token&, double, const GossipDispatch::CancellationHandle&)
+    void Advance(const GossipThread::Token&, double, const GossipDispatch::CancellationHandle& cancel)
     {
-        Testing::GossipSpies().Record("advance");
+        auto& spies = Testing::GossipSpies();
+        spies.Record("advance");
+        bool cancelHere = false;
+        {
+            std::scoped_lock lock(spies.mutex);
+            cancelHere = spies.cancelAfter == "advance";
+        }
+        // Lets a case put a cancellation between two steps of a tick, which is
+        // where a real one arrives: a load lands while the tick is mid-flight.
+        // This step is the one that can do it because it is the only one the
+        // scheduler hands the handle to.
+        if (cancelHere && cancel) {
+            cancel->Cancel();
+        }
     }
 
     void PublishSnapshot()
@@ -193,25 +226,3 @@ namespace NarrativeEngine::GossipSim
         return spies.lastSimulatedGameDay;
     }
 } // namespace NarrativeEngine::GossipSim
-
-namespace NarrativeEngine::GossipHarvest
-{
-    bool RunSweep(const GossipThread::Token&, double, const GossipDispatch::CancellationHandle& cancel)
-    {
-        auto& spies = Testing::GossipSpies();
-        spies.Record("sweep");
-        bool cancelHere = false;
-        bool succeeds = true;
-        {
-            std::scoped_lock lock(spies.mutex);
-            cancelHere = spies.cancelAfter == "sweep";
-            succeeds = spies.sweepSucceeds;
-        }
-        // Lets a case put a cancellation between two steps, which is where the
-        // real one arrives: a load cancels while a tick is mid-flight.
-        if (cancelHere && cancel) {
-            cancel->Cancel();
-        }
-        return succeeds;
-    }
-} // namespace NarrativeEngine::GossipHarvest

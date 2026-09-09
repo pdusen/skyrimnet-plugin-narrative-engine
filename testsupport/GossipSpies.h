@@ -38,7 +38,13 @@ namespace NarrativeEngine::Testing
         std::vector<std::string> calls;
         // The game day each tick was stamped for.
         std::vector<double> stampedHorizons;
-        bool sweepSucceeds = true;
+
+        // How much of a participant's circle of contacts is not already
+        // carrying a rumor, and how the simulation would describe that. The
+        // harvest asks before spending a model call on somebody nobody is left
+        // to tell.
+        float contactShare = 1.0f;
+        std::string contactAvailability = "everybody";
         double lastSimulatedGameDay = -1.0;
         // Which step should observe a cancellation, so each of a tick's three
         // checkpoints can be reached in turn.

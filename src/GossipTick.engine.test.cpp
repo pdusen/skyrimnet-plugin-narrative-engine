@@ -8,7 +8,11 @@
 #include <GossipSpies.h>
 #include <GossipThread.h>
 #include <GossipWorld.h>
+
+#include <FakeSkyrimNet.h>
+
 #include <ThreadRole.h>
+#include <Windows.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -54,7 +58,22 @@ namespace
     using NarrativeEngine::Testing::EngineMock;
     namespace GossipGraph = NarrativeEngine::GossipGraph;
     using NarrativeEngine::Testing::BuildGossipWorld;
+    using NarrativeEngine::Testing::FakeSkyrimNetState;
+    using NarrativeEngine::Testing::FakeSkyrimNetStateFunc;
     using NarrativeEngine::Testing::GossipSpies;
+    using NarrativeEngine::Testing::kFakeSkyrimNetStateExport;
+
+    // The stand-in SkyrimNet beside the executable, whose memory system the
+    // harvest refuses to sweep without.
+    FakeSkyrimNetState& FakeSkyrimNet()
+    {
+        HMODULE module = ::LoadLibraryA("SkyrimNet");
+        REQUIRE(module != nullptr);
+        auto* accessor = reinterpret_cast<FakeSkyrimNetStateFunc>(
+            reinterpret_cast<void*>(::GetProcAddress(module, kFakeSkyrimNetStateExport)));
+        REQUIRE(accessor != nullptr);
+        return *accessor();
+    }
 
     constexpr auto kTimeout = std::chrono::seconds{5};
 
@@ -436,10 +455,11 @@ TEST_CASE("GossipTick runs a tick in order", "[GossipTick][engine]")
 
     SECTION("when the sweep cannot run")
     {
-        // The graph or SkyrimNet's memory system was not ready. The tick still
-        // advances and publishes: the carrier steps already queued are due
-        // whether or not new rumors were seeded.
-        GossipSpies().sweepSucceeds = false;
+        // SkyrimNet's memory system is not up, which is what the window after
+        // a load looks like. The tick still advances and publishes: the
+        // carrier steps already queued are due whether or not new rumors were
+        // seeded this time round.
+        FakeSkyrimNet().memorySystemReady = false;
 
         SECTION("should still advance and publish")
         {
@@ -455,14 +475,19 @@ TEST_CASE("GossipTick runs a tick in order", "[GossipTick][engine]")
         // What a load does. The tick must stop rather than finish and discard,
         // because its remaining steps write into SkyrimNet's memory database,
         // which loading a save does not roll back.
-        GossipSpies().cancelAfter = "sweep";
+        //
+        // The cancellation is raised from the advance step, which is the only
+        // one of the tick's collaborators the scheduler hands the handle to.
+        // The checkpoint between the sweep and the advance is reached the same
+        // way from the harvest's own tests, where a cancelled handle can be
+        // passed straight in.
+        GossipSpies().cancelAfter = "advance";
 
-        SECTION("should stop before advancing the simulation")
+        SECTION("should stop before publishing a half-simulated world")
         {
             PollWith(60.0);
             DrainTicks();
-            REQUIRE(GossipSpies().CountOf("sweep") == 1);
-            REQUIRE(GossipSpies().CountOf("advance") == 0);
+            REQUIRE(GossipSpies().CountOf("advance") == 1);
             REQUIRE(GossipSpies().CountOf("publish") == 0);
         }
     }

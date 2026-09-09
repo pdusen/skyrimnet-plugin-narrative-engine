@@ -2951,7 +2951,11 @@ namespace NarrativeEngine::Testing
         // is how the engine's own records are laid out, and what everything
         // reading LCUN expects.
         row.actor = reinterpret_cast<RE::Actor*>(npc);
-        row.refID = 0;
+        // And its `refID` names the placed reference, which is the id anything
+        // outside the engine — SkyrimNet especially — speaks. A row without
+        // one leaves the person unaddressable, which on a real load order is
+        // vanishingly rare and here would silently empty every sweep.
+        row.refID = npc->GetFormID() + 0x01000000u;
         row.editorLoc = editorLocation;
         location->uniqueNPCs.push_back(row);
     }
