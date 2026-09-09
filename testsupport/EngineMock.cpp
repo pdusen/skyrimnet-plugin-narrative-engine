@@ -677,6 +677,10 @@ namespace NarrativeEngine::Testing
         // Headroom past sizeof, for the same reason cells get it.
         auto& object = pool.worldObjects.emplace_back(sizeof(RE::TESWorldSpace) + 0x200, 128);
         WireFormDefaults(object, false);
+        // Its editor ID, which is how anything naming a worldspace in a file
+        // or a log refers to it. Left empty unless a test sets one, which is
+        // the case a caller falls back from.
+        object.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
         auto* worldSpace = object.As<RE::TESWorldSpace>();
         worldSpace->formType = RE::FormType::WorldSpace;
         worldSpace->formID = formID;
@@ -893,6 +897,164 @@ namespace NarrativeEngine::Testing
         }
         mesh->triangles.push_back(tri);
         return mesh;
+    }
+
+    // -----------------------------------------------------------------------
+    // The NAVI record
+    // -----------------------------------------------------------------------
+    //
+    // BSNavmeshInfo is a forward declaration in CommonLibSSE and nothing more,
+    // so there is no type to construct: the harness hands out blocks of bytes
+    // with the fields written where `navInfo` says, and the code under test is
+    // free to go looking for them. The blocks are oversized because a search
+    // for a field reads a window past the front of one.
+    namespace
+    {
+        constexpr std::size_t kNavInfoBytes = 0x100;
+
+        struct NavPool
+        {
+            std::deque<FakeObject> mapObjects;
+            std::deque<FakeObject> meshForms;
+            std::deque<std::vector<std::byte>> infoBlocks;
+            std::deque<RE::BSTArray<const RE::BSNavmeshInfo*>*> chains;
+            std::deque<RE::BSTArray<RE::BSNavmeshInfo*>*> cellBuckets;
+            // Which info block each navmesh FormID resolves to, which is the
+            // whole of what the record is asked for by FormID.
+            std::unordered_map<std::uint32_t, RE::BSNavmeshInfo*> byFormID;
+            // Which cell each navmesh was filed under, so a second navmesh in
+            // the same cell joins the bucket already there.
+            std::unordered_map<std::uint64_t, RE::BSTArray<RE::BSNavmeshInfo*>*> bucketByCell;
+            // What each fabricated NavMesh form calls its parent cell.
+            std::unordered_map<const void*, RE::TESObjectCELL*> meshParent;
+        };
+
+        NavPool& Nav()
+        {
+            static auto* pool = new NavPool();
+            return *pool;
+        }
+
+        RE::BSNavmeshInfo* NavmeshInfoImpl(void*, std::uint32_t id)
+        {
+            const auto& table = Nav().byFormID;
+            const auto it = table.find(id);
+            return it == table.end() ? nullptr : it->second;
+        }
+
+        RE::TESObjectCELL* SaveParentCellImpl(void* self)
+        {
+            // `self` is the TESChildCell subobject, which is what the harness
+            // keyed the table on when it wired the slot.
+            const auto& table = Nav().meshParent;
+            const auto it = table.find(self);
+            return it == table.end() ? nullptr : it->second;
+        }
+    } // namespace
+
+    RE::NavMeshInfoMap* EngineMock::AddNavMeshInfoMap(std::uint32_t formID)
+    {
+        auto& pool = Nav();
+        auto& object = pool.mapObjects.emplace_back(sizeof(RE::NavMeshInfoMap) + 0x100, 128);
+        WireFormDefaults(object, false);
+        auto* map = object.As<RE::NavMeshInfoMap>();
+        map->formType = RE::FormType::Navigation;
+        map->formID = formID;
+
+        // GetNavmeshInfo is slot 02 of the BSNavmeshInfoMap vtable, which is a
+        // base of its own with its own pointer, not of the primary one.
+        auto* infoBase = static_cast<RE::BSNavmeshInfoMap*>(map);
+        const auto infoOffset =
+            static_cast<std::size_t>(reinterpret_cast<std::byte*>(infoBase) - reinterpret_cast<std::byte*>(map));
+        object.BaseSlot(infoOffset, 8, 2, reinterpret_cast<void*>(&NavmeshInfoImpl));
+
+        // Both containers are real ones sitting in zeroed storage, which is not
+        // the same thing as an empty container: the hash map keeps a non-zero
+        // end-of-chain sentinel it would never have got, and iterating without
+        // it yields nothing at all.
+        new (&map->ckNavMeshInfoMap) RE::BSTHashMap<std::uint64_t, RE::BSTArray<RE::BSNavmeshInfo*>*>();
+        new (&map->allPaths) RE::BSTArray<RE::BSTArray<const RE::BSNavmeshInfo*>*>();
+
+        FormTable().insert({formID, object.As<RE::TESForm>()});
+        return map;
+    }
+
+    const RE::BSNavmeshInfo* EngineMock::AddNavmeshInfo(RE::NavMeshInfoMap* map,
+                                                        std::uint32_t navMeshFormID,
+                                                        std::uint32_t worldSpaceFormID,
+                                                        std::int16_t cellX,
+                                                        std::int16_t cellY,
+                                                        float x,
+                                                        float y,
+                                                        float z)
+    {
+        if (!map)
+            return nullptr;
+        auto& pool = Nav();
+        auto& block = pool.infoBlocks.emplace_back(kNavInfoBytes, std::byte{});
+        auto* bytes = block.data();
+        if (navInfo.writeFormID && navInfo.formIDOffset + sizeof(std::uint32_t) <= kNavInfoBytes)
+            std::memcpy(bytes + navInfo.formIDOffset, &navMeshFormID, sizeof(navMeshFormID));
+        if (navInfo.writePosition && navInfo.positionOffset + sizeof(float) * 3 <= kNavInfoBytes) {
+            const float point[3] = {x, y, z};
+            std::memcpy(bytes + navInfo.positionOffset, point, sizeof(point));
+        }
+
+        auto* info = reinterpret_cast<RE::BSNavmeshInfo*>(bytes);
+        pool.byFormID[navMeshFormID] = info;
+
+        // The engine files navmeshes by a packed key: worldspace in the high
+        // half, then cellX, then cellY.
+        const auto key = (static_cast<std::uint64_t>(worldSpaceFormID) << 32)
+                         | (static_cast<std::uint64_t>(static_cast<std::uint16_t>(cellX)) << 16)
+                         | static_cast<std::uint64_t>(static_cast<std::uint16_t>(cellY));
+        auto& bucket = pool.bucketByCell[key];
+        if (!bucket) {
+            bucket = new RE::BSTArray<RE::BSNavmeshInfo*>();
+            pool.cellBuckets.push_back(bucket);
+            map->ckNavMeshInfoMap.insert({key, bucket});
+        }
+        bucket->push_back(info);
+        return info;
+    }
+
+    RE::NavMesh* EngineMock::AddNavMeshForm(std::uint32_t formID,
+                                            RE::TESObjectCELL* parentCell,
+                                            float minX,
+                                            float minY,
+                                            float maxX,
+                                            float maxY)
+    {
+        auto& pool = Nav();
+        auto& object = pool.meshForms.emplace_back(sizeof(RE::NavMesh) + 0x100, 128);
+        WireFormDefaults(object, false);
+        auto* mesh = object.As<RE::NavMesh>();
+        mesh->formType = RE::FormType::NavMesh;
+        mesh->formID = formID;
+        mesh->meshGrid.gridBoundsMin = RE::NiPoint3{minX, minY, 0.0f};
+        mesh->meshGrid.gridBoundsMax = RE::NiPoint3{maxX, maxY, 0.0f};
+
+        // GetSaveParentCell is slot 01 of TESChildCell, a base with its own
+        // vtable pointer partway into the object.
+        auto* childCell = static_cast<RE::TESChildCell*>(mesh);
+        const auto childOffset =
+            static_cast<std::size_t>(reinterpret_cast<std::byte*>(childCell) - reinterpret_cast<std::byte*>(mesh));
+        object.BaseSlot(childOffset, 4, 1, reinterpret_cast<void*>(&SaveParentCellImpl));
+        pool.meshParent[static_cast<const void*>(childCell)] = parentCell;
+
+        FormTable().insert({formID, object.As<RE::TESForm>()});
+        return mesh;
+    }
+
+    void EngineMock::AddPreferredPath(RE::NavMeshInfoMap* map, const std::vector<const RE::BSNavmeshInfo*>& chain)
+    {
+        if (!map)
+            return;
+        auto* stored = new RE::BSTArray<const RE::BSNavmeshInfo*>();
+        Nav().chains.push_back(stored);
+        for (const auto* info : chain)
+            stored->push_back(info);
+        map->allPaths.push_back(stored);
     }
 
     void EngineMock::LoadGrid(const std::vector<RE::TESObjectCELL*>& cells)

@@ -18,6 +18,8 @@ namespace RE
     class BGSKeyword;
     class BGSLocation;
     class NavMesh;
+    class NavMeshInfoMap;
+    struct BSNavmeshInfo;
     class Sky;
     class TESFaction;
     class TESObjectCELL;
@@ -253,6 +255,19 @@ namespace NarrativeEngine::Testing
             bool playerIndoors = false;
         } grid;
 
+        // How the harness lays out the opaque BSNavmeshInfo block. The real one
+        // on Skyrim SE 1.6 holds the navmesh FormID first and a position right
+        // after it; a case that wants to know what happens when neither can be
+        // found turns them off.
+        struct NavInfoState
+        {
+            std::size_t formIDOffset = 0x00;
+            bool writeFormID = true;
+
+            std::size_t positionOffset = 0x04;
+            bool writePosition = true;
+        } navInfo;
+
         // What an actor did when placement code moved it.
         struct PlacementState
         {
@@ -486,6 +501,46 @@ namespace NarrativeEngine::Testing
         // the smallest square that fits them. Slots past the end stay null,
         // which is what a grid the streaming system has not filled looks like.
         void LoadGrid(const std::vector<RE::TESObjectCELL*>& cells);
+
+        // Skyrim's one NAVI record: the precomputed long-distance pathing map.
+        // Registered in the global form table, which is where it is found, and
+        // kept for the life of the process because nothing takes a record down
+        // inside a session.
+        RE::NavMeshInfoMap* AddNavMeshInfoMap(std::uint32_t formID);
+
+        // Tell the NAVI record about one navmesh, filed under the cell it
+        // covers, and hand back the opaque handle the record identifies it by.
+        //
+        // That handle is a BSNavmeshInfo, which CommonLibSSE only
+        // forward-declares — it has no member layout at all, so code that wants
+        // the position inside one has to measure where it sits. The harness
+        // therefore lays the block out itself, per `navInfo` below, and a case
+        // that moves or omits a field is asking what happens when the
+        // measurement fails.
+        const RE::BSNavmeshInfo* AddNavmeshInfo(RE::NavMeshInfoMap* map,
+                                                std::uint32_t navMeshFormID,
+                                                std::uint32_t worldSpaceFormID,
+                                                std::int16_t cellX,
+                                                std::int16_t cellY,
+                                                float x,
+                                                float y,
+                                                float z);
+
+        // A resident NavMesh form with geometry bounds. Only a minority of
+        // navmeshes have one loaded at any moment, and they are the only ones
+        // whose position is known from the outside — which makes them the
+        // samples any measurement of the opaque block is taken against.
+        RE::NavMesh* AddNavMeshForm(std::uint32_t formID,
+                                    RE::TESObjectCELL* parentCell,
+                                    float minX,
+                                    float minY,
+                                    float maxX,
+                                    float maxY);
+
+        // One precomputed route: an ordered run of navmeshes the engine will
+        // move a distant traveller along. Plotted end to end, these are the
+        // roads.
+        void AddPreferredPath(RE::NavMeshInfoMap* map, const std::vector<const RE::BSNavmeshInfo*>& chain);
 
         // Fabricate a quest whose state the mocked TESQuest predicates answer
         // from, authored in the named ESP. Kept alive for the process: an alias

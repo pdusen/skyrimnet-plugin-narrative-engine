@@ -732,6 +732,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/Decorators.cpp"
         "${CMAKE_SOURCE_DIR}/src/EvalDispatch.cpp"
         "${CMAKE_SOURCE_DIR}/src/FineRoads.cpp"
+        "${CMAKE_SOURCE_DIR}/src/TravelGraph.cpp"
         "${CMAKE_SOURCE_DIR}/src/PrismaUI.cpp"
         "${CMAKE_SOURCE_DIR}/src/SkyrimNetAPI.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipClaims.cpp"
