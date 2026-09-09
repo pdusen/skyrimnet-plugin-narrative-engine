@@ -2,13 +2,25 @@
 
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
+#include <GossipClaims.h>
+#include <GossipDispatch.h>
 #include <GossipGraph.h>
 #include <GossipSpies.h>
+#include <GossipThread.h>
+#include <SkyrimNetAPI.h>
+#include <ThreadRole.h>
+
+#include <FakeSkyrimNet.h>
+
+#include <Windows.h>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <vector>
 
 // Tests for what a rumor says when it is passed on.
 //
@@ -34,14 +46,35 @@
 // invented, which is why the harness stands in for the engine's relationship
 // lookup: the words "sister" and "brother" are data, and a test that hardcoded
 // either would be testing itself.
+//
+// Above all that sits the walk, which is where the money goes. It evaluates one
+// candidate at a time and stops at the first acceptance, so a pool of forty
+// costs one model call in the usual case rather than forty. What it does with
+// each answer is the part worth pinning: an answer about the OWNER keeps their
+// memory claimed and frees the happening, so another witness can still tell it;
+// an answer about the HAPPENING keeps both, so nobody tells it twice; and
+// anything that means "nothing was learned" gives everything back, so a
+// transient failure does not burn a memory for good.
+//
+// Both model calls in the walk run against the stand-in SkyrimNet beside the
+// executable, which answers inline — so a walk that the shipping build spreads
+// across seconds of callbacks finishes here before the call returns.
 
 namespace
 {
     namespace GossipContent = NarrativeEngine::GossipContent;
+    namespace GossipClaims = NarrativeEngine::GossipClaims;
+    namespace GossipDispatch = NarrativeEngine::GossipDispatch;
     namespace GossipGraph = NarrativeEngine::GossipGraph;
+    namespace GossipThread = NarrativeEngine::GossipThread;
+    namespace SkyrimNetAPI = NarrativeEngine::SkyrimNetAPI;
     using NarrativeEngine::Testing::ConfiguredSettings;
     using NarrativeEngine::Testing::EngineMock;
+    using NarrativeEngine::Testing::FakeSkyrimNetState;
+    using NarrativeEngine::Testing::FakeSkyrimNetStateFunc;
     using NarrativeEngine::Testing::GossipSpies;
+    using NarrativeEngine::Testing::kFakeSkyrimNetStateExport;
+    using NarrativeEngine::Testing::ResetGossipState;
 
     constexpr const char* kSettings = "[Gossip]\niGossipContentBands=3\n";
 
@@ -77,6 +110,99 @@ namespace
         p.name = name;
         spies.participants[npc] = p;
         spies.npcNames[npc] = name;
+    }
+
+    // Memories and the happenings behind them. Claims are keyed on both, and
+    // which of the two a refusal keeps is the thing most of the walk cases are
+    // about.
+    constexpr std::int64_t kFirstMemory = 5001;
+    constexpr std::int64_t kSecondMemory = 5002;
+    constexpr std::int64_t kOtherWitness = 5003;
+    constexpr std::int64_t kFirstEvent = 9001;
+    constexpr std::int64_t kSecondEvent = 9002;
+
+    // Reaches the stand-in SkyrimNet. The DLL is already beside the executable,
+    // so this only bumps a refcount and gives a handle to resolve through.
+    FakeSkyrimNetState& FakeLLM()
+    {
+        HMODULE module = ::LoadLibraryA("SkyrimNet");
+        REQUIRE(module != nullptr);
+        auto* accessor = reinterpret_cast<FakeSkyrimNetStateFunc>(
+            reinterpret_cast<void*>(::GetProcAddress(module, kFakeSkyrimNetStateExport)));
+        REQUIRE(accessor != nullptr);
+        return *accessor();
+    }
+
+    template <std::size_t N> void Say(char (&dest)[N], const std::string& text)
+    {
+        std::size_t i = 0;
+        for (; i + 1 < N && i < text.size(); ++i)
+            dest[i] = text[i];
+        dest[i] = '\0';
+    }
+
+    // Claims are taken and read on the gossip worker, which is the only place
+    // a token is made.
+    template <class Fn> void OnGossipThread(Fn body)
+    {
+        const NarrativeEngine::ScopedThreadRole role{NarrativeEngine::ThreadRole::Plugin};
+        GossipThread::detail::JobDispatcher::Invoke([&](const GossipThread::Token& gt) { body(gt); });
+    }
+
+    GossipContent::Candidate CandidateFor(std::int64_t memoryId, std::int64_t eventId = kFirstEvent)
+    {
+        GossipContent::Candidate c;
+        c.memoryId = memoryId;
+        c.owner = kTeller;
+        c.importance = 0.7f;
+        c.text = "A College mage was caught in the Arcanaeum after hours.";
+        c.locationName = "Winterhold";
+        c.eventIds = {eventId};
+        return c;
+    }
+
+    void Walk(std::vector<GossipContent::Candidate> pool, int maxSeeds = 4)
+    {
+        OnGossipThread([&](const GossipThread::Token& gt) {
+            GossipContent::RequestRumors(gt, std::move(pool), maxSeeds, 100.0, {});
+        });
+    }
+
+    bool IsClaimed(std::int64_t memoryId)
+    {
+        bool claimed = false;
+        OnGossipThread(
+            [&](const GossipThread::Token& gt) { claimed = NarrativeEngine::GossipClaims::IsClaimed(gt, memoryId); });
+        return claimed;
+    }
+
+    bool AreEventsClaimed(const std::vector<std::int64_t>& eventIds)
+    {
+        bool claimed = false;
+        OnGossipThread([&](const GossipThread::Token& gt) {
+            claimed = NarrativeEngine::GossipClaims::AreEventsClaimed(gt, eventIds);
+        });
+        return claimed;
+    }
+
+    std::size_t SeededCount()
+    {
+        auto& spies = GossipSpies();
+        std::scoped_lock lock(spies.mutex);
+        return spies.seeded.size();
+    }
+
+    NarrativeEngine::Testing::GossipSpyState::Seeded LastSeeded()
+    {
+        auto& spies = GossipSpies();
+        std::scoped_lock lock(spies.mutex);
+        REQUIRE_FALSE(spies.seeded.empty());
+        return spies.seeded.back();
+    }
+
+    std::string LastPromptName()
+    {
+        return std::string{FakeLLM().lastPromptName};
     }
 
     void NameLocation(std::uint32_t form, const char* name)
@@ -313,6 +439,230 @@ TEST_CASE("GossipContent picks a telling for how far it has come", "[GossipConte
             // The index is used to subscript the band list, so a zero count
             // has to floor at one rather than produce an index of minus one.
             REQUIRE(GossipContent::BandForGeneration(7) == 0);
+        }
+    }
+}
+
+TEST_CASE("GossipContent walks a pool one candidate at a time", "[GossipContent][engine]")
+{
+    // Happy path, re-run per leaf: one candidate nobody has claimed, and a
+    // model that approves it and writes its bands.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    GossipSpies().Reset();
+    ResetGossipState();
+    REQUIRE(SkyrimNetAPI::Initialize());
+    auto& llm = FakeLLM();
+    llm.sendPromptAccepts = true;
+    llm.sendPromptSucceeds = true;
+    llm.sendPromptCalls = 0;
+    Say(llm.promptResponse, R"({"verdict":"seed","bands":["first","second","third"]})");
+    Place(kTeller, "Sven", kHousehold, kRiverwood, kWhiterunHold);
+
+    SECTION("when the model approves a candidate")
+    {
+        Walk({CandidateFor(kFirstMemory)});
+
+        SECTION("should seed a rumor from it")
+        {
+            REQUIRE(SeededCount() == 1);
+        }
+
+        SECTION("should seed it with the bands the model wrote")
+        {
+            REQUIRE(LastSeeded().bands == std::vector<std::string>{"first", "second", "third"});
+        }
+
+        SECTION("should credit the memory it came from")
+        {
+            // The simulation records this so the harvester never offers the
+            // same memory again, and so a rumor can be traced back.
+            REQUIRE(LastSeeded().sourceMemoryId == kFirstMemory);
+            REQUIRE(LastSeeded().originNpc == kTeller);
+        }
+
+        SECTION("should leave the memory claimed")
+        {
+            REQUIRE(IsClaimed(kFirstMemory));
+        }
+    }
+
+    SECTION("when the model returns fewer bands than there are")
+    {
+        Say(llm.promptResponse, R"({"verdict":"seed","bands":["only one"]})");
+        Walk({CandidateFor(kFirstMemory)});
+
+        SECTION("should repeat the last one to fill them")
+        {
+            // Two usable tellings out of three is still a usable rumor, and
+            // refusing the seed over it would spend a director call and an
+            // expensive composer call for nothing.
+            REQUIRE(LastSeeded().bands.size() == 3);
+            REQUIRE(LastSeeded().bands.back() == "only one");
+        }
+    }
+
+    SECTION("when the owner would not repeat it")
+    {
+        Say(llm.promptResponse, R"({"verdict":"private"})");
+        Walk({CandidateFor(kFirstMemory)});
+
+        SECTION("should seed nothing")
+        {
+            REQUIRE(SeededCount() == 0);
+        }
+
+        SECTION("should never ask the composer")
+        {
+            // The whole point of splitting the two calls: a refusal costs the
+            // cheap model and nothing else, and the refusals outnumber the
+            // acceptances.
+            REQUIRE(LastPromptName() == "narrative_engine_gossip_eval");
+        }
+
+        SECTION("should keep the memory but free the happening")
+        {
+            // A judgement about this person, not about the event. Somebody
+            // else who saw the same thing may still be willing to tell it.
+            REQUIRE(IsClaimed(kFirstMemory));
+            REQUIRE_FALSE(AreEventsClaimed({kFirstEvent}));
+        }
+    }
+
+    SECTION("when the story is not worth telling")
+    {
+        Say(llm.promptResponse, R"({"verdict":"not_worthy"})");
+        Walk({CandidateFor(kFirstMemory)});
+
+        SECTION("should keep the memory but free the happening")
+        {
+            REQUIRE(IsClaimed(kFirstMemory));
+            REQUIRE_FALSE(AreEventsClaimed({kFirstEvent}));
+        }
+    }
+
+    SECTION("when the story is already going round")
+    {
+        Say(llm.promptResponse, R"({"verdict":"duplicate","duplicate_of":"the mage business"})");
+        Walk({CandidateFor(kFirstMemory)});
+
+        SECTION("should keep the happening claimed too")
+        {
+            // A judgement about the event rather than the person. Releasing it
+            // would let a second witness start a second rumor about the one
+            // thing that happened.
+            REQUIRE(IsClaimed(kFirstMemory));
+            REQUIRE(AreEventsClaimed({kFirstEvent}));
+        }
+    }
+
+    SECTION("when the answer means nothing at all")
+    {
+        Say(llm.promptResponse, R"({"verdict":"perhaps"})");
+        Walk({CandidateFor(kFirstMemory)});
+
+        SECTION("should give the memory back")
+        {
+            // An unrecognised verdict is a fault in the prompt or the model,
+            // not a judgement about the memory. Keeping the claim would burn a
+            // memory for the rest of the save over a bad afternoon.
+            REQUIRE_FALSE(IsClaimed(kFirstMemory));
+            REQUIRE_FALSE(AreEventsClaimed({kFirstEvent}));
+        }
+    }
+
+    SECTION("when the model cannot be reached")
+    {
+        llm.sendPromptSucceeds = false;
+        Walk({CandidateFor(kFirstMemory)});
+
+        SECTION("should give the memory back")
+        {
+            REQUIRE_FALSE(IsClaimed(kFirstMemory));
+        }
+    }
+
+    SECTION("when the composer answers with no bands")
+    {
+        Say(llm.promptResponse, R"({"verdict":"seed","bands":[]})");
+        Walk({CandidateFor(kFirstMemory)});
+
+        SECTION("should seed nothing and give the memory back")
+        {
+            // Composition failing is not the memory's fault, so it returns to
+            // the pool — but the sweep's seed budget is spent either way, or a
+            // tick's cost would be bounded by nothing the settings say.
+            REQUIRE(SeededCount() == 0);
+            REQUIRE_FALSE(IsClaimed(kFirstMemory));
+        }
+    }
+
+    SECTION("when the simulation refuses the seed")
+    {
+        GossipSpies().nextRumorID = 0;
+        Walk({CandidateFor(kFirstMemory)});
+
+        SECTION("should give the memory back")
+        {
+            // The live-rumor cap being full is a temporary state, and a memory
+            // burned on one is a memory nobody ever hears about.
+            REQUIRE_FALSE(IsClaimed(kFirstMemory));
+        }
+    }
+
+    SECTION("when a candidate was claimed since the pool was built")
+    {
+        OnGossipThread(
+            [](const GossipThread::Token& gt) { GossipClaims::Claim(gt, kFirstMemory, {kFirstEvent}, 100.0); });
+        Walk({CandidateFor(kFirstMemory), CandidateFor(kSecondMemory, kSecondEvent)});
+
+        SECTION("should skip it and carry on to the next")
+        {
+            REQUIRE(SeededCount() == 1);
+            REQUIRE(LastSeeded().sourceMemoryId == kSecondMemory);
+        }
+    }
+
+    SECTION("when another account of the same happening is already claimed")
+    {
+        OnGossipThread(
+            [](const GossipThread::Token& gt) { GossipClaims::Claim(gt, kOtherWitness, {kFirstEvent}, 100.0); });
+        Walk({CandidateFor(kFirstMemory)});
+
+        SECTION("should skip it")
+        {
+            // Two people saw one thing. Only one rumor should come of it.
+            REQUIRE(SeededCount() == 0);
+        }
+    }
+
+    SECTION("when the pool holds more than the sweep may seed")
+    {
+        Walk({CandidateFor(kFirstMemory), CandidateFor(kSecondMemory, kSecondEvent)}, /*maxSeeds=*/1);
+
+        SECTION("should stop at its budget")
+        {
+            // The pool is deliberately shuffled before it gets here, so
+            // stopping early is a uniform choice among the acceptable rather
+            // than a bias towards whatever sorted first.
+            REQUIRE(SeededCount() == 1);
+        }
+    }
+
+    SECTION("when the world is replaced mid-walk")
+    {
+        SECTION("should stop and give the memory back")
+        {
+            // A tick that keeps going past a load spends model calls on a
+            // world that no longer exists, and worse, can seed a rumor into
+            // it.
+            auto cancel = std::make_shared<GossipDispatch::CancellationToken>();
+            cancel->Cancel();
+            OnGossipThread([&](const GossipThread::Token& gt) {
+                GossipContent::RequestRumors(gt, {CandidateFor(kFirstMemory)}, 1, 100.0, cancel);
+            });
+            REQUIRE(SeededCount() == 0);
+            REQUIRE_FALSE(IsClaimed(kFirstMemory));
         }
     }
 }
