@@ -19,6 +19,8 @@ namespace RE
     class BGSLocation;
     class NavMesh;
     class NavMeshInfoMap;
+    class TESGlobal;
+    class TESLevCharacter;
     class TESNPC;
     struct BSNavmeshInfo;
     class Sky;
@@ -524,6 +526,20 @@ namespace NarrativeEngine::Testing
         // the placed reference.
         void SetActorBase(RE::Actor* actor, RE::TESNPC* base);
 
+        // Give an actor a keyword. Actors inherit these from their base form
+        // and their race in the engine; nothing here distinguishes the two,
+        // because nothing that asks the question does either.
+        void GiveActorKeyword(RE::Actor* actor, RE::BGSKeyword* keyword);
+
+        // A levelled-character list, which is what content files name when
+        // they mean "one of these" rather than a particular NPC.
+        RE::TESLevCharacter* AddLeveledCharacter(std::uint32_t formID, std::string editorID);
+
+        // A global variable holding whatever a test wants it to. Content files
+        // gate on these and quest scripts write them, so their value is world
+        // state rather than configuration.
+        RE::TESGlobal* AddGlobal(std::uint32_t formID, std::string editorID, float value);
+
         // Declare a kinship between two NPCs, with the label the record would
         // carry. Labels are gendered and are read off the record rather than
         // invented, so both are given: `labelForMale` is what `a` calls `b`
@@ -704,7 +720,9 @@ namespace NarrativeEngine::Testing
         RE::Actor* AddLoadedActor(std::uint32_t formID);
 
         // A stand-in faction to hold ranks against.
-        RE::TESFaction* AddFaction(std::uint32_t formID);
+        // The editor ID is optional and only matters when something names the
+        // faction in a content file rather than holding a pointer to it.
+        RE::TESFaction* AddFaction(std::uint32_t formID, std::string editorID = {});
 
         // Convenience over `factions.ranks`.
         void SetFactionRank(RE::Actor* actor, RE::TESFaction* faction, int rank);
@@ -764,6 +782,11 @@ namespace NarrativeEngine::Testing
             // Per-actor state the snapshot reads beyond the liveness flags.
             std::string actorDisplayName = "Ysolda";
             bool actorIsPlayerTeammate = false;
+
+            // How far the player has levelled. What an encounter is scaled
+            // against, and the only thing anything here asks an actor's level
+            // for.
+            std::uint16_t actorLevel = 1;
             bool actorIsBleedingOut = false;
         } world;
 

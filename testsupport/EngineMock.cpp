@@ -63,6 +63,7 @@ namespace NarrativeEngine::Testing
     // engine functions further down the file.
     const std::vector<RE::TESObjectREFR*>& ReferencesIn(const void* cell);
     RE::TESNPC* BaseFormOf(const void* actor);
+    bool ActorHasKeyword(const void* actor, const RE::BGSKeyword* keyword);
     RE::TESObjectREFR* ReferenceForHandle(std::uint32_t raw);
     RE::BSExtraData* TeleportDataOn(const void* extraList);
 
@@ -936,6 +937,30 @@ namespace NarrativeEngine::Testing
     {
         if (actor)
             ActorBases()[static_cast<const void*>(actor)] = base;
+    }
+
+    namespace
+    {
+        std::map<const void*, std::vector<const RE::BGSKeyword*>>& ActorKeywords()
+        {
+            static auto* table = new std::map<const void*, std::vector<const RE::BGSKeyword*>>();
+            return *table;
+        }
+    } // namespace
+
+    bool ActorHasKeyword(const void* actor, const RE::BGSKeyword* keyword)
+    {
+        const auto& table = ActorKeywords();
+        const auto it = table.find(actor);
+        if (it == table.end())
+            return false;
+        return std::find(it->second.begin(), it->second.end(), keyword) != it->second.end();
+    }
+
+    void EngineMock::GiveActorKeyword(RE::Actor* actor, RE::BGSKeyword* keyword)
+    {
+        if (actor && keyword)
+            ActorKeywords()[static_cast<const void*>(actor)].push_back(keyword);
     }
 
     void EngineMock::AddRelationship(RE::TESNPC* a, RE::TESNPC* b, const char* labelForMale, const char* labelForFemale)
@@ -1999,7 +2024,7 @@ namespace NarrativeEngine::Testing
         location->worldLocMarker = HandleFor(marker);
     }
 
-    RE::TESFaction* EngineMock::AddFaction(std::uint32_t formID)
+    RE::TESFaction* EngineMock::AddFaction(std::uint32_t formID, std::string editorID)
     {
         auto& object = FactionObjects().emplace_back(sizeof(RE::TESFaction), 256);
         WireFormDefaults(object, false);
@@ -2007,7 +2032,55 @@ namespace NarrativeEngine::Testing
         form->formType = RE::FormType::Faction;
         form->formID = formID;
         FormTable().insert({formID, form});
+        if (!editorID.empty()) {
+            SetEditorID(form, editorID);
+            EditorIDTable().insert({RE::BSFixedString(editorID.c_str()), form});
+        }
         return object.As<RE::TESFaction>();
+    }
+
+    namespace
+    {
+        // Forms a content file names but nothing here reads through. Levelled
+        // lists are compared by identity and globals are read for one float,
+        // so neither needs more than storage with the right type on it.
+        std::deque<FakeObject>& SimpleForms()
+        {
+            static auto* pool = new std::deque<FakeObject>();
+            return *pool;
+        }
+    } // namespace
+
+    RE::TESLevCharacter* EngineMock::AddLeveledCharacter(std::uint32_t formID, std::string editorID)
+    {
+        auto& object = SimpleForms().emplace_back(sizeof(RE::TESLevCharacter) + 0x40, 128);
+        WireFormDefaults(object, false);
+        auto* form = object.As<RE::TESForm>();
+        form->formType = RE::FormType::LeveledNPC;
+        form->formID = formID;
+        FormTable().insert({formID, form});
+        if (!editorID.empty()) {
+            SetEditorID(form, editorID);
+            EditorIDTable().insert({RE::BSFixedString(editorID.c_str()), form});
+        }
+        return object.As<RE::TESLevCharacter>();
+    }
+
+    RE::TESGlobal* EngineMock::AddGlobal(std::uint32_t formID, std::string editorID, float value)
+    {
+        auto& object = SimpleForms().emplace_back(sizeof(RE::TESGlobal) + 0x40, 128);
+        WireFormDefaults(object, false);
+        auto* form = object.As<RE::TESForm>();
+        form->formType = RE::FormType::Global;
+        form->formID = formID;
+        FormTable().insert({formID, form});
+        if (!editorID.empty()) {
+            SetEditorID(form, editorID);
+            EditorIDTable().insert({RE::BSFixedString(editorID.c_str()), form});
+        }
+        auto* global = object.As<RE::TESGlobal>();
+        global->value = value;
+        return global;
     }
 
     void EngineMock::SetFactionRank(RE::Actor* actor, RE::TESFaction* faction, int rank)
@@ -2219,6 +2292,30 @@ RE::SEXES::SEX RE::TESNPC::GetSex() const
     // Read off the base form rather than from a mock-wide flag: a rumor names
     // several people at once, and each of them needs a pronoun of their own.
     return actorData.actorBaseFlags.any(RE::ACTOR_BASE_DATA::Flag::kFemale) ? RE::SEXES::kFemale : RE::SEXES::kMale;
+}
+
+bool RE::Actor::IsInFaction(const RE::TESFaction* a_faction) const
+{
+    // Answered from the same rank table SetFactionRank fills: membership is
+    // rank zero or better, which is what the engine means by it too.
+    auto* mock = NarrativeEngine::Testing::EngineMock::Current();
+    if (!mock || !a_faction)
+        return false;
+    return mock->FactionRank(const_cast<RE::Actor*>(this), const_cast<RE::TESFaction*>(a_faction)) >= 0;
+}
+
+std::uint16_t RE::Actor::GetLevel() const
+{
+    auto* mock = NarrativeEngine::Testing::EngineMock::Current();
+    return mock ? mock->world.actorLevel : static_cast<std::uint16_t>(1);
+}
+
+bool RE::Actor::HasKeyword(const RE::BGSKeyword* a_keyword) const
+{
+    // Actors carry the keywords of their base form, and the harness keeps the
+    // answer beside the actor for the same reason it keeps the base form
+    // there: the field the engine reads sits inside a relocated block.
+    return NarrativeEngine::Testing::ActorHasKeyword(this, a_keyword);
 }
 
 bool RE::TESObjectREFR::Is3DLoaded() const
