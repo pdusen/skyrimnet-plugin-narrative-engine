@@ -724,6 +724,38 @@ namespace NarrativeEngine::Testing
             std::vector<Removal> removals;
         } inventory;
 
+        // SKSE's own plumbing: the two interfaces a plugin asks for on the way
+        // up, and the callbacks it hands them. Startup is the only place the
+        // whole mod is wired together, and every one of those callbacks is
+        // unreachable except through the registration -- so the harness keeps
+        // them and a test calls them the way SKSE would.
+        struct SKSEInterfaceState
+        {
+            bool messagingPresent = true;
+            bool listenerRegisters = true;
+            bool serializationPresent = true;
+
+            int initCalls = 0;
+            std::uint32_t uniqueID = 0;
+
+            void (*messageListener)(SKSE::MessagingInterface::Message*) = nullptr;
+            void (*saveCallback)(SKSE::SerializationInterface*) = nullptr;
+            void (*loadCallback)(SKSE::SerializationInterface*) = nullptr;
+            void (*revertCallback)(SKSE::SerializationInterface*) = nullptr;
+
+            // What a load walk finds, in order. The three fields are all a
+            // dispatcher has to route on, and an unknown type among them is
+            // the case a co-save from another build produces.
+            struct Record
+            {
+                std::uint32_t type = 0;
+                std::uint32_t version = 1;
+                std::uint32_t length = 0;
+            };
+            std::vector<Record> records;
+            std::size_t recordCursor = 0;
+        } skse;
+
         // The keyboard, as far as a hotkey sink is concerned. Present says the
         // input manager resolved at all; a sink that never registers is a
         // hotkey that never fires and says nothing about why.

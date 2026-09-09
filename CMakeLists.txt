@@ -770,6 +770,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/LetterPool.cpp"
         "${CMAKE_SOURCE_DIR}/src/BeatSystem.cpp"
         "${CMAKE_SOURCE_DIR}/src/DashboardUIManager.cpp"
+        "${CMAKE_SOURCE_DIR}/src/Plugin.cpp"
     )
 
     if(engine_test_sources)

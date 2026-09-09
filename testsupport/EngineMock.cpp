@@ -634,6 +634,97 @@ std::uint32_t SKSE::SerializationInterface::ReadRecordData(void* a_buf, std::uin
     return n;
 }
 
+// ---------------------------------------------------------------------------
+// SKSE's own plumbing
+// ---------------------------------------------------------------------------
+//
+// The interfaces a plugin is handed on the way up, and the callbacks it gives
+// back. None of it touches the game: what a test needs is to be handed the
+// callbacks and then to call them the way SKSE would, because the whole
+// wiring-up of the mod happens inside them and there is no other door.
+
+void SKSE::Init(const SKSE::LoadInterface*) noexcept
+{
+    if (auto* mock = EngineMock::Current())
+        ++mock->skse.initCalls;
+}
+
+const SKSE::MessagingInterface* SKSE::GetMessagingInterface() noexcept
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->skse.messagingPresent)
+        return nullptr;
+    return NarrativeEngine::Testing::OpaqueSingleton<SKSE::MessagingInterface>();
+}
+
+bool SKSE::MessagingInterface::RegisterListener(void (*a_callback)(SKSE::MessagingInterface::Message*)) const
+{
+    auto* mock = EngineMock::Current();
+    if (!mock)
+        return false;
+    if (!mock->skse.listenerRegisters)
+        return false;
+    mock->skse.messageListener = a_callback;
+    return true;
+}
+
+const SKSE::SerializationInterface* SKSE::GetSerializationInterface() noexcept
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->skse.serializationPresent)
+        return nullptr;
+    return NarrativeEngine::Testing::OpaqueSingleton<SKSE::SerializationInterface>();
+}
+
+void SKSE::SerializationInterface::SetUniqueID(std::uint32_t a_uid) const
+{
+    if (auto* mock = EngineMock::Current())
+        mock->skse.uniqueID = a_uid;
+}
+
+void SKSE::SerializationInterface::SetSaveCallback(void (*a_callback)(SKSE::SerializationInterface*)) const
+{
+    if (auto* mock = EngineMock::Current())
+        mock->skse.saveCallback = a_callback;
+}
+
+void SKSE::SerializationInterface::SetLoadCallback(void (*a_callback)(SKSE::SerializationInterface*)) const
+{
+    if (auto* mock = EngineMock::Current())
+        mock->skse.loadCallback = a_callback;
+}
+
+void SKSE::SerializationInterface::SetRevertCallback(void (*a_callback)(SKSE::SerializationInterface*)) const
+{
+    if (auto* mock = EngineMock::Current())
+        mock->skse.revertCallback = a_callback;
+}
+
+bool SKSE::SerializationInterface::GetNextRecordInfo(std::uint32_t& a_type,
+                                                     std::uint32_t& a_version,
+                                                     std::uint32_t& a_length) const
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || mock->skse.recordCursor >= mock->skse.records.size())
+        return false;
+    const auto& record = mock->skse.records[mock->skse.recordCursor++];
+    a_type = record.type;
+    a_version = record.version;
+    a_length = record.length;
+    return true;
+}
+
+// The plugin's own manifest, which is only ever asked for its name -- the log
+// file is named after it.
+const SKSE::PluginDeclaration* SKSE::PluginDeclaration::GetSingleton() noexcept
+{
+    static const SKSE::PluginDeclaration declaration{SKSE::PluginDeclaration::PluginDeclarationInfo{
+        .Version = {1, 0, 0, 0},
+        .Name = "NarrativeEngineTests",
+    }};
+    return &declaration;
+}
+
 bool SKSE::SerializationInterface::ResolveFormID(RE::FormID a_oldFormID, RE::FormID& a_newFormID) const
 {
     auto* mock = EngineMock::Current();
