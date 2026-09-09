@@ -19,6 +19,7 @@
 #include <deque>
 #include <new>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 // Definitions for the CommonLibSSE functions production code calls.
@@ -55,6 +56,13 @@ namespace NarrativeEngine::Testing
     };
 
     const ExteriorCellFacts* FactsFor(const void* cell);
+
+    // What a fabricated cell holds, which reference a handle names, and whether
+    // an extra-data list carries teleport data. Reached from the out-of-line
+    // engine functions further down the file.
+    const std::vector<RE::TESObjectREFR*>& ReferencesIn(const void* cell);
+    RE::TESObjectREFR* ReferenceForHandle(std::uint32_t raw);
+    RE::BSExtraData* TeleportDataOn(const void* extraList);
 
     // Cells are fabricated with headroom past sizeof(TESObjectCELL).
     // TESObjectCELL::GetRuntimeData() hands back a view whose members sit at
@@ -1265,12 +1273,23 @@ namespace NarrativeEngine::Testing
 
 RE::BSExtraData* RE::ExtraDataList::GetByType(RE::ExtraDataType a_type)
 {
+    // Two kinds of extra data are asked for on fabricated references, and each
+    // is answered from a side table rather than from a real list: the alias
+    // instances an actor was filled into, and the teleport data on a door.
+    if (a_type == RE::ExtraDataType::kTeleport)
+        return NarrativeEngine::Testing::TeleportDataOn(static_cast<const void*>(this));
+
     auto* mock = EngineMock::Current();
     if (!mock || !mock->aliases.arrayPresent)
         return nullptr;
     if (a_type != RE::ExtraDataType::kAliasInstanceArray)
         return nullptr;
     return NarrativeEngine::Testing::CurrentAliasArray();
+}
+
+const RE::BSExtraData* RE::ExtraDataList::GetByType(RE::ExtraDataType a_type) const
+{
+    return const_cast<RE::ExtraDataList*>(this)->GetByType(a_type);
 }
 
 bool RE::TESQuest::IsStopped() const
@@ -1693,6 +1712,138 @@ namespace NarrativeEngine::Testing
         return actor;
     }
 
+    // -----------------------------------------------------------------------
+    // References in a cell, and the doors between cells
+    // -----------------------------------------------------------------------
+    //
+    // Extra data is not built for real. ExtraDataList is a linked structure the
+    // engine allocates and walks, and the only question asked of one here is
+    // whether it holds teleport data — so the harness keeps that answer in a
+    // side table keyed by the list's own address, and the teleport block is
+    // bytes rather than a constructed ExtraTeleport, whose vtable is declared
+    // and never defined.
+
+    namespace
+    {
+        struct RefPool
+        {
+            std::deque<FakeObject> objects;
+            std::deque<std::vector<std::byte>> teleportBlocks;
+            std::deque<RE::DoorTeleportData*> doorData;
+            // What lives in each cell, in the order it was added, which is the
+            // order a sweep of the cell reports them in.
+            std::unordered_map<const void*, std::vector<RE::TESObjectREFR*>> byCell;
+            // The teleport block hanging off each extra-data list.
+            std::unordered_map<const void*, RE::BSExtraData*> teleportByList;
+            // Which reference each handle resolves to. Handles start at one:
+            // zero is the engine's "no reference".
+            std::vector<RE::TESObjectREFR*> byHandle;
+        };
+
+        RefPool& Refs()
+        {
+            static auto* pool = new RefPool();
+            return *pool;
+        }
+
+        RE::ObjectRefHandle HandleFor(RE::TESObjectREFR* ref)
+        {
+            auto& pool = Refs();
+            pool.byHandle.push_back(ref);
+            RE::ObjectRefHandle handle;
+            const auto raw = static_cast<std::uint32_t>(pool.byHandle.size());
+            std::memcpy(static_cast<void*>(&handle), &raw, sizeof(raw));
+            return handle;
+        }
+    } // namespace
+
+    const std::vector<RE::TESObjectREFR*>& ReferencesIn(const void* cell)
+    {
+        static auto* empty = new std::vector<RE::TESObjectREFR*>();
+        const auto& table = Refs().byCell;
+        const auto it = table.find(cell);
+        return it == table.end() ? *empty : it->second;
+    }
+
+    RE::TESObjectREFR* ReferenceForHandle(std::uint32_t raw)
+    {
+        const auto& table = Refs().byHandle;
+        return (raw == 0 || raw > table.size()) ? nullptr : table[raw - 1];
+    }
+
+    RE::BSExtraData* TeleportDataOn(const void* extraList)
+    {
+        const auto& table = Refs().teleportByList;
+        const auto it = table.find(extraList);
+        return it == table.end() ? nullptr : it->second;
+    }
+
+    RE::TESObjectREFR* EngineMock::AddReference(RE::TESObjectCELL* cell, std::uint32_t formID, RE::NiPoint3 position)
+    {
+        auto& pool = Refs();
+        auto& object = pool.objects.emplace_back(sizeof(RE::TESObjectREFR) + 0x200, 256);
+        WireFormDefaults(object, true);
+        auto* form = object.As<RE::TESForm>();
+        form->formType = RE::FormType::Reference;
+        form->formID = formID;
+        FormTable().insert({formID, form});
+
+        auto* ref = object.As<RE::TESObjectREFR>();
+        ref->data.location = position;
+        ref->parentCell = cell;
+        if (cell)
+            pool.byCell[static_cast<const void*>(cell)].push_back(ref);
+        return ref;
+    }
+
+    namespace
+    {
+        // A teleport block: zeroed bytes with the data pointer written where
+        // ExtraTeleport keeps it.
+        RE::BSExtraData* MakeTeleport(RE::DoorTeleportData* data)
+        {
+            auto& block = Refs().teleportBlocks.emplace_back(sizeof(RE::ExtraTeleport), std::byte{});
+            std::memcpy(block.data() + offsetof(RE::ExtraTeleport, teleportData), &data, sizeof(data));
+            return reinterpret_cast<RE::BSExtraData*>(block.data());
+        }
+    } // namespace
+
+    RE::TESObjectREFR* EngineMock::AddLoadDoor(RE::TESObjectCELL* cell,
+                                               std::uint32_t formID,
+                                               RE::TESObjectCELL* destination,
+                                               RE::NiPoint3 arrival)
+    {
+        auto* door = AddReference(cell, formID, RE::NiPoint3{});
+        // The door on the far side. Nothing reads its own position — what
+        // matters is the cell it stands in, which is how a caller tells a way
+        // outdoors from a door into another room.
+        auto* farSide = AddReference(destination, formID + 1u, arrival);
+
+        auto* data = new RE::DoorTeleportData();
+        Refs().doorData.push_back(data);
+        data->linkedDoor = HandleFor(farSide);
+        data->position = arrival;
+
+        Refs().teleportByList[static_cast<const void*>(&door->extraList)] = MakeTeleport(data);
+        return door;
+    }
+
+    RE::TESObjectREFR* EngineMock::AddUnlinkedDoor(RE::TESObjectCELL* cell, std::uint32_t formID)
+    {
+        auto* door = AddReference(cell, formID, RE::NiPoint3{});
+        Refs().teleportByList[static_cast<const void*>(&door->extraList)] = MakeTeleport(nullptr);
+        return door;
+    }
+
+    void EngineMock::SetLocationMarker(RE::BGSLocation* location, RE::TESObjectCELL* cell, RE::NiPoint3 position)
+    {
+        if (!location)
+            return;
+        static std::uint32_t nextMarker = 0x00B00001u;
+        auto* marker = AddReference(cell, nextMarker++, position);
+        location->worldLocMarker = HandleFor(marker);
+    }
+
     RE::TESFaction* EngineMock::AddFaction(std::uint32_t formID)
     {
         auto& object = FactionObjects().emplace_back(sizeof(RE::TESFaction), 256);
@@ -1889,6 +2040,26 @@ bool RE::BSPointerHandle<RE::Actor, RE::BSUntypedPointerHandle<21, 5>>::get_smar
     }
     a_smartPointerOut.reset(LoadedActors()[raw - 1]);
     return true;
+}
+
+bool RE::BSPointerHandle<RE::TESObjectREFR, RE::BSUntypedPointerHandle<21, 5>>::get_smartptr(
+    RE::NiPointer<RE::TESObjectREFR>& a_smartPointerOut) const
+{
+    // A handle is one uint32; reading it directly avoids depending on the
+    // accessors of a base class the harness does not own.
+    std::uint32_t raw = 0;
+    std::memcpy(&raw, static_cast<const void*>(this), sizeof(raw));
+    auto* ref = NarrativeEngine::Testing::ReferenceForHandle(raw);
+    a_smartPointerOut.reset(ref);
+    return ref != nullptr;
+}
+
+void RE::TESObjectCELL::ForEachReference(std::function<RE::BSContainer::ForEachResult(RE::TESObjectREFR*)> a_fn) const
+{
+    for (auto* ref : NarrativeEngine::Testing::ReferencesIn(static_cast<const void*>(this))) {
+        if (a_fn(ref) == RE::BSContainer::ForEachResult::kStop)
+            return;
+    }
 }
 
 void RE::BSHandleRefObject::IncRefCount()

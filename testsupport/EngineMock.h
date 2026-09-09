@@ -542,6 +542,27 @@ namespace NarrativeEngine::Testing
         // roads.
         void AddPreferredPath(RE::NavMeshInfoMap* map, const std::vector<const RE::BSNavmeshInfo*>& chain);
 
+        // Put a plain reference in a cell, where a sweep of the cell will find
+        // it. Registered in the form table like any other form.
+        RE::TESObjectREFR* AddReference(RE::TESObjectCELL* cell, std::uint32_t formID, RE::NiPoint3 position);
+
+        // A load door standing in `cell` that comes out beside a door in
+        // `destination`, at `arrival`. That arrival point is where an occupant
+        // leaving the building actually appears, which is not where either door
+        // itself stands.
+        RE::TESObjectREFR* AddLoadDoor(RE::TESObjectCELL* cell,
+                                       std::uint32_t formID,
+                                       RE::TESObjectCELL* destination,
+                                       RE::NiPoint3 arrival);
+
+        // A door carrying teleport data that names no door on the other side,
+        // which is what an unlinked or broken door looks like in a save.
+        RE::TESObjectREFR* AddUnlinkedDoor(RE::TESObjectCELL* cell, std::uint32_t formID);
+
+        // The map marker a location is pinned to. Coarser than a doorway: a
+        // town's marker sits outside its walls.
+        void SetLocationMarker(RE::BGSLocation* location, RE::TESObjectCELL* cell, RE::NiPoint3 position);
+
         // Fabricate a quest whose state the mocked TESQuest predicates answer
         // from, authored in the named ESP. Kept alive for the process: an alias
         // instance holds a bare pointer to it.
