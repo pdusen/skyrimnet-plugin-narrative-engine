@@ -183,6 +183,11 @@ namespace NarrativeEngine::Testing
             std::vector<HandleRequest> handleRequests;
             std::vector<Dispatch> dispatches;
             std::vector<std::int32_t> packedInts;
+            std::vector<bool> packedBools;
+            // Forms packed as Papyrus object arguments, in the order they were
+            // packed. A call that names the right method on the right script
+            // and hands it the wrong reference is a call the VM accepts.
+            std::vector<const void*> packedForms;
         } papyrus;
 
         // SKSE's co-save stream. Byte-accurate rather than value-accurate:
@@ -630,6 +635,28 @@ namespace NarrativeEngine::Testing
         // instance holds a bare pointer to it.
         RE::TESQuest* AddQuest(const QuestState& state);
 
+        // A quest carrying named reference aliases, which is the shape a beat
+        // drives: it starts the quest and then watches the Papyrus side fill
+        // the aliases in. Every alias named here starts EMPTY rather than
+        // falling back to the courier's single-alias answer, because the whole
+        // of what the beat does while it waits is distinguish the two.
+        //
+        // Rebuilt at the SAME ADDRESS every time a given editor ID is asked
+        // for, unlike everything else the harness fabricates. A module that
+        // resolves its aliases at data load caches the pointers once per
+        // process, and the next leaf of a sectioned test rebuilding the world
+        // would otherwise leave that cache pointing at freed storage.
+        struct AliasedQuest
+        {
+            RE::TESQuest* quest = nullptr;
+            std::vector<RE::BGSRefAlias*> aliases; // in the order named
+        };
+        AliasedQuest AddQuestWithAliases(const QuestState& state, const std::vector<std::string>& aliasNames);
+
+        // Fill a reference alias, as the quest's own Papyrus does once it
+        // starts. Passing null empties it again.
+        void FillRefAlias(RE::BGSRefAlias* alias, RE::TESObjectREFR* reference);
+
         // Fill `actor` into the aliases described by `aliases.instances`,
         // building the ExtraAliasInstanceArray the engine would have built.
         // Call after setting them up.
@@ -670,6 +697,31 @@ namespace NarrativeEngine::Testing
             bool actorIsDead = false;
             bool actorIsDisabled = false;
         } forms;
+
+        // Starting, stopping and resetting a quest, which is how a beat drives
+        // its own delivery quest through a run.
+        struct QuestControlState
+        {
+            // EnsureQuestStarted has two answers and they fail independently:
+            // whether the call itself went through, and what the engine
+            // reported back through the out-parameter. Production checks both,
+            // and a quest that reports failure both ways is a different world
+            // from one that was simply never asked.
+            bool startCallSucceeds = true;
+            bool startResult = true;
+
+            // Quests started, stopped and reset, in order. A rollback that
+            // stops the wrong slot's quest leaves a letter in the world and
+            // takes an unrelated one out of it.
+            std::vector<const void*> started;
+            std::vector<const void*> stopped;
+            std::vector<const void*> reset;
+
+            // References Disable() was called on, by FormID. Deleting a letter
+            // is Disable followed by SetDelete, and the first is the half that
+            // goes through the engine.
+            std::vector<std::uint32_t> disabled;
+        } questControl;
 
         // The vanilla WICourier resolution: the quest, the container alias on
         // it, and the staging container's inventory.

@@ -3,6 +3,8 @@
 #include <RE/Skyrim.h>
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -207,9 +209,47 @@ namespace NarrativeEngine::Testing
             return RelationshipBetween(a, b);
         }
 
-        const std::array<RelocationMock, 22>& Table()
+        // ------------------------------------------------------------------
+        // skyrim_cast
+        // ------------------------------------------------------------------
+        //
+        // A downcast in CommonLibSSE is three relocations, not one: the type
+        // descriptor of the source class, the type descriptor of the target,
+        // and the CRT's __RTDynamicCast, which walks the object's own MSVC
+        // RTTI from there. Fabricated storage has no RTTI to walk, so the
+        // harness stands in for all three -- a distinct sentinel per type,
+        // which nothing ever dereferences, and a cast that answers from a
+        // declared list of derivations instead of from the object.
+        //
+        // The list is the limit of what the harness can express: every alias
+        // it fabricates IS a reference alias, so a base alias always casts to
+        // one. A test that wanted an alias of some other kind would need the
+        // derivation decided per object rather than per type pair.
+        //
+        // Nothing ever reads a descriptor, so the ADDRESS is the type's whole
+        // identity and a byte apiece is enough to give each a distinct one.
+        // Registered directly rather than behind a pointer: unlike the form
+        // table's entries, `REL::Relocation<void*>::get()` hands back the
+        // address the id resolved to rather than what is stored there.
+        std::byte g_bgsBaseAliasType{};
+        std::byte g_bgsRefAliasType{};
+
+        void* RTDynamicCastImpl(void* object, std::int32_t, void* fromType, void* toType, std::int32_t)
         {
-            static const std::array<RelocationMock, 22> table = {{
+            if (!object || !fromType || !toType)
+                return nullptr;
+            if (fromType == toType)
+                return object;
+            // Single inheritance at offset zero, which is what the engine's
+            // own alias hierarchy is, so the pointer does not move.
+            if (fromType == &g_bgsBaseAliasType && toType == &g_bgsRefAliasType)
+                return object;
+            return nullptr;
+        }
+
+        const std::array<RelocationMock, 28>& Table()
+        {
+            static const std::array<RelocationMock, 28> table = {{
                 // BSFixedString::ctor8 — SE 67819, AE 69161
                 {67819u, Addr(&FixedStringCtor8)},
                 {69161u, Addr(&FixedStringCtor8)},
@@ -243,6 +283,15 @@ namespace NarrativeEngine::Testing
                 // BGSRelationship::GetRelationship — SE 23632, AE 24084
                 {23632u, Addr(&GetRelationshipImpl)},
                 {24084u, Addr(&GetRelationshipImpl)},
+                // RTTI_BGSBaseAlias — SE 685384, AE 393166
+                {685384u, reinterpret_cast<std::uintptr_t>(&g_bgsBaseAliasType)},
+                {393166u, reinterpret_cast<std::uintptr_t>(&g_bgsBaseAliasType)},
+                // RTTI_BGSRefAlias — SE 685398, AE 393181
+                {685398u, reinterpret_cast<std::uintptr_t>(&g_bgsRefAliasType)},
+                {393181u, reinterpret_cast<std::uintptr_t>(&g_bgsRefAliasType)},
+                // RTDynamicCast — SE 102238, AE 109689
+                {102238u, Addr(&RTDynamicCastImpl)},
+                {109689u, Addr(&RTDynamicCastImpl)},
             }};
             return table;
         }

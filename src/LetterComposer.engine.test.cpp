@@ -4,8 +4,8 @@
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
 #include <FakeSkyrimNet.h>
+#include <NPCLetterBeat.h>
 #include <SkyrimNetAPI.h>
-#include <VisitSpies.h>
 
 #include <nlohmann/json.hpp>
 
@@ -51,7 +51,6 @@ namespace
     using NarrativeEngine::Testing::FakeSkyrimNetState;
     using NarrativeEngine::Testing::FakeSkyrimNetStateFunc;
     using NarrativeEngine::Testing::kFakeSkyrimNetStateExport;
-    using NarrativeEngine::Testing::VisitSpies;
 
     constexpr const char* kSettings = "[General]\nbDebugMode=0\n"
                                       "[Beats]\niLetterContentMinWords=5\niLetterContentMaxWords=40\n";
@@ -209,7 +208,7 @@ TEST_CASE("LetterComposer writes only to people who are away", "[LetterComposer]
     auto& fake = FakeState();
     REQUIRE(SkyrimNet::Initialize());
     fake.Reset();
-    VisitSpies().Reset();
+    NarrativeEngine::NPCLetterBeat_Persistence::OnRevert();
     (void)engine.AddActor(kYsolda);
     engine.visibility.target3DPresent = false;
     engine.world.playerHasLocation = false;
@@ -252,11 +251,10 @@ TEST_CASE("LetterComposer writes only to people who are away", "[LetterComposer]
 
     SECTION("when they wrote only recently")
     {
-        {
-            auto& spies = VisitSpies();
-            std::scoped_lock lock(spies.mutex);
-            spies.onCooldown.insert(kYsolda);
-        }
+        // Stamped through the beat's own delivery hook rather than by setting
+        // a flag: the cooldown the composer reads is the one a delivered
+        // letter leaves behind, and the two have to be the same ledger.
+        NarrativeEngine::NPCLetterBeat_Cooldowns::OnLetterDelivered(kYsolda);
 
         SECTION("should leave them out")
         {

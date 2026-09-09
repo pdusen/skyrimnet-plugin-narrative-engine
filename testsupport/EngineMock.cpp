@@ -92,6 +92,8 @@ namespace NarrativeEngine::Testing
     inline constexpr std::size_t kActorStorageBytes = sizeof(RE::Actor) + 0x400;
     void RegisterCellFacts(const void* cell, std::int16_t cellX, std::int16_t cellY, RE::BGSLocation* location);
     const EngineMock::QuestState* QuestStateFor(const void* quest);
+    EngineMock::QuestState* MutableQuestStateFor(const void* quest);
+    std::unordered_map<const void*, RE::TESObjectREFR*>& AliasReferences();
     RE::TESObjectCELL* FabricatedCell();
 
     namespace
@@ -136,12 +138,25 @@ namespace NarrativeEngine::Testing
         RE::BGSScene* GetCurrentSceneImpl(void*);
         void Update3DPositionImpl(void*, bool);
 
+        // TESForm::SetDelete, slot 0x23. The engine's own body is the flag bit
+        // and nothing else, so the stand-in is too -- and setting it for real
+        // is what makes IsDeleted() the thing a test asks.
+        void SetDeleteImpl(void* self, bool set)
+        {
+            auto* form = static_cast<RE::TESForm*>(self);
+            if (set)
+                form->formFlags |= static_cast<std::uint32_t>(RE::TESForm::RecordFlags::kDeleted);
+            else
+                form->formFlags &= ~static_cast<std::uint32_t>(RE::TESForm::RecordFlags::kDeleted);
+        }
+
         void WireFormDefaults(FakeObject& form, bool isReference)
         {
             void* asReference = isReference ? reinterpret_cast<void*>(&FormAsReferenceSelf)
                                             : reinterpret_cast<void*>(&FormAsReferenceNull);
             form.Slot(0x2B, asReference);
             form.Slot(0x2C, asReference);
+            form.Slot(0x23, reinterpret_cast<void*>(&SetDeleteImpl));
             if (isReference) {
                 form.Slot(0x4A, reinterpret_cast<void*>(&GetCurrentSceneImpl));
                 // Update3DPosition, slot 0x3F. Placement code calls it right
@@ -478,6 +493,21 @@ RE::BSScript::Variable::Variable()
 }
 
 RE::BSScript::Variable::~Variable() = default;
+
+void RE::BSScript::Variable::SetBool(bool a_val)
+{
+    if (auto* mock = EngineMock::Current())
+        mock->papyrus.packedBools.push_back(a_val);
+}
+
+// A form passed as a Papyrus object argument. The engine turns it into a
+// handle through the same policy the receiver's own handle came from; the
+// harness records the form, which is the thing a test can name.
+void RE::BSScript::PackHandle(RE::BSScript::Variable*, const void* a_src, std::uint32_t)
+{
+    if (auto* mock = EngineMock::Current())
+        mock->papyrus.packedForms.push_back(a_src);
+}
 
 void RE::BSScript::Variable::SetSInt(std::int32_t a_val)
 {
@@ -1467,14 +1497,31 @@ namespace NarrativeEngine::Testing
         Aliases().instances.clear();
         Aliases().packageArrays.clear();
         Aliases().arrays.clear();
+        AliasReferences().clear();
         CurrentAliasArray() = nullptr;
     }
 
     const EngineMock::QuestState* QuestStateFor(const void* quest)
     {
-        const auto& states = QuestStates();
+        return MutableQuestStateFor(quest);
+    }
+
+    // Starting, stopping and resetting a quest all change what the predicates
+    // answer afterwards, which is the whole point of calling them.
+    EngineMock::QuestState* MutableQuestStateFor(const void* quest)
+    {
+        auto& states = QuestStates();
         const auto it = states.find(quest);
         return it == states.end() ? nullptr : &it->second;
+    }
+
+    // Per-alias fills. An alias with an entry here answers with what it was
+    // given -- null included, which reads as "the quest has not filled it yet"
+    // and is a state the courier's single global flag cannot express.
+    std::unordered_map<const void*, RE::TESObjectREFR*>& AliasReferences()
+    {
+        static auto* references = new std::unordered_map<const void*, RE::TESObjectREFR*>();
+        return *references;
     }
 
     RE::TESQuest* EngineMock::AddQuest(const QuestState& state)
@@ -1512,6 +1559,73 @@ namespace NarrativeEngine::Testing
 
         QuestStates()[static_cast<const void*>(quest)] = state;
         return quest;
+    }
+
+    EngineMock::AliasedQuest EngineMock::AddQuestWithAliases(const QuestState& state,
+                                                             const std::vector<std::string>& aliasNames)
+    {
+        // Storage that outlives the mock, keyed by editor ID, and never
+        // cleared. Everything else the harness fabricates is rebuilt per test,
+        // but a module that resolves aliases at data load caches the POINTERS
+        // exactly once per process -- so the next test rebuilding the same
+        // quest has to rebuild it at the same address or that cache dangles.
+        struct Storage
+        {
+            std::deque<FakeObject> objects;
+            AliasedQuest built;
+            RE::TESForm* form = nullptr;
+        };
+        static auto* byEditorID = new std::map<std::string, Storage>();
+
+        const auto [it, fresh] = byEditorID->try_emplace(state.editorID);
+        auto& storage = it->second;
+        if (fresh) {
+            auto& questObject = storage.objects.emplace_back(sizeof(RE::TESQuest), 128);
+            WireFormDefaults(questObject, false);
+            questObject.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
+            storage.built.quest = questObject.As<RE::TESQuest>();
+            storage.form = questObject.As<RE::TESForm>();
+            // Built in place. A zeroed BSTArray takes a push_back and reports
+            // the right size afterwards, then iterates as empty -- so the
+            // alias walk would find nothing and every slot would report both
+            // its aliases missing.
+            new (&storage.built.quest->aliases) RE::BSTArray<RE::BGSBaseAlias*>();
+            for (std::size_t i = 0; i < aliasNames.size(); ++i) {
+                auto& aliasObject = storage.objects.emplace_back(sizeof(RE::BGSRefAlias), 64);
+                storage.built.aliases.push_back(aliasObject.As<RE::BGSRefAlias>());
+            }
+        }
+
+        auto* quest = storage.built.quest;
+        quest->formType = RE::FormType::Quest;
+        quest->formID = state.formID;
+        SetEditorID(quest, state.editorID);
+        quest->aliases.clear();
+        for (std::size_t i = 0; i < aliasNames.size() && i < storage.built.aliases.size(); ++i) {
+            auto* alias = storage.built.aliases[i];
+            auto* base = reinterpret_cast<RE::BGSBaseAlias*>(alias);
+            base->aliasName = aliasNames[i].c_str();
+            quest->aliases.push_back(base);
+            // Explicitly empty rather than absent: an alias the quest has not
+            // filled yet is the state a beat spends its whole COMPOSE arm
+            // waiting on, and the courier's global answer cannot express it.
+            AliasReferences()[static_cast<const void*>(alias)] = nullptr;
+        }
+
+        // The ESP a quest was authored in is not reproduced here: nothing that
+        // drives a quest through its own aliases asks which file it came from.
+        if (!state.editorID.empty())
+            EditorIDTable().insert({RE::BSFixedString(state.editorID.c_str()), storage.form});
+        FormTable().insert({state.formID, storage.form});
+        QuestStates()[static_cast<const void*>(quest)] = state;
+        return storage.built;
+    }
+
+    void EngineMock::FillRefAlias(RE::BGSRefAlias* alias, RE::TESObjectREFR* reference)
+    {
+        if (!alias)
+            return;
+        AliasReferences()[static_cast<const void*>(alias)] = reference;
     }
 
     void EngineMock::FillAliasInstances(RE::Actor*)
@@ -2237,10 +2351,62 @@ std::uint16_t RE::TESQuest::GetCurrentStageID() const
 
 RE::TESObjectREFR* RE::BGSRefAlias::GetReference() const
 {
+    // An alias the harness built answers for itself, because a quest with two
+    // of them fills them at different moments and the code under test is
+    // waiting on exactly that difference. The courier's own Container alias is
+    // fabricated elsewhere and has no entry, so it keeps the global answer.
+    const auto& references = NarrativeEngine::Testing::AliasReferences();
+    if (const auto it = references.find(static_cast<const void*>(this)); it != references.end())
+        return it->second;
+
     auto* mock = EngineMock::Current();
     if (!mock || !mock->courier.aliasHasReference)
         return nullptr;
     return NarrativeEngine::Testing::OpaqueSingleton<RE::TESObjectREFR>();
+}
+
+bool RE::TESQuest::EnsureQuestStarted(bool& a_result, bool)
+{
+    auto* mock = EngineMock::Current();
+    if (!mock)
+        return false;
+    mock->questControl.started.push_back(static_cast<const void*>(this));
+    a_result = mock->questControl.startResult;
+    if (a_result) {
+        if (auto* state = NarrativeEngine::Testing::MutableQuestStateFor(this)) {
+            state->running = true;
+            state->stopped = false;
+        }
+    }
+    return mock->questControl.startCallSucceeds;
+}
+
+void RE::TESQuest::Stop()
+{
+    if (auto* mock = EngineMock::Current())
+        mock->questControl.stopped.push_back(static_cast<const void*>(this));
+    if (auto* state = NarrativeEngine::Testing::MutableQuestStateFor(this)) {
+        state->running = false;
+        state->stopped = true;
+    }
+}
+
+void RE::TESQuest::Reset()
+{
+    if (auto* mock = EngineMock::Current())
+        mock->questControl.reset.push_back(static_cast<const void*>(this));
+    // Reset clears alias fills, which is why production has to delete the
+    // letter reference BEFORE resetting the quest that points at it.
+    for (auto* alias : aliases) {
+        if (alias)
+            NarrativeEngine::Testing::AliasReferences()[static_cast<const void*>(alias)] = nullptr;
+    }
+}
+
+void RE::TESObjectREFR::Disable()
+{
+    if (auto* mock = EngineMock::Current())
+        mock->questControl.disabled.push_back(GetFormID());
 }
 
 std::map<RE::TESBoundObject*, int> RE::TESObjectREFR::GetInventoryCounts(
