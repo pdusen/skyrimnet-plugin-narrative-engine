@@ -19,6 +19,7 @@ namespace RE
     class BGSLocation;
     class NavMesh;
     class NavMeshInfoMap;
+    class TESNPC;
     struct BSNavmeshInfo;
     class Sky;
     class TESFaction;
@@ -512,6 +513,20 @@ namespace NarrativeEngine::Testing
         // the whole exterior, because what code under test asks of it is what
         // is underfoot rather than which cell it is standing in.
         RE::TESObjectCELL* GroundCell();
+
+        // Fabricate an NPC base form, which is what the gossip graph and every
+        // relationship record are keyed on rather than the placed reference.
+        RE::TESNPC* AddNPC(std::uint32_t formID, bool female = false);
+
+        // Declare a kinship between two NPCs, with the label the record would
+        // carry. Labels are gendered and are read off the record rather than
+        // invented, so both are given: `labelForMale` is what `a` calls `b`
+        // when b is male, `labelForFemale` when b is female.
+        //
+        // Directional, as the engine's own record is: relationships name a
+        // first and a second party, and which label applies depends on which
+        // side the person being described sits.
+        void AddRelationship(RE::TESNPC* a, RE::TESNPC* b, const char* labelForMale, const char* labelForFemale);
 
         // Put these cells in the loaded exterior grid, in row-major order over
         // the smallest square that fits them. Slots past the end stay null,

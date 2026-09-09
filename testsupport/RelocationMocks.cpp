@@ -202,9 +202,14 @@ namespace NarrativeEngine::Testing
             return reinterpret_cast<std::uintptr_t>(fn);
         }
 
-        const std::array<RelocationMock, 20>& Table()
+        RE::BGSRelationship* GetRelationshipImpl(RE::TESNPC* a, RE::TESNPC* b)
         {
-            static const std::array<RelocationMock, 20> table = {{
+            return RelationshipBetween(a, b);
+        }
+
+        const std::array<RelocationMock, 22>& Table()
+        {
+            static const std::array<RelocationMock, 22> table = {{
                 // BSFixedString::ctor8 — SE 67819, AE 69161
                 {67819u, Addr(&FixedStringCtor8)},
                 {69161u, Addr(&FixedStringCtor8)},
@@ -235,6 +240,9 @@ namespace NarrativeEngine::Testing
                 // ...and its lock — SE 514361, AE 400518
                 {514361u, reinterpret_cast<std::uintptr_t>(&g_editorIDTableLock)},
                 {400518u, reinterpret_cast<std::uintptr_t>(&g_editorIDTableLock)},
+                // BGSRelationship::GetRelationship — SE 23632, AE 24084
+                {23632u, Addr(&GetRelationshipImpl)},
+                {24084u, Addr(&GetRelationshipImpl)},
             }};
             return table;
         }

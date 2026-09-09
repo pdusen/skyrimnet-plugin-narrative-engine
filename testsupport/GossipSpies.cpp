@@ -51,6 +51,10 @@ namespace NarrativeEngine::Testing
         sweepSucceeds = true;
         lastSimulatedGameDay = -1.0;
         cancelAfter.clear();
+        participants.clear();
+        circulating.clear();
+        seeded.clear();
+        nextRumorID = 1;
     }
 
     GossipSpyState& GossipSpies()
@@ -97,6 +101,22 @@ namespace NarrativeEngine::Testing
 
 namespace NarrativeEngine::GossipGraph
 {
+    const Participant* Find(RE::FormID npc)
+    {
+        auto& spies = Testing::GossipSpies();
+        std::scoped_lock lock(spies.mutex);
+        const auto it = spies.participants.find(npc);
+        return it == spies.participants.end() ? nullptr : &it->second;
+    }
+
+    RE::FormID ActorRefFor(RE::FormID npc)
+    {
+        auto& spies = Testing::GossipSpies();
+        std::scoped_lock lock(spies.mutex);
+        const auto it = spies.participants.find(npc);
+        return it == spies.participants.end() ? 0 : it->second.actorRef;
+    }
+
     bool IsReady()
     {
         auto& spies = Testing::GossipSpies();
@@ -165,6 +185,26 @@ namespace NarrativeEngine::Testing
 
 namespace NarrativeEngine::GossipSim
 {
+    std::uint32_t SeedRumor(const GossipThread::Token&,
+                            RE::FormID originNpc,
+                            float notability,
+                            std::int64_t sourceMemoryId,
+                            std::vector<std::string> bands)
+    {
+        auto& spies = Testing::GossipSpies();
+        std::scoped_lock lock(spies.mutex);
+        spies.seeded.push_back(
+            Testing::GossipSpyState::Seeded{originNpc, notability, sourceMemoryId, std::move(bands)});
+        return spies.nextRumorID;
+    }
+
+    std::vector<RumorView> GetRumorViews(const GossipState&)
+    {
+        auto& spies = Testing::GossipSpies();
+        std::scoped_lock lock(spies.mutex);
+        return spies.circulating;
+    }
+
     GossipState& MutableState(const GossipThread::Token&)
     {
         return Testing::LiveGossipState();

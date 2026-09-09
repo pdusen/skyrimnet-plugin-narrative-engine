@@ -85,6 +85,12 @@ namespace NarrativeEngine::Testing
     // same kind of data relocation.
     RE::BSTHashMap<RE::BSFixedString, RE::TESForm*>& EditorIDTable();
 
+    // What BGSRelationship::GetRelationship answers with. The engine resolves
+    // it through the address library, so the harness has to stand in for the
+    // lookup itself rather than for a member of anything; the answer comes from
+    // whatever EngineMock::AddRelationship registered.
+    RE::BGSRelationship* RelationshipBetween(RE::TESNPC* a, RE::TESNPC* b);
+
     // Called when a relocation resolves past everything registered. Aborts with
     // a message naming the situation, because the alternative is jumping into
     // whatever happened to be next in the table.

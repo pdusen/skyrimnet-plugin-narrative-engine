@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <map>
 #include <new>
 #include <unordered_map>
 #include <utility>
@@ -856,6 +857,88 @@ namespace NarrativeEngine::Testing
             mesh->triangles.push_back(tri);
         }
         return mesh;
+    }
+
+    // -----------------------------------------------------------------------
+    // NPC base forms and the relationships between them
+    // -----------------------------------------------------------------------
+    //
+    // BGSRelationship::GetRelationship is a free function the engine resolves
+    // through the address library, so what is stood in for is the lookup
+    // rather than any member: see the entry in RelocationMocks.cpp.
+
+    namespace
+    {
+        struct RelationshipPool
+        {
+            std::deque<FakeObject> npcs;
+            std::deque<FakeObject> relationships;
+            std::deque<FakeObject> associations;
+            // Keyed by the ordered pair, because the record itself is ordered
+            // and the label depends on which side someone sits.
+            std::map<std::pair<const void*, const void*>, RE::BGSRelationship*> byPair;
+        };
+
+        RelationshipPool& Relationships()
+        {
+            static auto* pool = new RelationshipPool();
+            return *pool;
+        }
+    } // namespace
+
+    RE::BGSRelationship* RelationshipBetween(RE::TESNPC* a, RE::TESNPC* b)
+    {
+        if (!a || !b)
+            return nullptr;
+        const auto& table = Relationships().byPair;
+        if (const auto it = table.find({static_cast<const void*>(a), static_cast<const void*>(b)}); it != table.end())
+            return it->second;
+        if (const auto it = table.find({static_cast<const void*>(b), static_cast<const void*>(a)}); it != table.end())
+            return it->second;
+        return nullptr;
+    }
+
+    RE::TESNPC* EngineMock::AddNPC(std::uint32_t formID, bool female)
+    {
+        auto& pool = Relationships();
+        auto& object = pool.npcs.emplace_back(sizeof(RE::TESNPC) + 0x100, 256);
+        WireFormDefaults(object, false);
+        auto* npc = object.As<RE::TESNPC>();
+        npc->formType = RE::FormType::NPC;
+        npc->formID = formID;
+        if (female)
+            npc->actorData.actorBaseFlags.set(RE::ACTOR_BASE_DATA::Flag::kFemale);
+        FormTable().insert({formID, object.As<RE::TESForm>()});
+        return npc;
+    }
+
+    void EngineMock::AddRelationship(RE::TESNPC* a, RE::TESNPC* b, const char* labelForMale, const char* labelForFemale)
+    {
+        if (!a || !b)
+            return;
+        auto& pool = Relationships();
+
+        auto& assocObject = pool.associations.emplace_back(sizeof(RE::BGSAssociationType) + 0x40, 128);
+        WireFormDefaults(assocObject, false);
+        auto* assoc = assocObject.As<RE::BGSAssociationType>();
+        assoc->formType = RE::FormType::AssociationType;
+        // Both rows carry the same pair of labels. Which row is read depends on
+        // which side of the record the person being named sits, and a test that
+        // set only one would pass or fail on that detail rather than on the
+        // framing under test.
+        for (auto& row : assoc->associationLabels) {
+            row[RE::BGSAssociationType::Sexes::kMale] = labelForMale;
+            row[RE::BGSAssociationType::Sexes::kFemale] = labelForFemale;
+        }
+
+        auto& object = pool.relationships.emplace_back(sizeof(RE::BGSRelationship) + 0x40, 128);
+        WireFormDefaults(object, false);
+        auto* rel = object.As<RE::BGSRelationship>();
+        rel->formType = RE::FormType::Relationship;
+        rel->npc1 = a;
+        rel->npc2 = b;
+        rel->assocType = assoc;
+        pool.byPair[{static_cast<const void*>(a), static_cast<const void*>(b)}] = rel;
     }
 
     RE::TESObjectCELL* EngineMock::GroundCell()
@@ -2098,6 +2181,13 @@ bool RE::BSPointerHandle<RE::TESObjectREFR, RE::BSUntypedPointerHandle<21, 5>>::
     auto* ref = NarrativeEngine::Testing::ReferenceForHandle(raw);
     a_smartPointerOut.reset(ref);
     return ref != nullptr;
+}
+
+RE::SEXES::SEX RE::TESNPC::GetSex() const
+{
+    // Read off the base form rather than from a mock-wide flag: a rumor names
+    // several people at once, and each of them needs a pronoun of their own.
+    return actorData.actorBaseFlags.any(RE::ACTOR_BASE_DATA::Flag::kFemale) ? RE::SEXES::kFemale : RE::SEXES::kMale;
 }
 
 float RE::TESObjectREFR::GetAngleZ() const

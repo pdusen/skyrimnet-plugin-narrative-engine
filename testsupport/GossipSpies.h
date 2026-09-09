@@ -1,5 +1,7 @@
 #pragma once
 
+#include <GossipGraph.h>
+#include <GossipSim.h>
 #include <GossipState.h>
 
 #include <cstddef>
@@ -52,6 +54,31 @@ namespace NarrativeEngine::Testing
         // Which step should observe a cancellation, so each of a tick's three
         // checkpoints can be reached in turn.
         std::string cancelAfter;
+
+        // Who is in the graph. A rumor is only ever about participants, and
+        // what the content layer wants from one is its name, where it lives
+        // and who its people are — so the harness holds whole participants
+        // rather than answering field by field.
+        std::map<std::uint32_t, NarrativeEngine::GossipGraph::Participant> participants;
+
+        // Rumors already circulating, which the evaluation is shown so it can
+        // recognise one it has already heard.
+        std::vector<NarrativeEngine::GossipSim::RumorView> circulating;
+
+        // Rumors seeded, in order, with the banded text each was seeded with.
+        struct Seeded
+        {
+            std::uint32_t originNpc = 0;
+            float notability = 0.0f;
+            std::int64_t sourceMemoryId = 0;
+            std::vector<std::string> bands;
+        };
+        std::vector<Seeded> seeded;
+
+        // What the next seed answers with. Zero is the simulation refusing —
+        // the graph is not ready, the origin is not a participant, or the live
+        // cap is full — and the content layer has to release its claim.
+        std::uint32_t nextRumorID = 1;
 
         void Record(std::string step);
         std::vector<std::string> Calls();
