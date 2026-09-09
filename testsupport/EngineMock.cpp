@@ -95,6 +95,11 @@ namespace NarrativeEngine::Testing
     EngineMock::QuestState* MutableQuestStateFor(const void* quest);
     std::unordered_map<const void*, RE::TESForm*>& LeveledResults();
     std::unordered_map<const void*, RE::TESBoundObject*>& PlacedBases();
+    namespace
+    {
+        // Defined further down, beside the other base-subobject wiring.
+        template <class T> void WireFullName(FakeObject& object);
+    } // namespace
     std::unordered_map<const void*, RE::TESObjectREFR*>& AliasReferences();
     RE::TESObjectCELL* FabricatedCell();
 
@@ -163,6 +168,43 @@ namespace NarrativeEngine::Testing
                 {it == owners.end() ? 0u : it->second, static_cast<int>(a_value), a_amount});
         }
 
+        // TESObjectREFR::RemoveItem, slot 0x56. Recorded rather than
+        // reproduced: the engine's own body moves a stack between two
+        // inventories and returns a handle to whatever it created, and what
+        // the code under test is responsible for is asking the right
+        // container for the right item.
+        //
+        // The signature carries the return buffer as a SECOND parameter: the
+        // handle it answers with is returned in memory, and on x64 MSVC that
+        // buffer is passed after `this`. A stand-in written without it reads
+        // the buffer as the item and answers about garbage.
+        RE::ObjectRefHandle* RemoveItemImpl(void* self,
+                                            RE::ObjectRefHandle* result,
+                                            RE::TESBoundObject* item,
+                                            std::int32_t count,
+                                            RE::ITEM_REMOVE_REASON,
+                                            RE::ExtraDataList*,
+                                            RE::TESObjectREFR*,
+                                            const RE::NiPoint3*,
+                                            const RE::NiPoint3*)
+        {
+            if (auto* mock = EngineMock::Current()) {
+                std::fprintf(
+                    stderr, "[probe] removeitem self=%p result=%p item=%p\n", self, (void*)result, (void*)item);
+                std::fflush(stderr);
+                const auto holder = static_cast<RE::TESObjectREFR*>(self)->GetFormID();
+                const auto held = item ? item->GetFormID() : 0u;
+                mock->inventory.removals.push_back({holder, held, count});
+                if (auto it = mock->inventory.playerCounts.find(held); it != mock->inventory.playerCounts.end())
+                    it->second = 0;
+                if (auto it = mock->inventory.containerCounts.find(held); it != mock->inventory.containerCounts.end())
+                    it->second = 0;
+            }
+            if (result)
+                *result = RE::ObjectRefHandle{};
+            return result;
+        }
+
         // TESForm::SetDelete, slot 0x23. The engine's own body is the flag bit
         // and nothing else, so the stand-in is too -- and setting it for real
         // is what makes IsDeleted() the thing a test asks.
@@ -182,6 +224,8 @@ namespace NarrativeEngine::Testing
             form.Slot(0x2B, asReference);
             form.Slot(0x2C, asReference);
             form.Slot(0x23, reinterpret_cast<void*>(&SetDeleteImpl));
+            if (isReference)
+                form.Slot(0x56, reinterpret_cast<void*>(&RemoveItemImpl));
             if (isReference) {
                 form.Slot(0x4A, reinterpret_cast<void*>(&GetCurrentSceneImpl));
                 // Update3DPosition, slot 0x3F. Placement code calls it right
@@ -2536,6 +2580,40 @@ RE::BSPointerHandle<RE::TESObjectREFR> RE::TESObjectREFR::CreateRefHandle()
     return handle;
 }
 
+// A container's contents, filtered the way the caller asked. Each entry
+// carries a count and an entry-data object with no extra lists, which is what
+// an ordinary stack of items looks like -- the per-reference extra data that
+// tracks an individual placed item is not fabricated.
+std::map<RE::TESBoundObject*, std::pair<std::int32_t, std::unique_ptr<RE::InventoryEntryData>>> RE::TESObjectREFR::
+    GetInventory(std::function<bool(RE::TESBoundObject&)> a_filter, bool)
+{
+    std::map<RE::TESBoundObject*, std::pair<std::int32_t, std::unique_ptr<RE::InventoryEntryData>>> contents;
+    auto* mock = EngineMock::Current();
+    if (!mock)
+        return contents;
+    for (const auto& [heldID, count] : mock->inventory.containerCounts) {
+        auto* form = RE::TESForm::LookupByID(heldID);
+        auto* bound = form ? form->As<RE::TESBoundObject>() : nullptr;
+        if (!bound || (a_filter && !a_filter(*bound)))
+            continue;
+        contents.emplace(bound, std::make_pair(count, std::unique_ptr<RE::InventoryEntryData>{}));
+    }
+    return contents;
+}
+
+std::int32_t RE::PlayerCharacter::GetItemCount(RE::TESBoundObject* a_object)
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !a_object)
+        return 0;
+    const auto it = mock->inventory.playerCounts.find(a_object->GetFormID());
+    return it == mock->inventory.playerCounts.end() ? 0 : it->second;
+}
+
+// Its body in the engine releases the extra-data lists it owns. Nothing here
+// builds any, so there is nothing to release.
+RE::InventoryEntryData::~InventoryEntryData() = default;
+
 bool RE::TESObjectREFR::IsInWater() const
 {
     auto* mock = EngineMock::Current();
@@ -2650,15 +2728,28 @@ namespace NarrativeEngine::Testing
         return q;
     }
 
-    RE::TESForm* EngineMock::AddBook(std::uint32_t formID)
+    RE::TESForm* EngineMock::AddBook(std::uint32_t formID, std::string editorID)
     {
-        static FakeObject book{sizeof(RE::TESObjectBOOK), 256};
+        // One object per book and never freed: a module that owns twenty of
+        // them holds their FormIDs for the life of the process, and two books
+        // sharing storage would be one book with two ids.
+        static auto* books = new std::deque<FakeObject>();
+        auto& book = books->emplace_back(sizeof(RE::TESObjectBOOK) + 0x40, 256);
         WireFormDefaults(book, false);
+        book.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
+        // A book's display name is what the player reads off it in their
+        // inventory, and code that renames one at runtime writes it through
+        // the TESFullName base.
+        WireFullName<RE::TESObjectBOOK>(book);
         auto* form = book.As<RE::TESForm>();
         // Book is a bound object, which is what As<TESBoundObject>() checks.
         form->formType = RE::FormType::Book;
         form->formID = formID;
         FormTable().insert({formID, form});
+        if (!editorID.empty()) {
+            SetEditorID(form, editorID);
+            EditorIDTable().insert({RE::BSFixedString(editorID.c_str()), form});
+        }
         return form;
     }
 } // namespace NarrativeEngine::Testing

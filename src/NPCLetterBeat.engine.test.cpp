@@ -3,7 +3,6 @@
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
 #include <FakeSkyrimNet.h>
-#include <LetterPoolSpies.h>
 
 #include <AsyncDispatch.h>
 #include <IBeat.h>
@@ -39,9 +38,7 @@
 //
 // Mocked-engine, because every step touches the engine: the quests, their
 // aliases, the sender's faction rank, and the courier's own container. The
-// letter pool itself is stood in for (see LetterPoolSpies.h) -- the beat is
-// responsible for asking it for a slot and for giving the slot back, not for
-// the pool's own lifecycle.
+// twenty Book forms the pool writes into, and the courier's own container.
 //
 // Two pieces of the module resolve exactly once per process and cannot be
 // un-resolved: the per-slot quest cache and the vanilla courier lookup. Cases
@@ -68,7 +65,6 @@ namespace
     using NarrativeEngine::Testing::FakeSkyrimNetState;
     using NarrativeEngine::Testing::FakeSkyrimNetStateFunc;
     using NarrativeEngine::Testing::kFakeSkyrimNetStateExport;
-    using NarrativeEngine::Testing::LetterPoolSpies;
 
     // A one-second poll interval keeps the RUNNING arm's verify window eight
     // ticks wide rather than thirty-two; everything else is the shipping
@@ -83,7 +79,7 @@ namespace
 
     constexpr std::uint32_t kSender = 0x0001A6A0u;
     constexpr std::uint32_t kSenderFaction = 0x0E0000FFu;
-    constexpr std::uint32_t kBook = 0x0E000001u;
+    constexpr std::uint32_t kBookBase = 0x0E000001u;
     constexpr std::uint32_t kLetterRef = 0x0E00A001u;
     constexpr std::uint32_t kPooledQuestBase = 0x0E001000u;
 
@@ -158,16 +154,27 @@ namespace
         return built;
     }
 
+    // The twenty Book forms the pool writes letters into, under the editor IDs
+    // it resolves them by.
+    void BuildPooledBooks(EngineMock& engine, std::size_t count = LetterPool::kPoolSize)
+    {
+        for (std::size_t i = 0; i < count; ++i) {
+            char editorID[64];
+            std::snprintf(editorID, sizeof(editorID), "_ne_PooledLetter%02zu", i);
+            (void)engine.AddBook(kBookBase + static_cast<std::uint32_t>(i), editorID);
+        }
+    }
+
     // The whole world the beat needs to get a letter out: the vanilla courier,
-    // twenty delivery quests, the faction the Sender alias fills from, the NPC
-    // doing the writing, and the Book form the letter is written into.
+    // twenty delivery quests, the twenty Book forms behind them, the faction
+    // the Sender alias fills from, and the NPC doing the writing.
     std::vector<EngineMock::AliasedQuest> BuildWorld(EngineMock& engine)
     {
         engine.AddCourierQuest(/*withContainerAlias=*/true, /*withContainerRef=*/true);
         auto quests = BuildPooledQuests(engine, LetterPool::kPoolSize, /*withAliases=*/true);
         engine.AddFaction(kSenderFaction, "_ne_LetterSenderFaction");
         engine.AddActor(kSender);
-        engine.AddBook(kBook);
+        BuildPooledBooks(engine);
         // A letter comes from somebody the player is NOT standing next to, so
         // the composer refuses a sender who is loaded in the world or shares
         // the player's location hub. Put them out of sight and out of reach.
@@ -299,10 +306,11 @@ TEST_CASE("NPCLetterBeat says when it can be offered", "[NPCLetterBeat][engine]"
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
     Persistence::OnRevert();
-    LetterPoolSpies().Reset();
+    LetterPool::OnRevert();
     REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
     PrimeModel();
     const auto quests = BuildWorld(engine);
+    LetterPool::Initialize();
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCLetterBeat beat;
@@ -393,10 +401,11 @@ TEST_CASE("NPCLetterBeat counts down its own cooldown", "[NPCLetterBeat][engine]
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
     Persistence::OnRevert();
-    LetterPoolSpies().Reset();
+    LetterPool::OnRevert();
     REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
     PrimeModel();
     const auto quests = BuildWorld(engine);
+    LetterPool::Initialize();
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCLetterBeat beat;
@@ -452,10 +461,11 @@ TEST_CASE("NPCLetterBeat gets a letter to the courier", "[NPCLetterBeat][engine]
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
     Persistence::OnRevert();
-    LetterPoolSpies().Reset();
+    LetterPool::OnRevert();
     REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
     PrimeModel();
     const auto quests = BuildWorld(engine);
+    LetterPool::Initialize();
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCLetterBeat beat;
@@ -478,12 +488,11 @@ TEST_CASE("NPCLetterBeat gets a letter to the courier", "[NPCLetterBeat][engine]
         {
             // The body IS the letter. Everything after this point moves an
             // item around; nothing writes its text again.
-            auto& spies = LetterPoolSpies();
-            std::scoped_lock lock(spies.mutex);
-            REQUIRE(spies.populated.size() == 1);
-            REQUIRE(spies.populated.front().senderNpcFormID == kSender);
-            REQUIRE(spies.populated.front().body.starts_with("I have been turning this over"));
-            REQUIRE(spies.populated.front().mood == "warm");
+            const auto slots = LetterPool::GetSlotSnapshots();
+            REQUIRE(slots.front().state == LetterPool::State::PendingDelivery);
+            REQUIRE(slots.front().senderLabel == "A note");
+            REQUIRE(slots.front().body.starts_with("I have been turning this over"));
+            REQUIRE(slots.front().mood == "warm");
         }
 
         SECTION("should start the slot's own delivery quest")
@@ -518,8 +527,7 @@ TEST_CASE("NPCLetterBeat gets a letter to the courier", "[NPCLetterBeat][engine]
             // waiting forever and one of twenty slots gone with it.
             REQUIRE(RunArm(beat, BeatState::COMPOSE) == BeatState::CLEANUP);
             REQUIRE(Tick(beat, BeatState::CLEANUP).transitionTo == BeatState::NOT_RUNNING);
-            std::scoped_lock lock(LetterPoolSpies().mutex);
-            REQUIRE(LetterPoolSpies().aborted == std::vector<std::size_t>{0});
+            REQUIRE(LetterPool::GetStats().free == LetterPool::kPoolSize);
         }
     }
 
@@ -534,8 +542,7 @@ TEST_CASE("NPCLetterBeat gets a letter to the courier", "[NPCLetterBeat][engine]
             // named but no letter was ever spawned for them to carry.
             REQUIRE(RunArm(beat, BeatState::COMPOSE) == BeatState::CLEANUP);
             REQUIRE(Tick(beat, BeatState::CLEANUP).transitionTo == BeatState::NOT_RUNNING);
-            std::scoped_lock lock(LetterPoolSpies().mutex);
-            REQUIRE(LetterPoolSpies().aborted == std::vector<std::size_t>{0});
+            REQUIRE(LetterPool::GetStats().free == LetterPool::kPoolSize);
         }
     }
 
@@ -563,10 +570,11 @@ TEST_CASE("NPCLetterBeat gives up when it cannot dispatch", "[NPCLetterBeat][eng
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
     Persistence::OnRevert();
-    LetterPoolSpies().Reset();
+    LetterPool::OnRevert();
     REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
     PrimeModel();
     const auto quests = BuildWorld(engine);
+    LetterPool::Initialize();
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCLetterBeat beat;
@@ -596,16 +604,18 @@ TEST_CASE("NPCLetterBeat gives up when it cannot dispatch", "[NPCLetterBeat][eng
         SECTION("should fail without taking a slot")
         {
             REQUIRE(RunArm(beat, BeatState::COMPOSE) == BeatState::CLEANUP);
-            std::scoped_lock lock(LetterPoolSpies().mutex);
-            REQUIRE(LetterPoolSpies().allocations == 0);
+            REQUIRE(LetterPool::GetStats().free == LetterPool::kPoolSize);
         }
     }
 
     SECTION("when the pool has no slot to give")
     {
-        {
-            std::scoped_lock lock(LetterPoolSpies().mutex);
-            LetterPoolSpies().allocationFailure = LetterPool::AllocationFailure::EvictionFailed;
+        // Every one of the twenty taken and none of them yet delivered, which
+        // is the only state the allocator cannot evict its way out of.
+        for (std::size_t i = 0; i < LetterPool::kPoolSize; ++i) {
+            const auto taken = LetterPool::Allocate();
+            REQUIRE(taken.has_value());
+            LetterPool::PopulateSlot(taken->slotIndex, "A note", "held", kSender, "topic", "warm", {});
         }
         beat.OnStart(BeatContext{}, SenderParams());
 
@@ -630,8 +640,7 @@ TEST_CASE("NPCLetterBeat gives up when it cannot dispatch", "[NPCLetterBeat][eng
         {
             REQUIRE(RunArm(beat, BeatState::COMPOSE) == BeatState::CLEANUP);
             REQUIRE(engine.questControl.started.empty());
-            std::scoped_lock lock(LetterPoolSpies().mutex);
-            REQUIRE(LetterPoolSpies().allocations == 0);
+            REQUIRE(LetterPool::GetStats().free == LetterPool::kPoolSize);
         }
     }
 
@@ -647,8 +656,7 @@ TEST_CASE("NPCLetterBeat gives up when it cannot dispatch", "[NPCLetterBeat][eng
             REQUIRE(RunArm(beat, BeatState::COMPOSE) == BeatState::CLEANUP);
             REQUIRE(engine.factions.addToFactionCalls.back().rank == 0);
             REQUIRE(Tick(beat, BeatState::CLEANUP).transitionTo == BeatState::NOT_RUNNING);
-            std::scoped_lock lock(LetterPoolSpies().mutex);
-            REQUIRE_FALSE(LetterPoolSpies().aborted.empty());
+            REQUIRE(LetterPool::GetStats().free == LetterPool::kPoolSize);
         }
     }
 
@@ -663,8 +671,7 @@ TEST_CASE("NPCLetterBeat gives up when it cannot dispatch", "[NPCLetterBeat][eng
         {
             REQUIRE(RunArm(beat, BeatState::COMPOSE) == BeatState::CLEANUP);
             REQUIRE(Tick(beat, BeatState::CLEANUP).transitionTo == BeatState::NOT_RUNNING);
-            std::scoped_lock lock(LetterPoolSpies().mutex);
-            REQUIRE_FALSE(LetterPoolSpies().aborted.empty());
+            REQUIRE(LetterPool::GetStats().free == LetterPool::kPoolSize);
         }
     }
 }
@@ -677,10 +684,11 @@ TEST_CASE("NPCLetterBeat confirms the letter arrived", "[NPCLetterBeat][engine]"
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
     Persistence::OnRevert();
-    LetterPoolSpies().Reset();
+    LetterPool::OnRevert();
     REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
     PrimeModel();
     const auto quests = BuildWorld(engine);
+    LetterPool::Initialize();
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCLetterBeat beat;
@@ -708,8 +716,7 @@ TEST_CASE("NPCLetterBeat confirms the letter arrived", "[NPCLetterBeat][engine]"
         {
             REQUIRE(RunArm(beat, BeatState::RUNNING) == BeatState::CLEANUP);
             REQUIRE(Tick(beat, BeatState::CLEANUP).transitionTo == BeatState::NOT_RUNNING);
-            std::scoped_lock lock(LetterPoolSpies().mutex);
-            REQUIRE(LetterPoolSpies().aborted == std::vector<std::size_t>{0});
+            REQUIRE(LetterPool::GetStats().free == LetterPool::kPoolSize);
         }
     }
 
@@ -738,10 +745,11 @@ TEST_CASE("NPCLetterBeat puts everything back when it is done", "[NPCLetterBeat]
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
     Persistence::OnRevert();
-    LetterPoolSpies().Reset();
+    LetterPool::OnRevert();
     REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
     PrimeModel();
     const auto quests = BuildWorld(engine);
+    LetterPool::Initialize();
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCLetterBeat beat;
@@ -773,10 +781,11 @@ TEST_CASE("NPCLetterBeat puts everything back when it is done", "[NPCLetterBeat]
             REQUIRE(engine.papyrus.packedInts.back() == 20);
         }
 
-        SECTION("should keep the slot rather than abort it")
+        SECTION("should keep the slot rather than hand it back")
         {
-            std::scoped_lock lock(LetterPoolSpies().mutex);
-            REQUIRE(LetterPoolSpies().aborted.empty());
+            // The letter is out in the world now, and the pool's own sinks
+            // carry it the rest of the way.
+            REQUIRE(LetterPool::GetStats().pendingDelivery == 1);
         }
     }
 
@@ -795,8 +804,7 @@ TEST_CASE("NPCLetterBeat puts everything back when it is done", "[NPCLetterBeat]
 
         SECTION("should give the slot back")
         {
-            std::scoped_lock lock(LetterPoolSpies().mutex);
-            REQUIRE(LetterPoolSpies().aborted == std::vector<std::size_t>{0});
+            REQUIRE(LetterPool::GetStats().free == LetterPool::kPoolSize);
         }
     }
 
@@ -810,8 +818,7 @@ TEST_CASE("NPCLetterBeat puts everything back when it is done", "[NPCLetterBeat]
             // or a revert. It is always the failure branch, whatever the beat
             // had achieved.
             REQUIRE(beat.RemainingCooldownGameHours() == 0.0);
-            std::scoped_lock lock(LetterPoolSpies().mutex);
-            REQUIRE(LetterPoolSpies().aborted == std::vector<std::size_t>{0});
+            REQUIRE(LetterPool::GetStats().free == LetterPool::kPoolSize);
         }
     }
 }
@@ -823,8 +830,9 @@ TEST_CASE("NPCLetterBeat drives a slot's delivery quest", "[NPCLetterBeat][engin
     // teardown that takes one out of the world again.
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
-    LetterPoolSpies().Reset();
+    LetterPool::OnRevert();
     const auto quests = BuildWorld(engine);
+    LetterPool::Initialize();
     Init::Initialize();
     auto* letter = engine.AddReference(nullptr, kLetterRef, {});
     constexpr std::size_t kSlot = 3;
@@ -990,10 +998,11 @@ TEST_CASE("NPCLetterBeat carries its ledgers across a save", "[NPCLetterBeat][en
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
     Persistence::OnRevert();
-    LetterPoolSpies().Reset();
+    LetterPool::OnRevert();
     REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
     PrimeModel();
     const auto quests = BuildWorld(engine);
+    LetterPool::Initialize();
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCLetterBeat beat;
@@ -1147,36 +1156,34 @@ TEST_CASE("NPCLetterBeat with delivery quests that did not resolve", "[NPCLetter
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
     Persistence::OnRevert();
-    LetterPoolSpies().Reset();
+    LetterPool::OnRevert();
     REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
     PrimeModel();
     engine.AddCourierQuest(true, true);
     engine.AddFaction(kSenderFaction, "_ne_LetterSenderFaction");
     engine.AddActor(kSender);
-    engine.AddBook(kBook);
+    BuildPooledBooks(engine);
     engine.visibility.target3DPresent = false;
     engine.world.playerHasLocation = false;
+    LetterPool::Initialize();
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCLetterBeat beat;
 
-    SECTION("should still hand the pool a table, of nothing")
+    SECTION("should leave every slot without a quest to deliver through")
     {
         // The pool checks dispatchability against this table, so a beat that
-        // never called it at all would leave the pool handing out slots that
-        // can never be delivered.
-        std::scoped_lock lock(LetterPoolSpies().mutex);
-        REQUIRE(LetterPoolSpies().setPerSlotQuestsCalled);
-        REQUIRE(LetterPoolSpies().perSlotQuests.front() == nullptr);
+        // never handed it over would leave the pool giving out slots that can
+        // never be delivered.
+        REQUIRE(LetterPool::GetPerSlotQuest(0) == nullptr);
     }
 
-    SECTION("should fail the dispatch rather than start a quest that is not there")
+    SECTION("should refuse to allocate rather than take a slot it cannot dispatch")
     {
         beat.OnStart(BeatContext{}, SenderParams());
         REQUIRE(RunArm(beat, BeatState::COMPOSE) == BeatState::CLEANUP);
         REQUIRE(engine.questControl.started.empty());
-        std::scoped_lock lock(LetterPoolSpies().mutex);
-        REQUIRE(LetterPoolSpies().aborted == std::vector<std::size_t>{0});
+        REQUIRE(LetterPool::GetStats().free == LetterPool::kPoolSize);
     }
 }
 
@@ -1189,16 +1196,17 @@ TEST_CASE("NPCLetterBeat with delivery quests missing their aliases", "[NPCLette
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
     Persistence::OnRevert();
-    LetterPoolSpies().Reset();
+    LetterPool::OnRevert();
     REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
     PrimeModel();
     engine.AddCourierQuest(true, true);
     BuildPooledQuests(engine, LetterPool::kPoolSize, /*withAliases=*/false);
     engine.AddFaction(kSenderFaction, "_ne_LetterSenderFaction");
     engine.AddActor(kSender);
-    engine.AddBook(kBook);
+    BuildPooledBooks(engine);
     engine.visibility.target3DPresent = false;
     engine.world.playerHasLocation = false;
+    LetterPool::Initialize();
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCLetterBeat beat;
@@ -1210,7 +1218,6 @@ TEST_CASE("NPCLetterBeat with delivery quests missing their aliases", "[NPCLette
         beat.OnStart(BeatContext{}, SenderParams());
         REQUIRE(RunArm(beat, BeatState::COMPOSE) == BeatState::CLEANUP);
         REQUIRE(engine.questControl.started.empty());
-        std::scoped_lock lock(LetterPoolSpies().mutex);
-        REQUIRE(LetterPoolSpies().aborted == std::vector<std::size_t>{0});
+        REQUIRE(LetterPool::GetStats().free == LetterPool::kPoolSize);
     }
 }

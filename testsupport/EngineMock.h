@@ -702,6 +702,28 @@ namespace NarrativeEngine::Testing
             bool actorIsDisabled = false;
         } forms;
 
+        // What containers and the player are carrying. Only counts are
+        // modelled: the extra-data lists that carry per-reference state are
+        // not fabricated, so code walking them finds a stack with none, which
+        // is what an ordinary item looks like.
+        struct InventoryState
+        {
+            // Keyed by the bound object's FormID.
+            std::map<std::uint32_t, int> containerCounts;
+            std::map<std::uint32_t, int> playerCounts;
+
+            // Items taken out of somebody's inventory, in order. Which
+            // container was asked is half of what matters: a sold letter is
+            // in a merchant's chest and nowhere a sweep of actors would look.
+            struct Removal
+            {
+                std::uint32_t holderFormID = 0;
+                std::uint32_t itemFormID = 0;
+                std::int32_t count = 0;
+            };
+            std::vector<Removal> removals;
+        } inventory;
+
         // Actor values written through an actor's value owner. Aggression is
         // the one that matters here: it decides whether a spawned attacker
         // fights on its own initiative or waits to be told.
@@ -820,7 +842,10 @@ namespace NarrativeEngine::Testing
         RE::TESQuest* AddCourierQuest(bool withContainerAlias, bool withContainerRef);
 
         // Register a bound object (a book) in the form table under `formID`.
-        RE::TESForm* AddBook(std::uint32_t formID);
+        // Register a bound object (a book) in the form table under `formID`,
+        // optionally under an editor ID as well -- which is how a module that
+        // owns a set of them resolves the set at data load.
+        RE::TESForm* AddBook(std::uint32_t formID, std::string editorID = {});
 
         // Faction ranks, and the loaded-actor lists a sweep walks.
         //

@@ -210,6 +210,35 @@ namespace NarrativeEngine::Testing
         }
 
         // ------------------------------------------------------------------
+        // Detour targets
+        // ------------------------------------------------------------------
+        //
+        // Two engine functions the letter pool patches at runtime. Nothing
+        // here is ever called: the addresses are handed straight to MinHook,
+        // which the harness also stands in for. They are registered so the
+        // two resolve to DIFFERENT addresses -- an unregistered id lands on
+        // whichever neighbouring entry the binary search reaches, and two
+        // distinct hooks pointing at one address would read as installed
+        // correctly when they are not.
+        std::byte g_getDescriptionTarget{};
+        std::byte g_openBookMenuTarget{};
+
+        // ------------------------------------------------------------------
+        // RE::TESFullName
+        // ------------------------------------------------------------------
+        //
+        // Setting a form's display name is a relocated call rather than a
+        // plain member write -- the engine has bookkeeping around it -- so
+        // anything that renames a record at runtime needs this. Writing the
+        // member is the whole of the observable effect: GetFullName is inline
+        // over it, and that is what a player reads off the item.
+        void FullNameSet(RE::TESFullName* self, const char* name)
+        {
+            if (self)
+                self->fullName = name ? name : "";
+        }
+
+        // ------------------------------------------------------------------
         // skyrim_cast
         // ------------------------------------------------------------------
         //
@@ -247,9 +276,9 @@ namespace NarrativeEngine::Testing
             return nullptr;
         }
 
-        const std::array<RelocationMock, 28>& Table()
+        const std::array<RelocationMock, 34>& Table()
         {
-            static const std::array<RelocationMock, 28> table = {{
+            static const std::array<RelocationMock, 34> table = {{
                 // BSFixedString::ctor8 — SE 67819, AE 69161
                 {67819u, Addr(&FixedStringCtor8)},
                 {69161u, Addr(&FixedStringCtor8)},
@@ -289,6 +318,15 @@ namespace NarrativeEngine::Testing
                 // RTTI_BGSRefAlias — SE 685398, AE 393181
                 {685398u, reinterpret_cast<std::uintptr_t>(&g_bgsRefAliasType)},
                 {393181u, reinterpret_cast<std::uintptr_t>(&g_bgsRefAliasType)},
+                // TESFullName::SetFullName — SE 22318, AE 22791
+                {22318u, Addr(&FullNameSet)},
+                {22791u, Addr(&FullNameSet)},
+                // TESDescription::GetDescription — SE 14399, AE 14552
+                {14399u, reinterpret_cast<std::uintptr_t>(&g_getDescriptionTarget)},
+                {14552u, reinterpret_cast<std::uintptr_t>(&g_getDescriptionTarget)},
+                // BookMenu::OpenBookMenu — SE 50122, AE 51053
+                {50122u, reinterpret_cast<std::uintptr_t>(&g_openBookMenuTarget)},
+                {51053u, reinterpret_cast<std::uintptr_t>(&g_openBookMenuTarget)},
                 // RTDynamicCast — SE 102238, AE 109689
                 {102238u, Addr(&RTDynamicCastImpl)},
                 {109689u, Addr(&RTDynamicCastImpl)},
