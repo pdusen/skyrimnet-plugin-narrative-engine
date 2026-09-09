@@ -724,6 +724,14 @@ namespace NarrativeEngine::Testing
             std::vector<Removal> removals;
         } inventory;
 
+        // The keyboard, as far as a hotkey sink is concerned. Present says the
+        // input manager resolved at all; a sink that never registers is a
+        // hotkey that never fires and says nothing about why.
+        struct InputState
+        {
+            bool managerPresent = true;
+        } input;
+
         // Actor values written through an actor's value owner. Aggression is
         // the one that matters here: it decides whether a spawned attacker
         // fights on its own initiative or waits to be told.

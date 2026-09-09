@@ -2614,6 +2614,22 @@ std::int32_t RE::PlayerCharacter::GetItemCount(RE::TESBoundObject* a_object)
 // builds any, so there is nothing to release.
 RE::InventoryEntryData::~InventoryEntryData() = default;
 
+RE::BSInputDeviceManager* RE::BSInputDeviceManager::GetSingleton()
+{
+    auto* mock = EngineMock::Current();
+    if (!mock || !mock->input.managerPresent)
+        return nullptr;
+    return NarrativeEngine::Testing::OpaqueSingleton<RE::BSInputDeviceManager>();
+}
+
+// An input event's narrowing to a button press. Answers null for anything the
+// harness did not fabricate as a button, which is what a mouse move or a
+// thumbstick reads as.
+RE::ButtonEvent* RE::InputEvent::AsButtonEvent()
+{
+    return eventType == RE::INPUT_EVENT_TYPE::kButton ? static_cast<RE::ButtonEvent*>(this) : nullptr;
+}
+
 bool RE::TESObjectREFR::IsInWater() const
 {
     auto* mock = EngineMock::Current();

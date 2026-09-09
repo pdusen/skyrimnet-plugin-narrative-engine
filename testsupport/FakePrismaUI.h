@@ -43,6 +43,20 @@ namespace NarrativeEngine::Testing
         int interopCalls = 0;
         int registerListenerCalls = 0;
 
+        // Every listener the view registered, by name and by function
+        // pointer. Retained because the dashboard's controls exist ONLY as
+        // these callbacks -- the page calls them and nothing else does, so a
+        // test that wants to press a button has to be handed the button.
+        //
+        // A raw function pointer rather than anything richer: the two sides
+        // are separate binaries with separate heaps, and this struct crosses
+        // between them.
+        using ListenerFn = void (*)(const char* argument);
+        static constexpr int kMaxRecordedListeners = 64;
+        int recordedListeners = 0;
+        char listenerNames[kMaxRecordedListeners][64]{};
+        ListenerFn listenerCallbacks[kMaxRecordedListeners]{};
+
         bool lastPauseGame = false;
         bool lastDisableFocusMenu = false;
 
@@ -54,7 +68,11 @@ namespace NarrativeEngine::Testing
         // free anything across the module boundary.
         char lastHtmlPath[260]{};
         char lastFunctionName[128]{};
-        char lastArgument[512]{};
+        // Sized for a whole dashboard state blob rather than a token one: the
+        // page is handed the entire Director state in a single string, and a
+        // buffer that truncated it would hand a test unparseable JSON and
+        // look exactly like a compose that produced it.
+        char lastArgument[32768]{};
 
         // Clears the per-call record, and deliberately NOT the interface
         // handshake above it. The wrapper performs that handshake exactly once

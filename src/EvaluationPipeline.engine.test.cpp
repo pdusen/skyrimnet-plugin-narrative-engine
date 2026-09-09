@@ -2,7 +2,6 @@
 
 #include <ConfiguredSettings.h>
 #include <DecisionLog.h>
-#include <DownstreamSpies.h>
 #include <EngineMock.h>
 #include <FakeSkyrimNet.h>
 #include <PhaseTracker.h>
@@ -55,7 +54,6 @@ namespace
     namespace SkyrimNetAPI = NarrativeEngine::SkyrimNetAPI;
     using NarrativeEngine::Snapshot;
     using NarrativeEngine::Testing::ConfiguredSettings;
-    using NarrativeEngine::Testing::DownstreamSpies;
     using NarrativeEngine::Testing::EngineMock;
     using NarrativeEngine::Testing::FakeSkyrimNetState;
     using NarrativeEngine::Testing::FakeSkyrimNetStateFunc;
@@ -303,9 +301,12 @@ TEST_CASE("EvaluationPipeline reads what the model said", "[EvaluationPipeline][
 
 TEST_CASE("EvaluationPipeline hands its decision on", "[EvaluationPipeline][engine]")
 {
+    // Applying a decision also tells the dashboard the world moved. That is
+    // not asserted here: the dashboard early-outs while nobody is looking at
+    // it, so making the push observable would mean standing a whole view up
+    // inside a case about the pipeline. It is covered where the view is.
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
-    DownstreamSpies().Reset();
     DecisionLog::Clear();
     PhaseTracker::Reset();
 
@@ -326,11 +327,6 @@ TEST_CASE("EvaluationPipeline hands its decision on", "[EvaluationPipeline][engi
             const auto tail = DecisionLog::Tail(1);
             REQUIRE(tail.size() == 1);
             REQUIRE(tail.front().narrativeNote == "something happened");
-        }
-
-        SECTION("should tell the dashboard the world moved")
-        {
-            REQUIRE(DownstreamSpies().dashboardPushes.load() > 0);
         }
 
         SECTION("should leave the phase where it was")
@@ -360,7 +356,6 @@ TEST_CASE("EvaluationPipeline runs one evaluation at a time", "[EvaluationPipeli
     // a burst of queued evaluations arriving at once.
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
-    DownstreamSpies().Reset();
     DecisionLog::Clear();
     REQUIRE(SkyrimNetAPI::Initialize());
     auto& llm = FakeLLM();

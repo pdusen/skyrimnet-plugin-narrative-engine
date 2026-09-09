@@ -4,7 +4,6 @@
 #include <CombatEventLog.h>
 #include <ConfiguredSettings.h>
 #include <DecisionLog.h>
-#include <DownstreamSpies.h>
 #include <EngineMock.h>
 #include <EvalDispatch.h>
 #include <EventHistoryWriter.h>
@@ -45,11 +44,9 @@
 // through the file it flushes, and the evaluation through the decision it hands
 // to the beat system.
 //
-// That last handoff is a stand-in (testsupport/DownstreamSpies.cpp), and it is
-// also the lever for the in-flight cases. The beat system owns a decision once
-// it is given one, and the callback it eventually makes is what lets the next
-// evaluation start — so a stand-in that keeps the callback puts the pipeline in
-// the state a slow LLM would, without anything having to be slow.
+// The in-flight cases are driven from the model end: a prompt the stand-in
+// SkyrimNet accepts and never answers leaves the pipeline latched exactly as a
+// slow round trip would, without anything having to be slow.
 //
 // The per-poll heartbeat is the driver's own first act: asking whether the game
 // is paused. The harness counts that question, which makes it an exact measure
@@ -216,7 +213,6 @@ TEST_CASE("Tick polls the event logs", "[Tick][engine]")
                                       "[Gossip]\nbGossipEnabled=1\n"
                                       "[FineRoads]\nbFineRoadsEnabled=1\n"
                                       "[EventHistory]\nbEventHistoryEnabled=1\niEventHistoryFlushIntervalSeconds=1\n"};
-    NarrativeEngine::Testing::DownstreamSpies().Reset();
     // The decision log is where an evaluation lands, and it outlives any one
     // case, so a leaf counting from zero has to start it from zero.
     NarrativeEngine::DecisionLog::Clear();
@@ -302,7 +298,6 @@ TEST_CASE("Tick fires the Director", "[Tick][engine]")
     EngineMock engine;
     const ConfiguredSettings settings{"[Director]\nbTickEnabled=1\niTickIntervalSeconds=1\n"
                                       "[Gossip]\nbGossipEnabled=1\n"};
-    NarrativeEngine::Testing::DownstreamSpies().Reset();
     // The decision log is where an evaluation lands, and it outlives any one
     // case, so a leaf counting from zero has to start it from zero.
     NarrativeEngine::DecisionLog::Clear();
@@ -393,7 +388,6 @@ TEST_CASE("Tick::Start and Stop", "[Tick][engine]")
     EngineMock engine;
     const ConfiguredSettings settings{"[Director]\nbTickEnabled=1\niTickIntervalSeconds=1\n"
                                       "[Gossip]\nbGossipEnabled=1\n"};
-    NarrativeEngine::Testing::DownstreamSpies().Reset();
     // The decision log is where an evaluation lands, and it outlives any one
     // case, so a leaf counting from zero has to start it from zero.
     NarrativeEngine::DecisionLog::Clear();

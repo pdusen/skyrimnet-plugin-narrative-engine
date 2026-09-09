@@ -68,12 +68,17 @@ namespace
 
         void RegisterJSListener(PrismaView view,
                                 const char* functionName,
-                                PRISMA_UI_API::JSListenerCallback) noexcept override
+                                PRISMA_UI_API::JSListenerCallback callback) noexcept override
         {
             auto& s = State();
             ++s.registerListenerCalls;
             s.lastView = view;
             CopyInto(s.lastFunctionName, sizeof(s.lastFunctionName), functionName);
+            if (s.recordedListeners < FakePrismaState::kMaxRecordedListeners) {
+                const int slot = s.recordedListeners++;
+                CopyInto(s.listenerNames[slot], sizeof(s.listenerNames[slot]), functionName);
+                s.listenerCallbacks[slot] = callback;
+            }
         }
 
         bool HasFocus(PrismaView) noexcept override
