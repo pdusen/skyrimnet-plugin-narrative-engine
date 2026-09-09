@@ -4,8 +4,8 @@
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
 #include <FakeSkyrimNet.h>
+#include <NPCVisitBeat.h>
 #include <SkyrimNetAPI.h>
-#include <VisitSpies.h>
 
 #include <nlohmann/json.hpp>
 
@@ -62,7 +62,6 @@ namespace
     using NarrativeEngine::Testing::FakeSkyrimNetState;
     using NarrativeEngine::Testing::FakeSkyrimNetStateFunc;
     using NarrativeEngine::Testing::kFakeSkyrimNetStateExport;
-    using NarrativeEngine::Testing::VisitSpies;
 
     constexpr const char* kSettings = "[General]\nbDebugMode=0\n"
                                       "[Beats]\niVisitBriefingMinWords=5\niVisitBriefingMaxWords=40\n";
@@ -260,7 +259,7 @@ TEST_CASE("VisitComposer offers only people who could actually call", "[VisitCom
     auto& fake = FakeState();
     REQUIRE(SkyrimNet::Initialize());
     fake.Reset();
-    VisitSpies().Reset();
+    NarrativeEngine::NPCVisitBeat_Persistence::OnRevert();
     auto* ysolda = engine.AddActor(kYsolda);
     auto* base = engine.AddNPC(0x0001A6A2u);
     base->actorData.actorBaseFlags.set(RE::ACTOR_BASE_DATA::Flag::kUnique);
@@ -328,11 +327,13 @@ TEST_CASE("VisitComposer offers only people who could actually call", "[VisitCom
 
     SECTION("when they called only recently")
     {
-        {
-            auto& spies = VisitSpies();
-            std::scoped_lock lock(spies.mutex);
-            spies.onCooldown.insert(kYsolda);
-        }
+        // Stamped through the beat's own arrival hook rather than by setting
+        // a flag: the cooldown the composer reads is the one a completed
+        // visit leaves behind, and the two have to be the same ledger. The
+        // clock has to be off zero for the stamp to mean anything -- a stamp
+        // at hour zero reads as never having happened.
+        engine.calendar.hoursPassed = 100.0f;
+        NarrativeEngine::NPCVisitBeat_Cooldowns::OnVisitCompleted(kYsolda);
 
         SECTION("should leave them out")
         {

@@ -494,6 +494,12 @@ RE::BSScript::Variable::Variable()
 
 RE::BSScript::Variable::~Variable() = default;
 
+void RE::BSScript::Variable::SetString(std::string_view a_val)
+{
+    if (auto* mock = EngineMock::Current())
+        mock->papyrus.packedStrings.emplace_back(a_val);
+}
+
 void RE::BSScript::Variable::SetBool(bool a_val)
 {
     if (auto* mock = EngineMock::Current())
@@ -2401,6 +2407,15 @@ void RE::TESQuest::Reset()
         if (alias)
             NarrativeEngine::Testing::AliasReferences()[static_cast<const void*>(alias)] = nullptr;
     }
+}
+
+void RE::TESObjectREFR::MoveTo(RE::TESObjectREFR* a_target)
+{
+    // Recorded rather than reproduced. The engine's own body unloads the
+    // mover's 3D, reparents them to the target's cell and reloads them there;
+    // what the code under test is responsible for is choosing the target.
+    if (auto* mock = EngineMock::Current())
+        mock->questControl.teleports.push_back({GetFormID(), a_target ? a_target->GetFormID() : 0u});
 }
 
 void RE::TESObjectREFR::Disable()

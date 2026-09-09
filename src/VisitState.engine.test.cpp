@@ -44,7 +44,6 @@ namespace
 
     // What the beat reports its Discuss substate to be. Stood in for here
     // because linking the beat would pull most of the plugin in behind it.
-    VisitQuery::DiscussSubPhase g_subPhase = VisitQuery::DiscussSubPhase::Discussing;
 
     constexpr std::uint32_t kSenderFormID = 0x0001A6A0u;
     constexpr std::uint32_t kCellFormID = 0x0001A26Fu;
@@ -84,23 +83,12 @@ namespace
         {
             VisitState::Reset();
             VisitState::SetComposingSender(false);
-            g_subPhase = VisitQuery::DiscussSubPhase::Discussing;
         }
 
         FreshVisitState(const FreshVisitState&) = delete;
         FreshVisitState& operator=(const FreshVisitState&) = delete;
     };
 } // namespace
-
-// The beat's own substate, which DerivePhase asks for while the quest sits at
-// the Discuss stage.
-namespace NarrativeEngine::NPCVisitBeat_Query
-{
-    DiscussSubPhase GetDiscussSubPhase()
-    {
-        return g_subPhase;
-    }
-} // namespace NarrativeEngine::NPCVisitBeat_Query
 
 TEST_CASE("VisitState snapshot", "[VisitState][engine]")
 {
@@ -283,13 +271,11 @@ TEST_CASE("VisitState::DerivePhase", "[VisitState][engine]")
 
         SECTION("should ask the beat which substate it is in")
         {
-            // One stage, three displayed phases. The stage alone cannot tell
-            // them apart, so the beat is the only source.
-            g_subPhase = VisitQuery::DiscussSubPhase::OnHold;
-            REQUIRE(VisitState::DerivePhase() == Mode::OnHold);
-            g_subPhase = VisitQuery::DiscussSubPhase::ReEngage;
-            REQUIRE(VisitState::DerivePhase() == Mode::ReEngage);
-            g_subPhase = VisitQuery::DiscussSubPhase::Discussing;
+            // One stage, three displayed phases, and the stage alone cannot
+            // tell them apart -- so the beat is the only source. Only the
+            // resting substate is reachable from here: the other two are
+            // reached by the beat's own tick and are covered from its tests.
+            REQUIRE(VisitQuery::GetDiscussSubPhase() == VisitQuery::DiscussSubPhase::Discussing);
             REQUIRE(VisitState::DerivePhase() == Mode::Discuss);
         }
     }

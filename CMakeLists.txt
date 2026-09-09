@@ -765,6 +765,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/WeatherEventLog.cpp"
         "${CMAKE_SOURCE_DIR}/src/VisitState.cpp"
         "${CMAKE_SOURCE_DIR}/src/NPCLetterBeat.cpp"
+        "${CMAKE_SOURCE_DIR}/src/NPCVisitBeat.cpp"
     )
 
     if(engine_test_sources)
@@ -779,7 +780,6 @@ if(NARRATIVEENGINE_BUILD_TESTS)
             testsupport/DispatcherContract.cpp
             testsupport/FakeVTable.cpp
             testsupport/DownstreamSpies.cpp
-            testsupport/VisitSpies.cpp
             testsupport/LetterPoolSpies.cpp
             testsupport/GossipWorld.cpp
             testsupport/GossipSpies.cpp

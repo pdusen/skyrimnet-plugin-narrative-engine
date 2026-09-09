@@ -184,6 +184,10 @@ namespace NarrativeEngine::Testing
             std::vector<Dispatch> dispatches;
             std::vector<std::int32_t> packedInts;
             std::vector<bool> packedBools;
+            // Strings packed as Papyrus arguments. A narration line reaches
+            // the player through one of these and nothing else, so what was
+            // packed is what was said.
+            std::vector<std::string> packedStrings;
             // Forms packed as Papyrus object arguments, in the order they were
             // packed. A call that names the right method on the right script
             // and hands it the wrong reference is a call the VM accepts.
@@ -721,6 +725,16 @@ namespace NarrativeEngine::Testing
             // is Disable followed by SetDelete, and the first is the half that
             // goes through the engine.
             std::vector<std::uint32_t> disabled;
+
+            // Teleports, as (who moved, what they were moved to). Sending an
+            // NPC home is one of these, and sending them to the wrong marker
+            // leaves them standing wherever the visit ended.
+            struct Teleport
+            {
+                std::uint32_t moverFormID = 0;
+                std::uint32_t destinationFormID = 0;
+            };
+            std::vector<Teleport> teleports;
         } questControl;
 
         // The vanilla WICourier resolution: the quest, the container alias on

@@ -253,7 +253,10 @@ TEST_CASE("LetterComposer writes only to people who are away", "[LetterComposer]
     {
         // Stamped through the beat's own delivery hook rather than by setting
         // a flag: the cooldown the composer reads is the one a delivered
-        // letter leaves behind, and the two have to be the same ledger.
+        // letter leaves behind, and the two have to be the same ledger. The
+        // clock has to be off zero for the stamp to mean anything -- a stamp
+        // at hour zero reads as never having happened.
+        engine.calendar.hoursPassed = 100.0f;
         NarrativeEngine::NPCLetterBeat_Cooldowns::OnLetterDelivered(kYsolda);
 
         SECTION("should leave them out")
