@@ -231,15 +231,9 @@ namespace NarrativeEngine::Testing
             bool hasWater = false;
             float waterHeight = 0.0f;
 
-            // Points inside this axis-aligned box carry no navmesh, which is
-            // how a test makes a candidate position unstandable.
-            bool hasNavmeshHole = false;
-            float holeMinX = 0.0f;
-            float holeMaxX = 0.0f;
-            float holeMinY = 0.0f;
-            float holeMaxY = 0.0f;
-            // When false nothing anywhere is on navmesh.
-            bool navmeshEverywhere = true;
+            // Navmesh is not answered from here. Containment is tested
+            // against real triangles on the ground cell, so a test says where
+            // an actor can stand by laying a patch with AddNavmeshPatch.
         } terrain;
 
         // The loaded exterior cell grid — the square of cells the streaming
@@ -500,6 +494,24 @@ namespace NarrativeEngine::Testing
         // cell genuinely has. Distinct from a cell that was never given one:
         // that cell reports no list at all.
         void AddEmptyNavMeshList(RE::TESObjectCELL* cell);
+
+        // Cover a rectangle of ground with navmesh, as the two triangles a
+        // mesh generator would make of it. Containment is asked in the
+        // horizontal plane and then checked against the surface height, so a
+        // patch is the smallest honest way to say "an actor can stand
+        // anywhere in here".
+        RE::NavMesh* AddNavmeshPatch(RE::TESObjectCELL* cell,
+                                     std::uint32_t meshFormID,
+                                     float westX,
+                                     float southY,
+                                     float eastX,
+                                     float northY,
+                                     float surfaceZ);
+
+        // The cell every world position resolves to. One cell stands in for
+        // the whole exterior, because what code under test asks of it is what
+        // is underfoot rather than which cell it is standing in.
+        RE::TESObjectCELL* GroundCell();
 
         // Put these cells in the loaded exterior grid, in row-major order over
         // the smallest square that fits them. Slots past the end stay null,

@@ -821,6 +821,48 @@ namespace NarrativeEngine::Testing
         }
     } // namespace
 
+    RE::NavMesh* EngineMock::AddNavmeshPatch(RE::TESObjectCELL* cell,
+                                             std::uint32_t meshFormID,
+                                             float westX,
+                                             float southY,
+                                             float eastX,
+                                             float northY,
+                                             float surfaceZ)
+    {
+        if (!cell)
+            return nullptr;
+        auto* mesh = NewMesh(cell, meshFormID);
+        const RE::NiPoint3 corners[4] = {
+            RE::NiPoint3{westX, southY, surfaceZ},
+            RE::NiPoint3{eastX, southY, surfaceZ},
+            RE::NiPoint3{eastX, northY, surfaceZ},
+            RE::NiPoint3{westX, northY, surfaceZ},
+        };
+        for (const auto& corner : corners) {
+            RE::BSNavmeshVertex vertex{};
+            vertex.location = corner;
+            mesh->vertices.push_back(vertex);
+        }
+        // The rectangle split along one diagonal, which is what any mesh
+        // generator does with a flat quad.
+        const std::uint16_t indices[2][3] = {{0, 1, 2}, {0, 2, 3}};
+        for (const auto& triangle : indices) {
+            RE::BSNavmeshTriangle tri{};
+            tri.triangleFlags.set(RE::BSNavmeshTriangle::TriangleFlag::kPreferred);
+            for (int v = 0; v < 3; ++v) {
+                tri.vertices[v] = triangle[v];
+                tri.triangles[v] = 0xFFFFu;
+            }
+            mesh->triangles.push_back(tri);
+        }
+        return mesh;
+    }
+
+    RE::TESObjectCELL* EngineMock::GroundCell()
+    {
+        return FabricatedCell();
+    }
+
     void EngineMock::AddEmptyNavMeshList(RE::TESObjectCELL* cell)
     {
         if (cell)
@@ -2056,6 +2098,14 @@ bool RE::BSPointerHandle<RE::TESObjectREFR, RE::BSUntypedPointerHandle<21, 5>>::
     auto* ref = NarrativeEngine::Testing::ReferenceForHandle(raw);
     a_smartPointerOut.reset(ref);
     return ref != nullptr;
+}
+
+float RE::TESObjectREFR::GetAngleZ() const
+{
+    // Which way a reference is facing. Read off the object rather than from a
+    // mock-wide field, because a search that reasons about what is behind
+    // someone has to be able to turn two of them different ways.
+    return data.angle.z;
 }
 
 void RE::TESObjectCELL::ForEachReference(std::function<RE::BSContainer::ForEachResult(RE::TESObjectREFR*)> a_fn) const
