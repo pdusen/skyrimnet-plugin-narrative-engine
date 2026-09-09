@@ -36,8 +36,6 @@ namespace NarrativeEngine::Testing
 
         // Every step a tick took, in order.
         std::vector<std::string> calls;
-        // The game day each tick was stamped for.
-        std::vector<double> stampedHorizons;
 
         // How much of a participant's circle of contacts is not already
         // carrying a rumor, and how the simulation would describe that. The
@@ -45,10 +43,6 @@ namespace NarrativeEngine::Testing
         // to tell.
         float contactShare = 1.0f;
         std::string contactAvailability = "everybody";
-        double lastSimulatedGameDay = -1.0;
-        // Which step should observe a cancellation, so each of a tick's three
-        // checkpoints can be reached in turn.
-        std::string cancelAfter;
 
         // Rumors already circulating, which the evaluation is shown so it can
         // recognise one it has already heard.

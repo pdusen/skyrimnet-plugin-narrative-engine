@@ -728,6 +728,11 @@ namespace NarrativeEngine::Testing
         // actors, which is what a faction sweep walks.
         RE::Actor* AddLoadedActor(std::uint32_t formID);
 
+        // The placed reference AddResident fabricated for a unique NPC, which
+        // is the actor anything asking whether that person is alive resolves.
+        // Null for an NPC who was never made a resident of anywhere.
+        RE::Actor* PlacedActorFor(std::uint32_t npcFormID);
+
         // A stand-in faction to hold ranks against.
         // The editor ID is optional and only matters when something names the
         // faction in a content file rather than holding a pointer to it.

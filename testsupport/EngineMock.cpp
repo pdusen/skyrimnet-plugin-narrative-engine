@@ -96,6 +96,12 @@ namespace NarrativeEngine::Testing
 
     namespace
     {
+        // Where a resident's placed reference sits relative to their base
+        // form. The engine has no such rule -- this is the fabrication's own
+        // convention, so that a test holding an NPC's id can reach the actor
+        // made for them without the world fixture handing back both.
+        constexpr std::uint32_t kPlacedRefOffset = 0x01000000u;
+
         // LocationKeywords documents.
         std::unordered_map<const void*, std::string>& EditorIDsByForm()
         {
@@ -2952,12 +2958,19 @@ namespace NarrativeEngine::Testing
         // reading LCUN expects.
         row.actor = reinterpret_cast<RE::Actor*>(npc);
         // And its `refID` names the placed reference, which is the id anything
-        // outside the engine — SkyrimNet especially — speaks. A row without
-        // one leaves the person unaddressable, which on a real load order is
-        // vanishingly rare and here would silently empty every sweep.
-        row.refID = npc->GetFormID() + 0x01000000u;
+        // outside the engine — SkyrimNet especially — speaks. The reference is
+        // fabricated here rather than left as a bare id, because code that
+        // asks whether somebody is alive resolves it and reads their state: a
+        // row naming a reference nothing can find reads as a person who has
+        // died, and a world of those is a world where nobody talks.
+        row.refID = AddActor(npc->GetFormID() + kPlacedRefOffset)->GetFormID();
         row.editorLoc = editorLocation;
         location->uniqueNPCs.push_back(row);
+    }
+
+    RE::Actor* EngineMock::PlacedActorFor(std::uint32_t npcFormID)
+    {
+        return RE::TESForm::LookupByID<RE::Actor>(npcFormID + kPlacedRefOffset);
     }
 
     void EngineMock::JoinFaction(RE::TESNPC* npc, RE::TESFaction* faction, std::int8_t rank)

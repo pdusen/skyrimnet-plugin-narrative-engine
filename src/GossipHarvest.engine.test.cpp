@@ -5,6 +5,7 @@
 #include <FakeSkyrimNet.h>
 #include <GossipClaims.h>
 #include <GossipGraph.h>
+#include <GossipSim.h>
 #include <GossipSpies.h>
 #include <GossipWorld.h>
 #include <SkyrimNetAPI.h>
@@ -16,6 +17,7 @@
 
 #include <Windows.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -70,6 +72,7 @@ namespace
     using NarrativeEngine::Testing::GossipSpies;
     using NarrativeEngine::Testing::GossipWorld;
     using NarrativeEngine::Testing::kFakeSkyrimNetStateExport;
+    using NarrativeEngine::Testing::LiveGossipState;
     using NarrativeEngine::Testing::ResetGossipState;
 
     // One bucket, so every sweep draws the whole population and a case never
@@ -130,25 +133,33 @@ namespace
     bool Sweep(const GossipDispatch::CancellationHandle& cancel = {})
     {
         bool swept = false;
-        OnGossipThread([&](const GossipThread::Token& gt) { swept = GossipHarvest::RunSweep(gt, kToday, cancel); });
+        OnGossipThread([&](const GossipThread::Token& gt) {
+            // The scheduler stamps the horizon before the sweep, and a rumor
+            // seeded during one dates itself from that clock. Without it the
+            // simulation has no clock at all and refuses the seed.
+            NarrativeEngine::GossipSim::SetHorizon(gt, kToday);
+            swept = GossipHarvest::RunSweep(gt, kToday, cancel);
+        });
         return swept;
     }
 
-    // What the sweep handed on to the content layer, which is the sweep's
-    // whole output: the memories it thought were worth a rumor.
+    // What the sweep turned into rumors, read off the simulation's own state:
+    // a seeded rumor is the sweep's whole output, and the simulation is the
+    // only record that one happened.
+    std::vector<NarrativeEngine::GossipSim::RumorView> Rumors()
+    {
+        return NarrativeEngine::GossipSim::GetRumorViews(NarrativeEngine::Testing::LiveGossipState());
+    }
+
     std::size_t Offered()
     {
-        auto& spies = GossipSpies();
-        std::scoped_lock lock(spies.mutex);
-        return spies.seeded.size();
+        return Rumors().size();
     }
 
     bool OfferedMemory(std::int64_t id)
     {
-        auto& spies = GossipSpies();
-        std::scoped_lock lock(spies.mutex);
-        return std::any_of(
-            spies.seeded.begin(), spies.seeded.end(), [&](const auto& seed) { return seed.sourceMemoryId == id; });
+        const auto rumors = Rumors();
+        return std::any_of(rumors.begin(), rumors.end(), [&](const auto& rumor) { return rumor.sourceMemoryId == id; });
     }
 } // namespace
 

@@ -5,6 +5,7 @@
 #include <GossipClaims.h>
 #include <GossipDispatch.h>
 #include <GossipGraph.h>
+#include <GossipSim.h>
 #include <GossipSpies.h>
 #include <GossipThread.h>
 #include <GossipWorld.h>
@@ -76,6 +77,7 @@ namespace
     using NarrativeEngine::Testing::FakeSkyrimNetStateFunc;
     using NarrativeEngine::Testing::GossipSpies;
     using NarrativeEngine::Testing::kFakeSkyrimNetStateExport;
+    using NarrativeEngine::Testing::LiveGossipState;
     using NarrativeEngine::Testing::ResetGossipState;
 
     constexpr const char* kSettings = "[Gossip]\niGossipContentBands=3\n";
@@ -127,11 +129,13 @@ namespace
         GossipThread::detail::JobDispatcher::Invoke([&](const GossipThread::Token& gt) { body(gt); });
     }
 
-    GossipContent::Candidate CandidateFor(std::int64_t memoryId, std::int64_t eventId = kFirstEvent)
+    GossipContent::Candidate CandidateFor(std::int64_t memoryId,
+                                          std::int64_t eventId = kFirstEvent,
+                                          std::uint32_t owner = kHulda)
     {
         GossipContent::Candidate c;
         c.memoryId = memoryId;
-        c.owner = kHulda;
+        c.owner = owner;
         c.importance = 0.7f;
         c.text = "A College mage was caught in the Arcanaeum after hours.";
         c.locationName = "Winterhold";
@@ -163,19 +167,40 @@ namespace
         return claimed;
     }
 
-    std::size_t SeededCount()
+    // What the simulation actually took. Read off its own state rather than
+    // from a spy, because the simulation is compiled in here and its rumors
+    // are the only record that a seed happened.
+    std::vector<NarrativeEngine::GossipSim::RumorView> Rumors()
     {
-        auto& spies = GossipSpies();
-        std::scoped_lock lock(spies.mutex);
-        return spies.seeded.size();
+        return NarrativeEngine::GossipSim::GetRumorViews(NarrativeEngine::Testing::LiveGossipState());
     }
 
-    NarrativeEngine::Testing::GossipSpyState::Seeded LastSeeded()
+    std::size_t SeededCount()
     {
-        auto& spies = GossipSpies();
-        std::scoped_lock lock(spies.mutex);
-        REQUIRE_FALSE(spies.seeded.empty());
-        return spies.seeded.back();
+        return Rumors().size();
+    }
+
+    // The memory a rumor was seeded from, which is what ties it back to the
+    // candidate the walk accepted.
+    std::int64_t LastSourceMemory()
+    {
+        const auto rumors = Rumors();
+        REQUIRE_FALSE(rumors.empty());
+        return rumors.back().sourceMemoryId;
+    }
+
+    std::uint32_t LastOrigin()
+    {
+        const auto rumors = Rumors();
+        REQUIRE_FALSE(rumors.empty());
+        return rumors.back().originNpc;
+    }
+
+    std::vector<std::string> LastBands()
+    {
+        const auto rumors = Rumors();
+        REQUIRE_FALSE(rumors.empty());
+        return rumors.back().bands;
     }
 
     std::string LastPromptName()
@@ -437,15 +462,15 @@ TEST_CASE("GossipContent walks a pool one candidate at a time", "[GossipContent]
 
         SECTION("should seed it with the bands the model wrote")
         {
-            REQUIRE(LastSeeded().bands == std::vector<std::string>{"first", "second", "third"});
+            REQUIRE(LastBands() == std::vector<std::string>{"first", "second", "third"});
         }
 
         SECTION("should credit the memory it came from")
         {
             // The simulation records this so the harvester never offers the
             // same memory again, and so a rumor can be traced back.
-            REQUIRE(LastSeeded().sourceMemoryId == kFirstMemory);
-            REQUIRE(LastSeeded().originNpc == kHulda);
+            REQUIRE(LastSourceMemory() == kFirstMemory);
+            REQUIRE(LastOrigin() == kHulda);
         }
 
         SECTION("should leave the memory claimed")
@@ -464,8 +489,8 @@ TEST_CASE("GossipContent walks a pool one candidate at a time", "[GossipContent]
             // Two usable tellings out of three is still a usable rumor, and
             // refusing the seed over it would spend a director call and an
             // expensive composer call for nothing.
-            REQUIRE(LastSeeded().bands.size() == 3);
-            REQUIRE(LastSeeded().bands.back() == "only one");
+            REQUIRE(LastBands().size() == 3);
+            REQUIRE(LastBands().back() == "only one");
         }
     }
 
@@ -566,13 +591,16 @@ TEST_CASE("GossipContent walks a pool one candidate at a time", "[GossipContent]
 
     SECTION("when the simulation refuses the seed")
     {
-        GossipSpies().nextRumorID = 0;
-        Walk({CandidateFor(kFirstMemory)});
+        // The memory's owner is nobody the graph knows, which is one of the
+        // three reasons the simulation declines to seed from a candidate.
+        Walk({CandidateFor(kFirstMemory, kFirstEvent, 0x00DEAD01u)});
 
         SECTION("should give the memory back")
         {
-            // The live-rumor cap being full is a temporary state, and a memory
-            // burned on one is a memory nobody ever hears about.
+            // A refusal here is a temporary state — a full live-rumor cap, or
+            // a graph still building — and a memory burned on one is a memory
+            // nobody ever hears about.
+            REQUIRE(SeededCount() == 0);
             REQUIRE_FALSE(IsClaimed(kFirstMemory));
         }
     }
@@ -586,7 +614,7 @@ TEST_CASE("GossipContent walks a pool one candidate at a time", "[GossipContent]
         SECTION("should skip it and carry on to the next")
         {
             REQUIRE(SeededCount() == 1);
-            REQUIRE(LastSeeded().sourceMemoryId == kSecondMemory);
+            REQUIRE(LastSourceMemory() == kSecondMemory);
         }
     }
 

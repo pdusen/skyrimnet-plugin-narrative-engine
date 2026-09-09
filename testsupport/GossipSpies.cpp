@@ -1,5 +1,10 @@
 #include "GossipSpies.h"
 
+#include <GossipClaims.h>
+#include <GossipSim.h>
+#include <GossipThread.h>
+#include <ThreadRole.h>
+
 #include <GossipDispatch.h>
 #include <GossipGraph.h>
 #include <GossipHarvest.h>
@@ -43,11 +48,8 @@ namespace NarrativeEngine::Testing
     {
         std::scoped_lock lock(mutex);
         calls.clear();
-        stampedHorizons.clear();
         contactShare = 1.0f;
         contactAvailability = "everybody";
-        lastSimulatedGameDay = -1.0;
-        cancelAfter.clear();
         circulating.clear();
         seeded.clear();
         nextRumorID = 1;
@@ -114,115 +116,33 @@ namespace NarrativeEngine::Testing
         }
     } // namespace
 
+    // Now that the simulation is compiled in for real, its own state is the
+    // only state. These stay as the harness's name for it so that every test
+    // file reaching for "the gossip world" keeps working, and so there is one
+    // place to change if that ever stops being true.
     GossipState& LiveGossipState()
     {
-        return *LiveStorage();
+        GossipState* live = nullptr;
+        const NarrativeEngine::ScopedThreadRole role{NarrativeEngine::ThreadRole::Plugin};
+        GossipThread::detail::JobDispatcher::Invoke(
+            [&](const GossipThread::Token& gt) { live = &GossipSim::MutableState(gt); });
+        return *live;
     }
 
     GossipState& StagedGossipState()
     {
-        return *StagedStorage();
+        return GossipSim::PendingState();
     }
 
     void ResetGossipState()
     {
-        *LiveStorage() = GossipState{};
-        *StagedStorage() = GossipState{};
+        // What loading a save into a running session does, in the order the
+        // session does it: the two modules each clear their own portion of the
+        // staging area, and the next tick adopts the empty result over the
+        // live image. A revert alone would leave the outgoing world live,
+        // which is correct in the game — the adopt is the second half.
+        GossipSim::OnRevert();
+        GossipClaims::OnRevert();
+        (void)GossipSim::AdoptPendingState();
     }
 } // namespace NarrativeEngine::Testing
-
-namespace NarrativeEngine::GossipSim
-{
-    float AvailableContactShare(const GossipThread::Token&, RE::FormID)
-    {
-        auto& spies = Testing::GossipSpies();
-        std::scoped_lock lock(spies.mutex);
-        return spies.contactShare;
-    }
-
-    std::string DescribeContactAvailability(const GossipThread::Token&, RE::FormID)
-    {
-        auto& spies = Testing::GossipSpies();
-        std::scoped_lock lock(spies.mutex);
-        return spies.contactAvailability;
-    }
-
-    std::uint32_t SeedRumor(const GossipThread::Token&,
-                            RE::FormID originNpc,
-                            float notability,
-                            std::int64_t sourceMemoryId,
-                            std::vector<std::string> bands)
-    {
-        auto& spies = Testing::GossipSpies();
-        std::scoped_lock lock(spies.mutex);
-        spies.seeded.push_back(
-            Testing::GossipSpyState::Seeded{originNpc, notability, sourceMemoryId, std::move(bands)});
-        return spies.nextRumorID;
-    }
-
-    std::vector<RumorView> GetRumorViews(const GossipState&)
-    {
-        auto& spies = Testing::GossipSpies();
-        std::scoped_lock lock(spies.mutex);
-        return spies.circulating;
-    }
-
-    GossipState& MutableState(const GossipThread::Token&)
-    {
-        // The harvest's very first act, and the only thing it does before any
-        // of its readiness gates. Recording it is how the scheduler's tests
-        // see that a sweep started at all, now that the sweep itself is real.
-        Testing::GossipSpies().Record("sweep");
-
-        return Testing::LiveGossipState();
-    }
-
-    GossipState& PendingState()
-    {
-        return Testing::StagedGossipState();
-    }
-
-    bool AdoptPendingState()
-    {
-        Testing::GossipSpies().Record("adopt");
-        return true;
-    }
-
-    void SetHorizon(const GossipThread::Token&, double asOfGameDay)
-    {
-        auto& spies = Testing::GossipSpies();
-        spies.Record("horizon");
-        std::scoped_lock lock(spies.mutex);
-        spies.stampedHorizons.push_back(asOfGameDay);
-    }
-
-    void Advance(const GossipThread::Token&, double, const GossipDispatch::CancellationHandle& cancel)
-    {
-        auto& spies = Testing::GossipSpies();
-        spies.Record("advance");
-        bool cancelHere = false;
-        {
-            std::scoped_lock lock(spies.mutex);
-            cancelHere = spies.cancelAfter == "advance";
-        }
-        // Lets a case put a cancellation between two steps of a tick, which is
-        // where a real one arrives: a load lands while the tick is mid-flight.
-        // This step is the one that can do it because it is the only one the
-        // scheduler hands the handle to.
-        if (cancelHere && cancel) {
-            cancel->Cancel();
-        }
-    }
-
-    void PublishSnapshot()
-    {
-        Testing::GossipSpies().Record("publish");
-    }
-
-    double LastSimulatedGameDay()
-    {
-        auto& spies = Testing::GossipSpies();
-        std::scoped_lock lock(spies.mutex);
-        return spies.lastSimulatedGameDay;
-    }
-} // namespace NarrativeEngine::GossipSim

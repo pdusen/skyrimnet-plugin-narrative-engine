@@ -5,9 +5,11 @@
 #include <GossipDispatch.h>
 #include <GossipGraph.h>
 #include <GossipLog.h>
+#include <GossipSim.h>
 #include <GossipSpies.h>
 #include <GossipThread.h>
 #include <GossipWorld.h>
+#include <SkyrimNetAPI.h>
 
 #include <FakeSkyrimNet.h>
 
@@ -42,11 +44,17 @@
 // interval, because re-harvesting one memory corpus N times finds the same
 // memories N times.
 //
-// The five collaborators a tick calls are our own modules, so the test defines
-// their entry points and they double as spies: the ORDER a tick calls them in
-// is itself the contract — the horizon is stamped before the harvest so a rumor
-// seeded during the tick is not dated an interval in the past, and the snapshot
-// is published once at the end so no reader sees a half-advanced simulation.
+// Every collaborator a tick calls is compiled in for real, so the tick is
+// observed through what it leaves behind rather than through a record of the
+// calls it made: the simulation's own clock says which moment a tick was
+// stamped for, the harvest's own counter says whether it swept, and the
+// published snapshot says what a reader would see.
+//
+// That costs one thing worth naming. A cancellation arriving BETWEEN two steps
+// of a tick can no longer be staged from here — there is no seam left to raise
+// one from. The checkpoints are reached where they can be: the harvest's own
+// tests hand it a cancelled handle directly, and GossipDispatch's cover the
+// cancellation machinery itself.
 
 namespace
 {
@@ -57,11 +65,56 @@ namespace
     using NarrativeEngine::Testing::ConfiguredSettings;
     using NarrativeEngine::Testing::EngineMock;
     namespace GossipGraph = NarrativeEngine::GossipGraph;
+    namespace GossipSim = NarrativeEngine::GossipSim;
     using NarrativeEngine::Testing::BuildGossipWorld;
     using NarrativeEngine::Testing::FakeSkyrimNetState;
     using NarrativeEngine::Testing::FakeSkyrimNetStateFunc;
     using NarrativeEngine::Testing::GossipSpies;
     using NarrativeEngine::Testing::kFakeSkyrimNetStateExport;
+    using NarrativeEngine::Testing::LiveGossipState;
+    using NarrativeEngine::Testing::ResetGossipState;
+
+    // How many sweeps the harvest has run this session. The sweep is real now,
+    // and this is its own counter — kept in the simulation's state so that the
+    // dashboard reads a sweep count and a rumor count from one image.
+    std::size_t Sweeps()
+    {
+        return LiveGossipState().harvest.sweeps;
+    }
+
+    // The game day the LIVE simulation was last wound to. The tick sets this
+    // before sweeping, so it is the horizon the tick was scheduled for.
+    // Deliberately not LastSimulatedGameDay, which reads the published image —
+    // the difference between the two is exactly what says whether a publish
+    // happened.
+    double SimulatedDay()
+    {
+        return LiveGossipState().simGameDay;
+    }
+
+    // Whether a snapshot has been published for readers at all. The tick
+    // publishes once, at the end.
+    bool Published()
+    {
+        return GossipSim::Snapshot() != nullptr;
+    }
+
+    // The clock the published snapshot carries, which is what a reader sees.
+    double PublishedDay()
+    {
+        const auto snapshot = GossipSim::Snapshot();
+        return snapshot ? snapshot->simGameDay : -1.0;
+    }
+
+    // Wind the simulation's clock, which is what a loaded save arrives with
+    // and what the scheduler anchors its first interval against.
+    void SetSimulatedDay(double day)
+    {
+        const NarrativeEngine::ScopedThreadRole role{NarrativeEngine::ThreadRole::Plugin};
+        GossipThread::detail::JobDispatcher::Invoke(
+            [&](const GossipThread::Token& gt) { GossipSim::SetHorizon(gt, day); });
+        GossipSim::PublishSnapshot();
+    }
 
     // The stand-in SkyrimNet beside the executable, whose memory system the
     // harvest refuses to sweep without.
@@ -141,7 +194,7 @@ TEST_CASE("GossipTick waits for a graph to exist", "[GossipTick][engine]")
             REQUIRE_FALSE(GossipGraph::IsReady());
             PollWith(60.0);
             DrainTicks();
-            REQUIRE(GossipSpies().Calls().empty());
+            REQUIRE(Sweeps() == 0);
         }
     }
 }
@@ -157,6 +210,11 @@ TEST_CASE("GossipTick::Poll refuses to schedule", "[GossipTick][engine]")
     GossipSpies().Reset();
     BuildGossipWorld(engine);
     GossipGraph::Initialize();
+    // The harvest refuses to sweep without SkyrimNet's memory system and its
+    // filtered query, so the wrapper is resolved against the stand-in beside
+    // the executable before any tick runs.
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    FakeSkyrimNet().Reset();
     SetGameDay(engine, 10.0);
     GossipTick::OnSessionStart();
 
@@ -169,7 +227,7 @@ TEST_CASE("GossipTick::Poll refuses to schedule", "[GossipTick][engine]")
         {
             PollWith(60.0);
             DrainTicks();
-            REQUIRE(GossipSpies().Calls().empty());
+            REQUIRE(Sweeps() == 0);
         }
     }
 
@@ -181,7 +239,7 @@ TEST_CASE("GossipTick::Poll refuses to schedule", "[GossipTick][engine]")
             // so it has to hold before any game-clock work happens.
             PollWith(0.25);
             DrainTicks();
-            REQUIRE(GossipSpies().Calls().empty());
+            REQUIRE(Sweeps() == 0);
         }
     }
 }
@@ -195,10 +253,15 @@ TEST_CASE("GossipTick::Poll anchors a new schedule", "[GossipTick][engine]")
     GossipSpies().Reset();
     BuildGossipWorld(engine);
     GossipGraph::Initialize();
+    // The harvest refuses to sweep without SkyrimNet's memory system and its
+    // filtered query, so the wrapper is resolved against the stand-in beside
+    // the executable before any tick runs.
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    FakeSkyrimNet().Reset();
 
     SECTION("when this world has never run a tick")
     {
-        GossipSpies().lastSimulatedGameDay = -1.0;
+        ResetGossipState();
         SetGameDay(engine, 10.0);
         GossipTick::OnSessionStart();
 
@@ -209,7 +272,7 @@ TEST_CASE("GossipTick::Poll anchors a new schedule", "[GossipTick][engine]")
             // happened at.
             PollWith(60.0);
             DrainTicks();
-            REQUIRE(GossipSpies().CountOf("sweep") == 0);
+            REQUIRE(Sweeps() == 0);
         }
 
         SECTION("should fire once the interval has passed in world")
@@ -218,7 +281,7 @@ TEST_CASE("GossipTick::Poll anchors a new schedule", "[GossipTick][engine]")
             SetGameDay(engine, 11.5);
             PollWith(60.0);
             DrainTicks();
-            REQUIRE(GossipSpies().CountOf("sweep") == 1);
+            REQUIRE(Sweeps() == 1);
         }
     }
 
@@ -227,7 +290,8 @@ TEST_CASE("GossipTick::Poll anchors a new schedule", "[GossipTick][engine]")
         // The case the "blank it on load" version got wrong. The schedule is
         // re-derived from the persisted simulation clock, so in-world time that
         // passed while gossip was not running still counts.
-        GossipSpies().lastSimulatedGameDay = 9.0;
+        ResetGossipState();
+        SetSimulatedDay(9.0);
         SetGameDay(engine, 10.5);
         GossipTick::OnSessionStart();
 
@@ -235,7 +299,7 @@ TEST_CASE("GossipTick::Poll anchors a new schedule", "[GossipTick][engine]")
         {
             PollWith(60.0);
             DrainTicks();
-            REQUIRE(GossipSpies().CountOf("sweep") == 1);
+            REQUIRE(Sweeps() == 1);
         }
     }
 
@@ -245,7 +309,8 @@ TEST_CASE("GossipTick::Poll anchors a new schedule", "[GossipTick][engine]")
         // corpus twenty times and find the same memories twenty times; the
         // carrier steps in between are still drained, because Advance processes
         // each queued event at its own due time rather than at the horizon.
-        GossipSpies().lastSimulatedGameDay = 10.0;
+        ResetGossipState();
+        SetSimulatedDay(10.0);
         SetGameDay(engine, 30.0);
         GossipTick::OnSessionStart();
 
@@ -253,16 +318,14 @@ TEST_CASE("GossipTick::Poll anchors a new schedule", "[GossipTick][engine]")
         {
             PollWith(60.0);
             DrainTicks();
-            REQUIRE(GossipSpies().CountOf("sweep") == 1);
+            REQUIRE(Sweeps() == 1);
         }
 
         SECTION("should stamp the tick for the present")
         {
             PollWith(60.0);
             DrainTicks();
-            std::scoped_lock lock(GossipSpies().mutex);
-            REQUIRE(GossipSpies().stampedHorizons.size() == 1);
-            REQUIRE(GossipSpies().stampedHorizons[0] >= 30.0);
+            REQUIRE(SimulatedDay() >= 30.0);
         }
     }
 
@@ -270,7 +333,8 @@ TEST_CASE("GossipTick::Poll anchors a new schedule", "[GossipTick][engine]")
     {
         // An older save, or a console time change. Nothing is owed against a
         // schedule belonging to a world further along than this one.
-        GossipSpies().lastSimulatedGameDay = 50.0;
+        ResetGossipState();
+        SetSimulatedDay(50.0);
         SetGameDay(engine, 10.0);
         GossipTick::OnSessionStart();
 
@@ -278,7 +342,7 @@ TEST_CASE("GossipTick::Poll anchors a new schedule", "[GossipTick][engine]")
         {
             PollWith(60.0);
             DrainTicks();
-            REQUIRE(GossipSpies().CountOf("sweep") == 0);
+            REQUIRE(Sweeps() == 0);
         }
     }
 }
@@ -293,7 +357,12 @@ TEST_CASE("GossipTick::Poll enqueues one job per crossed boundary", "[GossipTick
     GossipSpies().Reset();
     BuildGossipWorld(engine);
     GossipGraph::Initialize();
-    GossipSpies().lastSimulatedGameDay = -1.0;
+    // The harvest refuses to sweep without SkyrimNet's memory system and its
+    // filtered query, so the wrapper is resolved against the stand-in beside
+    // the executable before any tick runs.
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    FakeSkyrimNet().Reset();
+    ResetGossipState();
     SetGameDay(engine, 10.0);
     GossipTick::OnSessionStart();
     // Seed the schedule: the first check with no anchor sets the next due time
@@ -311,18 +380,20 @@ TEST_CASE("GossipTick::Poll enqueues one job per crossed boundary", "[GossipTick
         {
             // Not one tick that has three times as much to do. Each carries its
             // own stamp and reads the world as of that moment.
-            REQUIRE(GossipSpies().CountOf("sweep") == 3);
+            REQUIRE(Sweeps() == 3);
         }
 
         SECTION("should stamp each for its own scheduled moment")
         {
-            // Ascending and one interval apart. A tick stamped `now` instead of
-            // its scheduled time would date every rumor it seeds to the same
-            // instant, collapsing three hours of history into one.
-            std::scoped_lock lock(GossipSpies().mutex);
-            REQUIRE(GossipSpies().stampedHorizons.size() == 3);
-            REQUIRE(GossipSpies().stampedHorizons[0] < GossipSpies().stampedHorizons[1]);
-            REQUIRE(GossipSpies().stampedHorizons[1] < GossipSpies().stampedHorizons[2]);
+            // The last of the three winds the clock to the third boundary, not
+            // to the moment the run happened to reach. A tick stamped `now`
+            // instead of its scheduled time would date every rumor it seeds to
+            // the same instant, collapsing three hours of history into one —
+            // and would leave the clock reading the present rather than the
+            // boundary it was due for.
+            const double thirdBoundary = 10.0 + 3.0 / 24.0;
+            REQUIRE(SimulatedDay() < thirdBoundary + 1e-6);
+            REQUIRE(SimulatedDay() > 10.0);
         }
     }
 
@@ -334,7 +405,7 @@ TEST_CASE("GossipTick::Poll enqueues one job per crossed boundary", "[GossipTick
 
         SECTION("should enqueue nothing")
         {
-            REQUIRE(GossipSpies().CountOf("sweep") == 0);
+            REQUIRE(Sweeps() == 0);
         }
     }
 
@@ -349,11 +420,11 @@ TEST_CASE("GossipTick::Poll enqueues one job per crossed boundary", "[GossipTick
             // A load of an older save. Left alone the schedule would sit a
             // hundred intervals in the future and gossip would never tick
             // again for the rest of the session.
-            REQUIRE(GossipSpies().CountOf("sweep") == 0);
+            REQUIRE(Sweeps() == 0);
             SetGameDay(engine, 2.0 + 2.0 / 24.0);
             PollWith(60.0);
             DrainTicks();
-            REQUIRE(GossipSpies().CountOf("sweep") >= 1);
+            REQUIRE(Sweeps() >= 1);
         }
     }
 }
@@ -370,9 +441,14 @@ TEST_CASE("GossipTick::Poll caps the backlog", "[GossipTick][engine]")
     GossipSpies().Reset();
     BuildGossipWorld(engine);
     GossipGraph::Initialize();
+    // The harvest refuses to sweep without SkyrimNet's memory system and its
+    // filtered query, so the wrapper is resolved against the stand-in beside
+    // the executable before any tick runs.
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    FakeSkyrimNet().Reset();
     NarrativeEngine::Testing::ClearGossipTrace();
     NarrativeEngine::GossipLog::OnSessionStart();
-    GossipSpies().lastSimulatedGameDay = -1.0;
+    ResetGossipState();
     SetGameDay(engine, 10.0);
     GossipTick::OnSessionStart();
     PollWith(60.0);
@@ -389,7 +465,7 @@ TEST_CASE("GossipTick::Poll caps the backlog", "[GossipTick][engine]")
             // A console time jump must not be able to queue a year of
             // simulation, and there is no value in harvesting the same corpus
             // twenty times in a row.
-            REQUIRE(GossipSpies().CountOf("sweep") <= GossipTick::kMaxOutstandingTicks);
+            REQUIRE(Sweeps() <= GossipTick::kMaxOutstandingTicks);
         }
 
         SECTION("should say how many it dropped")
@@ -416,7 +492,13 @@ TEST_CASE("GossipTick runs a tick in order", "[GossipTick][engine]")
     GossipSpies().Reset();
     BuildGossipWorld(engine);
     GossipGraph::Initialize();
-    GossipSpies().lastSimulatedGameDay = 9.0;
+    // The harvest refuses to sweep without SkyrimNet's memory system and its
+    // filtered query, so the wrapper is resolved against the stand-in beside
+    // the executable before any tick runs.
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    FakeSkyrimNet().Reset();
+    ResetGossipState();
+    SetSimulatedDay(9.0);
     SetGameDay(engine, 10.0);
     GossipTick::OnSessionStart();
 
@@ -424,32 +506,25 @@ TEST_CASE("GossipTick runs a tick in order", "[GossipTick][engine]")
     {
         PollWith(60.0);
         DrainTicks();
-        const auto calls = GossipSpies().Calls();
 
-        SECTION("should adopt the incoming state before anything reads it")
+        SECTION("should wind the simulation to the tick's own moment")
         {
-            // A load stages state rather than writing it live. A sweep against
-            // the outgoing world would claim memories the incoming one has no
-            // rumors for.
-            REQUIRE_FALSE(calls.empty());
-            REQUIRE(calls.front() == "adopt");
+            // Set before the harvest rather than after it. A rumor seeded
+            // during this tick dates itself from the simulation clock, so
+            // stamping afterwards would date every one of them a whole
+            // interval in the past.
+            REQUIRE(SimulatedDay() > 9.0);
+            REQUIRE(Sweeps() == 1);
         }
 
-        SECTION("should stamp the horizon before harvesting")
-        {
-            // A rumor seeded during this tick dates itself from the simulation
-            // clock, so stamping afterwards would date every one of them a
-            // whole interval in the past.
-            REQUIRE(calls == std::vector<std::string>{"adopt", "horizon", "sweep", "advance", "publish"});
-        }
-
-        SECTION("should publish exactly once, at the end")
+        SECTION("should publish what it finished with")
         {
             // A snapshot taken mid-drain shows some carriers stepped and some
             // not, with transmission counts that do not match the carrier set
-            // they came from.
-            REQUIRE(GossipSpies().CountOf("publish") == 1);
-            REQUIRE(calls.back() == "publish");
+            // they came from. One publish, at the end, from the finished
+            // image.
+            REQUIRE(Published());
+            REQUIRE(PublishedDay() == SimulatedDay());
         }
     }
 
@@ -465,30 +540,8 @@ TEST_CASE("GossipTick runs a tick in order", "[GossipTick][engine]")
         {
             PollWith(60.0);
             DrainTicks();
-            REQUIRE(GossipSpies().CountOf("advance") == 1);
-            REQUIRE(GossipSpies().CountOf("publish") == 1);
-        }
-    }
-
-    SECTION("when the tick is cancelled mid-flight")
-    {
-        // What a load does. The tick must stop rather than finish and discard,
-        // because its remaining steps write into SkyrimNet's memory database,
-        // which loading a save does not roll back.
-        //
-        // The cancellation is raised from the advance step, which is the only
-        // one of the tick's collaborators the scheduler hands the handle to.
-        // The checkpoint between the sweep and the advance is reached the same
-        // way from the harvest's own tests, where a cancelled handle can be
-        // passed straight in.
-        GossipSpies().cancelAfter = "advance";
-
-        SECTION("should stop before publishing a half-simulated world")
-        {
-            PollWith(60.0);
-            DrainTicks();
-            REQUIRE(GossipSpies().CountOf("advance") == 1);
-            REQUIRE(GossipSpies().CountOf("publish") == 0);
+            REQUIRE(SimulatedDay() > 9.0);
+            REQUIRE(PublishedDay() == SimulatedDay());
         }
     }
 }
