@@ -1,5 +1,8 @@
 #include "FakeSkyrimNet.h"
 
+#include <chrono>
+#include <thread>
+
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -174,6 +177,12 @@ extern "C"
         // SkyrimNet delivered on, and calling straight back from here is the
         // sharpest version of that: a wrapper that invoked the callback directly
         // would run it on the caller's own thread and pass.
+        // A model that has not finished thinking. Spun on rather than waited
+        // on, because the caller is blocked here and the test clearing it is
+        // on another thread; there is nothing to signal through.
+        while (s.holdPromptAnswer.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds{1});
+        }
         if (callback) {
             callback(s.promptResponse, s.sendPromptSucceeds ? 1 : 0);
         }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 
@@ -36,6 +38,14 @@ namespace NarrativeEngine::Testing
         bool registerDecoratorSucceeds = true;
         bool sendPromptAccepts = true;
         bool sendPromptSucceeds = true;
+
+        // While set, a prompt is accepted and then never answered until it is
+        // cleared. That is what a model still thinking looks like, and it is
+        // the only way for a test to hold a caller's in-flight latch without
+        // a real round trip to hold it for them. Read from the fake's own
+        // thread-agnostic loop, so the test clearing it must do so from
+        // another thread than the one that is waiting.
+        std::atomic<bool> holdPromptAnswer{false};
 
         std::uint64_t uuidAnswer = 0x00ABCDEF12345678ull;
         int addMemoryAnswer = 77;
@@ -108,9 +118,68 @@ namespace NarrativeEngine::Testing
         {
             const int keptVersion = version;
             const int keptQueries = versionQueries;
-            *this = FakeSkyrimNetState{};
+            // Field by field rather than by assignment: the hold flag is an
+            // atomic and the whole struct is no longer copyable.
+            FakeSkyrimNetState fresh;
             version = keptVersion;
             versionQueries = keptQueries;
+            memorySystemReady = fresh.memorySystemReady;
+            hasDecoratorAnswer = fresh.hasDecoratorAnswer;
+            registerDecoratorSucceeds = fresh.registerDecoratorSucceeds;
+            sendPromptAccepts = fresh.sendPromptAccepts;
+            sendPromptSucceeds = fresh.sendPromptSucceeds;
+            holdPromptAnswer.store(false);
+            uuidAnswer = fresh.uuidAnswer;
+            addMemoryAnswer = fresh.addMemoryAnswer;
+            registerDecoratorCalls = 0;
+            sendPromptCalls = 0;
+            addMemoryCalls = 0;
+            recentEventsCalls = 0;
+            memoriesForActorCalls = 0;
+            queryMemoriesCalls = 0;
+            recentDialogueCalls = 0;
+            engagementCalls = 0;
+            lastFormID = 0;
+            lastMaxCount = 0;
+            lastImportance = 0.0f;
+            lastExcludePlayer = false;
+            lastPlayerEventsOnly = false;
+            lastShortWindow = 0.0;
+            lastMediumWindow = 0.0;
+            lastPromptName[0] = '\0';
+            lastVariant[0] = '\0';
+            lastContextJson[0] = '\0';
+            lastEventFilter[0] = '\0';
+            lastContextQuery[0] = '\0';
+            lastQueryJson[0] = '\0';
+            lastDecoratorName[0] = '\0';
+            lastDecoratorDescription[0] = '\0';
+            recordedDecorators = 0;
+            decoratorNames[0][0] = '\0';
+            decoratorResults[0][0] = '\0';
+            lastMemoryText[0] = '\0';
+            lastMemoryType[0] = '\0';
+            lastEmotion[0] = '\0';
+            lastLocation[0] = '\0';
+            lastTagsWereNull = false;
+            lastRelatedActorsWereNull = false;
+            lastTagsJson[0] = '\0';
+            lastRelatedActorsJson[0] = '\0';
+            CopyLiteral(eventsJson, "[]");
+            CopyLiteral(memoriesJson, "[]");
+            CopyLiteral(queryMemoriesJson, "[]");
+            CopyLiteral(dialogueJson, "[]");
+            CopyLiteral(engagementJson, "[]");
+            CopyLiteral(promptResponse, "the response");
+        }
+
+    private:
+        template <std::size_t N> static void CopyLiteral(char (&dest)[N], const char* text)
+        {
+            std::size_t i = 0;
+            for (; i + 1 < N && text[i] != '\0'; ++i)
+                dest[i] = text[i];
+            dest[i] = '\0';
         }
     };
 

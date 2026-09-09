@@ -768,6 +768,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/NPCVisitBeat.cpp"
         "${CMAKE_SOURCE_DIR}/src/AmbushBeat.cpp"
         "${CMAKE_SOURCE_DIR}/src/LetterPool.cpp"
+        "${CMAKE_SOURCE_DIR}/src/BeatSystem.cpp"
     )
 
     if(engine_test_sources)

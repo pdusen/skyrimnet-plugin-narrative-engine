@@ -17,8 +17,10 @@
 
 #include <Windows.h>
 
+#include <chrono>
 #include <cstddef>
 #include <string>
+#include <thread>
 
 // Tests for the Director's per-tick evaluation.
 //
@@ -77,6 +79,14 @@ namespace
         for (; i + 1 < N && i < text.size(); ++i)
             dest[i] = text[i];
         dest[i] = '\0';
+    }
+
+    // How many decisions have been filed. Every path out of the beat system
+    // files one, whether or not a beat was chosen, so this counts evaluations
+    // that ran the whole way through rather than beats that fired.
+    std::size_t Decisions()
+    {
+        return DecisionLog::Tail(1000).size();
     }
 
     // Runs one evaluation the way the tick driver does, on a plugin thread.
@@ -346,13 +356,15 @@ TEST_CASE("EvaluationPipeline hands its decision on", "[EvaluationPipeline][engi
 
 TEST_CASE("EvaluationPipeline runs one evaluation at a time", "[EvaluationPipeline][engine]")
 {
-    // The single-flight latch, which is what stands between a slow LLM and a
-    // burst of queued evaluations arriving at once.
+    // The single-flight latch, which is what stands between a slow model and
+    // a burst of queued evaluations arriving at once.
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
     DownstreamSpies().Reset();
+    DecisionLog::Clear();
     REQUIRE(SkyrimNetAPI::Initialize());
     auto& llm = FakeLLM();
+    llm.Reset();
     llm.sendPromptAccepts = true;
     llm.sendPromptSucceeds = true;
     Say(llm.promptResponse, "{\"tension_score\": 30}");
@@ -364,26 +376,30 @@ TEST_CASE("EvaluationPipeline runs one evaluation at a time", "[EvaluationPipeli
             REQUIRE_FALSE(EvaluationPipeline::IsEvaluationInFlight());
         }
 
-        SECTION("should hand a decision to the beat system")
+        SECTION("should file the decision it reached")
         {
             Evaluate();
-            REQUIRE(DownstreamSpies().beatsConsidered.load() == 1);
+            REQUIRE(Decisions() == 1);
         }
 
-        SECTION("should be idle again once the beat system is finished")
+        SECTION("should be idle again once the decision is filed")
         {
             Evaluate();
             REQUIRE_FALSE(EvaluationPipeline::IsEvaluationInFlight());
         }
     }
 
-    SECTION("when the beat system is still holding the last decision")
+    SECTION("when the model has not answered the last one yet")
     {
-        // Which is what an LLM round trip outlasting the tick interval looks
-        // like from here.
-        DownstreamSpies().holdCompletion = true;
-        Evaluate();
-        REQUIRE(DownstreamSpies().beatsConsidered.load() == 1);
+        // Accepted and never answered, which is what a round trip outlasting
+        // the tick interval actually is. Run on a worker because the caller
+        // is what blocks.
+        llm.holdPromptAnswer = true;
+        std::thread worker{[] { Evaluate(); }};
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+        while (!EvaluationPipeline::IsEvaluationInFlight() && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds{1});
+        }
 
         SECTION("should report itself busy")
         {
@@ -392,21 +408,26 @@ TEST_CASE("EvaluationPipeline runs one evaluation at a time", "[EvaluationPipeli
 
         SECTION("should refuse to start another")
         {
-            // Not queue it. One evaluation per missed interval would arrive as
-            // a burst the moment the first returned, and every one of them
+            // Not queue it. One evaluation per missed interval would arrive
+            // as a burst the moment the first returned, and every one of them
             // would be reasoning about a world that had already moved.
             Evaluate();
             Evaluate();
-            REQUIRE(DownstreamSpies().beatsConsidered.load() == 1);
+            REQUIRE(Decisions() == 0);
         }
 
-        SECTION("should start another once it is released")
+        SECTION("should start another once the answer arrives")
         {
-            DownstreamSpies().holdCompletion = false;
-            DownstreamSpies().ReleaseHeld();
+            llm.holdPromptAnswer = false;
+            worker.join();
             REQUIRE_FALSE(EvaluationPipeline::IsEvaluationInFlight());
             Evaluate();
-            REQUIRE(DownstreamSpies().beatsConsidered.load() == 2);
+            REQUIRE(Decisions() == 2);
+        }
+
+        llm.holdPromptAnswer = false;
+        if (worker.joinable()) {
+            worker.join();
         }
     }
 
@@ -420,7 +441,7 @@ TEST_CASE("EvaluationPipeline runs one evaluation at a time", "[EvaluationPipeli
             // A failed call is not a decision. Passing the empty response
             // through would file a parse failure as though the model had
             // answered.
-            REQUIRE(DownstreamSpies().beatsConsidered.load() == 0);
+            REQUIRE(Decisions() == 0);
         }
 
         SECTION("should not stay latched")

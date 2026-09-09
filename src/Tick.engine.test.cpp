@@ -3,10 +3,12 @@
 #include <AsyncDispatch.h>
 #include <CombatEventLog.h>
 #include <ConfiguredSettings.h>
+#include <DecisionLog.h>
 #include <DownstreamSpies.h>
 #include <EngineMock.h>
 #include <EvalDispatch.h>
 #include <EventHistoryWriter.h>
+#include <FakeSkyrimNet.h>
 #include <FineRoads.h>
 #include <GossipSpies.h>
 #include <PluginThread.h>
@@ -15,6 +17,8 @@
 #include <nlohmann/json.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+
+#include <Windows.h>
 
 #include <atomic>
 #include <chrono>
@@ -86,11 +90,22 @@ namespace
         return mock ? mock->ui.pausedQueries.load() : 0;
     }
 
-    // How many decisions have reached the beat system, which is one per
-    // evaluation the driver has run to completion.
+    NarrativeEngine::Testing::FakeSkyrimNetState& FakeLLM()
+    {
+        HMODULE module = ::LoadLibraryA("SkyrimNet");
+        REQUIRE(module != nullptr);
+        auto* accessor = reinterpret_cast<NarrativeEngine::Testing::FakeSkyrimNetStateFunc>(
+            reinterpret_cast<void*>(::GetProcAddress(module, NarrativeEngine::Testing::kFakeSkyrimNetStateExport)));
+        REQUIRE(accessor != nullptr);
+        return *accessor();
+    }
+
+    // How many decisions have been filed, which is one per evaluation the
+    // driver has run to completion: every path out of the beat system files
+    // one, whether or not a beat was chosen.
     int Evaluations()
     {
-        return NarrativeEngine::Testing::DownstreamSpies().beatsConsidered.load();
+        return static_cast<int>(NarrativeEngine::DecisionLog::Tail(1000).size());
     }
 
     bool HistoryFileHasContent()
@@ -202,6 +217,9 @@ TEST_CASE("Tick polls the event logs", "[Tick][engine]")
                                       "[FineRoads]\nbFineRoadsEnabled=1\n"
                                       "[EventHistory]\nbEventHistoryEnabled=1\niEventHistoryFlushIntervalSeconds=1\n"};
     NarrativeEngine::Testing::DownstreamSpies().Reset();
+    // The decision log is where an evaluation lands, and it outlives any one
+    // case, so a leaf counting from zero has to start it from zero.
+    NarrativeEngine::DecisionLog::Clear();
     NarrativeEngine::Testing::GossipSpies().Reset();
     Tick::SetEnabled(true);
     // The history writer is compiled in for real, so a session is opened here
@@ -285,6 +303,9 @@ TEST_CASE("Tick fires the Director", "[Tick][engine]")
     const ConfiguredSettings settings{"[Director]\nbTickEnabled=1\niTickIntervalSeconds=1\n"
                                       "[Gossip]\nbGossipEnabled=1\n"};
     NarrativeEngine::Testing::DownstreamSpies().Reset();
+    // The decision log is where an evaluation lands, and it outlives any one
+    // case, so a leaf counting from zero has to start it from zero.
+    NarrativeEngine::DecisionLog::Clear();
     NarrativeEngine::Testing::GossipSpies().Reset();
     Tick::SetEnabled(true);
     // The evaluation ends in a call to the LLM, so the wrapper has to have
@@ -325,27 +346,44 @@ TEST_CASE("Tick fires the Director", "[Tick][engine]")
 
     SECTION("when the previous evaluation is still running")
     {
-        // The beat system keeps the decision rather than finishing with it,
-        // which is what a round trip that outlasts the interval looks like.
-        NarrativeEngine::Testing::DownstreamSpies().holdCompletion = true;
+        // The model accepts the prompt and never answers, which is what a
+        // round trip that outlasts the interval actually is. Released by the
+        // guard on the way out, before the driver is stopped -- a driver
+        // thread still spinning on the answer would never join.
+        FakeLLM().holdPromptAnswer = true;
+        // Counted from here, because prompts sent by earlier leaves of this
+        // case are still on the tally.
+        FakeLLM().sendPromptCalls = 0;
         const RunningDriver driver;
+        // Declared after the driver so it is destroyed before it: a driver
+        // thread still spinning on an answer would never join.
+        struct ReleaseAnswer
+        {
+            ~ReleaseAnswer()
+            {
+                FakeLLM().holdPromptAnswer = false;
+            }
+        } release;
+        (void)release;
 
         SECTION("should skip rather than queue a catch-up burst")
         {
-            // One evaluation gets through and is still running; every interval
-            // after it must pass without starting another. Queueing one per
-            // missed interval would fire the whole backlog the moment the
-            // first returned.
-            REQUIRE(Eventually([] { return Evaluations() >= 1; }, kFireTimeout));
-            REQUIRE_FALSE(Eventually([] { return Evaluations() > 1; }, kFireTimeout));
+            // One evaluation gets through and is still waiting on the model;
+            // every interval after it must pass without starting another.
+            // Queueing one per missed interval would fire the whole backlog
+            // the moment the first answer arrived. Counted in prompts rather
+            // than decisions: nothing has been decided yet, which is the
+            // point.
+            REQUIRE(Eventually([] { return FakeLLM().sendPromptCalls >= 1; }, kFireTimeout));
+            REQUIRE_FALSE(Eventually([] { return FakeLLM().sendPromptCalls > 1; }, kFireTimeout));
         }
 
         SECTION("should fire again once it finishes")
         {
+            REQUIRE(Eventually([] { return FakeLLM().sendPromptCalls >= 1; }, kFireTimeout));
+            FakeLLM().holdPromptAnswer = false;
             REQUIRE(Eventually([] { return Evaluations() >= 1; }, kFireTimeout));
-            NarrativeEngine::Testing::DownstreamSpies().holdCompletion = false;
-            NarrativeEngine::Testing::DownstreamSpies().ReleaseHeld();
-            REQUIRE(Eventually([] { return Evaluations() > 1; }, kFireTimeout));
+            REQUIRE(Eventually([] { return FakeLLM().sendPromptCalls > 1; }, kFireTimeout));
         }
     }
 }
@@ -356,6 +394,9 @@ TEST_CASE("Tick::Start and Stop", "[Tick][engine]")
     const ConfiguredSettings settings{"[Director]\nbTickEnabled=1\niTickIntervalSeconds=1\n"
                                       "[Gossip]\nbGossipEnabled=1\n"};
     NarrativeEngine::Testing::DownstreamSpies().Reset();
+    // The decision log is where an evaluation lands, and it outlives any one
+    // case, so a leaf counting from zero has to start it from zero.
+    NarrativeEngine::DecisionLog::Clear();
     NarrativeEngine::Testing::GossipSpies().Reset();
 
     SECTION("when start is called twice")
