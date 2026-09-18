@@ -15,6 +15,8 @@
 #include <Settings.h>
 #include <SKSECosaveIO.h>
 #include <SkyrimNetAPI.h>
+#include <StuckRecovery.h>
+#include <VisitArrivalPoint.h>
 #include <VisitComposer.h>
 #include <VisitConclusionPoll.h>
 #include <VisitState.h>
@@ -26,6 +28,7 @@
 #include <RE/B/BGSRefAlias.h>
 #include <RE/B/BSFixedString.h>
 #include <RE/C/Calendar.h>
+#include <RE/P/PlayerCharacter.h>
 #include <RE/T/TESDeathEvent.h>
 #include <RE/T/TESFaction.h>
 #include <RE/T/TESObjectCELL.h>
@@ -53,8 +56,20 @@ namespace NarrativeEngine
         constexpr const char* kVisitQuestEditorID = "_ne_VisitQuest";
         constexpr const char* kVisitFactionEditorID = "_ne_VisitSenderFaction";
         constexpr const char* kSenderAliasName = "Sender";
-        constexpr const char* kSpawnMarkerAliasName = "SpawnMarker";
         constexpr const char* kReturnAnchorAliasName = "ReturnAnchor";
+        constexpr const char* kQuestScriptName = "_ne_VisitQuest";
+
+        // XMarkerHeading, the static both runtime markers are made
+        // from. Carries a facing as well as a position, which is what
+        // lets the arrival marker point the sender at the player.
+        // Verified against the Spriggit export: 000034 is
+        // XMarkerHeading and 00003B is the plain XMarker.
+        constexpr RE::FormID kXMarkerHeadingFormID = 0x00000034;
+
+        // Ticks to wait for both force-fills to land before giving up.
+        // The master poll is ~250ms, so this is ~5 seconds — the same
+        // bound AmbushBeat uses for the same dispatch-then-read shape.
+        constexpr int kFillVerifyMaxTicks = 20;
 
         constexpr std::int8_t kSenderRankCandidate = 0;
         constexpr std::int8_t kSenderRankDesignated = 4;
@@ -73,8 +88,8 @@ namespace NarrativeEngine
         RE::TESQuest* g_visitQuest = nullptr;
         RE::TESFaction* g_visitSenderFaction = nullptr;
         RE::BGSRefAlias* g_senderAlias = nullptr;
-        RE::BGSRefAlias* g_spawnMarkerAlias = nullptr;
         RE::BGSRefAlias* g_returnAnchorAlias = nullptr;
+        RE::TESBoundObject* g_xMarkerBase = nullptr;
 
         // ---- Small helpers -----------------------------------------
 
@@ -177,9 +192,13 @@ namespace NarrativeEngine
             Start,
             ComposingLLM,
             LLMResultReady,
-            Dispatching,
-            Succeeded, // -> RUNNING
-            Failed,    // -> CLEANUP
+            SelectingPoint, // road-graph arrival search
+            StartingQuest,  // snapshot pose, place anchor, EnsureQuestStarted
+            Warping,        // place arrival marker, MoveTo, dispatch both fills
+            VerifyingFill,  // read both aliases back on a later tick
+            Arming,         // bind the package, begin the escort
+            Succeeded,      // -> RUNNING
+            Failed,         // -> CLEANUP
         };
 
         std::mutex g_sessionMutex;
@@ -272,6 +291,25 @@ namespace NarrativeEngine
         // RUNNING tick cadence — one marshaled main-thread stage tick
         // every kRunningCheckEveryNTicks worker ticks (4 = ~1s at
         // 250ms).
+        // Where the sender is warped to, and the road behind it that
+        // StuckRecovery escalates through. Written by SelectingPoint,
+        // read by Warping and Arming. Guarded by g_sessionMutex.
+        VisitArrivalPoint::Result g_arrival;
+
+        // The two references this beat creates. The arrival marker is a
+        // MoveTo target and is deleted a tick later; the anchor lives for
+        // the whole visit and is deleted by the quest's Shutdown
+        // fragment. Both are tracked here so a failure path can clean up
+        // whatever had been made by the time it fired.
+        std::atomic<RE::FormID> g_arrivalMarkerFormID = 0;
+
+        std::atomic<int> g_fillVerifyTicks = 0;
+
+        // Supervises the walk in, fed the arrival search's fallbacks.
+        // Only the approach is escorted -- once the sender is talking to
+        // the player there is nothing left to be stuck on.
+        StuckRecovery::Escort g_escort{"visit"};
+
         constexpr int kRunningCheckEveryNTicks = 4;
         int g_runningTickCount = 0;
         std::atomic<bool> g_runningTaskInFlight = false;
@@ -303,6 +341,13 @@ namespace NarrativeEngine
             g_discussSenderFormID.store(0, std::memory_order_release);
             g_runningTickCount = 0;
             g_runningTaskInFlight.store(false, std::memory_order_release);
+            g_fillVerifyTicks.store(0, std::memory_order_release);
+            g_arrivalMarkerFormID.store(0, std::memory_order_release);
+            g_escort.Clear();
+            {
+                std::scoped_lock lock(g_sessionMutex);
+                g_arrival = {};
+            }
             g_salutationDiscussLatch.Reset();
             g_discussSubPhase.store(DiscussSubPhase::Discussing, std::memory_order_release);
             {
@@ -823,7 +868,6 @@ namespace NarrativeEngine
         }
 
         void FireComposeLLM();
-        void DispatchQuest(const PluginThread::Token&);
 
         void FireComposeLLM()
         {
@@ -866,22 +910,105 @@ namespace NarrativeEngine
                                    });
         }
 
-        void DispatchQuest(const PluginThread::Token& pt)
+        // ---- COMPOSE sub-phases ------------------------------------
+        //
+        // Each one does its work through a blocking main-thread hop, sets
+        // the next sub-phase, and returns; the Tick after it picks up
+        // where this left off. Same shape as AmbushBeat's COMPOSE, and
+        // the reason VerifyingFill is a phase of its own rather than a
+        // line at the end of Warping: VMDispatchOnQuest reports that the
+        // call was QUEUED, not that it ran, so the aliases can only be
+        // read back on a later tick.
+
+        // Delete the temporary marker the sender was warped onto, if one
+        // is still outstanding. Safe to call more than once.
+        void DeleteArrivalMarker(const MainThread::Token&)
         {
-            MainThread::FireAndForget(pt, [](const MainThread::Token&) {
+            const RE::FormID markerID = g_arrivalMarkerFormID.exchange(0, std::memory_order_acq_rel);
+            if (markerID == 0) {
+                return;
+            }
+            auto* form = RE::TESForm::LookupByID(markerID);
+            auto* ref = form ? form->As<RE::TESObjectREFR>() : nullptr;
+            if (!ref) {
+                logger::warn("NPCVisitBeat: arrival marker 0x{:08X} no longer resolves", markerID);
+                return;
+            }
+            // Disable + SetDelete, not the Papyrus DisableNoWait /
+            // Delete pair -- neither of those has a CommonLibSSE-NG
+            // binding. This is the same teardown AmbushBeat uses on its
+            // own spawned references.
+            ref->Disable();
+            ref->SetDelete(true);
+            logger::info("NPCVisitBeat: arrival marker 0x{:08X} deleted", markerID);
+        }
+
+        // SelectingPoint -- where should this visitor come from?
+        //
+        // Deliberately ahead of StartingQuest: this is the step most
+        // likely to fail, and failing it here means there is no quest to
+        // tear down afterwards.
+        TickResult ComposeSelectPoint(const PluginThread::Token& pt)
+        {
+            const auto snap = VisitState::GetSnapshot();
+            if (snap.senderFormID == 0) {
+                SetSubPhase(ComposeSubPhase::Failed, "no_composition_at_dispatch");
+                return {};
+            }
+
+            std::string liveResolveReason;
+            auto* sender = MainThread::Run(pt, [&](const MainThread::Token&) {
+                return BeatParamHelpers::ResolveLiveSenderActor(snap.senderFormID, &liveResolveReason);
+            });
+            if (!sender) {
+                g_subPhase.Fail(ComposeSubPhase::Failed, std::move(liveResolveReason));
+                return {};
+            }
+
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            auto arrival = VisitArrivalPoint::Find(pt, sender, player);
+            if (!arrival.Ok()) {
+                // Not an error. There is no road they could have walked
+                // in on, and arriving from nowhere in particular is the
+                // thing this beat exists to stop doing.
+                logger::info("NPCVisitBeat: no arrival point for sender 0x{:08X} -- declining the visit",
+                             snap.senderFormID);
+                SetSubPhase(ComposeSubPhase::Failed, "arrival_no_point");
+                return {};
+            }
+
+            logger::info("NPCVisitBeat: arrival tier={} at ({:.0f},{:.0f},{:.0f}) with {} fallback(s)",
+                         VisitArrivalPoint::TierName(arrival.tier),
+                         arrival.point.x,
+                         arrival.point.y,
+                         arrival.point.z,
+                         arrival.fallbacks.size());
+            {
+                std::scoped_lock lock(g_sessionMutex);
+                g_arrival = std::move(arrival);
+            }
+            SetSubPhase(ComposeSubPhase::StartingQuest);
+            return {};
+        }
+
+        // StartingQuest -- snapshot the pose, plant the anchor, start the
+        // quest.
+        //
+        // The anchor is created BEFORE anything moves, because it marks
+        // where the sender was standing when the beat picked them. Once
+        // Warping has run, that place is no longer anywhere the sender
+        // can be asked about.
+        TickResult ComposeStartQuest(const PluginThread::Token& pt)
+        {
+            const bool ok = MainThread::Run(pt, [](const MainThread::Token& mt) {
                 auto snap = VisitState::GetSnapshot();
-                if (snap.senderFormID == 0) {
-                    SetSubPhase(ComposeSubPhase::Failed, "no_composition_at_dispatch");
-                    return;
-                }
-                std::string liveResolveReason;
-                RE::Actor* sender = BeatParamHelpers::ResolveLiveSenderActor(snap.senderFormID, &liveResolveReason);
+                std::string reason;
+                auto* sender = BeatParamHelpers::ResolveLiveSenderActor(snap.senderFormID, &reason);
                 if (!sender) {
-                    g_subPhase.Fail(ComposeSubPhase::Failed, std::move(liveResolveReason));
-                    return;
+                    logger::warn("NPCVisitBeat: sender no longer resolves at quest start ({})", reason);
+                    return false;
                 }
 
-                // Snapshot pre-dispatch pose so ReturnHome can teleport back.
                 snap.returnPosition = sender->GetPosition();
                 snap.returnAngleZ = sender->GetAngleZ();
                 if (auto* parentCell = sender->GetParentCell()) {
@@ -889,66 +1016,231 @@ namespace NarrativeEngine
                 }
                 snap.ignoreNudgeCount = 0;
                 snap.consecutivePollFailures = 0;
+
+                // PlaceObjectAtMe on the SENDER, so the anchor lands in
+                // the sender's own cell rather than the player's.
+                snap.returnAnchorFormID = 0;
+                if (g_xMarkerBase) {
+                    if (auto anchor = sender->PlaceObjectAtMe(g_xMarkerBase, /*a_forcePersist=*/true)) {
+                        snap.returnAnchorFormID = anchor->GetFormID();
+                    }
+                }
                 VisitState::SetSnapshot(snap);
-                logger::info("NPCVisitBeat: snapshotted sender at ({:.1f},{:.1f},{:.1f}) in "
-                             "cell 0x{:08X}",
+                logger::info("NPCVisitBeat: snapshotted sender at ({:.1f},{:.1f},{:.1f}) in cell "
+                             "0x{:08X}, anchor=0x{:08X}",
                              snap.returnPosition.x,
                              snap.returnPosition.y,
                              snap.returnPosition.z,
-                             snap.returnCellFormID);
+                             snap.returnCellFormID,
+                             snap.returnAnchorFormID);
+                if (snap.returnAnchorFormID == 0) {
+                    // Survivable: every cleanup path falls back to the
+                    // snapshotted position, and only the walk home is
+                    // lost. Worth a warning, not a failure.
+                    logger::warn("NPCVisitBeat: no return anchor could be placed -- the sender will be "
+                                 "teleported home rather than walking");
+                }
 
                 PromoteSenderToDesignated(sender);
 
                 bool engineResult = false;
                 const bool callOk = g_visitQuest->EnsureQuestStarted(engineResult, /*a_startNow=*/true);
                 if (!callOk || !engineResult) {
-                    const bool senderFilled = g_senderAlias && g_senderAlias->GetReference() != nullptr;
-                    const bool spawnFilled = g_spawnMarkerAlias && g_spawnMarkerAlias->GetReference() != nullptr;
-                    const bool anchorFilled = g_returnAnchorAlias && g_returnAnchorAlias->GetReference() != nullptr;
-                    logger::warn("NPCVisitBeat: EnsureQuestStarted failed (callOk={}, "
-                                 "engineResult={}) alias_state after failure: Sender_filled={} "
-                                 "SpawnMarker_filled={} ReturnAnchor_filled={} — demoting and "
-                                 "rolling back",
-                                 callOk,
-                                 engineResult,
-                                 senderFilled,
-                                 spawnFilled,
-                                 anchorFilled);
+                    logger::warn(
+                        "NPCVisitBeat: EnsureQuestStarted failed (callOk={}, engineResult={})", callOk, engineResult);
                     DemoteSenderToCandidate(sender);
-                    SetSubPhase(ComposeSubPhase::Failed, "ensure_quest_started_failed");
-                    return;
+                    DeleteArrivalMarker(mt);
+                    return false;
                 }
-                const RE::FormID senderAliasFilledID =
-                    (g_senderAlias && g_senderAlias->GetReference()) ? g_senderAlias->GetReference()->GetFormID() : 0u;
-                const RE::FormID spawnMarkerFilledID = (g_spawnMarkerAlias && g_spawnMarkerAlias->GetReference())
-                                                           ? g_spawnMarkerAlias->GetReference()->GetFormID()
-                                                           : 0u;
-                const RE::FormID returnAnchorFilledID = (g_returnAnchorAlias && g_returnAnchorAlias->GetReference())
-                                                            ? g_returnAnchorAlias->GetReference()->GetFormID()
-                                                            : 0u;
-                snap.returnAnchorFormID = returnAnchorFilledID;
-                VisitState::SetSnapshot(snap);
-                logger::info("NPCVisitBeat: EnsureQuestStarted ok — Sender=0x{:08X}, "
-                             "SpawnMarker=0x{:08X}, ReturnAnchor=0x{:08X}",
-                             senderAliasFilledID,
-                             spawnMarkerFilledID,
-                             returnAnchorFilledID);
-                if (senderAliasFilledID == 0 || returnAnchorFilledID == 0) {
-                    logger::warn("NPCVisitBeat: EnsureQuestStarted reported success but a "
-                                 "required alias is unfilled (Sender=0x{:08X}, "
-                                 "ReturnAnchor=0x{:08X}) — rolling back",
-                                 senderAliasFilledID,
-                                 returnAnchorFilledID);
-                    DemoteSenderToCandidate(sender);
-                    QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
-                    SetSubPhase(ComposeSubPhase::Failed, "ensure_quest_started_unfilled_alias");
-                    return;
-                }
-                g_salutationEnteredAtNormalSec.store(NormalElapsedNow());
-                g_lastDistanceLogNormalSec.store(0.0);
-                VisitState::SetComposingSender(false);
-                SetSubPhase(ComposeSubPhase::Succeeded);
+                return true;
             });
+
+            if (!ok) {
+                SetSubPhase(ComposeSubPhase::Failed, "quest_start_failed");
+                return {};
+            }
+            SetSubPhase(ComposeSubPhase::Warping);
+            return {};
+        }
+
+        // Warping -- put the sender on the arrival point and dispatch
+        // both force-fills.
+        //
+        // MoveTo rather than SetPosition: the sender may be in a
+        // different worldspace entirely, which raw coordinates would not
+        // survive. That needs a reference to move ONTO, hence the
+        // throwaway marker.
+        TickResult ComposeWarp(const PluginThread::Token& pt)
+        {
+            RE::NiPoint3 point{};
+            {
+                std::scoped_lock lock(g_sessionMutex);
+                point = g_arrival.point;
+            }
+
+            const bool ok = MainThread::Run(pt, [point](const MainThread::Token&) {
+                auto snap = VisitState::GetSnapshot();
+                std::string reason;
+                auto* sender = BeatParamHelpers::ResolveLiveSenderActor(snap.senderFormID, &reason);
+                auto* player = RE::PlayerCharacter::GetSingleton();
+                if (!sender || !player || !g_xMarkerBase) {
+                    logger::warn("NPCVisitBeat: cannot warp (sender={} player={} markerBase={})",
+                                 sender != nullptr,
+                                 player != nullptr,
+                                 g_xMarkerBase != nullptr);
+                    return false;
+                }
+
+                auto marker = player->PlaceObjectAtMe(g_xMarkerBase, /*a_forcePersist=*/true);
+                if (!marker) {
+                    logger::warn("NPCVisitBeat: PlaceObjectAtMe returned no arrival marker");
+                    return false;
+                }
+                marker->SetPosition(point);
+                // Face the player, so the sender arrives looking the way
+                // someone walking toward them would. MoveTo copies the
+                // target's rotation, which is why the marker is an
+                // XMarkerHeading rather than a plain XMarker.
+                const auto playerPos = player->GetPosition();
+                marker->data.angle.z = std::atan2(playerPos.x - point.x, playerPos.y - point.y);
+                marker->Update3DPosition(/*a_warp=*/true);
+                g_arrivalMarkerFormID.store(marker->GetFormID(), std::memory_order_release);
+
+                sender->MoveTo(marker.get());
+                logger::info("NPCVisitBeat: warped sender 0x{:08X} to ({:.0f},{:.0f},{:.0f}) via marker "
+                             "0x{:08X}",
+                             snap.senderFormID,
+                             point.x,
+                             point.y,
+                             point.z,
+                             marker->GetFormID());
+
+                // ForceRefTo has no native binding, so both fills go
+                // through the quest script. Fire-and-forget, hence the
+                // readback a tick later. Passed as FormIDs, not
+                // references; see
+                // docs/engine-findings/passing-references-to-papyrus-from-cpp.md.
+                QuestUtils::VMDispatchOnQuest(
+                    g_visitQuest, kQuestScriptName, "FillSenderSlot", static_cast<std::int32_t>(sender->GetFormID()));
+                if (snap.returnAnchorFormID != 0) {
+                    QuestUtils::VMDispatchOnQuest(g_visitQuest,
+                                                  kQuestScriptName,
+                                                  "FillReturnAnchorSlot",
+                                                  static_cast<std::int32_t>(snap.returnAnchorFormID));
+                }
+                return true;
+            });
+
+            if (!ok) {
+                MainThread::Run(pt, [](const MainThread::Token& mt) {
+                    DeleteArrivalMarker(mt);
+                    return 0;
+                });
+                SetSubPhase(ComposeSubPhase::Failed, "warp_failed");
+                return {};
+            }
+            g_fillVerifyTicks.store(0, std::memory_order_release);
+            SetSubPhase(ComposeSubPhase::VerifyingFill);
+            return {};
+        }
+
+        struct AliasFillState
+        {
+            RE::FormID sender = 0;
+            RE::FormID anchor = 0;
+        };
+
+        // VerifyingFill -- read both aliases back, a tick or more after
+        // the dispatch.
+        TickResult ComposeVerifyFill(const PluginThread::Token& pt)
+        {
+            const auto snap = VisitState::GetSnapshot();
+            const bool anchorExpected = snap.returnAnchorFormID != 0;
+
+            const auto filled = MainThread::Run(pt, [](const MainThread::Token& mt) {
+                // The marker has done its job the moment the move landed.
+                // Deleted here rather than at the end of Warping so a
+                // full tick has passed first -- MoveTo is believed
+                // synchronous, and the cost of not relying on that is one
+                // tick.
+                DeleteArrivalMarker(mt);
+                AliasFillState out;
+                if (g_senderAlias && g_senderAlias->GetReference()) {
+                    out.sender = g_senderAlias->GetReference()->GetFormID();
+                }
+                if (g_returnAnchorAlias && g_returnAnchorAlias->GetReference()) {
+                    out.anchor = g_returnAnchorAlias->GetReference()->GetFormID();
+                }
+                return out;
+            });
+
+            if (filled.sender != 0 && (!anchorExpected || filled.anchor != 0)) {
+                logger::info("NPCVisitBeat: fills verified -- Sender=0x{:08X} ReturnAnchor=0x{:08X}",
+                             filled.sender,
+                             filled.anchor);
+                SetSubPhase(ComposeSubPhase::Arming);
+                return {};
+            }
+
+            const int ticks = g_fillVerifyTicks.fetch_add(1, std::memory_order_acq_rel) + 1;
+            if (ticks < kFillVerifyMaxTicks) {
+                return {};
+            }
+
+            logger::warn("NPCVisitBeat: fills did not land after {} ticks (Sender=0x{:08X} "
+                         "ReturnAnchor=0x{:08X})",
+                         ticks,
+                         filled.sender,
+                         filled.anchor);
+            MainThread::Run(pt, [](const MainThread::Token&) {
+                auto snapshot = VisitState::GetSnapshot();
+                std::string reason;
+                if (auto* sender = BeatParamHelpers::ResolveLiveSenderActor(snapshot.senderFormID, &reason)) {
+                    DemoteSenderToCandidate(sender);
+                }
+                QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
+                return 0;
+            });
+            // The sender's own fill is what the beat cannot proceed
+            // without; a missing anchor only costs the walk home, so the
+            // two are reported apart.
+            SetSubPhase(ComposeSubPhase::Failed,
+                        filled.sender == 0 ? "sender_fill_unverified" : "anchor_fill_unverified");
+            return {};
+        }
+
+        // Arming -- bind the package and hand the approach to the escort.
+        TickResult ComposeArm(const PluginThread::Token& pt)
+        {
+            std::vector<RE::NiPoint3> fallbacks;
+            RE::NiPoint3 placedAt{};
+            {
+                std::scoped_lock lock(g_sessionMutex);
+                fallbacks = g_arrival.fallbacks;
+                placedAt = g_arrival.point;
+            }
+
+            MainThread::Run(pt, [&](const MainThread::Token&) {
+                auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
+                auto* senderActor = senderRef ? senderRef->As<RE::Actor>() : nullptr;
+                if (senderActor) {
+                    senderActor->EvaluatePackage();
+                }
+                // Fallbacks are further along the visitor's own road, so
+                // escalating through them walks a stuck sender BACK ALONG
+                // THEIR ROUTE rather than sideways onto unrelated ground.
+                g_escort.Begin(fallbacks);
+                if (senderActor) {
+                    g_escort.Track(senderActor, placedAt);
+                }
+                return 0;
+            });
+
+            g_salutationEnteredAtNormalSec.store(NormalElapsedNow());
+            g_lastDistanceLogNormalSec.store(0.0);
+            VisitState::SetComposingSender(false);
+            SetSubPhase(ComposeSubPhase::Succeeded);
+            return {};
         }
 
         // ---- RUNNING stage-tick (main thread; called every ~1s) ----
@@ -1340,19 +1632,26 @@ namespace NarrativeEngine
                         continue;
                     if (a->aliasName == kSenderAliasName) {
                         g_senderAlias = skyrim_cast<RE::BGSRefAlias*>(a);
-                    } else if (a->aliasName == kSpawnMarkerAliasName) {
-                        g_spawnMarkerAlias = skyrim_cast<RE::BGSRefAlias*>(a);
                     } else if (a->aliasName == kReturnAnchorAliasName) {
                         g_returnAnchorAlias = skyrim_cast<RE::BGSRefAlias*>(a);
                     }
                 }
             }
-            if (!g_senderAlias || !g_spawnMarkerAlias || !g_returnAnchorAlias) {
+            if (!g_senderAlias || !g_returnAnchorAlias) {
                 logger::error("NPCVisitBeat_Init: one or more required aliases unresolved "
-                              "(Sender={} SpawnMarker={} ReturnAnchor={})",
+                              "(Sender={} ReturnAnchor={})",
                               g_senderAlias ? "ok" : "MISSING",
-                              g_spawnMarkerAlias ? "ok" : "MISSING",
                               g_returnAnchorAlias ? "ok" : "MISSING");
+                ok = false;
+            }
+            // Both runtime markers -- the arrival point the sender is
+            // warped onto, and the anchor they walk back to -- are made
+            // from this one static.
+            if (auto* form = RE::TESForm::LookupByID(kXMarkerHeadingFormID)) {
+                g_xMarkerBase = form->As<RE::TESBoundObject>();
+            }
+            if (!g_xMarkerBase) {
+                logger::error("NPCVisitBeat_Init: XMarkerHeading (0x{:08X}) did not resolve", kXMarkerHeadingFormID);
                 ok = false;
             }
             g_pointersCriticallyMissing.store(!ok);
@@ -1539,11 +1838,18 @@ namespace NarrativeEngine
             case ComposeSubPhase::ComposingLLM:
                 return {};
             case ComposeSubPhase::LLMResultReady:
-                SetSubPhase(ComposeSubPhase::Dispatching);
-                DispatchQuest(pt);
+                SetSubPhase(ComposeSubPhase::SelectingPoint);
                 return {};
-            case ComposeSubPhase::Dispatching:
-                return {};
+            case ComposeSubPhase::SelectingPoint:
+                return ComposeSelectPoint(pt);
+            case ComposeSubPhase::StartingQuest:
+                return ComposeStartQuest(pt);
+            case ComposeSubPhase::Warping:
+                return ComposeWarp(pt);
+            case ComposeSubPhase::VerifyingFill:
+                return ComposeVerifyFill(pt);
+            case ComposeSubPhase::Arming:
+                return ComposeArm(pt);
             case ComposeSubPhase::Succeeded:
                 logger::info("NPCVisitBeat: COMPOSE succeeded; advancing to RUNNING");
                 g_runningTickCount = 0;

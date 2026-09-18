@@ -887,6 +887,13 @@ namespace NarrativeEngine::Testing
         // owns a set of them resolves the set at data load.
         RE::TESForm* AddBook(std::uint32_t formID, std::string editorID = {});
 
+        // Register a bound object that is NOT an actor base -- a static,
+        // which is what every marker in the game is. Distinct from AddBook
+        // only in form type, but the distinction is the point: code that
+        // places a marker and code that places an NPC take the same
+        // PlaceObjectAtMe path and are told apart by exactly this.
+        RE::TESForm* AddStatic(std::uint32_t formID, std::string editorID = {});
+
         // Faction ranks, and the loaded-actor lists a sweep walks.
         //
         // Ranks are keyed by (actor form id, faction form id). An absent pair

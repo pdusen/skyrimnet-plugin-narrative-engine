@@ -2835,6 +2835,28 @@ namespace NarrativeEngine::Testing
         return q;
     }
 
+    RE::TESForm* EngineMock::AddStatic(std::uint32_t formID, std::string editorID)
+    {
+        // Same never-freed storage rule as AddBook: a marker base outlives
+        // whatever placed a reference from it.
+        static auto* statics = new std::deque<FakeObject>();
+        auto& object = statics->emplace_back(sizeof(RE::TESObjectSTAT) + 0x40, 256);
+        WireFormDefaults(object, false);
+        object.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
+        auto* form = object.As<RE::TESForm>();
+        // Static is a bound object, so As<TESBoundObject>() succeeds -- and
+        // it is not an NPC, so PlaceObjectAtMe builds a plain reference
+        // rather than an actor.
+        form->formType = RE::FormType::Static;
+        form->formID = formID;
+        FormTable().insert({formID, form});
+        if (!editorID.empty()) {
+            SetEditorID(form, editorID);
+            EditorIDTable().insert({RE::BSFixedString(editorID.c_str()), form});
+        }
+        return form;
+    }
+
     RE::TESForm* EngineMock::AddBook(std::uint32_t formID, std::string editorID)
     {
         // One object per book and never freed: a module that owns twenty of

@@ -5,10 +5,12 @@
 #include <FakeSkyrimNet.h>
 
 #include <AsyncDispatch.h>
+#include <FineRoads.h>
 #include <IBeat.h>
 #include <MainThread.h>
 #include <PluginThread.h>
 #include <SkyrimNetAPI.h>
+#include <ThreadRole.h>
 #include <VisitState.h>
 
 #include <nlohmann/json.hpp>
@@ -88,14 +90,23 @@ namespace
                                       "iVisitPollSilenceRealSeconds=0\n"
                                       "iVisitPollMaxIntervalGameMinutes=0\n"
                                       "iVisitMaxIgnoreNudges=3\n"
-                                      "iVisitBriefingMinWords=5\niVisitBriefingMaxWords=200\n";
+                                      "iVisitBriefingMinWords=5\niVisitBriefingMaxWords=200\n"
+                                      "iVisitMarkerMinDistanceUnits=800\n"
+                                      "iVisitMarkerMaxDistanceUnits=2500\n"
+                                      "iVisitArrivalCoverRadiusUnits=64\n"
+                                      "bVisitArrivalAllowCoarseBearing=true\n"
+                                      "[FineRoads]\nbFineRoadsEnabled=1\n"
+                                      "iFineRoadsBackstopSeconds=1\nbFineRoadsDebugBitmap=0\n";
 
     constexpr std::uint32_t kSender = 0x0001A6A0u;
     constexpr std::uint32_t kSenderBase = 0x0001A6A2u;
     constexpr std::uint32_t kVisitFaction = 0x0E0100FFu;
     constexpr std::uint32_t kVisitQuest = 0x0E010000u;
-    constexpr std::uint32_t kSpawnMarker = 0x0E010A01u;
     constexpr std::uint32_t kReturnAnchor = 0x0E010A02u;
+    constexpr std::uint32_t kXMarkerHeading = 0x00000034u;
+    constexpr std::uint32_t kVisitWorldSpace = 0x0E010B01u;
+    constexpr std::uint32_t kRoadMesh = 0x0E010B02u;
+    constexpr std::uint32_t kGroundMesh = 0x0E010B03u;
 
     constexpr std::uint32_t kStageSalutation = 10;
     constexpr std::uint32_t kStageDiscuss = 20;
@@ -183,9 +194,57 @@ namespace
     {
         EngineMock::AliasedQuest quest;
         RE::Actor* sender = nullptr;
-        RE::TESObjectREFR* spawnMarker = nullptr;
         RE::TESObjectREFR* returnAnchor = nullptr;
+        RE::TESObjectCELL* cell = nullptr;
     };
+
+    // A road running east through the player, with usable ground under it
+    // and cover everywhere -- the smallest world in which VisitArrivalPoint
+    // returns a Tier 1 answer. Which node it picks is VisitArrivalPoint's own
+    // suite's business; here it only has to succeed, so the beat has
+    // somewhere to warp the sender to.
+    RE::TESObjectCELL* LayRoadWorld(EngineMock& engine)
+    {
+        auto* space = engine.AddWorldSpace(kVisitWorldSpace);
+        auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+        std::vector<EngineMock::FakeTriangle> road;
+        for (int i = 0; i < 12; ++i) {
+            EngineMock::FakeTriangle t;
+            t.x = static_cast<float>(i) * 500.0f;
+            t.y = 0.0f;
+            t.z = 0.0f;
+            t.neighbor[0] = i > 0 ? i - 1 : -1;
+            t.neighbor[1] = i < 11 ? i + 1 : -1;
+            road.push_back(t);
+        }
+        engine.AddNavMesh(cell, kRoadMesh, road);
+
+        // Order matters twice over. FineRoads::Poll refuses to read the grid
+        // while the player reads as indoors, so cellIsInterior has to be
+        // false BEFORE the poll rather than after it. And StandPlayerInCell
+        // copies that same flag onto the cell it fabricates, so changing it
+        // afterwards does not reach back.
+        engine.world.cellIsInterior = false;
+        // The default mock position is off in the hundreds, which would
+        // leave the road running past the player rather than away from them.
+        engine.world.playerX = 0.0f;
+        engine.world.playerY = 0.0f;
+        engine.world.playerZ = 0.0f;
+        engine.StandPlayerInCell(space, 0, 0);
+
+        engine.LoadGrid({cell});
+        {
+            const NarrativeEngine::ScopedThreadRole role{NarrativeEngine::ThreadRole::Plugin};
+            PluginThread::detail::JobDispatcher::Invoke(
+                [](const PluginThread::Token& pt) { NarrativeEngine::FineRoads::Poll(pt, 1000.0); });
+        }
+        engine.terrain.landHeight = 0.0f;
+        engine.AddNavmeshPatch(engine.GroundCell(), kGroundMesh, -20000.0f, -20000.0f, 20000.0f, 20000.0f, 0.0f);
+        // Every ray blocked, so the cover gate never rejects and the search
+        // has a Tier 1 answer to give.
+        engine.visibility.pickHitFraction = 0.0f;
+        return cell;
+    }
 
     VisitWorld BuildWorld(EngineMock& engine, bool withAliases = true)
     {
@@ -194,11 +253,14 @@ namespace
         state.editorID = "_ne_VisitQuest";
         state.formID = kVisitQuest;
         state.running = false;
-        const std::vector<std::string> aliases = withAliases
-                                                     ? std::vector<std::string>{"Sender", "SpawnMarker", "ReturnAnchor"}
-                                                     : std::vector<std::string>{};
+        const std::vector<std::string> aliases =
+            withAliases ? std::vector<std::string>{"Sender", "ReturnAnchor"} : std::vector<std::string>{};
         world.quest = engine.AddQuestWithAliases(state, aliases);
         engine.AddFaction(kVisitFaction, "_ne_VisitSenderFaction");
+        // Both runtime markers are placed from this one base, so without it
+        // the beat cannot start at all.
+        engine.AddStatic(kXMarkerHeading, "XMarkerHeading");
+        world.cell = LayRoadWorld(engine);
 
         // The name the closing narration is written around, read off the
         // reference rather than the base record.
@@ -207,24 +269,34 @@ namespace
         auto* base = engine.AddNPC(kSenderBase, "Ysolda");
         base->actorData.actorBaseFlags.set(RE::ACTOR_BASE_DATA::Flag::kUnique);
         engine.SetActorBase(world.sender, base);
-        world.spawnMarker = engine.AddReference(nullptr, kSpawnMarker, {});
         world.returnAnchor = engine.AddReference(nullptr, kReturnAnchor, {});
+        // The sender needs somewhere to be, or the arrival search cannot
+        // place their end of the route. The player's end is settled by
+        // StandPlayerInCell inside LayRoadWorld.
+        world.sender->parentCell = world.cell;
         return world;
     }
 
-    // Stand the sender this far from the player, along one axis. The player is
-    // at EngineMock's own default position.
+    // Stand the sender this far from the player, along one axis -- eastward,
+    // which is the direction the test world's road runs.
     void PlaceSenderAway(EngineMock& engine, RE::Actor* sender, float units)
     {
         sender->SetPosition(RE::NiPoint3{engine.world.playerX + units, engine.world.playerY, engine.world.playerZ},
                             false);
     }
 
+    // Stand in for the force-fills landing.
+    //
+    // The beat dispatches FillSenderSlot and FillReturnAnchorSlot into the
+    // Papyrus VM, which the harness records but does not run, so nothing
+    // would ever fill these. Pre-filling them means VerifyingFill sees what
+    // it would have seen a tick after a real dispatch. That the dispatch was
+    // made at all is asserted separately -- this helper only lets the
+    // machine get past the readback.
     void FillAliases(EngineMock& engine, const VisitWorld& world)
     {
         engine.FillRefAlias(world.quest.aliases.at(0), world.sender);
-        engine.FillRefAlias(world.quest.aliases.at(1), world.spawnMarker);
-        engine.FillRefAlias(world.quest.aliases.at(2), world.returnAnchor);
+        engine.FillRefAlias(world.quest.aliases.at(1), world.returnAnchor);
     }
 
     TickResult Tick(NPCVisitBeat& beat, BeatState state, TickMode mode = TickMode::Normal)
@@ -272,6 +344,37 @@ namespace
             std::this_thread::sleep_for(std::chrono::milliseconds{1});
         }
         return BeatState::COMPOSE;
+    }
+
+    // Compose the visit, then stand the sender `units` from the player.
+    //
+    // The two cannot be the same distance. Composing needs a journey to
+    // stage -- a sender standing on top of the player has no road between
+    // them and the arrival search rightly declines -- while the stage
+    // machine under test needs them already arrived. In the game the beat
+    // closes that gap by warping them in and letting them walk; here it is
+    // closed directly.
+    void ComposeWithSenderStandingAt(NPCVisitBeat& beat, EngineMock& engine, const VisitWorld& world, float units)
+    {
+        PlaceSenderAway(engine, world.sender, 3000.0f);
+        beat.OnStart(BeatContext{}, SenderParams());
+        REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+        PlaceSenderAway(engine, world.sender, units);
+    }
+
+    // Every reference the beat placed that is still in the world. The arrival
+    // marker is meant to be gone by the time COMPOSE is done; the return
+    // anchor is meant to outlive it.
+    std::size_t SurvivingPlacedRefs(const EngineMock& engine)
+    {
+        std::size_t alive = 0;
+        for (const auto& placement : engine.spawn.placed) {
+            auto* form = RE::TESForm::LookupByID(placement.refFormID);
+            if (form && !form->IsDeleted()) {
+                ++alive;
+            }
+        }
+        return alive;
     }
 
     void AbortFromMainThread(NPCVisitBeat& beat)
@@ -450,7 +553,10 @@ TEST_CASE("NPCVisitBeat sends somebody to the player", "[NPCVisitBeat][engine]")
             const auto snap = VisitState::GetSnapshot();
             REQUIRE(snap.returnPosition.x == 4000.0f);
             REQUIRE(snap.returnPosition.y == 5000.0f);
-            REQUIRE(snap.returnAnchorFormID == kReturnAnchor);
+            // The anchor is a marker the beat places at the sender's own
+            // position, so what matters is that one exists -- its FormID is
+            // assigned at runtime and is not knowable here.
+            REQUIRE(snap.returnAnchorFormID != 0);
         }
 
         SECTION("should put the sender at the rank the alias fills from")
@@ -520,12 +626,139 @@ TEST_CASE("NPCVisitBeat sends somebody to the player", "[NPCVisitBeat][engine]")
         // filled anybody in. Nothing later would notice: the stage handlers
         // read the alias and return quietly when it is null, so the beat
         // would sit at Salutation until its timeout.
-        engine.FillRefAlias(world.quest.aliases.at(2), nullptr);
+        engine.FillRefAlias(world.quest.aliases.at(1), nullptr);
 
         SECTION("should roll the quest back rather than run it")
         {
             REQUIRE(RunCompose(beat) == BeatState::CLEANUP);
             REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+        }
+    }
+}
+
+TEST_CASE("NPCVisitBeat gives up cleanly when the arrival cannot be staged", "[NPCVisitBeat][engine]")
+{
+    // COMPOSE is now six steps, and each of them can fail. What matters is
+    // not that they can -- it is that every one of them ends the same way:
+    // CLEANUP, no quest left running, and nothing left standing in the world.
+    // A beat that fails halfway and leaves a marker behind is how a save
+    // accumulates junk nobody can trace.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    PrimeModel();
+    const auto world = BuildWorld(engine);
+    Init::Initialize();
+    const RunningDispatch dispatch;
+    NPCVisitBeat beat;
+
+    SECTION("when the player can see every piece of road they might come up")
+    {
+        // Open ground with nothing to stand behind. The search declines, and
+        // declining is the whole point: arriving in plain sight would be the
+        // tell this beat exists to remove.
+        engine.visibility.pickHitFraction = 1.0f;
+        FillAliases(engine, world);
+        PlaceSenderAway(engine, world.sender, 3000.0f);
+        beat.OnStart(BeatContext{}, SenderParams());
+
+        SECTION("should decline before the quest is ever started")
+        {
+            REQUIRE(RunCompose(beat) == BeatState::CLEANUP);
+            // Ahead of EnsureQuestStarted on purpose: failing here means
+            // there is no quest to tear down afterwards.
+            REQUIRE(engine.questControl.started.empty());
+            REQUIRE(engine.spawn.placed.empty());
+        }
+    }
+
+    SECTION("when the arrival marker cannot be placed")
+    {
+        // One placement succeeds -- the return anchor, made first -- and the
+        // next one, the marker the sender is warped onto, does not.
+        engine.spawn.placeSucceedsCount = 1;
+        FillAliases(engine, world);
+        PlaceSenderAway(engine, world.sender, 3000.0f);
+        beat.OnStart(BeatContext{}, SenderParams());
+
+        SECTION("should give up rather than leave the sender where they were")
+        {
+            REQUIRE(RunCompose(beat) == BeatState::CLEANUP);
+            REQUIRE_FALSE(engine.questControl.teleports.size() > 0);
+        }
+    }
+
+    SECTION("when the sender's own alias never fills")
+    {
+        // The dispatch into Papyrus is fire-and-forget: it reports that the
+        // call was queued, not that it ran. A fill that never lands has to
+        // time out rather than leave the beat waiting on it forever.
+        engine.FillRefAlias(world.quest.aliases.at(1), world.returnAnchor);
+        PlaceSenderAway(engine, world.sender, 3000.0f);
+        beat.OnStart(BeatContext{}, SenderParams());
+
+        SECTION("should roll the quest back rather than run a visit with nobody in it")
+        {
+            REQUIRE(RunCompose(beat) == BeatState::CLEANUP);
+            REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+        }
+    }
+}
+
+TEST_CASE("NPCVisitBeat waits for the fills it asked for", "[NPCVisitBeat][engine]")
+{
+    // The readback is a whole sub-phase of its own rather than a line at the
+    // end of the warp, because VMDispatchOnQuest only ever says the call was
+    // QUEUED. Reading the aliases back in the same tick would fail every
+    // time; reading them once and giving up would fail whenever the VM was
+    // busy.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    PrimeModel();
+    const auto world = BuildWorld(engine);
+    Init::Initialize();
+    const RunningDispatch dispatch;
+    NPCVisitBeat beat;
+
+    PlaceSenderAway(engine, world.sender, 3000.0f);
+    beat.OnStart(BeatContext{}, SenderParams());
+
+    // Tick with the aliases still empty. The beat has asked Papyrus to fill
+    // them and is waiting for an answer that has not come yet.
+    for (int i = 0; i < 6; ++i) {
+        REQUIRE_FALSE(Tick(beat, BeatState::COMPOSE).transitionTo.has_value());
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+
+    SECTION("when the fills land late")
+    {
+        FillAliases(engine, world);
+
+        SECTION("should pick them up and run the visit")
+        {
+            REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+        }
+
+        SECTION("should have asked Papyrus for both of them")
+        {
+            REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+            // ForceRefTo has no native binding, so these two dispatches are
+            // the only way either alias is ever filled.
+            REQUIRE(DispatchedMethod(engine, "FillSenderSlot"));
+            REQUIRE(DispatchedMethod(engine, "FillReturnAnchorSlot"));
+        }
+
+        SECTION("should have thrown away the marker it warped them onto")
+        {
+            REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+            // Two references were placed: the anchor, which the visit needs
+            // for the walk home, and the arrival marker, which existed only
+            // to be a MoveTo target. Exactly one should still be standing.
+            REQUIRE(engine.spawn.placed.size() == 2);
+            REQUIRE(SurvivingPlacedRefs(engine) == 1);
         }
     }
 }
@@ -659,9 +892,7 @@ TEST_CASE("NPCVisitBeat holds the conversation while the world interrupts", "[NP
     const RunningDispatch dispatch;
     NPCVisitBeat beat;
     FillAliases(engine, world);
-    PlaceSenderAway(engine, world.sender, 100.0f);
-    beat.OnStart(BeatContext{}, SenderParams());
-    REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+    ComposeWithSenderStandingAt(beat, engine, world, 100.0f);
     engine.courier.questStage = static_cast<std::uint16_t>(kStageDiscuss);
 
     SECTION("when nothing is interrupting")
@@ -780,9 +1011,7 @@ TEST_CASE("NPCVisitBeat closes the conversation", "[NPCVisitBeat][engine]")
     const RunningDispatch dispatch;
     NPCVisitBeat beat;
     FillAliases(engine, world);
-    PlaceSenderAway(engine, world.sender, 100.0f);
-    beat.OnStart(BeatContext{}, SenderParams());
-    REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+    ComposeWithSenderStandingAt(beat, engine, world, 100.0f);
 
     // Arrive, which is what arms the poll and starts the speech sampler.
     engine.courier.questStage = static_cast<std::uint16_t>(kStageSalutation);
@@ -881,9 +1110,7 @@ TEST_CASE("NPCVisitBeat sends the visitor home", "[NPCVisitBeat][engine]")
     const RunningDispatch dispatch;
     NPCVisitBeat beat;
     FillAliases(engine, world);
-    PlaceSenderAway(engine, world.sender, 100.0f);
-    beat.OnStart(BeatContext{}, SenderParams());
-    REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+    ComposeWithSenderStandingAt(beat, engine, world, 100.0f);
     engine.courier.questStage = static_cast<std::uint16_t>(kStageReturnHome);
 
     SECTION("when the sender is still in sight and nearby")
@@ -892,8 +1119,12 @@ TEST_CASE("NPCVisitBeat sends the visitor home", "[NPCVisitBeat][engine]")
         {
             // Teleporting them the moment the stage starts would have an NPC
             // vanish in front of the player.
+            //
+            // Counted from after COMPOSE rather than from zero: the arrival
+            // warp is a teleport too, and it has already happened by now.
+            const auto before = engine.questControl.teleports.size();
             StageTick(beat);
-            REQUIRE(engine.questControl.teleports.empty());
+            REQUIRE(engine.questControl.teleports.size() == before);
         }
     }
 
@@ -962,7 +1193,7 @@ TEST_CASE("NPCVisitBeat sends the visitor home", "[NPCVisitBeat][engine]")
 
     SECTION("when the return anchor was never filled")
     {
-        engine.FillRefAlias(world.quest.aliases.at(2), nullptr);
+        engine.FillRefAlias(world.quest.aliases.at(1), nullptr);
         PlaceSenderAway(engine, world.sender, 9000.0f);
 
         SECTION("should still get them out of the scene")
@@ -1035,10 +1266,11 @@ TEST_CASE("NPCVisitBeat freezes when the world is not running", "[NPCVisitBeat][
         {
             // The sender is far enough away to be sent home the instant the
             // stage machine looks at them, so any tick that reaches it shows.
+            const auto before = engine.questControl.teleports.size();
             for (int i = 0; i < 40; ++i) {
                 Tick(beat, BeatState::RUNNING, TickMode::Paused);
             }
-            REQUIRE(engine.questControl.teleports.empty());
+            REQUIRE(engine.questControl.teleports.size() == before);
         }
     }
 }
@@ -1055,9 +1287,7 @@ TEST_CASE("NPCVisitBeat tears the visit down", "[NPCVisitBeat][engine]")
     const RunningDispatch dispatch;
     NPCVisitBeat beat;
     FillAliases(engine, world);
-    PlaceSenderAway(engine, world.sender, 100.0f);
-    beat.OnStart(BeatContext{}, SenderParams());
-    REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+    ComposeWithSenderStandingAt(beat, engine, world, 100.0f);
 
     SECTION("when the quest has come to rest")
     {

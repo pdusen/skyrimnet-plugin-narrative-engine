@@ -603,7 +603,7 @@ Step 3 to call. **The beat is broken at the end of this step** — that is expec
 
 ### Step 3 — COMPOSE rework: arrival, warp, force-fill, verification
 
-- [ ] Complete
+- [X] Complete (Claude's half; user in-game verification outstanding)
 
 **[CLAUDE]**
 
@@ -653,6 +653,26 @@ Step 3 to call. **The beat is broken at the end of this step** — that is expec
   running and no reference left behind.
 - Every one of the six COMPOSE sub-phases is entered by at least one test. A suite that passes while skipping
   `VerifyingFill` is the failure this step is most likely to hide.
+
+**What came out differently:**
+
+- **`arrival_tier3` was a duplicate and is not implemented.** `Find` reports success or failure, not which
+  tier it stopped at, so the beat cannot tell "declined at Tier 3" from "declined for any other reason" —
+  both are `arrival_no_point`. The tier that *did* win is logged by `VisitArrivalPoint` itself. Five distinct
+  reasons ship: `arrival_no_point`, `quest_start_failed`, `warp_failed`, `sender_fill_unverified`,
+  `anchor_fill_unverified`, alongside the compose-LLM and parse failures that already existed.
+- **The arrival marker is deleted at the top of `VerifyingFill`, not at the end of `Warping`.** The step said
+  to delete it in the sub-phase that created it. `MoveTo` is believed synchronous, but that is a claim about
+  engine internals nobody here has verified, and deleting a reference an actor is mid-move onto would strand
+  them. Waiting one tick costs nothing and does not rest on the claim.
+- **Harness work was needed after all, and it was one function.** `EngineMock::AddStatic` — a bound object
+  that is not an NPC, which is what every marker in the game is. `PlaceObjectAtMe` branches on exactly that
+  distinction, so standing a Book in for an XMarkerHeading would have tested the wrong path.
+- **A sender already standing beside the player can no longer be visited.** Routing from the player to
+  someone a hundred units away yields a one-node path entirely inside the minimum distance, so the search
+  declines and the beat gives up. That is defensible — there is no journey to stage — but it is a real
+  narrowing of who the Director can pick, it is not what the old marker-based beat did, and nothing in this
+  phase's design called for it. Worth a decision during Step 8 rather than leaving it as a side effect.
 
 **Verify [USER]:**
 
