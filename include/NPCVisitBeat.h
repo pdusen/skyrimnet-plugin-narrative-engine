@@ -11,18 +11,24 @@
 // NPCVisitBeat — the Narrative Beat System's face-to-face social beat.
 //
 // A known NPC (chosen by the beat-select LLM from the player's recent
-// engagement history) is warped to a nearby out-of-sight XMarker, walks
-// up to the player under a Follow package, and holds an in-person
-// conversation whose turns are driven through SkyrimNet's ExecuteAction
-// API. See PHASE_05_NPC_VISIT_ACTION.md for the underlying design and
-// PHASE_06_BEAT_SYSTEM_REFACTOR.md for the beat-lifecycle refactor.
+// engagement history) is warped onto a point on the road between their
+// home and the player, out of sight, walks up to the player under a
+// Follow package, and holds an in-person conversation whose turns are
+// driven through SkyrimNet's ExecuteAction API. See
+// PHASE_05_NPC_VISIT_ACTION.md for the underlying design,
+// PHASE_06_BEAT_SYSTEM_REFACTOR.md for the beat-lifecycle refactor, and
+// PHASE_14_VISIT_BEAT_REFACTOR.md for where the arrival point comes
+// from and why the aliases are force-filled.
 //
 // Lifecycle (four-state per-beat model):
-//   COMPOSE — fire compose LLM, promote sender via marker faction,
-//             snapshot pre-dispatch pose, EnsureQuestStarted, verify
-//             alias fills. On success → RUNNING (quest already at
-//             Stage 10 = Salutation); on any failure → CLEANUP with
-//             failure_reason.
+//   COMPOSE — a sub-state machine: fire the compose LLM, search for an
+//             arrival point (VisitArrivalPoint), snapshot the
+//             pre-dispatch pose and plant the return anchor,
+//             EnsureQuestStarted, warp the sender in and dispatch both
+//             force-fills, read the aliases back a tick later, then bind
+//             the package and begin the StuckRecovery escort. On success
+//             → RUNNING (quest already at Stage 10 = Salutation); on any
+//             failure → CLEANUP with failure_reason.
 //   RUNNING — dispatches on quest stage each Normal-mode Tick:
 //               Stage 10 (Salutation) — approach-distance / timeout
 //               Stage 20 (Discuss)    — internal three-way substate cycle
@@ -36,9 +42,10 @@
 //               Stage 30 (Valediction)— closing narration + dwell
 //               Stage 50 (ReturnHome) — distance / LOS / cell / timeout
 //               Stage 60 / 200        — terminal → CLEANUP
-//   CLEANUP — teleport sender home if alive, demote, dispatch Shutdown
-//             fragment, wait for quest to drop to Stage 0, then return
-//             to NOT_RUNNING.
+//   CLEANUP — send the sender home if alive (to the return anchor, or
+//             to the snapshotted position when there is none), dispatch
+//             the Shutdown fragment, wait for the quest to drop to
+//             Stage 0, then return to NOT_RUNNING.
 namespace NarrativeEngine
 {
     class NPCVisitBeat : public IBeat
@@ -55,10 +62,10 @@ namespace NarrativeEngine
 
     namespace NPCVisitBeat_Init
     {
-        // Resolve `_ne_VisitQuest`, `_ne_VisitSenderFaction`, the three
-        // reference aliases (Sender, SpawnMarker, ReturnAnchor), and
-        // wire the death sink. Called at kDataLoaded after
-        // Settings::Load.
+        // Resolve `_ne_VisitQuest`, its two reference aliases (Sender
+        // and ReturnAnchor), the XMarkerHeading both runtime markers are
+        // placed from, and wire the death sink. Called at kDataLoaded
+        // after Settings::Load.
         void Initialize();
     } // namespace NPCVisitBeat_Init
 

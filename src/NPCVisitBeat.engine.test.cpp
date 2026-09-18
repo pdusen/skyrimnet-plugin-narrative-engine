@@ -102,7 +102,6 @@ namespace
 
     constexpr std::uint32_t kSender = 0x0001A6A0u;
     constexpr std::uint32_t kSenderBase = 0x0001A6A2u;
-    constexpr std::uint32_t kVisitFaction = 0x0E0100FFu;
     constexpr std::uint32_t kVisitQuest = 0x0E010000u;
     constexpr std::uint32_t kReturnAnchor = 0x0E010A02u;
     constexpr std::uint32_t kXMarkerHeading = 0x00000034u;
@@ -258,7 +257,6 @@ namespace
         const std::vector<std::string> aliases =
             withAliases ? std::vector<std::string>{"Sender", "ReturnAnchor"} : std::vector<std::string>{};
         world.quest = engine.AddQuestWithAliases(state, aliases);
-        engine.AddFaction(kVisitFaction, "_ne_VisitSenderFaction");
         // Both runtime markers are placed from this one base, so without it
         // the beat cannot start at all.
         engine.AddStatic(kXMarkerHeading, "XMarkerHeading");
@@ -572,15 +570,6 @@ TEST_CASE("NPCVisitBeat sends somebody to the player", "[NPCVisitBeat][engine]")
             REQUIRE(snap.returnAnchorFormID != 0);
         }
 
-        SECTION("should put the sender at the rank the alias fills from")
-        {
-            REQUIRE_FALSE(engine.factions.addToFactionCalls.empty());
-            const auto& call = engine.factions.addToFactionCalls.back();
-            REQUIRE(call.actorFormID == kSender);
-            REQUIRE(call.factionFormID == kVisitFaction);
-            REQUIRE(call.rank == 4);
-        }
-
         SECTION("should start the visit quest")
         {
             REQUIRE(engine.questControl.started == std::vector<const void*>{world.quest.quest});
@@ -624,12 +613,9 @@ TEST_CASE("NPCVisitBeat sends somebody to the player", "[NPCVisitBeat][engine]")
     {
         engine.questControl.startResult = false;
 
-        SECTION("should put the sender back down to candidate rank")
+        SECTION("should give up without running a visit")
         {
-            // The promotion has already happened by then, and a sender left
-            // designated would fill the alias on somebody else's visit.
             REQUIRE(RunCompose(beat) == BeatState::CLEANUP);
-            REQUIRE(engine.factions.addToFactionCalls.back().rank == 0);
         }
     }
 
@@ -716,6 +702,31 @@ TEST_CASE("NPCVisitBeat gives up cleanly when the arrival cannot be staged", "[N
             REQUIRE(RunCompose(beat) == BeatState::CLEANUP);
             REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
         }
+    }
+}
+
+TEST_CASE("NPCVisitBeat starts up without the retired marker faction", "[NPCVisitBeat][engine]")
+{
+    // _ne_VisitSenderFaction is gone, along with the fill rule it fed. The
+    // failure this guards against is a lookup left behind: a form that no
+    // longer exists resolves to nothing, Initialize decides something
+    // critical is missing, and the beat quietly reports itself unavailable
+    // for the whole session with nothing but a log line to say why.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    PrimeModel();
+    const auto world = BuildWorld(engine);
+    REQUIRE(world.quest.quest != nullptr);
+    Init::Initialize();
+
+    SECTION("should still offer itself")
+    {
+        NPCVisitBeat beat;
+        BeatContext ctx;
+        ctx.player = RE::PlayerCharacter::GetSingleton();
+        REQUIRE(beat.IsAvailable(ctx));
     }
 }
 
@@ -919,11 +930,6 @@ TEST_CASE("NPCVisitBeat waits for the sender to walk over", "[NPCVisitBeat][engi
             REQUIRE_FALSE(engine.questControl.teleports.empty());
             REQUIRE(engine.questControl.teleports.back().moverFormID == kSender);
             REQUIRE(engine.questControl.teleports.back().destinationFormID == kReturnAnchor);
-        }
-
-        SECTION("should put them back down to candidate rank")
-        {
-            REQUIRE(engine.factions.addToFactionCalls.back().rank == 0);
         }
 
         SECTION("should roll the quest back")
@@ -1209,11 +1215,6 @@ TEST_CASE("NPCVisitBeat sends the visitor home", "[NPCVisitBeat][engine]")
         {
             REQUIRE_FALSE(engine.questControl.teleports.empty());
             REQUIRE(engine.questControl.teleports.back().destinationFormID == kReturnAnchor);
-        }
-
-        SECTION("should put them back down to candidate rank")
-        {
-            REQUIRE(engine.factions.addToFactionCalls.back().rank == 0);
         }
 
         SECTION("should shut the quest down")

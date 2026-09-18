@@ -745,7 +745,7 @@ anchor stops stranding people.
 
 ### Step 5 — Retire the sender faction and the spawn-marker form list
 
-- [ ] Complete
+- [X] Complete
 
 **[CLAUDE]**
 
@@ -777,6 +777,19 @@ anchor stops stranding people.
   took NPC Visit down with it.
 - `NPCLetterBeat` has its own separate sender faction and its own promote/demote pair. Leave both alone — the
   names are nearly identical and the letter beat still needs its fill rule.
+
+**What came out differently:**
+
+- **Four suite sections went with the code, and none of them lost coverage.** Three asserted the sender was
+  put back down to candidate rank on an abort or rollback, and one that they were promoted in the first
+  place. Their subject was the fill rule leaking a designated sender onto somebody else's visit — with no
+  fill rule there is nothing to leak, so these are not tests that lost their subject but tests whose subject
+  stopped existing. What releases the sender now is the quest's `Reset()` clearing the forced fill, which
+  "tears the visit down" already covers.
+- **Deleting the faction lookup would have failed silently.** `Initialize` set `ok = false` when the faction
+  did not resolve, which disables the beat for the session behind one log line. Leaving that lookup in place
+  against a deleted record is exactly the failure this step could have shipped, so a case now starts the beat
+  up in a world with no faction in it and asserts it still offers itself.
 
 **Verify [CLAUDE]:**
 

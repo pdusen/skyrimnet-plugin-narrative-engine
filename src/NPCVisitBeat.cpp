@@ -5,7 +5,6 @@
 #include <BeatUtils.h>
 #include <CameraVisibility.h>
 #include <EngineUtils.h>
-#include <FactionDesignationUtils.h>
 #include <LocationKeywords.h>
 #include <logger.h>
 #include <MainThread.h>
@@ -54,7 +53,6 @@ namespace NarrativeEngine
         // ---- Editor IDs & rank constants ---------------------------
 
         constexpr const char* kVisitQuestEditorID = "_ne_VisitQuest";
-        constexpr const char* kVisitFactionEditorID = "_ne_VisitSenderFaction";
         constexpr const char* kSenderAliasName = "Sender";
         constexpr const char* kReturnAnchorAliasName = "ReturnAnchor";
         constexpr const char* kQuestScriptName = "_ne_VisitQuest";
@@ -71,9 +69,6 @@ namespace NarrativeEngine
         // bound AmbushBeat uses for the same dispatch-then-read shape.
         constexpr int kFillVerifyMaxTicks = 20;
 
-        constexpr std::int8_t kSenderRankCandidate = 0;
-        constexpr std::int8_t kSenderRankDesignated = 4;
-
         constexpr std::uint32_t kStageSalutation = 10;
         constexpr std::uint32_t kStageDiscuss = 20;
         constexpr std::uint32_t kStageValediction = 30;
@@ -86,7 +81,6 @@ namespace NarrativeEngine
         std::atomic<bool> g_pointersResolved = false;
         std::atomic<bool> g_pointersCriticallyMissing = false;
         RE::TESQuest* g_visitQuest = nullptr;
-        RE::TESFaction* g_visitSenderFaction = nullptr;
         RE::BGSRefAlias* g_senderAlias = nullptr;
         RE::BGSRefAlias* g_returnAnchorAlias = nullptr;
         RE::TESBoundObject* g_xMarkerBase = nullptr;
@@ -419,18 +413,6 @@ namespace NarrativeEngine
             return j.dump();
         }
 
-        void PromoteSenderToDesignated(RE::Actor* sender)
-        {
-            FactionDesignationUtils::PromoteToDesignated(
-                g_visitSenderFaction, sender, kSenderRankDesignated, kSenderRankCandidate, "NPCVisitBeat");
-        }
-
-        void DemoteSenderToCandidate(RE::Actor* sender)
-        {
-            FactionDesignationUtils::DemoteToCandidate(
-                g_visitSenderFaction, sender, kSenderRankCandidate, "NPCVisitBeat");
-        }
-
         // Visit-specific candidate viability filter used by
         // IsAvailable's cheap CountViable walk. Kept in sync with
         // VisitComposer's filter so the count matches what Compose()
@@ -665,7 +647,6 @@ namespace NarrativeEngine
 
             if (senderActor && !senderActor->IsDead()) {
                 SendSenderHome(senderActor, "HARD-ABORT");
-                DemoteSenderToCandidate(senderActor);
             } else if (senderActor) {
                 logger::info("NPCVisitBeat[HARD-ABORT]: sender dead; skipping teleport/demote");
             }
@@ -885,7 +866,6 @@ namespace NarrativeEngine
                 // anchor was missing, which moves nobody anywhere.
                 SendSenderHome(senderActor, "RETURNHOME");
                 senderActor->EvaluatePackage();
-                DemoteSenderToCandidate(senderActor);
             } else if (senderActor) {
                 logger::info("NPCVisitBeat[RETURNHOME]: sender dead; skipping teleport/demote");
             }
@@ -1068,14 +1048,11 @@ namespace NarrativeEngine
                                  "teleported home rather than walking");
                 }
 
-                PromoteSenderToDesignated(sender);
-
                 bool engineResult = false;
                 const bool callOk = g_visitQuest->EnsureQuestStarted(engineResult, /*a_startNow=*/true);
                 if (!callOk || !engineResult) {
                     logger::warn(
                         "NPCVisitBeat: EnsureQuestStarted failed (callOk={}, engineResult={})", callOk, engineResult);
-                    DemoteSenderToCandidate(sender);
                     DeleteArrivalMarker(mt);
                     return false;
                 }
@@ -1222,9 +1199,7 @@ namespace NarrativeEngine
             MainThread::Run(pt, [](const MainThread::Token&) {
                 auto snapshot = VisitState::GetSnapshot();
                 std::string reason;
-                if (auto* sender = BeatParamHelpers::ResolveLiveSenderActor(snapshot.senderFormID, &reason)) {
-                    DemoteSenderToCandidate(sender);
-                }
+                if (auto* sender = BeatParamHelpers::ResolveLiveSenderActor(snapshot.senderFormID, &reason)) {}
                 QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
                 return 0;
             });
@@ -1427,7 +1402,6 @@ namespace NarrativeEngine
                         auto* senderActor = senderRef->As<RE::Actor>();
                         if (senderActor) {
                             SendSenderHome(senderActor, "SALUTATION");
-                            DemoteSenderToCandidate(senderActor);
                         }
                         QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
                         VisitConclusionPoll::Disarm();
@@ -1695,13 +1669,6 @@ namespace NarrativeEngine
                               kVisitQuestEditorID);
                 ok = false;
             }
-            if (auto* form = RE::TESForm::LookupByEditorID(kVisitFactionEditorID)) {
-                g_visitSenderFaction = form->As<RE::TESFaction>();
-            }
-            if (!g_visitSenderFaction) {
-                logger::error("NPCVisitBeat_Init: sender faction '{}' did not resolve", kVisitFactionEditorID);
-                ok = false;
-            }
             if (g_visitQuest) {
                 for (auto* a : g_visitQuest->aliases) {
                     if (!a)
@@ -1732,10 +1699,7 @@ namespace NarrativeEngine
             }
             g_pointersCriticallyMissing.store(!ok);
             if (ok) {
-                logger::info("NPCVisitBeat_Init: resolved quest=0x{:08X}, faction=0x{:08X}, "
-                             "aliases bound",
-                             g_visitQuest->GetFormID(),
-                             g_visitSenderFaction->GetFormID());
+                logger::info("NPCVisitBeat_Init: resolved quest=0x{:08X}, aliases bound", g_visitQuest->GetFormID());
                 RegisterSinks();
             } else {
                 logger::error("NPCVisitBeat_Init: one or more required forms missing — "
