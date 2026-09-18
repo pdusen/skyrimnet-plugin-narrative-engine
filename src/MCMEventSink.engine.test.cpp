@@ -180,6 +180,24 @@ TEST_CASE("MCMEventSink dispatches an MCM change", "[MCMEventSink][engine]")
         }
     }
 
+    SECTION("when one of our own events arrives under the wrong name")
+    {
+        const McmOverride override{"[Dashboard]\niHotkeyDXSC=88\n"};
+        REQUIRE(Settings::Get().dashboardHotkeyDXSC == 65);
+        SendModEvent("_ne_DashboardHotkeyChangd");
+        DrainAsyncQueue();
+
+        SECTION("should ignore it too")
+        {
+            // A typo in _ne_MCM.psc looks exactly like the script never
+            // firing. The sink still refuses to act on it -- matching
+            // loosely would be worse than not matching -- but this is the
+            // one near-miss it keeps tracing, which is what tells the two
+            // apart in the log.
+            REQUIRE(Settings::Get().dashboardHotkeyDXSC == 65);
+        }
+    }
+
     SECTION("when the override file is absent")
     {
         REQUIRE(Settings::Get().dashboardHotkeyDXSC == 65);
