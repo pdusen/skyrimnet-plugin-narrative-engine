@@ -503,6 +503,73 @@ TEST_CASE("VisitArrivalPoint declines when nothing can route the two ends togeth
     }
 }
 
+TEST_CASE("VisitArrivalPoint finds a visitor who is not loaded", "[VisitArrivalPoint][engine]")
+{
+    // The case the beat is FOR, and the one the first in-game run died on.
+    //
+    // A visit brings somebody from elsewhere, so the sender is almost never
+    // attached: GetParentCell is `return parentCell` and reads null for any
+    // reference the engine has not loaded, and an unloaded interior cannot be
+    // walked for its load door either. Resolving a visitor's end of the route
+    // the way the player's end is resolved therefore works for exactly the
+    // visitor who did not need bringing.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    auto* space = engine.AddWorldSpace(kWorld);
+    auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+    LayRoad(engine, cell);
+    engine.LoadGrid({cell});
+    PollFineRoads();
+    LayGround(engine);
+    CoverEverywhere(engine);
+
+    auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+
+    SECTION("when they are away and the save still knows which cell holds them")
+    {
+        // No parent cell -- nothing has attached them -- but the save has
+        // them filed east, which is where they would be walking from.
+        auto* sender = ActorAt(engine, kSender, nullptr, At(kRoadEnd, 0.0f));
+        engine.SetSaveParentCell(sender, cell);
+        const auto result = FindFor(sender, player);
+
+        SECTION("should still bring them in from the east")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(result.point.x > 0.0f);
+        }
+    }
+
+    SECTION("when not even the save can place them")
+    {
+        // Asleep in some interior on the far side of the province. All that
+        // is left is the location the record files them under, and its map
+        // marker -- coarse, but it is a real place and it is theirs.
+        auto* sender = ActorAt(engine, kSender, nullptr, At(0.0f, 0.0f));
+        auto* home = engine.AddLocation(0x00D05002u, "Sender's Home", {}, "SenderHome");
+        engine.SetLocationMarker(home, cell, At(-kRoadEnd, 0.0f));
+        engine.SetEditorLocation(sender, home);
+        const auto result = FindFor(sender, player);
+
+        SECTION("should bring them in from the side their home is on")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(result.point.x < 0.0f);
+        }
+    }
+
+    SECTION("when nothing anywhere can place them")
+    {
+        auto* sender = ActorAt(engine, kSender, nullptr, At(0.0f, 0.0f));
+        const auto result = FindFor(sender, player);
+
+        SECTION("should decline rather than invent a direction")
+        {
+            REQUIRE_FALSE(result.Ok());
+        }
+    }
+}
+
 TEST_CASE("VisitArrivalPoint measures a visitor indoors from their doorstep", "[VisitArrivalPoint][engine]")
 {
     // Someone at home is nowhere on the road network — their interior has no

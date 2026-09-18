@@ -2359,6 +2359,21 @@ namespace NarrativeEngine::Testing
         return it == table.end() ? nullptr : it->second;
     }
 
+    namespace
+    {
+        std::unordered_map<const void*, RE::TESObjectCELL*>& SaveCells()
+        {
+            static auto* cells = new std::unordered_map<const void*, RE::TESObjectCELL*>();
+            return *cells;
+        }
+    } // namespace
+
+    void EngineMock::SetSaveParentCell(RE::TESObjectREFR* ref, RE::TESObjectCELL* cell)
+    {
+        if (ref)
+            SaveCells()[static_cast<const void*>(ref)] = cell;
+    }
+
     RE::TESObjectREFR* EngineMock::AddReference(RE::TESObjectCELL* cell, std::uint32_t formID, RE::NiPoint3 position)
     {
         auto& pool = Refs();
@@ -2994,6 +3009,18 @@ bool RE::Actor::HasKeyword(const RE::BGSKeyword* a_keyword) const
 RE::TESRace* RE::TESNPC::GetRace()
 {
     return NarrativeEngine::Testing::RaceOf(this);
+}
+
+RE::TESObjectCELL* RE::TESObjectREFR::GetSaveParentCell() const
+{
+    // Falls back to the attached cell, because for anything loaded the two
+    // are the same and a test should not have to say so twice. A case that
+    // wants an UNLOADED reference clears parentCell and sets this instead.
+    if (const auto it = NarrativeEngine::Testing::SaveCells().find(static_cast<const void*>(this));
+        it != NarrativeEngine::Testing::SaveCells().end()) {
+        return it->second;
+    }
+    return parentCell;
 }
 
 RE::BGSLocation* RE::TESObjectREFR::GetEditorLocation() const

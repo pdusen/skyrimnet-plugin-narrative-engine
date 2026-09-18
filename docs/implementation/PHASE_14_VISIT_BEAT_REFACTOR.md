@@ -163,10 +163,16 @@ out and already shared. `VisitArrivalPoint` is a new module that calls the same 
 The fine road graph covers the loaded cell grid and moves with the player. That is what makes the query work,
 because it puts the high-resolution half of any route exactly where the arrival point has to be.
 
-1. **`RoadRoute::ResolveOrigin(mt, senderActor)`** — where the sender sits on the exterior road network. This
-   already follows a load door out when the sender is indoors, and falls back to the cell's location marker
-   when there is not one, which is the "where would this person actually emerge from their house" question,
-   solved in Phase 12.
+1. **Find where the visitor is.** `RoadRoute::ResolveOrigin` answers this for anything loaded, and follows a
+   load door out when they are indoors — but it reads `GetParentCell()`, which is `return parentCell` and is
+   null for any reference the engine has not attached, and its load-door walk enumerates references an
+   unloaded cell does not have. **A visit sender is almost never loaded** — bringing somebody from elsewhere
+   is the entire beat — so that call answers for exactly the visitor who did not need bringing. The first
+   in-game run failed here on every dispatch. So the origin comes off a ladder, best first: the live position
+   when they are loaded; else `GetSaveParentCell()` plus `data.location`, which travel with a reference
+   whether or not it has 3D; else the map marker of the location the record files them under. The rung that
+   answered is logged, because a route staged off the last one points at where the visitor *lives* rather
+   than where they are.
 2. **`RoadRoute::Route(worldSpace, playerPos, senderOrigin)`** — note the argument order. We route *from the
    player outward toward the sender*, not in the direction the visitor travels. `Plan::finePath` is documented
    as "ordered walkable points from the start outward", so routing this way traces the road away from the

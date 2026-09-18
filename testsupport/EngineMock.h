@@ -617,6 +617,12 @@ namespace NarrativeEngine::Testing
         // it. Registered in the form table like any other form.
         RE::TESObjectREFR* AddReference(RE::TESObjectCELL* cell, std::uint32_t formID, RE::NiPoint3 position);
 
+        // The cell the SAVE holds a reference in, which is not the same
+        // question as which cell it is attached to. An NPC on the other side
+        // of the province has a save cell and no parent cell, and code that
+        // has to find somebody who is not loaded can only ask this one.
+        void SetSaveParentCell(RE::TESObjectREFR* ref, RE::TESObjectCELL* cell);
+
         // A load door standing in `cell` that comes out beside a door in
         // `destination`, at `arrival`. That arrival point is where an occupant
         // leaving the building actually appears, which is not where either door

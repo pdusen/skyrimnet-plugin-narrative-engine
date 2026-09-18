@@ -8,7 +8,10 @@
 #include <StuckRecovery.h>
 #include <TravelGraph.h>
 
+#include <RE/B/BGSLocation.h>
 #include <RE/P/PlayerCharacter.h>
+#include <RE/T/TESObjectCELL.h>
+#include <RE/T/TESWorldSpace.h>
 
 #include <algorithm>
 #include <cmath>
@@ -269,12 +272,113 @@ namespace NarrativeEngine::VisitArrivalPoint
             return kept;
         }
 
+        // How a visitor's end of the route was found. Logged, because
+        // which rung answered says how much to trust the direction: a
+        // live position is where they actually are, an editor location is
+        // only where they were placed.
+        enum class OriginSource : std::uint8_t
+        {
+            Unresolved,
+            Live,        // RoadRoute::ResolveOrigin -- loaded, or indoors via a load door
+            SaveCell,    // unloaded, but the save knows which cell holds them
+            HomeLocation // not even that; fall back to where the record says they belong
+        };
+
+        const char* OriginSourceName(OriginSource source)
+        {
+            switch (source) {
+            case OriginSource::Live:
+                return "live";
+            case OriginSource::SaveCell:
+                return "save-cell";
+            case OriginSource::HomeLocation:
+                return "home-location";
+            case OriginSource::Unresolved:
+            default:
+                return "unresolved";
+            }
+        }
+
+        // Where is this visitor, when they are almost certainly not loaded?
+        //
+        // This is the ordinary case, not an edge one: the beat exists to
+        // bring somebody who is ELSEWHERE, and `RoadRoute::ResolveOrigin`
+        // reads `GetParentCell()`, which is `return parentCell` and is
+        // null for any reference the engine has not attached. It also
+        // walks an interior's references looking for a load door, which
+        // finds nothing in a cell nobody has loaded. So it answers for the
+        // player, who is always loaded, and for a sender standing in the
+        // same room -- and for nobody else.
+        //
+        // Hence a ladder, best first:
+        //
+        //   Live          where they actually are. Only available while
+        //                 they are loaded, which for a visit sender is
+        //                 usually not the case.
+        //   SaveCell      GetSaveParentCell is the cell the save file
+        //                 holds them in, and data.location travels with
+        //                 the reference whether or not it has 3D. Exterior
+        //                 only -- an unloaded interior still cannot be
+        //                 walked for its door.
+        //   HomeLocation  the location the record says they belong to, and
+        //                 its map marker. Coarsest of the three, and the
+        //                 one that answers for somebody asleep in an
+        //                 interior on the other side of the province.
+        //
+        // The rung that answers is logged. A visit staged off HomeLocation
+        // is pointing at where the visitor LIVES rather than where they
+        // are, which is defensible for a visit and would not be for
+        // anything that claimed to track them.
+        OriginSource ResolveSenderOrigin(const MainThread::Token& mt, RE::Actor* sender, RoadRoute::Origin& out)
+        {
+            out = RoadRoute::ResolveOrigin(mt, sender);
+            if (out.valid) {
+                return OriginSource::Live;
+            }
+
+            if (auto* saveCell = sender->GetSaveParentCell(); saveCell && !saveCell->IsInteriorCell()) {
+                if (auto* ws = saveCell->GetRuntimeData().worldSpace) {
+                    out.valid = true;
+                    out.worldSpace = ws->GetFormID();
+                    out.position = sender->GetPosition();
+                    out.viaLoadDoor = false;
+                    return OriginSource::SaveCell;
+                }
+            }
+
+            // The map marker of wherever the record files them. Same
+            // primitive RoadRoute falls back to for a door-less interior,
+            // reached here from the base record rather than from a cell we
+            // cannot read.
+            auto* home = sender->GetEditorLocation();
+            if (!home) {
+                home = sender->GetCurrentLocation();
+            }
+            if (home) {
+                const auto markerPtr = home->worldLocMarker.get();
+                if (auto* marker = markerPtr.get()) {
+                    if (auto* markerCell = marker->GetParentCell()) {
+                        if (auto* ws = markerCell->GetRuntimeData().worldSpace) {
+                            out.valid = true;
+                            out.worldSpace = ws->GetFormID();
+                            out.position = marker->GetPosition();
+                            out.viaLoadDoor = true;
+                            return OriginSource::HomeLocation;
+                        }
+                    }
+                }
+            }
+
+            return OriginSource::Unresolved;
+        }
+
         struct Endpoints
         {
             bool resolved = false;
             RoadRoute::Origin sender;
             RoadRoute::Origin player;
             RE::NiPoint3 playerPos{};
+            OriginSource senderSource = OriginSource::Unresolved;
         };
     } // namespace
 
@@ -309,7 +413,7 @@ namespace NarrativeEngine::VisitArrivalPoint
         // doors where either party is indoors.
         const auto ends = MainThread::Run(pt, [sender, player](const MainThread::Token& mt) {
             Endpoints out;
-            out.sender = RoadRoute::ResolveOrigin(mt, sender);
+            out.senderSource = ResolveSenderOrigin(mt, sender, out.sender);
             out.player = RoadRoute::ResolveOrigin(mt, player);
             out.playerPos = player->GetPosition();
             out.resolved = out.sender.valid && out.player.valid;
@@ -317,10 +421,12 @@ namespace NarrativeEngine::VisitArrivalPoint
         });
 
         if (!ends.resolved) {
-            logger::info("VisitArrivalPoint: sender=0x{:08X} tier=none — origin unresolved "
-                         "(sender_valid={} player_valid={})",
+            logger::warn("VisitArrivalPoint: sender=0x{:08X} tier=none — origin unresolved "
+                         "(sender_valid={} via={} player_valid={}). Nothing in the record or the save "
+                         "could say where this visitor is or where they belong.",
                          senderId,
                          ends.sender.valid,
+                         OriginSourceName(ends.senderSource),
                          ends.player.valid);
             return result;
         }
@@ -389,14 +495,15 @@ namespace NarrativeEngine::VisitArrivalPoint
 
         if (tier == Tier::None) {
             logger::info("VisitArrivalPoint: sender=0x{:08X} tier=none — ws=0x{:08X} "
-                         "home=({:.0f},{:.0f}){} player=({:.0f},{:.0f}){} band=[{:.0f},{:.0f}] cover_r={:.0f} "
+                         "home=({:.0f},{:.0f}) via={} player=({:.0f},{:.0f}){} band=[{:.0f},{:.0f}] "
+                         "cover_r={:.0f} "
                          "plan_valid={} within_fine={} fine_nodes={} coarse_nodes={} coarse_allowed={} "
                          "| fine[{}] | bearing[{}]",
                          senderId,
                          ends.player.worldSpace,
                          ends.sender.position.x,
                          ends.sender.position.y,
-                         ends.sender.viaLoadDoor ? " via-door" : "",
+                         OriginSourceName(ends.senderSource),
                          ends.player.position.x,
                          ends.player.position.y,
                          ends.player.viaLoadDoor ? " via-door" : "",
@@ -425,7 +532,7 @@ namespace NarrativeEngine::VisitArrivalPoint
         const float pointBearing =
             ToDegrees(std::atan2(result.point.y - ends.playerPos.y, result.point.x - ends.playerPos.x));
 
-        logger::info("VisitArrivalPoint: sender=0x{:08X} tier={} — ws=0x{:08X} home=({:.0f},{:.0f}){} "
+        logger::info("VisitArrivalPoint: sender=0x{:08X} tier={} — ws=0x{:08X} home=({:.0f},{:.0f}) via={} "
                      "player=({:.0f},{:.0f}){} point=({:.0f},{:.0f},{:.0f}) dist={:.0f}u "
                      "bearing_home={:.0f}deg bearing_point={:.0f}deg off_by={:.0f}deg within_fine={} "
                      "fine_nodes={} coarse_nodes={} fallbacks={} | fine[{}] | bearing[{}]",
@@ -434,7 +541,7 @@ namespace NarrativeEngine::VisitArrivalPoint
                      ends.player.worldSpace,
                      ends.sender.position.x,
                      ends.sender.position.y,
-                     ends.sender.viaLoadDoor ? " via-door" : "",
+                     OriginSourceName(ends.senderSource),
                      ends.playerPos.x,
                      ends.playerPos.y,
                      ends.player.viaLoadDoor ? " via-door" : "",
