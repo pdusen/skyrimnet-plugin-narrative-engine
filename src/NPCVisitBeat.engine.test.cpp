@@ -95,6 +95,8 @@ namespace
                                       "iVisitMarkerMaxDistanceUnits=2500\n"
                                       "iVisitArrivalCoverRadiusUnits=64\n"
                                       "bVisitArrivalAllowCoarseBearing=true\n"
+                                      "iStuckRecoveryCheckIntervalSeconds=1\n"
+                                      "iStuckRecoveryMovementThresholdUnits=100\n"
                                       "[FineRoads]\nbFineRoadsEnabled=1\n"
                                       "iFineRoadsBackstopSeconds=1\nbFineRoadsDebugBitmap=0\n";
 
@@ -375,6 +377,17 @@ namespace
             }
         }
         return alive;
+    }
+
+    // Tick the RUNNING arm long enough for the escort to check twice.
+    //
+    // Its clock is wall-clock elapsed and Settings clamps the interval to a
+    // one-second floor, so this cannot be hurried: the first check only
+    // establishes where the sender was, and the second is the one that can
+    // tell they have not moved since.
+    void EscortTicks(NPCVisitBeat& beat)
+    {
+        TickForSeconds(beat, BeatState::RUNNING, TickMode::Normal, 2.4);
     }
 
     void AbortFromMainThread(NPCVisitBeat& beat)
@@ -702,6 +715,65 @@ TEST_CASE("NPCVisitBeat gives up cleanly when the arrival cannot be staged", "[N
         {
             REQUIRE(RunCompose(beat) == BeatState::CLEANUP);
             REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+        }
+    }
+}
+
+TEST_CASE("NPCVisitBeat moves a visitor who cannot walk the last stretch", "[NPCVisitBeat][engine]")
+{
+    // The arrival point is vetted, but vetting a POSITION is not the same as
+    // proving a route: the search asks whether someone can stand somewhere,
+    // while the engine has to walk a collision capsule from there to the
+    // player. Where those two disagree the sender simply never arrives, and
+    // before this the beat just burned its approach timeout and rolled back.
+    //
+    // The fallbacks are what makes recovery possible, and where they come
+    // from is the point -- each is another node further along the same road,
+    // so escalating walks the visitor BACK ALONG THEIR OWN ROUTE rather than
+    // sideways onto ground nothing has vetted.
+    EngineMock engine;
+    const std::string patientSettings = std::string{kSettings} + "[Beats]\niVisitApproachTimeoutSeconds=30\n";
+    const ConfiguredSettings settings{patientSettings.c_str()};
+    Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    PrimeModel();
+    const auto world = BuildWorld(engine);
+    Init::Initialize();
+    const RunningDispatch dispatch;
+    NPCVisitBeat beat;
+    FillAliases(engine, world);
+
+    PlaceSenderAway(engine, world.sender, 3000.0f);
+    beat.OnStart(BeatContext{}, SenderParams());
+    REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+    engine.courier.questStage = static_cast<std::uint16_t>(kStageSalutation);
+
+    SECTION("when they have stopped moving well short of the player")
+    {
+        // Far enough out to still be approaching rather than arrived, and
+        // then not moving at all between checks.
+        PlaceSenderAway(engine, world.sender, 3000.0f);
+        const auto stalledAt = world.sender->GetPosition();
+        EscortTicks(beat);
+
+        SECTION("should put them somewhere else on the road in")
+        {
+            REQUIRE(world.sender->GetPosition().x != stalledAt.x);
+        }
+    }
+
+    SECTION("when they are already close enough to be arriving")
+    {
+        PlaceSenderAway(engine, world.sender, 100.0f);
+        const auto standingAt = world.sender->GetPosition();
+        EscortTicks(beat);
+
+        SECTION("should leave them alone")
+        {
+            // Stillness this close is someone standing in front of the
+            // player about to speak, not someone stuck. Warping them here
+            // would be the visible bug the escort exists to prevent.
+            REQUIRE(world.sender->GetPosition().x == standingAt.x);
         }
     }
 }
@@ -1196,13 +1268,16 @@ TEST_CASE("NPCVisitBeat sends the visitor home", "[NPCVisitBeat][engine]")
         engine.FillRefAlias(world.quest.aliases.at(1), nullptr);
         PlaceSenderAway(engine, world.sender, 9000.0f);
 
-        SECTION("should still get them out of the scene")
+        SECTION("should put them back where they were standing anyway")
         {
-            // A self-MoveTo, which at least unloads and reloads them where
-            // they stand rather than leaving them frozen mid-package.
+            // There is no reference left to move them onto, but the
+            // snapshot still knows where the beat found them. This used to
+            // be a MoveTo onto the sender's own reference, which moves
+            // nobody anywhere and left them wherever the visit ended.
+            const auto snap = VisitState::GetSnapshot();
             StageTick(beat);
-            REQUIRE_FALSE(engine.questControl.teleports.empty());
-            REQUIRE(engine.questControl.teleports.back().destinationFormID == kSender);
+            REQUIRE(world.sender->GetPosition().x == snap.returnPosition.x);
+            REQUIRE(world.sender->GetPosition().y == snap.returnPosition.y);
         }
     }
 }

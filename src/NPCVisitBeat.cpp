@@ -305,6 +305,11 @@ namespace NarrativeEngine
 
         std::atomic<int> g_fillVerifyTicks = 0;
 
+        // Last Normal-mode reading handed to the escort's clock, so the
+        // gap between checks is measured rather than assumed from the
+        // tick rate.
+        std::atomic<double> g_lastEscortSampleNormalSec = 0.0;
+
         // Supervises the walk in, fed the arrival search's fallbacks.
         // Only the approach is escorted -- once the sender is talking to
         // the player there is nothing left to be stuck on.
@@ -344,6 +349,7 @@ namespace NarrativeEngine
             g_fillVerifyTicks.store(0, std::memory_order_release);
             g_arrivalMarkerFormID.store(0, std::memory_order_release);
             g_escort.Clear();
+            g_lastEscortSampleNormalSec.store(0.0, std::memory_order_release);
             {
                 std::scoped_lock lock(g_sessionMutex);
                 g_arrival = {};
@@ -459,6 +465,46 @@ namespace NarrativeEngine
                 return false;
             }
             return true;
+        }
+
+        // Put the sender back where the beat found them.
+        //
+        // The anchor is the good answer: it is a real reference, so MoveTo
+        // handles the cell change for us. When it is missing -- the fill
+        // never landed, or nothing could be placed -- the snapshot still
+        // knows where they were standing, and putting them there is far
+        // better than the alternative this replaced, which was to skip the
+        // move entirely and abandon them wherever the visit ended.
+        //
+        // KNOWN LIMIT: the fallback is a position, not a reference, so it
+        // cannot carry the sender across a cell boundary. A visit that
+        // started indoors and lost its anchor leaves them outside their own
+        // front door rather than inside it.
+        void SendSenderHome(RE::Actor* senderActor, const char* tag)
+        {
+            if (!senderActor) {
+                return;
+            }
+            const auto snap = VisitState::GetSnapshot();
+            auto* anchorRef = g_returnAnchorAlias ? g_returnAnchorAlias->GetReference() : nullptr;
+            if (anchorRef) {
+                senderActor->MoveTo(anchorRef);
+                logger::info("NPCVisitBeat[{}]: sent sender 0x{:08X} home to anchor 0x{:08X}",
+                             tag,
+                             senderActor->GetFormID(),
+                             anchorRef->GetFormID());
+            } else {
+                senderActor->SetPosition(snap.returnPosition, /*a_updateCharController=*/true);
+                senderActor->Update3DPosition(/*a_warp=*/true);
+                logger::warn("NPCVisitBeat[{}]: no return anchor for sender 0x{:08X} — placed them at the "
+                             "snapshotted position ({:.0f},{:.0f},{:.0f}) instead",
+                             tag,
+                             senderActor->GetFormID(),
+                             snap.returnPosition.x,
+                             snap.returnPosition.y,
+                             snap.returnPosition.z);
+            }
+            senderActor->data.angle.z = snap.returnAngleZ;
         }
 
         // ---- Hard-abort helper -------------------------------------
@@ -615,18 +661,10 @@ namespace NarrativeEngine
             g_onHoldCombatStartedAtCombatSec.store(0.0);
 
             auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
-            auto* anchorRef = g_returnAnchorAlias ? g_returnAnchorAlias->GetReference() : nullptr;
             auto* senderActor = senderRef ? senderRef->As<RE::Actor>() : nullptr;
 
             if (senderActor && !senderActor->IsDead()) {
-                if (anchorRef) {
-                    senderActor->MoveTo(anchorRef);
-                    logger::info("NPCVisitBeat[HARD-ABORT]: teleported sender 0x{:08X} to "
-                                 "return anchor 0x{:08X}",
-                                 senderActor->GetFormID(),
-                                 anchorRef->GetFormID());
-                }
-                senderActor->data.angle.z = VisitState::GetSnapshot().returnAngleZ;
+                SendSenderHome(senderActor, "HARD-ABORT");
                 DemoteSenderToCandidate(senderActor);
             } else if (senderActor) {
                 logger::info("NPCVisitBeat[HARD-ABORT]: sender dead; skipping teleport/demote");
@@ -841,22 +879,11 @@ namespace NarrativeEngine
                          "shutdown chain",
                          triggerReason);
             auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
-            auto* anchorRef = g_returnAnchorAlias ? g_returnAnchorAlias->GetReference() : nullptr;
             auto* senderActor = senderRef ? senderRef->As<RE::Actor>() : nullptr;
             if (senderActor && !senderActor->IsDead()) {
-                if (anchorRef) {
-                    senderActor->MoveTo(anchorRef);
-                    logger::info("NPCVisitBeat[RETURNHOME]: teleported sender 0x{:08X} to "
-                                 "return anchor 0x{:08X}",
-                                 senderActor->GetFormID(),
-                                 anchorRef->GetFormID());
-                } else {
-                    senderActor->MoveTo(senderRef);
-                    logger::warn("NPCVisitBeat[RETURNHOME]: return anchor unresolved; used "
-                                 "self-MoveTo fallback for sender 0x{:08X}",
-                                 senderActor->GetFormID());
-                }
-                senderActor->data.angle.z = VisitState::GetSnapshot().returnAngleZ;
+                // Was a MoveTo onto the sender's own reference when the
+                // anchor was missing, which moves nobody anywhere.
+                SendSenderHome(senderActor, "RETURNHOME");
                 senderActor->EvaluatePackage();
                 DemoteSenderToCandidate(senderActor);
             } else if (senderActor) {
@@ -1243,6 +1270,49 @@ namespace NarrativeEngine
             return {};
         }
 
+        // Move the sender on when the walk in has stalled.
+        //
+        // Only while they are still walking: the escort supervises the
+        // APPROACH and nothing else. Once they are talking to the player
+        // there is nothing left to be stuck on, and warping someone
+        // mid-conversation is worse than any stall.
+        //
+        // The clock is plugin-thread arithmetic, so waiting costs no
+        // main-thread hop -- only the check it gates does.
+        void DriveApproachEscort(const PluginThread::Token& pt, TickMode mode)
+        {
+            if (mode != TickMode::Normal || !g_visitQuest) {
+                return;
+            }
+            const auto stage = g_visitQuest->GetCurrentStageID();
+            if (stage != kStageSalutation) {
+                return;
+            }
+            const auto& cfg = Settings::Get();
+            StuckRecovery::Options opts;
+            opts.movementThresholdUnits = static_cast<float>(cfg.stuckRecoveryMovementThresholdUnits);
+            opts.checkIntervalSeconds = static_cast<double>(cfg.stuckRecoveryCheckIntervalSeconds);
+            opts.arrivedDistanceUnits = static_cast<float>(cfg.visitSalutationApproachDistanceUnits);
+
+            const double nowNormal = NormalElapsedNow();
+            const double sincePrev = nowNormal - g_lastEscortSampleNormalSec.exchange(nowNormal);
+            if (sincePrev <= 0.0 || !g_escort.DueForCheck(sincePrev, opts)) {
+                return;
+            }
+
+            MainThread::Run(pt, [&opts](const MainThread::Token& mt) {
+                auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
+                auto* senderActor = senderRef ? senderRef->As<RE::Actor>() : nullptr;
+                auto* player = RE::PlayerCharacter::GetSingleton();
+                if (!senderActor || senderActor->IsDead() || !player) {
+                    return 0;
+                }
+                // StuckRecovery logs each warp itself.
+                g_escort.Update(mt, senderActor, player->GetPosition(), opts);
+                return 0;
+            });
+        }
+
         // ---- RUNNING stage-tick (main thread; called every ~1s) ----
 
         // Emit a periodic warn/error while a stage-transition dispatch
@@ -1354,14 +1424,11 @@ namespace NarrativeEngine
                                      "{}s) — rolling back",
                                      elapsed,
                                      timeoutSec);
-                        auto* anchorRef = g_returnAnchorAlias ? g_returnAnchorAlias->GetReference() : nullptr;
                         auto* senderActor = senderRef->As<RE::Actor>();
-                        if (senderActor && anchorRef) {
-                            senderActor->MoveTo(anchorRef);
-                            senderActor->data.angle.z = VisitState::GetSnapshot().returnAngleZ;
-                        }
-                        if (senderActor)
+                        if (senderActor) {
+                            SendSenderHome(senderActor, "SALUTATION");
                             DemoteSenderToCandidate(senderActor);
+                        }
                         QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
                         VisitConclusionPoll::Disarm();
                         PushRolledBackHistory(senderActor);
@@ -1607,8 +1674,17 @@ namespace NarrativeEngine
     {
         void Initialize()
         {
-            if (g_pointersResolved.exchange(true))
-                return;
+            // Resolve every time rather than latching on the first call.
+            //
+            // Production calls this exactly once, at kDataLoaded, so nothing
+            // changes there. The latch that used to sit here was guarding
+            // nothing -- RegisterSinks has its own -- and it silently made
+            // the module keep pointers from the FIRST call forever, which in
+            // the test harness means pointers into storage a later case has
+            // already recycled. Every assertion about the faction or the
+            // aliases after the first one was reading whatever now sat at
+            // that address.
+            g_pointersResolved.store(true, std::memory_order_release);
             bool ok = true;
             if (auto* form = RE::TESForm::LookupByEditorID(kVisitQuestEditorID)) {
                 g_visitQuest = form->As<RE::TESQuest>();
@@ -1869,6 +1945,7 @@ namespace NarrativeEngine
             if (g_terminalCleanupDone.load()) {
                 return {BeatState::CLEANUP};
             }
+            DriveApproachEscort(pt, mode);
             // Fire a stage-tick every N ticks. Combat mode is forwarded
             // so the Discuss/OnHold substate can drive combat-stuck.
             if (++g_runningTickCount >= kRunningCheckEveryNTicks) {

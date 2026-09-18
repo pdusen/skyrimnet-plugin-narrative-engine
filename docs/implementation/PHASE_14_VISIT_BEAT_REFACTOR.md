@@ -690,7 +690,7 @@ With `bDebugMode=true`, standing outdoors on or near a road:
 
 ### Step 4 — Approach hardening: escort, and a non-fatal return anchor
 
-- [ ] Complete
+- [X] Complete
 
 **[CLAUDE]**
 
@@ -717,10 +717,29 @@ anchor stops stranding people.
 - The approach timeout stays as the outer backstop. The escort reduces how often it fires; it does not replace
   it.
 
+**What came out differently:**
+
+- **The self-MoveTo was worse than documented.** `RunReturnHomeShutdown` did not skip the move when the
+  anchor was missing — it moved the sender onto their own reference, which moves nobody anywhere while
+  reading like a fallback. All three paths now go through one `SendSenderHome`, which uses the anchor when
+  there is one and the snapshotted position when there is not.
+- **The fallback cannot cross a cell boundary.** It is a position, not a reference, so a visit that started
+  indoors and lost its anchor leaves the sender outside their own front door. Recorded in the code; better
+  than the nothing it replaced, and not worth a second marker to fix.
+- **Removing a one-shot latch in `Initialize` was necessary, and it fixed the suite rather than the beat.**
+  `g_pointersResolved` made the function resolve forms on its first call only. Production calls it once at
+  `kDataLoaded`, so nothing changes there — but in the harness every test leaf after the first was running
+  against pointers into `EngineMock` storage a later case had already recycled. The faction assertions had
+  been passing on the coincidence that the recycled address still held a faction. `RegisterSinks` has its
+  own guard, so the latch was protecting nothing. Found by accident when an unrelated addition to the test
+  world shifted the allocation pattern and the coincidence stopped holding.
+
 **Verify [CLAUDE]:**
 
 - `pwsh -File build.ps1 test` succeeds.
 - No cleanup path remains that can skip returning the sender home.
+- Disabling the escort drive makes the stalled-visitor case fail, so the case is testing the escort rather
+  than describing it.
 
 ---
 
