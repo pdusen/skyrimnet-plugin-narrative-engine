@@ -2,11 +2,6 @@
 ;NEXT FRAGMENT INDEX 9
 Scriptname _ne__QF__ne_VisitQuest_0500FB2E Extends Quest Hidden
 
-;BEGIN ALIAS PROPERTY SpawnMarker
-;ALIAS PROPERTY TYPE ReferenceAlias
-ReferenceAlias Property Alias_SpawnMarker Auto
-;END ALIAS PROPERTY
-
 ;BEGIN ALIAS PROPERTY PlayerRef
 ;ALIAS PROPERTY TYPE ReferenceAlias
 ReferenceAlias Property Alias_PlayerRef Auto
@@ -44,14 +39,10 @@ EndFunction
 
 ;BEGIN FRAGMENT Fragment_1
 Function Fragment_1()
-;BEGIN AUTOCAST TYPE _ne_VisitQuest
-Quest __temp = self as Quest
-_ne_VisitQuest kmyQuest = __temp as _ne_VisitQuest
-;END AUTOCAST
 ;BEGIN CODE
 ; 10
-; Warp & Salutation
-kmyQuest.MoveSenderToSpawnMarker()
+; Salutation
+; The warp happens in C++ before this stage is ever set.
 ;END CODE
 EndFunction
 ;END FRAGMENT

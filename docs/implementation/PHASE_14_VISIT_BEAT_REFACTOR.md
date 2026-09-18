@@ -540,7 +540,7 @@ Step 6 reads, so its diagnostic logging is the deliverable as much as the search
 
 ### Step 2 — ESP alias rework and Papyrus trampolines
 
-- [ ] Complete
+- [X] Complete (Claude's half; user CK verification outstanding)
 
 **[CLAUDE]**, with a **[USER]** Creation Kit fallback.
 
@@ -581,9 +581,16 @@ Step 3 to call. **The beat is broken at the end of this step** — that is expec
 - `pwsh -File build.ps1 build` succeeds, including the Papyrus compile and the ESP deserialize.
 - Re-serializing the mod-folder ESP reproduces the hand-edited YAML — the round-trip is stable.
 - **No unit tests are added, and that is deliberate:** this step changes only ESP records and Papyrus, neither
-  of which either test executable can reach. The existing `NPCVisitBeat` suite will be red between here and
-  Step 3, because the fills it expects no longer happen. Do not paper over that by loosening the suite —
-  Step 3 is what makes it green again.
+  of which either test executable can reach.
+- **Corrected after the fact:** this step predicted the `NPCVisitBeat` suite would go red until Step 3. It does
+  not. `NPCVisitBeat.engine.test.cpp` fabricates its own quest through `AddQuestWithAliases`, so it never
+  reads the shipped record and an ESP edit is invisible to it. The suite stays green across this step, which
+  means **Step 2 has no automated signal at all** — the build, the round-trip and the CK are the whole of its
+  verification.
+- What does break is the runtime: `NPCVisitBeat_Init::Initialize` requires all three aliases, so with
+  `SpawnMarker` gone it logs `SpawnMarker=MISSING`, sets `g_pointersCriticallyMissing`, and the beat reports
+  itself unavailable for the session. That is the intended broken window between Steps 2 and 3, and it fails
+  closed rather than wedging.
 
 **Verify [USER]:**
 
