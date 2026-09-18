@@ -736,6 +736,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/RoadRoute.cpp"
         "${CMAKE_SOURCE_DIR}/src/HoldGrid.cpp"
         "${CMAKE_SOURCE_DIR}/src/AmbushSpawnPoints.cpp"
+        "${CMAKE_SOURCE_DIR}/src/VisitArrivalPoint.cpp"
         "${CMAKE_SOURCE_DIR}/src/EvaluationPipeline.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipContent.cpp"
         "${CMAKE_SOURCE_DIR}/src/VisitComposer.cpp"

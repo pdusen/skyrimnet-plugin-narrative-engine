@@ -1,0 +1,393 @@
+#include <VisitArrivalPoint.h>
+
+#include <CameraVisibility.h>
+#include <logger.h>
+#include <MainThread.h>
+#include <RoadRoute.h>
+#include <Settings.h>
+#include <StuckRecovery.h>
+#include <TravelGraph.h>
+
+#include <RE/P/PlayerCharacter.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <string>
+
+namespace NarrativeEngine::VisitArrivalPoint
+{
+    namespace
+    {
+        using StuckRecovery::kActorHeightUnits;
+        using StuckRecovery::kGroundClearanceUnits;
+
+        // Runner-ups kept for StuckRecovery, and how far apart two of
+        // them have to be to count as distinct options.
+        //
+        // The fine graph is a ribbon two or three nodes wide rather than
+        // a thinned centreline, so consecutive nodes can be a hundred
+        // units apart ACROSS the road rather than along it. Two points
+        // that close are one place, and handing both to the escort
+        // spends two escalations on the same patch of ground.
+        constexpr std::size_t kMaxFallbacks = 6;
+        constexpr float kFallbackSeparationUnits = 400.0f;
+
+        // Tier 2's arc around the bearing home, and how finely it is
+        // sampled.
+        //
+        // The bearing is only as good as the coarse node it points at,
+        // and those sit roughly one cell apart — so treating it as exact
+        // would be false precision. Thirty degrees either side is wide
+        // enough to find usable ground without the arrival reading as
+        // coming from somewhere else.
+        constexpr float kBearingArcHalfWidthDegrees = 30.0f;
+        constexpr int kBearingAzimuthSamples = 9;
+        constexpr int kBearingRadiusSamples = 5;
+
+        // A coarse node nearer than this to the player says nothing
+        // about direction — CoarseOnly plans start at the node NEAREST
+        // the player, which can be almost on top of them. Walk the
+        // coarse path until it has actually gone somewhere.
+        constexpr float kBearingMinSeparationUnits = 1000.0f;
+
+        // Largest elevation difference from the player a Tier 2
+        // candidate may have, either way.
+        //
+        // A reachability proxy, not an aesthetic one: the navmesh gate
+        // answers containment and not connectivity, so a ledge is "on
+        // navmesh" with no walkable route down. Tighter than the ambush
+        // search's budget because this band is tighter — at 800 units
+        // out this is a 26-degree slope, at 2500 it is 9.
+        constexpr float kMaxElevationDeltaUnits = 400.0f;
+
+        float Dist2D(const RE::NiPoint3& a, const RE::NiPoint3& b)
+        {
+            const float dx = a.x - b.x;
+            const float dy = a.y - b.y;
+            return std::sqrt(dx * dx + dy * dy);
+        }
+
+        // Why a candidate was rejected, so a failed search names the
+        // gate that killed it rather than going quiet.
+        struct GateTally
+        {
+            int considered = 0;
+            int tooNear = 0;
+            int tooFar = 0;
+            int offNavmesh = 0;
+            int notLevel = 0;
+            int inView = 0;
+
+            std::string Describe() const
+            {
+                return "considered=" + std::to_string(considered) + " tooNear=" + std::to_string(tooNear)
+                       + " tooFar=" + std::to_string(tooFar) + " offNavmesh=" + std::to_string(offNavmesh)
+                       + " notLevel=" + std::to_string(notLevel) + " inView=" + std::to_string(inView);
+            }
+        };
+
+        // Accepted candidates, best-first. The winner is element zero;
+        // everything after it is fallback supply.
+        void AppendSeparated(std::vector<RE::NiPoint3>& kept, const RE::NiPoint3& candidate)
+        {
+            for (const auto& existing : kept) {
+                if (Dist2D(existing, candidate) < kFallbackSeparationUnits) {
+                    return;
+                }
+            }
+            kept.push_back(candidate);
+        }
+
+        bool BehindCover(const RE::NiPoint3& pos, float coverRadius)
+        {
+            return CameraVisibility::IsPositionBehindCover(pos, kActorHeightUnits, coverRadius);
+        }
+
+        // ---- Tier 1 -------------------------------------------------
+        //
+        // Walk the fine path outward from the player and keep every node
+        // that clears the gates, in road order.
+        //
+        // The whole path is scanned rather than stopping at the first
+        // node past the band: a road can curve back toward the player,
+        // so road order and straight-line distance do not rise together
+        // and an early exit would miss usable ground beyond a bend.
+        std::vector<RE::NiPoint3> WalkFinePath(const std::vector<RE::NiPoint3>& finePath,
+                                               const RE::NiPoint3& playerPos,
+                                               float minDist,
+                                               float maxDist,
+                                               float coverRadius,
+                                               GateTally& tally)
+        {
+            std::vector<RE::NiPoint3> kept;
+            for (const auto& node : finePath) {
+                ++tally.considered;
+                const float distance = Dist2D(node, playerPos);
+                if (distance < minDist) {
+                    ++tally.tooNear;
+                    continue;
+                }
+                if (distance > maxDist) {
+                    ++tally.tooFar;
+                    continue;
+                }
+                // The graph is a snapshot and cells unload out from
+                // under it, so being on navmesh is re-checked rather
+                // than inherited from the triangle the node came from.
+                if (!StuckRecovery::IsOnNavmesh(node)) {
+                    ++tally.offNavmesh;
+                    continue;
+                }
+                RE::NiPoint3 standing = node;
+                standing.z += kGroundClearanceUnits;
+                if (!BehindCover(standing, coverRadius)) {
+                    ++tally.inView;
+                    continue;
+                }
+                AppendSeparated(kept, standing);
+                if (kept.size() > kMaxFallbacks) {
+                    break;
+                }
+            }
+            return kept;
+        }
+
+        // ---- Tier 2 -------------------------------------------------
+
+        struct BearingCandidate
+        {
+            RE::NiPoint3 pos{};
+            // Angular deviation from the bearing home, in degrees, and
+            // distance from the middle of the band. Combined so that
+            // neither is a pure tiebreaker for the other: a point
+            // straight down the bearing at the edge of the band should
+            // not automatically beat one slightly off it at a better
+            // distance.
+            float score = 0.0f;
+        };
+
+        // The first coarse node on the route that is far enough from the
+        // player to mean a direction. Returns false when the coarse path
+        // never gets clear of them.
+        bool BearingHome(const std::vector<std::size_t>& coarsePath, const RE::NiPoint3& playerPos, RE::NiPoint3& out)
+        {
+            for (const auto index : coarsePath) {
+                const auto* node = TravelGraph::GetNode(index);
+                if (!node) {
+                    continue;
+                }
+                const RE::NiPoint3 at{node->x, node->y, node->z};
+                if (Dist2D(at, playerPos) >= kBearingMinSeparationUnits) {
+                    out = at;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        std::vector<RE::NiPoint3> SampleBearingArc(const RE::NiPoint3& playerPos,
+                                                   const RE::NiPoint3& toward,
+                                                   float minDist,
+                                                   float maxDist,
+                                                   float coverRadius,
+                                                   GateTally& tally)
+        {
+            const float baseAngle = std::atan2(toward.y - playerPos.y, toward.x - playerPos.x);
+            const float arc = kBearingArcHalfWidthDegrees * 3.14159265f / 180.0f;
+
+            std::vector<BearingCandidate> accepted;
+            const float bandMiddle = 0.5f * (minDist + maxDist);
+            const float bandHalf = std::max(1.0f, 0.5f * (maxDist - minDist));
+
+            for (int r = 0; r < kBearingRadiusSamples; ++r) {
+                const float t = kBearingRadiusSamples == 1 ? 0.0f : static_cast<float>(r) / (kBearingRadiusSamples - 1);
+                const float radius = minDist + t * (maxDist - minDist);
+                for (int a = 0; a < kBearingAzimuthSamples; ++a) {
+                    const float u =
+                        kBearingAzimuthSamples == 1 ? 0.0f : static_cast<float>(a) / (kBearingAzimuthSamples - 1);
+                    const float offset = -arc + u * (2.0f * arc);
+                    const float angle = baseAngle + offset;
+
+                    ++tally.considered;
+                    RE::NiPoint3 probe{
+                        playerPos.x + radius * std::cos(angle), playerPos.y + radius * std::sin(angle), playerPos.z};
+
+                    // Off-road ground carries none of Tier 1's
+                    // guarantees, so this is the full standability
+                    // question: grounded, dry, and on navmesh.
+                    RE::NiPoint3 standing{};
+                    if (!StuckRecovery::IsStandable(probe, standing)) {
+                        ++tally.offNavmesh;
+                        continue;
+                    }
+                    if (std::fabs(standing.z - playerPos.z) > kMaxElevationDeltaUnits) {
+                        ++tally.notLevel;
+                        continue;
+                    }
+                    if (!BehindCover(standing, coverRadius)) {
+                        ++tally.inView;
+                        continue;
+                    }
+
+                    BearingCandidate candidate;
+                    candidate.pos = standing;
+                    const float angularPenalty = std::fabs(offset) / arc;
+                    const float distancePenalty = std::fabs(radius - bandMiddle) / bandHalf;
+                    candidate.score = angularPenalty + distancePenalty;
+                    accepted.push_back(candidate);
+                }
+            }
+
+            std::sort(accepted.begin(), accepted.end(), [](const BearingCandidate& a, const BearingCandidate& b) {
+                return a.score < b.score;
+            });
+
+            std::vector<RE::NiPoint3> kept;
+            for (const auto& candidate : accepted) {
+                AppendSeparated(kept, candidate.pos);
+                if (kept.size() > kMaxFallbacks) {
+                    break;
+                }
+            }
+            return kept;
+        }
+
+        struct Endpoints
+        {
+            bool resolved = false;
+            RoadRoute::Origin sender;
+            RoadRoute::Origin player;
+            RE::NiPoint3 playerPos{};
+        };
+    } // namespace
+
+    const char* TierName(Tier tier)
+    {
+        switch (tier) {
+        case Tier::FineRoad:
+            return "fine-road";
+        case Tier::CoarseBearing:
+            return "coarse-bearing";
+        case Tier::None:
+        default:
+            return "none";
+        }
+    }
+
+    Result Find(const PluginThread::Token& pt, RE::Actor* sender, RE::Actor* player)
+    {
+        Result result;
+        if (!sender || !player) {
+            logger::warn("VisitArrivalPoint: no sender or no player");
+            return result;
+        }
+
+        const auto& cfg = Settings::Get();
+        const float minDist = static_cast<float>(std::max(1, cfg.visitMarkerMinDistanceUnits));
+        const float maxDist = std::max(minDist + 1.0f, static_cast<float>(cfg.visitMarkerMaxDistanceUnits));
+        const float coverRadius = static_cast<float>(std::max(0, cfg.visitArrivalCoverRadiusUnits));
+        const RE::FormID senderId = sender->GetFormID();
+
+        // Engine state: both ends of the route, resolved through load
+        // doors where either party is indoors.
+        const auto ends = MainThread::Run(pt, [sender, player](const MainThread::Token& mt) {
+            Endpoints out;
+            out.sender = RoadRoute::ResolveOrigin(mt, sender);
+            out.player = RoadRoute::ResolveOrigin(mt, player);
+            out.playerPos = player->GetPosition();
+            out.resolved = out.sender.valid && out.player.valid;
+            return out;
+        });
+
+        if (!ends.resolved) {
+            logger::info("VisitArrivalPoint: sender=0x{:08X} tier=none — origin unresolved "
+                         "(sender_valid={} player_valid={})",
+                         senderId,
+                         ends.sender.valid,
+                         ends.player.valid);
+            return result;
+        }
+        if (ends.sender.worldSpace != ends.player.worldSpace) {
+            logger::info("VisitArrivalPoint: sender=0x{:08X} tier=none — different worldspaces "
+                         "(sender=0x{:08X} player=0x{:08X})",
+                         senderId,
+                         ends.sender.worldSpace,
+                         ends.player.worldSpace);
+            return result;
+        }
+
+        // Pure query over both graphs — deliberately NOT inside a
+        // main-thread hop. Route from the player OUTWARD toward the
+        // sender; finePath then traces the road away from the player in
+        // the direction of the visitor's home.
+        const auto plan = RoadRoute::Route(ends.player.worldSpace, ends.player.position, ends.sender.position);
+
+        GateTally fineTally;
+        GateTally bearingTally;
+        std::vector<RE::NiPoint3> kept;
+        Tier tier = Tier::None;
+
+        if (plan.valid && !plan.finePath.empty()) {
+            kept = MainThread::Run(pt, [&](const MainThread::Token&) {
+                return WalkFinePath(plan.finePath, ends.playerPos, minDist, maxDist, coverRadius, fineTally);
+            });
+            if (!kept.empty()) {
+                tier = Tier::FineRoad;
+            }
+        }
+
+        if (tier == Tier::None && cfg.visitArrivalAllowCoarseBearing && plan.valid) {
+            RE::NiPoint3 toward{};
+            const bool haveBearing = BearingHome(plan.coarsePath, ends.playerPos, toward);
+            if (haveBearing) {
+                kept = MainThread::Run(pt, [&](const MainThread::Token&) {
+                    return SampleBearingArc(ends.playerPos, toward, minDist, maxDist, coverRadius, bearingTally);
+                });
+                if (!kept.empty()) {
+                    tier = Tier::CoarseBearing;
+                }
+            }
+        }
+
+        if (tier == Tier::None) {
+            logger::info("VisitArrivalPoint: sender=0x{:08X} tier=none — ws=0x{:08X} "
+                         "sender_via_door={} player_via_door={} plan_valid={} fine_nodes={} coarse_nodes={} "
+                         "coarse_allowed={} | fine[{}] | bearing[{}]",
+                         senderId,
+                         ends.player.worldSpace,
+                         ends.sender.viaLoadDoor,
+                         ends.player.viaLoadDoor,
+                         plan.valid,
+                         plan.finePath.size(),
+                         plan.coarsePath.size(),
+                         cfg.visitArrivalAllowCoarseBearing,
+                         fineTally.Describe(),
+                         bearingTally.Describe());
+            return result;
+        }
+
+        result.tier = tier;
+        result.point = kept.front();
+        result.fallbacks.assign(kept.begin() + 1, kept.end());
+
+        logger::info("VisitArrivalPoint: sender=0x{:08X} tier={} — ws=0x{:08X} sender_via_door={} "
+                     "player_via_door={} fine_nodes={} coarse_nodes={} point=({:.0f},{:.0f},{:.0f}) "
+                     "dist={:.0f}u fallbacks={} | fine[{}] | bearing[{}]",
+                     senderId,
+                     TierName(tier),
+                     ends.player.worldSpace,
+                     ends.sender.viaLoadDoor,
+                     ends.player.viaLoadDoor,
+                     plan.finePath.size(),
+                     plan.coarsePath.size(),
+                     result.point.x,
+                     result.point.y,
+                     result.point.z,
+                     Dist2D(result.point, ends.playerPos),
+                     result.fallbacks.size(),
+                     fineTally.Describe(),
+                     bearingTally.Describe());
+        return result;
+    }
+} // namespace NarrativeEngine::VisitArrivalPoint

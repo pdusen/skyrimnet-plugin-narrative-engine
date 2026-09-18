@@ -381,8 +381,25 @@ namespace NarrativeEngine::Settings
         // [Actions] — dispatch / composition
         int visitBriefingMinWords = 40;
         int visitBriefingMaxWords = 120;
-        int visitMarkerMinDistanceUnits = 800;  // closest spawn marker may be
-        int visitMarkerMaxDistanceUnits = 2500; // farthest spawn marker may be
+        // Distance band the arrival search picks a point within,
+        // measured straight-line from the player. Read by
+        // VisitArrivalPoint; before Phase 14 these were parsed and never
+        // consumed, with the live band baked into the SpawnMarker alias.
+        int visitMarkerMinDistanceUnits = 800;  // closest the sender may arrive
+        int visitMarkerMaxDistanceUnits = 2500; // farthest the sender may arrive
+
+        // Silhouette half-width the arrival search's cover gate tests
+        // across. One actor, not a group, so this is the narrow end of
+        // the range CameraVisibility::IsPositionBehindCover was built
+        // for. The value is a measurement rather than a preference —
+        // see PHASE_14_VISIT_BEAT_REFACTOR.md, Step 2.
+        int visitArrivalCoverRadiusUnits = 64;
+
+        // When the road graph yields no usable arrival point, fall back
+        // to a bearing toward the sender's home. False makes a failed
+        // road search decline the visit outright, which is the stricter
+        // reading of "visitors arrive by road".
+        bool visitArrivalAllowCoarseBearing = true;
 
         // Compose-prompt content caps for narrative_engine_visit_compose.prompt.
         // Same shrink-for-local-LLMs motivation as the letter-compose

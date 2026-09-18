@@ -464,7 +464,7 @@ four gated stages, which is exactly the shape of `src/VisitArrivalPoint.engine.t
 
 ### Step 1 — Settings surface and the `VisitArrivalPoint` module
 
-- [ ] Complete
+- [X] Complete
 
 **[CLAUDE]**
 

@@ -435,6 +435,10 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("Beats", "iVisitMarkerMinDistanceUnits", dst.visitMarkerMinDistanceUnits));
             dst.visitMarkerMaxDistanceUnits = static_cast<int>(
                 ini.GetLongValue("Beats", "iVisitMarkerMaxDistanceUnits", dst.visitMarkerMaxDistanceUnits));
+            dst.visitArrivalCoverRadiusUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitArrivalCoverRadiusUnits", dst.visitArrivalCoverRadiusUnits));
+            dst.visitArrivalAllowCoarseBearing =
+                ini.GetBoolValue("Beats", "bVisitArrivalAllowCoarseBearing", dst.visitArrivalAllowCoarseBearing);
             dst.visitComposeMemoryRenderCap = static_cast<int>(
                 ini.GetLongValue("Beats", "iVisitComposeMemoryRenderCap", dst.visitComposeMemoryRenderCap));
             dst.visitComposeDialogueRenderCap = static_cast<int>(
