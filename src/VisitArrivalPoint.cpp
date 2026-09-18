@@ -272,16 +272,22 @@ namespace NarrativeEngine::VisitArrivalPoint
             return kept;
         }
 
+        // Upper bound on parentLoc traversal, matching AlphaCanon's. A
+        // room's Location rarely carries a map marker; the building or the
+        // settlement above it does.
+        constexpr int kMaxParentDepth = 16;
+
         // How a visitor's end of the route was found. Logged, because
         // which rung answered says how much to trust the direction: a
-        // live position is where they actually are, an editor location is
-        // only where they were placed.
+        // live position is where they actually are, a map marker is only
+        // roughly where they belong.
         enum class OriginSource : std::uint8_t
         {
             Unresolved,
-            Live,        // RoadRoute::ResolveOrigin -- loaded, or indoors via a load door
-            SaveCell,    // unloaded, but the save knows which cell holds them
-            HomeLocation // not even that; fall back to where the record says they belong
+            Live,          // RoadRoute::ResolveOrigin -- loaded, or indoors via a load door
+            SaveCell,      // unloaded, and the save files them in an exterior cell
+            SaveCellLocal, // unloaded in an interior; the map marker of that cell's Location
+            HomeLocation   // not even that; the marker of the Location the record files them under
         };
 
         const char* OriginSourceName(OriginSource source)
@@ -291,12 +297,47 @@ namespace NarrativeEngine::VisitArrivalPoint
                 return "live";
             case OriginSource::SaveCell:
                 return "save-cell";
+            case OriginSource::SaveCellLocal:
+                return "save-cell-marker";
             case OriginSource::HomeLocation:
                 return "home-location";
             case OriginSource::Unresolved:
             default:
                 return "unresolved";
             }
+        }
+
+        // The map marker of `location`, or of the nearest ancestor that has
+        // one.
+        //
+        // A room does not usually carry a marker -- "Hall of Attainment"
+        // has none, "College of Winterhold" does -- so the useful answer is
+        // almost always a rung or two up the parentLoc chain. Without the
+        // walk this resolves for almost nobody who lives indoors, which is
+        // most people.
+        bool MarkerFromLocation(RE::BGSLocation* location, RoadRoute::Origin& out, std::string& trail)
+        {
+            for (int depth = 0; location && depth < kMaxParentDepth; ++depth) {
+                const char* edid = location->GetFormEditorID();
+                trail += (depth == 0 ? "" : "->");
+                trail += (edid && *edid) ? edid : "?";
+
+                const auto markerPtr = location->worldLocMarker.get();
+                if (auto* marker = markerPtr.get()) {
+                    if (auto* markerCell = marker->GetParentCell()) {
+                        if (auto* ws = markerCell->GetRuntimeData().worldSpace) {
+                            out.valid = true;
+                            out.worldSpace = ws->GetFormID();
+                            out.position = marker->GetPosition();
+                            out.viaLoadDoor = true;
+                            trail += "[marker]";
+                            return true;
+                        }
+                    }
+                }
+                location = location->parentLoc;
+            }
+            return false;
         }
 
         // Where is this visitor, when they are almost certainly not loaded?
@@ -336,7 +377,9 @@ namespace NarrativeEngine::VisitArrivalPoint
                 return OriginSource::Live;
             }
 
-            if (auto* saveCell = sender->GetSaveParentCell(); saveCell && !saveCell->IsInteriorCell()) {
+            auto* saveCell = sender->GetSaveParentCell();
+            const bool saveCellInterior = saveCell && saveCell->IsInteriorCell();
+            if (saveCell && !saveCellInterior) {
                 if (auto* ws = saveCell->GetRuntimeData().worldSpace) {
                     out.valid = true;
                     out.worldSpace = ws->GetFormID();
@@ -346,29 +389,41 @@ namespace NarrativeEngine::VisitArrivalPoint
                 }
             }
 
-            // The map marker of wherever the record files them. Same
-            // primitive RoadRoute falls back to for a door-less interior,
-            // reached here from the base record rather than from a cell we
-            // cannot read.
+            // Indoors and unloaded, which is where most people are most of
+            // the time. The cell's own Location knows the building, and
+            // somewhere up its parentLoc chain is a map marker.
+            std::string cellTrail;
+            if (saveCellInterior && MarkerFromLocation(saveCell->GetLocation(), out, cellTrail)) {
+                logger::debug("VisitArrivalPoint: sender 0x{:08X} placed from their save cell's location ({})",
+                              sender->GetFormID(),
+                              cellTrail);
+                return OriginSource::SaveCellLocal;
+            }
+
+            // Last resort: whatever Location the record itself files them
+            // under, which may be set when no cell answers.
+            std::string homeTrail;
             auto* home = sender->GetEditorLocation();
             if (!home) {
                 home = sender->GetCurrentLocation();
             }
-            if (home) {
-                const auto markerPtr = home->worldLocMarker.get();
-                if (auto* marker = markerPtr.get()) {
-                    if (auto* markerCell = marker->GetParentCell()) {
-                        if (auto* ws = markerCell->GetRuntimeData().worldSpace) {
-                            out.valid = true;
-                            out.worldSpace = ws->GetFormID();
-                            out.position = marker->GetPosition();
-                            out.viaLoadDoor = true;
-                            return OriginSource::HomeLocation;
-                        }
-                    }
-                }
+            if (MarkerFromLocation(home, out, homeTrail)) {
+                logger::debug("VisitArrivalPoint: sender 0x{:08X} placed from the location they belong to ({})",
+                              sender->GetFormID(),
+                              homeTrail);
+                return OriginSource::HomeLocation;
             }
 
+            // Everything declined. Say what each rung actually saw, so the
+            // next attempt does not have to be another run of the game.
+            logger::warn("VisitArrivalPoint: sender 0x{:08X} could not be placed — save_cell={} interior={} "
+                         "cell_location_trail='{}' editor_or_current_location={} location_trail='{}'",
+                         sender->GetFormID(),
+                         saveCell != nullptr,
+                         saveCellInterior,
+                         cellTrail,
+                         home != nullptr,
+                         homeTrail);
             return OriginSource::Unresolved;
         }
 

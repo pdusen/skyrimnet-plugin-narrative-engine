@@ -170,9 +170,16 @@ because it puts the high-resolution half of any route exactly where the arrival 
    is the entire beat — so that call answers for exactly the visitor who did not need bringing. The first
    in-game run failed here on every dispatch. So the origin comes off a ladder, best first: the live position
    when they are loaded; else `GetSaveParentCell()` plus `data.location`, which travel with a reference
-   whether or not it has 3D; else the map marker of the location the record files them under. The rung that
-   answered is logged, because a route staged off the last one points at where the visitor *lives* rather
-   than where they are.
+   whether or not it has 3D; else — when that save cell is an **interior**, which is where most people are
+   most of the time — the map marker of that cell's `Location`, climbing `parentLoc` until one carries a
+   marker; else the marker of whatever `Location` the record itself files them under. The rung that answered
+   is logged, because a route staged off the lower ones points at where the visitor *lives* rather than where
+   they are.
+
+   The `parentLoc` climb is not optional detail. A room does not usually carry a map marker — "Hall of
+   Attainment" has none, "College of Winterhold" does — so stopping at the cell's own `Location` resolves for
+   almost nobody who lives indoors. The second in-game run failed on exactly that, having already been fixed
+   once for the unloaded case.
 2. **`RoadRoute::Route(worldSpace, playerPos, senderOrigin)`** — note the argument order. We route *from the
    player outward toward the sender*, not in the direction the visitor travels. `Plan::finePath` is documented
    as "ordered walkable points from the start outward", so routing this way traces the road away from the

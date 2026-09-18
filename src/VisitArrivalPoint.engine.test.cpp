@@ -540,6 +540,32 @@ TEST_CASE("VisitArrivalPoint finds a visitor who is not loaded", "[VisitArrivalP
         }
     }
 
+    SECTION("when the save has them indoors, in a room with no marker of its own")
+    {
+        // The case every real dispatch hit. College students are filed in
+        // the Hall of Attainment: an interior, so there is no exterior
+        // position to read, and its own Location carries no map marker --
+        // the College above it does. Stopping at the room resolves for
+        // nobody who lives indoors, which is most people.
+        auto* sender = ActorAt(engine, kSender, nullptr, At(0.0f, 0.0f));
+        auto* hall = engine.AddLocation(0x00D05010u, "Hall of Attainment", {}, "HallOfAttainmentLocation");
+        auto* college = engine.AddLocation(0x00D05011u, "College of Winterhold", {}, "CollegeLocation");
+        engine.SetLocationParent(hall, college);
+        // Only the parent is pinned to the map, and it is pinned west.
+        engine.SetLocationMarker(college, cell, At(-kRoadEnd, 0.0f));
+
+        auto* room = engine.AddExteriorCell(space, 9, 9, hall);
+        engine.SetCellInterior(room, true);
+        engine.SetSaveParentCell(sender, room);
+        const auto result = FindFor(sender, player);
+
+        SECTION("should climb to the marker above it and come in from the west")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(result.point.x < 0.0f);
+        }
+    }
+
     SECTION("when not even the save can place them")
     {
         // Asleep in some interior on the far side of the province. All that
