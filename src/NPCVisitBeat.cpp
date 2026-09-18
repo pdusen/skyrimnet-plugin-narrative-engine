@@ -356,14 +356,54 @@ namespace NarrativeEngine
             }
         }
 
+        const char* ComposeSubPhaseName(ComposeSubPhase phase)
+        {
+            switch (phase) {
+            case ComposeSubPhase::Start:
+                return "Start";
+            case ComposeSubPhase::ComposingLLM:
+                return "ComposingLLM";
+            case ComposeSubPhase::LLMResultReady:
+                return "LLMResultReady";
+            case ComposeSubPhase::SelectingPoint:
+                return "SelectingPoint";
+            case ComposeSubPhase::StartingQuest:
+                return "StartingQuest";
+            case ComposeSubPhase::Warping:
+                return "Warping";
+            case ComposeSubPhase::VerifyingFill:
+                return "VerifyingFill";
+            case ComposeSubPhase::Arming:
+                return "Arming";
+            case ComposeSubPhase::Succeeded:
+                return "Succeeded";
+            case ComposeSubPhase::Failed:
+                return "Failed";
+            }
+            return "?";
+        }
+
         // Transition the sub-phase machine. On a Failed transition,
         // records `reason` as the failure-reason string; on any other
         // transition, `reason` is ignored.
+        //
+        // Every transition is logged, not just the failing ones. COMPOSE
+        // is six steps deep and most of what can go wrong leaves the beat
+        // sitting in one of them rather than announcing anything, so the
+        // last transition in the log is how anyone reading it afterwards
+        // knows how far the beat actually got.
         void SetSubPhase(ComposeSubPhase phase, const char* reason = nullptr)
         {
+            const auto previous = g_subPhase.Get();
             if (reason && phase == ComposeSubPhase::Failed) {
+                logger::warn("NPCVisitBeat: COMPOSE {} -> {} ({})",
+                             ComposeSubPhaseName(previous),
+                             ComposeSubPhaseName(phase),
+                             reason);
                 g_subPhase.Fail(phase, reason);
             } else {
+                logger::info(
+                    "NPCVisitBeat: COMPOSE {} -> {}", ComposeSubPhaseName(previous), ComposeSubPhaseName(phase));
                 g_subPhase.Set(phase);
             }
         }
@@ -959,6 +999,8 @@ namespace NarrativeEngine
         {
             const auto snap = VisitState::GetSnapshot();
             if (snap.senderFormID == 0) {
+                logger::warn("NPCVisitBeat: reached SelectingPoint with no sender in the snapshot — the "
+                             "compose result never landed");
                 SetSubPhase(ComposeSubPhase::Failed, "no_composition_at_dispatch");
                 return {};
             }
@@ -1124,13 +1166,24 @@ namespace NarrativeEngine
                 // readback a tick later. Passed as FormIDs, not
                 // references; see
                 // docs/engine-findings/passing-references-to-papyrus-from-cpp.md.
-                QuestUtils::VMDispatchOnQuest(
+                const bool senderQueued = QuestUtils::VMDispatchOnQuest(
                     g_visitQuest, kQuestScriptName, "FillSenderSlot", static_cast<std::int32_t>(sender->GetFormID()));
+                bool anchorQueued = true;
                 if (snap.returnAnchorFormID != 0) {
-                    QuestUtils::VMDispatchOnQuest(g_visitQuest,
-                                                  kQuestScriptName,
-                                                  "FillReturnAnchorSlot",
-                                                  static_cast<std::int32_t>(snap.returnAnchorFormID));
+                    anchorQueued = QuestUtils::VMDispatchOnQuest(g_visitQuest,
+                                                                 kQuestScriptName,
+                                                                 "FillReturnAnchorSlot",
+                                                                 static_cast<std::int32_t>(snap.returnAnchorFormID));
+                }
+                // Queued is not landed -- that is what VerifyingFill is
+                // for -- but a dispatch that could not even be queued is a
+                // different fault with the same symptom, and only this
+                // line tells them apart.
+                logger::info("NPCVisitBeat: fill dispatches queued (sender={} anchor={})", senderQueued, anchorQueued);
+                if (!senderQueued) {
+                    logger::error("NPCVisitBeat: could not queue FillSenderSlot on '{}' — the quest script "
+                                  "is probably not attached",
+                                  kQuestScriptName);
                 }
                 return true;
             });
@@ -1191,9 +1244,15 @@ namespace NarrativeEngine
                 return {};
             }
 
-            logger::warn("NPCVisitBeat: fills did not land after {} ticks (Sender=0x{:08X} "
-                         "ReturnAnchor=0x{:08X})",
+            // Both FormIDs we ASKED for, alongside what actually landed.
+            // The trampolines themselves trace to Papyrus.0.log rather than
+            // here, so these are what let the two logs be lined up without
+            // running the visit again.
+            logger::warn("NPCVisitBeat: fills did not land after {} ticks — dispatched sender=0x{:08X} "
+                         "anchor=0x{:08X}, read back sender=0x{:08X} anchor=0x{:08X}",
                          ticks,
+                         snap.senderFormID,
+                         snap.returnAnchorFormID,
                          filled.sender,
                          filled.anchor);
             MainThread::Run(pt, [](const MainThread::Token&) {
@@ -1222,21 +1281,49 @@ namespace NarrativeEngine
                 placedAt = g_arrival.point;
             }
 
-            MainThread::Run(pt, [&](const MainThread::Token&) {
+            // VerifyingFill proved the alias holds SOMETHING. Whether
+            // that something is an actor is a separate question, and the
+            // answer decides whether anyone can be sent walking. Arming
+            // used to skip its work quietly when the cast failed and
+            // report success anyway, which produces a visit that runs its
+            // full length with nobody ever arriving -- indistinguishable,
+            // from the outside, from a sender who simply could not path.
+            const bool armed = MainThread::Run(pt, [&](const MainThread::Token&) {
                 auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
-                auto* senderActor = senderRef ? senderRef->As<RE::Actor>() : nullptr;
-                if (senderActor) {
-                    senderActor->EvaluatePackage();
+                if (!senderRef) {
+                    logger::error("NPCVisitBeat: Sender alias empty at Arming");
+                    return false;
                 }
+                auto* senderActor = senderRef->As<RE::Actor>();
+                if (!senderActor) {
+                    auto* base = senderRef->GetBaseObject();
+                    logger::error("NPCVisitBeat: Sender alias holds ref 0x{:08X} (base 0x{:08X}) which is not "
+                                  "an actor — nobody would ever walk over",
+                                  senderRef->GetFormID(),
+                                  base ? base->GetFormID() : 0u);
+                    return false;
+                }
+                senderActor->EvaluatePackage();
                 // Fallbacks are further along the visitor's own road, so
                 // escalating through them walks a stuck sender BACK ALONG
-                // THEIR ROUTE rather than sideways onto unrelated ground.
+                // THEIR ROUTE rather than sideways onto unrelated terrain.
                 g_escort.Begin(fallbacks);
-                if (senderActor) {
-                    g_escort.Track(senderActor, placedAt);
-                }
-                return 0;
+                g_escort.Track(senderActor, placedAt);
+                logger::info("NPCVisitBeat: armed sender 0x{:08X} '{}' at ({:.0f},{:.0f},{:.0f}); escort has "
+                             "{} fallback(s)",
+                             senderActor->GetFormID(),
+                             senderRef->GetDisplayFullName(),
+                             placedAt.x,
+                             placedAt.y,
+                             placedAt.z,
+                             fallbacks.size());
+                return true;
             });
+
+            if (!armed) {
+                SetSubPhase(ComposeSubPhase::Failed, "sender_not_actor");
+                return {};
+            }
 
             g_salutationEnteredAtNormalSec.store(NormalElapsedNow());
             g_lastDistanceLogNormalSec.store(0.0);
@@ -1280,6 +1367,14 @@ namespace NarrativeEngine
                 auto* senderActor = senderRef ? senderRef->As<RE::Actor>() : nullptr;
                 auto* player = RE::PlayerCharacter::GetSingleton();
                 if (!senderActor || senderActor->IsDead() || !player) {
+                    // Once per due check rather than once per tick, so a
+                    // sender who died or fell out of the alias mid-approach
+                    // leaves a trail without flooding the log.
+                    logger::warn("NPCVisitBeat: escort check found no live sender to escort (ref={} actor={} "
+                                 "dead={})",
+                                 senderRef != nullptr,
+                                 senderActor != nullptr,
+                                 senderActor && senderActor->IsDead());
                     return 0;
                 }
                 // StuckRecovery logs each warp itself.

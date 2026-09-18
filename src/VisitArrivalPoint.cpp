@@ -61,6 +61,22 @@ namespace NarrativeEngine::VisitArrivalPoint
         // out this is a 26-degree slope, at 2500 it is 9.
         constexpr float kMaxElevationDeltaUnits = 400.0f;
 
+        float ToDegrees(float radians)
+        {
+            return radians * 180.0f / 3.14159265f;
+        }
+
+        // Smallest angle between two bearings, so "off by" never reads 350
+        // degrees when it means 10.
+        float BearingDelta(float a, float b)
+        {
+            float delta = std::fabs(a - b);
+            while (delta > 180.0f) {
+                delta = 360.0f - delta;
+            }
+            return delta;
+        }
+
         float Dist2D(const RE::NiPoint3& a, const RE::NiPoint3& b)
         {
             const float dx = a.x - b.x;
@@ -337,28 +353,58 @@ namespace NarrativeEngine::VisitArrivalPoint
             }
         }
 
-        if (tier == Tier::None && cfg.visitArrivalAllowCoarseBearing && plan.valid) {
-            RE::NiPoint3 toward{};
-            const bool haveBearing = BearingHome(plan.coarsePath, ends.playerPos, toward);
-            if (haveBearing) {
-                kept = MainThread::Run(pt, [&](const MainThread::Token&) {
-                    return SampleBearingArc(ends.playerPos, toward, minDist, maxDist, coverRadius, bearingTally);
-                });
-                if (!kept.empty()) {
-                    tier = Tier::CoarseBearing;
+        if (tier == Tier::None) {
+            if (!cfg.visitArrivalAllowCoarseBearing) {
+                logger::info("VisitArrivalPoint: sender=0x{:08X} no fine-road point and the bearing fallback "
+                             "is switched off",
+                             senderId);
+            } else if (!plan.valid) {
+                logger::info("VisitArrivalPoint: sender=0x{:08X} no route at all — neither graph could place "
+                             "both ends",
+                             senderId);
+            } else {
+                RE::NiPoint3 toward{};
+                if (!BearingHome(plan.coarsePath, ends.playerPos, toward)) {
+                    logger::info("VisitArrivalPoint: sender=0x{:08X} no usable bearing — none of the {} coarse "
+                                 "node(s) on the route is {:.0f}u clear of the player",
+                                 senderId,
+                                 plan.coarsePath.size(),
+                                 kBearingMinSeparationUnits);
+                } else {
+                    logger::info("VisitArrivalPoint: sender=0x{:08X} falling back to a bearing toward "
+                                 "({:.0f},{:.0f}), {:.0f}u out",
+                                 senderId,
+                                 toward.x,
+                                 toward.y,
+                                 Dist2D(toward, ends.playerPos));
+                    kept = MainThread::Run(pt, [&](const MainThread::Token&) {
+                        return SampleBearingArc(ends.playerPos, toward, minDist, maxDist, coverRadius, bearingTally);
+                    });
+                    if (!kept.empty()) {
+                        tier = Tier::CoarseBearing;
+                    }
                 }
             }
         }
 
         if (tier == Tier::None) {
             logger::info("VisitArrivalPoint: sender=0x{:08X} tier=none — ws=0x{:08X} "
-                         "sender_via_door={} player_via_door={} plan_valid={} fine_nodes={} coarse_nodes={} "
-                         "coarse_allowed={} | fine[{}] | bearing[{}]",
+                         "home=({:.0f},{:.0f}){} player=({:.0f},{:.0f}){} band=[{:.0f},{:.0f}] cover_r={:.0f} "
+                         "plan_valid={} within_fine={} fine_nodes={} coarse_nodes={} coarse_allowed={} "
+                         "| fine[{}] | bearing[{}]",
                          senderId,
                          ends.player.worldSpace,
-                         ends.sender.viaLoadDoor,
-                         ends.player.viaLoadDoor,
+                         ends.sender.position.x,
+                         ends.sender.position.y,
+                         ends.sender.viaLoadDoor ? " via-door" : "",
+                         ends.player.position.x,
+                         ends.player.position.y,
+                         ends.player.viaLoadDoor ? " via-door" : "",
+                         minDist,
+                         maxDist,
+                         coverRadius,
                          plan.valid,
+                         plan.destinationWithinFine,
                          plan.finePath.size(),
                          plan.coarsePath.size(),
                          cfg.visitArrivalAllowCoarseBearing,
@@ -371,23 +417,52 @@ namespace NarrativeEngine::VisitArrivalPoint
         result.point = kept.front();
         result.fallbacks.assign(kept.begin() + 1, kept.end());
 
-        logger::info("VisitArrivalPoint: sender=0x{:08X} tier={} — ws=0x{:08X} sender_via_door={} "
-                     "player_via_door={} fine_nodes={} coarse_nodes={} point=({:.0f},{:.0f},{:.0f}) "
-                     "dist={:.0f}u fallbacks={} | fine[{}] | bearing[{}]",
+        // The bearing the arrival should have come from, so a visit that
+        // reads wrong in game can be checked against what the code decided
+        // rather than re-run to find out.
+        const float homeBearing =
+            ToDegrees(std::atan2(ends.sender.position.y - ends.playerPos.y, ends.sender.position.x - ends.playerPos.x));
+        const float pointBearing =
+            ToDegrees(std::atan2(result.point.y - ends.playerPos.y, result.point.x - ends.playerPos.x));
+
+        logger::info("VisitArrivalPoint: sender=0x{:08X} tier={} — ws=0x{:08X} home=({:.0f},{:.0f}){} "
+                     "player=({:.0f},{:.0f}){} point=({:.0f},{:.0f},{:.0f}) dist={:.0f}u "
+                     "bearing_home={:.0f}deg bearing_point={:.0f}deg off_by={:.0f}deg within_fine={} "
+                     "fine_nodes={} coarse_nodes={} fallbacks={} | fine[{}] | bearing[{}]",
                      senderId,
                      TierName(tier),
                      ends.player.worldSpace,
-                     ends.sender.viaLoadDoor,
-                     ends.player.viaLoadDoor,
-                     plan.finePath.size(),
-                     plan.coarsePath.size(),
+                     ends.sender.position.x,
+                     ends.sender.position.y,
+                     ends.sender.viaLoadDoor ? " via-door" : "",
+                     ends.playerPos.x,
+                     ends.playerPos.y,
+                     ends.player.viaLoadDoor ? " via-door" : "",
                      result.point.x,
                      result.point.y,
                      result.point.z,
                      Dist2D(result.point, ends.playerPos),
+                     homeBearing,
+                     pointBearing,
+                     BearingDelta(homeBearing, pointBearing),
+                     plan.destinationWithinFine,
+                     plan.finePath.size(),
+                     plan.coarsePath.size(),
                      result.fallbacks.size(),
                      fineTally.Describe(),
                      bearingTally.Describe());
+
+        // Where the escort will send them if they cannot walk it, in the
+        // order it will try. StuckRecovery logs each warp as it happens, but
+        // only this says what the supply was to begin with.
+        for (std::size_t i = 0; i < result.fallbacks.size(); ++i) {
+            logger::debug("VisitArrivalPoint: fallback {} at ({:.0f},{:.0f},{:.0f}), {:.0f}u out",
+                          i,
+                          result.fallbacks[i].x,
+                          result.fallbacks[i].y,
+                          result.fallbacks[i].z,
+                          Dist2D(result.fallbacks[i], ends.playerPos));
+        }
         return result;
     }
 } // namespace NarrativeEngine::VisitArrivalPoint

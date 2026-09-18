@@ -845,6 +845,10 @@ the gate stays "fully covered" or relaxes to "least visible candidate in the ban
   measurement comes off the real beat and needs no scaffolding at all.
 - One search per dispatched visit is a slower rate than a polling probe would have given, so this wants
   several sessions' worth of dispatches rather than one. Sample size is the cost of not building the probe.
+- The per-search line carries both resolved origins as positions, the band and cover radius in force, the
+  bearing home against the bearing actually chosen, and the per-gate kill counts. A visit that reads wrong in
+  game can therefore be diagnosed from the log rather than by running it again — which matters because these
+  are expensive runs and the interesting failures are intermittent.
 - A Tier 1 rate that is *too* high is also a finding — it would mean the gate is not actually rejecting
   anything and open-road pop-in will show up in Step 8.
 
