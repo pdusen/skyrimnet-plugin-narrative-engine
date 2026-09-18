@@ -426,11 +426,16 @@ watermark, neither of which this phase reaches.
 
 Sequential. Unlike Phase 11 there is **no Creation Kit step**: this phase adds no records, and the three edits
 it makes to `_ne_VisitQuest` — delete one alias, re-flag two — are expressible directly in the Spriggit YAML,
-whose exact shape for an `Optional` alias with no fill rule is already visible in `_ne_AmbushQuest`. Step 3
+whose exact shape for an `Optional` alias with no fill rule is already visible in `_ne_AmbushQuest`. Step 2
 carries a CK fallback in case the round-trip disagrees.
 
-Steps 3 and 4 are the one place the tree is knowingly broken in between: Step 3 removes the fill rules and
-Step 4 supplies the force-fill that replaces them. Do not stop between them.
+Steps 2 and 3 are the one place the tree is knowingly broken in between: Step 2 removes the fill rules and
+Step 3 supplies the force-fill that replaces them. Do not stop between them.
+
+The four steps that need a running game are last on purpose. Cover-gate calibration in particular reads a log
+that only exists once visits are being dispatched, so putting it early would have meant writing a probe driver
+into `NPCVisitBeat.cpp` for the sole purpose of making the search run — and Step 3 would then have deleted it.
+Every step before Step 6 is Claude's alone and verifiable from a build and a test run.
 
 Every step is entirely Claude's work or entirely the user's, never mixed. Verification is attributed
 separately, since a step Claude implements may still need a running game to confirm.
@@ -448,10 +453,10 @@ to reach by playing — a search that finds nothing, a fill that never lands, a 
 
 Three consequences that are easy to get wrong:
 
-- **Deleting code means deleting its tests and checking what that uncovers.** Step 6 removes the faction
+- **Deleting code means deleting its tests and checking what that uncovers.** Step 5 removes the faction
   machinery; the risk is not that its tests fail but that they quietly disappear and take a branch's coverage
   with them.
-- **A step whose verification is in-game still says so explicitly.** Step 3 touches no C++ at all; its entry
+- **A step whose verification is in-game still says so explicitly.** Step 2 touches no C++ at all; its entry
   records that, so the absence reads as a decision rather than an oversight.
 - **`pwsh -File build.ps1 test` passing is a floor, not the bar.** It also has to be true that the new
   branches are reached — a suite that builds and passes while never entering the new code is worse than no
@@ -469,7 +474,7 @@ four gated stages, which is exactly the shape of `src/VisitArrivalPoint.engine.t
 **[CLAUDE]**
 
 **Goal:** The arrival search, standalone and observable, before anything depends on it. It produces the data
-Step 2 reads, so its diagnostic logging is the deliverable as much as the search is.
+Step 6 reads, so its diagnostic logging is the deliverable as much as the search is.
 
 **Files:** `include/VisitArrivalPoint.h`, `src/VisitArrivalPoint.cpp`, `src/VisitArrivalPoint.engine.test.cpp`,
 `include/Settings.h`, `src/Settings.cpp`, `CMakeLists.txt`,
@@ -478,7 +483,7 @@ Step 2 reads, so its diagnostic logging is the deliverable as much as the search
 **Sub-tasks:**
 
 1. Settings: wire `iVisitMarkerMinDistanceUnits` / `iVisitMarkerMaxDistanceUnits` into the new module — names
-   and defaults unchanged. Add `iVisitArrivalCoverRadiusUnits` (provisional `64`, final value set by Step 2)
+   and defaults unchanged. Add `iVisitArrivalCoverRadiusUnits` (provisional `64`, final value set by Step 6)
    and `bVisitArrivalAllowCoarseBearing` (`true`). Document both in the deployed INI.
 2. Implement the module's API:
 
@@ -506,7 +511,7 @@ Step 2 reads, so its diagnostic logging is the deliverable as much as the search
 6. **The per-search debug log**, one line per call, debug-mode gated: sender, both resolved origins and whether
    either came via a load door, worldspace, `finePath` node count, how many candidates died at each gate,
    the tier reached, the winning point with its straight-line distance, and the fallback count. A failed
-   search must name the gate that killed it. This is the phase's most valuable diagnostic and Step 2 reads
+   search must name the gate that killed it. This is the phase's most valuable diagnostic and Step 6 reads
    nothing else.
 7. Add the module to `NARRATIVEENGINE_MOCKED_SOURCES` and write `src/VisitArrivalPoint.engine.test.cpp` with
    the `/unit-test` skill, covering: Tier 1 happy path, each of the three gates rejecting in isolation, Tier 2
@@ -533,64 +538,14 @@ Step 2 reads, so its diagnostic logging is the deliverable as much as the search
 
 ---
 
-### Step 2 — Cover-gate calibration
-
-- [ ] Complete
-
-**[USER]** to gather, **[CLAUDE]** to analyse and set the defaults.
-
-**Goal:** Resolve open questions 2 and 3 on data. Decide `iVisitArrivalCoverRadiusUnits`, and decide whether
-the gate stays "fully covered" or relaxes to "least visible candidate in the band."
-
-**Files:** `include/Settings.h`, `src/Settings.cpp`, this doc's **Settings** table, and — if the gate relaxes —
-`src/VisitArrivalPoint.cpp`.
-
-**Sub-tasks [USER]:**
-
-1. Build with `bDebugMode=true` and play normally for a while across varied terrain: the plain outside
-   Whiterun, forest around Falkreath, a mountain pass, the approach to a walled city, and at least one stretch
-   of tundra with no cover for a long way.
-2. Hand over the resulting log.
-
-**Sub-tasks [CLAUDE]:**
-
-1. Aggregate the per-search lines into tier rates and per-gate kill counts, bucketed by terrain. **The
-   aggregation script is throwaway and goes in the scratchpad**, not in the repo.
-2. Pick `iVisitArrivalCoverRadiusUnits` from the cover-gate kill rate.
-3. Choose between the three documented responses — widen the band, relax the gate, or accept the Tier 1 miss
-   rate — and record which, and why, in **Post-implementation**.
-4. Update this doc's **Settings** table to replace `TBD` with the chosen value.
-5. **If the gate relaxes**, that is a behaviour change and needs its own cases: a band in which no candidate
-   is fully covered now returns the least-visible one rather than nothing, and a band in which one candidate
-   *is* fully covered still prefers it over a less-covered nearer one. Both go into
-   `src/VisitArrivalPoint.engine.test.cpp` in this step.
-6. Whether or not the gate relaxes, pin the chosen `iVisitArrivalCoverRadiusUnits` in a test that fails if the
-   default moves — the value is the output of a measurement, and a silent edit to it should not pass.
-7. Run `pwsh -File format.ps1`.
-
-**Specifics:**
-
-- The search has to run on its own for this, without dispatching a visit. Drive it from the beat's existing
-  candidate pool: on each debug-mode poll, run `Find` against one currently-viable sender candidate and log
-  the result. That costs one search per poll and needs no new UI.
-- A Tier 1 rate that is *too* high is also a finding — it would mean the gate is not actually rejecting
-  anything and open-road pop-in will show up in Step 8.
-
-**Verify [CLAUDE]:**
-
-- The chosen value is justified by a number in the log, not by taste.
-- `pwsh -File build.ps1 test` succeeds, and the suite fails if `iVisitArrivalCoverRadiusUnits` is edited.
-
----
-
-### Step 3 — ESP alias rework and Papyrus trampolines
+### Step 2 — ESP alias rework and Papyrus trampolines
 
 - [ ] Complete
 
 **[CLAUDE]**, with a **[USER]** Creation Kit fallback.
 
 **Goal:** Remove every fill rule the beat currently depends on, and put the force-fill trampolines in place for
-Step 4 to call. **The beat is broken at the end of this step** — that is expected and Step 4 fixes it.
+Step 3 to call. **The beat is broken at the end of this step** — that is expected and Step 3 fixes it.
 
 **Files:** `esp/plugin/Quests/_ne_VisitQuest - 00082D_NarrativeEngine.esp.yaml`,
 `esp/Source/Scripts/_ne_VisitQuest.psc`, `esp/Source/Scripts/_ne__QF__ne_VisitQuest_0500FB2E.psc`.
@@ -627,8 +582,8 @@ Step 4 to call. **The beat is broken at the end of this step** — that is expec
 - Re-serializing the mod-folder ESP reproduces the hand-edited YAML — the round-trip is stable.
 - **No unit tests are added, and that is deliberate:** this step changes only ESP records and Papyrus, neither
   of which either test executable can reach. The existing `NPCVisitBeat` suite will be red between here and
-  Step 4, because the fills it expects no longer happen. Do not paper over that by loosening the suite —
-  Step 4 is what makes it green again.
+  Step 3, because the fills it expects no longer happen. Do not paper over that by loosening the suite —
+  Step 3 is what makes it green again.
 
 **Verify [USER]:**
 
@@ -639,7 +594,7 @@ Step 4 to call. **The beat is broken at the end of this step** — that is expec
 
 ---
 
-### Step 4 — COMPOSE rework: arrival, warp, force-fill, verification
+### Step 3 — COMPOSE rework: arrival, warp, force-fill, verification
 
 - [ ] Complete
 
@@ -686,7 +641,7 @@ Step 4 to call. **The beat is broken at the end of this step** — that is expec
 **Verify [CLAUDE]:**
 
 - `pwsh -File build.ps1 build` and `pwsh -File build.ps1 test` both succeed, and the `NPCVisitBeat` suite is
-  green again for the first time since Step 3.
+  green again for the first time since Step 2.
 - A test forces each of the six `failure_reason` paths and asserts CLEANUP is reached with no quest left
   running and no reference left behind.
 - Every one of the six COMPOSE sub-phases is entered by at least one test. A suite that passes while skipping
@@ -706,7 +661,7 @@ With `bDebugMode=true`, standing outdoors on or near a road:
 
 ---
 
-### Step 5 — Approach hardening: escort, and a non-fatal return anchor
+### Step 4 — Approach hardening: escort, and a non-fatal return anchor
 
 - [ ] Complete
 
@@ -742,7 +697,7 @@ anchor stops stranding people.
 
 ---
 
-### Step 6 — Retire the sender faction and the spawn-marker form list
+### Step 5 — Retire the sender faction and the spawn-marker form list
 
 - [ ] Complete
 
@@ -784,6 +739,60 @@ anchor stops stranding people.
 - A full visit still runs end to end in the test suite.
 - The suite's case count did not drop by more than the number of cases that tested the deleted code itself.
   A larger drop means a branch lost its only cover.
+
+---
+
+### Step 6 — Cover-gate calibration
+
+- [ ] Complete
+
+**[USER]** to gather, **[CLAUDE]** to analyse and set the defaults.
+
+**Goal:** Resolve open questions 2 and 3 on data. Decide `iVisitArrivalCoverRadiusUnits`, and decide whether
+the gate stays "fully covered" or relaxes to "least visible candidate in the band."
+
+**Files:** `include/Settings.h`, `src/Settings.cpp`, this doc's **Settings** table, and — if the gate relaxes —
+`src/VisitArrivalPoint.cpp`.
+
+**Sub-tasks [USER]:**
+
+1. Build with `bDebugMode=true` and force-dispatch `npc_visit` repeatedly from the dashboard's Dispatch tab,
+   moving between terrain types between dispatches: the plain outside Whiterun, forest around Falkreath, a
+   mountain pass, the approach to a walled city, and at least one stretch of tundra with no cover for a long
+   way.
+2. Hand over the resulting log.
+
+**Sub-tasks [CLAUDE]:**
+
+1. Aggregate the per-search lines into tier rates and per-gate kill counts, bucketed by terrain. **The
+   aggregation script is throwaway and goes in the scratchpad**, not in the repo.
+2. Pick `iVisitArrivalCoverRadiusUnits` from the cover-gate kill rate.
+3. Choose between the three documented responses — widen the band, relax the gate, or accept the Tier 1 miss
+   rate — and record which, and why, in **Post-implementation**.
+4. Update this doc's **Settings** table to replace `TBD` with the chosen value.
+5. **If the gate relaxes**, that is a behaviour change and needs its own cases: a band in which no candidate
+   is fully covered now returns the least-visible one rather than nothing, and a band in which one candidate
+   *is* fully covered still prefers it over a less-covered nearer one. Both go into
+   `src/VisitArrivalPoint.engine.test.cpp` in this step.
+6. Whether or not the gate relaxes, pin the chosen `iVisitArrivalCoverRadiusUnits` in a test that fails if the
+   default moves — the value is the output of a measurement, and a silent edit to it should not pass.
+7. Run `pwsh -File format.ps1`.
+
+**Specifics:**
+
+- **This step is deliberately late.** It was originally second, which would have needed a throwaway probe
+  driver written into `NPCVisitBeat.cpp` purely to make the search run — wiring that Step 3 would then have
+  rewritten. Sitting here instead, every dispatched visit already calls `Find` and logs a line, so the
+  measurement comes off the real beat and needs no scaffolding at all.
+- One search per dispatched visit is a slower rate than a polling probe would have given, so this wants
+  several sessions' worth of dispatches rather than one. Sample size is the cost of not building the probe.
+- A Tier 1 rate that is *too* high is also a finding — it would mean the gate is not actually rejecting
+  anything and open-road pop-in will show up in Step 8.
+
+**Verify [CLAUDE]:**
+
+- The chosen value is justified by a number in the log, not by taste.
+- `pwsh -File build.ps1 test` succeeds, and the suite fails if `iVisitArrivalCoverRadiusUnits` is edited.
 
 ---
 
