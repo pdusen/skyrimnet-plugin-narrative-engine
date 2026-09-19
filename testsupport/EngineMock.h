@@ -640,6 +640,13 @@ namespace NarrativeEngine::Testing
         // town's marker sits outside its walls.
         void SetLocationMarker(RE::BGSLocation* location, RE::TESObjectCELL* cell, RE::NiPoint3 position);
 
+        // Point a location at a marker the test already built. The reason to
+        // want one is to give it no attached cell: a map marker a long way
+        // from the player is in an unloaded cell, and code that reads its
+        // parent cell gets nothing -- which is not reachable through the
+        // overload above, because that one always attaches its marker.
+        void SetLocationMarkerRef(RE::BGSLocation* location, RE::TESObjectREFR* marker);
+
         // Fabricate a quest whose state the mocked TESQuest predicates answer
         // from, authored in the named ESP. Kept alive for the process: an alias
         // instance holds a bare pointer to it.

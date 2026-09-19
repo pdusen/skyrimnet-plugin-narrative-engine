@@ -307,6 +307,25 @@ namespace NarrativeEngine::VisitArrivalPoint
             }
         }
 
+        // Which cell a reference belongs to, whether or not anything has
+        // loaded it.
+        //
+        // `GetParentCell()` is `return parentCell` and is null for anything
+        // unattached. That is the single mistake this module has now made
+        // twice -- first on the visitor, then on the map marker it climbed
+        // to in order to place the visitor -- so the read lives in one
+        // place and both callers go through it.
+        RE::TESObjectCELL* CellOf(RE::TESObjectREFR* ref)
+        {
+            if (!ref) {
+                return nullptr;
+            }
+            if (auto* attached = ref->GetParentCell()) {
+                return attached;
+            }
+            return ref->GetSaveParentCell();
+        }
+
         // The map marker of `location`, or of the nearest ancestor that has
         // one.
         //
@@ -324,7 +343,10 @@ namespace NarrativeEngine::VisitArrivalPoint
 
                 const auto markerPtr = location->worldLocMarker.get();
                 if (auto* marker = markerPtr.get()) {
-                    if (auto* markerCell = marker->GetParentCell()) {
+                    // A marker far from the player is in an unloaded cell,
+                    // which is exactly when this matters -- so CellOf, not
+                    // GetParentCell.
+                    if (auto* markerCell = CellOf(marker)) {
                         if (auto* ws = markerCell->GetRuntimeData().worldSpace) {
                             out.valid = true;
                             out.worldSpace = ws->GetFormID();
@@ -333,6 +355,9 @@ namespace NarrativeEngine::VisitArrivalPoint
                             trail += "[marker]";
                             return true;
                         }
+                        trail += "[marker,no-worldspace]";
+                    } else {
+                        trail += "[marker,no-cell]";
                     }
                 }
                 location = location->parentLoc;
@@ -377,7 +402,7 @@ namespace NarrativeEngine::VisitArrivalPoint
                 return OriginSource::Live;
             }
 
-            auto* saveCell = sender->GetSaveParentCell();
+            auto* saveCell = CellOf(sender);
             const bool saveCellInterior = saveCell && saveCell->IsInteriorCell();
             if (saveCell && !saveCellInterior) {
                 if (auto* ws = saveCell->GetRuntimeData().worldSpace) {

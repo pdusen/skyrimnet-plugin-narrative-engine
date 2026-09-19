@@ -566,6 +566,31 @@ TEST_CASE("VisitArrivalPoint finds a visitor who is not loaded", "[VisitArrivalP
         }
     }
 
+    SECTION("when their home's map marker is itself in an unloaded cell")
+    {
+        // The whole point of the marker rung is to place somebody who is
+        // far away -- and a marker that far away is in an unloaded cell
+        // too, so reading its parent cell gives nothing. Resolving the
+        // marker but not its cell is the shape that made every College
+        // dispatch decline after the parentLoc climb was already working.
+        auto* sender = ActorAt(engine, kSender, nullptr, At(0.0f, 0.0f));
+        auto* home = engine.AddLocation(0x00D05020u, "Somewhere Far", {}, "FarLocation");
+
+        // A marker with no attached cell, the way an unloaded reference
+        // reads, but which the save can still place.
+        auto* marker = engine.AddReference(nullptr, 0x00D05021u, At(-kRoadEnd, 0.0f));
+        engine.SetSaveParentCell(marker, cell);
+        engine.SetLocationMarkerRef(home, marker);
+        engine.SetEditorLocation(sender, home);
+        const auto result = FindFor(sender, player);
+
+        SECTION("should still place them, from the side the marker is on")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(result.point.x < 0.0f);
+        }
+    }
+
     SECTION("when not even the save can place them")
     {
         // Asleep in some interior on the far side of the province. All that

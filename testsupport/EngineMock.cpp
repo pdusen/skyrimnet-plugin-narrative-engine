@@ -2431,6 +2431,13 @@ namespace NarrativeEngine::Testing
         return door;
     }
 
+    void EngineMock::SetLocationMarkerRef(RE::BGSLocation* location, RE::TESObjectREFR* marker)
+    {
+        if (!location || !marker)
+            return;
+        location->worldLocMarker = HandleFor(marker);
+    }
+
     void EngineMock::SetLocationMarker(RE::BGSLocation* location, RE::TESObjectCELL* cell, RE::NiPoint3 position)
     {
         if (!location)
