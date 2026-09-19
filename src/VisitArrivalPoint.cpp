@@ -89,17 +89,6 @@ namespace NarrativeEngine::VisitArrivalPoint
             return radians * 180.0f / 3.14159265f;
         }
 
-        // Smallest angle between two bearings, so "off by" never reads 350
-        // degrees when it means 10.
-        float BearingDelta(float a, float b)
-        {
-            float delta = std::fabs(a - b);
-            while (delta > 180.0f) {
-                delta = 360.0f - delta;
-            }
-            return delta;
-        }
-
         float Dist2D(const RE::NiPoint3& a, const RE::NiPoint3& b)
         {
             const float dx = a.x - b.x;
@@ -652,9 +641,18 @@ namespace NarrativeEngine::VisitArrivalPoint
         result.point = kept.front();
         result.fallbacks.assign(kept.begin() + 1, kept.end());
 
-        // The bearing the arrival should have come from, so a visit that
-        // reads wrong in game can be checked against what the code decided
-        // rather than re-run to find out.
+        // Where the visitor lives, and where they were actually put, as
+        // bearings from the player.
+        //
+        // These two are NOT expected to agree, and the gap between them is
+        // not an error term. The arrival sits on the routed path toward
+        // the visitor, so on a road that bends -- or a north-south road
+        // reached by somebody who lives due east -- a wide difference is
+        // the road being followed rather than ignored. An earlier version
+        // logged the delta as "off_by", which reads as a fault and was
+        // duly mistaken for one. Both bearings are kept because they
+        // locate the arrival on a map; `tier` is what says whether the
+        // route was honoured.
         const float homeBearing =
             ToDegrees(std::atan2(ends.sender.position.y - ends.playerPos.y, ends.sender.position.x - ends.playerPos.x));
         const float pointBearing =
@@ -662,7 +660,7 @@ namespace NarrativeEngine::VisitArrivalPoint
 
         logger::info("VisitArrivalPoint: sender=0x{:08X} tier={} — ws=0x{:08X} home=({:.0f},{:.0f}) via={} "
                      "player=({:.0f},{:.0f},{:.0f}){} point=({:.0f},{:.0f},{:.0f}) dist={:.0f}u "
-                     "bearing_home={:.0f}deg bearing_point={:.0f}deg off_by={:.0f}deg within_fine={} "
+                     "bearing_home={:.0f}deg bearing_arrival={:.0f}deg within_fine={} "
                      "fine_nodes={} coarse_nodes={} fallbacks={} | fine[{}] | bearing[{}]",
                      senderId,
                      TierName(tier),
@@ -680,7 +678,6 @@ namespace NarrativeEngine::VisitArrivalPoint
                      Dist2D(result.point, ends.playerPos),
                      homeBearing,
                      pointBearing,
-                     BearingDelta(homeBearing, pointBearing),
                      plan.destinationWithinFine,
                      plan.finePath.size(),
                      plan.coarsePath.size(),
