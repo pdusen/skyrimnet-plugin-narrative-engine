@@ -2034,6 +2034,14 @@ bool RE::Actor::HasLineOfSight(RE::TESObjectREFR*, bool&)
     return mock != nullptr && mock->visibility.engineLineOfSight;
 }
 
+void RE::DebugNotification(const char* a_notification, const char*, bool)
+{
+    auto* mock = NarrativeEngine::Testing::EngineMock::Current();
+    if (!mock || !a_notification)
+        return;
+    mock->notifications.shown.emplace_back(a_notification);
+}
+
 RE::NiAVObject* RE::TES::Pick(RE::bhkPickData& a_pickData)
 {
     auto* mock = EngineMock::Current();

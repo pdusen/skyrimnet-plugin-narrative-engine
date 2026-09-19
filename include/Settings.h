@@ -67,6 +67,14 @@ namespace NarrativeEngine::Settings
         // is configured to pass through (see logger.h).
         bool traceMode = false;
 
+        // Corner-of-the-screen notices when a beat does something the
+        // player would otherwise only learn about later, or not at all:
+        // a visitor warped in and walking over, a letter handed to the
+        // courier, an ambush spawned, a rumour seeded. A testing aid —
+        // they name factions and NPCs the character has no way of
+        // knowing about — so off unless asked for.
+        bool debugNotifications = false;
+
         // [Director]
         // TEMP: 30 for development iteration; ship default is 90.
         int tickIntervalSeconds = 30;             // wall-clock seconds between evaluations
@@ -850,6 +858,7 @@ namespace NarrativeEngine::Settings
     struct McmOverride
     {
         std::optional<bool> debugMode;
+        std::optional<bool> debugNotifications;
         std::optional<bool> traceMode;
         std::optional<bool> tickEnabled;
         std::optional<int> tickIntervalSeconds;

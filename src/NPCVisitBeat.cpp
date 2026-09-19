@@ -4,6 +4,7 @@
 #include <BeatParamHelpers.h>
 #include <BeatUtils.h>
 #include <CameraVisibility.h>
+#include <DebugNotify.h>
 #include <EngineUtils.h>
 #include <LocationKeywords.h>
 #include <logger.h>
@@ -1323,6 +1324,12 @@ namespace NarrativeEngine
                              placedAt.y,
                              placedAt.z,
                              fallbacks.size());
+                // Announced at Arming rather than at the warp: this is
+                // the first point where the visitor demonstrably exists,
+                // is an actor, and has a package bound -- so a notice
+                // here means somebody really is walking over.
+                const char* name = senderRef->GetDisplayFullName();
+                DebugNotify::Post(std::format("[NE] {} is coming to see you", (name && *name) ? name : "Someone"));
                 return true;
             });
 

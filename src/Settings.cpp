@@ -153,6 +153,7 @@ namespace NarrativeEngine::Settings
         void ReadIniInto(CSimpleIniA& ini, Config& dst)
         {
             dst.debugMode = ini.GetBoolValue("General", "bDebugMode", dst.debugMode);
+            dst.debugNotifications = ini.GetBoolValue("General", "bDebugNotifications", dst.debugNotifications);
             dst.traceMode = ini.GetBoolValue("General", "bTraceMode", dst.traceMode);
 
             dst.tickIntervalSeconds =
@@ -728,6 +729,11 @@ namespace NarrativeEngine::Settings
         // case — SaveFile creates the file with just our keys.
         (void)ini.LoadFile(kMcmIniPath);
 
+        if (mutations.debugNotifications) {
+            ini.SetBoolValue("General", "bDebugNotifications", *mutations.debugNotifications);
+            g_config.debugNotifications = *mutations.debugNotifications;
+            logger::info("Settings: MCM override write: bDebugNotifications={}", *mutations.debugNotifications);
+        }
         if (mutations.debugMode) {
             ini.SetBoolValue("General", "bDebugMode", *mutations.debugMode);
             g_config.debugMode = *mutations.debugMode;

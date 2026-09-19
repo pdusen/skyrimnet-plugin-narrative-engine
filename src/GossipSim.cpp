@@ -6,6 +6,7 @@
 
 #include <GossipState.h>
 
+#include <DebugNotify.h>
 #include <EventLogUtil.h>
 #include <GossipClaims.h>
 #include <GossipContent.h>
@@ -1166,6 +1167,17 @@ namespace NarrativeEngine::GossipSim
         g_rumors.emplace(id, std::move(rumor));
 
         GossipLog::Seed(id, notability, originNpc, p->settlement ? p->settlement : p->hold, sourceMemoryId);
+
+        // Rumours are the one beat with nothing to watch -- they spread
+        // between NPCs offscreen and only ever surface later in someone
+        // else's dialogue. Without a notice the only evidence a seed
+        // happened at all is the gossip log.
+        //
+        // Posted from the gossip thread, which is why DebugNotify takes
+        // no token and marshals for itself. Only the FormID is safe to
+        // carry across; the name is read on the main thread, where
+        // touching the form is allowed.
+        DebugNotify::PostActorNamed(originNpc, "[NE] New rumor spreading from {}");
         return id;
     }
 

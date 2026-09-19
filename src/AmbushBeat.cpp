@@ -3,6 +3,7 @@
 #include <AmbushAttackerGroups.h>
 #include <AmbushSpawnPoints.h>
 #include <BeatRegistry.h>
+#include <DebugNotify.h>
 #include <EngineUtils.h>
 #include <JsonUtils.h>
 #include <LLMTextSanitizer.h>
@@ -934,6 +935,15 @@ namespace NarrativeEngine
                 }
                 g_composeSucceeded.store(true, std::memory_order_release);
                 logger::info("AmbushBeat: armed {} of {} attacker(s); COMPOSE complete", armed, expected);
+                {
+                    std::string groupId;
+                    {
+                        std::scoped_lock lock(g_stateMutex);
+                        groupId = g_activeGroupId;
+                    }
+                    DebugNotify::Post(std::format(
+                        "[NE] Ambush spawned: {} ({} attackers)", groupId.empty() ? "unknown group" : groupId, armed));
+                }
 
                 // Put this group on its cooldown. Stamped here rather
                 // than at OnStart or CLEANUP because this is the first

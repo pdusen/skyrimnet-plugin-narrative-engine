@@ -385,6 +385,14 @@ namespace NarrativeEngine::Testing
             std::map<std::string, bool> namedNodes;
         } visibility;
 
+        // Corner-of-the-screen notices the game was asked to show. Kept
+        // as text because that is the whole of what a notification is,
+        // and what a test about one wants to assert.
+        struct NotificationState
+        {
+            std::vector<std::string> shown;
+        } notifications;
+
         // The engine's high-process actor list. Anything that sweeps the
         // loaded actors walks this; the harness hands back whatever a test
         // registered with AddLoadedActor.

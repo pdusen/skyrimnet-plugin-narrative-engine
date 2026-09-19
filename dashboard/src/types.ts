@@ -57,6 +57,7 @@ export interface DirectorState {
 // have a writer wired up.
 export interface SettingsTabState {
     debug_mode: boolean;
+    debug_notifications: boolean;
     // Human-readable display of the current dashboard hotkey binding
     // (e.g. "F7", "Ctrl+F7"). Composed on the C++ side so the friendly
     // name matches what the input sink actually matches against.

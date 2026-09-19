@@ -633,6 +633,22 @@ namespace NarrativeEngine::DashboardUIManager
             });
         }
 
+        // Backs the Settings tab's Debug Notifications checkbox.
+        // Payload is `"true"` or `"false"`.
+        void OnSetDebugNotifications(const char* argument)
+        {
+            const bool enabled = ParseBoolArg(argument);
+            logger::info("DashboardUIManager: ne_setDebugNotifications({}) received", enabled ? "true" : "false");
+            AsyncDispatch::EnqueueWork([enabled](const PluginThread::Token& pt) {
+                MainThread::FireAndForget(pt, [enabled](const MainThread::Token&) {
+                    Settings::McmOverride mut;
+                    mut.debugNotifications = enabled;
+                    Settings::WriteMcmOverride(mut);
+                    PushFullState();
+                });
+            });
+        }
+
         // Shared implementation for the Settings-tab integer slider
         // listeners. Every slider handler follows the exact same shape:
         // parse the payload as a bare integer, clamp to a per-slider
@@ -920,6 +936,7 @@ namespace NarrativeEngine::DashboardUIManager
         PrismaUI_API::RegisterJSListener(g_view, "ne_abortRunningBeat", &OnAbortRunningBeat);
         // Phase 08 Settings tab listeners.
         PrismaUI_API::RegisterJSListener(g_view, "ne_setDebugMode", &OnSetDebugMode);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setDebugNotifications", &OnSetDebugNotifications);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setTickInterval", &OnSetTickInterval);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setMinPhaseDuration", &OnSetMinPhaseDuration);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setPhaseIdealDuration", &OnSetPhaseIdealDuration);
@@ -1000,6 +1017,7 @@ namespace NarrativeEngine::DashboardUIManager
             const auto& cfg = Settings::Get();
             j["settings"] = {
                 {"debug_mode", cfg.debugMode},
+                {"debug_notifications", cfg.debugNotifications},
                 {"dashboard_hotkey_display",
                  FormatHotkeyBinding(cfg.dashboardHotkeyDXSC, cfg.dashboardHotkeyModifiers)},
                 {"dashboard_hotkey_capture_active", g_hotkeyCaptureMode.load(std::memory_order_acquire)},
