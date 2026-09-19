@@ -396,7 +396,7 @@ what they always claimed to do, and this phase is the one that makes the claim t
 | Key                            | Default | Change                                                           |
 | ------------------------------ | ------- | ---------------------------------------------------------------- |
 | `iVisitMarkerMinDistanceUnits` | `800`   | Now live. Was parsed and never read; the alias hardcoded `3000`. |
-| `iVisitMarkerMaxDistanceUnits` | `2500`  | Now live. Was parsed and never read; the alias hardcoded `8000`. |
+| `iVisitMarkerMaxDistanceUnits` | `5000`  | Now live. Was parsed and never read; the alias hardcoded `8000`. |
 
 New keys. The set is deliberately small; the arrival search has one genuinely uncertain parameter and the rest
 is structure.

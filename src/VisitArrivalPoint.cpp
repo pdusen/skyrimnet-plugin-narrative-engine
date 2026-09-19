@@ -75,9 +75,12 @@ namespace NarrativeEngine::VisitArrivalPoint
         //
         // A reachability proxy, not an aesthetic one: the navmesh gate
         // answers containment and not connectivity, so a ledge is "on
-        // navmesh" with no walkable route down. Tighter than the ambush
-        // search's budget because this band is tighter — at 800 units
-        // out this is a 26-degree slope, at 2500 it is 9.
+        // navmesh" with no walkable route down. Absolute rather than a
+        // slope ratio, so the budget tightens with range: across the
+        // 800-5000 band it works out to 26 degrees at the near end and
+        // under 5 at the far one. That asymmetry is wanted — the far
+        // samples are the ones most likely to reach across a valley onto
+        // ground nothing can walk to.
         constexpr float kMaxElevationDeltaUnits = 400.0f;
 
         float ToDegrees(float radians)

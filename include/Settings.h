@@ -386,7 +386,7 @@ namespace NarrativeEngine::Settings
         // VisitArrivalPoint; before Phase 14 these were parsed and never
         // consumed, with the live band baked into the SpawnMarker alias.
         int visitMarkerMinDistanceUnits = 800;  // closest the sender may arrive
-        int visitMarkerMaxDistanceUnits = 2500; // farthest the sender may arrive
+        int visitMarkerMaxDistanceUnits = 5000; // farthest the sender may arrive
 
         // Silhouette half-width the arrival search's cover gate tests
         // across. One actor, not a group, so this is the narrow end of
@@ -429,7 +429,7 @@ namespace NarrativeEngine::Settings
         // [Actions] — state machine timing
         // Salutation timeout: seconds after Start before rollback if the sender
         // hasn't closed distance to speak the opening line.
-        int visitApproachTimeoutSeconds = 60;
+        int visitApproachTimeoutSeconds = 90;
         // Distance at which the Salutation opening line fires and the machine
         // advances to Discuss. Kept generous (~900u) so the LLM + TTS pipeline
         // has time to generate the opening line while the sender is still
