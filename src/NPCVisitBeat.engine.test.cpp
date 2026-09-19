@@ -377,6 +377,30 @@ namespace
         return alive;
     }
 
+    // Compose the way a live one composes: slowly.
+    //
+    // The beat's clocks are wall-clock accumulators fed by its own ticks,
+    // so how long COMPOSE took is part of its state by the time RUNNING
+    // begins. In the game the LLM call alone is seconds. The harness
+    // answers instantly, so a test that needs COMPOSE to have consumed
+    // real time has to spend it somewhere else -- here by withholding the
+    // alias fills for a few slow ticks, which parks the machine in
+    // VerifyingFill, then granting them.
+    //
+    // Without this an escort bug that only shows when COMPOSE was slow is
+    // invisible: the harness composes in about fifty milliseconds and
+    // every interval still looks fresh.
+    void ComposeSlowly(NPCVisitBeat& beat, EngineMock& engine, const VisitWorld& world)
+    {
+        beat.OnStart(BeatContext{}, SenderParams());
+        for (int i = 0; i < 12; ++i) {
+            Tick(beat, BeatState::COMPOSE);
+            std::this_thread::sleep_for(std::chrono::milliseconds{100});
+        }
+        FillAliases(engine, world);
+        REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+    }
+
     // Tick the RUNNING arm long enough for the escort to check twice.
     //
     // Its clock is wall-clock elapsed and Settings clamps the interval to a
@@ -743,7 +767,9 @@ TEST_CASE("NPCVisitBeat moves a visitor who cannot walk the last stretch", "[NPC
     // so escalating walks the visitor BACK ALONG THEIR OWN ROUTE rather than
     // sideways onto ground nothing has vetted.
     EngineMock engine;
-    const std::string patientSettings = std::string{kSettings} + "[Beats]\niVisitApproachTimeoutSeconds=30\n";
+    const std::string patientSettings = std::string{kSettings}
+                                        + "[Beats]\niVisitApproachTimeoutSeconds=30\n"
+                                          "iVisitSalutationApproachDistanceUnits=500\n";
     const ConfiguredSettings settings{patientSettings.c_str()};
     Persistence::OnRevert();
     REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
@@ -752,11 +778,9 @@ TEST_CASE("NPCVisitBeat moves a visitor who cannot walk the last stretch", "[NPC
     Init::Initialize();
     const RunningDispatch dispatch;
     NPCVisitBeat beat;
-    FillAliases(engine, world);
 
     PlaceSenderAway(engine, world.sender, 3000.0f);
-    beat.OnStart(BeatContext{}, SenderParams());
-    REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+    ComposeSlowly(beat, engine, world);
     engine.courier.questStage = static_cast<std::uint16_t>(kStageSalutation);
 
     SECTION("when they have stopped moving well short of the player")
@@ -770,6 +794,25 @@ TEST_CASE("NPCVisitBeat moves a visitor who cannot walk the last stretch", "[NPC
         SECTION("should put them somewhere else on the road in")
         {
             REQUIRE(world.sender->GetPosition().x != stalledAt.x);
+        }
+    }
+
+    SECTION("when they have only just been put down")
+    {
+        // Standing exactly where the beat placed them, which is what a
+        // visitor looks like for the first moment of every single visit.
+        // Three live dispatches in a row warped their visitor to a
+        // fallback about half a second after arrival -- the escort's
+        // first check was measuring a gap that began at OnStart, so the
+        // whole of COMPOSE counted toward it and the interval was already
+        // spent before anyone had taken a step.
+        PlaceSenderAway(engine, world.sender, 1000.0f);
+        const auto placedAt = world.sender->GetPosition();
+        TickForSeconds(beat, BeatState::RUNNING, TickMode::Normal, 0.6);
+
+        SECTION("should let them start walking before judging that they cannot")
+        {
+            REQUIRE(world.sender->GetPosition().x == placedAt.x);
         }
     }
 

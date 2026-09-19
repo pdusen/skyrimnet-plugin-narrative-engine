@@ -1325,6 +1325,18 @@ namespace NarrativeEngine
                 return {};
             }
 
+            // Start the escort's clock HERE, not at OnStart.
+            //
+            // The clock measures the gap between checks as a delta against
+            // this stamp, and leaving it at zero made the first delta the
+            // whole of COMPOSE -- an LLM call, several seconds -- which
+            // cleared the check interval instantly. Every visit therefore
+            // got its first stall check about half a second after the
+            // visitor was put down, saw them barely moved because they had
+            // barely had time to move, and warped them to a fallback they
+            // never needed. One check interval has to pass between being
+            // placed and being judged for failing to walk.
+            g_lastEscortSampleNormalSec.store(NormalElapsedNow(), std::memory_order_release);
             g_salutationEnteredAtNormalSec.store(NormalElapsedNow());
             g_lastDistanceLogNormalSec.store(0.0);
             VisitState::SetComposingSender(false);
