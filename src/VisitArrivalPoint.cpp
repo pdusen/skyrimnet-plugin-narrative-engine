@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <string>
 
 namespace NarrativeEngine::VisitArrivalPoint
@@ -117,11 +118,38 @@ namespace NarrativeEngine::VisitArrivalPoint
             int notLevel = 0;
             int inView = 0;
 
+            // How far out the candidates actually reached, whether or not
+            // the band admitted them.
+            //
+            // The counts alone cannot distinguish "the band is throwing
+            // away road that would have worked" from "there is no cover
+            // out there either" -- and those want opposite responses. The
+            // span says how much road exists past the ceiling, so raising
+            // it can be judged before it is tried rather than after.
+            float nearest = -1.0f;
+            float farthest = -1.0f;
+
+            void Saw(float distance)
+            {
+                ++considered;
+                if (nearest < 0.0f || distance < nearest) {
+                    nearest = distance;
+                }
+                if (distance > farthest) {
+                    farthest = distance;
+                }
+            }
+
             std::string Describe() const
             {
-                return "considered=" + std::to_string(considered) + " tooNear=" + std::to_string(tooNear)
+                char span[64] = "span=none";
+                if (nearest >= 0.0f) {
+                    std::snprintf(span, sizeof(span), "span=[%.0f,%.0f]", nearest, farthest);
+                }
+                return "considered=" + std::to_string(considered) + " " + span + " tooNear=" + std::to_string(tooNear)
                        + " tooFar=" + std::to_string(tooFar) + " offNavmesh=" + std::to_string(offNavmesh)
-                       + " notLevel=" + std::to_string(notLevel) + " inView=" + std::to_string(inView);
+                       + " notLevel=" + std::to_string(notLevel) + " inView=" + std::to_string(inView)
+                       + " survived=" + std::to_string(considered - tooNear - tooFar - offNavmesh - notLevel - inView);
             }
         };
 
@@ -160,8 +188,8 @@ namespace NarrativeEngine::VisitArrivalPoint
         {
             std::vector<RE::NiPoint3> kept;
             for (const auto& node : finePath) {
-                ++tally.considered;
                 const float distance = Dist2D(node, playerPos);
+                tally.Saw(distance);
                 if (distance < minDist) {
                     ++tally.tooNear;
                     continue;
@@ -247,7 +275,7 @@ namespace NarrativeEngine::VisitArrivalPoint
                     const float offset = -arc + u * (2.0f * arc);
                     const float angle = baseAngle + offset;
 
-                    ++tally.considered;
+                    tally.Saw(radius);
                     RE::NiPoint3 probe{
                         playerPos.x + radius * std::cos(angle), playerPos.y + radius * std::sin(angle), playerPos.z};
 
