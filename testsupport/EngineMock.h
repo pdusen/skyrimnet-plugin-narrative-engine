@@ -372,6 +372,13 @@ namespace NarrativeEngine::Testing
             float pickHitFraction = 1.0f;
             int pickCalls = 0;
 
+            // The highest point any ray was cast TO, in game units. The
+            // cover fan's whole job is to sweep a body-shaped silhouette,
+            // and whether it reached over a visitor's head is not
+            // observable any other way -- one hit fraction says what the
+            // rays hit, never where they went.
+            float highestPickTargetZ = 0.0f;
+
             // Skeleton nodes the fan looks for by name. Empty means none
             // resolve and the fan falls back to the bounding box, which is the
             // usual case for a non-actor reference.

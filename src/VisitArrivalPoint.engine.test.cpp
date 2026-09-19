@@ -211,6 +211,22 @@ TEST_CASE("VisitArrivalPoint brings the visitor in from the side of the road the
             REQUIRE(std::fabs(result.point.x - 1000.0f) < 1.0f);
         }
 
+        SECTION("should check for cover over a whole visitor, not just their feet")
+        {
+            REQUIRE(result.Ok());
+            // The gate samples 10/50/90 percent of the height it is given,
+            // so the top ray lands at 0.9 of it. A tester watched an NPC
+            // appear on a spot that passed while their head was plainly
+            // visible: the rays had swept to 115 units and the visitor was
+            // taller than that.
+            //
+            // Asserted as a reach over a crown rather than as the constant
+            // itself, because what matters is that the fan clears a tall
+            // visitor's head and not what number produces that.
+            constexpr float kTallestVisitorCrownUnits = 140.0f;
+            REQUIRE(engine.visibility.highestPickTargetZ >= result.point.z + kTallestVisitorCrownUnits);
+        }
+
         SECTION("should stand the visitor clear of the ground")
         {
             REQUIRE(result.Ok());

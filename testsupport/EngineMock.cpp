@@ -2026,6 +2026,15 @@ RE::NiAVObject* RE::TES::Pick(RE::bhkPickData& a_pickData)
     if (!mock)
         return nullptr;
     ++mock->visibility.pickCalls;
+    // Undo the Havok world scale the caller applied, so the recorded
+    // height is in the game units a test reasons in.
+    const float scale = RE::bhkWorld::GetWorldScale();
+    if (scale > 0.0f) {
+        const float targetZ = a_pickData.rayInput.to.quad.m128_f32[2] / scale;
+        if (mock->visibility.pickCalls == 1 || targetZ > mock->visibility.highestPickTargetZ) {
+            mock->visibility.highestPickTargetZ = targetZ;
+        }
+    }
     a_pickData.rayOutput.hitFraction = mock->visibility.pickHitFraction;
     return nullptr;
 }

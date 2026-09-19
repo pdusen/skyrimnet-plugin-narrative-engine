@@ -247,6 +247,14 @@ to make that choice on data rather than on taste:
 `coverRadiusUnits` is a single actor here, not a cluster, so it is the narrow end of that parameter's range —
 one more reason the visit gate may behave quite differently from the ambush one that shaped it.
 
+**The height passed matters as much as the radius, and is not the actor's height.** `IsPositionBehindCover`
+samples three heights — 10%, 50% and 90% of what it is given — so the topmost ray lands at `0.9h` above the
+feet rather than at `h`. Passing the nominal humanoid 128 put the top ray at 115 units while a visitor's crown
+sits near 128, and an Altmer's nearer 138: cover that stopped all three rays could still leave a head in plain
+view. A tester watched exactly that happen. The gate is now given 160, putting the top ray at 144 and clear of
+the tallest playable race. Deliberately conservative — being too tall costs a usable spot, being too short
+costs the illusion — and it makes the gate stricter, so it moves the Tier 1 hit rate this step is measuring.
+
 #### What the ribbon costs us
 
 Fine nodes are raw triangle centroids, so the graph is a ribbon two or three nodes wide rather than a thinned

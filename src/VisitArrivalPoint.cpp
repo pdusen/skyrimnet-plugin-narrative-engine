@@ -22,8 +22,24 @@ namespace NarrativeEngine::VisitArrivalPoint
 {
     namespace
     {
-        using StuckRecovery::kActorHeightUnits;
         using StuckRecovery::kGroundClearanceUnits;
+
+        // Body height handed to the cover gate. NOT the nominal 128 that
+        // StuckRecovery uses for a humanoid, and deliberately taller than
+        // any visitor.
+        //
+        // `IsPositionBehindCover` samples three heights -- 10%, 50% and
+        // 90% of whatever it is given -- so the topmost ray lands at 0.9h
+        // above the feet, not at h. Passing the nominal 128 put the top
+        // ray at 115 while a visitor's crown sits near 128, and an Altmer's
+        // nearer 138. Cover that stops all three rays can therefore leave a
+        // head in plain view, which is what a tester watched happen.
+        //
+        // 160 puts the top ray at 144, clear of the tallest playable race
+        // with margin. Deliberately conservative: the cost of being too
+        // tall is a spot rejected that would have been fine, and the cost
+        // of being too short is the player watching somebody appear.
+        constexpr float kCoverProbeHeightUnits = 160.0f;
 
         // Runner-ups kept for StuckRecovery, and how far apart two of
         // them have to be to count as distinct options.
@@ -120,7 +136,7 @@ namespace NarrativeEngine::VisitArrivalPoint
 
         bool BehindCover(const RE::NiPoint3& pos, float coverRadius)
         {
-            return CameraVisibility::IsPositionBehindCover(pos, kActorHeightUnits, coverRadius);
+            return CameraVisibility::IsPositionBehindCover(pos, kCoverProbeHeightUnits, coverRadius);
         }
 
         // ---- Tier 1 -------------------------------------------------
@@ -575,7 +591,7 @@ namespace NarrativeEngine::VisitArrivalPoint
 
         if (tier == Tier::None) {
             logger::info("VisitArrivalPoint: sender=0x{:08X} tier=none — ws=0x{:08X} "
-                         "home=({:.0f},{:.0f}) via={} player=({:.0f},{:.0f}){} band=[{:.0f},{:.0f}] "
+                         "home=({:.0f},{:.0f}) via={} player=({:.0f},{:.0f},{:.0f}){} band=[{:.0f},{:.0f}] "
                          "cover_r={:.0f} "
                          "plan_valid={} within_fine={} fine_nodes={} coarse_nodes={} coarse_allowed={} "
                          "| fine[{}] | bearing[{}]",
@@ -586,6 +602,7 @@ namespace NarrativeEngine::VisitArrivalPoint
                          OriginSourceName(ends.senderSource),
                          ends.player.position.x,
                          ends.player.position.y,
+                         ends.playerPos.z,
                          ends.player.viaLoadDoor ? " via-door" : "",
                          minDist,
                          maxDist,
@@ -613,7 +630,7 @@ namespace NarrativeEngine::VisitArrivalPoint
             ToDegrees(std::atan2(result.point.y - ends.playerPos.y, result.point.x - ends.playerPos.x));
 
         logger::info("VisitArrivalPoint: sender=0x{:08X} tier={} — ws=0x{:08X} home=({:.0f},{:.0f}) via={} "
-                     "player=({:.0f},{:.0f}){} point=({:.0f},{:.0f},{:.0f}) dist={:.0f}u "
+                     "player=({:.0f},{:.0f},{:.0f}){} point=({:.0f},{:.0f},{:.0f}) dist={:.0f}u "
                      "bearing_home={:.0f}deg bearing_point={:.0f}deg off_by={:.0f}deg within_fine={} "
                      "fine_nodes={} coarse_nodes={} fallbacks={} | fine[{}] | bearing[{}]",
                      senderId,
@@ -624,6 +641,7 @@ namespace NarrativeEngine::VisitArrivalPoint
                      OriginSourceName(ends.senderSource),
                      ends.playerPos.x,
                      ends.playerPos.y,
+                     ends.playerPos.z,
                      ends.player.viaLoadDoor ? " via-door" : "",
                      result.point.x,
                      result.point.y,
