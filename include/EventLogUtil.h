@@ -1,5 +1,7 @@
 #pragma once
 
+#include <filesystem>
+
 #include <string>
 #include <vector>
 
@@ -90,4 +92,37 @@ namespace NarrativeEngine::EventLogUtil
     // per event from the caller-supplied set. Callers each own their
     // pending queue's mutex.
     std::vector<HistoryEntry> DrainVector(std::vector<HistoryEntry>& pending);
+
+    // Rotate a numbered log family: `<stem>.log` is the current file and
+    // `<stem>.1.log` .. `<stem>.<slots>.log` are the history behind it.
+    // The oldest is dropped, the rest shift down one, and the current
+    // file's contents are COPIED into slot 1.
+    //
+    // Copied, not renamed, and that distinction is the whole reason this
+    // is shared rather than written twice.
+    //
+    // Renaming gives the same files with the same contents, so nothing
+    // about the end state says which was used. What differs is the
+    // IDENTITY of the current file: a rename moves it aside and the
+    // reopen creates a different file at the same path. Anything holding
+    // that path open — an editor tailing the log, which is how these get
+    // read while the game runs — is following the file, not the name, so
+    // it silently ends up watching the rotated copy and never sees
+    // another line. On Windows the rename can also just fail outright
+    // against the reader's open handle, and the rotation is lost.
+    //
+    // Copy-then-truncate keeps one file for the life of the install, the
+    // same way SKSE's own basic_file_sink treats the main plugin log.
+    // The caller does the truncating: it reopens the current path with
+    // std::ios::trunc immediately after this returns, which empties the
+    // file in place without ever unlinking it.
+    //
+    // Best-effort throughout. Every filesystem error is logged against
+    // `label` and swallowed — a rotation that cannot happen degrades to
+    // "this session appends to whatever was there", which is worse than
+    // rotating and far better than not logging.
+    void RotateLogFiles(const std::filesystem::path& directory,
+                        std::string_view stem,
+                        int slots,
+                        std::string_view label);
 } // namespace NarrativeEngine::EventLogUtil

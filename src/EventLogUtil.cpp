@@ -5,9 +5,12 @@
 #include <RE/Skyrim.h>
 
 #include <array>
+#include <filesystem>
+
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <logger.h>
 
 namespace NarrativeEngine::EventLogUtil
 {
@@ -151,5 +154,61 @@ namespace NarrativeEngine::EventLogUtil
         std::vector<HistoryEntry> out;
         out.swap(pending);
         return out;
+    }
+    void RotateLogFiles(const std::filesystem::path& directory,
+                        std::string_view stem,
+                        int slots,
+                        std::string_view label)
+    {
+        if (directory.empty() || stem.empty() || slots < 1) {
+            return;
+        }
+
+        const auto pathForSlot = [&](int slot) {
+            const std::string name =
+                slot == 0 ? std::string(stem) + ".log" : std::string(stem) + "." + std::to_string(slot) + ".log";
+            return directory / name;
+        };
+
+        std::error_code ec;
+
+        // Drop the oldest.
+        const auto oldest = pathForSlot(slots);
+        if (std::filesystem::exists(oldest, ec)) {
+            std::filesystem::remove(oldest, ec);
+            if (ec) {
+                logger::warn("{}: failed to delete '{}': {}", label, oldest.string(), ec.message());
+                ec.clear();
+            }
+        }
+
+        // Shift the history down. These may be renamed freely -- nothing
+        // reads a rotated file while the game is running.
+        for (int slot = slots - 1; slot >= 1; --slot) {
+            const auto src = pathForSlot(slot);
+            const auto dst = pathForSlot(slot + 1);
+            if (std::filesystem::exists(src, ec)) {
+                std::filesystem::rename(src, dst, ec);
+                if (ec) {
+                    logger::warn("{}: rotate '{}' -> '{}' failed: {}", label, src.string(), dst.string(), ec.message());
+                    ec.clear();
+                }
+            }
+        }
+
+        // The current file is COPIED into slot 1 and left where it is.
+        // See the header for why this is not a rename. The caller
+        // truncates it on reopen.
+        const auto current = pathForSlot(0);
+        if (std::filesystem::exists(current, ec)) {
+            std::filesystem::copy_file(current, pathForSlot(1), std::filesystem::copy_options::overwrite_existing, ec);
+            if (ec) {
+                logger::warn("{}: copy current '{}' -> '{}' failed: {}",
+                             label,
+                             current.string(),
+                             pathForSlot(1).string(),
+                             ec.message());
+            }
+        }
     }
 } // namespace NarrativeEngine::EventLogUtil

@@ -6,6 +6,9 @@
 #include <SKSE/Interfaces.h>
 
 #include <catch2/catch_test_macros.hpp>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 
 #include <cstddef>
 #include <cstdint>
@@ -233,6 +236,99 @@ TEST_CASE("EventLogUtil::FormatInGameTimestampFromGameTime", "[EventLogUtil][eng
             REQUIRE(EventLogUtil::FormatInGameTimestampFromGameTime(-1'000'000.0 * kDay) == "[invalid time]");
         }
     }
+}
+
+TEST_CASE("EventLogUtil::RotateLogFiles", "[EventLogUtil][engine]")
+{
+    // Rotation has to shift the history along AND leave the current file
+    // exactly where it was, because something is usually reading it.
+    //
+    // These logs are read by tailing them in an editor while the game
+    // runs. A tail follows the FILE, not the name, so moving the current
+    // file aside and creating a fresh one at the same path silently
+    // leaves the reader watching a rotated copy that will never grow
+    // again. The end state on disk is identical either way, which is why
+    // this is worth pinning: nothing about the resulting files says which
+    // was done, only whether the current one is still the same file.
+    namespace fs = std::filesystem;
+    namespace EventLogUtil = NarrativeEngine::EventLogUtil;
+
+    const auto dir = fs::temp_directory_path() / "ne_rotate_test";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+
+    const std::string stem = "trace";
+    const auto current = dir / "trace.log";
+    const auto first = dir / "trace.1.log";
+    const auto second = dir / "trace.2.log";
+
+    const auto write = [](const fs::path& path, std::string_view text) {
+        std::ofstream out(path, std::ios::out | std::ios::trunc);
+        out << text;
+    };
+    const auto read = [](const fs::path& path) {
+        std::ifstream in(path);
+        std::stringstream buffer;
+        buffer << in.rdbuf();
+        return buffer.str();
+    };
+
+    SECTION("when a previous session's log is still there")
+    {
+        write(current, "session one");
+        EventLogUtil::RotateLogFiles(dir, stem, 5, "Test");
+
+        SECTION("should keep the current file rather than move it aside")
+        {
+            // The whole point. After a rename the path is empty until
+            // something recreates it, and whatever was tailing the old
+            // file is now tailing history.
+            REQUIRE(fs::exists(current));
+        }
+
+        SECTION("should put the old contents in the first history slot")
+        {
+            REQUIRE(read(first) == "session one");
+        }
+    }
+
+    SECTION("when several sessions have already rotated")
+    {
+        write(current, "newest");
+        write(first, "older");
+        EventLogUtil::RotateLogFiles(dir, stem, 5, "Test");
+
+        SECTION("should shift the history along behind the current file")
+        {
+            REQUIRE(read(first) == "newest");
+            REQUIRE(read(second) == "older");
+        }
+    }
+
+    SECTION("when the oldest slot is full")
+    {
+        write(current, "newest");
+        write(dir / "trace.5.log", "ancient");
+        EventLogUtil::RotateLogFiles(dir, stem, 5, "Test");
+
+        SECTION("should drop it rather than grow the family forever")
+        {
+            REQUIRE_FALSE(fs::exists(dir / "trace.5.log"));
+        }
+    }
+
+    SECTION("when there is no log yet")
+    {
+        SECTION("should do nothing rather than fabricate one")
+        {
+            EventLogUtil::RotateLogFiles(dir, stem, 5, "Test");
+            REQUIRE_FALSE(fs::exists(current));
+            REQUIRE_FALSE(fs::exists(first));
+        }
+    }
+
+    fs::remove_all(dir, ec);
 }
 
 TEST_CASE("EventLogUtil string serialization", "[EventLogUtil][engine]")

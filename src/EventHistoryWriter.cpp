@@ -73,51 +73,12 @@ namespace NarrativeEngine::EventHistoryWriter
             return dir / (std::string(kFileStem) + "." + std::to_string(slot) + ".log");
         }
 
-        // Rotate: delete .5, rename .4 -> .5, .3 -> .4, ..., current
-        // -> .1. Errors are logged and swallowed — the writer degrades
-        // to "current session's file only" if rotation fails.
+        // Shared with GossipLog, and shared specifically so the
+        // copy-rather-than-rename rule for the current file is written
+        // down once. See EventLogUtil.h.
         void RotateFilesLocked()
         {
-            std::error_code ec;
-
-            // Drop the oldest.
-            const auto oldest = FilePathForSlot(kRotationSlots);
-            if (std::filesystem::exists(oldest, ec)) {
-                std::filesystem::remove(oldest, ec);
-                if (ec) {
-                    logger::warn("EventHistoryWriter: failed to delete '{}': {}", oldest.string(), ec.message());
-                    ec.clear();
-                }
-            }
-
-            // Shift .4 -> .5, .3 -> .4, ..., .1 -> .2.
-            for (int slot = kRotationSlots - 1; slot >= 1; --slot) {
-                const auto src = FilePathForSlot(slot);
-                const auto dst = FilePathForSlot(slot + 1);
-                if (std::filesystem::exists(src, ec)) {
-                    std::filesystem::rename(src, dst, ec);
-                    if (ec) {
-                        logger::warn("EventHistoryWriter: rotate '{}' -> '{}' failed: {}",
-                                     src.string(),
-                                     dst.string(),
-                                     ec.message());
-                        ec.clear();
-                    }
-                }
-            }
-
-            // Current -> .1.
-            const auto current = FilePathForSlot(0);
-            const auto first = FilePathForSlot(1);
-            if (std::filesystem::exists(current, ec)) {
-                std::filesystem::rename(current, first, ec);
-                if (ec) {
-                    logger::warn("EventHistoryWriter: rotate current '{}' -> '{}' failed: {}",
-                                 current.string(),
-                                 first.string(),
-                                 ec.message());
-                }
-            }
+            EventLogUtil::RotateLogFiles(LogDirectory(), kFileStem, kRotationSlots, "EventHistoryWriter");
         }
 
         // Open the current-slot file in truncate mode. On failure,
