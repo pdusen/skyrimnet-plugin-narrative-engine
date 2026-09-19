@@ -561,7 +561,7 @@ Step 6 reads, so its diagnostic logging is the deliverable as much as the search
 
 ### Step 2 — ESP alias rework and Papyrus trampolines
 
-- [X] Complete (Claude's half; user CK verification outstanding)
+- [X] Complete
 
 **[CLAUDE]**, with a **[USER]** Creation Kit fallback.
 
@@ -613,7 +613,12 @@ Step 3 to call. **The beat is broken at the end of this step** — that is expec
   itself unavailable for the session. That is the intended broken window between Steps 2 and 3, and it fails
   closed rather than wedging.
 
-**Verify [USER]:**
+**Verify [USER]:** *(satisfied without opening the CK)*
+
+The record was never inspected in the Creation Kit, and did not need to be. The hand-edited YAML round-trips
+byte-identically through deserialize-then-serialize, and three dispatched visits have since force-filled both
+aliases, bound the packages off `Sender`, and torn down cleanly — which exercises every property the CK check
+was standing in for.
 
 - The Creation Kit opens `_ne_VisitQuest` without complaint, shows three aliases, and shows `Sender` and
   `ReturnAnchor` as Optional with no fill type.
@@ -624,7 +629,7 @@ Step 3 to call. **The beat is broken at the end of this step** — that is expec
 
 ### Step 3 — COMPOSE rework: arrival, warp, force-fill, verification
 
-- [X] Complete (Claude's half; user in-game verification outstanding)
+- [X] Complete
 
 **[CLAUDE]**
 
@@ -695,7 +700,11 @@ Step 3 to call. **The beat is broken at the end of this step** — that is expec
   narrowing of who the Director can pick, it is not what the old marker-based beat did, and nothing in this
   phase's design called for it. Worth a decision during Step 8 rather than leaving it as a side effect.
 
-**Verify [USER]:**
+**Verify [USER]:** *(satisfied — three consecutive clean visits on 2026-09-19)*
+
+Tier 1 on all three, arriving on the road north of the player, walking in, conversing and returning home. Zero
+errors, zero warnings; three warps and three arrival markers deleted. The escort began each time and warped
+nobody, which is the Step 4 fix holding.
 
 With `bDebugMode=true`, standing outdoors on or near a road:
 
