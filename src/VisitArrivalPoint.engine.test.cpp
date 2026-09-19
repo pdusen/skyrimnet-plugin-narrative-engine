@@ -627,6 +627,11 @@ TEST_CASE("VisitArrivalPoint finds a visitor who is not loaded", "[VisitArrivalP
 
     SECTION("when nothing anywhere can place them")
     {
+        // No cell, no editor location, and no ambient current location
+        // either -- the mock hands every reference the same one, and
+        // leaving it in play means this case is really asking whether
+        // THAT has a map marker.
+        engine.world.playerHasLocation = false;
         auto* sender = ActorAt(engine, kSender, nullptr, At(0.0f, 0.0f));
         const auto result = FindFor(sender, player);
 

@@ -87,8 +87,14 @@ namespace NarrativeEngine
 
         // ---- Small helpers -----------------------------------------
 
+        // Null in production; a test may point it at a clock it drives.
+        std::atomic<double (*)()> g_clockOverride = nullptr;
+
         double RealSecondsNow()
         {
+            if (auto* clock = g_clockOverride.load(std::memory_order_acquire)) {
+                return clock();
+            }
             return static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                            std::chrono::steady_clock::now().time_since_epoch())
                                            .count())
@@ -2083,6 +2089,14 @@ namespace NarrativeEngine
     // ---------------------------------------------------------------
     // Query surface
     // ---------------------------------------------------------------
+
+    namespace NPCVisitBeat_Testing
+    {
+        void SetClock(double (*clock)())
+        {
+            g_clockOverride.store(clock, std::memory_order_release);
+        }
+    } // namespace NPCVisitBeat_Testing
 
     namespace NPCVisitBeat_Query
     {

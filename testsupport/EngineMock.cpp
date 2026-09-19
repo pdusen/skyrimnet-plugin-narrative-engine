@@ -67,6 +67,7 @@ namespace NarrativeEngine::Testing
     std::deque<FakeObject>& SimpleFormObjects();
     RE::TESRace* RaceOf(const void* npc);
     RE::BGSLocation* EditorLocationOf(const void* ref);
+    void ClearEditorLocations();
     const char* FormName(const void* form);
     void SetFormName(const void* form, std::string name);
 
@@ -290,6 +291,14 @@ namespace NarrativeEngine::Testing
             std::fprintf(stderr, "[EngineMock] FATAL: a second EngineMock was constructed while one was alive.\n");
             std::abort();
         }
+
+        // Side tables keyed by reference POINTER outlive the mock that
+        // filled them, and the object pools hand the same addresses back
+        // to the next one. A reference this mock builds therefore
+        // inherits whatever the last mock recorded against the address it
+        // happens to land on -- invisible until a case asks whether a
+        // reference has something and gets the previous case's answer.
+        ClearEditorLocations();
 
         // Tell CommonLibSSE which runtime it is looking at, without a Skyrim
         // process to learn it from. `mock()` is CommonLibSSE-NG's own
@@ -1140,6 +1149,11 @@ namespace NarrativeEngine::Testing
             return *table;
         }
     } // namespace
+
+    void ClearEditorLocations()
+    {
+        EditorLocations().clear();
+    }
 
     RE::TESRace* RaceOf(const void* npc)
     {
@@ -3237,6 +3251,11 @@ RE::BGSLocation* RE::TESObjectREFR::GetCurrentLocation() const
     location->fullName = mock->world.locationName.c_str();
     location->keywords = nullptr;
     location->numKeywords = 0;
+    // This object is reused across every call, so anything a previous
+    // caller left in it is still here. An unreset handle is the worst of
+    // them: it is not obviously stale, and it resolves often enough to
+    // turn a test that asks "is there a map marker" into a coin flip.
+    location->worldLocMarker = {};
     SetEditorID(location, mock->world.locationEditorID);
 
     if (mock->world.locationParentEditorID.empty()) {
@@ -3254,6 +3273,7 @@ RE::BGSLocation* RE::TESObjectREFR::GetCurrentLocation() const
         parent->parentLoc = nullptr;
         parent->keywords = nullptr;
         parent->numKeywords = 0;
+        parent->worldLocMarker = {};
         SetEditorID(parent, mock->world.locationParentEditorID);
         location->parentLoc = parent;
     }

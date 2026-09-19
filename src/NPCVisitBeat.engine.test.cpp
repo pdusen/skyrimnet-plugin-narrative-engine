@@ -377,6 +377,51 @@ namespace
         return alive;
     }
 
+    // A clock the test drives, in place of the beat's wall clock.
+    //
+    // Every timer in the beat -- the approach timeout, the valediction
+    // dwell, the escort's check cadence -- is a delta against a clock
+    // sampled on each Tick. Spending those seconds for real makes a case
+    // slow and, worse, makes it depend on how busy the machine is: the
+    // escort case ran eleven seconds and still raced often enough to
+    // redden a run in three. Driving the clock makes the same case exact
+    // and instant.
+    //
+    // Held in a namespace-scope double because the seam takes a plain
+    // function pointer, which cannot capture.
+    double g_fakeNowSeconds = 1000.0;
+
+    double FakeClock()
+    {
+        return g_fakeNowSeconds;
+    }
+
+    // Move time forward the way a run of ticks would, and let the beat
+    // see each step. One tick per step, because the accumulators only
+    // advance when the beat is ticked.
+    void AdvanceAndTick(NPCVisitBeat& beat, BeatState state, double seconds, double stepSeconds = 0.1)
+    {
+        for (double spent = 0.0; spent < seconds; spent += stepSeconds) {
+            g_fakeNowSeconds += stepSeconds;
+            Tick(beat, state);
+        }
+    }
+
+    // Installs the test clock for one case and puts the real one back
+    // afterwards, so a case that throws cannot leak it into the next.
+    struct ScopedFakeClock
+    {
+        ScopedFakeClock()
+        {
+            g_fakeNowSeconds = 1000.0;
+            NarrativeEngine::NPCVisitBeat_Testing::SetClock(&FakeClock);
+        }
+        ~ScopedFakeClock()
+        {
+            NarrativeEngine::NPCVisitBeat_Testing::SetClock(nullptr);
+        }
+    };
+
     // Compose the way a live one composes: slowly.
     //
     // The beat's clocks are wall-clock accumulators fed by its own ticks,
@@ -393,23 +438,24 @@ namespace
     void ComposeSlowly(NPCVisitBeat& beat, EngineMock& engine, const VisitWorld& world)
     {
         beat.OnStart(BeatContext{}, SenderParams());
-        for (int i = 0; i < 12; ++i) {
-            Tick(beat, BeatState::COMPOSE);
-            std::this_thread::sleep_for(std::chrono::milliseconds{100});
-        }
+        // Park the machine in VerifyingFill by withholding the fills, and
+        // charge the clock for the wait. The compose result itself
+        // arrives on a real worker thread, so RunCompose below still does
+        // the one genuine bit of waiting this case needs.
+        AdvanceAndTick(beat, BeatState::COMPOSE, 1.2);
         FillAliases(engine, world);
         REQUIRE(RunCompose(beat) == BeatState::RUNNING);
     }
 
-    // Tick the RUNNING arm long enough for the escort to check twice.
+    // Tick the RUNNING arm past two escort checks.
     //
-    // Its clock is wall-clock elapsed and Settings clamps the interval to a
-    // one-second floor, so this cannot be hurried: the first check only
-    // establishes where the sender was, and the second is the one that can
-    // tell they have not moved since.
+    // Settings clamps the check interval to a one-second floor, and the
+    // first check of a pair only records where the sender was -- the
+    // second is the one that can tell they have not moved since. So two
+    // intervals have to pass, and now they pass instantly.
     void EscortTicks(NPCVisitBeat& beat)
     {
-        TickForSeconds(beat, BeatState::RUNNING, TickMode::Normal, 2.4);
+        AdvanceAndTick(beat, BeatState::RUNNING, 2.4);
     }
 
     void AbortFromMainThread(NPCVisitBeat& beat)
@@ -767,6 +813,7 @@ TEST_CASE("NPCVisitBeat moves a visitor who cannot walk the last stretch", "[NPC
     // so escalating walks the visitor BACK ALONG THEIR OWN ROUTE rather than
     // sideways onto ground nothing has vetted.
     EngineMock engine;
+    const ScopedFakeClock fakeClock;
     const std::string patientSettings = std::string{kSettings}
                                         + "[Beats]\niVisitApproachTimeoutSeconds=30\n"
                                           "iVisitSalutationApproachDistanceUnits=500\n";
@@ -808,7 +855,7 @@ TEST_CASE("NPCVisitBeat moves a visitor who cannot walk the last stretch", "[NPC
         // spent before anyone had taken a step.
         PlaceSenderAway(engine, world.sender, 1000.0f);
         const auto placedAt = world.sender->GetPosition();
-        TickForSeconds(beat, BeatState::RUNNING, TickMode::Normal, 0.6);
+        AdvanceAndTick(beat, BeatState::RUNNING, 0.6);
 
         SECTION("should let them start walking before judging that they cannot")
         {

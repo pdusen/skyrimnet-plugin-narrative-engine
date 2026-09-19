@@ -69,6 +69,24 @@ namespace NarrativeEngine
         void Initialize();
     } // namespace NPCVisitBeat_Init
 
+    namespace NPCVisitBeat_Testing
+    {
+        // Replace the wall clock the beat measures its own timers
+        // against. Passing nullptr restores the real one.
+        //
+        // The beat's approach timeout, dwell timers and escort cadence
+        // are all deltas against steady_clock sampled on each Tick. A
+        // test that wants to watch one of those fire otherwise has to
+        // spend the real seconds, which makes it slow and makes it
+        // depend on how loaded the machine is -- the escort case ran for
+        // eleven seconds and still raced. With a clock it can drive, the
+        // same case is exact and instant.
+        //
+        // Production never calls this and the pointer stays null there,
+        // so the only cost on the real path is one atomic load per Tick.
+        void SetClock(double (*clock)());
+    } // namespace NPCVisitBeat_Testing
+
     namespace NPCVisitBeat_Query
     {
         // The Discuss stage runs an internal three-way substate cycle
