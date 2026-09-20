@@ -320,6 +320,117 @@ TEST_CASE("VisitArrivalPoint keeps the arrival inside the distance band", "[Visi
     }
 }
 
+TEST_CASE("VisitArrivalPoint reaches past the band rather than declining", "[VisitArrivalPoint][engine]")
+{
+    // The band's ceiling says how long the walk in ought to take. It is
+    // a preference, not a rule about where a person may stand, and
+    // treating it as a rule meant a road whose only hidden stretch sat
+    // slightly too far out produced no visit at all.
+    //
+    // The road here runs east with cover only beyond the ceiling, which
+    // is the shape that was losing visits.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    auto* space = engine.AddWorldSpace(kWorld);
+    auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+    LayRoad(engine, cell);
+    engine.LoadGrid({cell});
+    PollFineRoads();
+    LayGround(engine);
+    CoverEverywhere(engine);
+
+    auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+    auto* sender = ActorAt(engine, kSender, cell, At(kRoadEnd, 0.0f));
+
+    SECTION("when the band admits nothing but the road continues")
+    {
+        // A band that ends before the first road node does.
+        const ConfiguredSettings narrow{"[Beats]\niVisitMarkerMinDistanceUnits=100\n"
+                                        "iVisitMarkerMaxDistanceUnits=300\n"
+                                        "iVisitArrivalCoverRadiusUnits=64\n"
+                                        "bVisitArrivalAllowCoarseBearing=false\n"
+                                        "[FineRoads]\nbFineRoadsEnabled=1\n"
+                                        "iFineRoadsBackstopSeconds=1\nbFineRoadsDebugBitmap=0\n"
+                                        "[TravelGraph]\nbTravelGraphEnabled=1\nbTravelGraphDebugBitmap=0\n"};
+        const auto result = FindFor(sender, player);
+
+        SECTION("should take a point past the ceiling instead of giving up")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(Dist2D(result.point, At(0.0f, 0.0f)) > 300.0f);
+        }
+    }
+
+    SECTION("when the band admits a point")
+    {
+        const auto result = FindFor(sender, player);
+
+        SECTION("should still prefer it over anything further out")
+        {
+            // The reach is a fallback and must not become the default:
+            // a visitor who could have arrived at 1000 units should not
+            // be put at 5000 because the search liked it better.
+            REQUIRE(result.Ok());
+            REQUIRE(Dist2D(result.point, At(0.0f, 0.0f)) <= 2500.0f);
+        }
+    }
+}
+
+TEST_CASE("VisitArrivalPoint will use open ground the player is not facing", "[VisitArrivalPoint][engine]")
+{
+    // On a plain there is nothing to stand behind, and demanding cover
+    // there means declining most visits. But cover is only ever a proxy
+    // for "the player will not watch this happen" -- and someone facing
+    // the other way is not watching either.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    auto* space = engine.AddWorldSpace(kWorld);
+    auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+    LayRoad(engine, cell);
+    engine.LoadGrid({cell});
+    PollFineRoads();
+    LayGround(engine);
+    // Wide open: every ray reaches, so nowhere is covered.
+    engine.visibility.pickHitFraction = 1.0f;
+
+    auto* sender = ActorAt(engine, kSender, cell, At(kRoadEnd, 0.0f));
+
+    SECTION("when the player is facing away from the road east")
+    {
+        // Facing west: angle.z is clockwise from +Y, so 270 degrees.
+        auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+        player->data.angle.z = 3.0f * 3.14159265f / 2.0f;
+        const auto result = FindFor(sender, player);
+
+        SECTION("should place them on the open road behind them")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(result.point.x > 0.0f);
+        }
+
+        SECTION("should keep them far enough back to be unnoticeable")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(Dist2D(result.point, At(0.0f, 0.0f)) >= 3000.0f);
+        }
+    }
+
+    SECTION("when the player is looking straight down that road")
+    {
+        // Facing east, which is where the only candidates are.
+        auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+        player->data.angle.z = 3.14159265f / 2.0f;
+        const auto result = FindFor(sender, player);
+
+        SECTION("should decline rather than let them appear in plain sight")
+        {
+            // The concession is to the player's attention, not to the
+            // difficulty of finding cover. Facing the spot puts it back.
+            REQUIRE_FALSE(result.Ok());
+        }
+    }
+}
+
 TEST_CASE("VisitArrivalPoint refuses ground the player can see", "[VisitArrivalPoint][engine]")
 {
     EngineMock engine;
@@ -334,6 +445,10 @@ TEST_CASE("VisitArrivalPoint refuses ground the player can see", "[VisitArrivalP
     engine.visibility.pickHitFraction = 1.0f;
 
     auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+    // Looking east, straight down the only stretch of road the sender
+    // could arrive on. Facing matters now: open ground the player is
+    // NOT watching is usable, so this case has to actually be watched.
+    player->data.angle.z = 3.14159265f / 2.0f;
     auto* sender = ActorAt(engine, kSender, cell, At(kRoadEnd, 0.0f));
 
     SECTION("should decline rather than let the player watch the arrival")

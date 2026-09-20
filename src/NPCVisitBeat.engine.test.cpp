@@ -728,6 +728,12 @@ TEST_CASE("NPCVisitBeat gives up cleanly when the arrival cannot be staged", "[N
         // declining is the whole point: arriving in plain sight would be the
         // tell this beat exists to remove.
         engine.visibility.pickHitFraction = 1.0f;
+        // Facing east down the road the sender would come up. Open
+        // ground out of view is usable now, so declining requires the
+        // player to be looking at it.
+        if (auto* pc = RE::PlayerCharacter::GetSingleton()) {
+            pc->data.angle.z = 3.14159265f / 2.0f;
+        }
         FillAliases(engine, world);
         PlaceSenderAway(engine, world.sender, 3000.0f);
         beat.OnStart(BeatContext{}, SenderParams());

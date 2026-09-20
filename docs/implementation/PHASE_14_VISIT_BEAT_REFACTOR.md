@@ -998,6 +998,64 @@ This phase is complete when:
 
 ---
 
+## Arrivals beyond the numbered plan
+
+The first broad in-game run — sixteen dispatches across six wilderness spots and four cities — turned up four
+faults. Two are fixed; two are designed and not yet built, and are written down here rather than folded into
+an existing step because each is a change of shape rather than a tuning.
+
+### Done: the band's ceiling stopped being a wall
+
+No point inside the band being hidden used to mean no visit. The ceiling is a statement about how long the
+walk in should take, not about where a person may stand, so the walk now keeps a second pool of candidates
+past it and uses them when the band yields nothing. Capped at 8000 units, near the edge of the loaded cell
+grid — beyond that an actor has no 3D, so there is nothing to place and nothing to hide.
+
+### Done: open ground the player is not facing is usable
+
+Cover was only ever a proxy for "the player will not watch this happen", and on a plain the proxy fails while
+the thing it stands for is often still true. A candidate with no cover is now accepted when it is at least
+3000 units away **and** outside a 60-degree arc of the player's facing. The arc is deliberately wider than
+Skyrim's field of view: being wrong that way costs a usable spot, being wrong the other way costs the
+illusion. Counted separately in the log as `unseen=`, because a run that leans on it is reporting that the
+terrain had nothing to hide behind.
+
+Facing comes from the player's `angle.z` rather than the camera's rotation matrix — that convention is
+established elsewhere in this project and verified by its tests, while the camera node's is not. First person
+makes them identical; third-person free-look can separate them, which the generous arc absorbs.
+
+### To do: constrain candidates to the approach corridor
+
+Two of six arrivals came from roughly the opposite direction — home at 51 degrees, arrival at -166; home at
+77, arrival at -129. Nothing in the walk requires a candidate to lie on the route the visitor would actually
+take, so when the forward stretch had no cover the search happily took the rearward branch.
+
+A "must be closer to home than the player is" test was considered and **rejected**: a road that runs away
+before curving back is a perfectly ordinary approach, and that test would refuse all of it.
+
+The design instead: build the coarse path from the sender's origin to the player, take the near endpoint of
+that path, build a fine path from that endpoint to the player, and consider only those nodes and their near
+neighbours. That constrains candidates to the corridor the visitor would genuinely walk, rather than to any
+road the fine graph happens to contain.
+
+### To do: cities are a different worldspace
+
+Eight of the sixteen dispatches died on one line — `different worldspaces` — with senders in Tamriel
+(`0000003C`) and the player in `RiftenWorld`, `MarkarthWorld`, `SolitudeWorld` or `WindhelmWorld`. The
+equality check gives up rather than routing.
+
+Indoors is the same fault wearing a different hat: a city inn's load door lands in the *city* worldspace, so
+`ResolveOrigin` returns `SolitudeWorld` and the mismatch fires again. One fix has to cover both, and the
+indoor case needs deciding explicitly rather than assumed to fall out.
+
+The shape: when the worldspaces differ, find the nearest door in the player's worldspace whose linked door
+lands in the sender's, which is the city gate, and route from the gate's far side toward the sender. Where
+the gate is in clear view ahead of the player, place the visitor just outside it and let them path in
+through it. Note that the arrival then sits in a different worldspace from the player, which neither the warp
+nor the escort has ever been asked to handle.
+
+---
+
 ## Post-implementation additions
 
 *Populated after implementation completes, mirroring Phase 09's and Phase 11's practice. The four open engine

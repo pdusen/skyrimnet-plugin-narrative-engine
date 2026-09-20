@@ -84,6 +84,61 @@ namespace NarrativeEngine::VisitArrivalPoint
         // ground nothing can walk to.
         constexpr float kMaxElevationDeltaUnits = 400.0f;
 
+        // How far out the search may reach when nothing inside the band
+        // works.
+        //
+        // The band's ceiling is a preference about how long the walk in
+        // should take, not a limit on where somebody may stand. When no
+        // point inside it is hidden, a point beyond it is better than no
+        // visit -- and at that range the arrival is not something the
+        // player could pick out anyway.
+        //
+        // Capped near the loaded cell grid (uGridsToLoad 5 gives roughly
+        // 8192 units): past that an actor has no 3D at all, so there is
+        // nothing to place and nothing to hide.
+        constexpr float kMaxReachUnits = 8000.0f;
+
+        // A point this far away, with the player facing elsewhere, may be
+        // used even with no cover at all.
+        //
+        // Cover exists to hide the instant somebody appears. If the
+        // player is not looking that way, that instant is already
+        // hidden, and insisting on geometry as well turns "no visit" into
+        // the common outcome on open ground.
+        constexpr float kUnseenDistanceUnits = 3000.0f;
+
+        // Half-angle of the arc treated as "the player can see this".
+        //
+        // Deliberately wider than Skyrim's default field of view (~80
+        // degrees total), because being wrong in this direction costs a
+        // usable spot while being wrong the other way costs the player
+        // watching somebody appear. A small turn of the head should not
+        // reveal a spawn that was judged unseen.
+        constexpr float kViewHalfAngleDegrees = 60.0f;
+
+        // True when `pos` lies outside the arc the player is facing.
+        //
+        // Uses the PLAYER's facing rather than the camera's: `angle.z` is
+        // measured clockwise from +Y, a convention this project already
+        // relies on elsewhere, whereas the camera node's rotation matrix
+        // convention is not established here and is not worth guessing
+        // at. In first person the two are the same. In third person with
+        // free-look they can differ, which is why the arc is generous.
+        bool OutsidePlayerView(const RE::NiPoint3& pos, const RE::NiPoint3& playerPos, float playerAngleZ)
+        {
+            const float toX = pos.x - playerPos.x;
+            const float toY = pos.y - playerPos.y;
+            if (std::fabs(toX) < 1e-3f && std::fabs(toY) < 1e-3f) {
+                return false;
+            }
+            const float facingX = std::sin(playerAngleZ);
+            const float facingY = std::cos(playerAngleZ);
+            const float len = std::sqrt(toX * toX + toY * toY);
+            const float dot = (toX * facingX + toY * facingY) / len;
+            const float limit = std::cos(kViewHalfAngleDegrees * 3.14159265f / 180.0f);
+            return dot < limit;
+        }
+
         float ToDegrees(float radians)
         {
             return radians * 180.0f / 3.14159265f;
@@ -102,10 +157,18 @@ namespace NarrativeEngine::VisitArrivalPoint
         {
             int considered = 0;
             int tooNear = 0;
+            // Past the furthest the search may reach at all, not merely
+            // past the preferred band -- the band's ceiling now only
+            // decides which pool a candidate lands in.
             int tooFar = 0;
             int offNavmesh = 0;
             int notLevel = 0;
             int inView = 0;
+            // Accepted with no cover because the player was facing the
+            // other way. Counted apart from the covered ones: a run that
+            // leans on this is telling you the terrain had nothing to
+            // hide behind, which is the finding, not an incidental.
+            int unseen = 0;
 
             // How far out the candidates actually reached, whether or not
             // the band admitted them.
@@ -136,9 +199,10 @@ namespace NarrativeEngine::VisitArrivalPoint
                     std::snprintf(span, sizeof(span), "span=[%.0f,%.0f]", nearest, farthest);
                 }
                 return "considered=" + std::to_string(considered) + " " + span + " tooNear=" + std::to_string(tooNear)
-                       + " tooFar=" + std::to_string(tooFar) + " offNavmesh=" + std::to_string(offNavmesh)
+                       + " pastReach=" + std::to_string(tooFar) + " offNavmesh=" + std::to_string(offNavmesh)
                        + " notLevel=" + std::to_string(notLevel) + " inView=" + std::to_string(inView)
-                       + " survived=" + std::to_string(considered - tooNear - tooFar - offNavmesh - notLevel - inView);
+                       + " unseen=" + std::to_string(unseen)
+                       + " survived=" + std::to_string(considered - tooNear - offNavmesh - notLevel - inView);
             }
         };
 
@@ -170,12 +234,19 @@ namespace NarrativeEngine::VisitArrivalPoint
         // and an early exit would miss usable ground beyond a bend.
         std::vector<RE::NiPoint3> WalkFinePath(const std::vector<RE::NiPoint3>& finePath,
                                                const RE::NiPoint3& playerPos,
+                                               float playerAngleZ,
                                                float minDist,
                                                float maxDist,
                                                float coverRadius,
                                                GateTally& tally)
         {
-            std::vector<RE::NiPoint3> kept;
+            // Two pools, because the band's ceiling is a preference and
+            // not a rule. Anything inside it wins; a point past it is
+            // held back and used only if the band yielded nothing, which
+            // beats declining the visit over a walk being a bit long.
+            std::vector<RE::NiPoint3> inBand;
+            std::vector<RE::NiPoint3> beyondBand;
+
             for (const auto& node : finePath) {
                 const float distance = Dist2D(node, playerPos);
                 tally.Saw(distance);
@@ -183,7 +254,8 @@ namespace NarrativeEngine::VisitArrivalPoint
                     ++tally.tooNear;
                     continue;
                 }
-                if (distance > maxDist) {
+                if (distance > kMaxReachUnits) {
+                    // Past the loaded grid there is no actor to place.
                     ++tally.tooFar;
                     continue;
                 }
@@ -196,16 +268,30 @@ namespace NarrativeEngine::VisitArrivalPoint
                 }
                 RE::NiPoint3 standing = node;
                 standing.z += kGroundClearanceUnits;
+
                 if (!BehindCover(standing, coverRadius)) {
-                    ++tally.inView;
-                    continue;
+                    // No geometry to hide behind. Usable anyway if the
+                    // player is both far enough away and facing
+                    // elsewhere -- on open ground that is the difference
+                    // between a visit and no visit.
+                    if (distance < kUnseenDistanceUnits || !OutsidePlayerView(standing, playerPos, playerAngleZ)) {
+                        ++tally.inView;
+                        continue;
+                    }
+                    ++tally.unseen;
                 }
-                AppendSeparated(kept, standing);
-                if (kept.size() > kMaxFallbacks) {
+
+                auto& pool = (distance <= maxDist) ? inBand : beyondBand;
+                AppendSeparated(pool, standing);
+                if (inBand.size() > kMaxFallbacks) {
                     break;
                 }
             }
-            return kept;
+
+            if (!inBand.empty()) {
+                return inBand;
+            }
+            return beyondBand;
         }
 
         // ---- Tier 2 -------------------------------------------------
@@ -242,6 +328,7 @@ namespace NarrativeEngine::VisitArrivalPoint
         }
 
         std::vector<RE::NiPoint3> SampleBearingArc(const RE::NiPoint3& playerPos,
+                                                   float playerAngleZ,
                                                    const RE::NiPoint3& toward,
                                                    float minDist,
                                                    float maxDist,
@@ -257,7 +344,12 @@ namespace NarrativeEngine::VisitArrivalPoint
 
             for (int r = 0; r < kBearingRadiusSamples; ++r) {
                 const float t = kBearingRadiusSamples == 1 ? 0.0f : static_cast<float>(r) / (kBearingRadiusSamples - 1);
-                const float radius = minDist + t * (maxDist - minDist);
+                // Spread across the whole reach, not just the band:
+                // the far rings are only ever reached when the near ones
+                // failed, and the scoring below already prefers the
+                // middle of the band over them.
+                const float outer = std::max(maxDist, kMaxReachUnits);
+                const float radius = minDist + t * (outer - minDist);
                 for (int a = 0; a < kBearingAzimuthSamples; ++a) {
                     const float u =
                         kBearingAzimuthSamples == 1 ? 0.0f : static_cast<float>(a) / (kBearingAzimuthSamples - 1);
@@ -281,8 +373,11 @@ namespace NarrativeEngine::VisitArrivalPoint
                         continue;
                     }
                     if (!BehindCover(standing, coverRadius)) {
-                        ++tally.inView;
-                        continue;
+                        if (radius < kUnseenDistanceUnits || !OutsidePlayerView(standing, playerPos, playerAngleZ)) {
+                            ++tally.inView;
+                            continue;
+                        }
+                        ++tally.unseen;
                     }
 
                     BearingCandidate candidate;
@@ -494,6 +589,11 @@ namespace NarrativeEngine::VisitArrivalPoint
             RoadRoute::Origin sender;
             RoadRoute::Origin player;
             RE::NiPoint3 playerPos{};
+            // Which way the player is facing, for the unseen-arrival
+            // test. Captured here with the position because both are
+            // engine reads and this is the one main-thread hop that
+            // already does them.
+            float playerAngleZ = 0.0f;
             OriginSource senderSource = OriginSource::Unresolved;
         };
     } // namespace
@@ -532,6 +632,7 @@ namespace NarrativeEngine::VisitArrivalPoint
             out.senderSource = ResolveSenderOrigin(mt, sender, out.sender);
             out.player = RoadRoute::ResolveOrigin(mt, player);
             out.playerPos = player->GetPosition();
+            out.playerAngleZ = player->data.angle.z;
             out.resolved = out.sender.valid && out.player.valid;
             return out;
         });
@@ -568,7 +669,8 @@ namespace NarrativeEngine::VisitArrivalPoint
 
         if (plan.valid && !plan.finePath.empty()) {
             kept = MainThread::Run(pt, [&](const MainThread::Token&) {
-                return WalkFinePath(plan.finePath, ends.playerPos, minDist, maxDist, coverRadius, fineTally);
+                return WalkFinePath(
+                    plan.finePath, ends.playerPos, ends.playerAngleZ, minDist, maxDist, coverRadius, fineTally);
             });
             if (!kept.empty()) {
                 tier = Tier::FineRoad;
@@ -600,7 +702,8 @@ namespace NarrativeEngine::VisitArrivalPoint
                                  toward.y,
                                  Dist2D(toward, ends.playerPos));
                     kept = MainThread::Run(pt, [&](const MainThread::Token&) {
-                        return SampleBearingArc(ends.playerPos, toward, minDist, maxDist, coverRadius, bearingTally);
+                        return SampleBearingArc(
+                            ends.playerPos, ends.playerAngleZ, toward, minDist, maxDist, coverRadius, bearingTally);
                     });
                     if (!kept.empty()) {
                         tier = Tier::CoarseBearing;
