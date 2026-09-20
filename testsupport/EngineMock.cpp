@@ -92,6 +92,7 @@ namespace NarrativeEngine::Testing
     // the end of.
     inline constexpr std::size_t kActorStorageBytes = sizeof(RE::Actor) + 0x400;
     void RegisterCellFacts(const void* cell, std::int16_t cellX, std::int16_t cellY, RE::BGSLocation* location);
+    void ClearReferencePool();
     const EngineMock::QuestState* QuestStateFor(const void* quest);
     EngineMock::QuestState* MutableQuestStateFor(const void* quest);
     std::unordered_map<const void*, RE::TESForm*>& LeveledResults();
@@ -299,6 +300,14 @@ namespace NarrativeEngine::Testing
         // happens to land on -- invisible until a case asks whether a
         // reference has something and gets the previous case's answer.
         ClearEditorLocations();
+        // References are the worst of these: the pool hands the same storage
+        // to the next mock, and FOUR tables are keyed off it -- what a cell
+        // holds, what a handle resolves to, whether an extra-data list has
+        // teleport data, and which cell the save files a reference in. A
+        // fresh reference landing on an old address inherits all four, so a
+        // plain XMarker can read as a load door and an attached reference
+        // can report a save cell it was never given.
+        ClearReferencePool();
 
         // Tell CommonLibSSE which runtime it is looking at, without a Skyrim
         // process to learn it from. `mock()` is CommonLibSSE-NG's own
@@ -2398,6 +2407,21 @@ namespace NarrativeEngine::Testing
             return *cells;
         }
     } // namespace
+
+    void ClearReferencePool()
+    {
+        auto& pool = Refs();
+        pool.byCell.clear();
+        pool.teleportByList.clear();
+        pool.byHandle.clear();
+        for (auto* data : pool.doorData) {
+            delete data;
+        }
+        pool.doorData.clear();
+        pool.teleportBlocks.clear();
+        pool.objects.clear();
+        SaveCells().clear();
+    }
 
     void EngineMock::SetSaveParentCell(RE::TESObjectREFR* ref, RE::TESObjectCELL* cell)
     {

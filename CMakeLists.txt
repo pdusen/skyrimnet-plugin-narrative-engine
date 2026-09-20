@@ -791,6 +791,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
             testsupport/GossipSpies.cpp
             testsupport/RelocationMocks.cpp
             testsupport/RelocationMocks.test.cpp
+            testsupport/EngineMockHygiene.test.cpp
         )
         target_compile_features(
             NarrativeEngineEngineMockTests
