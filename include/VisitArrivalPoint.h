@@ -88,6 +88,7 @@ namespace NarrativeEngine::VisitArrivalPoint
         CoarseBearing,
         CityApproach, // inside the player's walled worldspace, toward the gate
         CityGate,     // the far side of that gate, in the visitor's worldspace
+        Doorstep,     // the player is indoors; the far side of their own door
     };
 
     const char* TierName(Tier tier);

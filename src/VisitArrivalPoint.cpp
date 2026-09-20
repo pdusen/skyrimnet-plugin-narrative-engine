@@ -772,6 +772,8 @@ namespace NarrativeEngine::VisitArrivalPoint
             return "city-approach";
         case Tier::CityGate:
             return "city-gate";
+        case Tier::Doorstep:
+            return "doorstep";
         case Tier::None:
         default:
             return "none";
@@ -814,17 +816,51 @@ namespace NarrativeEngine::VisitArrivalPoint
                          OriginSourceName(ends.playerSource));
             return result;
         }
+        // The player is inside a building, and the visitor waits at the
+        // door they will come out of.
+        //
+        // Nothing is searched for, because nothing can be. Standing in an
+        // interior empties the exterior cell grid, and every gate the
+        // search runs reads it: `IsStandable` asks `TES::GetLandHeight`,
+        // which has no landscape to answer from, so all 45 bearing
+        // samples come back off-navmesh and no point anywhere outdoors
+        // can be validated. The cover raycast has nothing loaded to hit
+        // either.
+        //
+        // None of that matters, because the answer needs no validating.
+        // `teleportData->position` is where the engine itself puts the
+        // player every time they walk out of this door, so it is ground
+        // somebody stands on by construction. The visitor waits there and
+        // the player finds them on the way out.
+        if (ends.player.exteriorDoor != 0) {
+            result.tier = Tier::Doorstep;
+            result.point = ends.player.position;
+            result.placementAnchor = ends.player.exteriorDoor;
+            logger::info("VisitArrivalPoint: sender=0x{:08X} tier=doorstep at ({:.0f},{:.0f},{:.0f}) — the "
+                         "player is indoors, so the visitor waits at the far side of their own door "
+                         "0x{:08X} in ws=0x{:08X}",
+                         senderId,
+                         result.point.x,
+                         result.point.y,
+                         result.point.z,
+                         result.placementAnchor,
+                         ends.player.worldSpace);
+            return result;
+        }
+
         if (ends.sender.worldSpace != ends.player.worldSpace) {
             // A walled city, almost always. The two are not in the
             // same coordinate system, so nothing can be routed between
             // them directly -- but a door joins them, and the visitor can
             // walk through it like anybody else.
             // Measured from where the player IS IN THAT WORLDSPACE,
-            // which is not always where they are standing. A player in a
-            // city inn has interior coordinates that mean nothing against
-            // the gate's; `ResolveOrigin` has already walked them out
-            // their own front door, and that doorstep is the position
-            // every city decision below is made from.
+            // which is not always where they are standing. An indoor
+            // player with a load door has already been answered by the
+            // doorstep tier above; what reaches here is one whose
+            // interior has no way out and resolved to a map marker
+            // instead. Their own coordinates would mean nothing against
+            // the gate's, so the marker is what every city decision below
+            // is made from.
             const RE::NiPoint3& cityAnchorPos = ends.player.position;
             const bool playerIndoors = ends.player.viaLoadDoor;
 

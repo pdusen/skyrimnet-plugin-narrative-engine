@@ -891,7 +891,7 @@ the gate stays "fully covered" or relaxes to "least visible candidate in the ban
 
 ### Step 7 — Resolve the player-indoors question
 
-- [ ] Complete
+- [x] Complete — **neither branch**; see *Done: indoors, the visitor waits at the door*
 
 **[USER]** to answer, **[CLAUDE]** to implement whichever branch the answer picks.
 
@@ -1120,6 +1120,49 @@ It now aims at `CorridorTarget`'s way-in first and falls back to the coarse path
 priority: the corridor node is both the better direction and, in this case, the only one available. Routing
 at the corridor is what empties `coarsePath` in the first place, so the two changes had to be made together.
 
+### Done: indoors, the visitor waits at the door
+
+Step 7 offered two branches — make the arrival search work from the player's load-door origin, or gate
+indoor players out. The answer turned out to be neither, and the search was the wrong place to look.
+
+Standing in an interior empties the exterior cell grid. Every gate the search runs reads it:
+`StuckRecovery::IsStandable` calls `GroundPoint`, which calls `TES::GetLandHeight`, which has no landscape
+to answer from. In the third run all 45 bearing samples came back `offNavmesh` on every indoor dispatch,
+with `fine_nodes=0`, because there is no point anywhere outdoors that can be *validated* while the player
+is inside. The cover raycast has nothing loaded to hit either.
+
+None of that needs solving, because the answer needs no validating. The interior's load door names an
+exterior door, and `teleportData->position` is where the engine itself places the player every single time
+they walk out of it. That is ground somebody stands on by construction. `Tier::Doorstep` puts the visitor
+there and returns — no route, no band, no cover gate — with the far door as the placement anchor, because
+`PlaceObjectAtMe` builds in the caller's cell and an indoor caller is in the wrong one.
+
+It short-circuits the worldspace check as well, so a player in a Solitude inn no longer needs a city gate
+found for them: there is no gate in the story, the visitor is at the inn door. That case previously failed
+with `no door between them in the loaded cells`, for the same underlying reason — the gate search walks the
+loaded grid, and indoors the grid is empty.
+
+`RoadRoute::Origin` gained `exteriorDoor`, set only on the real load-door rung and never on the map-marker
+fallback beneath it, so a non-zero value is a promise that `position` is an engine arrival point rather than
+a marker sitting somewhere near a town.
+
+### Done: the bearing stopped aiming at the nearest scrap of road
+
+Making the bearing fall back to the corridor turned declines into arrivals, and three of them came in 115,
+159 and 71 degrees off the direction home, with a fine-road arrival on a mountain 207 degrees off.
+
+`CorridorTarget` returned the first node at least 1000 units from the player walking back from the player's
+end — which is the player's own nearest coarse node. The coarse graph holds one node per navmesh cell, so
+that node can sit most of a cell away in a direction decided by where the road network runs, not by where
+the visitor lives. It answers "where is the nearest road", which is not a bearing.
+
+The walk now yields two picks off the same path. The way in stays near, because routing to it is what keeps
+the plan inside fine coverage. The bearing aim is the first node at least `kBearingAimMinUnits` — one
+coarse cell, 4096 units, the resolution the graph is sampled at — from the player, and never the player's
+own nearest node however far off it sits. Below one cell the bearing to a node is an artefact of the
+sampling. Where the whole route is shorter than that, the aim falls back to the visitor's own origin: a
+straight line home ignores the road but does not point away from it.
+
 ### Open: a cover proof 2355 units away is worth very little
 
 Outside Falkreath the same point was chosen twice — 2355 units out, **955 units above the player**, all nine
@@ -1127,8 +1170,19 @@ cover rays reported blocked — and the visitor was in plain sight both times. T
 count, so the run cannot be diagnosed without repeating it.
 
 What is now logged per kept candidate: its distance, its elevation relative to the player, and which of the
-two rules passed it (`cover` or `unseen`). The headline line carries the winner's `dz`. One more dispatch at
-that spot distinguishes the two live explanations — a thin occluder at range that a 64-unit silhouette clears
+two rules passed it (`cover` or `unseen`). The headline line carries the winner's `dz`.
+
+**The third run produced that data and it narrows the question without closing it.** Outside Falkreath all
+thirteen kept candidates passed by `cover`, climbing from +1163 units at 3140 out to +2711 at 7958; the
+mountain pass gave +1791 to +1929. The gate is not failing at random — it rejected 21 of 90 there, and 10
+of 14 on the Whiterun plain — but *every* candidate on a climbing road passes it, which is consistent with
+rays grazing a slope reading as blocked while a figure standing on it is skylined from below.
+
+Choosing the flattest survivor instead of the nearest was considered and **does not help**: at Falkreath the
+elevations increase monotonically along the road, so the flattest survivor is the one already chosen. A
+hard elevation gate would refuse Falkreath and the mountain pass alike, and both are places a visit should
+be possible. So this still wants one more dispatch at that spot, which distinguishes the two live
+explanations — a thin occluder at range that a 64-unit silhouette clears
 but a wider one would not, versus a crest the probes hide behind while the figure standing on it is skylined
 from below. The first is the `iVisitArrivalCoverRadiusUnits` decision Step 6 exists to make; the second is
 not, and would want its own gate.

@@ -207,6 +207,7 @@ namespace NarrativeEngine::RoadRoute
         // answer to "where would they emerge".
         RE::NiPoint3 arrival{};
         RE::FormID arrivalWorldSpace = 0;
+        RE::FormID arrivalDoor = 0;
         bool found = false;
 
         cell->ForEachReference([&](RE::TESObjectREFR* candidate) {
@@ -235,6 +236,7 @@ namespace NarrativeEngine::RoadRoute
                 return RE::BSContainer::ForEachResult::kContinue;
             }
             arrivalWorldSpace = ws->GetFormID();
+            arrivalDoor = linked->GetFormID();
             // teleportData->position is the arrival spot just outside the
             // far door, which is closer to "where they emerge" than the
             // door reference itself.
@@ -248,6 +250,7 @@ namespace NarrativeEngine::RoadRoute
             origin.worldSpace = arrivalWorldSpace;
             origin.position = arrival;
             origin.viaLoadDoor = true;
+            origin.exteriorDoor = arrivalDoor;
             return origin;
         }
 

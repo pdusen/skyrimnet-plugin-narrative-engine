@@ -65,6 +65,17 @@ namespace NarrativeEngine::RoadRoute
         // True when the reference was indoors and this is where its load
         // door comes out, rather than the reference's own position.
         bool viaLoadDoor = false;
+
+        // The exterior door `position` comes out beside, or 0.
+        //
+        // Set only on the real load-door rung, never on the map-marker
+        // fallback beneath it, so a non-zero value is a promise that
+        // `position` is the engine's own arrival point for that door --
+        // ground somebody is placed on every time they walk out. A
+        // caller that needs to BUILD something there needs the reference
+        // too, because PlaceObjectAtMe works in the caller's cell and an
+        // indoor caller is in the wrong one.
+        RE::FormID exteriorDoor = 0;
     };
 
     // Which cell a reference belongs to, whether or not anything has

@@ -994,10 +994,10 @@ TEST_CASE("VisitArrivalPoint walks a city visitor in through the gate", "[VisitA
 
     SECTION("when the player is indoors in the city")
     {
-        // A city inn's load door lands in the CITY worldspace, so the
-        // mismatch against a Skyrim visitor fires exactly as it does in the
-        // street. What changes is that the player's own coordinates are
-        // interior ones and mean nothing here.
+        // The gate stops being the question. A city inn's load door already
+        // names an exterior door, and the visitor waiting at it is both
+        // simpler and better than sending them to the city gate to walk a
+        // route the player is not on.
         CoverEverywhere(engine);
         auto* inn = engine.AddExteriorCell(city, 9, 9, nullptr);
         engine.SetCellInterior(inn, true);
@@ -1007,25 +1007,12 @@ TEST_CASE("VisitArrivalPoint walks a city visitor in through the gate", "[VisitA
         auto* player = ActorAt(engine, kPlayer, inn, At(50.0f, 50.0f));
         const auto result = FindFor(sender, player);
 
-        SECTION("should measure from the doorstep rather than from the interior")
+        SECTION("should wait at the inn's own door, not out by the gate")
         {
-            // Both the doorstep and the interior position lie west of the
-            // gate, so the BEARING is east either way -- what tells them
-            // apart is where the arc is centred. Measured from the doorstep
-            // the winner is still west of the city's middle; measured from
-            // the interior it would be east of it.
             REQUIRE(result.Ok());
-            REQUIRE(result.tier == VisitArrivalPoint::Tier::CityApproach);
-            REQUIRE(result.point.x < 0.0f);
-            REQUIRE(result.point.x > kDoorstepX);
-        }
-
-        SECTION("should build the marker from the gate, not from inside the inn")
-        {
-            // The point is in the player's worldspace but not in the
-            // player's CELL, and PlaceObjectAtMe goes by the cell.
-            REQUIRE(result.Ok());
-            REQUIRE(result.placementAnchor == kGate);
+            REQUIRE(result.tier == VisitArrivalPoint::Tier::Doorstep);
+            REQUIRE(result.point.x == kDoorstepX);
+            REQUIRE(result.placementAnchor == kInnDoor + 1u);
         }
     }
 }
@@ -1107,22 +1094,96 @@ TEST_CASE("VisitArrivalPoint still arrives when the road under the player is a s
     }
 }
 
-TEST_CASE("VisitArrivalPoint measures from the player's doorstep, not their front room", "[VisitArrivalPoint][engine]")
+TEST_CASE("VisitArrivalPoint waits at the door when the player is indoors", "[VisitArrivalPoint][engine]")
 {
-    // A player inside a building has interior coordinates -- small numbers
-    // local to the cell that mean nothing against a road. Every dispatch
-    // with the player indoors fed them to the coarse graph, which answered
-    // with whatever node sits near the worldspace origin, and chased a
-    // corridor ten thousand units off in the wrong direction.
+    // Standing in an interior empties the exterior cell grid, so every gate
+    // the search runs has nothing to read: `IsStandable` asks
+    // `TES::GetLandHeight`, which has no landscape to answer from, and in
+    // game all 45 bearing samples came back off-navmesh. There is no point
+    // outdoors that can be validated while the player is inside.
     //
-    // Interiors and the doorstep are deliberately on OPPOSITE sides of the
-    // worldspace here, so an answer taken from the wrong one cannot
-    // accidentally look right.
+    // None of that needs solving, because the answer needs no validating.
+    // The interior's load door names an exterior door, and the engine's own
+    // arrival point for it is where the player is placed every time they
+    // walk out. The visitor waits there.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+
+    auto* space = engine.AddWorldSpace(kWorld);
+    auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+    auto* inn = engine.AddExteriorCell(space, 9, 9, nullptr);
+    engine.SetCellInterior(inn, true);
+
+    constexpr std::uint32_t kInnDoor = 0x00D09001u;
+    const RE::NiPoint3 doorstep = At(2048.0f, 2048.0f);
+    engine.AddLoadDoor(inn, kInnDoor, cell, doorstep);
+
+    // Interior coordinates, nowhere near the doorstep in world terms.
+    auto* player = ActorAt(engine, kPlayer, inn, At(-20000.0f, -20000.0f));
+
+    SECTION("when the visitor lives out in the same worldspace")
+    {
+        auto* sender = ActorAt(engine, kSender, cell, At(24576.0f, 2048.0f));
+        const auto result = FindFor(sender, player);
+
+        SECTION("should put them on the far side of the player's own door")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(result.tier == VisitArrivalPoint::Tier::Doorstep);
+            REQUIRE(result.point.x == doorstep.x);
+            REQUIRE(result.point.y == doorstep.y);
+        }
+
+        SECTION("should build the marker from that door rather than from the player")
+        {
+            // PlaceObjectAtMe works in the CALLER's cell, and the player is
+            // in the wrong one -- building from them would put the visitor
+            // in the room. AddLoadDoor numbers the far side one above.
+            REQUIRE(result.Ok());
+            REQUIRE(result.placementAnchor == kInnDoor + 1u);
+        }
+
+        SECTION("should not go looking for a road it cannot reach")
+        {
+            // No fine graph, no coarse graph and no ground were laid here,
+            // which is the state the game is actually in with the player
+            // indoors. A tier that depended on any of them would decline.
+            REQUIRE(result.Ok());
+        }
+    }
+
+    SECTION("when the visitor lives in another worldspace")
+    {
+        // A city inn. The door short-circuits the worldspace mismatch
+        // entirely -- there is no gate to find, because the visitor is not
+        // going through one.
+        auto* elsewhere = engine.AddWorldSpace(kOtherWorld);
+        auto* farCell = engine.AddExteriorCell(elsewhere, 0, 0, nullptr);
+        auto* sender = ActorAt(engine, kSender, farCell, At(0.0f, 0.0f));
+        const auto result = FindFor(sender, player);
+
+        SECTION("should still wait at the player's door")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(result.tier == VisitArrivalPoint::Tier::Doorstep);
+            REQUIRE(result.placementAnchor == kInnDoor + 1u);
+        }
+    }
+}
+
+TEST_CASE("VisitArrivalPoint never measures the road from interior coordinates", "[VisitArrivalPoint][engine]")
+{
+    // Some interiors genuinely have no load door out, and those fall back to
+    // a map marker. The search then runs as normal -- and it must run from
+    // the MARKER, not from the player's interior position, which is small
+    // numbers local to the cell. Feeding those to the coarse graph picks
+    // whatever node sits near the worldspace origin; in game that sent every
+    // indoor dispatch chasing a corridor ten thousand units off.
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
 
     auto* navi = engine.AddNavMeshInfoMap(kNavi);
-    std::uint32_t nextForm = 0x00D07000u;
+    std::uint32_t nextForm = 0x00D0A000u;
     std::vector<const RE::BSNavmeshInfo*> road;
     for (int cellX = 0; cellX <= 6; ++cellX) {
         road.push_back(
@@ -1137,31 +1198,27 @@ TEST_CASE("VisitArrivalPoint measures from the player's doorstep, not their fron
     LayGround(engine);
     CoverEverywhere(engine);
 
-    // The doorstep sits on the road's first node; home is far east along it.
-    const RE::NiPoint3 doorstep = At(2048.0f, 2048.0f);
-    auto* inn = engine.AddExteriorCell(space, 9, 9, nullptr);
-    engine.SetCellInterior(inn, true);
-    engine.AddLoadDoor(inn, 0x00D07100u, cell, doorstep);
+    // The marker sits on the road's first node; home is far east along it.
+    const RE::NiPoint3 marker = At(2048.0f, 2048.0f);
+    auto* vault = engine.AddExteriorCell(space, 9, 9, nullptr);
+    engine.SetCellInterior(vault, true);
+    auto* location = engine.AddLocation(0x00D0A100u, "The Vault", {});
+    engine.SetLocationMarker(location, cell, marker);
+    engine.world.playerHasLocation = true;
+    engine.world.playerLocationOverride = location;
 
-    // Interior coordinates, and nowhere near the doorstep in world terms.
-    auto* player = ActorAt(engine, kPlayer, inn, At(-20000.0f, -20000.0f));
-    auto* sender = ActorAt(engine, kSender, cell, At(24576.0f, 2048.0f));
+    auto* player = ActorAt(engine, kPlayer, vault, At(-20000.0f, -20000.0f));
+    auto* sender = ActorAt(engine, kSender, cell, At(26624.0f, 2048.0f));
     const auto result = FindFor(sender, player);
 
-    SECTION("should place the visitor near where the player will come out")
+    SECTION("should bring the visitor in from the marker's side of the world")
     {
+        // East of the marker, because that is where home is from there.
+        // Measured from the player's own coordinates the whole search runs
+        // twenty thousand units away in the opposite corner.
         REQUIRE(result.Ok());
-        REQUIRE(Dist2D(result.point, doorstep) <= 8000.0f);
-    }
-
-    SECTION("should bring them in from the direction of home, measured from there")
-    {
-        // East of the doorstep. Measured from the interior position the
-        // bearing would run northeast toward the doorstep instead, which is
-        // the failure this pins.
-        REQUIRE(result.Ok());
-        REQUIRE(result.point.x > doorstep.x);
-        REQUIRE(std::fabs(result.point.y - doorstep.y) < std::fabs(result.point.x - doorstep.x));
+        REQUIRE(result.point.x > marker.x);
+        REQUIRE(Dist2D(result.point, marker) <= 8000.0f);
     }
 }
 
