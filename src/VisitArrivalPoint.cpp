@@ -42,6 +42,35 @@ namespace NarrativeEngine::VisitArrivalPoint
         // of being too short is the player watching somebody appear.
         constexpr float kCoverProbeHeightUnits = 160.0f;
 
+        // How far out `IsPositionBehindCover` still answers a question
+        // worth asking.
+        //
+        // Step 6's probe measured the gate's pass rate against the
+        // distances each search looked at, over seventy searches and
+        // 514 road candidates:
+        //
+        //     up to   999 units    0.0% passed as covered   (22 seen)
+        //     1000 - 1999         2.8%                     (106 seen)
+        //     2000 - 2999        74.9%                     (203 seen)
+        //     4000 - 4999        74.4%                      (82 seen)
+        //     9000 - 9999       100.0%                     (101 seen)
+        //
+        // That is not terrain changing; it is the test losing its grip.
+        // A ray is "blocked" if anything stops it anywhere short of the
+        // last 5% of its length, and the further the target the more
+        // world the ray crosses, so at nine thousand units every one of
+        // 101 candidates was declared hidden. Cover proved that way is
+        // a hill somewhere in between, not something the visitor is
+        // standing behind -- and it stops being true the moment either
+        // of them moves.
+        //
+        // The collapse is between the second and third bucket, so that
+        // is the boundary. Under it the raycast decides. At or past it
+        // the raycast is ignored and the candidate must be outside the
+        // player's view arc instead -- a geometric test that does not
+        // degrade with range.
+        constexpr float kCoverTrustedRangeUnits = 2000.0f;
+
         // Runner-ups kept for StuckRecovery, and how far apart two of
         // them have to be to count as distinct options.
         //
@@ -226,15 +255,6 @@ namespace NarrativeEngine::VisitArrivalPoint
         // nothing to place and nothing to hide.
         constexpr float kMaxReachUnits = 8000.0f;
 
-        // A point this far away, with the player facing elsewhere, may be
-        // used even with no cover at all.
-        //
-        // Cover exists to hide the instant somebody appears. If the
-        // player is not looking that way, that instant is already
-        // hidden, and insisting on geometry as well turns "no visit" into
-        // the common outcome on open ground.
-        constexpr float kUnseenDistanceUnits = 3000.0f;
-
         // Half-angle of the arc treated as "the player can see this".
         //
         // Deliberately wider than Skyrim's default field of view (~80
@@ -344,6 +364,44 @@ namespace NarrativeEngine::VisitArrivalPoint
             return CameraVisibility::IsPositionBehindCover(pos, kCoverProbeHeightUnits, coverRadius);
         }
 
+        // Will the player watch this happen?
+        //
+        // Two tests, and which one answers depends on range. Close in,
+        // the raycast: it is exact, and it is the only one that can tell
+        // a rock from open ground. Far out, the raycast has stopped
+        // discriminating (see `kCoverTrustedRangeUnits`), so the arc the
+        // player is facing decides instead -- and a candidate that is
+        // both distant and behind them is not going to be seen arriving
+        // whatever the terrain does.
+        //
+        // Returns the rule that admitted the candidate, for the log, or
+        // nullptr when neither did. Counts its own rejections.
+        const char* Admits(const RE::NiPoint3& standing,
+                           float distance,
+                           const RE::NiPoint3& playerPos,
+                           float playerAngleZ,
+                           float coverRadius,
+                           GateTally& tally)
+        {
+            if (distance < kCoverTrustedRangeUnits) {
+                if (BehindCover(standing, coverRadius)) {
+                    return "cover";
+                }
+                // Too near to be missed on open ground, and the arc
+                // cannot help at a range where the player would notice
+                // movement in the corner of their eye.
+                ++tally.inView;
+                return nullptr;
+            }
+
+            if (OutsidePlayerView(standing, playerPos, playerAngleZ)) {
+                ++tally.unseen;
+                return "unseen";
+            }
+            ++tally.inView;
+            return nullptr;
+        }
+
         // ---- Tier 1 -------------------------------------------------
         //
         // Walk the fine path outward from the player and keep every node
@@ -390,18 +448,9 @@ namespace NarrativeEngine::VisitArrivalPoint
                 RE::NiPoint3 standing = node;
                 standing.z += kGroundClearanceUnits;
 
-                const char* passedBy = "cover";
-                if (!BehindCover(standing, coverRadius)) {
-                    // No geometry to hide behind. Usable anyway if the
-                    // player is both far enough away and facing
-                    // elsewhere -- on open ground that is the difference
-                    // between a visit and no visit.
-                    if (distance < kUnseenDistanceUnits || !OutsidePlayerView(standing, playerPos, playerAngleZ)) {
-                        ++tally.inView;
-                        continue;
-                    }
-                    ++tally.unseen;
-                    passedBy = "unseen";
+                const char* passedBy = Admits(standing, distance, playerPos, playerAngleZ, coverRadius, tally);
+                if (!passedBy) {
+                    continue;
                 }
 
                 auto& pool = (distance <= maxDist) ? inBand : beyondBand;
@@ -511,12 +560,8 @@ namespace NarrativeEngine::VisitArrivalPoint
                         ++tally.notLevel;
                         continue;
                     }
-                    if (!BehindCover(standing, coverRadius)) {
-                        if (radius < kUnseenDistanceUnits || !OutsidePlayerView(standing, playerPos, playerAngleZ)) {
-                            ++tally.inView;
-                            continue;
-                        }
-                        ++tally.unseen;
+                    if (!Admits(standing, radius, playerPos, playerAngleZ, coverRadius, tally)) {
+                        continue;
                     }
 
                     BearingCandidate candidate;

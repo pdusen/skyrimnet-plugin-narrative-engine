@@ -140,6 +140,44 @@ TEST_CASE("Settings::Load reads the plugin INI", "[Settings][engine]")
     }
 }
 
+TEST_CASE("Settings holds the measured visit-arrival defaults", "[Settings][engine]")
+{
+    // These three are outputs of a measurement rather than preferences, so a
+    // silent edit to one should not pass. Phase 14's Step 6 probe ran seventy
+    // arrival searches across plain, forest, mountain pass and four cities,
+    // and what it found is written up under "Arrivals beyond the numbered
+    // plan" in that phase's doc. Change a number here only with a newer
+    // measurement, and update the doc in the same commit.
+    IniFixture files;
+    Settings::Load();
+
+    SECTION("should keep the cover silhouette at one actor's width")
+    {
+        // 64 units is a body, which is what the gate is nominally asking
+        // about. The probe's finding was that widening it is not the lever:
+        // under 2000 units the gate already rejects 97% of road candidates,
+        // and past that it passes nearly everything whatever width it is
+        // given, because range and not silhouette is what defeats it.
+        REQUIRE(Settings::Get().visitArrivalCoverRadiusUnits == 64);
+    }
+
+    SECTION("should keep the band the two distance keys describe")
+    {
+        // Both were parsed and never read before this phase. The arrival
+        // distance is observably a function of them now, so they are load
+        // bearing rather than documentation.
+        REQUIRE(Settings::Get().visitMarkerMinDistanceUnits == 800);
+        REQUIRE(Settings::Get().visitMarkerMaxDistanceUnits == 5000);
+    }
+
+    SECTION("should leave the bearing fallback switched on")
+    {
+        // Tier 2 carried 8 of 70 searches in the probe. Off, those are
+        // declines.
+        REQUIRE(Settings::Get().visitArrivalAllowCoarseBearing);
+    }
+}
+
 TEST_CASE("Settings MCM override wins over the plugin INI", "[Settings][engine]")
 {
     // The cascade is the module's reason for existing: the plugin INI carries

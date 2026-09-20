@@ -494,8 +494,12 @@ TEST_CASE("VisitArrivalPoint will use open ground the player is not facing", "[V
 
         SECTION("should keep them far enough back to be unnoticeable")
         {
+            // Past `kCoverTrustedRangeUnits`, which is where the raycast
+            // stops discriminating and the facing arc takes over. Nearer
+            // than that the arc is not consulted at all: at close range
+            // the player notices movement whichever way they are turned.
             REQUIRE(result.Ok());
-            REQUIRE(Dist2D(result.point, At(0.0f, 0.0f)) >= 3000.0f);
+            REQUIRE(Dist2D(result.point, At(0.0f, 0.0f)) >= 2000.0f);
         }
     }
 
@@ -1269,5 +1273,103 @@ TEST_CASE("VisitArrivalPoint does not take its bearing from the nearest scrap of
         REQUIRE(result.Ok());
         REQUIRE(result.tier == VisitArrivalPoint::Tier::CoarseBearing);
         REQUIRE(result.point.x > playerPos.x);
+    }
+}
+
+TEST_CASE("VisitArrivalPoint stops trusting a cover proof it cannot make at range", "[VisitArrivalPoint][engine]")
+{
+    // Step 6's probe measured the cover gate's pass rate against how far out
+    // each search was looking, over seventy searches and 514 road
+    // candidates: 0.0% passed under 1000 units, 2.8% from 1000 to 1999,
+    // 74.9% from 2000 to 2999, and 100% of 101 candidates at nine thousand.
+    //
+    // That is the test losing its grip rather than the terrain changing. A
+    // ray counts as blocked if anything stops it short of its last 5%, and a
+    // longer ray crosses more world, so distant candidates are declared
+    // hidden by a hill somewhere in between -- which is not something the
+    // visitor is standing behind, and stops being true as soon as either of
+    // them moves.
+    //
+    // So past the boundary the raycast is ignored and the player's facing
+    // decides. The road here runs due east, and the engine reports cover
+    // EVERYWHERE, so cover alone would admit every candidate on it.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    auto* space = engine.AddWorldSpace(kWorld);
+    auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+    LayRoad(engine, cell);
+    engine.LoadGrid({cell});
+    PollFineRoads();
+    LayGround(engine);
+    CoverEverywhere(engine);
+
+    auto* sender = ActorAt(engine, kSender, cell, At(kRoadEnd, 0.0f));
+
+    // A band entirely past the boundary, so every candidate is one the
+    // raycast can no longer vouch for and the facing arc is what decides.
+    // Tier 2 is off, so a refusal here is a refusal rather than a fallback.
+    constexpr const char* kFarBand = "[Beats]\niVisitMarkerMinDistanceUnits=2600\n"
+                                     "iVisitMarkerMaxDistanceUnits=5000\n"
+                                     "iVisitArrivalCoverRadiusUnits=64\n"
+                                     "bVisitArrivalAllowCoarseBearing=false\n"
+                                     "[FineRoads]\nbFineRoadsEnabled=1\niFineRoadsBackstopSeconds=1\n"
+                                     "bFineRoadsDebugBitmap=0\n"
+                                     "[TravelGraph]\nbTravelGraphEnabled=1\nbTravelGraphDebugBitmap=0\n";
+
+    SECTION("when the player is looking straight down the road east")
+    {
+        const ConfiguredSettings farBand{kFarBand};
+        auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+        player->data.angle.z = 3.14159265f / 2.0f; // east
+
+        SECTION("should decline rather than believe the raycast")
+        {
+            // The engine reports cover on every one of these, and the old
+            // gate took the first. They are in front of the player at a
+            // range where that report is worth nothing.
+            const auto result = FindFor(sender, player);
+            REQUIRE_FALSE(result.Ok());
+        }
+    }
+
+    SECTION("when the player is facing away from that road")
+    {
+        // Facing west: angle.z is clockwise from +Y, so 270 degrees.
+        const ConfiguredSettings farBand{kFarBand};
+        auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+        player->data.angle.z = 3.0f * 3.14159265f / 2.0f;
+
+        SECTION("should use the distant road, since nobody is watching it")
+        {
+            const auto result = FindFor(sender, player);
+            REQUIRE(result.Ok());
+            REQUIRE(result.point.x > 0.0f);
+            REQUIRE(Dist2D(result.point, At(0.0f, 0.0f)) >= 2600.0f);
+        }
+    }
+
+    SECTION("when the road close in is genuinely covered")
+    {
+        // Inside the boundary the raycast is still the only test that can
+        // tell a rock from open ground, so facing must not veto it.
+        const ConfiguredSettings nearBand{"[Beats]\niVisitMarkerMinDistanceUnits=800\n"
+                                          "iVisitMarkerMaxDistanceUnits=1500\n"
+                                          "iVisitArrivalCoverRadiusUnits=64\n"
+                                          "bVisitArrivalAllowCoarseBearing=false\n"
+                                          "[FineRoads]\nbFineRoadsEnabled=1\niFineRoadsBackstopSeconds=1\n"
+                                          "bFineRoadsDebugBitmap=0\n"
+                                          "[TravelGraph]\nbTravelGraphEnabled=1\nbTravelGraphDebugBitmap=0\n"};
+        auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+        player->data.angle.z = 3.14159265f / 2.0f; // east, straight at it
+
+        SECTION("should still take it, facing or not")
+        {
+            const auto result = FindFor(sender, player);
+            REQUIRE(result.Ok());
+            REQUIRE(result.tier == VisitArrivalPoint::Tier::FineRoad);
+            const float distance = Dist2D(result.point, At(0.0f, 0.0f));
+            REQUIRE(distance >= 800.0f);
+            REQUIRE(distance < 2000.0f);
+        }
     }
 }

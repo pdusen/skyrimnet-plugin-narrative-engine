@@ -403,11 +403,16 @@ is structure.
 
 | Key                               | Default | Meaning                                                            |
 | --------------------------------- | ------- | ------------------------------------------------------------------ |
-| `iVisitArrivalCoverRadiusUnits`   | TBD     | Silhouette width passed to `IsPositionBehindCover`. Set by probe.  |
+| `iVisitArrivalCoverRadiusUnits`   | `64`    | Silhouette width passed to `IsPositionBehindCover`. Set by probe.  |
 | `bVisitArrivalAllowCoarseBearing` | `true`  | Whether Tier 2 may run, or Tier 1 failure goes straight to Tier 3. |
 
-`iVisitArrivalCoverRadiusUnits` has no default until the cover-gate probe reports. Writing a number here before
-then would be exactly the kind of chosen-by-feel magic constant the IntelEngine guidance warns about.
+`iVisitArrivalCoverRadiusUnits` is `64` — one actor's width, which is what the gate is nominally asking
+about. Step 6's probe reported, and its finding was that the silhouette is **not** the operative parameter:
+under 2000 units the gate already rejects 97% of road candidates at this width, and past that it passes
+nearly everything whatever width it is given, because what defeats it is range. The probe's numbers and the
+change they did produce are under **Arrivals beyond the numbered plan**. All three of these are outputs of a
+measurement rather than preferences, so `Settings.engine.test.cpp` fails if any of them is edited without
+one.
 
 ---
 
@@ -833,7 +838,7 @@ anchor stops stranding people.
 
 ### Step 6 — Cover-gate calibration
 
-- [ ] Complete
+- [x] Complete — see *Done: the cover gate only answers at short range*
 
 **[USER]** to gather, **[CLAUDE]** to analyse and set the defaults.
 
@@ -948,7 +953,7 @@ the gate stays "fully covered" or relaxes to "least visible candidate in the ban
 
 ### Step 8 — End-to-end in-game validation
 
-- [ ] Complete
+- [x] Complete — accepted by the user after the fourth run; see the note at the end of this step
 
 **[USER]**
 
@@ -973,6 +978,18 @@ enough varied situations to believe it.
 
 - No visit in the run arrives from a direction that contradicts where the sender lives.
 - No run leaves an orphaned XMarker at either end.
+
+**What the run actually covered.** Four in-game runs, seventy arrival searches, across Whiterun plain,
+Falkreath forest, Rorikstead, Loreius Farm, a mountain pass, Riverwood, and all five walled cities plus
+their interiors. Sub-tasks 1 and 2 were exercised in full and the user accepted the result: visitors appear
+in every outdoor location tested and indoors, with arrival directions "not always in the direction I
+expected, but close enough".
+
+Sub-tasks 3 to 6 were **not** separately exercised — no deliberate Tier 3 forcing, no mid-approach kill, no
+save-and-reload mid-visit, and no third-person camera watch of a single arrival. Tier 3 and the hard-abort
+path were both hit incidentally and cleanly during the four runs (`arrival_no_point` declines in the first
+three, and a `user_abort` from the dashboard mid-approach), and both are covered by tests. The other two are
+untested in game and are recorded here as such rather than as passes.
 
 ---
 
@@ -1163,44 +1180,103 @@ own nearest node however far off it sits. Below one cell the bearing to a node i
 sampling. Where the whole route is shorter than that, the aim falls back to the visitor's own origin: a
 straight line home ignores the road but does not point away from it.
 
-### Open: a cover proof 2355 units away is worth very little
+### Done: the cover gate only answers at short range
 
-Outside Falkreath the same point was chosen twice — 2355 units out, **955 units above the player**, all nine
-cover rays reported blocked — and the visitor was in plain sight both times. The log recorded only a survivor
-count, so the run cannot be diagnosed without repeating it.
+Outside Falkreath the same point was chosen twice — 2355 units out, 955 units above the player, all nine
+cover rays reported blocked — and the visitor was in plain sight both times. Per-candidate logging was added
+to diagnose it, and Step 6's aggregation over all four runs found the cause. It is not the silhouette and it
+is not the elevation.
 
-What is now logged per kept candidate: its distance, its elevation relative to the player, and which of the
-two rules passed it (`cover` or `unseen`). The headline line carries the winner's `dz`.
+`IsPositionBehindCover`'s pass rate, against the distances each search was looking at — seventy searches,
+514 road candidates:
 
-**The third run produced that data and it narrows the question without closing it.** Outside Falkreath all
-thirteen kept candidates passed by `cover`, climbing from +1163 units at 3140 out to +2711 at 7958; the
-mountain pass gave +1791 to +1929. The gate is not failing at random — it rejected 21 of 90 there, and 10
-of 14 on the Whiterun plain — but *every* candidate on a climbing road passes it, which is consistent with
-rays grazing a slope reading as blocked while a figure standing on it is skylined from below.
+| Distances looked at | Passed as covered | Candidates |
+| ------------------- | ----------------- | ---------- |
+| up to 999           | 0.0%              | 22         |
+| 1000 – 1999         | 2.8%              | 106        |
+| 2000 – 2999         | 74.9%             | 203        |
+| 4000 – 4999         | 74.4%             | 82         |
+| 9000 – 9999         | 100.0%            | 101        |
 
-Choosing the flattest survivor instead of the nearest was considered and **does not help**: at Falkreath the
-elevations increase monotonically along the road, so the flattest survivor is the one already chosen. A
-hard elevation gate would refuse Falkreath and the mountain pass alike, and both are places a visit should
-be possible. So this still wants one more dispatch at that spot, which distinguishes the two live
-explanations — a thin occluder at range that a 64-unit silhouette clears
-but a wider one would not, versus a crest the probes hide behind while the figure standing on it is skylined
-from below. The first is the `iVisitArrivalCoverRadiusUnits` decision Step 6 exists to make; the second is
-not, and would want its own gate.
+That is not terrain changing between those buckets; it is the test losing its grip. A ray counts as blocked
+when anything stops it short of its last 5%, and a longer ray crosses more world, so at nine thousand units
+every one of 101 candidates was declared hidden. Cover proved that way is a hill somewhere in between rather
+than something the visitor is standing behind, and it stops being true the moment either of them moves.
 
-An elevation gate on the fine tier was considered and **not** built. The bearing tier's `kMaxElevationDeltaUnits`
-of 400 would reject Falkreath's 955 — but also the mountain-pass arrival of 649 that worked, and every one of
-its six fallbacks. Two samples do not separate the good case from the bad one, and a threshold fitted to them
-would be taste wearing a number.
+**The gate is therefore scoped to the range it measures well.** Under `kCoverTrustedRangeUnits` — 2000, the
+boundary where the collapse happens — the raycast decides, because it is the only test that can tell a rock
+from open ground. At or past it the raycast is ignored and the candidate must be outside the player's view
+arc instead: a geometric test that does not degrade with range. Both tiers ask it through one `Admits`
+helper rather than each carrying its own copy.
 
-**Also worth recording: `unseen=0` on every search in both runs.** The open-ground rule — no cover, but at
-least 3000 units out and outside a 60-degree arc — has never once fired. The band's ceiling is 5000 and the
-first survivor in road order is reliably nearer than 3000, so the rule is unreachable in practice on the
-terrain tested so far.
+This subsumes the old open-ground rule. `kUnseenDistanceUnits` is gone: it said "no cover is acceptable past
+3000 units if the player is facing away", which was the right idea applied at the wrong point, since cover
+was consulted first and `unseen` never once fired in four runs. The condition is now the only one past the
+boundary rather than a fallback beneath one that always passed.
+
+**Of the three responses this step was set up to choose between, none was taken.** The band is not too
+narrow, the gate does not need relaxing, and the Tier 1 miss rate was never the problem — Tier 1 carried 21
+of 70 searches. The measurement found a fourth answer the design did not anticipate, which is what it was
+for.
+
+`iVisitArrivalCoverRadiusUnits` stays at `64`, one actor's width. The probe's finding is that widening it is
+not the lever: below the boundary the gate already rejects 97% of road candidates at this width, and above
+it no width helps. Pinned in `Settings.engine.test.cpp` so a silent edit fails.
+
+An elevation gate on the fine tier was considered and **not** built. Falkreath's candidates climbed from
++1163 to +2711 units and the mountain pass gave +1791 to +1929, so the bearing tier's 400-unit budget would
+refuse both — and both are places a visit should be possible. Choosing the flattest survivor instead of the
+nearest does not help either: at Falkreath the elevations increase monotonically along the road, so the
+flattest survivor is the one already being chosen. With the range rule in place the Falkreath candidate is
+refused anyway when the player is facing it, which is the case that produced the complaint.
+
+**Expected consequence, recorded so it is not a surprise:** a player looking straight down a long open road
+will get fewer visits there than before, because the gate no longer accepts a distant cover claim it cannot
+support. That is the trade this project has already chosen twice — a visible arrival is worse than no
+visit — but it is a real reduction and the next run should be watched for it.
 
 ---
 
 ## Post-implementation additions
 
-*Populated after implementation completes, mirroring Phase 09's and Phase 11's practice. The four open engine
-questions' answers land here, along with the cover-gate calibration result and anything that arrived beyond
-the numbered plan.*
+### The four open engine questions, answered
+
+**1. Can the sender path to a player who is indoors?** The question dissolved rather than resolving. Nothing
+can be *placed* outdoors while the player is inside, let alone pathed: standing in an interior empties the
+exterior cell grid, so `TES::GetLandHeight` has no landscape and every one of 45 bearing samples came back
+off-navmesh on every indoor dispatch. Neither planned branch applied. `Tier::Doorstep` puts the visitor at
+the exterior arrival point of the player's own load door — ground the engine itself places the player on
+every time they walk out, needing no validation — and the approach never has to traverse anything. Verified
+in game: interior visits work.
+
+**2. How often does Tier 1 find a covered point?** Often enough, and for the wrong reason past 2000 units.
+Tier 1 carried 21 of 70 searches. See *Done: the cover gate only answers at short range* for the pass-rate
+table and what it changed.
+
+**3. Does the fine graph reach far enough for the band?** Reach was never the problem; **connectivity** was.
+The graph routinely spans 300–1200 nodes, but it is built per cell and the component under the player can be
+a stub of three. `Route` calls a destination "within fine" when the nearest *reachable* node is within two
+cells of it, so a stub satisfies that test and returns a fine-only plan with an empty coarse path — which is
+what made Rorikstead and Loreius Farm decline every visit until the bearing learned to aim at the corridor
+instead. Tier 2 does cover it, exactly as the fallback predicted, but only once it has something to aim at.
+
+**4. Does `Actor::MoveTo` land the sender correctly across a worldspace boundary?** Yes, with one condition
+the question did not anticipate: the marker has to be *built* in the right cell. `PlaceObjectAtMe` creates
+its reference in the caller's cell, so placing from the player put the marker inside the city and the
+visitor with it. `Result::placementAnchor` names a reference already standing where the visitor needs to be
+— the far side of a city gate, or of the player's own door — and `MoveTo` onto a marker built from that
+lands correctly every time. Ten `city-gate` arrivals across Solitude, Riften, Markarth and Windhelm, no
+`SetPosition` follow-up needed.
+
+### Everything else
+
+The cover-gate calibration result and the seven faults the in-game runs turned up are written up under
+**Arrivals beyond the numbered plan** above, each with the numbers that decided it.
+
+### Engine findings written up separately
+
+None. Every behaviour this phase tripped over — `GetParentCell()` being null for unattached references, the
+exterior grid emptying indoors, `PlaceObjectAtMe` using the caller's cell, `TES::Pick` losing discrimination
+with range — is recorded here with the code comment that carries the lesson at the point of use. They are
+properties of how this beat uses the engine rather than standalone API discoveries, and
+`docs/engine-findings/` is for the latter.
