@@ -2405,6 +2405,14 @@ namespace NarrativeEngine::Testing
             SaveCells()[static_cast<const void*>(ref)] = cell;
     }
 
+    void EngineMock::Unload(RE::TESObjectREFR* ref)
+    {
+        if (!ref)
+            return;
+        SaveCells()[static_cast<const void*>(ref)] = ref->parentCell;
+        ref->parentCell = nullptr;
+    }
+
     RE::TESObjectREFR* EngineMock::AddReference(RE::TESObjectCELL* cell, std::uint32_t formID, RE::NiPoint3 position)
     {
         auto& pool = Refs();

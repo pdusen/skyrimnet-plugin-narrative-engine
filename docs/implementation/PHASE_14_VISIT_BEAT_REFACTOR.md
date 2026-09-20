@@ -1001,8 +1001,9 @@ This phase is complete when:
 ## Arrivals beyond the numbered plan
 
 The first broad in-game run — sixteen dispatches across six wilderness spots and four cities — turned up four
-faults. All four are fixed, and each is written down here rather than folded into an existing step because
-each was a change of shape rather than a tuning.
+faults. All four are fixed. A second run across the same ground, plus five cities and their interiors,
+found two more; those are fixed too, and one observation from it is still open. Each is written down here
+rather than folded into an existing step because each was a change of shape rather than a tuning.
 
 ### Done: the band's ceiling stopped being a wall
 
@@ -1088,6 +1089,59 @@ running throughout, so a visitor who never makes it through still resolves the b
 A `crossWorldspace` flag on the result was built and then removed: the live cell check answers the same
 question and stays true as the visitor moves, where a flag captured at compose time starts lying the moment
 they step through the gate.
+
+### Done: indoors resolves, because `GetParentCell` is null for what is not loaded
+
+Every dispatch with the player inside a building declined with `player_valid=false`. `RoadRoute::ResolveOrigin`
+walks an interior's references for a load door and reads `linked->GetParentCell()` on the far side — and
+standing indoors is precisely what unloads the exterior, so the door on the other side is the one reference
+whose `parentCell` is guaranteed to be null. The walk existed and could never succeed.
+
+This is the same read that broke the visitor's own origin twice before. `CellOf` and `MarkerFromLocation`
+have therefore moved out of `VisitArrivalPoint` and into `RoadRoute`, where `ResolveOrigin` uses them for the
+reference, the far door and the marker alike; the marker fallback now climbs `parentLoc` as well, because a
+room's own Location almost never carries one. The player climbs the same four-rung ladder the sender does
+rather than stopping at `ResolveOrigin`, and the rung that answered is logged for both ends.
+
+`EngineMock::Unload` now models an unattached reference — `parentCell` null, the save cell still set. The
+harness built every reference attached, which is the one state the game is least often in, and that is why
+three rounds of this bug reached the game.
+
+### Done: the bearing fallback had nothing to aim at
+
+Rorikstead and Loreius Farm declined every attempt with a fine path of three and fifteen nodes, exhausted,
+and no fallback. The cause is an interaction, not a missing case. `Route` calls a destination "within fine"
+when the nearest *reachable* fine node is within two cells of it — and the fine graph is built per cell, so
+the component under the player is frequently a stub of a few nodes while the rest of the road sits in
+another. The stub satisfies that test, so the plan returns fine-only with an **empty** `coarsePath`, and the
+bearing fallback read nothing else.
+
+It now aims at `CorridorTarget`'s way-in first and falls back to the coarse path, which reverses the
+priority: the corridor node is both the better direction and, in this case, the only one available. Routing
+at the corridor is what empties `coarsePath` in the first place, so the two changes had to be made together.
+
+### Open: a cover proof 2355 units away is worth very little
+
+Outside Falkreath the same point was chosen twice — 2355 units out, **955 units above the player**, all nine
+cover rays reported blocked — and the visitor was in plain sight both times. The log recorded only a survivor
+count, so the run cannot be diagnosed without repeating it.
+
+What is now logged per kept candidate: its distance, its elevation relative to the player, and which of the
+two rules passed it (`cover` or `unseen`). The headline line carries the winner's `dz`. One more dispatch at
+that spot distinguishes the two live explanations — a thin occluder at range that a 64-unit silhouette clears
+but a wider one would not, versus a crest the probes hide behind while the figure standing on it is skylined
+from below. The first is the `iVisitArrivalCoverRadiusUnits` decision Step 6 exists to make; the second is
+not, and would want its own gate.
+
+An elevation gate on the fine tier was considered and **not** built. The bearing tier's `kMaxElevationDeltaUnits`
+of 400 would reject Falkreath's 955 — but also the mountain-pass arrival of 649 that worked, and every one of
+its six fallbacks. Two samples do not separate the good case from the bad one, and a threshold fitted to them
+would be taste wearing a number.
+
+**Also worth recording: `unseen=0` on every search in both runs.** The open-ground rule — no cover, but at
+least 3000 units out and outside a 60-degree arc — has never once fired. The band's ceiling is 5000 and the
+first survivor in road order is reliably nearer than 3000, so the rule is unreachable in practice on the
+terrain tested so far.
 
 ---
 

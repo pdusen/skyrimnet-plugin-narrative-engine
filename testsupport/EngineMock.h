@@ -638,6 +638,16 @@ namespace NarrativeEngine::Testing
         // has to find somebody who is not loaded can only ask this one.
         void SetSaveParentCell(RE::TESObjectREFR* ref, RE::TESObjectCELL* cell);
 
+        // Detach a reference the way the streaming system does when its cell
+        // goes out of the loaded grid: `parentCell` becomes null while the
+        // save still files it where it was.
+        //
+        // Every reference this harness builds is attached, which is the one
+        // state the game is least often in. Most of the world is unloaded at
+        // any moment, and `GetParentCell()` returning null there is the
+        // single engine behaviour this project has tripped over most.
+        void Unload(RE::TESObjectREFR* ref);
+
         // A load door standing in `cell` that comes out beside a door in
         // `destination`, at `arrival`. That arrival point is where an occupant
         // leaving the building actually appears, which is not where either door

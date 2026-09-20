@@ -342,6 +342,7 @@ namespace NarrativeEngine::VisitArrivalPoint
                 RE::NiPoint3 standing = node;
                 standing.z += kGroundClearanceUnits;
 
+                const char* passedBy = "cover";
                 if (!BehindCover(standing, coverRadius)) {
                     // No geometry to hide behind. Usable anyway if the
                     // player is both far enough away and facing
@@ -352,10 +353,27 @@ namespace NarrativeEngine::VisitArrivalPoint
                         continue;
                     }
                     ++tally.unseen;
+                    passedBy = "unseen";
                 }
 
                 auto& pool = (distance <= maxDist) ? inBand : beyondBand;
+                const std::size_t before = pool.size();
                 AppendSeparated(pool, standing);
+                if (pool.size() != before) {
+                    // Elevation is in here because the cover gate is at
+                    // its least trustworthy uphill: rays that graze a
+                    // slope read as blocked while the figure standing on
+                    // it is skylined from below.
+                    logger::debug("VisitArrivalPoint: candidate ({:.0f},{:.0f},{:.0f}) kept — {:.0f}u out, "
+                                  "{:+.0f}u in elevation, passed by {}, {}",
+                                  standing.x,
+                                  standing.y,
+                                  standing.z,
+                                  distance,
+                                  standing.z - playerPos.z,
+                                  passedBy,
+                                  (distance <= maxDist) ? "in band" : "past the band");
+                }
                 if (inBand.size() > kMaxFallbacks) {
                     break;
                 }
@@ -476,11 +494,6 @@ namespace NarrativeEngine::VisitArrivalPoint
             return kept;
         }
 
-        // Upper bound on parentLoc traversal, matching AlphaCanon's. A
-        // room's Location rarely carries a map marker; the building or the
-        // settlement above it does.
-        constexpr int kMaxParentDepth = 16;
-
         // How a visitor's end of the route was found. Logged, because
         // which rung answered says how much to trust the direction: a
         // live position is where they actually are, a map marker is only
@@ -509,64 +522,6 @@ namespace NarrativeEngine::VisitArrivalPoint
             default:
                 return "unresolved";
             }
-        }
-
-        // Which cell a reference belongs to, whether or not anything has
-        // loaded it.
-        //
-        // `GetParentCell()` is `return parentCell` and is null for anything
-        // unattached. That is the single mistake this module has now made
-        // twice -- first on the visitor, then on the map marker it climbed
-        // to in order to place the visitor -- so the read lives in one
-        // place and both callers go through it.
-        RE::TESObjectCELL* CellOf(RE::TESObjectREFR* ref)
-        {
-            if (!ref) {
-                return nullptr;
-            }
-            if (auto* attached = ref->GetParentCell()) {
-                return attached;
-            }
-            return ref->GetSaveParentCell();
-        }
-
-        // The map marker of `location`, or of the nearest ancestor that has
-        // one.
-        //
-        // A room does not usually carry a marker -- "Hall of Attainment"
-        // has none, "College of Winterhold" does -- so the useful answer is
-        // almost always a rung or two up the parentLoc chain. Without the
-        // walk this resolves for almost nobody who lives indoors, which is
-        // most people.
-        bool MarkerFromLocation(RE::BGSLocation* location, RoadRoute::Origin& out, std::string& trail)
-        {
-            for (int depth = 0; location && depth < kMaxParentDepth; ++depth) {
-                const char* edid = location->GetFormEditorID();
-                trail += (depth == 0 ? "" : "->");
-                trail += (edid && *edid) ? edid : "?";
-
-                const auto markerPtr = location->worldLocMarker.get();
-                if (auto* marker = markerPtr.get()) {
-                    // A marker far from the player is in an unloaded cell,
-                    // which is exactly when this matters -- so CellOf, not
-                    // GetParentCell.
-                    if (auto* markerCell = CellOf(marker)) {
-                        if (auto* ws = markerCell->GetRuntimeData().worldSpace) {
-                            out.valid = true;
-                            out.worldSpace = ws->GetFormID();
-                            out.position = marker->GetPosition();
-                            out.viaLoadDoor = true;
-                            trail += "[marker]";
-                            return true;
-                        }
-                        trail += "[marker,no-worldspace]";
-                    } else {
-                        trail += "[marker,no-cell]";
-                    }
-                }
-                location = location->parentLoc;
-            }
-            return false;
         }
 
         // Where is this visitor, when they are almost certainly not loaded?
@@ -599,14 +554,17 @@ namespace NarrativeEngine::VisitArrivalPoint
         // is pointing at where the visitor LIVES rather than where they
         // are, which is defensible for a visit and would not be for
         // anything that claimed to track them.
-        OriginSource ResolveSenderOrigin(const MainThread::Token& mt, RE::Actor* sender, RoadRoute::Origin& out)
+        OriginSource ResolveActorOrigin(const MainThread::Token& mt,
+                                        RE::Actor* sender,
+                                        const char* who,
+                                        RoadRoute::Origin& out)
         {
             out = RoadRoute::ResolveOrigin(mt, sender);
             if (out.valid) {
                 return OriginSource::Live;
             }
 
-            auto* saveCell = CellOf(sender);
+            auto* saveCell = RoadRoute::CellOf(sender);
             const bool saveCellInterior = saveCell && saveCell->IsInteriorCell();
             if (saveCell && !saveCellInterior) {
                 if (auto* ws = saveCell->GetRuntimeData().worldSpace) {
@@ -622,8 +580,9 @@ namespace NarrativeEngine::VisitArrivalPoint
             // the time. The cell's own Location knows the building, and
             // somewhere up its parentLoc chain is a map marker.
             std::string cellTrail;
-            if (saveCellInterior && MarkerFromLocation(saveCell->GetLocation(), out, cellTrail)) {
-                logger::debug("VisitArrivalPoint: sender 0x{:08X} placed from their save cell's location ({})",
+            if (saveCellInterior && RoadRoute::MarkerFromLocation(saveCell->GetLocation(), out, cellTrail)) {
+                logger::debug("VisitArrivalPoint: {} 0x{:08X} placed from their save cell's location ({})",
+                              who,
                               sender->GetFormID(),
                               cellTrail);
                 return OriginSource::SaveCellLocal;
@@ -636,8 +595,9 @@ namespace NarrativeEngine::VisitArrivalPoint
             if (!home) {
                 home = sender->GetCurrentLocation();
             }
-            if (MarkerFromLocation(home, out, homeTrail)) {
-                logger::debug("VisitArrivalPoint: sender 0x{:08X} placed from the location they belong to ({})",
+            if (RoadRoute::MarkerFromLocation(home, out, homeTrail)) {
+                logger::debug("VisitArrivalPoint: {} 0x{:08X} placed from the location they belong to ({})",
+                              who,
                               sender->GetFormID(),
                               homeTrail);
                 return OriginSource::HomeLocation;
@@ -645,8 +605,9 @@ namespace NarrativeEngine::VisitArrivalPoint
 
             // Everything declined. Say what each rung actually saw, so the
             // next attempt does not have to be another run of the game.
-            logger::warn("VisitArrivalPoint: sender 0x{:08X} could not be placed — save_cell={} interior={} "
+            logger::warn("VisitArrivalPoint: {} 0x{:08X} could not be placed — save_cell={} interior={} "
                          "cell_location_trail='{}' editor_or_current_location={} location_trail='{}'",
+                         who,
                          sender->GetFormID(),
                          saveCell != nullptr,
                          saveCellInterior,
@@ -715,7 +676,7 @@ namespace NarrativeEngine::VisitArrivalPoint
                         if (!farDoor) {
                             return RE::BSContainer::ForEachResult::kContinue;
                         }
-                        auto* farCell = CellOf(farDoor);
+                        auto* farCell = RoadRoute::CellOf(farDoor);
                         if (!farCell || farCell->IsInteriorCell()) {
                             return RE::BSContainer::ForEachResult::kContinue;
                         }
@@ -742,6 +703,7 @@ namespace NarrativeEngine::VisitArrivalPoint
             bool resolved = false;
             RoadRoute::Origin sender;
             RoadRoute::Origin player;
+            OriginSource playerSource = OriginSource::Unresolved;
             RE::NiPoint3 playerPos{};
             // Which way the player is facing, for the unseen-arrival
             // test. Captured here with the position because both are
@@ -787,8 +749,8 @@ namespace NarrativeEngine::VisitArrivalPoint
         // doors where either party is indoors.
         const auto ends = MainThread::Run(pt, [sender, player](const MainThread::Token& mt) {
             Endpoints out;
-            out.senderSource = ResolveSenderOrigin(mt, sender, out.sender);
-            out.player = RoadRoute::ResolveOrigin(mt, player);
+            out.senderSource = ResolveActorOrigin(mt, sender, "sender", out.sender);
+            out.playerSource = ResolveActorOrigin(mt, player, "player", out.player);
             out.playerPos = player->GetPosition();
             out.playerAngleZ = player->data.angle.z;
             out.resolved = out.sender.valid && out.player.valid;
@@ -797,12 +759,13 @@ namespace NarrativeEngine::VisitArrivalPoint
 
         if (!ends.resolved) {
             logger::warn("VisitArrivalPoint: sender=0x{:08X} tier=none — origin unresolved "
-                         "(sender_valid={} via={} player_valid={}). Nothing in the record or the save "
-                         "could say where this visitor is or where they belong.",
+                         "(sender_valid={} via={} | player_valid={} via={}). Nothing in the record or the "
+                         "save could say where one of them is.",
                          senderId,
                          ends.sender.valid,
                          OriginSourceName(ends.senderSource),
-                         ends.player.valid);
+                         ends.player.valid,
+                         OriginSourceName(ends.playerSource));
             return result;
         }
         if (ends.sender.worldSpace != ends.player.worldSpace) {
@@ -936,36 +899,56 @@ namespace NarrativeEngine::VisitArrivalPoint
         }
 
         if (tier == Tier::None) {
+            // What the bearing aims at, best first.
+            //
+            // The corridor's way-in comes first because it is the better
+            // answer AND because it is usually the only one. Routing at
+            // the corridor target puts the destination inside fine
+            // coverage, which is the branch of `Route` that returns an
+            // EMPTY coarsePath -- so on the old ordering the bearing
+            // fallback had nothing to aim at in exactly the case the
+            // corridor had just succeeded. Rorikstead and Loreius Farm
+            // both declined every visit that way: a fine path of three
+            // and fifteen nodes, exhausted, and then no fallback,
+            // although `CorridorTarget` had a perfectly good coarse node
+            // on the road home the whole time.
+            RE::NiPoint3 toward{};
+            bool haveToward = false;
+            const char* towardSource = "none";
+            if (haveCorridor) {
+                toward = corridor;
+                haveToward = true;
+                towardSource = "corridor";
+            } else if (plan.valid && BearingHome(plan.coarsePath, ends.playerPos, toward)) {
+                haveToward = true;
+                towardSource = "coarse-route";
+            }
+
             if (!cfg.visitArrivalAllowCoarseBearing) {
                 logger::info("VisitArrivalPoint: sender=0x{:08X} no fine-road point and the bearing fallback "
                              "is switched off",
                              senderId);
-            } else if (!plan.valid) {
-                logger::info("VisitArrivalPoint: sender=0x{:08X} no route at all — neither graph could place "
-                             "both ends",
-                             senderId);
+            } else if (!haveToward) {
+                logger::info("VisitArrivalPoint: sender=0x{:08X} no usable bearing — no approach corridor ({}) "
+                             "and none of the {} coarse node(s) on the route is {:.0f}u clear of the player",
+                             senderId,
+                             corridorWhy,
+                             plan.coarsePath.size(),
+                             kBearingMinSeparationUnits);
             } else {
-                RE::NiPoint3 toward{};
-                if (!BearingHome(plan.coarsePath, ends.playerPos, toward)) {
-                    logger::info("VisitArrivalPoint: sender=0x{:08X} no usable bearing — none of the {} coarse "
-                                 "node(s) on the route is {:.0f}u clear of the player",
-                                 senderId,
-                                 plan.coarsePath.size(),
-                                 kBearingMinSeparationUnits);
-                } else {
-                    logger::info("VisitArrivalPoint: sender=0x{:08X} falling back to a bearing toward "
-                                 "({:.0f},{:.0f}), {:.0f}u out",
-                                 senderId,
-                                 toward.x,
-                                 toward.y,
-                                 Dist2D(toward, ends.playerPos));
-                    kept = MainThread::Run(pt, [&](const MainThread::Token&) {
-                        return SampleBearingArc(
-                            ends.playerPos, ends.playerAngleZ, toward, minDist, maxDist, coverRadius, bearingTally);
-                    });
-                    if (!kept.empty()) {
-                        tier = Tier::CoarseBearing;
-                    }
+                logger::info("VisitArrivalPoint: sender=0x{:08X} falling back to a bearing toward "
+                             "({:.0f},{:.0f}), {:.0f}u out, from the {}",
+                             senderId,
+                             toward.x,
+                             toward.y,
+                             Dist2D(toward, ends.playerPos),
+                             towardSource);
+                kept = MainThread::Run(pt, [&](const MainThread::Token&) {
+                    return SampleBearingArc(
+                        ends.playerPos, ends.playerAngleZ, toward, minDist, maxDist, coverRadius, bearingTally);
+                });
+                if (!kept.empty()) {
+                    tier = Tier::CoarseBearing;
                 }
             }
         }
@@ -1020,7 +1003,7 @@ namespace NarrativeEngine::VisitArrivalPoint
             ToDegrees(std::atan2(result.point.y - ends.playerPos.y, result.point.x - ends.playerPos.x));
 
         logger::info("VisitArrivalPoint: sender=0x{:08X} tier={} — ws=0x{:08X} home=({:.0f},{:.0f}) via={} "
-                     "player=({:.0f},{:.0f},{:.0f}){} point=({:.0f},{:.0f},{:.0f}) dist={:.0f}u "
+                     "player=({:.0f},{:.0f},{:.0f}){} point=({:.0f},{:.0f},{:.0f}) dist={:.0f}u dz={:+.0f}u "
                      "bearing_home={:.0f}deg bearing_arrival={:.0f}deg within_fine={} "
                      "fine_nodes={} coarse_nodes={} fallbacks={} | fine[{}] | bearing[{}]",
                      senderId,
@@ -1037,6 +1020,7 @@ namespace NarrativeEngine::VisitArrivalPoint
                      result.point.y,
                      result.point.z,
                      Dist2D(result.point, ends.playerPos),
+                     result.point.z - ends.playerPos.z,
                      homeBearing,
                      pointBearing,
                      plan.destinationWithinFine,

@@ -130,13 +130,62 @@ namespace NarrativeEngine::RoadRoute
         }
     } // namespace
 
+    RE::TESObjectCELL* CellOf(RE::TESObjectREFR* ref)
+    {
+        if (!ref) {
+            return nullptr;
+        }
+        if (auto* attached = ref->GetParentCell()) {
+            return attached;
+        }
+        return ref->GetSaveParentCell();
+    }
+
+    namespace
+    {
+        // Upper bound on parentLoc traversal, matching AlphaCanon's. A
+        // room's Location rarely carries a map marker; the building or
+        // the settlement above it does.
+        constexpr int kMaxParentDepth = 16;
+    } // namespace
+
+    bool MarkerFromLocation(RE::BGSLocation* location, Origin& out, std::string& trail)
+    {
+        for (int depth = 0; location && depth < kMaxParentDepth; ++depth) {
+            const char* edid = location->GetFormEditorID();
+            trail += (depth == 0 ? "" : "->");
+            trail += (edid && *edid) ? edid : "?";
+
+            const auto markerPtr = location->worldLocMarker.get();
+            if (auto* marker = markerPtr.get()) {
+                // A marker away from the player is in an unloaded cell,
+                // which is exactly when this matters -- so CellOf.
+                if (auto* markerCell = CellOf(marker)) {
+                    if (auto* ws = markerCell->GetRuntimeData().worldSpace) {
+                        out.valid = true;
+                        out.worldSpace = ws->GetFormID();
+                        out.position = marker->GetPosition();
+                        out.viaLoadDoor = true;
+                        trail += "[marker]";
+                        return true;
+                    }
+                    trail += "[marker,no-worldspace]";
+                } else {
+                    trail += "[marker,no-cell]";
+                }
+            }
+            location = location->parentLoc;
+        }
+        return false;
+    }
+
     Origin ResolveOrigin(const MainThread::Token&, RE::TESObjectREFR* ref)
     {
         Origin origin;
         if (!ref) {
             return origin;
         }
-        auto* cell = ref->GetParentCell();
+        auto* cell = CellOf(ref);
         if (!cell) {
             return origin;
         }
@@ -172,7 +221,12 @@ namespace NarrativeEngine::RoadRoute
             if (!linked) {
                 return RE::BSContainer::ForEachResult::kContinue;
             }
-            auto* linkedCell = linked->GetParentCell();
+            // The whole reason for this walk is that `ref` is indoors,
+            // and standing indoors is what unloads the exterior. So the
+            // door on the far side is precisely the reference whose
+            // parentCell is null, and reading it directly made every
+            // indoors resolution fail.
+            auto* linkedCell = CellOf(linked.get());
             if (!linkedCell || linkedCell->IsInteriorCell()) {
                 return RE::BSContainer::ForEachResult::kContinue; // interior-to-interior, keep looking
             }
@@ -197,23 +251,25 @@ namespace NarrativeEngine::RoadRoute
             return origin;
         }
 
-        // No load door out. Fall back to the location's map marker, which
-        // is coarser (markers sit some way from the actual entrance) but
-        // beats having no position at all.
-        if (auto* location = ref->GetCurrentLocation()) {
-            const auto markerPtr = location->worldLocMarker.get();
-            if (auto* marker = markerPtr.get()) {
-                if (auto* markerCell = marker->GetParentCell()) {
-                    if (auto* ws = markerCell->GetRuntimeData().worldSpace) {
-                        origin.valid = true;
-                        origin.worldSpace = ws->GetFormID();
-                        origin.position = marker->GetPosition();
-                        origin.viaLoadDoor = true;
-                        return origin;
-                    }
-                }
-            }
+        // No load door out. Fall back to a map marker, which is coarser
+        // -- markers sit some way from the actual entrance -- but beats
+        // having no position at all. The cell's own Location first,
+        // because that is the building; `GetCurrentLocation` can be null
+        // in a cell nobody has registered.
+        std::string trail;
+        if (MarkerFromLocation(cell->GetLocation(), origin, trail)) {
+            logger::debug("RoadRoute: 0x{:08X} placed from its cell's location ({})", ref->GetFormID(), trail);
+            return origin;
         }
+        if (MarkerFromLocation(ref->GetCurrentLocation(), origin, trail)) {
+            logger::debug("RoadRoute: 0x{:08X} placed from its current location ({})", ref->GetFormID(), trail);
+            return origin;
+        }
+
+        logger::debug("RoadRoute: 0x{:08X} is indoors with no way out — no load door to an exterior and no "
+                      "map marker up the location chain ('{}')",
+                      ref->GetFormID(),
+                      trail);
         return origin;
     }
 

@@ -5,6 +5,7 @@
 #include <RE/Skyrim.h>
 
 #include <cstddef>
+#include <string>
 #include <vector>
 
 // RoadRoute — the query layer over the two road graphs.
@@ -66,15 +67,40 @@ namespace NarrativeEngine::RoadRoute
         bool viaLoadDoor = false;
     };
 
+    // Which cell a reference belongs to, whether or not anything has
+    // loaded it.
+    //
+    // `GetParentCell()` is `return parentCell` and is null for anything
+    // unattached. That single read is the mistake this project has now
+    // made three times — on a visit sender, on the map marker it climbed
+    // to in order to place them, and on the far side of a load door
+    // while the player stood indoors — so it lives here and everything
+    // goes through it.
+    RE::TESObjectCELL* CellOf(RE::TESObjectREFR* ref);
+
+    // Fill `out` from the map marker of `location`, or of the nearest
+    // ancestor that has one, and append the locations walked to `trail`.
+    //
+    // A room does not usually carry a marker — "Hall of Attainment" has
+    // none, "College of Winterhold" does — so the useful answer is
+    // almost always a rung or two up the parentLoc chain. Without the
+    // walk this resolves for almost nobody who is indoors, which is most
+    // people most of the time.
+    bool MarkerFromLocation(RE::BGSLocation* location, Origin& out, std::string& trail);
+
     // Where `ref` sits on the exterior road network.
     //
     // Outdoors this is just the reference's own position. Indoors there
     // is no fine graph and the interior has no place on the coarse one,
     // so we follow a load door out and use the arrival point — that is
     // where the occupant would actually emerge, which is what makes an
-    // NPC arriving there read correctly. Falls back to the reference's
-    // location marker when the cell has no load door (some interiors
-    // genuinely don't), and returns invalid if neither resolves.
+    // NPC arriving there read correctly. Falls back to the location
+    // marker when the cell has no load door (some interiors genuinely
+    // don't), and returns invalid if neither resolves.
+    //
+    // Every cell read goes through `CellOf`. Standing indoors unloads
+    // the exterior, so the door on the far side — the whole point of the
+    // walk — is exactly the reference whose `parentCell` is null.
     Origin ResolveOrigin(const MainThread::Token&, RE::TESObjectREFR* ref);
 
     struct Plan

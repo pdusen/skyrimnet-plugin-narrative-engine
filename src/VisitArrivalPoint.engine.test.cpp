@@ -1029,3 +1029,80 @@ TEST_CASE("VisitArrivalPoint walks a city visitor in through the gate", "[VisitA
         }
     }
 }
+
+TEST_CASE("VisitArrivalPoint still arrives when the road under the player is a stub", "[VisitArrivalPoint][engine]")
+{
+    // Rorikstead and Loreius Farm declined every visit, and the reason was
+    // an interaction rather than a missing case. `Route` calls a destination
+    // "within fine" when the nearest REACHABLE fine node is within two cells
+    // of it -- and the fine graph is per-cell, so the component under the
+    // player is often a stub of a few nodes while the rest of the road sits
+    // in another component. The stub satisfies that test, so the plan comes
+    // back as a fine-only path of three nodes with an EMPTY coarse path.
+    //
+    // Every one of those three was inside the minimum distance, and the
+    // bearing fallback then had nothing to aim at, because it only ever read
+    // the coarse path. `CorridorTarget` had a perfectly good node on the
+    // road home the whole time.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+
+    auto* navi = engine.AddNavMeshInfoMap(kNavi);
+    std::uint32_t nextForm = 0x00D06000u;
+    std::vector<const RE::BSNavmeshInfo*> road;
+    for (int cellX = 0; cellX <= 5; ++cellX) {
+        road.push_back(
+            engine.AddNavmeshInfo(navi, nextForm++, kWorld, static_cast<std::int16_t>(cellX), 0, 0.0f, 0.0f, 0.0f));
+    }
+    engine.AddPreferredPath(navi, road);
+    TravelGraph::Initialize();
+    REQUIRE(TravelGraph::NodeCount() > 0);
+
+    auto* space = engine.AddWorldSpace(kWorld);
+    auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+
+    // The stub: three nodes, none of them far enough from the player to be
+    // usable. Every fine candidate will be rejected as too near.
+    const RE::NiPoint3 playerPos = At(2048.0f, 2048.0f);
+    std::vector<Triangle> stub;
+    for (int i = 0; i < 3; ++i) {
+        Triangle t;
+        t.x = playerPos.x + static_cast<float>(i) * 300.0f;
+        t.y = playerPos.y;
+        t.z = kGround;
+        t.neighbor[0] = i > 0 ? i - 1 : -1;
+        t.neighbor[1] = i < 2 ? i + 1 : -1;
+        stub.push_back(t);
+    }
+    engine.AddNavMesh(cell, kRoadMesh, stub);
+    engine.LoadGrid({cell});
+    PollFineRoads();
+    REQUIRE(FineRoads::NodeCount() == 3);
+
+    LayGround(engine);
+    CoverEverywhere(engine);
+
+    auto* player = ActorAt(engine, kPlayer, cell, playerPos);
+    auto* sender = ActorAt(engine, kSender, cell, At(20480.0f, 2048.0f));
+    const auto result = FindFor(sender, player);
+
+    SECTION("should fall back to the bearing rather than decline")
+    {
+        REQUIRE(result.Ok());
+        REQUIRE(result.tier == VisitArrivalPoint::Tier::CoarseBearing);
+    }
+
+    SECTION("should still bring the visitor in from the direction of home")
+    {
+        REQUIRE(result.Ok());
+        REQUIRE(result.point.x > playerPos.x);
+    }
+
+    SECTION("should keep the arrival inside the band")
+    {
+        REQUIRE(result.Ok());
+        const float distance = Dist2D(result.point, playerPos);
+        REQUIRE(distance >= 800.0f);
+        REQUIRE(distance <= 2500.0f);
+    }
+}

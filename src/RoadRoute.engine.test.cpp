@@ -514,6 +514,73 @@ TEST_CASE("RoadRoute places a reference on the road network", "[RoadRoute][engin
         }
     }
 
+    SECTION("when the reference is indoors and the world outside has unloaded")
+    {
+        // The ordinary case, and the one that was broken. Standing inside a
+        // building is what unloads the exterior, so the door on the far side
+        // -- the entire point of the walk -- is exactly the reference whose
+        // `parentCell` is null. Reading it directly meant every dispatch with
+        // the player indoors resolved nothing and declined the visit.
+        auto* nearDoor = engine.AddLoadDoor(inn, 0x00B13050u, outside, At(kDoorstepX, kDoorstepY));
+        REQUIRE(nearDoor != nullptr);
+        auto* farDoor = RE::TESForm::LookupByID(0x00B13051u);
+        REQUIRE(farDoor != nullptr);
+        engine.Unload(farDoor->As<RE::TESObjectREFR>());
+
+        auto* ref = engine.AddReference(inn, 0x00B13006u, At(1000.0f, 1000.0f));
+        const auto origin = ResolveFor(ref);
+
+        SECTION("should still come out where the door comes out")
+        {
+            REQUIRE(origin.valid);
+            REQUIRE(origin.position.x == kDoorstepX);
+            REQUIRE(origin.position.y == kDoorstepY);
+            REQUIRE(origin.worldSpace == kMainland);
+        }
+    }
+
+    SECTION("when the room has no door out but the building above it has a marker")
+    {
+        // A room's own Location almost never carries a map marker -- "Hall of
+        // Attainment" has none, "College of Winterhold" does -- so a fallback
+        // that reads only the immediate location answers for nobody indoors.
+        auto* room = engine.AddLocation(0x00B13110u, "Hall of Attainment", {});
+        auto* settlement = engine.AddLocation(0x00B13111u, "The College", {});
+        engine.SetLocationParent(room, settlement);
+        engine.SetLocationMarker(settlement, outside, At(kMarkerX, kMarkerX));
+
+        auto* dorm = engine.AddExteriorCell(space, 9, 12, room);
+        engine.SetCellInterior(dorm, true);
+        auto* ref = engine.AddReference(dorm, 0x00B13007u, At(1000.0f, 1000.0f));
+        engine.world.playerHasLocation = false;
+        engine.world.playerLocationOverride = nullptr;
+        const auto origin = ResolveFor(ref);
+
+        SECTION("should climb to the marker rather than give up")
+        {
+            REQUIRE(origin.valid);
+            REQUIRE(origin.position.x == kMarkerX);
+            REQUIRE(origin.viaLoadDoor);
+        }
+    }
+
+    SECTION("when the reference itself is unloaded outdoors")
+    {
+        // GetParentCell is null for anything the engine has not attached, and
+        // most of the world is unattached at any moment.
+        auto* ref = engine.AddReference(outside, 0x00B13008u, At(40000.0f, 40000.0f));
+        engine.Unload(ref);
+        const auto origin = ResolveFor(ref);
+
+        SECTION("should read the cell the save files it in")
+        {
+            REQUIRE(origin.valid);
+            REQUIRE(origin.worldSpace == kMainland);
+            REQUIRE(origin.position.x == 40000.0f);
+            REQUIRE_FALSE(origin.viaLoadDoor);
+        }
+    }
+
     SECTION("when the only door leads to another room")
     {
         // A cellar hatch is not a way outside, and taking it would resolve the
