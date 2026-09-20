@@ -67,6 +67,7 @@ namespace
 
     constexpr std::uint32_t kWorld = 0x00D00001u;
     constexpr std::uint32_t kOtherWorld = 0x00D00002u;
+    constexpr std::uint32_t kCityWorld = 0x00D00003u;
     constexpr std::uint32_t kRoadMesh = 0x00D01001u;
     constexpr std::uint32_t kGroundMesh = 0x00D01002u;
     constexpr std::uint32_t kNavi = 0x00D01010u;
@@ -691,8 +692,10 @@ TEST_CASE("VisitArrivalPoint declines when nothing can route the two ends togeth
 
         SECTION("should decline rather than route between them")
         {
-            // Solstheim to Skyrim is a boat, not a walk. Every graph here is
-            // per-worldspace, and a plan across two of them would be fiction.
+            // Every graph here is per-worldspace, and a plan across two of
+            // them would be fiction. A walled city is joined to Skyrim by a
+            // gate and gets its own treatment below; this grid holds no door
+            // at all, which is Solstheim -- a boat, not a walk.
             REQUIRE_FALSE(result.Ok());
         }
     }
@@ -887,6 +890,142 @@ TEST_CASE("VisitArrivalPoint measures a visitor indoors from their doorstep", "[
             // rather than read off the actor.
             REQUIRE(result.Ok());
             REQUIRE(result.point.x < 0.0f);
+        }
+    }
+}
+
+TEST_CASE("VisitArrivalPoint walks a city visitor in through the gate", "[VisitArrivalPoint][engine]")
+{
+    // Riften, Markarth, Solitude and Windhelm are each their own worldspace,
+    // so a visitor who lives in Skyrim and a player standing in one of them
+    // have coordinates that cannot be compared, let alone routed between.
+    // Half the first broad in-game run died on exactly that. What joins the
+    // two is the city gate: one door reference inside the walls, its partner
+    // outside them.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    auto* skyrim = engine.AddWorldSpace(kWorld);
+    auto* city = engine.AddWorldSpace(kCityWorld);
+    auto* outside = engine.AddExteriorCell(skyrim, 0, 0, nullptr);
+    auto* cityCell = engine.AddExteriorCell(city, 0, 0, nullptr);
+    engine.LoadGrid({cityCell});
+    LayGround(engine);
+
+    // The gate stands 2000 units east of the middle of the city and comes
+    // out well into Skyrim.
+    constexpr std::uint32_t kGate = 0x00D05001u;
+    constexpr float kGateArrivalX = 6000.0f;
+    auto* gate = engine.AddLoadDoor(cityCell, kGate, outside, At(kGateArrivalX, 0.0f));
+    gate->data.location = At(2000.0f, 0.0f);
+
+    // The visitor lives out in Skyrim, nowhere near the city's grid.
+    auto* sender = ActorAt(engine, kSender, outside, At(20000.0f, 0.0f));
+
+    SECTION("when the player is out in the streets with cover to spare")
+    {
+        CoverEverywhere(engine);
+        auto* player = ActorAt(engine, kPlayer, cityCell, At(0.0f, 0.0f));
+        const auto result = FindFor(sender, player);
+
+        SECTION("should put the visitor inside the walls, between the player and the gate")
+        {
+            // Already through the gate is a shorter and more natural walk
+            // than watching someone traverse it.
+            REQUIRE(result.Ok());
+            REQUIRE(result.tier == VisitArrivalPoint::Tier::CityApproach);
+            REQUIRE(result.point.x > 0.0f);
+        }
+
+        SECTION("should build the marker from the player, who is standing on that ground")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(result.placementAnchor == 0u);
+        }
+    }
+
+    SECTION("when the player is watching the whole way to the gate")
+    {
+        // Open ground, and facing east -- which is where the gate is and so
+        // where every candidate inside the walls would be.
+        engine.visibility.pickHitFraction = 1.0f;
+        auto* player = ActorAt(engine, kPlayer, cityCell, At(0.0f, 0.0f));
+        player->data.angle.z = 3.14159265f / 2.0f;
+        const auto result = FindFor(sender, player);
+
+        SECTION("should place the visitor outside the gate and let them walk in")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(result.tier == VisitArrivalPoint::Tier::CityGate);
+            REQUIRE(std::fabs(result.point.x - kGateArrivalX) < 1.0f);
+            REQUIRE(std::fabs(result.point.z - kStandingZ) < 1.0f);
+        }
+
+        SECTION("should name the far door as what the marker is built from")
+        {
+            // PlaceObjectAtMe builds its reference in the CALLER's cell.
+            // Placing from the player would put the marker inside the city
+            // and land the visitor there, which is the whole thing this
+            // tier exists to avoid. AddLoadDoor numbers the far side one
+            // above the near one.
+            REQUIRE(result.Ok());
+            REQUIRE(result.placementAnchor == kGate + 1u);
+        }
+    }
+
+    SECTION("when the city has a second gate nearer the player")
+    {
+        CoverEverywhere(engine);
+        constexpr std::uint32_t kWestGate = 0x00D05010u;
+        auto* westGate = engine.AddLoadDoor(cityCell, kWestGate, outside, At(-9000.0f, 0.0f));
+        westGate->data.location = At(-500.0f, 0.0f);
+        auto* player = ActorAt(engine, kPlayer, cityCell, At(0.0f, 0.0f));
+        const auto result = FindFor(sender, player);
+
+        SECTION("should bring the visitor in through that one")
+        {
+            // Nearest wins. Sending someone to the far gate of a city they
+            // are standing beside is a longer walk for no reason, and the
+            // player watches all of it.
+            REQUIRE(result.Ok());
+            REQUIRE(result.tier == VisitArrivalPoint::Tier::CityApproach);
+            REQUIRE(result.point.x < 0.0f);
+        }
+    }
+
+    SECTION("when the player is indoors in the city")
+    {
+        // A city inn's load door lands in the CITY worldspace, so the
+        // mismatch against a Skyrim visitor fires exactly as it does in the
+        // street. What changes is that the player's own coordinates are
+        // interior ones and mean nothing here.
+        CoverEverywhere(engine);
+        auto* inn = engine.AddExteriorCell(city, 9, 9, nullptr);
+        engine.SetCellInterior(inn, true);
+        constexpr std::uint32_t kInnDoor = 0x00D05020u;
+        constexpr float kDoorstepX = -3000.0f;
+        engine.AddLoadDoor(inn, kInnDoor, cityCell, At(kDoorstepX, 0.0f));
+        auto* player = ActorAt(engine, kPlayer, inn, At(50.0f, 50.0f));
+        const auto result = FindFor(sender, player);
+
+        SECTION("should measure from the doorstep rather than from the interior")
+        {
+            // Both the doorstep and the interior position lie west of the
+            // gate, so the BEARING is east either way -- what tells them
+            // apart is where the arc is centred. Measured from the doorstep
+            // the winner is still west of the city's middle; measured from
+            // the interior it would be east of it.
+            REQUIRE(result.Ok());
+            REQUIRE(result.tier == VisitArrivalPoint::Tier::CityApproach);
+            REQUIRE(result.point.x < 0.0f);
+            REQUIRE(result.point.x > kDoorstepX);
+        }
+
+        SECTION("should build the marker from the gate, not from inside the inn")
+        {
+            // The point is in the player's worldspace but not in the
+            // player's CELL, and PlaceObjectAtMe goes by the cell.
+            REQUIRE(result.Ok());
+            REQUIRE(result.placementAnchor == kGate);
         }
     }
 }

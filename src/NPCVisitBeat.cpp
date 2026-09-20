@@ -964,6 +964,49 @@ namespace NarrativeEngine
                                    });
         }
 
+        // Which worldspace a reference is in, whether or not its cell
+        // is attached.
+        RE::FormID WorldSpaceOf(RE::TESObjectREFR* ref)
+        {
+            if (!ref) {
+                return 0;
+            }
+            auto* cell = ref->GetParentCell();
+            if (!cell) {
+                cell = ref->GetSaveParentCell();
+            }
+            if (!cell || cell->IsInteriorCell()) {
+                return 0;
+            }
+            auto* ws = cell->GetRuntimeData().worldSpace;
+            return ws ? ws->GetFormID() : 0;
+        }
+
+        // True when the sender and the player are somewhere their
+        // positions can be meaningfully compared.
+        //
+        // A visitor placed outside a walled city is in a different
+        // worldspace, and the two coordinate systems have nothing to do
+        // with one another: GetDistance between them is arithmetic on
+        // unrelated numbers. It can read as a few hundred units and fire
+        // the greeting through a wall, or as tens of thousands and never
+        // fire at all.
+        //
+        // So every distance-driven decision waits until they share a
+        // worldspace, which happens the moment the visitor walks through
+        // the gate. Interiors count as "not comparable" for the same
+        // reason. The approach TIMEOUT keeps running throughout, so a
+        // visitor who never makes it through still resolves the beat.
+        bool DistancesAreComparable(RE::TESObjectREFR* senderRef, RE::PlayerCharacter* player)
+        {
+            if (!senderRef || !player) {
+                return false;
+            }
+            const auto senderWs = WorldSpaceOf(senderRef);
+            const auto playerWs = WorldSpaceOf(player);
+            return senderWs != 0 && senderWs == playerWs;
+        }
+
         // ---- COMPOSE sub-phases ------------------------------------
         //
         // Each one does its work through a blocking main-thread hop, sets
@@ -1126,12 +1169,14 @@ namespace NarrativeEngine
         TickResult ComposeWarp(const PluginThread::Token& pt)
         {
             RE::NiPoint3 point{};
+            RE::FormID anchorId = 0;
             {
                 std::scoped_lock lock(g_sessionMutex);
                 point = g_arrival.point;
+                anchorId = g_arrival.placementAnchor;
             }
 
-            const bool ok = MainThread::Run(pt, [point](const MainThread::Token&) {
+            const bool ok = MainThread::Run(pt, [point, anchorId](const MainThread::Token&) {
                 auto snap = VisitState::GetSnapshot();
                 std::string reason;
                 auto* sender = BeatParamHelpers::ResolveLiveSenderActor(snap.senderFormID, &reason);
@@ -1144,7 +1189,26 @@ namespace NarrativeEngine
                     return false;
                 }
 
-                auto marker = player->PlaceObjectAtMe(g_xMarkerBase, /*a_forcePersist=*/true);
+                // PlaceObjectAtMe builds its reference in the CALLER's
+                // cell. For an arrival outside a walled city that must
+                // not be the player, who is inside it -- the search hands
+                // back a reference already standing on the far side to
+                // place from instead.
+                RE::TESObjectREFR* placeFrom = player;
+                if (anchorId != 0) {
+                    auto* form = RE::TESForm::LookupByID(anchorId);
+                    auto* anchor = form ? form->As<RE::TESObjectREFR>() : nullptr;
+                    if (!anchor) {
+                        logger::warn("NPCVisitBeat: placement anchor 0x{:08X} no longer resolves", anchorId);
+                        return false;
+                    }
+                    placeFrom = anchor;
+                    logger::info("NPCVisitBeat: placing the arrival marker from 0x{:08X}, not the player — "
+                                 "the arrival is in another worldspace",
+                                 anchorId);
+                }
+
+                auto marker = placeFrom->PlaceObjectAtMe(g_xMarkerBase, /*a_forcePersist=*/true);
                 if (!marker) {
                     logger::warn("NPCVisitBeat: PlaceObjectAtMe returned no arrival marker");
                     return false;
@@ -1391,6 +1455,17 @@ namespace NarrativeEngine
                 auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
                 auto* senderActor = senderRef ? senderRef->As<RE::Actor>() : nullptr;
                 auto* player = RE::PlayerCharacter::GetSingleton();
+                if (senderActor && player && !senderActor->IsDead() && !DistancesAreComparable(senderRef, player)) {
+                    // The visitor is outside the walls and the player is
+                    // inside them, or the other way round. Warping them
+                    // "closer" would mean warping them to a coordinate in
+                    // a worldspace they are not in, which lands them
+                    // somewhere arbitrary. Let them walk the gate; the
+                    // approach timeout still resolves the beat if they
+                    // never make it through.
+                    logger::info("NPCVisitBeat: escort idle - sender and player are in different worldspaces");
+                    return 0;
+                }
                 if (!senderActor || senderActor->IsDead() || !player) {
                     // Once per due check rather than once per tick, so a
                     // sender who died or fell out of the alias mid-approach
@@ -1484,18 +1559,20 @@ namespace NarrativeEngine
                     const auto now = NormalElapsedNow();
                     const auto enteredAt = g_salutationEnteredAtNormalSec.load();
                     const auto elapsed = enteredAt > 0.0 ? (now - enteredAt) : 0.0;
+                    const bool comparable = DistancesAreComparable(senderRef, player);
                     const auto lastLog = g_lastDistanceLogNormalSec.load();
                     if (now - lastLog >= 5.0) {
                         g_lastDistanceLogNormalSec.store(now);
                         logger::info("NPCVisitBeat[SALUTATION]: elapsed={:.1f}s, "
-                                     "sender-to-player distance={:.0f}u (timeout at {}s, "
+                                     "sender-to-player distance={:.0f}u{} (timeout at {}s, "
                                      "approach<={}u)",
                                      elapsed,
                                      dist,
+                                     comparable ? "" : " [meaningless - different worldspaces]",
                                      timeoutSec,
                                      approachDist);
                     }
-                    if (dist <= static_cast<float>(approachDist)) {
+                    if (comparable && dist <= static_cast<float>(approachDist)) {
                         logger::info("NPCVisitBeat[SALUTATION]: approach reached "
                                      "({:.0f}u) — firing opening line and advancing to "
                                      "Discuss",

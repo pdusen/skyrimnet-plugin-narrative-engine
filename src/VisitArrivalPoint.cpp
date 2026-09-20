@@ -656,6 +656,87 @@ namespace NarrativeEngine::VisitArrivalPoint
             return OriginSource::Unresolved;
         }
 
+        // The way out of a walled city, as a pair of doors.
+        //
+        // Skyrim's cities are their own worldspaces, so a visitor living
+        // in Tamriel and a player standing in Solitude have coordinates
+        // that cannot be compared, let alone routed between. Eight of
+        // sixteen dispatches in the first broad run died on exactly
+        // that. What joins the two is a door: one reference in the
+        // player's worldspace, its partner in the visitor's.
+        struct CityGateway
+        {
+            RE::TESObjectREFR* nearSide = nullptr; // in the player's worldspace
+            RE::TESObjectREFR* farSide = nullptr;  // in the visitor's
+            RE::NiPoint3 arrival{};                // where the far door puts you
+            bool Ok() const
+            {
+                return nearSide && farSide;
+            }
+        };
+
+        // Find the nearest door out of `fromWorldSpace` that lands in
+        // `toWorldSpace`.
+        //
+        // Walks the loaded cell grid the same way FineRoads does, since
+        // ForEachReferenceInRange has no binding here. Nearest wins: a
+        // city with several gates should send the visitor to whichever
+        // one the player is actually near.
+        CityGateway FindCityGateway(const RE::NiPoint3& playerPos, RE::FormID toWorldSpace)
+        {
+            CityGateway best;
+            float bestDist = -1.0f;
+
+            auto* tes = RE::TES::GetSingleton();
+            if (!tes) {
+                return best;
+            }
+            auto* grid = tes->gridCells;
+            if (!grid || !grid->cells) {
+                return best;
+            }
+
+            for (std::uint32_t gx = 0; gx < grid->length; ++gx) {
+                for (std::uint32_t gy = 0; gy < grid->length; ++gy) {
+                    auto* cell = grid->GetCell(gx, gy);
+                    if (!cell || !cell->IsAttached()) {
+                        continue;
+                    }
+                    cell->ForEachReference([&](RE::TESObjectREFR* candidate) {
+                        if (!candidate) {
+                            return RE::BSContainer::ForEachResult::kContinue;
+                        }
+                        auto* teleport = candidate->extraList.GetByType<RE::ExtraTeleport>();
+                        if (!teleport || !teleport->teleportData) {
+                            return RE::BSContainer::ForEachResult::kContinue;
+                        }
+                        auto linked = teleport->teleportData->linkedDoor.get();
+                        auto* farDoor = linked.get();
+                        if (!farDoor) {
+                            return RE::BSContainer::ForEachResult::kContinue;
+                        }
+                        auto* farCell = CellOf(farDoor);
+                        if (!farCell || farCell->IsInteriorCell()) {
+                            return RE::BSContainer::ForEachResult::kContinue;
+                        }
+                        auto* farWs = farCell->GetRuntimeData().worldSpace;
+                        if (!farWs || farWs->GetFormID() != toWorldSpace) {
+                            return RE::BSContainer::ForEachResult::kContinue;
+                        }
+                        const float d = Dist2D(candidate->GetPosition(), playerPos);
+                        if (bestDist < 0.0f || d < bestDist) {
+                            bestDist = d;
+                            best.nearSide = candidate;
+                            best.farSide = farDoor;
+                            best.arrival = teleport->teleportData->position;
+                        }
+                        return RE::BSContainer::ForEachResult::kContinue;
+                    });
+                }
+            }
+            return best;
+        }
+
         struct Endpoints
         {
             bool resolved = false;
@@ -678,6 +759,10 @@ namespace NarrativeEngine::VisitArrivalPoint
             return "fine-road";
         case Tier::CoarseBearing:
             return "coarse-bearing";
+        case Tier::CityApproach:
+            return "city-approach";
+        case Tier::CityGate:
+            return "city-gate";
         case Tier::None:
         default:
             return "none";
@@ -721,11 +806,93 @@ namespace NarrativeEngine::VisitArrivalPoint
             return result;
         }
         if (ends.sender.worldSpace != ends.player.worldSpace) {
-            logger::info("VisitArrivalPoint: sender=0x{:08X} tier=none — different worldspaces "
-                         "(sender=0x{:08X} player=0x{:08X})",
+            // A walled city, almost always. The two are not in the
+            // same coordinate system, so nothing can be routed between
+            // them directly -- but a door joins them, and the visitor can
+            // walk through it like anybody else.
+            // Measured from where the player IS IN THAT WORLDSPACE,
+            // which is not always where they are standing. A player in a
+            // city inn has interior coordinates that mean nothing against
+            // the gate's; `ResolveOrigin` has already walked them out
+            // their own front door, and that doorstep is the position
+            // every city decision below is made from.
+            const RE::NiPoint3& cityAnchorPos = ends.player.position;
+            const bool playerIndoors = ends.player.viaLoadDoor;
+
+            const auto gateway = MainThread::Run(
+                pt, [&](const MainThread::Token&) { return FindCityGateway(cityAnchorPos, ends.sender.worldSpace); });
+            if (!gateway.Ok()) {
+                logger::info("VisitArrivalPoint: sender=0x{:08X} tier=none — different worldspaces "
+                             "(sender=0x{:08X} player=0x{:08X}) and no door between them in the loaded "
+                             "cells",
+                             senderId,
+                             ends.sender.worldSpace,
+                             ends.player.worldSpace);
+                return result;
+            }
+
+            const auto gatePos = gateway.nearSide->GetPosition();
+            logger::info("VisitArrivalPoint: sender=0x{:08X} across worldspaces "
+                         "(sender=0x{:08X} player=0x{:08X}); player_indoors={} measured from "
+                         "({:.0f},{:.0f}); gate at ({:.0f},{:.0f}), {:.0f}u out",
                          senderId,
                          ends.sender.worldSpace,
-                         ends.player.worldSpace);
+                         ends.player.worldSpace,
+                         playerIndoors,
+                         cityAnchorPos.x,
+                         cityAnchorPos.y,
+                         gatePos.x,
+                         gatePos.y,
+                         Dist2D(gatePos, cityAnchorPos));
+
+            // Inside the walls first. Somewhere between the player and
+            // the gate reads as the visitor having already come through
+            // it, which is a shorter and more natural walk than watching
+            // them traverse the gate.
+            GateTally cityTally;
+            auto inside = MainThread::Run(pt, [&](const MainThread::Token&) {
+                return SampleBearingArc(
+                    cityAnchorPos, ends.playerAngleZ, gatePos, minDist, maxDist, coverRadius, cityTally);
+            });
+            if (!inside.empty()) {
+                result.tier = Tier::CityApproach;
+                result.point = inside.front();
+                result.fallbacks.assign(inside.begin() + 1, inside.end());
+                // The point is in the player's worldspace but not
+                // necessarily in the player's CELL: a player still inside
+                // the inn would have the marker built in the inn. The
+                // city side of the gate is the nearest reference known to
+                // be standing on the ground this point is on.
+                if (playerIndoors) {
+                    result.placementAnchor = gateway.nearSide->GetFormID();
+                }
+                logger::info("VisitArrivalPoint: sender=0x{:08X} tier=city-approach at "
+                             "({:.0f},{:.0f},{:.0f}) inside the walls, anchored on 0x{:08X} | city[{}]",
+                             senderId,
+                             result.point.x,
+                             result.point.y,
+                             result.point.z,
+                             result.placementAnchor,
+                             cityTally.Describe());
+                return result;
+            }
+
+            // Nothing usable inside -- most often because the player can
+            // see the whole way to the gate. So put the visitor on the
+            // far side of it and let them walk in, which is what the
+            // player would expect to see anyway.
+            result.tier = Tier::CityGate;
+            result.point = gateway.arrival;
+            result.point.z += kGroundClearanceUnits;
+            result.placementAnchor = gateway.farSide->GetFormID();
+            logger::info("VisitArrivalPoint: sender=0x{:08X} tier=city-gate at ({:.0f},{:.0f},{:.0f}) "
+                         "outside the gate, anchored on 0x{:08X} | city[{}]",
+                         senderId,
+                         result.point.x,
+                         result.point.y,
+                         result.point.z,
+                         result.placementAnchor,
+                         cityTally.Describe());
             return result;
         }
 

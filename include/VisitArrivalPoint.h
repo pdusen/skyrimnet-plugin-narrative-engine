@@ -86,6 +86,8 @@ namespace NarrativeEngine::VisitArrivalPoint
         None,
         FineRoad,
         CoarseBearing,
+        CityApproach, // inside the player's walled worldspace, toward the gate
+        CityGate,     // the far side of that gate, in the visitor's worldspace
     };
 
     const char* TierName(Tier tier);
@@ -107,6 +109,18 @@ namespace NarrativeEngine::VisitArrivalPoint
         std::vector<RE::NiPoint3> fallbacks;
 
         Tier tier = Tier::None;
+
+        // The reference a placement marker must be created from, or 0
+        // to create it from the player.
+        //
+        // PlaceObjectAtMe builds its reference in the CALLER's cell, so
+        // placing from the player is only right when `point` is in the
+        // cell the player is standing in. The two city tiers are exactly
+        // when it is not: CityGate sits in another worldspace, and
+        // CityApproach found via a doorstep sits outside an interior the
+        // player has not left yet. Both hand back a door reference
+        // already standing in the right place to build from.
+        RE::FormID placementAnchor = 0;
 
         bool Ok() const
         {

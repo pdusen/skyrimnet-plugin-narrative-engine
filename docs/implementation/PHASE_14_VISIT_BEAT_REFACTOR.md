@@ -1001,8 +1001,8 @@ This phase is complete when:
 ## Arrivals beyond the numbered plan
 
 The first broad in-game run — sixteen dispatches across six wilderness spots and four cities — turned up four
-faults. Two are fixed; two are designed and not yet built, and are written down here rather than folded into
-an existing step because each is a change of shape rather than a tuning.
+faults. All four are fixed, and each is written down here rather than folded into an existing step because
+each was a change of shape rather than a tuning.
 
 ### Done: the band's ceiling stopped being a wall
 
@@ -1046,21 +1046,48 @@ forcing its frontier heuristic to misfire needs coarse-join geometry that is fid
 worth more time. So the corridor's benefit rests on the mechanism and on the in-game evidence (two of six
 arrivals from the wrong side), not on a test that fails without it. The next in-game run is the real check.
 
-### To do: cities are a different worldspace
+### Done: a walled city is reached through its gate
 
 Eight of the sixteen dispatches died on one line — `different worldspaces` — with senders in Tamriel
 (`0000003C`) and the player in `RiftenWorld`, `MarkarthWorld`, `SolitudeWorld` or `WindhelmWorld`. The
-equality check gives up rather than routing.
+equality check gave up rather than routing, and indoors was the same fault wearing a different hat: a city
+inn's load door lands in the *city* worldspace, so `ResolveOrigin` returns `SolitudeWorld` and the mismatch
+fired there too.
 
-Indoors is the same fault wearing a different hat: a city inn's load door lands in the *city* worldspace, so
-`ResolveOrigin` returns `SolitudeWorld` and the mismatch fires again. One fix has to cover both, and the
-indoor case needs deciding explicitly rather than assumed to fall out.
+Two tiers now sit below the road ones, reached only when the worldspaces differ:
 
-The shape: when the worldspaces differ, find the nearest door in the player's worldspace whose linked door
-lands in the sender's, which is the city gate, and route from the gate's far side toward the sender. Where
-the gate is in clear view ahead of the player, place the visitor just outside it and let them path in
-through it. Note that the arrival then sits in a different worldspace from the player, which neither the warp
-nor the escort has ever been asked to handle.
+- **`CityApproach`** — sample the bearing arc from the player toward the gate and place the visitor inside
+  the walls, already through it. A shorter and more natural walk than watching someone traverse a gate.
+- **`CityGate`** — where nothing inside the walls is usable, place the visitor at the gate's own arrival
+  spot, outside, and let them path in. This is the first arrival that does not share a worldspace with the
+  player, and three pieces of existing logic had to be told about it.
+
+The gate is found by walking the loaded cell grid for the nearest door whose `ExtraTeleport` linked door
+lands in the sender's worldspace. Nearest wins, because a city with several gates should use the one the
+player is beside.
+
+**Everything is measured from `ResolveOrigin`'s answer, not from `GetPosition`.** A player in a city inn has
+interior coordinates that mean nothing against a gate's, and `ResolveOrigin` has already walked them out
+their own front door. That doorstep is the centre of the arc, the origin of the nearest-gate search, and
+the elevation reference — which is what makes the indoor case fall out of the outdoor one instead of
+needing its own path.
+
+**`Result::placementAnchor`** is the reference a marker is built from. `PlaceObjectAtMe` builds in the
+CALLER's cell, so placing from the player is only correct when the arrival is in the cell the player is
+standing in. Both city tiers can break that: `CityGate` by worldspace, and `CityApproach` by the player
+still being inside the inn. Each hands back a door reference already standing on the right ground — the far
+side for `CityGate`, the city side for an indoor `CityApproach`.
+
+**The approach's distance checks wait.** `DistancesAreComparable` holds the Salutation greeting and the
+stuck-recovery escort until the sender and the player share a worldspace, which happens the moment the
+visitor walks through the gate. `GetDistance` across two coordinate systems is arithmetic on unrelated
+numbers: it can read as a few hundred units and fire the greeting through a wall, or as tens of thousands
+and never fire at all. Interiors count as not comparable for the same reason. The approach TIMEOUT keeps
+running throughout, so a visitor who never makes it through still resolves the beat rather than wedging it.
+
+A `crossWorldspace` flag on the result was built and then removed: the live cell check answers the same
+question and stays true as the visitor moves, where a flag captured at compose time starts lying the moment
+they step through the gate.
 
 ---
 
