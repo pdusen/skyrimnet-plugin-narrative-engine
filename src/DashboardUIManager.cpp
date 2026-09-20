@@ -63,11 +63,15 @@ namespace NarrativeEngine::DashboardUIManager
         // non-main thread.
         //
         // The comparison is in DirectX-scan-code space throughout — the
-        // native input space of SKSE's button events and SkyUI's keymap
-        // controls. `Settings::Get().dashboardHotkeyDXSC` is likewise a
-        // scan code (populated from the plugin INI or overridden at
-        // runtime by _ne_MCM.psc's ModEvent), so no scan/VK translation
-        // is needed.
+        // input space of SKSE's *keyboard* button events and SkyUI's
+        // keymap controls. `Settings::Get().dashboardHotkeyDXSC` is
+        // likewise a scan code (populated from the plugin INI or
+        // overridden at runtime by _ne_MCM.psc's ModEvent), so no
+        // scan/VK translation is needed. It does mean every event from
+        // another device has to be dropped before the comparison — see
+        // the device gate in ProcessEvent — because the mouse and the
+        // gamepad number their buttons in their own spaces, which
+        // overlap the scan codes without meaning the same thing.
 
         // DIK_ESCAPE. Used for the "ESC closes the dashboard" affordance
         // below. Modifier reads still use GetAsyncKeyState, which speaks
@@ -104,6 +108,37 @@ namespace NarrativeEngine::DashboardUIManager
                     const std::uint32_t dxsc = btn->GetIDCode();
                     if (dxsc == 0)
                         continue;
+
+                    // Device gate. GetIDCode() is numbered per device, not
+                    // in one shared scan-code space: the mouse counts its
+                    // own buttons from zero, so wheel-down reports 9 —
+                    // the same number as the keyboard's DIK_8 — and right
+                    // mouse reports 1, the same number as DIK_ESCAPE. The
+                    // gamepad numbers its buttons in a third space again.
+                    // A binding is stored as a keyboard scan code, so
+                    // comparing it against any other device compares two
+                    // different alphabets: a tester bound to Shift+8 had
+                    // the dashboard toggle on every scroll notch, because
+                    // sprinting holds Shift and each notch reports 9.
+                    // This sits ahead of every branch below so a wheel
+                    // notch can neither toggle the view, nor close it via
+                    // the ESC affordance, nor bind itself during capture.
+                    // Full collision table and the log signature in
+                    // docs/engine-findings/buttonevent-idcode-is-per-device.md.
+                    if (e->GetDevice() != RE::INPUT_DEVICE::kKeyboard) {
+                        // Traced only when the code would otherwise have
+                        // matched — the whole point is to surface a
+                        // cross-device collision, and tracing every mouse
+                        // click and scroll notch would bury it.
+                        if (trace && static_cast<int>(dxsc) == Settings::Get().dashboardHotkeyDXSC) {
+                            logger::trace("DashboardUIManager[trace]:  reject DXSC {} from non-keyboard device {} "
+                                          "(collides with the configured binding)",
+                                          dxsc,
+                                          static_cast<int>(e->GetDevice()));
+                        }
+                        continue;
+                    }
+
                     if (trace) {
                         // GetAsyncKeyState here is used purely for the
                         // diagnostic — the actual match logic below reads
