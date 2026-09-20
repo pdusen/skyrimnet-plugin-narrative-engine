@@ -1106,3 +1106,111 @@ TEST_CASE("VisitArrivalPoint still arrives when the road under the player is a s
         REQUIRE(distance <= 2500.0f);
     }
 }
+
+TEST_CASE("VisitArrivalPoint measures from the player's doorstep, not their front room", "[VisitArrivalPoint][engine]")
+{
+    // A player inside a building has interior coordinates -- small numbers
+    // local to the cell that mean nothing against a road. Every dispatch
+    // with the player indoors fed them to the coarse graph, which answered
+    // with whatever node sits near the worldspace origin, and chased a
+    // corridor ten thousand units off in the wrong direction.
+    //
+    // Interiors and the doorstep are deliberately on OPPOSITE sides of the
+    // worldspace here, so an answer taken from the wrong one cannot
+    // accidentally look right.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+
+    auto* navi = engine.AddNavMeshInfoMap(kNavi);
+    std::uint32_t nextForm = 0x00D07000u;
+    std::vector<const RE::BSNavmeshInfo*> road;
+    for (int cellX = 0; cellX <= 6; ++cellX) {
+        road.push_back(
+            engine.AddNavmeshInfo(navi, nextForm++, kWorld, static_cast<std::int16_t>(cellX), 0, 0.0f, 0.0f, 0.0f));
+    }
+    engine.AddPreferredPath(navi, road);
+    TravelGraph::Initialize();
+    REQUIRE(TravelGraph::NodeCount() > 0);
+
+    auto* space = engine.AddWorldSpace(kWorld);
+    auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+    LayGround(engine);
+    CoverEverywhere(engine);
+
+    // The doorstep sits on the road's first node; home is far east along it.
+    const RE::NiPoint3 doorstep = At(2048.0f, 2048.0f);
+    auto* inn = engine.AddExteriorCell(space, 9, 9, nullptr);
+    engine.SetCellInterior(inn, true);
+    engine.AddLoadDoor(inn, 0x00D07100u, cell, doorstep);
+
+    // Interior coordinates, and nowhere near the doorstep in world terms.
+    auto* player = ActorAt(engine, kPlayer, inn, At(-20000.0f, -20000.0f));
+    auto* sender = ActorAt(engine, kSender, cell, At(24576.0f, 2048.0f));
+    const auto result = FindFor(sender, player);
+
+    SECTION("should place the visitor near where the player will come out")
+    {
+        REQUIRE(result.Ok());
+        REQUIRE(Dist2D(result.point, doorstep) <= 8000.0f);
+    }
+
+    SECTION("should bring them in from the direction of home, measured from there")
+    {
+        // East of the doorstep. Measured from the interior position the
+        // bearing would run northeast toward the doorstep instead, which is
+        // the failure this pins.
+        REQUIRE(result.Ok());
+        REQUIRE(result.point.x > doorstep.x);
+        REQUIRE(std::fabs(result.point.y - doorstep.y) < std::fabs(result.point.x - doorstep.x));
+    }
+}
+
+TEST_CASE("VisitArrivalPoint does not take its bearing from the nearest scrap of road", "[VisitArrivalPoint][engine]")
+{
+    // The coarse graph holds one node per navmesh cell, so the node nearest
+    // the player can sit most of a cell away in a direction decided by where
+    // the road runs rather than by where the visitor lives. Aiming the
+    // fallback arc at it produced arrivals 115, 159 and 207 degrees off home
+    // in one run.
+    //
+    // The road here runs due east to the visitor, but it starts with a spur
+    // hanging SOUTH of the player, and that spur holds the node nearest to
+    // them.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+
+    auto* navi = engine.AddNavMeshInfoMap(kNavi);
+    std::uint32_t nextForm = 0x00D08000u;
+    std::vector<const RE::BSNavmeshInfo*> road;
+    // The spur: one cell south of the player, and the closest node to them.
+    road.push_back(engine.AddNavmeshInfo(navi, nextForm++, kWorld, 0, -1, 0.0f, 0.0f, 0.0f));
+    for (int cellX = 0; cellX <= 6; ++cellX) {
+        road.push_back(
+            engine.AddNavmeshInfo(navi, nextForm++, kWorld, static_cast<std::int16_t>(cellX), 0, 0.0f, 0.0f, 0.0f));
+    }
+    engine.AddPreferredPath(navi, road);
+    TravelGraph::Initialize();
+    REQUIRE(TravelGraph::NodeCount() > 0);
+
+    auto* space = engine.AddWorldSpace(kWorld);
+    auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+    LayGround(engine);
+    CoverEverywhere(engine);
+
+    // Standing between the spur and the road east, nearer the spur, and with
+    // no fine graph at all so the bearing is the only tier left.
+    const RE::NiPoint3 playerPos = At(2048.0f, 700.0f);
+    auto* player = ActorAt(engine, kPlayer, cell, playerPos);
+    auto* sender = ActorAt(engine, kSender, cell, At(26624.0f, 2048.0f));
+    REQUIRE(FineRoads::NodeCount() == 0);
+    const auto result = FindFor(sender, player);
+
+    SECTION("should aim down the road home rather than at the spur")
+    {
+        // The spur node is due south. An arrival south of the player is the
+        // bug; east of them is the road the visitor would walk.
+        REQUIRE(result.Ok());
+        REQUIRE(result.tier == VisitArrivalPoint::Tier::CoarseBearing);
+        REQUIRE(result.point.x > playerPos.x);
+    }
+}

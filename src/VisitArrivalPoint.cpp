@@ -78,6 +78,24 @@ namespace NarrativeEngine::VisitArrivalPoint
         // coarse path until it has actually gone somewhere.
         constexpr float kBearingMinSeparationUnits = 1000.0f;
 
+        // How far out a coarse node has to be before the bearing to it
+        // says anything about which way home is.
+        //
+        // The coarse graph is sampled at one node per navmesh cell, so
+        // `FindNearestNode` can hand back a node anywhere within roughly
+        // half a cell diagonal of the player -- and which side it lands
+        // on is decided by where the road network happens to run, not by
+        // where the visitor lives. Aiming the arc at it produced
+        // arrivals 115, 159 and 207 degrees off the direction home in
+        // one run.
+        //
+        // A whole cell is the smallest separation at which the answer
+        // stops being an artefact of the sampling, so that is the floor.
+        // It is deliberately larger than `kBearingMinSeparationUnits`,
+        // which guards a different thing: that the visitor does not
+        // appear on top of the player.
+        constexpr float kBearingAimMinUnits = 4096.0f;
+
         // The stretch of road a visitor would actually walk in on.
         //
         // Routing straight from the player to the sender does not give
@@ -114,8 +132,11 @@ namespace NarrativeEngine::VisitArrivalPoint
                             const RE::NiPoint3& senderPos,
                             const RE::NiPoint3& playerPos,
                             RE::NiPoint3& out,
+                            RE::NiPoint3& aim,
+                            bool& haveAim,
                             std::string& why)
         {
+            haveAim = false;
             const auto fromSender = TravelGraph::FindNearestNode(worldSpace, senderPos.x, senderPos.y);
             const auto toPlayer = TravelGraph::FindNearestNode(worldSpace, playerPos.x, playerPos.y);
             if (fromSender == TravelGraph::kInvalidNode || toPlayer == TravelGraph::kInvalidNode) {
@@ -135,17 +156,44 @@ namespace NarrativeEngine::VisitArrivalPoint
 
             // Backwards from the player's end: the first node far enough
             // out to point somewhere is the way in.
+            //
+            // `aim` is a second, stricter pick off the same path. The way
+            // in wants to be NEAR, so that routing to it keeps the plan
+            // inside fine coverage; a bearing wants to be FAR, so that it
+            // describes the road home rather than the nearest scrap of
+            // road. One walk answers both.
+            bool haveWayIn = false;
             for (auto it = path.rbegin(); it != path.rend(); ++it) {
                 const auto* node = TravelGraph::GetNode(*it);
                 if (!node) {
                     continue;
                 }
                 const RE::NiPoint3 at{node->x, node->y, node->z};
-                if (Dist2D(at, playerPos) >= kBearingMinSeparationUnits) {
+                const float away = Dist2D(at, playerPos);
+                if (!haveWayIn && away >= kBearingMinSeparationUnits) {
                     out = at;
-                    why = "ok";
-                    return true;
+                    haveWayIn = true;
                 }
+                // Never the player's own nearest node, however far off it
+                // sits: it says where the network is, not where home is.
+                if (it != path.rbegin() && away >= kBearingAimMinUnits) {
+                    aim = at;
+                    haveAim = true;
+                    break;
+                }
+            }
+
+            if (!haveAim) {
+                // Nothing on the route is far enough to be a direction.
+                // The visitor's own origin is then the honest answer --
+                // a straight line home, which ignores the road but does
+                // not point away from it.
+                aim = senderPos;
+                haveAim = true;
+            }
+            if (haveWayIn) {
+                why = "ok";
+                return true;
             }
             why = "every coarse node on the route sits on top of the player";
             return false;
@@ -704,7 +752,6 @@ namespace NarrativeEngine::VisitArrivalPoint
             RoadRoute::Origin sender;
             RoadRoute::Origin player;
             OriginSource playerSource = OriginSource::Unresolved;
-            RE::NiPoint3 playerPos{};
             // Which way the player is facing, for the unseen-arrival
             // test. Captured here with the position because both are
             // engine reads and this is the one main-thread hop that
@@ -751,7 +798,6 @@ namespace NarrativeEngine::VisitArrivalPoint
             Endpoints out;
             out.senderSource = ResolveActorOrigin(mt, sender, "sender", out.sender);
             out.playerSource = ResolveActorOrigin(mt, player, "player", out.player);
-            out.playerPos = player->GetPosition();
             out.playerAngleZ = player->data.angle.z;
             out.resolved = out.sender.valid && out.player.valid;
             return out;
@@ -859,6 +905,21 @@ namespace NarrativeEngine::VisitArrivalPoint
             return result;
         }
 
+        // Where the player IS IN THIS WORLDSPACE, which is not always
+        // where they are standing.
+        //
+        // `player->GetPosition()` is not it. Inside a building that is
+        // interior coordinates -- small numbers local to the cell that
+        // mean nothing against a road. Feeding them to
+        // `FindNearestNode` picks whatever coarse node happens to sit
+        // near the worldspace origin, and every dispatch with the player
+        // indoors chased a corridor ten thousand units away in the wrong
+        // direction because of it. `ResolveOrigin` has already walked
+        // them out their own front door; that doorstep is the anchor.
+        //
+        // Outdoors the two are the same value, so nothing changes there.
+        const RE::NiPoint3& anchorPos = ends.player.position;
+
         // Pure queries over both graphs — deliberately NOT inside a
         // main-thread hop.
         //
@@ -867,9 +928,16 @@ namespace NarrativeEngine::VisitArrivalPoint
         // lets Route's frontier heuristic pick the branch behind the
         // player, and it did.
         RE::NiPoint3 corridor{};
+        RE::NiPoint3 corridorAim{};
+        bool haveCorridorAim = false;
         std::string corridorWhy;
-        const bool haveCorridor =
-            CorridorTarget(ends.player.worldSpace, ends.sender.position, ends.playerPos, corridor, corridorWhy);
+        const bool haveCorridor = CorridorTarget(ends.player.worldSpace,
+                                                 ends.sender.position,
+                                                 anchorPos,
+                                                 corridor,
+                                                 corridorAim,
+                                                 haveCorridorAim,
+                                                 corridorWhy);
         const RE::NiPoint3 routeTo = haveCorridor ? corridor : ends.sender.position;
         if (!haveCorridor) {
             // Falling back to the sender's own position restores the old
@@ -891,7 +959,7 @@ namespace NarrativeEngine::VisitArrivalPoint
         if (plan.valid && !plan.finePath.empty()) {
             kept = MainThread::Run(pt, [&](const MainThread::Token&) {
                 return WalkFinePath(
-                    plan.finePath, ends.playerPos, ends.playerAngleZ, minDist, maxDist, coverRadius, fineTally);
+                    plan.finePath, anchorPos, ends.playerAngleZ, minDist, maxDist, coverRadius, fineTally);
             });
             if (!kept.empty()) {
                 tier = Tier::FineRoad;
@@ -915,11 +983,11 @@ namespace NarrativeEngine::VisitArrivalPoint
             RE::NiPoint3 toward{};
             bool haveToward = false;
             const char* towardSource = "none";
-            if (haveCorridor) {
-                toward = corridor;
+            if (haveCorridorAim) {
+                toward = corridorAim;
                 haveToward = true;
                 towardSource = "corridor";
-            } else if (plan.valid && BearingHome(plan.coarsePath, ends.playerPos, toward)) {
+            } else if (plan.valid && BearingHome(plan.coarsePath, anchorPos, toward)) {
                 haveToward = true;
                 towardSource = "coarse-route";
             }
@@ -941,11 +1009,11 @@ namespace NarrativeEngine::VisitArrivalPoint
                              senderId,
                              toward.x,
                              toward.y,
-                             Dist2D(toward, ends.playerPos),
+                             Dist2D(toward, anchorPos),
                              towardSource);
                 kept = MainThread::Run(pt, [&](const MainThread::Token&) {
                     return SampleBearingArc(
-                        ends.playerPos, ends.playerAngleZ, toward, minDist, maxDist, coverRadius, bearingTally);
+                        anchorPos, ends.playerAngleZ, toward, minDist, maxDist, coverRadius, bearingTally);
                 });
                 if (!kept.empty()) {
                     tier = Tier::CoarseBearing;
@@ -966,7 +1034,7 @@ namespace NarrativeEngine::VisitArrivalPoint
                          OriginSourceName(ends.senderSource),
                          ends.player.position.x,
                          ends.player.position.y,
-                         ends.playerPos.z,
+                         anchorPos.z,
                          ends.player.viaLoadDoor ? " via-door" : "",
                          minDist,
                          maxDist,
@@ -998,9 +1066,8 @@ namespace NarrativeEngine::VisitArrivalPoint
         // locate the arrival on a map; `tier` is what says whether the
         // route was honoured.
         const float homeBearing =
-            ToDegrees(std::atan2(ends.sender.position.y - ends.playerPos.y, ends.sender.position.x - ends.playerPos.x));
-        const float pointBearing =
-            ToDegrees(std::atan2(result.point.y - ends.playerPos.y, result.point.x - ends.playerPos.x));
+            ToDegrees(std::atan2(ends.sender.position.y - anchorPos.y, ends.sender.position.x - anchorPos.x));
+        const float pointBearing = ToDegrees(std::atan2(result.point.y - anchorPos.y, result.point.x - anchorPos.x));
 
         logger::info("VisitArrivalPoint: sender=0x{:08X} tier={} — ws=0x{:08X} home=({:.0f},{:.0f}) via={} "
                      "player=({:.0f},{:.0f},{:.0f}){} point=({:.0f},{:.0f},{:.0f}) dist={:.0f}u dz={:+.0f}u "
@@ -1012,15 +1079,15 @@ namespace NarrativeEngine::VisitArrivalPoint
                      ends.sender.position.x,
                      ends.sender.position.y,
                      OriginSourceName(ends.senderSource),
-                     ends.playerPos.x,
-                     ends.playerPos.y,
-                     ends.playerPos.z,
+                     anchorPos.x,
+                     anchorPos.y,
+                     anchorPos.z,
                      ends.player.viaLoadDoor ? " via-door" : "",
                      result.point.x,
                      result.point.y,
                      result.point.z,
-                     Dist2D(result.point, ends.playerPos),
-                     result.point.z - ends.playerPos.z,
+                     Dist2D(result.point, anchorPos),
+                     result.point.z - anchorPos.z,
                      homeBearing,
                      pointBearing,
                      plan.destinationWithinFine,
@@ -1039,7 +1106,7 @@ namespace NarrativeEngine::VisitArrivalPoint
                           result.fallbacks[i].x,
                           result.fallbacks[i].y,
                           result.fallbacks[i].z,
-                          Dist2D(result.fallbacks[i], ends.playerPos));
+                          Dist2D(result.fallbacks[i], anchorPos));
         }
         return result;
     }
