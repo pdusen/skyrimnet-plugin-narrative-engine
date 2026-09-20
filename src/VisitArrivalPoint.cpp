@@ -65,11 +65,91 @@ namespace NarrativeEngine::VisitArrivalPoint
         constexpr int kBearingAzimuthSamples = 9;
         constexpr int kBearingRadiusSamples = 5;
 
+        float Dist2D(const RE::NiPoint3& a, const RE::NiPoint3& b)
+        {
+            const float dx = a.x - b.x;
+            const float dy = a.y - b.y;
+            return std::sqrt(dx * dx + dy * dy);
+        }
+
         // A coarse node nearer than this to the player says nothing
         // about direction — CoarseOnly plans start at the node NEAREST
         // the player, which can be almost on top of them. Walk the
         // coarse path until it has actually gone somewhere.
         constexpr float kBearingMinSeparationUnits = 1000.0f;
+
+        // The stretch of road a visitor would actually walk in on.
+        //
+        // Routing straight from the player to the sender does not give
+        // this. `RoadRoute::Route` picks which frontier to hand off at by
+        // total journey cost, and its own header records that the coarse
+        // half of that sum underestimates in a way nobody has verified —
+        // so when the forward branch has no cover, the search will take
+        // the rearward one and the visitor walks in from behind. Two of
+        // six arrivals in the first broad run did exactly that.
+        //
+        // So the corridor is built the other way round, as the coarse
+        // route decides it:
+        //
+        //   1. Coarse path from the sender's origin to the player. This
+        //      is the province-scale route and has no frontier heuristic
+        //      in it.
+        //   2. Walk back from the player's end of that path to the first
+        //      node genuinely clear of them. That node is where the
+        //      approach comes THROUGH.
+        //   3. Route the player to THAT, not to the sender. The
+        //      destination is now close, so Route takes its
+        //      destination-within-fine branch and returns a plain fine
+        //      path with no handoff to choose.
+        //
+        // What comes back is the road between the player and the way in,
+        // which is the only stretch a candidate has any business being
+        // on.
+        //
+        // A rejected alternative, recorded because it is the obvious one:
+        // requiring each candidate to be closer to the sender than the
+        // player is. Roads run away before they curve back, and that test
+        // refuses every one that does.
+        bool CorridorTarget(RE::FormID worldSpace,
+                            const RE::NiPoint3& senderPos,
+                            const RE::NiPoint3& playerPos,
+                            RE::NiPoint3& out,
+                            std::string& why)
+        {
+            const auto fromSender = TravelGraph::FindNearestNode(worldSpace, senderPos.x, senderPos.y);
+            const auto toPlayer = TravelGraph::FindNearestNode(worldSpace, playerPos.x, playerPos.y);
+            if (fromSender == TravelGraph::kInvalidNode || toPlayer == TravelGraph::kInvalidNode) {
+                why = "no coarse node for one end";
+                return false;
+            }
+            if (fromSender == toPlayer) {
+                why = "both ends share one coarse node";
+                return false;
+            }
+
+            const auto path = TravelGraph::FindPath(fromSender, toPlayer);
+            if (path.empty()) {
+                why = "no coarse route between them";
+                return false;
+            }
+
+            // Backwards from the player's end: the first node far enough
+            // out to point somewhere is the way in.
+            for (auto it = path.rbegin(); it != path.rend(); ++it) {
+                const auto* node = TravelGraph::GetNode(*it);
+                if (!node) {
+                    continue;
+                }
+                const RE::NiPoint3 at{node->x, node->y, node->z};
+                if (Dist2D(at, playerPos) >= kBearingMinSeparationUnits) {
+                    out = at;
+                    why = "ok";
+                    return true;
+                }
+            }
+            why = "every coarse node on the route sits on top of the player";
+            return false;
+        }
 
         // Largest elevation difference from the player a Tier 2
         // candidate may have, either way.
@@ -142,13 +222,6 @@ namespace NarrativeEngine::VisitArrivalPoint
         float ToDegrees(float radians)
         {
             return radians * 180.0f / 3.14159265f;
-        }
-
-        float Dist2D(const RE::NiPoint3& a, const RE::NiPoint3& b)
-        {
-            const float dx = a.x - b.x;
-            const float dy = a.y - b.y;
-            return std::sqrt(dx * dx + dy * dy);
         }
 
         // Why a candidate was rejected, so a failed search names the
@@ -656,11 +729,29 @@ namespace NarrativeEngine::VisitArrivalPoint
             return result;
         }
 
-        // Pure query over both graphs — deliberately NOT inside a
-        // main-thread hop. Route from the player OUTWARD toward the
-        // sender; finePath then traces the road away from the player in
-        // the direction of the visitor's home.
-        const auto plan = RoadRoute::Route(ends.player.worldSpace, ends.player.position, ends.sender.position);
+        // Pure queries over both graphs — deliberately NOT inside a
+        // main-thread hop.
+        //
+        // Route toward the corridor's way-in rather than toward the
+        // sender directly. See CorridorTarget: routing at the sender
+        // lets Route's frontier heuristic pick the branch behind the
+        // player, and it did.
+        RE::NiPoint3 corridor{};
+        std::string corridorWhy;
+        const bool haveCorridor =
+            CorridorTarget(ends.player.worldSpace, ends.sender.position, ends.playerPos, corridor, corridorWhy);
+        const RE::NiPoint3 routeTo = haveCorridor ? corridor : ends.sender.position;
+        if (!haveCorridor) {
+            // Falling back to the sender's own position restores the old
+            // behaviour, frontier heuristic and all. Logged, because a
+            // visit that arrives from a strange direction wants this line
+            // to explain itself.
+            logger::debug("VisitArrivalPoint: sender=0x{:08X} no approach corridor ({}) — routing at the "
+                          "sender directly",
+                          senderId,
+                          corridorWhy);
+        }
+        const auto plan = RoadRoute::Route(ends.player.worldSpace, ends.player.position, routeTo);
 
         GateTally fineTally;
         GateTally bearingTally;

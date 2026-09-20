@@ -269,6 +269,89 @@ TEST_CASE("VisitArrivalPoint brings the visitor in from the side of the road the
     }
 }
 
+TEST_CASE("VisitArrivalPoint keeps to the road the visitor would actually walk", "[VisitArrivalPoint][engine]")
+{
+    // Where the visitor lives and which way they arrive from are not the
+    // same question, and this is the case that separates them.
+    //
+    // The sender lives far to the EAST. The road to them leaves to the
+    // WEST and loops round -- ordinary geography, and the reason a
+    // "candidate must be closer to home than the player is" rule was
+    // rejected: it would refuse the entire first half of a journey like
+    // this one.
+    //
+    // So the direction has to come from the route rather than from the
+    // bearing. The coarse path decides it, and the fine road between the
+    // player and that route's way in is the only stretch offered. Route
+    // at the sender instead, as this used to, and the answer swings to
+    // the eastern road that goes nowhere near them.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+
+    // A coarse chain that runs west from the player and only then turns
+    // back east to where the sender lives.
+    auto* navi = engine.AddNavMeshInfoMap(kNavi);
+    std::uint32_t nextForm = 0x00D06000u;
+    std::vector<const RE::BSNavmeshInfo*> chain;
+    for (int cellX : {0, -1, -2, -3, 10}) {
+        chain.push_back(
+            engine.AddNavmeshInfo(navi, nextForm++, kWorld, static_cast<std::int16_t>(cellX), 0, 0.0f, 0.0f, 0.0f));
+    }
+    engine.AddPreferredPath(navi, chain);
+    TravelGraph::Initialize();
+    REQUIRE(TravelGraph::NodeCount() > 0);
+
+    auto* space = engine.AddWorldSpace(kWorld);
+    auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+
+    // The fine road has to lie under the coarse one, or the player is
+    // off-road and every candidate is a hop sideways onto it. Coarse
+    // nodes come out at cell centres, so this runs along y=2048 through
+    // the first of them, reaching both ways.
+    {
+        std::vector<Triangle> fineRoad;
+        const int count = 15;
+        for (int i = 0; i < count; ++i) {
+            Triangle t;
+            t.x = 2048.0f + (static_cast<float>(i) - 7.0f) * kNodeSpacing;
+            t.y = 2048.0f;
+            t.z = kGround;
+            t.neighbor[0] = i > 0 ? i - 1 : -1;
+            t.neighbor[1] = i < count - 1 ? i + 1 : -1;
+            // Both ends leave the loaded region, which is what gives
+            // RoadRoute a handoff to choose between -- and choosing it
+            // by journey cost is exactly what used to send the visitor
+            // up the wrong one.
+            if (i == 0 || i == count - 1) {
+                t.portalMesh[2] = 0x00D0FFFFu;
+                t.portalTriangle[2] = 0;
+            }
+            fineRoad.push_back(t);
+        }
+        engine.AddNavMesh(cell, kRoadMesh, fineRoad);
+    }
+    engine.LoadGrid({cell});
+    PollFineRoads();
+    LayGround(engine);
+    CoverEverywhere(engine);
+
+    const RE::NiPoint3 playerPos = At(2048.0f, 2048.0f);
+    auto* player = ActorAt(engine, kPlayer, cell, playerPos);
+
+    SECTION("when the road to them leaves in the opposite direction")
+    {
+        // Far east as the crow flies; reached by walking west.
+        auto* sender = ActorAt(engine, kSender, cell, At(43008.0f, 2048.0f));
+        const auto result = FindFor(sender, player);
+
+        SECTION("should follow the route west, not the bearing east")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(result.point.x < playerPos.x);
+        }
+    }
+}
+
 TEST_CASE("VisitArrivalPoint keeps the arrival inside the distance band", "[VisitArrivalPoint][engine]")
 {
     // A band narrow enough that exactly one node on each side of the player

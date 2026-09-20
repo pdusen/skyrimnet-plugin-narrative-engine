@@ -1024,7 +1024,7 @@ Facing comes from the player's `angle.z` rather than the camera's rotation matri
 established elsewhere in this project and verified by its tests, while the camera node's is not. First person
 makes them identical; third-person free-look can separate them, which the generous arc absorbs.
 
-### To do: constrain candidates to the approach corridor
+### Done: candidates are constrained to the approach corridor
 
 Two of six arrivals came from roughly the opposite direction — home at 51 degrees, arrival at -166; home at
 77, arrival at -129. Nothing in the walk requires a candidate to lie on the route the visitor would actually
@@ -1033,10 +1033,18 @@ take, so when the forward stretch had no cover the search happily took the rearw
 A "must be closer to home than the player is" test was considered and **rejected**: a road that runs away
 before curving back is a perfectly ordinary approach, and that test would refuse all of it.
 
-The design instead: build the coarse path from the sender's origin to the player, take the near endpoint of
-that path, build a fine path from that endpoint to the player, and consider only those nodes and their near
-neighbours. That constrains candidates to the corridor the visitor would genuinely walk, rather than to any
-road the fine graph happens to contain.
+The design instead: build the coarse path from the sender's origin to the player, walk back from the player's
+end of it to the first node genuinely clear of them, and route the player to THAT rather than to the sender.
+The destination is then close enough that `Route` takes its destination-within-fine branch and hands back a
+plain fine path with no frontier to choose. What comes back is the road between the player and the way in,
+which is the only stretch a candidate has any business being on.
+
+**Not covered by a distinguishing test, and worth saying so.** The looping-road case is pinned — a sender who
+lives east but is reached by walking west produces a westward arrival — but three attempts to build a fixture
+where the OLD routing gives a different answer all failed: in each one `Route` happened to agree, because
+forcing its frontier heuristic to misfire needs coarse-join geometry that is fiddly to construct and was not
+worth more time. So the corridor's benefit rests on the mechanism and on the in-game evidence (two of six
+arrivals from the wrong side), not on a test that fails without it. The next in-game run is the real check.
 
 ### To do: cities are a different worldspace
 
