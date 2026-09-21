@@ -409,10 +409,9 @@ is structure.
 `iVisitArrivalCoverRadiusUnits` is `64` — one actor's width, which is what the gate is nominally asking
 about. Step 6's probe reported, and its finding was that the silhouette is **not** the operative parameter:
 under 2000 units the gate already rejects 97% of road candidates at this width, and past that it passes
-nearly everything whatever width it is given, because what defeats it is range. The probe's numbers and the
-change they did produce are under **Arrivals beyond the numbered plan**. All three of these are outputs of a
-measurement rather than preferences, so `Settings.engine.test.cpp` fails if any of them is edited without
-one.
+nearly everything whatever width it is given, because what defeats it is range. The probe's numbers are
+under **Arrivals beyond the numbered plan**. All three of these are outputs of a measurement rather than
+preferences, so `Settings.engine.test.cpp` fails if any of them is edited without one.
 
 ---
 
@@ -838,7 +837,7 @@ anchor stops stranding people.
 
 ### Step 6 — Cover-gate calibration
 
-- [x] Complete — see *Done: the cover gate only answers at short range*
+- [x] Complete — see *Done: the cover gate measured, and left alone*
 
 **[USER]** to gather, **[CLAUDE]** to analyse and set the defaults.
 
@@ -1180,7 +1179,7 @@ own nearest node however far off it sits. Below one cell the bearing to a node i
 sampling. Where the whole route is shorter than that, the aim falls back to the visitor's own origin: a
 straight line home ignores the road but does not point away from it.
 
-### Done: the cover gate only answers at short range
+### Done: the cover gate measured, and left alone
 
 Outside Falkreath the same point was chosen twice — 2355 units out, 955 units above the player, all nine
 cover rays reported blocked — and the visitor was in plain sight both times. Per-candidate logging was added
@@ -1203,37 +1202,33 @@ when anything stops it short of its last 5%, and a longer ray crosses more world
 every one of 101 candidates was declared hidden. Cover proved that way is a hill somewhere in between rather
 than something the visitor is standing behind, and it stops being true the moment either of them moves.
 
-**The gate is therefore scoped to the range it measures well.** Under `kCoverTrustedRangeUnits` — 2000, the
-boundary where the collapse happens — the raycast decides, because it is the only test that can tell a rock
-from open ground. At or past it the raycast is ignored and the candidate must be outside the player's view
-arc instead: a geometric test that does not degrade with range. Both tiers ask it through one `Admits`
-helper rather than each carrying its own copy.
-
-This subsumes the old open-ground rule. `kUnseenDistanceUnits` is gone: it said "no cover is acceptable past
-3000 units if the player is facing away", which was the right idea applied at the wrong point, since cover
-was consulted first and `unseen` never once fired in four runs. The condition is now the only one past the
-boundary rather than a fallback beneath one that always passed.
-
-**Of the three responses this step was set up to choose between, none was taken.** The band is not too
-narrow, the gate does not need relaxing, and the Tier 1 miss rate was never the problem — Tier 1 carried 21
-of 70 searches. The measurement found a fourth answer the design did not anticipate, which is what it was
-for.
+**The gate was not changed, and that is a decision rather than an omission.** The obvious response to the
+table is to scope the raycast to the range it measures well and let the player's facing arc decide past it.
+That was built, and then reverted: it reduces the number of visits on exactly the open-road terrain the
+fourth run had just confirmed working, and trading away a working arrival rate for a failure mode seen once
+is not a trade this phase has evidence for. The measurement stands; acting on it wants its own phase, its
+own in-game run, and a decision made when arrivals are not the thing most recently fixed.
 
 `iVisitArrivalCoverRadiusUnits` stays at `64`, one actor's width. The probe's finding is that widening it is
-not the lever: below the boundary the gate already rejects 97% of road candidates at this width, and above
-it no width helps. Pinned in `Settings.engine.test.cpp` so a silent edit fails.
+not the lever either: below 2000 units the gate already rejects 97% of road candidates at this width, and
+above it no width helps, because what defeats it is range. Pinned in `Settings.engine.test.cpp` so a silent
+edit fails.
+
+**Of the three responses this step was set up to choose between, the third was taken** — accept the Tier 1
+miss rate. Tier 1 carried 21 of 70 searches, the band is not too narrow, and relaxing the gate would make
+the false-positive problem worse rather than better.
 
 An elevation gate on the fine tier was considered and **not** built. Falkreath's candidates climbed from
 +1163 to +2711 units and the mountain pass gave +1791 to +1929, so the bearing tier's 400-unit budget would
 refuse both — and both are places a visit should be possible. Choosing the flattest survivor instead of the
 nearest does not help either: at Falkreath the elevations increase monotonically along the road, so the
-flattest survivor is the one already being chosen. With the range rule in place the Falkreath candidate is
-refused anyway when the player is facing it, which is the case that produced the complaint.
+flattest survivor is the one already being chosen.
 
-**Expected consequence, recorded so it is not a surprise:** a player looking straight down a long open road
-will get fewer visits there than before, because the gate no longer accepts a distant cover claim it cannot
-support. That is the trade this project has already chosen twice — a visible arrival is worse than no
-visit — but it is a real reduction and the next run should be watched for it.
+**What is still open**, recorded so a later phase does not have to rediscover it: an arrival past roughly
+2000 units is admitted on a cover claim the raycast cannot support, and if the player happens to be facing
+that way they will watch it happen. It was seen once, at Falkreath. The per-candidate log line says which
+rule admitted each candidate and how far out it was, so the next occurrence is diagnosable without a
+repeat run.
 
 ---
 
@@ -1250,8 +1245,8 @@ every time they walk out, needing no validation — and the approach never has t
 in game: interior visits work.
 
 **2. How often does Tier 1 find a covered point?** Often enough, and for the wrong reason past 2000 units.
-Tier 1 carried 21 of 70 searches. See *Done: the cover gate only answers at short range* for the pass-rate
-table and what it changed.
+Tier 1 carried 21 of 70 searches. See *Done: the cover gate measured, and left alone* for the pass-rate
+table, what it means, and why nothing was changed on the strength of it.
 
 **3. Does the fine graph reach far enough for the band?** Reach was never the problem; **connectivity** was.
 The graph routinely spans 300–1200 nodes, but it is built per cell and the component under the player can be
