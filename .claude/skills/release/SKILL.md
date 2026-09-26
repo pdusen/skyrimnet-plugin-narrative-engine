@@ -314,20 +314,23 @@ affirmative ("do it", "authorized", "go ahead"). Re-present the
 
 ## 6. Bump the advertised version in tracked files and commit
 
-Two files carry the mod's advertised version and must be updated to match the
+Three files carry the mod's advertised version and must be updated to match the
 accepted `$Version` before the packaged artifact is built (`package.ps1` runs
 `build.ps1` which syncs these into the mod folder — the archive will bake in
 whatever version is on disk at packaging time):
 
 - `statics/SKSE/Plugins/SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml`
   — update the `version: "..."` key in the top-level `plugin:` block.
+- `statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/manifest.json`
+  — update the top-level `version` key to the same value. The build refuses to
+  configure while it disagrees with `manifest.yaml`.
 - `statics/MCM/Config/NarrativeEngine/config.json` — update the
   `valueOptions.value` string on the version-display item under the `About`
   header (the row labeled `"NarrativeEngine"`). Only replace the leading
   `vX.Y.Z` token; preserve any trailing suffix (e.g. `(dev)`) verbatim.
 
-Read both files first to confirm the current values, apply the edits, then
-verify with a `git diff` that only the intended lines changed. If either edit
+Read all three files first to confirm the current values, apply the edits, then
+verify with a `git diff` that only the intended lines changed. If any edit
 produces no diff (file was already at target version), stop and report — the
 bump is a no-op and something is out of order.
 
@@ -336,6 +339,7 @@ that exists on origin:
 
 ```powershell
 git add statics/SKSE/Plugins/SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml `
+        statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/manifest.json `
         statics/MCM/Config/NarrativeEngine/config.json
 git commit -m "chore(release): v$Version"
 git push origin (git branch --show-current)

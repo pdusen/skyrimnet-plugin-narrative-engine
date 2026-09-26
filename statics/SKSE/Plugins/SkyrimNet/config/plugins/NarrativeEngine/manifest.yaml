@@ -1,8 +1,11 @@
 # NarrativeEngine — SkyrimNet plugin manifest.
 #
-# SkyrimNet auto-discovers plugin folders under
+# SkyrimNet before Beta 25 (0.25.0) auto-discovers plugin folders under
 # `Data/SKSE/Plugins/SkyrimNet/config/plugins/<plugin>/` and ingests this
-# file. Two purposes:
+# file. Beta 25 reads the same file, unchanged, as
+# `external/pdusen.narrative-engine/settings/NarrativeEngine.yaml`; the build
+# deploys it to both paths, and `NarrativeEngine` is the config name either
+# way. Two purposes:
 #
 #   1. `variants:` declares named LLM-config profiles. When our C++ side
 #      calls `SendCustomPromptToLLM(promptName, variantName, ctx, cb)`,

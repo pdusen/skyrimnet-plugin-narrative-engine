@@ -324,7 +324,75 @@ if(DEFINED OUTPUT_FOLDER)
     #
     # `make_directory` is idempotent, so multiple files in the same destination
     # subdir cause no issues. `copy_if_different` skips no-op writes.
+    #
+    # SkyrimNet content deploys twice. SkyrimNet before Beta 25 (0.25.0) reads
+    # loose `SkyrimNet/prompts/` and the settings schema at
+    # `SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml`; Beta 25 reads
+    # both from a plugin folder under `SkyrimNet/external/<id>/`, next to its
+    # `manifest.json`, with the schema renamed to `settings/NarrativeEngine.yaml`.
+    # Beta 25 ignores the old prompts and prefers the new schema over the old
+    # one; older builds don't know `external/`. Shipping both keeps us working
+    # on either. The source tree keeps one copy, at the old paths.
+    #
+    # Each pair maps a legacy path prefix to its plugin-folder counterpart; a
+    # prefix that is a whole file path mirrors just that file.
     set(STATICS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/statics")
+    set(SKYRIMNET_STATICS_DIR "${STATICS_SOURCE_DIR}/SKSE/Plugins/SkyrimNet")
+    set(SKYRIMNET_PLUGIN_ID "pdusen.narrative-engine")
+    set(SKYRIMNET_EXTERNAL_DIR
+        "SKSE/Plugins/SkyrimNet/external/${SKYRIMNET_PLUGIN_ID}"
+    )
+    set(SKYRIMNET_LEGACY_PATHS
+        "SKSE/Plugins/SkyrimNet/prompts/"
+        "SKSE/Plugins/SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml"
+    )
+    set(SKYRIMNET_EXTERNAL_PATHS
+        "${SKYRIMNET_EXTERNAL_DIR}/prompts/"
+        "${SKYRIMNET_EXTERNAL_DIR}/settings/NarrativeEngine.yaml"
+    )
+
+    # The Beta 25 manifest must name the folder it sits in (SkyrimNet rejects
+    # the whole folder otherwise), and it carries a second copy of the version
+    # the YAML manifest advertises. Fail the configure rather than ship either
+    # mismatch.
+    set(SKYRIMNET_YAML_MANIFEST
+        "${SKYRIMNET_STATICS_DIR}/config/plugins/NarrativeEngine/manifest.yaml"
+    )
+    set(SKYRIMNET_JSON_MANIFEST
+        "${SKYRIMNET_STATICS_DIR}/external/${SKYRIMNET_PLUGIN_ID}/manifest.json"
+    )
+    set_property(
+        DIRECTORY
+        APPEND
+        PROPERTY
+            CMAKE_CONFIGURE_DEPENDS
+                "${SKYRIMNET_YAML_MANIFEST}"
+                "${SKYRIMNET_JSON_MANIFEST}"
+    )
+    file(READ "${SKYRIMNET_YAML_MANIFEST}" yaml_manifest)
+    if(NOT yaml_manifest MATCHES "\n  version: \"([^\"]+)\"")
+        message(
+            FATAL_ERROR
+            "No plugin version found in ${SKYRIMNET_YAML_MANIFEST}"
+        )
+    endif()
+    set(yaml_version "${CMAKE_MATCH_1}")
+    file(READ "${SKYRIMNET_JSON_MANIFEST}" json_manifest)
+    string(JSON json_id GET "${json_manifest}" id)
+    string(JSON json_version GET "${json_manifest}" version)
+    if(NOT json_id STREQUAL SKYRIMNET_PLUGIN_ID)
+        message(
+            FATAL_ERROR
+            "manifest.json id '${json_id}' does not match its folder '${SKYRIMNET_PLUGIN_ID}'"
+        )
+    endif()
+    if(NOT json_version STREQUAL yaml_version)
+        message(
+            FATAL_ERROR
+            "manifest.json version ${json_version} does not match manifest.yaml version ${yaml_version}"
+        )
+    endif()
+
     if(IS_DIRECTORY "${STATICS_SOURCE_DIR}")
         file(
             GLOB_RECURSE STATICS_FILES
@@ -340,18 +408,45 @@ if(DEFINED OUTPUT_FOLDER)
             set(STATICS_DEPLOY_OUTPUTS "")
             foreach(rel IN LISTS STATICS_FILES)
                 set(src "${STATICS_SOURCE_DIR}/${rel}")
-                set(dst "${OUTPUT_FOLDER}/${rel}")
-                get_filename_component(dst_dir "${dst}" DIRECTORY)
-                add_custom_command(
-                    OUTPUT "${dst}"
-                    DEPENDS "${src}"
-                    COMMAND "${CMAKE_COMMAND}" -E make_directory "${dst_dir}"
-                    COMMAND
-                        "${CMAKE_COMMAND}" -E copy_if_different "${src}"
+                set(dsts "${OUTPUT_FOLDER}/${rel}")
+                foreach(
+                    legacy
+                    external
+                    IN
+                    ZIP_LISTS SKYRIMNET_LEGACY_PATHS SKYRIMNET_EXTERNAL_PATHS
+                )
+                    string(FIND "${rel}" "${legacy}" legacy_at)
+                    if(legacy_at EQUAL 0)
+                        string(LENGTH "${legacy}" legacy_len)
+                        string(SUBSTRING "${rel}" ${legacy_len} -1 rest)
+                        list(APPEND dsts "${OUTPUT_FOLDER}/${external}${rest}")
+                    endif()
+                endforeach()
+                set(copy_commands "")
+                foreach(dst IN LISTS dsts)
+                    get_filename_component(dst_dir "${dst}" DIRECTORY)
+                    list(
+                        APPEND
+                        copy_commands
+                        COMMAND
+                        "${CMAKE_COMMAND}"
+                        -E
+                        make_directory
+                        "${dst_dir}"
+                        COMMAND
+                        "${CMAKE_COMMAND}"
+                        -E
+                        copy_if_different
+                        "${src}"
                         "${dst}"
+                    )
+                endforeach()
+                add_custom_command(
+                    OUTPUT ${dsts}
+                    DEPENDS "${src}" ${copy_commands}
                     VERBATIM
                 )
-                list(APPEND STATICS_DEPLOY_OUTPUTS "${dst}")
+                list(APPEND STATICS_DEPLOY_OUTPUTS ${dsts})
             endforeach()
             add_custom_target(
                 deploy_statics

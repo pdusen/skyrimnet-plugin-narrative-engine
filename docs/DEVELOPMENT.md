@@ -95,7 +95,8 @@ What does *not* take the prefix:
 
 - The plugin file (`NarrativeEngine.esp`) — that's a filename, not an EditorID.
 - The SkyrimNet plugin folder + manifest name (`SKSE/Plugins/SkyrimNet/config/plugins/NarrativeEngine/`,
-  `plugin.name: NarrativeEngine`) — SkyrimNet's own plugin identifier surface.
+  `plugin.name: NarrativeEngine`) and the Beta 25 content plugin id (`pdusen.narrative-engine`) — SkyrimNet's own
+  plugin identifier surface.
 - C++ namespaces / classes (`namespace NarrativeEngine`, `class ClosureDeliveryAction`) — these live entirely on
   the C++ side and the form-naming convention doesn't reach them.
 - The mod's mod-manager folder (`$SKYRIM_MODS_FOLDER/NarrativeEngine/`) — also a filename.
@@ -628,6 +629,14 @@ Markdown chat messages sent to an LLM. They use SkyrimNet's `[ system ] ... [ en
 `[ user ] ... [ end user ]` section markers and follow specific conventions about what to tell the LLM (and
 what to deliberately hide — e.g. the cadence at which the call fires). When authoring or editing one, read and
 follow [`docs/CUSTOM_PROMPTS.md`](CUSTOM_PROMPTS.md).
+
+The build deploys every prompt twice: to the loose `SkyrimNet/prompts/` folder that SkyrimNet reads before Beta 25
+(0.25.0), and to `SkyrimNet/external/pdusen.narrative-engine/prompts/`, the plugin folder Beta 25 reads instead.
+The settings schema, `SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml`, is deployed a second time as
+`external/pdusen.narrative-engine/settings/NarrativeEngine.yaml`, which Beta 25 prefers over the old path. Keep one
+copy in the source tree, at the old paths; `CMakeLists.txt` makes the second. The plugin folder's `manifest.json`
+lives in `statics/` like any other file, and the configure step fails if its `id` differs from its folder name or its
+`version` differs from the one in `manifest.yaml`.
 
 ## Markdown conventions
 
