@@ -285,6 +285,12 @@ namespace NarrativeEngine::VisitArrivalPoint
             int offNavmesh = 0;
             int notLevel = 0;
             int inView = 0;
+            // Nothing walkable joining the candidate to the player along
+            // the straight line. Counted apart from the rest because it
+            // is the only gate about REACHING the point rather than
+            // standing on it, and a run where it dominates is telling
+            // you the terrain is cut up rather than exposed.
+            int noCorridor = 0;
             // Accepted with no cover because the player was facing the
             // other way. Counted apart from the covered ones: a run that
             // leans on this is telling you the terrain had nothing to
@@ -321,9 +327,9 @@ namespace NarrativeEngine::VisitArrivalPoint
                 }
                 return "considered=" + std::to_string(considered) + " " + span + " tooNear=" + std::to_string(tooNear)
                        + " pastReach=" + std::to_string(tooFar) + " offNavmesh=" + std::to_string(offNavmesh)
-                       + " notLevel=" + std::to_string(notLevel) + " inView=" + std::to_string(inView)
-                       + " unseen=" + std::to_string(unseen)
-                       + " survived=" + std::to_string(considered - tooNear - offNavmesh - notLevel - inView);
+                       + " notLevel=" + std::to_string(notLevel) + " inView=" + std::to_string(inView) + " noCorridor="
+                       + std::to_string(noCorridor) + " unseen=" + std::to_string(unseen) + " survived="
+                       + std::to_string(considered - tooNear - offNavmesh - notLevel - inView - noCorridor);
             }
         };
 
@@ -402,6 +408,18 @@ namespace NarrativeEngine::VisitArrivalPoint
                     }
                     ++tally.unseen;
                     passedBy = "unseen";
+                }
+
+                // Last, because it is the most expensive gate and the
+                // cheapest way to pay for it is to ask it of the fewest
+                // candidates. Being on navmesh says the point is
+                // walkable ground; it does not say the visitor can walk
+                // FROM it to the player, and a visitor who halts at a
+                // dead end 550 units below the player is the failure
+                // this answers.
+                if (!StuckRecovery::HasNavmeshCorridor(standing, playerPos)) {
+                    ++tally.noCorridor;
+                    continue;
                 }
 
                 auto& pool = (distance <= maxDist) ? inBand : beyondBand;
@@ -517,6 +535,11 @@ namespace NarrativeEngine::VisitArrivalPoint
                             continue;
                         }
                         ++tally.unseen;
+                    }
+
+                    if (!StuckRecovery::HasNavmeshCorridor(standing, playerPos)) {
+                        ++tally.noCorridor;
+                        continue;
                     }
 
                     BearingCandidate candidate;

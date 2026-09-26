@@ -93,6 +93,7 @@ namespace NarrativeEngine::Testing
     inline constexpr std::size_t kActorStorageBytes = sizeof(RE::Actor) + 0x400;
     void RegisterCellFacts(const void* cell, std::int16_t cellX, std::int16_t cellY, RE::BGSLocation* location);
     void ClearReferencePool();
+    void ClearNavMeshes();
     const EngineMock::QuestState* QuestStateFor(const void* quest);
     EngineMock::QuestState* MutableQuestStateFor(const void* quest);
     std::unordered_map<const void*, RE::TESForm*>& LeveledResults();
@@ -308,6 +309,7 @@ namespace NarrativeEngine::Testing
         // plain XMarker can read as a load door and an attached reference
         // can report a save cell it was never given.
         ClearReferencePool();
+        ClearNavMeshes();
 
         // Tell CommonLibSSE which runtime it is looking at, without a Skyrim
         // process to learn it from. `mock()` is CommonLibSSE-NG's own
@@ -1067,6 +1069,25 @@ namespace NarrativeEngine::Testing
             return mesh;
         }
     } // namespace
+
+    // Detach every mesh from every cell that has one.
+    //
+    // The storage itself stays leaked, deliberately -- see NavMeshPool --
+    // so this empties the slot arrays rather than freeing anything. What
+    // has to be reset is which meshes each cell OFFERS: cells live in the
+    // world pool, which outlives the mock on purpose, so a cell would
+    // otherwise hand the next test the last test's terrain. Every existing
+    // case laid a patch that covered at least as much ground as the one
+    // before, which is why this never showed until a case needed navmesh
+    // to be ABSENT somewhere.
+    void ClearNavMeshes()
+    {
+        for (auto* list : NavMeshes().lists) {
+            if (list) {
+                MeshSlots(*list).clear();
+            }
+        }
+    }
 
     RE::NavMesh* EngineMock::AddNavmeshPatch(RE::TESObjectCELL* cell,
                                              std::uint32_t meshFormID,

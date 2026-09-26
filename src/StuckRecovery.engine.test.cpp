@@ -479,3 +479,167 @@ TEST_CASE("StuckRecovery::IsOnNavmesh", "[StuckRecovery][engine]")
         }
     }
 }
+
+TEST_CASE("StuckRecovery::Escort stops spending fallbacks on the same dead end", "[StuckRecovery][engine]")
+{
+    // What this is for, from the field: a visitor was placed, walked in, and
+    // halted. The escort warped her to the next vetted position, she ran back
+    // in, and halted within ten units of the same spot. Six times, consuming
+    // seventy-two seconds of a ninety-second approach budget — and the
+    // close-in step, the one move that could have got past the obstacle, never
+    // got a turn.
+    //
+    // The tell was there from the second stall: an actor that comes to rest in
+    // the same place from two different placements is saying the obstacle is
+    // between that place and the goal, not under its feet.
+    //
+    // Note the shape of a cycle, which the log pins down. A warp resets the
+    // baseline to the destination, so the check after it sees a large
+    // displacement and reports the actor healthy while it walks back. Only the
+    // check after THAT finds it stationary again. Every section here plays
+    // that out rather than warping and re-checking, because a test that skips
+    // the healthy check is testing a sequence the game never produces.
+    EngineMock engine;
+    // Ground and navmesh everywhere, so the close-in step has somewhere to go
+    // and a refusal is the escort's decision rather than the world's.
+    engine.world.cellIsInterior = false;
+    engine.terrain.landHeight = 0.0f;
+    engine.AddNavmeshPatch(engine.GroundCell(), 0x00A50001u, -40000.0f, -40000.0f, 40000.0f, 40000.0f, 0.0f);
+
+    Escort escort{"test"};
+    const NiPoint3 deadEnd{7000.0f, 0.0f, 0.0f};
+    escort.Begin({NiPoint3{9000.0f, 0.0f, 0.0f},
+                  NiPoint3{9500.0f, 500.0f, 0.0f},
+                  NiPoint3{9500.0f, -500.0f, 0.0f},
+                  NiPoint3{10000.0f, 0.0f, 0.0f}});
+    auto* actor = PlaceActor(engine, deadEnd);
+    escort.Track(actor, deadEnd);
+    Options opts;
+
+    // One full cycle: the actor is stalled, gets moved, walks to `walkedTo`,
+    // and comes to rest there. Returns what the escort decides about that
+    // resting place.
+    const auto cycleTo = [&](const NiPoint3& walkedTo) {
+        MoveActorTo(actor, walkedTo);
+        REQUIRE(Check(escort, actor, kGoal, opts).action == Action::Moving);
+        return Check(escort, actor, kGoal, opts);
+    };
+
+    SECTION("when it walks back to the same spot after a fallback")
+    {
+        // First stall: nothing known yet, so the list gets its turn.
+        REQUIRE(Check(escort, actor, kGoal, opts).action == Action::WarpedToFallback);
+
+        SECTION("should stop handing out fallbacks and close in instead")
+        {
+            const auto outcome = cycleTo(NiPoint3{deadEnd.x + 9.0f, deadEnd.y - 4.0f, 0.0f});
+            REQUIRE(outcome.action == Action::WarpedCloser);
+        }
+
+        SECTION("should keep closing in rather than going back to the list")
+        {
+            REQUIRE(cycleTo(NiPoint3{deadEnd.x + 9.0f, deadEnd.y - 4.0f, 0.0f}).action == Action::WarpedCloser);
+            REQUIRE(cycleTo(NiPoint3{deadEnd.x + 2.0f, deadEnd.y, 0.0f}).action == Action::WarpedCloser);
+        }
+    }
+
+    SECTION("when it stalls somewhere genuinely different each time")
+    {
+        // The whole point of the vetted list is that a different placement
+        // often does work, so noticing convergence must not cost that.
+        REQUIRE(Check(escort, actor, kGoal, opts).action == Action::WarpedToFallback);
+
+        SECTION("should carry on down the list")
+        {
+            const auto outcome = cycleTo(NiPoint3{6000.0f, 3000.0f, 0.0f});
+            REQUIRE(outcome.action == Action::WarpedToFallback);
+            REQUIRE(outcome.movedTo.y == 500.0f);
+        }
+    }
+
+    SECTION("when a fallback leaves it much further from the goal than it started")
+    {
+        // The second question, which catches the case where it stalls
+        // somewhere new every time but each one is worse than the last.
+        REQUIRE(Check(escort, actor, kGoal, opts).action == Action::WarpedToFallback);
+
+        SECTION("should stop trusting the list")
+        {
+            const auto outcome = cycleTo(NiPoint3{12000.0f, 0.0f, 0.0f});
+            REQUIRE(outcome.action == Action::WarpedCloser);
+        }
+    }
+
+    SECTION("when a fallback leaves it only slightly further out")
+    {
+        // Runner-ups are ordered by how good a place they are to walk from,
+        // not by distance, so the next one being a little further out is
+        // ordinary and must not retire the list. Well clear of the first
+        // stall, so this is the slack being tested and not convergence.
+        REQUIRE(Check(escort, actor, kGoal, opts).action == Action::WarpedToFallback);
+
+        SECTION("should carry on down the list")
+        {
+            // 7159 units out against the 7000 it started from.
+            REQUIRE(cycleTo(NiPoint3{7000.0f, 1500.0f, 0.0f}).action == Action::WarpedToFallback);
+        }
+    }
+}
+
+TEST_CASE("StuckRecovery::HasNavmeshCorridor", "[StuckRecovery][engine]")
+{
+    // Containment cannot answer connectivity: an unreachable ledge across a
+    // ravine is perfectly good navmesh, and every gate the arrival search runs
+    // is about standing on a point rather than reaching it. This samples the
+    // straight line instead, which is cheap and catches the gap that stranded
+    // a visitor 550 units below the player.
+    EngineMock engine;
+    engine.world.cellIsInterior = false;
+    engine.terrain.landHeight = 0.0f;
+
+    const NiPoint3 here{0.0f, 0.0f, 0.0f};
+    const NiPoint3 across{4000.0f, 0.0f, 0.0f};
+
+    SECTION("when navmesh runs the whole way")
+    {
+        engine.AddNavmeshPatch(engine.GroundCell(), 0x00A51001u, -1000.0f, -1000.0f, 5000.0f, 1000.0f, 0.0f);
+
+        SECTION("should say the line is walkable")
+        {
+            REQUIRE(StuckRecovery::HasNavmeshCorridor(here, across));
+        }
+    }
+
+    SECTION("when a wide gap sits in between")
+    {
+        // Two islands with 2000 units of nothing between them — a ravine, or
+        // the foot of a cliff the far side of which is where the player is.
+        engine.AddNavmeshPatch(engine.GroundCell(), 0x00A51002u, -1000.0f, -1000.0f, 1000.0f, 1000.0f, 0.0f);
+        engine.AddNavmeshPatch(engine.GroundCell(), 0x00A51003u, 3000.0f, -1000.0f, 5000.0f, 1000.0f, 0.0f);
+
+        SECTION("should refuse the line")
+        {
+            REQUIRE_FALSE(StuckRecovery::HasNavmeshCorridor(here, across));
+        }
+    }
+
+    SECTION("when the two ends are close together")
+    {
+        // Nothing between them worth sampling, and refusing here would reject
+        // every candidate at the near edge of the band.
+        SECTION("should not invent an obstacle")
+        {
+            REQUIRE(StuckRecovery::HasNavmeshCorridor(here, NiPoint3{100.0f, 0.0f, 0.0f}));
+        }
+    }
+
+    SECTION("when no ground resolves anywhere")
+    {
+        engine.terrain.landHeightResolves = false;
+
+        SECTION("should refuse rather than assume a corridor")
+        {
+            REQUIRE_FALSE(StuckRecovery::HasNavmeshCorridor(here, across));
+        }
+    }
+}

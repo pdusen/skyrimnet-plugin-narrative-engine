@@ -1,5 +1,7 @@
 #include <EngineMock.h>
 
+#include <StuckRecovery.h>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
@@ -13,12 +15,21 @@
 // reference in — so a mock that does not reset them starts life holding the
 // previous one's answers about storage it has just been given back.
 //
-// That is not theoretical. It has now produced two intermittent failures in
-// this suite: an editor-location table that outlived its mock, and this one,
-// which surfaced as `VisitArrivalPoint finds a visitor who is not loaded`
-// failing roughly once in twenty-five runs. Catch2 re-runs a TEST_CASE body
-// once per leaf SECTION in the same process, so a case with several sections
-// builds several mocks back to back and is exactly where this bites.
+// That is not theoretical. It has now produced three failures in this suite:
+// an editor-location table that outlived its mock; a reference pool that did
+// the same, surfacing as `VisitArrivalPoint finds a visitor who is not loaded`
+// failing roughly once in twenty-five runs; and navmesh, which stayed attached
+// to cells and quietly handed the next test the last one's terrain. Catch2
+// re-runs a TEST_CASE body once per leaf SECTION in the same process, so a
+// case with several sections builds several mocks back to back and is exactly
+// where this bites.
+//
+// The navmesh one is worth its own note, because it hid for so long: every
+// existing case laid a patch covering at least as much ground as the one
+// before, so a leaked patch was always a subset of the live one and changed no
+// answer. It surfaced the first time a case needed navmesh to be ABSENT
+// somewhere — a corridor test asking whether there was a gap between two
+// islands, which there was not, because a previous section had paved it.
 //
 // A flake like that costs far more to chase than the invariant costs to pin,
 // and the invariant is cheap: a mock starts with nothing in it.
@@ -94,6 +105,36 @@ TEST_CASE("EngineMock hands the next test an empty reference pool", "[EngineMock
             auto* plain = engine.AddReference(street, 0x00E10021u, RE::NiPoint3{});
             plain->parentCell = nullptr;
             REQUIRE(plain->GetSaveParentCell() == nullptr);
+        }
+    }
+}
+
+TEST_CASE("EngineMock hands the next test bare ground", "[EngineMock][engine]")
+{
+    // Navmesh storage is leaked on purpose — every piece of it frees through a
+    // relocation or a fabricated vtable — so what has to be reset is which
+    // meshes each CELL offers. Cells live in the world pool, which outlives a
+    // mock deliberately, and a cell that keeps its meshes hands the next test
+    // terrain it never laid.
+    {
+        EngineMock engine;
+        engine.world.cellIsInterior = false;
+        engine.terrain.landHeight = 0.0f;
+        engine.AddNavmeshPatch(engine.GroundCell(), 0x00E11001u, -5000.0f, -5000.0f, 5000.0f, 5000.0f, 0.0f);
+        REQUIRE(NarrativeEngine::StuckRecovery::IsOnNavmesh(RE::NiPoint3{0.0f, 0.0f, 8.0f}));
+    }
+
+    {
+        EngineMock engine;
+        engine.world.cellIsInterior = false;
+        engine.terrain.landHeight = 0.0f;
+
+        SECTION("should not report the last test's navmesh under a position")
+        {
+            // A test that needs navmesh to be absent somewhere -- which is the
+            // only way to ask whether two patches of it are joined -- gets the
+            // wrong answer otherwise, and gets it silently.
+            REQUIRE_FALSE(NarrativeEngine::StuckRecovery::IsOnNavmesh(RE::NiPoint3{0.0f, 0.0f, 8.0f}));
         }
     }
 }

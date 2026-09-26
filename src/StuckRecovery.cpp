@@ -227,6 +227,42 @@ namespace NarrativeEngine::StuckRecovery
         return IsOnNavmesh(out);
     }
 
+    bool HasNavmeshCorridor(const RE::NiPoint3& from, const RE::NiPoint3& to)
+    {
+        const float dx = to.x - from.x;
+        const float dy = to.y - from.y;
+        const float span = std::sqrt(dx * dx + dy * dy);
+        if (span < kCorridorSampleSpacingUnits) {
+            // Nothing between them worth sampling.
+            return true;
+        }
+
+        int samples = static_cast<int>(span / kCorridorSampleSpacingUnits);
+        if (samples > kCorridorMaxSamples) {
+            samples = kCorridorMaxSamples;
+        }
+
+        const float dz = to.z - from.z;
+        int gap = 0;
+        for (int i = 1; i < samples; ++i) {
+            const float t = static_cast<float>(i) / static_cast<float>(samples);
+            // Interpolated z is only a starting height for the ground
+            // query; what gets tested is where the terrain actually is.
+            const RE::NiPoint3 at{from.x + dx * t, from.y + dy * t, from.z + dz * t};
+
+            RE::NiPoint3 grounded{};
+            float groundZ = 0.0f;
+            if (GroundPoint(at, grounded, groundZ) && IsOnNavmesh(grounded)) {
+                gap = 0;
+                continue;
+            }
+            if (++gap > kCorridorGapTolerance) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     void WarpTo(const MainThread::Token&, RE::Actor* actor, const RE::NiPoint3& pos)
     {
         if (!actor) {
@@ -328,11 +364,54 @@ namespace NarrativeEngine::StuckRecovery
             return outcome;
         }
 
+        // Is the vetted list worth another try for this actor?
+        //
+        // Two questions, asked before spending one. Both were paid for
+        // in game: a visitor consumed all six fallbacks over seventy-two
+        // seconds of a ninety-second approach budget, walking in from
+        // each of them and halting within ten units of the same dead end
+        // every time, and the close-in step that could have worked never
+        // got a turn.
+        if (!track.fallbacksRetired) {
+            const char* why = nullptr;
+
+            // (1) Has it come to rest here before?
+            for (const auto& seen : track.stalls) {
+                if (pos.GetDistance(seen) <= kStallConvergenceUnits) {
+                    why = "it has stalled in this spot before";
+                    break;
+                }
+            }
+
+            // (2) Did the last warp make the gap worse rather than
+            // better? The player moving cannot fake this: the
+            // comparison is against the gap measured immediately before
+            // the warp, not against the previous check.
+            if (!why && track.gapBeforeWarp >= 0.0f && goalDist > track.gapBeforeWarp + kGapRegressionSlackUnits) {
+                why = "the last fallback left it further from the goal than it started";
+            }
+
+            if (why) {
+                track.fallbacksRetired = true;
+                logger::info("StuckRecovery[{}]: '{}' retiring {} unused fallback(s) — {}; closing in instead",
+                             m_label,
+                             actor->GetName(),
+                             m_fallbacks.size() - std::min(m_nextFallback, m_fallbacks.size()),
+                             why);
+            }
+        }
+
+        if (track.stalls.size() >= kStallMemory) {
+            track.stalls.erase(track.stalls.begin());
+        }
+        track.stalls.push_back(pos);
+
         // Step 1 — the caller's unused-but-validated positions.
-        if (m_nextFallback < m_fallbacks.size()) {
+        if (!track.fallbacksRetired && m_nextFallback < m_fallbacks.size()) {
             const auto dest = m_fallbacks[m_nextFallback++];
             WarpTo(token, actor, dest);
             track.lastPos = dest;
+            track.gapBeforeWarp = goalDist;
             outcome.action = Action::WarpedToFallback;
             outcome.movedTo = dest;
             logger::info("StuckRecovery[{}]: '{}' moved only {:.0f}u at ({:.0f},{:.0f},{:.0f}) -> fallback "

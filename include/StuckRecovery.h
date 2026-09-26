@@ -157,6 +157,70 @@ namespace NarrativeEngine::StuckRecovery
     // Grounded, dry, and on navmesh.
     bool IsStandable(const RE::NiPoint3& pos, RE::NiPoint3& out);
 
+    // Spacing between corridor samples, and the most that will ever be
+    // taken however long the line is. Thirty-two at 250 units covers
+    // 8000, which is as far as anything is placed.
+    inline constexpr float kCorridorSampleSpacingUnits = 250.0f;
+    inline constexpr int kCorridorMaxSamples = 32;
+
+    // Consecutive off-navmesh samples tolerated before the line counts
+    // as blocked.
+    //
+    // This is what separates a BARRIER from a BEND. A road curving round
+    // a boulder leaves the straight line for a sample or two and comes
+    // back; a ravine, a river gorge or the foot of a cliff produces a
+    // long unbroken run of nothing. Two samples tolerates roughly 750
+    // units of deviation from the straight line, which is more than
+    // ordinary road curvature needs.
+    inline constexpr int kCorridorGapTolerance = 2;
+
+    // How near two stall positions have to be to count as the same
+    // place.
+    //
+    // Deliberately well under the separation the spawn searches
+    // guarantee between their runner-ups — `VisitArrivalPoint` keeps
+    // them 400 units apart — so this can never merge two distinct vetted
+    // positions into one. It is above `movementThresholdUnits`, so
+    // "stopped in the same spot" and "shuffled a little and stopped"
+    // both count as the same dead end. Observed spread in the field was
+    // ten units, so there is a lot of room here.
+    inline constexpr float kStallConvergenceUnits = 200.0f;
+
+    // How many stall positions to remember per actor. Enough to notice a
+    // dead end being revisited after a detour, few enough that the
+    // comparison stays a handful of distance checks.
+    inline constexpr std::size_t kStallMemory = 4;
+
+    // How much further from the goal a warp has to leave an actor before
+    // it counts as having made things worse. Absorbs the ordinary case
+    // where the next vetted position is slightly further out and still a
+    // better place to walk from.
+    inline constexpr float kGapRegressionSlackUnits = 250.0f;
+
+    // Is there unbroken navmesh along the straight line from `from` to
+    // `to`?
+    //
+    // A cheap stand-in for the connectivity question `IsOnNavmesh`
+    // cannot answer. Containment says there is mesh under a point; it
+    // says nothing about whether that mesh is the same island the player
+    // is standing on, and an unreachable ledge across a ravine is
+    // perfectly good navmesh. A proper answer means a breadth-first walk
+    // over triangle adjacency plus cross-mesh portals — see
+    // `docs/engine-findings/navmesh-queries-in-commonlibsse-ng.md`,
+    // which parked that work until field testing showed stranded actors
+    // were common rather than occasional. They are: a visitor walked to
+    // the same dead end from six different placements, 550 units below
+    // the player, and stopped there every time.
+    //
+    // What this does instead is sample the line and ground each sample.
+    // It catches what defeated that visit — a gap the actor cannot cross
+    // — and it does NOT catch a wall or a closed door, which are thin
+    // enough to sit inside the gap tolerance. Endpoints are skipped:
+    // both ends have already been validated by whoever asked.
+    //
+    // MAIN THREAD, like every primitive here.
+    bool HasNavmeshCorridor(const RE::NiPoint3& from, const RE::NiPoint3& to);
+
     // Warp `actor` to `pos` and re-evaluate its package so it resumes
     // whatever it was doing. Both the char-controller flag and the warp
     // are required, or the physics body stays behind and the actor walks
@@ -223,6 +287,31 @@ namespace NarrativeEngine::StuckRecovery
             RE::NiPoint3 lastPos{};
             int closeInSteps = 0;
             bool stranded = false;
+
+            // Where this actor has stalled before.
+            //
+            // One stall says it is stuck; two in the same place say the
+            // fallbacks are not the cure. An actor that walks in from
+            // six different placements and halts within ten units of
+            // one spot every time is telling you the obstacle is
+            // between that spot and the goal, and no amount of moving
+            // it around on the far side of the obstacle will help.
+            std::vector<RE::NiPoint3> stalls;
+
+            // How far from the goal it was just before the last warp,
+            // or negative if it has not been warped.
+            //
+            // Compared against the gap at the next stall, this asks the
+            // only question that matters about an intervention: did it
+            // help? A fallback further out than where the actor already
+            // was makes the answer no, and the list should not be
+            // walked to the end to find that out six times over.
+            float gapBeforeWarp = -1.0f;
+
+            // Per-actor rather than shared, unlike the fallback cursor
+            // itself: one actor converging says nothing about whether
+            // the remaining positions are usable for its neighbours.
+            bool fallbacksRetired = false;
         };
 
         std::string m_label;
