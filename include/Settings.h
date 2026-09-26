@@ -290,12 +290,16 @@ namespace NarrativeEngine::Settings
         // Not the same as the ring-buffered tail the LLM sees. Session
         // rotation keeps the previous 5 files.
         //
-        // Disabled by default. When disabled, the file is never
-        // opened AND each event log skips its per-emit push to the
-        // pending queue (so the queue can't grow unbounded on a
-        // long-running session with the writer off). Flip to true
-        // for Step 9 testing and back to false after.
-        bool eventHistoryEnabled = false;
+        // Enabled by default, to match the gossip trace beside it. A
+        // testing aid is worth most when it was already running before
+        // the odd thing happened, and one that has to be switched on
+        // first never is: the session that needed it is over.
+        //
+        // When disabled, the file is never opened AND each event log
+        // skips its per-emit push to the pending queue, so the queue
+        // cannot grow unbounded on a long session with the writer off.
+        // That is the reason to turn it off, and the only one.
+        bool eventHistoryEnabled = true;
         // Flush cadence in unpaused real seconds (Tick-driven
         // accumulator). Weather / travel events emit slowly; 5s is a
         // comfortable trade between file-write frequency and how long
