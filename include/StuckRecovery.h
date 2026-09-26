@@ -40,10 +40,13 @@
 //      moving on its own. These destinations are dropped in from a
 //      little above the ground: they are picked off a bare line with
 //      none of the vetting the runner-ups had, so landing on top of an
-//      obstruction beats landing inside one.
-//   4. Inside `minGoalDistanceUnits` and still stalled? Stranded.
-//      Report it and stop — there is nowhere left to put it that isn't
-//      on top of the player.
+//      obstruction beats landing inside one. A step that finds nowhere
+//      standable reaches another `closeInStepUnits` further along on
+//      the next interval, so the probe walks the line instead of
+//      re-asking about one spot.
+//   4. Inside `minGoalDistanceUnits`, or out of line to probe, and
+//      still stalled? Stranded. Report it and stop — there is nowhere
+//      left to put it that isn't on top of the player.
 //
 // Actors within `arrivedDistanceUnits` of the goal are never touched,
 // and neither is one IN COMBAT, at any range. That second exclusion is
@@ -287,6 +290,18 @@ namespace NarrativeEngine::StuckRecovery
             RE::NiPoint3 lastPos{};
             int closeInSteps = 0;
             bool stranded = false;
+
+            // Close-in probes that found nowhere standable since the
+            // last one that did. The reach of the next probe is
+            // multiplied by this, so a refusal moves the probe along the
+            // line rather than re-asking about the spot that refused.
+            //
+            // Without it the probe never advances at all: it is computed
+            // from the actor's own position, and an actor that did not
+            // move gets the same point every interval. One visit spent
+            // fifteen identical probes and sixty of its ninety-second
+            // approach budget on a single patch of riverbed.
+            int closeInProbes = 0;
 
             // Where this actor has stalled before.
             //

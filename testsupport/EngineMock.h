@@ -245,6 +245,17 @@ namespace NarrativeEngine::Testing
             bool landHeightResolves = true;
             float landHeight = 0.0f;
 
+            // Relief, for a test that cares about the SHAPE of the
+            // ground rather than whether there is any. Set it and it
+            // answers per position in place of `landHeight`; leave it
+            // unset and the world stays the flat plane everything else
+            // here assumes.
+            //
+            // Anything reading the ground profile along a line — a
+            // corridor, a slope, a drop an actor cannot climb — needs
+            // this, because a plane has no profile to read.
+            std::function<float(const RE::NiPoint3&)> landHeightAt;
+
             // Water surface. Below it is underwater; a cell with no water
             // reports none.
             bool hasWater = false;

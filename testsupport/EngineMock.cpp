@@ -2144,12 +2144,12 @@ RE::TESObjectCELL* RE::TES::GetCell(const NiPoint3&) const
     return NarrativeEngine::Testing::FabricatedCell();
 }
 
-bool RE::TES::GetLandHeight(const NiPoint3&, float& a_height)
+bool RE::TES::GetLandHeight(const NiPoint3& a_pos, float& a_height)
 {
     auto* mock = EngineMock::Current();
     if (!mock || !mock->terrain.landHeightResolves)
         return false;
-    a_height = mock->terrain.landHeight;
+    a_height = mock->terrain.landHeightAt ? mock->terrain.landHeightAt(a_pos) : mock->terrain.landHeight;
     return true;
 }
 

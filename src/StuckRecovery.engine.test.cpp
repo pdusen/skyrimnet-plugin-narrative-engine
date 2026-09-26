@@ -368,6 +368,73 @@ TEST_CASE("StuckRecovery::Escort strands an actor it cannot help", "[StuckRecove
             REQUIRE(outcome.action == Action::None);
             REQUIRE(engine.placement.moves.empty());
         }
+
+        SECTION("should give up once the probe has walked the whole line")
+        {
+            // The ladder is finite. An actor that never moves hands back the
+            // same position every interval, so unless the reach grows the
+            // probe asks about one spot for the rest of the encounter -- which
+            // is what a visit did for sixty of its ninety seconds. Ten
+            // thousand units at six hundred a step is sixteen probes; by then
+            // the reach has run into the minimum goal distance and there is no
+            // more line left to walk.
+            Action last = Action::None;
+            for (int i = 0; i < 20 && last != Action::Stranded; ++i) {
+                last = Check(escort, actor, kGoal, opts).action;
+            }
+            REQUIRE(last == Action::Stranded);
+            REQUIRE(engine.placement.moves.empty());
+        }
+    }
+
+    SECTION("when only the far end of the line is standable")
+    {
+        // Navmesh near the goal and nothing between it and the actor -- the
+        // shape of a visitor stopped on the wrong bank of a river. The early
+        // probes land in the water; the reach has to carry a later one across.
+        //
+        // 600 a step off 6000 walks the probe to 5400, then 4800, then 4200,
+        // and only that last one is inside the patch. Were the reach fixed it
+        // would ask about 5400 every time and never move the actor at all.
+        engine.world.cellIsInterior = false;
+        engine.terrain.landHeight = 0.0f;
+        engine.AddNavmeshPatch(engine.GroundCell(), 0x00A52001u, -1000.0f, -1000.0f, 4300.0f, 1000.0f, 0.0f);
+
+        const NiPoint3 stuckAt{6000.0f, 0.0f, 0.0f};
+        auto* actor = PlaceActor(engine, stuckAt);
+        escort.Track(actor, stuckAt);
+
+        SECTION("should reach further with each refusal until one lands")
+        {
+            REQUIRE(Check(escort, actor, kGoal, opts).action == Action::None);
+            REQUIRE(Check(escort, actor, kGoal, opts).action == Action::None);
+
+            const auto outcome = Check(escort, actor, kGoal, opts);
+            REQUIRE(outcome.action == Action::WarpedCloser);
+            REQUIRE(outcome.movedTo.x < stuckAt.x);
+        }
+
+        SECTION("should start the ladder over once a probe lands")
+        {
+            // The multiplier counts refusals SINCE the last placement, not
+            // refusals ever. A warp that worked says the actor is somewhere
+            // new, and the next stall there deserves a near step rather than
+            // one that leaps three times as far because of ground it is no
+            // longer standing on.
+            REQUIRE(Check(escort, actor, kGoal, opts).action == Action::None);
+            REQUIRE(Check(escort, actor, kGoal, opts).action == Action::None);
+
+            const auto landed = Check(escort, actor, kGoal, opts);
+            REQUIRE(landed.action == Action::WarpedCloser);
+            MoveActorTo(actor, landed.movedTo);
+
+            // One step of 600 from roughly 4200 out; carrying the two earlier
+            // refusals over would take 1800 of it in one go.
+            const auto next = Check(escort, actor, kGoal, opts);
+            REQUIRE(next.action == Action::WarpedCloser);
+            const float stepTaken = landed.movedTo.GetDistance(kGoal) - next.movedTo.GetDistance(kGoal);
+            REQUIRE(stepTaken < 1.5f * opts.closeInStepUnits);
+        }
     }
 }
 

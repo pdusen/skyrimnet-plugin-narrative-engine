@@ -445,7 +445,13 @@ namespace NarrativeEngine::StuckRecovery
             return outcome;
         }
 
-        const float target = std::max(opts.minGoalDistanceUnits, goalDist - opts.closeInStepUnits);
+        // Each consecutive refusal reaches one step further, because the
+        // probe is computed from the actor's own position and a stuck
+        // actor hands back the same point every interval. Without the
+        // multiplier the ladder never climbs: one visit asked about the
+        // same patch of riverbed fifteen times.
+        const float reach = opts.closeInStepUnits * static_cast<float>(track.closeInProbes + 1);
+        const float target = std::max(opts.minGoalDistanceUnits, goalDist - reach);
         const float fraction = (goalDist - target) / std::max(1.0f, goalDist);
         const RE::NiPoint3 probe{pos.x + (goal.x - pos.x) * fraction,
                                  pos.y + (goal.y - pos.y) * fraction,
@@ -453,21 +459,41 @@ namespace NarrativeEngine::StuckRecovery
 
         RE::NiPoint3 dest{};
         if (!StandableAtOrNear(probe, dest)) {
-            // Not fatal: the actor keeps its position and the next
-            // interval steps again from here, which probes further
-            // along the same line.
             ++track.closeInSteps;
+            ++track.closeInProbes;
+
+            // The reach has run into the minimum goal distance, so the
+            // probe has walked the whole line it is allowed to walk and
+            // found nothing standable anywhere on it. Stepping again
+            // would ask about this same point for the rest of the
+            // encounter.
+            if (target <= opts.minGoalDistanceUnits) {
+                track.stranded = true;
+                outcome.action = Action::Stranded;
+                logger::warn("StuckRecovery[{}]: '{}' found nowhere standable anywhere along the {:.0f}u to its "
+                             "goal over {} probe(s) — giving up on it",
+                             m_label,
+                             actor->GetName(),
+                             goalDist,
+                             track.closeInProbes);
+                return outcome;
+            }
+
+            // Not fatal: the actor keeps its position and the next
+            // interval probes further along the same line.
             logger::warn("StuckRecovery[{}]: '{}' close-in step {} found nowhere standable near "
-                         "({:.0f},{:.0f},{:.0f}); will step again",
+                         "({:.0f},{:.0f},{:.0f}); reaching {:.0f}u further next time",
                          m_label,
                          actor->GetName(),
                          track.closeInSteps,
                          probe.x,
                          probe.y,
-                         probe.z);
+                         probe.z,
+                         opts.closeInStepUnits);
             return outcome;
         }
 
+        track.closeInProbes = 0;
         dest.z += kCloseInLiftUnits;
 
         WarpTo(token, actor, dest);
