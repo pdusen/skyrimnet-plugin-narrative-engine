@@ -181,8 +181,50 @@ target_include_directories(NarrativeEngineCore PUBLIC include)
 # source may parse JSON without breaking the "runs with no Skyrim" rule.
 target_link_libraries(NarrativeEngineCore PUBLIC nlohmann_json::nlohmann_json)
 
+# ---------------------------------------------------------------------------
+# The advertised version
+# ---------------------------------------------------------------------------
+#
+# manifest.yaml is the single source of truth for the version this mod
+# advertises -- the release skill bumps it there and propagates it outward -- so
+# it is read from there rather than restated in `project()`. A fourth copy would
+# be a fourth thing to forget.
+#
+# Read here rather than beside the deployment rules that also want it, because
+# the version has to reach the DLL whether or not this configure has anywhere to
+# deploy to.
+set(STATICS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/statics")
+set(SKYRIMNET_STATICS_DIR "${STATICS_SOURCE_DIR}/SKSE/Plugins/SkyrimNet")
+set(SKYRIMNET_PLUGIN_ID "pdusen.narrative-engine")
+set(SKYRIMNET_YAML_MANIFEST
+    "${SKYRIMNET_STATICS_DIR}/config/plugins/NarrativeEngine/manifest.yaml"
+)
+set(SKYRIMNET_JSON_MANIFEST
+    "${SKYRIMNET_STATICS_DIR}/external/${SKYRIMNET_PLUGIN_ID}/manifest.json"
+)
+set_property(
+    DIRECTORY
+    APPEND
+    PROPERTY CMAKE_CONFIGURE_DEPENDS "${SKYRIMNET_YAML_MANIFEST}"
+)
+file(READ "${SKYRIMNET_YAML_MANIFEST}" yaml_manifest)
+if(NOT yaml_manifest MATCHES "\n  version: \"([^\"]+)\"")
+    message(FATAL_ERROR "No plugin version found in ${SKYRIMNET_YAML_MANIFEST}")
+endif()
+set(NARRATIVEENGINE_VERSION "${CMAKE_MATCH_1}")
+message(STATUS "NarrativeEngine version ${NARRATIVEENGINE_VERSION}")
+
 add_commonlibsse_plugin(${PROJECT_NAME} SOURCES ${source_files} plugin.cpp)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23) # <--- use C++23 standard
+# Baked in rather than read at runtime: the startup line that names it is the
+# first thing the log carries, written before the plugin has opened any file it
+# could have read a version out of. Deliberately no fallback definition -- a
+# target that compiles Plugin.cpp without this should fail to build rather than
+# quietly report a version it does not have.
+target_compile_definitions(
+    ${PROJECT_NAME}
+    PRIVATE NARRATIVEENGINE_VERSION="${NARRATIVEENGINE_VERSION}"
+)
 target_precompile_headers(${PROJECT_NAME} PRIVATE PCH.h) # <--- PCH.h is required!
 target_include_directories(
     ${PROJECT_NAME}
@@ -336,9 +378,6 @@ if(DEFINED OUTPUT_FOLDER)
     #
     # Each pair maps a legacy path prefix to its plugin-folder counterpart; a
     # prefix that is a whole file path mirrors just that file.
-    set(STATICS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/statics")
-    set(SKYRIMNET_STATICS_DIR "${STATICS_SOURCE_DIR}/SKSE/Plugins/SkyrimNet")
-    set(SKYRIMNET_PLUGIN_ID "pdusen.narrative-engine")
     set(SKYRIMNET_EXTERNAL_DIR
         "SKSE/Plugins/SkyrimNet/external/${SKYRIMNET_PLUGIN_ID}"
     )
@@ -353,30 +392,14 @@ if(DEFINED OUTPUT_FOLDER)
 
     # The Beta 25 manifest must name the folder it sits in (SkyrimNet rejects
     # the whole folder otherwise), and it carries a second copy of the version
-    # the YAML manifest advertises. Fail the configure rather than ship either
+    # the YAML manifest advertises -- already read above as
+    # NARRATIVEENGINE_VERSION. Fail the configure rather than ship either
     # mismatch.
-    set(SKYRIMNET_YAML_MANIFEST
-        "${SKYRIMNET_STATICS_DIR}/config/plugins/NarrativeEngine/manifest.yaml"
-    )
-    set(SKYRIMNET_JSON_MANIFEST
-        "${SKYRIMNET_STATICS_DIR}/external/${SKYRIMNET_PLUGIN_ID}/manifest.json"
-    )
     set_property(
         DIRECTORY
         APPEND
-        PROPERTY
-            CMAKE_CONFIGURE_DEPENDS
-                "${SKYRIMNET_YAML_MANIFEST}"
-                "${SKYRIMNET_JSON_MANIFEST}"
+        PROPERTY CMAKE_CONFIGURE_DEPENDS "${SKYRIMNET_JSON_MANIFEST}"
     )
-    file(READ "${SKYRIMNET_YAML_MANIFEST}" yaml_manifest)
-    if(NOT yaml_manifest MATCHES "\n  version: \"([^\"]+)\"")
-        message(
-            FATAL_ERROR
-            "No plugin version found in ${SKYRIMNET_YAML_MANIFEST}"
-        )
-    endif()
-    set(yaml_version "${CMAKE_MATCH_1}")
     file(READ "${SKYRIMNET_JSON_MANIFEST}" json_manifest)
     string(JSON json_id GET "${json_manifest}" id)
     string(JSON json_version GET "${json_manifest}" version)
@@ -386,10 +409,10 @@ if(DEFINED OUTPUT_FOLDER)
             "manifest.json id '${json_id}' does not match its folder '${SKYRIMNET_PLUGIN_ID}'"
         )
     endif()
-    if(NOT json_version STREQUAL yaml_version)
+    if(NOT json_version STREQUAL NARRATIVEENGINE_VERSION)
         message(
             FATAL_ERROR
-            "manifest.json version ${json_version} does not match manifest.yaml version ${yaml_version}"
+            "manifest.json version ${json_version} does not match manifest.yaml version ${NARRATIVEENGINE_VERSION}"
         )
     endif()
 
@@ -920,6 +943,8 @@ if(NARRATIVEENGINE_BUILD_TESTS)
                 # Unlocks REL::Module::mock(), CommonLibSSE-NG's own hook for
                 # running its headers with no Skyrim process behind them.
                 ENABLE_COMMONLIBSSE_TESTING
+                # This target compiles Plugin.cpp, whose startup line names it.
+                NARRATIVEENGINE_VERSION="${NARRATIVEENGINE_VERSION}"
         )
         # Same forced PCH as the DLL, so these sources compile exactly as they
         # do in production rather than in some near-miss configuration.

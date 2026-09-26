@@ -490,7 +490,11 @@ namespace NarrativeEngine
     {
         SKSE::Init(skse);
         SetupLog();
-        logger::info("NarrativeEngine starting up.");
+        // First line of every log. The version belongs here because a log
+        // is usually read long after the build that wrote it, and "which
+        // build produced this?" is the question that decides whether the
+        // rest of the file is worth reading.
+        logger::info("NarrativeEngine v{} starting up.", NARRATIVEENGINE_VERSION);
 
         auto* messaging = SKSE::GetMessagingInterface();
         if (!messaging || !messaging->RegisterListener(OnMessage)) {
