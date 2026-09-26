@@ -248,30 +248,45 @@ target_link_libraries(
 # `Data/SKSE/Plugins/` folder, where SkyrimNet must already be installed
 # for our plugin to function.
 #
-# So the only build-time integration is making the header visible to our
-# sources. Point `SKYRIMNET_DIR` at SkyrimNet's mod folder via either:
-#   - `SKYRIMNET_DIR` env var (explicit override), or
-#   - `SKYRIM_MODS_FOLDER` env var (assumes the standard "SkyrimNet" subdir).
-if(DEFINED ENV{SKYRIMNET_DIR} AND IS_DIRECTORY "$ENV{SKYRIMNET_DIR}/CppAPI")
-    set(SKYRIMNET_DIR "$ENV{SKYRIMNET_DIR}")
-elseif(
-    DEFINED ENV{SKYRIM_MODS_FOLDER}
-    AND IS_DIRECTORY "$ENV{SKYRIM_MODS_FOLDER}/SkyrimNet/CppAPI"
+# So the only build-time integration is making the headers visible to our
+# sources. Where they live depends on the SkyrimNet version: Beta 25 dropped
+# `CppAPI/` from the main archive and ships it in a separate "SkyrimNet
+# Devkit" download alongside the modding docs and content tools; Beta 24 and
+# earlier carried it inside the SkyrimNet mod folder. We look for the
+# directory that actually holds `PublicAPI.h`, in this order:
+#   - `SKYRIMNET_CPPAPI` env var — the CppAPI directory itself, explicit.
+#   - `SKYRIMNET_DIR` env var — a root containing `CppAPI/`, explicit.
+#   - `$SKYRIM_MODS_FOLDER/SkyrimNet Devkit/CppAPI` — Beta 25's devkit mod.
+#   - `$SKYRIM_MODS_FOLDER/SkyrimNet/CppAPI` — Beta 24 and earlier.
+# Each candidate is probed for `PublicAPI.h`, so a stale `SKYRIMNET_DIR` left
+# over from a pre-Beta-25 install falls through to the devkit rather than
+# poisoning the include path with a directory that no longer exists.
+foreach(
+    _snetCandidate
+    "$ENV{SKYRIMNET_CPPAPI}"
+    "$ENV{SKYRIMNET_DIR}/CppAPI"
+    "$ENV{SKYRIM_MODS_FOLDER}/SkyrimNet Devkit/CppAPI"
+    "$ENV{SKYRIM_MODS_FOLDER}/SkyrimNet/CppAPI"
 )
-    set(SKYRIMNET_DIR "$ENV{SKYRIM_MODS_FOLDER}/SkyrimNet")
-endif()
+    if(
+        NOT DEFINED SKYRIMNET_CPPAPI_DIR
+        AND EXISTS "${_snetCandidate}/PublicAPI.h"
+    )
+        set(SKYRIMNET_CPPAPI_DIR "${_snetCandidate}")
+    endif()
+endforeach()
 
-if(NOT DEFINED SKYRIMNET_DIR)
+if(NOT DEFINED SKYRIMNET_CPPAPI_DIR)
     message(
         FATAL_ERROR
-        "Could not locate SkyrimNet. Set the SKYRIMNET_DIR environment variable to "
-        "the SkyrimNet mod folder (containing CppAPI/PublicAPI.h), or set "
-        "SKYRIM_MODS_FOLDER so SkyrimNet is found at \${SKYRIM_MODS_FOLDER}/SkyrimNet."
+        "Could not locate SkyrimNet's CppAPI headers. Install the SkyrimNet Devkit "
+        "(Beta 25+) or set the SKYRIMNET_CPPAPI environment variable to the directory "
+        "containing PublicAPI.h. See docs/DEVELOPMENT.md for the full search order."
     )
 endif()
 
-message(STATUS "SkyrimNet found at: ${SKYRIMNET_DIR}")
-target_include_directories(${PROJECT_NAME} PRIVATE "${SKYRIMNET_DIR}/CppAPI")
+message(STATUS "SkyrimNet CppAPI found at: ${SKYRIMNET_CPPAPI_DIR}")
+target_include_directories(${PROJECT_NAME} PRIVATE "${SKYRIMNET_CPPAPI_DIR}")
 # No `target_link_libraries(... SkyrimNet)` — `PublicAPI.h`'s `FindFunctions()`
 # loads `SkyrimNet.dll` at runtime via `LoadLibraryA`. Call it from
 # `kDataLoaded` to populate the function pointers.
@@ -919,14 +934,14 @@ if(NARRATIVEENGINE_BUILD_TESTS)
             NarrativeEngineEngineMockTests
             # PRISMA_UI_INCLUDE because src/PrismaUI.cpp includes the upstream
             # header; the wrapper is compiled here exactly as it is in the DLL.
-            # PRISMA_UI_INCLUDE and SKYRIMNET_DIR because src/PrismaUI.cpp and
-            # src/SkyrimNetAPI.cpp include their upstream headers; both wrappers
-            # are compiled here exactly as they are in the DLL.
+            # PRISMA_UI_INCLUDE and SKYRIMNET_CPPAPI_DIR because src/PrismaUI.cpp
+            # and src/SkyrimNetAPI.cpp include their upstream headers; both
+            # wrappers are compiled here exactly as they are in the DLL.
             PRIVATE
                 include
                 testsupport
                 "${PRISMA_UI_INCLUDE}"
-                "${SKYRIMNET_DIR}/CppAPI"
+                "${SKYRIMNET_CPPAPI_DIR}"
         )
         # CommonLibSSE's include dirs and compile definitions WITHOUT its
         # library: the headers are what we want, the .lib is what we replace.

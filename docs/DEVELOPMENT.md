@@ -127,14 +127,26 @@ environment.
 
 ### SkyrimNet location (one of)
 
-CMake needs SkyrimNet's `CppAPI/` headers on the include path. It looks in two places, in order:
+CMake needs SkyrimNet's `CppAPI/` headers on the include path. Beta 25 removed them from the main
+SkyrimNet archive and ships them in a separate **SkyrimNet Devkit** download, alongside the modding
+docs and the `content-convert` / `content-validate` tools; Beta 24 and earlier carried them inside
+the SkyrimNet mod folder. CMake probes four candidates for `PublicAPI.h` and takes the first that
+has it:
 
-- `SKYRIMNET_DIR` — explicit absolute path to the SkyrimNet mod folder (the one containing
-  `CppAPI/PublicAPI.h`). Takes precedence when set.
-- `$SKYRIM_MODS_FOLDER/SkyrimNet/` — automatic fallback when `SKYRIM_MODS_FOLDER` is set and
-  SkyrimNet is installed at the standard subpath. No additional env var needed in the common case.
+- `$SKYRIMNET_CPPAPI` — the `CppAPI/` directory itself, explicit. Set this if the headers live
+  somewhere the automatic search won't find.
+- `$SKYRIMNET_DIR/CppAPI` — for an explicit path to a root that contains `CppAPI/`.
+- `$SKYRIM_MODS_FOLDER/SkyrimNet Devkit/CppAPI` — Beta 25's devkit installed as a mod. No
+  additional env var needed in the common case.
+- `$SKYRIM_MODS_FOLDER/SkyrimNet/CppAPI` — Beta 24 and earlier.
 
-CMake `FATAL_ERROR`s if neither resolves to a valid `CppAPI/` directory.
+Because every candidate is probed for the header rather than just the directory, a `SKYRIMNET_DIR`
+left over from a pre-Beta-25 install falls through to the devkit instead of breaking the build.
+CMake `FATAL_ERROR`s if none of the four resolves.
+
+`SKYRIMNET_DIR` still means the SkyrimNet **mod** folder everywhere else — `setup-mod-folder.ps1`
+reads it to find `Source/Scripts/SkyrimNetApi.psc`, which Beta 25 did not move. Don't repoint it at
+the devkit; install the devkit as its own mod and leave `SKYRIMNET_DIR` alone (or unset).
 
 ### Required once `.psc` sources exist
 

@@ -100,8 +100,10 @@ else {
 # any SkyrimNet update. If someone left an old symlink from a previous run, we
 # replace it with a real file.
 #
-# Location resolution matches CMakeLists.txt: honor $env:SKYRIMNET_DIR if
-# set, otherwise fall back to <mods-folder>/SkyrimNet.
+# This wants the SkyrimNet *mod* folder, which still ships Source/Scripts in
+# Beta 25 — unlike the CppAPI headers, which moved to the separate devkit and
+# are located by their own search in CMakeLists.txt. Honor $env:SKYRIMNET_DIR
+# if set, otherwise fall back to <mods-folder>/SkyrimNet.
 
 $skyrimNetRoot = $env:SKYRIMNET_DIR
 if (-not $skyrimNetRoot) {
