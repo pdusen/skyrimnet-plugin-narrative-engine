@@ -1277,7 +1277,9 @@ namespace NarrativeEngine
                "narration, not as an explanation of your choice: describe the attackers and their grievance "
                "the way a chronicler would. It is recorded in the world's event log the moment the fight "
                "begins, so it must read as a statement of what is happening rather than as commentary "
-               "about the decision.";
+               "about the decision. It MUST NOT contain dialogue of any kind: no quoted speech, no line "
+               "attributed to anyone, and no narrated or paraphrased speech either. Leave out what is "
+               "said entirely — the attackers do their own talking once the fight starts.";
     }
 
     double AmbushBeat::RemainingCooldownGameHours() const

@@ -122,20 +122,22 @@ spoken to in a crowded room renders only the two-party lines.
 
 ## 3 — The ambush narration must not contain dialogue
 
-- [ ] Complete
+- [X] Complete — implemented; the **[USER]** in-game verification below is still outstanding
 
 **[CLAUDE]**
 
-**Goal:** The ambush beat's `narration_prose` comes back as narration only. No quoted speech, no lines put in
-an attacker's mouth.
+**Goal:** The ambush beat's `narration_prose` comes back with no dialogue in it at all. Not just no quoted
+speech and no lines put in an attacker's mouth — no narrated or paraphrased speech either. What anyone says
+is left out entirely; SkyrimNet's dialogue layer has the attackers once the fight starts.
 
 **Files:** `src/AmbushBeat.cpp` — the `narration_prose` paragraph of `PromptContribution`, around line 1273.
 
 **Sub-tasks:**
 
-1. Minimal edit to the existing parameter description — one added sentence, in the voice of the surrounding
-   text, forbidding quoted or attributed speech and saying what to do instead (report what is said as
-   narration, or leave it out). Do not restructure the paragraph or touch the other two parameters.
+1. Minimal edit to the existing parameter description, in the voice of the surrounding text, forbidding
+   quoted speech, attributed lines, and narrated or paraphrased speech alike, and saying to omit what is
+   said rather than to render it another way. Carry no example: an example of the thing being forbidden is
+   the likeliest way to reintroduce it. Do not restructure the paragraph or touch the other two parameters.
 2. No parser change, no rejection path, no new setting. This is a prompt wording fix; if it proves
    insufficient in play, that is a separate piece of work.
 
