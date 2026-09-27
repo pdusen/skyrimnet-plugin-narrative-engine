@@ -32,6 +32,14 @@
 //   sender talking to a third NPC, the player addressing somebody else
 //   within earshot — is dropped before the prompt is built.
 //
+// Row shape, which is NOT what PublicAPI.h's example shows: `type`,
+// `gameTime`, `originatingActorName` and `targetActorName` are
+// top-level, but the spoken line is `data.dialogue`. There is no `text`
+// field on a raw row — SkyrimNetEvents::FormatEventsText writes one,
+// from `type` plus `data`, for callers that want the rendered
+// "Speaker -> Listener: line" form. Reading the header's documented
+// `text` instead cost a session's worth of empty dialogue blocks.
+//
 // Threading: no engine access, so no token. The fetch is a SkyrimNet
 // DLL call; the two shaping functions are pure over their arguments,
 // which is why they take `nowGameSeconds` rather than reading

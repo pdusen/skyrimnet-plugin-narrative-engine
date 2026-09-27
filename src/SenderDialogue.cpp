@@ -59,6 +59,30 @@ namespace NarrativeEngine::SenderDialogue
         {
             return NamesMatch(name, playerName) || NamesMatch(name, "Player");
         }
+
+        // The spoken line off a raw event row.
+        //
+        // A row from PublicGetRecentEvents has NO `text` field. What it
+        // carries is `type` plus a `data` object, and
+        // SkyrimNetEvents::FormatEventsText is what synthesizes `text`
+        // from the two -- in place, for callers that want the rendered
+        // "Speaker -> Listener: line" form. We want the bare line, so
+        // we read `data.dialogue` directly and never run that pass.
+        //
+        // The header's own example row shows a flat `text`, which is
+        // why the first cut of this read one and silently dropped every
+        // dialogue row it was given. `text` is kept as a fallback for a
+        // caller that hands us an already-formatted array, and because
+        // costing nothing is the only argument it needs.
+        std::string ExtractLine(const nlohmann::json& row)
+        {
+            if (auto it = row.find("data"); it != row.end() && it->is_object()) {
+                if (auto line = JsonUtils::StringOr(*it, "dialogue"); !line.empty()) {
+                    return line;
+                }
+            }
+            return JsonUtils::StringOr(row, "text");
+        }
     } // namespace
 
     nlohmann::json Fetch(RE::FormID senderFormID, std::string_view senderName, std::string_view playerName, int cap)
@@ -78,6 +102,7 @@ namespace NarrativeEngine::SenderDialogue
 
         int droppedThirdParty = 0;
         int droppedUnattributable = 0;
+        int droppedNoLine = 0;
 
         for (const auto& e : parsed) {
             if (!e.is_object()) {
@@ -104,8 +129,13 @@ namespace NarrativeEngine::SenderDialogue
                 continue;
             }
 
-            auto text = LLMTextSanitizer::Sanitize(JsonUtils::StringOr(e, "text"));
+            auto text = LLMTextSanitizer::Sanitize(ExtractLine(e));
             if (text.empty()) {
+                // Counted, not silent. A two-party row we could not read
+                // a line out of is the shape of a payload change, and
+                // the first version of this dropped 31 of them per call
+                // without the tally saying so.
+                ++droppedNoLine;
                 continue;
             }
             auto speaker = LLMTextSanitizer::Sanitize(origin);
@@ -138,12 +168,13 @@ namespace NarrativeEngine::SenderDialogue
 
         if (Settings::Get().debugMode) {
             logger::debug("SenderDialogue: sender 0x{:X} — {} of {} rows kept "
-                          "(dropped: third-party={}, unattributable={})",
+                          "(dropped: third-party={}, unattributable={}, no-line={})",
                           senderFormID,
                           arr.size(),
                           parsed.size(),
                           droppedThirdParty,
-                          droppedUnattributable);
+                          droppedUnattributable,
+                          droppedNoLine);
         }
         return out;
     }

@@ -56,10 +56,27 @@ namespace
         dest[i] = '\0';
     }
 
-    // One row in the shape PublicGetRecentEvents documents.
-    std::string EventRow(const char* origin, const char* target, const char* text, double gameTime)
+    // One row in the shape PublicGetRecentEvents actually returns: the
+    // line nested under `data.dialogue`, with no top-level `text`.
+    //
+    // The first version of this helper emitted the flat `text` field that
+    // PublicAPI.h's example shows, which let the whole suite pass against a
+    // Fetch that dropped every real row on the floor. The fixture being
+    // wrong in the same direction as the code is the only way a filter this
+    // well covered could ship returning nothing, so the shape here is the
+    // load-bearing part of these tests.
+    std::string EventRow(const char* origin, const char* target, const char* line, double gameTime)
     {
-        return R"({"type":"dialogue","text":")" + std::string{text} + R"(","gameTime":)" + std::to_string(gameTime)
+        return R"({"type":"dialogue","gameTime":)" + std::to_string(gameTime) + R"(,"originatingActorName":")" + origin
+               + R"(","targetActorName":")" + target + R"(","data":{"speaker":")" + origin + R"(","listener":")"
+               + target + R"(","dialogue":")" + line + R"("}})";
+    }
+
+    // The same exchange in the rendered shape, which is what an array that
+    // has already been through SkyrimNetEvents::FormatEventsText looks like.
+    std::string FormattedEventRow(const char* origin, const char* target, const char* line, double gameTime)
+    {
+        return R"({"type":"dialogue","text":")" + std::string{line} + R"(","gameTime":)" + std::to_string(gameTime)
                + R"(,"originatingActorName":")" + origin + R"(","targetActorName":")" + target + R"("})";
     }
 
@@ -109,6 +126,7 @@ TEST_CASE("SenderDialogue::Fetch keeps only what the two of them said to each ot
         SECTION("should name the speaker by the originating actor")
         {
             const auto out = Dialogue::Fetch(kYsolda, "Ysolda", "Dragonborn", 10);
+            REQUIRE(out.size() == 2);
             REQUIRE(out[0].value("speaker", "") == "Dragonborn");
             REQUIRE(out[1].value("speaker", "") == "Ysolda");
         }
@@ -118,6 +136,7 @@ TEST_CASE("SenderDialogue::Fetch keeps only what the two of them said to each ot
             // FilterByMemoryAge and AnnotateAges both read it; a row that
             // lost it would be treated as infinitely old and dropped.
             const auto out = Dialogue::Fetch(kYsolda, "Ysolda", "Dragonborn", 10);
+            REQUIRE(out.size() == 2);
             REQUIRE(out[0].value("gameTime", 0.0) == 100.0);
         }
     }
@@ -219,6 +238,33 @@ TEST_CASE("SenderDialogue::Fetch keeps only what the two of them said to each ot
             const auto out = Dialogue::Fetch(kYsolda, "Ma'randru-jo", "Dragonborn", 10);
             REQUIRE(out.size() == 1);
             REQUIRE(out[0].value("speaker", "") == "Ma'randru-jo");
+        }
+    }
+
+    SECTION("when the row has already been rendered to a flat text field")
+    {
+        SetJson(fake.eventsJson, Rows({FormattedEventRow("Ysolda", "Dragonborn", "You again.", 100.0)}));
+
+        SECTION("should read the line from there")
+        {
+            // The fallback arm. Nothing in the plugin hands us a formatted
+            // array today, but the header documents this shape and it costs
+            // one lookup to accept it.
+            const auto out = Dialogue::Fetch(kYsolda, "Ysolda", "Dragonborn", 10);
+            REQUIRE(out.size() == 1);
+            REQUIRE(out[0].value("text", "") == "You again.");
+        }
+    }
+
+    SECTION("when a two-party row carries no line at all")
+    {
+        SetJson(fake.eventsJson,
+                R"([{"type":"dialogue","gameTime":100.0,"originatingActorName":"Ysolda",)"
+                R"("targetActorName":"Dragonborn","data":{"speaker":"Ysolda"}}])");
+
+        SECTION("should drop it")
+        {
+            REQUIRE(Dialogue::Fetch(kYsolda, "Ysolda", "Dragonborn", 10).empty());
         }
     }
 

@@ -110,6 +110,21 @@ which makes them pure — no token, per the `RoadRoute::Route` precedent — and
 sites pass `EventLogUtil::NowGameTimeSeconds()`, the canonical helper, in place of the
 `GetHoursPassed() * 3600` both composers had open-coded.
 
+**Fixed after the first in-game run: the line is `data.dialogue`, not `text`.** The first cut read a
+top-level `text` field, because that is what `PublicAPI.h`'s example row shows. A raw event row does not
+have one. `type`, `gameTime`, `originatingActorName` and `targetActorName` are top-level, but the spoken
+line sits in `data.dialogue`, and `SkyrimNetEvents::FormatEventsText` is what synthesizes `text` from `type`
+plus `data` for callers that want the rendered form. So every genuine two-party row was dropped for having
+no text, and the block reached the prompt empty: the first live run logged
+`0 of 68 rows kept (dropped: third-party=37, unattributable=0)`.
+
+The suite did not catch it because its fixture was wrong in the same direction as the code — `EventRow`
+emitted the documented flat shape rather than the real nested one, so a Fetch that dropped every real row
+passed every case. The fixture now emits `data.dialogue`, which fails loudly against the old extraction, and
+a second helper covers the flat shape as the fallback arm. Rows that pass the two-party test but yield no
+line are now counted as `no-line=` in the summary rather than dropped silently, which is what let a 31-row
+loss go unremarked.
+
 **Still reading the unfiltered endpoint, out of this item's scope:** `VisitConclusionPoll::SampleRecentLines`
 and `NPCVisitBeat`'s discuss-turn sampler. Both are in-conversation turn detection during a visit rather than
 compose context, and the poll already gates on `gameTime >= discussStartedAt` plus a speaker-side bystander
