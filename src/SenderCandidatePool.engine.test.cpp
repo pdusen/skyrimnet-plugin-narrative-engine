@@ -673,7 +673,7 @@ TEST_CASE("SenderCandidatePool::Build honours the sender blacklist", "[SenderCan
     SECTION("when the list names several NPCs")
     {
         const ConfiguredSettings settings{
-            "[General]\nbDebugMode=0\n[Beats]\nsBlacklistedSenders=Ysolda, WICourierNPC\n"};
+            "[General]\nbDebugMode=0\n[Beats]\nsBlacklistedSenders=Ysolda; WICourierNPC\n"};
 
         SECTION("should drop every one of them")
         {

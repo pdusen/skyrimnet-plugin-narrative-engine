@@ -436,7 +436,7 @@ TEST_CASE("Settings::IsSenderBlacklisted", "[Settings][engine]")
 
     SECTION("when the list names senders")
     {
-        WriteIni(kPluginIni, "[Beats]\nsBlacklistedSenders=WICourierNPC, Nazeem ,Ysolda\n");
+        WriteIni(kPluginIni, "[Beats]\nsBlacklistedSenders=WICourierNPC; Nazeem ;Ysolda; Rothgar, the Unbowed\n");
         Settings::Load();
 
         SECTION("should match on the EditorID")
@@ -468,7 +468,7 @@ TEST_CASE("Settings::IsSenderBlacklisted", "[Settings][engine]")
         SECTION("should trim the space around each entry")
         {
             // " Nazeem " is what a player writing a list with spaces after the
-            // commas actually produces.
+            // semicolons actually produces.
             REQUIRE(Settings::IsSenderBlacklisted("", "Nazeem") == Settings::SenderBlacklistMatch::DisplayName);
         }
 
@@ -477,6 +477,15 @@ TEST_CASE("Settings::IsSenderBlacklisted", "[Settings][engine]")
             // Nothing turns on which is reported except the log line, but the
             // log line is the whole way a surprising exclusion gets diagnosed.
             REQUIRE(Settings::IsSenderBlacklisted("Ysolda", "Ysolda") == Settings::SenderBlacklistMatch::EditorID);
+        }
+
+        SECTION("should keep an entry containing a comma whole")
+        {
+            // What the semicolon buys over a comma. No vanilla NPC is named
+            // with one, but a mod-added NPC can be, and splitting the entry
+            // would leave two halves that match nobody.
+            REQUIRE(Settings::IsSenderBlacklisted("", "Rothgar, the Unbowed")
+                    == Settings::SenderBlacklistMatch::DisplayName);
         }
 
         SECTION("should not match someone the list does not name")

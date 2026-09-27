@@ -24,9 +24,10 @@ a visit beat.
 
 **Sub-tasks:**
 
-1. New CSV setting alongside the existing exclusion lists — `sBlacklistedSendersCSV` under `[Beats]`, empty by
-   default, whitespace around commas trimmed. Parse once into a set in `Settings.cpp` and expose a membership
-   query the way `Settings::IsSpellNameBlocked` already does for `sSpellNameBlocklist`.
+1. New delimited setting alongside the existing exclusion lists — `sBlacklistedSenders` under `[Beats]`, empty
+   by default, semicolon-separated as `sSpellNameBlocklist` is, whitespace around the separators trimmed.
+   Parse once into a set in `Settings.cpp` and expose a membership query the way
+   `Settings::IsSpellNameBlocked` already does for `sSpellNameBlocklist`.
 2. Apply the gate inside `WalkEngagement` in `src/SenderCandidatePool.cpp`, as part of the universal viability
    walk — **not** in either caller's `extraViabilityFilter`. There are four filter call sites today
    (`LetterComposer.cpp:578`, `VisitComposer.cpp:268` and `:357`, `NPCVisitBeat.cpp:467`, the last two

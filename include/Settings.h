@@ -329,9 +329,11 @@ namespace NarrativeEngine::Settings
         // updates the field here.
         bool enableNpcLetter = true;
 
-        // Comma-separated list of NPCs who may never be chosen as the
+        // Semicolon-separated list of NPCs who may never be chosen as the
         // sender of a letter beat or the visitor of a visit beat.
-        // Empty by default. Whitespace around commas is allowed.
+        // Empty by default. Whitespace around the separators is
+        // allowed. Semicolon-separated to match sSpellNameBlocklist,
+        // the other list whose entries are free-text names.
         //
         // An entry matches a candidate if it equals EITHER the base
         // form's EditorID or the candidate's display name, so the same
@@ -347,7 +349,7 @@ namespace NarrativeEngine::Settings
         // via Settings::IsSenderBlacklisted. Enforced in
         // SenderCandidatePool's universal viability walk, so it covers
         // both composers and the IsAvailable-time CountViable path.
-        std::string blacklistedSendersCSV;
+        std::string blacklistedSenders;
 
         // NPCLetterBeat / LetterPool content + dispatch knobs. See
         // PHASE_04_LETTER_POOL_AND_NPC_LETTER_ACTION.md.
@@ -948,7 +950,7 @@ namespace NarrativeEngine::Settings
     };
 
     // Case-insensitive membership check against the parsed sender
-    // blacklist derived from Config::blacklistedSendersCSV. Either
+    // blacklist derived from Config::blacklistedSenders. Either
     // argument may be empty (an unresolved EditorID is the common
     // case); an empty blacklist always returns None. EditorID is
     // tested first so that arm is the one reported when both match.

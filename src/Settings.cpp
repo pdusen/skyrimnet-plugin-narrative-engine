@@ -23,7 +23,7 @@ namespace NarrativeEngine::Settings
         // (CombatEventLog HitSink) don't need locking.
         std::unordered_set<std::string> g_spellNameBlocklistSet;
 
-        // Parsed form of Config::blacklistedSendersCSV. Same lifecycle
+        // Parsed form of Config::blacklistedSenders. Same lifecycle
         // and threading story as g_spellNameBlocklistSet above: rebuilt
         // by RebuildBlacklistedSendersSet after every Load /
         // ApplyMcmOverride, read-only outside that path. One set serves
@@ -93,10 +93,10 @@ namespace NarrativeEngine::Settings
         }
 
         // Called after every path that mutates
-        // g_config.blacklistedSendersCSV.
+        // g_config.blacklistedSenders.
         void RebuildBlacklistedSendersSet()
         {
-            RebuildLowercasedSet(g_blacklistedSendersSet, g_config.blacklistedSendersCSV, ',');
+            RebuildLowercasedSet(g_blacklistedSendersSet, g_config.blacklistedSenders, ';');
             logger::info("Settings: sender blacklist has {} entries", g_blacklistedSendersSet.size());
         }
 
@@ -371,7 +371,7 @@ namespace NarrativeEngine::Settings
 
             dst.enableNpcLetter = ini.GetBoolValue("Beats", "bEnableNpcLetter", dst.enableNpcLetter);
 
-            dst.blacklistedSendersCSV = ini.GetValue("Beats", "sBlacklistedSenders", dst.blacklistedSendersCSV.c_str());
+            dst.blacklistedSenders = ini.GetValue("Beats", "sBlacklistedSenders", dst.blacklistedSenders.c_str());
 
             dst.letterContentMinWords =
                 static_cast<int>(ini.GetLongValue("Beats", "iLetterContentMinWords", dst.letterContentMinWords));
