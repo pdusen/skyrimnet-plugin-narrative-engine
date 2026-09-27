@@ -61,7 +61,7 @@ path.
 
 ## 2 — Dialogue history strictly filtered to player-and-sender exchanges
 
-- [ ] Complete
+- [X] Complete
 
 **[CLAUDE]**
 
@@ -92,6 +92,28 @@ that are either the player speaking **to** the sender, or the sender speaking **
 5. Tests: a third-party line is dropped on both paths, a player-to-sender line and a sender-to-player line
    both survive, an unattributable entry is dropped, and an empty result after filtering renders the prompt's
    `sender_recent_dialogue` block as absent rather than as an empty heading.
+
+**Done: the source moved, because the old one could not answer the question.** `PublicGetRecentDialogue`
+returns `{speaker, text, gameTime}` and nothing else — SkyrimNet's own `PublicAPI.h` documents that shape, and
+there is no counterparty on the row. Its docstring does claim the rows are dialogue "between the player and an
+NPC", but a filter resting on that claim is an assumption, not a filter: a line the sender aimed at a third
+party and a line they aimed at the player are the same row.
+
+`PublicGetRecentEvents(formId, n, "dialogue,dialogue_player_text")` carries `originatingActorName` and
+`targetActorName`, so both of the conditions above are decidable from the data. The wrapper for it already
+existed (`SkyrimNetAPI::GetRecentEvents`), so this added no API surface. `dialogue_background` is not
+requested: it is ambient NPC-to-NPC chatter, which the filter would drop anyway.
+
+The trio the two composers each carried is now one module, `SenderDialogue`, rather than two copies of a
+filter that has to agree. Its two shaping functions take `nowGameSeconds` instead of reading `RE::Calendar`,
+which makes them pure — no token, per the `RoadRoute::Route` precedent — and testable without a clock. Call
+sites pass `EventLogUtil::NowGameTimeSeconds()`, the canonical helper, in place of the
+`GetHoursPassed() * 3600` both composers had open-coded.
+
+**Still reading the unfiltered endpoint, out of this item's scope:** `VisitConclusionPoll::SampleRecentLines`
+and `NPCVisitBeat`'s discuss-turn sampler. Both are in-conversation turn detection during a visit rather than
+compose context, and the poll already gates on `gameTime >= discussStartedAt` plus a speaker-side bystander
+filter. Neither can tell who a line was addressed to, so the same gap exists there in a smaller form.
 
 **Verify [CLAUDE]:** `pwsh -File build.ps1 test` passes. A debug-mode compose run on a sender the player has
 spoken to in a crowded room renders only the two-party lines.
