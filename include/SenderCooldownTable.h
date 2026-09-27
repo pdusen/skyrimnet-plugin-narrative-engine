@@ -81,6 +81,23 @@ namespace NarrativeEngine
         // reused for that role rather than duplicating storage.
         std::optional<double> GetStampGameHours(FormID senderFormID) const;
 
+        // How many senders are still inside the cooldown window, and
+        // how many game-hours until the first of them leaves it. For
+        // the dashboard, which wants "when can this beat pick somebody
+        // again" rather than a verdict on one sender.
+        //
+        // `cooldownHours <= 0` (disabled) reports nothing pending, the
+        // same way IsOnCooldown reports false. Entries already past
+        // the window are skipped rather than reported with a negative
+        // remainder -- the table is pruned lazily, so expired stamps
+        // can still be sitting in it.
+        struct PendingSummary
+        {
+            int count = 0;
+            double soonestRemainingHours = 0.0;
+        };
+        PendingSummary SummarizePending(int cooldownHours, double nowGameHours) const;
+
         void Clear();
 
         // Called with an ICosaveIO whose record the caller has already

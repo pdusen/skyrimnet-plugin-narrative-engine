@@ -98,7 +98,9 @@ export function ActionDispatchTable({ actions, inFlightName, nowSeconds }: Props
                     <th className="col-name">Action</th>
                     <th className="col-enabled">Enabled</th>
                     <th className="col-last">Last Dispatched</th>
-                    <th className="col-cooldown">Cooldown</th>
+                    <th className="col-cooldown" title="In-world hours. Frozen while the game is paused — including now.">
+                        Cooldown <span className="timer-clock">game time</span>
+                    </th>
                     <th className="col-fire">Dispatch</th>
                 </tr>
             </thead>

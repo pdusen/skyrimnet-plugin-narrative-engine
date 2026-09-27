@@ -1,6 +1,7 @@
 #pragma once
 
 #include <IBeat.h>
+#include <SenderCooldownTable.h>
 
 #include <SKSE/SKSE.h>
 
@@ -133,7 +134,34 @@ namespace NarrativeEngine
         // a second time. Independent of IsSenderOnCooldown, which
         // decays; the watermark does not.
         std::optional<double> GetSenderMemoryWatermarkGameHours(RE::FormID senderNpcFormID);
+
+        // How many senders the visit beat is currently holding back,
+        // and the game-hours until the first becomes eligible. For the
+        // dashboard: the useful question there is "when could a visit
+        // pick somebody again", not whether one named NPC is held.
+        SenderCooldownTable::PendingSummary SummarizeSenderCooldowns();
     } // namespace NPCVisitBeat_Cooldowns
+
+    namespace NPCVisitBeat_Timers
+    {
+        // The two wall-time deadlines a visit in flight is running
+        // against, for the dashboard.
+        //
+        // Both are measured on the ACTIVE-PLAY clock -- NormalElapsedNow,
+        // which advances only under TickMode::Normal -- so they are
+        // frozen in combat and in dialogue as well as while paused,
+        // and they do not run down while the dashboard showing them is
+        // open. `active` is false for a phase that is not currently
+        // running.
+        struct TimeoutInfo
+        {
+            bool approachActive = false;
+            double approachRemainingSeconds = 0.0;
+            bool returnHomeActive = false;
+            double returnHomeRemainingSeconds = 0.0;
+        };
+        TimeoutInfo Get();
+    } // namespace NPCVisitBeat_Timers
 
     namespace NPCVisitBeat_Persistence
     {

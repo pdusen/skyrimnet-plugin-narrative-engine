@@ -32,6 +32,28 @@ namespace NarrativeEngine
         return elapsed < static_cast<double>(cooldownHours);
     }
 
+    SenderCooldownTable::PendingSummary SenderCooldownTable::SummarizePending(int cooldownHours,
+                                                                              double nowGameHours) const
+    {
+        PendingSummary summary;
+        if (cooldownHours <= 0)
+            return summary;
+
+        const double window = static_cast<double>(cooldownHours);
+        std::scoped_lock lock(mutex_);
+        for (const auto& [formID, stamp] : stamps_) {
+            if (stamp <= 0.0)
+                continue;
+            const double remaining = window - (nowGameHours - stamp);
+            if (remaining <= 0.0)
+                continue;
+            ++summary.count;
+            if (summary.soonestRemainingHours == 0.0 || remaining < summary.soonestRemainingHours)
+                summary.soonestRemainingHours = remaining;
+        }
+        return summary;
+    }
+
     std::optional<double> SenderCooldownTable::GetStampGameHours(FormID senderFormID) const
     {
         if (senderFormID == 0)

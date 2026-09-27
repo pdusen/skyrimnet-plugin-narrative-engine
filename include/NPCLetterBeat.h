@@ -1,6 +1,7 @@
 #pragma once
 
 #include <IBeat.h>
+#include <SenderCooldownTable.h>
 
 #include <SKSE/SKSE.h>
 
@@ -118,6 +119,11 @@ namespace NarrativeEngine
         // about the same memory a second time. Independent of
         // IsSenderOnCooldown, which decays; the watermark does not.
         std::optional<double> GetSenderMemoryWatermarkGameHours(RE::FormID senderNpcFormID);
+
+        // Senders the letter beat is currently holding back, and the
+        // game-hours until the first becomes eligible. Dashboard
+        // counterpart to IsSenderOnCooldown's per-NPC verdict.
+        SenderCooldownTable::PendingSummary SummarizeSenderCooldowns();
     } // namespace NPCLetterBeat_Cooldowns
 
     namespace NPCLetterBeat_Persistence

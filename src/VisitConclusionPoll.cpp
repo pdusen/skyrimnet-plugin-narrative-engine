@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <climits>
 #include <cstdio>
 #include <deque>
 #include <mutex>
@@ -421,6 +422,37 @@ namespace NarrativeEngine::VisitConclusionPoll
                               silenceLimit);
             }
         }
+    }
+
+    GateInfo GetGateInfo()
+    {
+        const auto& cfg = Settings::Get();
+        GateInfo info;
+
+        const double silenceLimit = static_cast<double>(std::max(0, cfg.visitPollSilenceRealSeconds));
+        const double maxInterval = static_cast<double>(std::max(0, cfg.visitPollMaxIntervalGameMinutes)) * 60.0;
+        const int turnLimit = std::max(0, cfg.visitPollTurnCountThreshold);
+        const double nowGame = GameSecondsNow();
+
+        std::scoped_lock lock(g_mutex);
+        info.armed = g_armed;
+        if (!g_armed)
+            return info;
+
+        if (silenceLimit > 0.0) {
+            info.silenceEnabled = true;
+            info.silenceRemainingSeconds = std::max(0.0, silenceLimit - g_silenceRealSeconds);
+        }
+        if (maxInterval > 0.0 && g_lastPollGameSeconds > 0.0) {
+            info.intervalEnabled = true;
+            info.intervalRemainingGameSeconds = std::max(0.0, maxInterval - (nowGame - g_lastPollGameSeconds));
+        }
+        if (turnLimit > 0) {
+            info.turnsEnabled = true;
+            info.turnsRemaining =
+                std::max(0, turnLimit - static_cast<int>(std::min<std::uint32_t>(g_turnsSinceLastPoll, INT_MAX)));
+        }
+        return info;
     }
 
     bool GateTick()

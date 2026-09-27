@@ -948,6 +948,12 @@ namespace NarrativeEngine
         {
             return g_senderMemoryWatermarks.GetStampGameHours(senderNpcFormID);
         }
+
+        SenderCooldownTable::PendingSummary SummarizeSenderCooldowns()
+        {
+            return g_senderCooldowns.SummarizePending(Settings::Get().letterSenderCooldownGameHours,
+                                                      EngineUtils::GetCurrentGameHours());
+        }
     } // namespace NPCLetterBeat_Cooldowns
 
     // ---------------------------------------------------------------------

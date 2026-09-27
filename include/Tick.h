@@ -16,4 +16,16 @@ namespace NarrativeEngine::Tick
     // the disabled span. Defaults to true. Thread-safe.
     void SetEnabled(bool enabled);
     bool IsEnabled();
+
+    // Unpaused real-time seconds until the accumulator next crosses
+    // `iTickIntervalSeconds` and an evaluation fires. Thread-safe.
+    //
+    // Unpaused, so it does not run down while the game is paused --
+    // which includes the whole time the dashboard that displays it is
+    // on screen. It is a reading as of the last poll, not a countdown.
+    //
+    // Returns the full interval before the first poll of a session, and
+    // 0 when the accumulator has already crossed (the next poll fires,
+    // unless an evaluation is still in flight).
+    double SecondsUntilNextTick();
 } // namespace NarrativeEngine::Tick

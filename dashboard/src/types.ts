@@ -9,6 +9,83 @@ export type PhaseName =
     | "FallingAction"
     | "Resolution";
 
+// --- Timers ---------------------------------------------------------------
+//
+// Composed by DashboardTimers::Collect on the C++ side. Read that header
+// before changing anything here: the four clocks are not interchangeable,
+// and the values are readings as of the push, not live countdowns. The
+// dashboard is only ever on screen with the game paused (PrismaUI Focus is
+// called with pauseGame=true), so three of the four are frozen for exactly
+// as long as anyone is looking at them. Nothing here should be animated.
+
+export type TimerClock =
+    | 'wall_clock'         // system_clock; runs through pause, combat, dialogue
+    | 'unpaused_real'      // Tick.cpp accumulators; frozen while paused
+    | 'active_play_real'   // TickMode::Normal only; also frozen in combat/dialogue
+    | 'game_time';         // RE::Calendar. `remaining` is in HOURS, not seconds
+
+export interface Timer {
+    // Seconds for the three real-time clocks, HOURS for 'game_time'.
+    remaining: number;
+    clock: TimerClock;
+}
+
+// null means "nothing scheduled / cooldown configured off" — render it as
+// such, never as "0 left". A disabled cooldown never blocks anything; an
+// expired one just stopped blocking, and the difference is the whole
+// question when a beat is not firing.
+export type MaybeTimer = Timer | null;
+
+export interface PendingSenderCooldowns {
+    count: number;
+    soonest: MaybeTimer;
+}
+
+export interface DirectorTimers {
+    next_evaluation: MaybeTimer;
+    phase_advance_unlock: MaybeTimer;
+    global_beat_cooldown: MaybeTimer;
+    repetition_window: {
+        suppressed_count: number;
+        soonest: MaybeTimer;
+    };
+}
+
+export interface LetterTimers {
+    beat_cooldown: MaybeTimer;
+    sender_cooldowns: PendingSenderCooldowns;
+    pending_delivery: { slot_index: number; timeout: MaybeTimer }[];
+}
+
+export interface VisitTimers {
+    beat_cooldown: MaybeTimer;
+    sender_cooldowns: PendingSenderCooldowns;
+    approach_timeout: MaybeTimer;
+    return_home_timeout: MaybeTimer;
+    // Three independent triggers; whichever trips first fires the poll.
+    // `turns_remaining` is not a clock, which is why there is no single
+    // "next poll" figure.
+    conclusion_poll: {
+        armed: boolean;
+        silence: MaybeTimer;
+        interval: MaybeTimer;
+        turns_remaining: number | null;
+    };
+}
+
+export interface GossipTimers {
+    next_schedule_check: MaybeTimer;
+    // One scheduled tick is both the harvest sweep and the simulation step.
+    next_tick: MaybeTimer;
+}
+
+export interface TimersState {
+    director: DirectorTimers;
+    letters: LetterTimers;
+    visit: VisitTimers;
+    gossip: GossipTimers;
+}
+
 export interface DirectorState {
     status: {
         skyrim_net_available: boolean;
@@ -48,6 +125,7 @@ export interface DirectorState {
     visit: VisitTabState;
     gossip: GossipTabState;
     settings: SettingsTabState;
+    timers: TimersState;
 }
 
 // Settings tab payload — populated by the C++ DashboardUIManager per

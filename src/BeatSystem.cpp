@@ -10,6 +10,7 @@
 #include <EngineUtils.h>
 #include <EvalDispatch.h>
 #include <EvaluationPipeline.h>
+#include <EventLogUtil.h>
 #include <LetterComposer.h>
 #include <LLMTextSanitizer.h>
 #include <logger.h>
@@ -373,6 +374,36 @@ namespace NarrativeEngine::BeatSystem
         info.name = g_runningBeatName;
         info.startedAtRealSeconds = g_runningBeatStartedAt;
         info.state = g_runningBeatCurrentState;
+        return info;
+    }
+
+    RepetitionWindowInfo GetRepetitionWindowInfo()
+    {
+        RepetitionWindowInfo info;
+        const double window = static_cast<double>(std::max(0, Settings::Get().beatRepetitionWindowSeconds));
+        if (window <= 0.0) {
+            return info;
+        }
+
+        // Same wall clock the ring stamps with. Deliberately not the
+        // active-play cooldown's clock: a beat fired five minutes ago
+        // leaves the ring five real minutes later whatever the player
+        // spent them doing.
+        const double now = EventLogUtil::NowUnixSeconds();
+        std::scoped_lock lock(g_recentMutex);
+        for (const auto& r : g_recentlyFired) {
+            const double expiresIn = window - (now - r.dispatchedAt);
+            if (expiresIn <= 0.0) {
+                // Already out of the window; the ring is trimmed lazily
+                // by ConsiderBeat, so an expired entry can still be
+                // sitting here and must not be reported as blocking.
+                continue;
+            }
+            ++info.suppressedCount;
+            if (info.soonestExpirySeconds == 0.0 || expiresIn < info.soonestExpirySeconds) {
+                info.soonestExpirySeconds = expiresIn;
+            }
+        }
         return info;
     }
 

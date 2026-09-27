@@ -5,6 +5,7 @@
 #include <BeatRegistry.h>
 #include <BeatSystem.h>
 #include <CombatEventLog.h>
+#include <DashboardTimers.h>
 #include <DecisionLog.h>
 #include <GossipClaims.h>
 #include <GossipGraph.h>
@@ -1273,6 +1274,13 @@ namespace NarrativeEngine::DashboardUIManager
             }
             j["actions"] = std::move(actions);
         }
+
+        // timers — the per-tab "when does the next thing happen, and
+        // how long has this cooldown left" readouts. Every figure is
+        // tagged with the clock that governs it; see DashboardTimers.h
+        // for why four of them are not interchangeable, and why these
+        // are readings as of the push rather than live countdowns.
+        j["timers"] = DashboardTimers::Collect();
 
         // visit — Phase 05 Step 16. The Visit tab renders three
         // sections: the current conversation (when a visit is in

@@ -125,6 +125,23 @@ namespace NarrativeEngine::GossipTick
         }
     }
 
+    ScheduleInfo GetScheduleInfo()
+    {
+        const auto& cfg = Settings::Get();
+        ScheduleInfo info;
+
+        const double checkEvery = static_cast<double>(std::max(1, cfg.gossipTickIntervalSeconds));
+        const double now = NowGameDay();
+
+        std::scoped_lock lock(g_mutex);
+        info.secondsUntilNextCheck = std::max(0.0, checkEvery - g_secondsSinceCheck);
+        if (g_nextDueGameDay >= 0.0) {
+            info.hasNextDue = true;
+            info.gameHoursUntilNextTick = std::max(0.0, (g_nextDueGameDay - now) * 24.0);
+        }
+        return info;
+    }
+
     void Poll(const PluginThread::Token&, double unpausedElapsedSeconds)
     {
         const auto& cfg = Settings::Get();

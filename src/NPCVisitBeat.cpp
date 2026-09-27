@@ -2232,7 +2232,37 @@ namespace NarrativeEngine
         {
             return g_senderMemoryWatermarks.GetStampGameHours(senderNpcFormID);
         }
+
+        SenderCooldownTable::PendingSummary SummarizeSenderCooldowns()
+        {
+            return g_senderCooldowns.SummarizePending(Settings::Get().visitSenderCooldownGameHours,
+                                                      EngineUtils::GetCurrentGameHours());
+        }
     } // namespace NPCVisitBeat_Cooldowns
+
+    namespace NPCVisitBeat_Timers
+    {
+        TimeoutInfo Get()
+        {
+            const auto& cfg = Settings::Get();
+            const double now = NormalElapsedNow();
+            TimeoutInfo info;
+
+            if (const double enteredAt = g_salutationEnteredAtNormalSec.load(std::memory_order_acquire);
+                enteredAt > 0.0) {
+                const double limit = static_cast<double>(std::max(1, cfg.visitApproachTimeoutSeconds));
+                info.approachActive = true;
+                info.approachRemainingSeconds = std::max(0.0, limit - (now - enteredAt));
+            }
+            if (const double startedAt = g_returnHomeStartedAtNormalSec.load(std::memory_order_acquire);
+                startedAt > 0.0) {
+                const double limit = static_cast<double>(std::max(1, cfg.visitReturnHomeTimeoutSeconds));
+                info.returnHomeActive = true;
+                info.returnHomeRemainingSeconds = std::max(0.0, limit - (now - startedAt));
+            }
+            return info;
+        }
+    } // namespace NPCVisitBeat_Timers
 
     // ---------------------------------------------------------------
     // Cosave — 'NBVS' record.

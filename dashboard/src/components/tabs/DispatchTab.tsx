@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { DirectorState } from '../../types';
 import { ActionDispatchTable } from '../ActionDispatchTable';
+import { TimerPanel, TimerRow } from '../TimerPanel';
 
 interface Props {
     state: DirectorState;
@@ -61,6 +62,9 @@ export function DispatchTab({ state, nowSeconds }: Props) {
         setConfirmOpen(false);
     };
     const onCancelAbort = () => setConfirmOpen(false);
+    // The two gates that apply to the table as a whole, as opposed to the
+    // per-beat cooldown in its own column.
+    const gates = state.timers.director;
 
     return (
         <div className="tab-content dispatch-tab">
@@ -71,6 +75,20 @@ export function DispatchTab({ state, nowSeconds }: Props) {
                     onCancel={onCancelAbort}
                 />
             )}
+            <TimerPanel title="Gates on every pick">
+                <TimerRow label="Global beat cooldown" timer={gates.global_beat_cooldown} />
+                <TimerRow
+                    label="Repetition window"
+                    timer={gates.repetition_window.soonest}
+                    note={
+                        gates.repetition_window.suppressed_count > 0
+                            ? `${gates.repetition_window.suppressed_count} beat${
+                                  gates.repetition_window.suppressed_count === 1 ? '' : 's'
+                              } suppressed`
+                            : 'nothing suppressed'
+                    }
+                />
+            </TimerPanel>
             <section className="panel dispatch-controls">
                 <h2>Controls</h2>
                 <label className="tick-toggle" title="When off, the plugin skips its periodic poll: no phase advance, no evaluation, no dispatcher tick. Debug aid.">

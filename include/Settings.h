@@ -135,7 +135,13 @@ namespace NarrativeEngine::Settings
         // thread. See PHASE_06_BEAT_SYSTEM_REFACTOR.md.
         int beatSystemPollIntervalMs = 250;
         // Beat dispatch knobs.
-        int beatCooldownSeconds = 120;         // wall-clock seconds after beat COMPLETION before next may fire
+        // Seconds of ACTIVE PLAY after beat COMPLETION before the next
+        // may fire -- not wall-clock, despite what this said until the
+        // dashboard had to label it. BeatSystem::RunOneTick only adds to
+        // the accumulator under TickMode::Normal, and ComputeTickMode
+        // returns Paused / Combat / Dialogue ahead of it, so this clock
+        // is frozen in combat and in dialogue as well as while paused.
+        int beatCooldownSeconds = 120;
         int beatRepetitionWindowSeconds = 300; // window during which the same beat name is excluded from picks
 
         // NPCLetterBeat precondition: minimum number of recently-engaged

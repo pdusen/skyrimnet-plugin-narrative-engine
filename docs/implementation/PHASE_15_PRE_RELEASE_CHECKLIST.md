@@ -147,7 +147,7 @@ is left out entirely; SkyrimNet's dialogue layer has the attackers once the figh
 
 ## 4 — Dashboard timing indicators on every tab
 
-- [ ] Complete
+- [X] Complete — implemented; the **[USER]** in-game verification below is still outstanding
 
 **[CLAUDE]**
 
@@ -203,6 +203,40 @@ seconds:**
 4. Tests: the C++ side's remaining-time computations get unit coverage per unit kind, including the
    already-expired case (clamp to zero, never negative) and the disabled case (a cooldown setting of 0 renders
    as "no cooldown", not as "0s remaining").
+
+**Done: five places the subsystems did not match the plan's shape.**
+
+- **Gossip has one scheduled tick, not two.** `GossipTick::RunTick` sets the horizon, runs the harvest sweep,
+  then advances the simulation, so "next sim step" and "next harvest sweep" are the same moment. What the
+  cadence does have is two *stages* on two different clocks: `Poll` only consults the schedule every
+  `iGossipTickIntervalSeconds` of unpaused real time, and what it looks for is a game-day boundary
+  `fGossipHarvestIntervalGameHours` apart. Both are shown; there is no second game-time figure to show.
+- **The conclusion poll has no single countdown.** Three independent conditions arm it — silence
+  (active-play seconds), max interval (game seconds), and turn count — and whichever trips first wins. A
+  lone "time to next poll" would have to pick a winner, and the turn counter is not a clock at all, so all
+  three are reported side by side.
+- **Sender cooldowns are summarised, not singular.** "The remaining visit-sender cooldown" has no one
+  answer: any number of senders can be held at once. `SenderCooldownTable::SummarizePending` reports how
+  many are held and when the first is released, which is the question the tab is actually being asked —
+  when could this beat pick somebody again. Both beats expose it, so Letters gained the same row.
+- **The letter delivery-verify delay is not shown, deliberately.** `iLetterDispatchVerifyDelaySeconds` is a
+  five-second grace window living inside the beat's RUNNING state rather than on a pool slot, and the
+  dashboard cannot be open while it runs — opening the panel pauses the game, and the window is five
+  seconds of a dispatch that has to complete for the beat to proceed. Surfacing it would have meant new
+  beat-internal state for a row nobody can ever catch. The pending-delivery timeout, which lasts ten
+  minutes and is visible on a slot, is shown.
+- **Two settings comments were wrong about their own clock, and are fixed.** `Settings.h` called
+  `iBeatCooldownSeconds` "wall-clock seconds"; the INI said the same and additionally described the
+  Director tick as plain wall-clock. Both now name the real clock, and the INI says outright that the beat
+  cooldown and the repetition window run at different rates.
+
+**Shape of the implementation.** `DashboardTimers` owns the arithmetic and the four-clock enum, emits a
+`timers` object into the state payload, and is where the tests live: the inactive-versus-expired distinction
+and the clamp are each one function, tested once, rather than repeated per readout. `TimerPanel.tsx` renders
+every row with its clock label and carries the "as of when the dashboard was opened" caveat once per panel.
+Five accessors were added to reach live state — `Tick::SecondsUntilNextTick`,
+`BeatSystem::GetRepetitionWindowInfo`, `GossipTick::GetScheduleInfo`, `NPCVisitBeat_Timers::Get`, and
+`VisitConclusionPoll::GetGateInfo` — plus `SenderCooldownTable::SummarizePending` for the two beats.
 
 **Verify [CLAUDE]:** `pwsh -File build.ps1 build`, `pwsh -File build.ps1 test`, and the dashboard build all
 pass.

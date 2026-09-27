@@ -502,3 +502,96 @@ TEST_CASE("SenderCooldownTable co-save round trip", "[SenderCooldownTable][cosav
         }
     }
 }
+
+TEST_CASE("SenderCooldownTable::SummarizePending", "[SenderCooldownTable]")
+{
+    // The dashboard's question is not "is this one NPC held back" but "when
+    // could this beat pick somebody again", which is a property of the whole
+    // table. Getting it wrong is invisible in play: the tab would just show a
+    // plausible number that never matched when a beat actually fired.
+    SenderCooldownTable table;
+    constexpr int kCooldownHours = 24;
+
+    SECTION("when nobody has been stamped")
+    {
+        SECTION("should report nothing pending")
+        {
+            const auto summary = table.SummarizePending(kCooldownHours, kNoon);
+            REQUIRE(summary.count == 0);
+            REQUIRE(summary.soonestRemainingHours == 0.0);
+        }
+    }
+
+    SECTION("when two senders are inside the window")
+    {
+        table.Stamp(kFaralda, kNoon);
+        table.Stamp(kYsolda, kNoon + 6.0);
+
+        SECTION("should count both")
+        {
+            REQUIRE(table.SummarizePending(kCooldownHours, kNoon + 6.0).count == 2);
+        }
+
+        SECTION("should report the one that frees up first")
+        {
+            // Faralda was stamped six hours earlier, so she leaves the window
+            // six hours before Ysolda does. Reporting the other one would
+            // overstate the wait by exactly that much.
+            REQUIRE(table.SummarizePending(kCooldownHours, kNoon + 6.0).soonestRemainingHours == 18.0);
+        }
+    }
+
+    SECTION("when one sender has aged out and one has not")
+    {
+        table.Stamp(kFaralda, kNoon);
+        table.Stamp(kYsolda, kNoon + 20.0);
+
+        SECTION("should count only the one still held")
+        {
+            // Stamps are pruned lazily, so an expired entry is still sitting in
+            // the table. Counting it would report a sender as blocked who is
+            // free to be picked on the very next evaluation.
+            const auto summary = table.SummarizePending(kCooldownHours, kNoon + 25.0);
+            REQUIRE(summary.count == 1);
+            REQUIRE(summary.soonestRemainingHours == 19.0);
+        }
+    }
+
+    SECTION("when every sender has aged out")
+    {
+        table.Stamp(kFaralda, kNoon);
+
+        SECTION("should report nothing pending rather than a negative remainder")
+        {
+            const auto summary = table.SummarizePending(kCooldownHours, kNoon + 100.0);
+            REQUIRE(summary.count == 0);
+            REQUIRE(summary.soonestRemainingHours == 0.0);
+        }
+    }
+
+    SECTION("when the cooldown is configured off")
+    {
+        table.Stamp(kFaralda, kNoon);
+
+        SECTION("should report nothing pending")
+        {
+            // Same contract as IsOnCooldown, which returns false outright at
+            // cooldownHours <= 0. A stamped table with the feature disabled
+            // holds nobody back.
+            REQUIRE(table.SummarizePending(0, kNoon).count == 0);
+        }
+    }
+
+    SECTION("when the clock has gone backwards")
+    {
+        table.Stamp(kFaralda, kNoon);
+
+        SECTION("should not report more than the full window")
+        {
+            // A load of an older save, or a console time change. The remainder
+            // is larger than the cooldown itself, which is odd but not wrong:
+            // the sender really is held until the clock catches up.
+            REQUIRE(table.SummarizePending(kCooldownHours, kNoon - 10.0).soonestRemainingHours == 34.0);
+        }
+    }
+}
