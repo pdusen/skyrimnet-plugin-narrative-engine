@@ -254,21 +254,37 @@ All four boxes checked, `pwsh -File format.ps1` clean, and a test build packaged
 
 ## Verifying all four in one session
 
-One run, in this order. The ordering is load-bearing in two places: the blacklist has to be written before the
-game starts, because the MCM override INI is read at load, and the dashboard's "before" reading has to be
-taken before the stretch of play that the "after" reading is compared against.
+One run, in this order. Two orderings are load-bearing: the blacklist must be written before the game
+starts, because the MCM override INI is read at load, and each dashboard reading must be taken before the
+stretch of play it is compared against.
 
-Everything below is observed from `NarrativeEngine.log` in the SKSE log folder and from the dashboard. No
-console commands are needed. `bDebugMode=1` is already the shipped default; if you have overridden it to 0,
-put it back, because three of the four checks read debug-level lines.
+Everything is observed from `NarrativeEngine.log` in the SKSE log folder and from the dashboard. No console
+commands. `bDebugMode=1` is the shipped default; if you have overridden it to 0, put it back, because most
+of these read debug-level lines.
+
+### What this session cannot settle, and why it is not here
+
+Three things the obvious test would check turn on behaviour neither of us controls, so they are left out
+rather than written as steps that pass or fail for the wrong reason:
+
+- **Ambient NPC-to-NPC chatter cannot be summoned.** Whether two NPCs near you strike up a conversation in
+  any given minute is SkyrimNet's business, so "wait for third-party dialogue and watch it get dropped" is
+  not a step, it is a hope. Item 2 is checked below in the direction that always holds: whatever is in the
+  block must be two-party. A rejection count above zero is welcome evidence when it appears, and proves
+  nothing when it does not.
+- **The narration is LLM output.** No number of clean samples proves the wording took, and one bad sample
+  does not prove it failed. Item 3 below is a sampling procedure with an honest stopping rule, not a
+  verification.
+- **A countdown whose period is shorter than your play session tells you nothing.** The Director tick wraps
+  every `iTickIntervalSeconds`, so comparing "next evaluation" before and after ten minutes of play compares
+  two arbitrary points in the same cycle. The item 4 steps below use transitions that only go one way.
 
 ### Before you launch
 
-- Build and deploy, so the ambush prompt wording and the rebuilt dashboard bundle are actually in the mod
-  folder: `pwsh -File build.ps1 build`. The prompt lives in C++ and the dashboard in `dashboard/dist`, and
-  neither reaches the game without this.
-- Pick **two** NPCs you can reach quickly and will talk to in the same place — the Whiterun market works,
-  Ysolda and Carlotta Valentia stand a few paces apart. One of them is going on the blacklist.
+- Build and deploy, so the ambush prompt wording and the rebuilt dashboard bundle actually reach the mod
+  folder: `pwsh -File build.ps1 build`. Neither is in the ESP, and neither gets there without this.
+- Pick one NPC you will definitely talk to, and one other you will also talk to. The first goes on the
+  blacklist.
 - Add the blacklist to `Data/MCM/Settings/NarrativeEngine.ini` in your overwrite (not the deployed plugin
   INI), creating the file or the section if needed:
 
@@ -279,76 +295,77 @@ put it back, because three of the four checks read debug-level lines.
 
 - Start the game and load your save.
 
-### Item 1 — the blacklist
+### Item 1 - the blacklist
 
-- Search the log for `sender blacklist has`. It should read `Settings: sender blacklist has 1 entries`. If it
-  says 0, the MCM INI is not where the plugin is reading from and nothing below this line will prove
-  anything.
-- Leave the rest of item 1 until the letter dispatch in the next section — the pool only gets walked when a
-  beat asks for candidates.
+Fully determined by what you do; nothing here depends on timing or on the LLM.
 
-### Items 1 and 2 — letters and visits, from a crowded room
+- Search the log for `sender blacklist has`. It must read `Settings: sender blacklist has 1 entries`. A 0
+  means the plugin is not reading the file you edited, and nothing below proves anything.
+- Talk to both NPCs, several exchanges each, so both are genuinely engaged.
+- Back out of conversation. Force-dispatch respects the global preconditions and `playerInDialogue` is one
+  of them, so pressing Dispatch with a menu open just logs `force-dispatch refused`.
+- Open the dashboard (**F7** by default), go to the **Dispatch** tab, press **Dispatch** on the `npc_letter`
+  row.
+- Find `SenderCandidatePool: walk complete` in the log. Its skip tally must carry
+  `blacklisted=1 (e.g. Ysolda via display-name)`. **That is item 1.**
+- Confirm the other direction too: find `BeatSystem: firing force-dispatch beat-select` and check that
+  `letter_sender_candidates` counts the NPC you did *not* blacklist. A blacklist that emptied the pool
+  entirely would satisfy the line above while being broken.
+- Optional negative control: remove the name from the INI, restart, and check the tally no longer carries a
+  `blacklisted=` count. It needs a restart, so it is not part of this run.
 
-- Stand in the market. Talk to **both** NPCs — several exchanges each, so there is real dialogue on file for
-  both of them. Then stand still for a minute or two and let the NPCs around you talk to *each other*; that
-  ambient chatter is the third-party dialogue the filter has to reject, and without it item 2 has nothing to
-  prove.
-- Open the dashboard (**F7** by default) and take the item 4 "before" reading now, while you are here — see
-  the next section. Then close it.
-- Back out of conversation first. Force-dispatch bypasses cooldowns and the minimum-sender gate, but it
-  still respects the global preconditions, and `playerInDialogue` is one of them — pressing Dispatch while
-  a dialogue menu is open just logs `force-dispatch refused`.
-- Reopen the dashboard, go to the **Dispatch** tab, and press **Dispatch** on the `npc_letter` row. It still
-  builds the sender pool, which is the part being tested.
-- In the log, find `SenderCandidatePool: walk complete`. The line ends with a skip tally; it should carry
-  `blacklisted=1 (e.g. Ysolda via display-name)`. **That is item 1 verified** — the blacklisted NPC was
-  dropped from the pool the LLM picks from.
-- Just above or below it, find `BeatSystem: firing force-dispatch beat-select` and check
-  `letter_sender_candidates=N`. The blacklisted NPC is not among them; the count is one lower than the
-  number of people you have been talking to.
-- Find `SenderDialogue: sender 0x... — N of M rows kept`. The tail reads
-  `(dropped: third-party=X, unattributable=Y)`. **X should be greater than zero** — those are the ambient
-  lines and the other NPC's conversations being refused. If X is 0, you did not stand around long enough for
-  anyone else to speak; go back and wait.
-- Find `LetterComposer: prompt context:` and read the `recent_dialogue` array in it. **Every line must be
-  the player speaking or the chosen sender speaking, and nobody else.** A line from a third party here is
-  item 2 failing.
-- Now press **Dispatch** on the `npc_visit` row and repeat the last three checks against
-  `VisitComposer: prompt context:`. Both composers go through the same module, so a difference between them
-  is itself the bug.
+### Item 2 - the dialogue block is two-party
 
-### Item 3 — the ambush narration
+The reliable claim is about what is present, not about what was rejected.
 
-- Leave the city and get into open country, away from walls and guards, then open the dashboard and press
-  **Dispatch** on the `ambush` row.
-- Search the log for `BeatSystem: beat-select LLM response:` — the JSON in that line contains
+- From the same letter dispatch, find `LetterComposer: prompt context:` and read the `recent_dialogue`
+  array. **Every entry's speaker must be you or the chosen sender.** A third name in there is item 2
+  failing, and it is the only unambiguous failure signal available.
+- Check the lines are ones you actually said to that NPC, not ones you said to the other one. This is the
+  part that catches a filter matching on the wrong side, and it is why you talked to two people.
+- Find `SenderDialogue: sender 0x... - N of M rows kept (dropped: third-party=X, unattributable=Y)`. If X is
+  above zero, the filter refused something and you have seen it work. **If X is zero, that is not a
+  failure** - it means nothing third-party was on file for that sender, which is the common case.
+- Press **Dispatch** on the `npc_visit` row and repeat both checks against `VisitComposer: prompt context:`.
+  Both composers call the same module, so a difference between them is itself the bug.
+
+### Item 3 - the ambush narration
+
+A sampling procedure. Treat it as evidence, not proof.
+
+- Get into open country, away from walls and guards. Open the dashboard and press **Dispatch** on the
+  `ambush` row.
+- Search the log for `BeatSystem: beat-select LLM response:` - the JSON on that line carries
   `narration_prose` verbatim, which is the fastest place to read it.
-- **Read it for any speech at all.** No quoted lines, obviously; but also nothing of the form "they shout
-  that…", "they demand…", "they call you…". Reported speech is still dialogue and the prompt now forbids it.
-  The narration should describe who is attacking and why, and say nothing about anyone talking.
-- Let the fight start and check the same text turns up in the Director tab's recent-events list and in
-  `NarrativeEngine_EventHistory.log`, which is where it actually reaches the world.
-- Do this **two or three times** across separate ambushes. One clean narration is weak evidence for a prompt
-  change; the failure mode is occasional, not systematic. Finish or flee each fight before dispatching the
-  next one — `playerInCombat` is a global precondition and will refuse the force-dispatch outright.
+- Read it for speech of any kind. Quoted lines, obviously; but also "they shout that...", "they demand...",
+  "they call you...". Reported speech is still dialogue and the prompt now forbids it.
+- Finish or flee the fight before dispatching another - `playerInCombat` is a global precondition and will
+  refuse the force-dispatch outright.
+- **Stopping rule: three clean samples is the most this session can offer, and it is weak evidence.** One
+  sample with speech in it is worth more than three without, so if you get one, keep the text and stop - the
+  wording needs another pass and further sampling will not tell you anything new.
 
-### Item 4 — the dashboard timers
+### Item 4 - the dashboard timers
 
-- The "before" reading, taken back in the market: open the dashboard and write down four numbers — **Next
-  evaluation** and **Phase may advance in** on the Director tab, **Global beat cooldown** on the same tab,
-  and **Next tick** on the Gossip tab.
-- Check the unit chips while you are there. Each row carries one: `unpaused`, `active play`, `real` or
-  `game time`. A row showing an em dash (—) is not broken; it means nothing is scheduled or that cooldown is
-  configured off.
-- Close the dashboard and play normally for ten minutes or so — the ambush above does nicely, since it puts
-  you in combat, which is the whole point of the next check.
-- Reopen the dashboard and compare:
-  - **Next evaluation** and **Next tick** should have moved by roughly the time you played.
-  - **Global beat cooldown** (`active play`) should have moved by *less* than the unpaused rows, because the
-    time you spent in combat and in dialogue does not count towards it. This difference is the reason the
-    unit chips exist, and it is the one thing worth looking at carefully.
-- While the visit or the ambush is still running, open the dashboard and look at the **Visit** tab: the
-  approach and return-home deadlines, and the three conclusion-poll triggers, should show live values rather
-  than em dashes.
-- Confirm nothing counts down while you watch it. The numbers are frozen on purpose — opening the dashboard
-  pauses the game — and the footer on each panel says so. A ticking number would be the bug here.
+Every check here is a one-way transition or a static property, so none of them depend on how long you
+played or on what the game happened to do.
+
+- **The unit chips.** Open the dashboard and confirm each timing row carries one: `unpaused`, `active play`,
+  `real` or `game time`. A missing chip is a bug; a row showing an em dash is not, and means nothing is
+  scheduled or that cooldown is off.
+- **Nothing moves while you watch.** Leave the panel open for thirty seconds. Every number should be
+  identical. They are frozen on purpose - opening the dashboard pauses the game - and the footer on each
+  panel says so. A ticking number is the bug here.
+- **A cooldown appears where there was none.** Before your first ambush this session, the `ambush` row's
+  cooldown on the Dispatch tab reads as an em dash. After one completes, it reads roughly 24h `game time`.
+  That transition only goes one way and is the cleanest proof the wiring is live.
+- **Game-time cooldowns fall as the world ages.** Note the `ambush` cooldown, close the panel, sleep or wait
+  a few in-world hours, reopen. It must have dropped by about the hours that passed.
+- **Active play diverges from wall clock, on purpose.** Right after any beat completes, the Director tab's
+  **Global beat cooldown** shows about 120s `active play`. Close the panel, stand in a dialogue menu with
+  any NPC for a minute without advancing the conversation, back out, and reopen. Real time passed; the
+  cooldown will have barely moved, because dialogue does not count towards it. **This is the one check that
+  justifies the unit chips existing** - if this number falls by a full minute, the clock labelling is wrong.
+- **In-flight rows populate.** While a visit or an ambush is still running, open the **Visit** tab: the
+  approach and return-home deadlines and the three conclusion-poll triggers should show values rather than
+  em dashes for whichever phase is actually current.
