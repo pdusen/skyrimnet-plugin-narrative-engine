@@ -23,6 +23,14 @@ namespace NarrativeEngine::Settings
         // (CombatEventLog HitSink) don't need locking.
         std::unordered_set<std::string> g_spellNameBlocklistSet;
 
+        // Parsed form of Config::blacklistedSendersCSV. Same lifecycle
+        // and threading story as g_spellNameBlocklistSet above: rebuilt
+        // by RebuildBlacklistedSendersSet after every Load /
+        // ApplyMcmOverride, read-only outside that path. One set serves
+        // both match arms — an entry is not declared to be an EditorID
+        // or a name, it is simply tested against both.
+        std::unordered_set<std::string> g_blacklistedSendersSet;
+
         constexpr const char* kPluginIniPath = "Data/SKSE/Plugins/NarrativeEngine.ini";
         constexpr const char* kMcmIniPath = "Data/MCM/Settings/NarrativeEngine.ini";
         // Companion files that MCM Helper reads to populate the MCM page.
@@ -55,27 +63,41 @@ namespace NarrativeEngine::Settings
             return s.substr(start, end - start);
         }
 
-        // Split Config::spellNameBlocklist on ';', trim each piece,
-        // lowercase it, and repopulate g_spellNameBlocklistSet. Called
-        // after every path that mutates g_config.spellNameBlocklist.
-        void RebuildSpellNameBlocklistSet()
+        // Split `raw` on `sep`, trim each piece, lowercase it, and
+        // repopulate `dest`. Shared by the two delimiter-separated
+        // blocklists below, which differ only in their separator.
+        void RebuildLowercasedSet(std::unordered_set<std::string>& dest, std::string_view raw, char sep)
         {
-            g_spellNameBlocklistSet.clear();
-            std::string_view raw{g_config.spellNameBlocklist};
+            dest.clear();
             std::size_t pos = 0;
             while (pos <= raw.size()) {
-                const auto sep = raw.find(';', pos);
-                const auto end = (sep == std::string_view::npos) ? raw.size() : sep;
+                const auto hit = raw.find(sep, pos);
+                const auto end = (hit == std::string_view::npos) ? raw.size() : hit;
                 const std::string_view piece = TrimAsciiSpace(raw.substr(pos, end - pos));
                 if (!piece.empty()) {
-                    g_spellNameBlocklistSet.insert(ToLowerCopy(piece));
+                    dest.insert(ToLowerCopy(piece));
                 }
-                if (sep == std::string_view::npos) {
+                if (hit == std::string_view::npos) {
                     break;
                 }
-                pos = sep + 1;
+                pos = hit + 1;
             }
+        }
+
+        // Called after every path that mutates
+        // g_config.spellNameBlocklist.
+        void RebuildSpellNameBlocklistSet()
+        {
+            RebuildLowercasedSet(g_spellNameBlocklistSet, g_config.spellNameBlocklist, ';');
             logger::info("Settings: spell-name blocklist has {} entries", g_spellNameBlocklistSet.size());
+        }
+
+        // Called after every path that mutates
+        // g_config.blacklistedSendersCSV.
+        void RebuildBlacklistedSendersSet()
+        {
+            RebuildLowercasedSet(g_blacklistedSendersSet, g_config.blacklistedSendersCSV, ',');
+            logger::info("Settings: sender blacklist has {} entries", g_blacklistedSendersSet.size());
         }
 
         // Sync spdlog's level filter to the current traceMode setting.
@@ -348,6 +370,8 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("TravelEvents", "iTravelFollowerRadiusUnits", dst.travelFollowerRadiusUnits));
 
             dst.enableNpcLetter = ini.GetBoolValue("Beats", "bEnableNpcLetter", dst.enableNpcLetter);
+
+            dst.blacklistedSendersCSV = ini.GetValue("Beats", "sBlacklistedSenders", dst.blacklistedSendersCSV.c_str());
 
             dst.letterContentMinWords =
                 static_cast<int>(ini.GetLongValue("Beats", "iLetterContentMinWords", dst.letterContentMinWords));
@@ -635,6 +659,7 @@ namespace NarrativeEngine::Settings
                       g_config.tickIntervalSeconds);
         ApplyLogLevelForTraceMode();
         RebuildSpellNameBlocklistSet();
+        RebuildBlacklistedSendersSet();
 
         // The gossip claim ledger is only correct while a claim outlives
         // the window in which its memory can be harvested. A memory
@@ -710,6 +735,7 @@ namespace NarrativeEngine::Settings
                       g_config.tickIntervalSeconds);
         ApplyLogLevelForTraceMode();
         RebuildSpellNameBlocklistSet();
+        RebuildBlacklistedSendersSet();
     }
 
     bool IsSpellNameBlocked(std::string_view spellName)
@@ -718,6 +744,20 @@ namespace NarrativeEngine::Settings
             return false;
         }
         return g_spellNameBlocklistSet.contains(ToLowerCopy(spellName));
+    }
+
+    SenderBlacklistMatch IsSenderBlacklisted(std::string_view editorID, std::string_view displayName)
+    {
+        if (g_blacklistedSendersSet.empty()) {
+            return SenderBlacklistMatch::None;
+        }
+        if (!editorID.empty() && g_blacklistedSendersSet.contains(ToLowerCopy(editorID))) {
+            return SenderBlacklistMatch::EditorID;
+        }
+        if (!displayName.empty() && g_blacklistedSendersSet.contains(ToLowerCopy(displayName))) {
+            return SenderBlacklistMatch::DisplayName;
+        }
+        return SenderBlacklistMatch::None;
     }
 
     void WriteMcmOverride(const McmOverride& mutations)

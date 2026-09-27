@@ -48,6 +48,11 @@ namespace
 
     constexpr std::uint32_t kYsolda = 0x0001A6A0u;
     constexpr std::uint32_t kCarlotta = 0x0001A6A1u;
+    // The blacklist cases need one candidate whose EditorID and display name
+    // differ, or the two match arms are indistinguishable. The vanilla courier
+    // is that: WICourierNPC, shown in game as "Courier".
+    constexpr std::uint32_t kCourierRef = 0x0001A6A2u;
+    constexpr std::uint32_t kCourierBase = 0x00039F83u;
 
     FakeSkyrimNetState& FakeState()
     {
@@ -575,6 +580,130 @@ TEST_CASE("SenderCandidatePool::CountViable", "[SenderCandidatePool][engine]")
         SECTION("should count none")
         {
             REQUIRE(Pool::CountViable(nullptr, 2) == 0);
+        }
+    }
+}
+
+TEST_CASE("SenderCandidatePool::Build honours the sender blacklist", "[SenderCandidatePool][engine]")
+{
+    // The blacklist is the one gate a player sets by hand, which makes it the
+    // one that has to hold without them being able to see it hold. It lives in
+    // the universal walk rather than a caller's extra filter so that both
+    // composers and the availability count are covered by the same test.
+    //
+    // An entry is tested against the base form's EditorID and against the
+    // display name, because Skyrim SE discards most EditorIDs at runtime: with
+    // an EditorID-recovery mod installed the first arm carries everything, and
+    // without one it never fires at all and the second carries everything.
+    // Both arms therefore matter on some install, so both are covered here.
+    EngineMock engine;
+    auto& fake = FakeState();
+    REQUIRE(SkyrimNet::Initialize());
+    fake.Reset();
+
+    auto* courier = engine.AddActor(kCourierRef);
+    auto* courierBase = engine.AddNPC(kCourierBase, "Courier");
+    engine.SetEditorIDOf(courierBase, "WICourierNPC");
+    engine.SetActorBase(courier, courierBase);
+    // Ysolda is left without a base form on purpose — an actor whose
+    // GetActorBase() is null must still be testable against the name arm
+    // rather than skipping the gate.
+    (void)engine.AddActor(kYsolda);
+
+    SetJson(fake.engagementJson,
+            "[" + EngagementRow(kYsolda, "Ysolda", 12.5, 100.0) + "," + EngagementRow(kCourierRef, "Courier", 9.0, 90.0)
+                + "]");
+    SetJson(fake.memoriesJson, "[" + MemoryRow("She spoke of the mammoth tusk.", 0.8, 50.0) + "]");
+
+    SECTION("when the blacklist is empty")
+    {
+        const ConfiguredSettings settings{"[General]\nbDebugMode=0\n"};
+
+        SECTION("should return everyone viable")
+        {
+            const auto pool = Pool::Build(DefaultOptions());
+            REQUIRE(pool.size() == 2);
+            REQUIRE(Contains(pool, kYsolda));
+            REQUIRE(Contains(pool, kCourierRef));
+        }
+    }
+
+    SECTION("when an entry names a candidate's display name")
+    {
+        const ConfiguredSettings settings{"[General]\nbDebugMode=0\n[Beats]\nsBlacklistedSenders=Ysolda\n"};
+
+        SECTION("should drop that candidate and keep the rest")
+        {
+            const auto pool = Pool::Build(DefaultOptions());
+            REQUIRE(pool.size() == 1);
+            REQUIRE(Contains(pool, kCourierRef));
+        }
+    }
+
+    SECTION("when an entry names a candidate's base-form EditorID")
+    {
+        const ConfiguredSettings settings{"[General]\nbDebugMode=0\n[Beats]\nsBlacklistedSenders=WICourierNPC\n"};
+
+        SECTION("should drop that candidate and keep the rest")
+        {
+            // Nothing the courier's engagement row says is "WICourierNPC" —
+            // the row calls them "Courier" — so a pass here is the EditorID
+            // arm and cannot be the name arm firing by coincidence.
+            const auto pool = Pool::Build(DefaultOptions());
+            REQUIRE(pool.size() == 1);
+            REQUIRE(Contains(pool, kYsolda));
+        }
+    }
+
+    SECTION("when an entry differs in case and carries surrounding whitespace")
+    {
+        const ConfiguredSettings settings{"[General]\nbDebugMode=0\n[Beats]\nsBlacklistedSenders=  ySOLda  \n"};
+
+        SECTION("should still drop that candidate")
+        {
+            // Hand-written by a player in a text editor. Neither the casing
+            // they used nor the spaces they left around the comma are a
+            // statement about who they meant.
+            const auto pool = Pool::Build(DefaultOptions());
+            REQUIRE(pool.size() == 1);
+            REQUIRE(Contains(pool, kCourierRef));
+        }
+    }
+
+    SECTION("when the list names several NPCs")
+    {
+        const ConfiguredSettings settings{
+            "[General]\nbDebugMode=0\n[Beats]\nsBlacklistedSenders=Ysolda, WICourierNPC\n"};
+
+        SECTION("should drop every one of them")
+        {
+            // Both arms at once, which is the shape a real list has.
+            REQUIRE(Pool::Build(DefaultOptions()).empty());
+        }
+    }
+
+    SECTION("when an entry matches nobody")
+    {
+        const ConfiguredSettings settings{"[General]\nbDebugMode=0\n[Beats]\nsBlacklistedSenders=Nazeem\n"};
+
+        SECTION("should keep everyone")
+        {
+            // A blacklist naming an NPC the player has not met is the ordinary
+            // case, not an error, and it must not cost anyone else their slot.
+            REQUIRE(Pool::Build(DefaultOptions()).size() == 2);
+        }
+    }
+
+    SECTION("when a blacklisted candidate would be counted for availability")
+    {
+        const ConfiguredSettings settings{"[General]\nbDebugMode=0\n[Beats]\nsBlacklistedSenders=Ysolda\n"};
+
+        SECTION("should not count them")
+        {
+            // The gate has to hold on this path too. A beat that counts a
+            // candidate it may not use reports itself available, spends a
+            // compose LLM call, and then has nobody to send.
+            REQUIRE(Pool::CountViable(nullptr, 2) == 1);
         }
     }
 }

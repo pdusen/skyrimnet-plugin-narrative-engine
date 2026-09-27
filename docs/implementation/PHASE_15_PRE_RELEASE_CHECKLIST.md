@@ -12,7 +12,7 @@ out as one rather than resolved here in advance.
 
 ## 1 — Blacklist for beat senders
 
-- [ ] Complete
+- [X] Complete
 
 **[CLAUDE]**
 

@@ -329,6 +329,26 @@ namespace NarrativeEngine::Settings
         // updates the field here.
         bool enableNpcLetter = true;
 
+        // Comma-separated list of NPCs who may never be chosen as the
+        // sender of a letter beat or the visitor of a visit beat.
+        // Empty by default. Whitespace around commas is allowed.
+        //
+        // An entry matches a candidate if it equals EITHER the base
+        // form's EditorID or the candidate's display name, so the same
+        // list works with and without an EditorID-recovery mod
+        // installed — TESNPC::GetFormEditorID() is empty at runtime
+        // without one, and on such an install every match comes from
+        // the name arm. EditorID is the precise identifier and the one
+        // to prefer where it resolves; names are ambiguous across
+        // duplicates, but a collision here fails safe by excluding one
+        // NPC too many rather than letting a blacklisted one through.
+        //
+        // The parsed set lives in Settings.cpp; membership is queried
+        // via Settings::IsSenderBlacklisted. Enforced in
+        // SenderCandidatePool's universal viability walk, so it covers
+        // both composers and the IsAvailable-time CountViable path.
+        std::string blacklistedSendersCSV;
+
         // NPCLetterBeat / LetterPool content + dispatch knobs. See
         // PHASE_04_LETTER_POOL_AND_NPC_LETTER_ACTION.md.
         int letterContentMinWords = 60;  // lower bound on LLM body length
@@ -914,6 +934,26 @@ namespace NarrativeEngine::Settings
     // by Load / ApplyMcmOverride and read-only afterward, so this is
     // safe to call from any thread (including engine sink threads).
     bool IsSpellNameBlocked(std::string_view spellName);
+
+    // Which arm of the sender blacklist matched a candidate, so the
+    // caller can log it. A surprising exclusion is otherwise hard to
+    // diagnose: the two arms are populated from the same CSV, and
+    // whether the EditorID one can fire at all depends on whether an
+    // EditorID-recovery mod is installed.
+    enum class SenderBlacklistMatch : std::uint8_t
+    {
+        None,
+        EditorID,
+        DisplayName,
+    };
+
+    // Case-insensitive membership check against the parsed sender
+    // blacklist derived from Config::blacklistedSendersCSV. Either
+    // argument may be empty (an unresolved EditorID is the common
+    // case); an empty blacklist always returns None. EditorID is
+    // tested first so that arm is the one reported when both match.
+    // Same threading guarantees as IsSpellNameBlocked.
+    SenderBlacklistMatch IsSenderBlacklisted(std::string_view editorID, std::string_view displayName);
 
     // Write a subset of Config fields to the MCM INI at
     // Data/MCM/Settings/NarrativeEngine.ini. Reads the current file

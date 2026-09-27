@@ -425,6 +425,105 @@ TEST_CASE("Settings::IsSpellNameBlocked", "[Settings][engine]")
     }
 }
 
+TEST_CASE("Settings::IsSenderBlacklisted", "[Settings][engine]")
+{
+    // One comma-separated list, tested against two different things. An entry
+    // is never declared to be an EditorID or a name — whichever it happens to
+    // be, it matches — because the arm that can fire depends on whether the
+    // player has an EditorID-recovery mod installed, and the list should not
+    // have to be rewritten when that changes.
+    IniFixture files;
+
+    SECTION("when the list names senders")
+    {
+        WriteIni(kPluginIni, "[Beats]\nsBlacklistedSenders=WICourierNPC, Nazeem ,Ysolda\n");
+        Settings::Load();
+
+        SECTION("should match on the EditorID")
+        {
+            REQUIRE(Settings::IsSenderBlacklisted("WICourierNPC", "Courier")
+                    == Settings::SenderBlacklistMatch::EditorID);
+        }
+
+        SECTION("should match on the display name")
+        {
+            REQUIRE(Settings::IsSenderBlacklisted("WEJS02Farmer", "Nazeem")
+                    == Settings::SenderBlacklistMatch::DisplayName);
+        }
+
+        SECTION("should match a name when no EditorID resolved")
+        {
+            // The common case on an install without an EditorID-recovery mod:
+            // GetFormEditorID() hands back nothing at all and the name arm is
+            // the only one left.
+            REQUIRE(Settings::IsSenderBlacklisted("", "Ysolda") == Settings::SenderBlacklistMatch::DisplayName);
+        }
+
+        SECTION("should ignore the case each was written in")
+        {
+            REQUIRE(Settings::IsSenderBlacklisted("wicouriernpc", "") == Settings::SenderBlacklistMatch::EditorID);
+            REQUIRE(Settings::IsSenderBlacklisted("", "nAzEeM") == Settings::SenderBlacklistMatch::DisplayName);
+        }
+
+        SECTION("should trim the space around each entry")
+        {
+            // " Nazeem " is what a player writing a list with spaces after the
+            // commas actually produces.
+            REQUIRE(Settings::IsSenderBlacklisted("", "Nazeem") == Settings::SenderBlacklistMatch::DisplayName);
+        }
+
+        SECTION("should report the EditorID when both arms match")
+        {
+            // Nothing turns on which is reported except the log line, but the
+            // log line is the whole way a surprising exclusion gets diagnosed.
+            REQUIRE(Settings::IsSenderBlacklisted("Ysolda", "Ysolda") == Settings::SenderBlacklistMatch::EditorID);
+        }
+
+        SECTION("should not match someone the list does not name")
+        {
+            REQUIRE(Settings::IsSenderBlacklisted("Belethor", "Belethor") == Settings::SenderBlacklistMatch::None);
+        }
+    }
+
+    SECTION("when the list is empty")
+    {
+        Settings::Load();
+
+        SECTION("should match nobody")
+        {
+            REQUIRE(Settings::IsSenderBlacklisted("WICourierNPC", "Courier") == Settings::SenderBlacklistMatch::None);
+        }
+
+        SECTION("should match nobody even when both arguments are empty")
+        {
+            // An actor with no base form and a nameless engagement row reaches
+            // the query as two empty strings; it must not match an entry that
+            // trimmed down to nothing.
+            REQUIRE(Settings::IsSenderBlacklisted("", "") == Settings::SenderBlacklistMatch::None);
+        }
+    }
+
+    SECTION("when the list is replaced by an override")
+    {
+        WriteIni(kPluginIni, "[Beats]\nsBlacklistedSenders=Ysolda\n");
+        Settings::Load();
+        WriteIni(kMcmIni, "[Beats]\nsBlacklistedSenders=Nazeem\n");
+        Settings::ApplyMcmOverride();
+
+        SECTION("should match the new list")
+        {
+            REQUIRE(Settings::IsSenderBlacklisted("", "Nazeem") == Settings::SenderBlacklistMatch::DisplayName);
+        }
+
+        SECTION("should stop matching the old one")
+        {
+            // The parsed set is rebuilt on every path that mutates the string,
+            // so a stale entry here would mean a rebuild was missed.
+            REQUIRE(Settings::IsSenderBlacklisted("", "Ysolda") == Settings::SenderBlacklistMatch::None);
+        }
+    }
+}
+
 TEST_CASE("Settings::WriteMcmOverride", "[Settings][engine]")
 {
     IniFixture files;

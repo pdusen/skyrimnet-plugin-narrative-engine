@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <random>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace NarrativeEngine::SenderCandidatePool
@@ -211,8 +212,10 @@ namespace NarrativeEngine::SenderCandidatePool
             int skippedDead = 0;
             int skippedDisabled = 0;
             int skippedNoName = 0;
+            int skippedBlacklisted = 0;
             int skippedStoryActive = 0;
             int skippedExtraFilter = 0;
+            std::string firstBlacklistedReason;
             std::string firstStoryActiveReason;
             std::string firstExtraFilterReason;
 
@@ -250,6 +253,39 @@ namespace NarrativeEngine::SenderCandidatePool
                 if (name.empty()) {
                     ++skippedNoName;
                     continue;
+                }
+
+                // Sender blacklist — the player has named this NPC as
+                // one who may never write or visit. Applied here, in
+                // the universal walk, rather than in a caller's
+                // extraViabilityFilter: there are four of those and
+                // this gate has to hold for all of them, including the
+                // CountViable path that IsAvailable uses to decide
+                // whether the beat has candidates at all.
+                {
+                    std::string_view editorID;
+                    if (auto* base = actor->GetActorBase()) {
+                        if (const char* edid = base->GetFormEditorID(); edid && *edid) {
+                            editorID = edid;
+                        }
+                    }
+                    const auto match = Settings::IsSenderBlacklisted(editorID, name);
+                    if (match != Settings::SenderBlacklistMatch::None) {
+                        const char* arm =
+                            (match == Settings::SenderBlacklistMatch::EditorID) ? "editor-id" : "display-name";
+                        ++skippedBlacklisted;
+                        if (firstBlacklistedReason.empty()) {
+                            firstBlacklistedReason = name + " via " + arm;
+                        }
+                        if (debug) {
+                            logger::debug("SenderCandidatePool: skipping '{}' (0x{:X}) — "
+                                          "blacklisted via {}",
+                                          name,
+                                          formId,
+                                          arm);
+                        }
+                        continue;
+                    }
                 }
 
                 // Story-active gate — reject NPCs currently being
@@ -291,10 +327,11 @@ namespace NarrativeEngine::SenderCandidatePool
                 if (stopWhen()) {
                     if (debug) {
                         logger::debug("SenderCandidatePool: walk early-exit (cap reached) "
-                                      "— skips: story-active={}, extra-filter={}, no-actor={}, "
-                                      "dead={}, disabled={}, no-name={}",
+                                      "— skips: story-active={}, extra-filter={}, blacklisted={}, "
+                                      "no-actor={}, dead={}, disabled={}, no-name={}",
                                       skippedStoryActive,
                                       skippedExtraFilter,
+                                      skippedBlacklisted,
                                       skippedNoActor,
                                       skippedDead,
                                       skippedDisabled,
@@ -309,13 +346,17 @@ namespace NarrativeEngine::SenderCandidatePool
                     firstStoryActiveReason.empty() ? std::string{} : " (e.g. " + firstStoryActiveReason + ")";
                 const std::string extraExample =
                     firstExtraFilterReason.empty() ? std::string{} : " (e.g. " + firstExtraFilterReason + ")";
+                const std::string blacklistExample =
+                    firstBlacklistedReason.empty() ? std::string{} : " (e.g. " + firstBlacklistedReason + ")";
                 logger::debug("SenderCandidatePool: walk complete — skips: "
-                              "story-active={}{}, extra-filter={}{}, no-actor={}, "
-                              "dead={}, disabled={}, no-name={}",
+                              "story-active={}{}, extra-filter={}{}, blacklisted={}{}, "
+                              "no-actor={}, dead={}, disabled={}, no-name={}",
                               skippedStoryActive,
                               storyExample,
                               skippedExtraFilter,
                               extraExample,
+                              skippedBlacklisted,
+                              blacklistExample,
                               skippedNoActor,
                               skippedDead,
                               skippedDisabled,
