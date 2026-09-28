@@ -1271,3 +1271,257 @@ TEST_CASE("VisitArrivalPoint does not take its bearing from the nearest scrap of
         REQUIRE(result.point.x > playerPos.x);
     }
 }
+
+TEST_CASE("VisitArrivalPoint walks a city visitor out to a player who is nowhere near it",
+          "[VisitArrivalPoint][engine]")
+{
+    // The mirror of the gate case above, and the one every real dispatch hit.
+    //
+    // A visitor who lives inside Whiterun resolves to WhiterunWorld, a player
+    // standing out in Eastmarch resolves to Tamriel, and the gate that joins
+    // them is thousands of units away in a cell nothing has loaded. The gate
+    // search can only see the grid around the player, so it finds nothing,
+    // and for as long as that was the end of the ladder every sender behind a
+    // set of walls declined -- five cities' worth of the people most worth
+    // visiting.
+    //
+    // Nothing about the gate is needed to answer. What the route wants from
+    // the visitor's end is a BEARING, and their home's map marker is one: it
+    // stands in the city's own worldspace, but a city overlays the same
+    // ground its parent does, so the marker's coordinates are already the
+    // player's coordinates. Whiterun's marker reads (19855,-7422) and the
+    // city's cells sit at grid (4,-2) of Tamriel, which is the same place.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    auto* skyrim = engine.AddWorldSpace(kWorld);
+    auto* city = engine.AddWorldSpace(kCityWorld);
+    engine.SetWorldSpaceParent(city, skyrim);
+
+    auto* cell = engine.AddExteriorCell(skyrim, 0, 0, nullptr);
+    LayRoad(engine, cell);
+    engine.LoadGrid({cell});
+    PollFineRoads();
+    LayGround(engine);
+    CoverEverywhere(engine);
+
+    auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+
+    // The city: its own location, its own cell, and a marker of its own
+    // standing inside its walls.
+    auto* home = engine.AddLocation(0x00D06001u, "The City", {}, "CityLocation");
+    auto* cityCell = engine.AddExteriorCell(city, 4, -2, home);
+
+    SECTION("when the city they live in lies east")
+    {
+        engine.SetLocationMarker(home, cityCell, At(kRoadEnd, 0.0f));
+        auto* sender = ActorAt(engine, kSender, nullptr, At(100.0f, 100.0f));
+        engine.SetSaveParentCell(sender, cityCell);
+        const auto result = FindFor(sender, player);
+
+        SECTION("should bring them in from the east rather than decline")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(result.point.x > 0.0f);
+        }
+
+        SECTION("should route them onto the road, not merely somewhere eastward")
+        {
+            REQUIRE(result.tier == VisitArrivalPoint::Tier::FineRoad);
+        }
+
+        SECTION("should build the marker from the player, who shares that ground")
+        {
+            // Not a city tier: the arrival is in the player's own worldspace
+            // and their own cell, so there is no door to anchor on and none
+            // is wanted.
+            REQUIRE(result.placementAnchor == 0u);
+        }
+    }
+
+    SECTION("when the city they live in lies west")
+    {
+        engine.SetLocationMarker(home, cityCell, At(-kRoadEnd, 0.0f));
+        auto* sender = ActorAt(engine, kSender, nullptr, At(100.0f, 100.0f));
+        engine.SetSaveParentCell(sender, cityCell);
+        const auto result = FindFor(sender, player);
+
+        SECTION("should mirror the eastern answer exactly")
+        {
+            // Same visitor, same cell, same coordinates inside the walls --
+            // and the opposite arrival, because the marker is the only thing
+            // being read.
+            REQUIRE(result.Ok());
+            REQUIRE(result.point.x < 0.0f);
+        }
+    }
+
+    SECTION("when the city sits inside a hold marked somewhere else entirely")
+    {
+        // "Deepest" is the whole claim. The hold's marker would put a visitor
+        // from the city on the road from wherever the hold happens to be
+        // pinned, which is a worse answer than the city they actually live in
+        // -- and the hold is what a climb finds if it does not stop at the
+        // first marker it meets.
+        auto* hold = engine.AddLocation(0x00D06002u, "The Hold", {}, "HoldLocation");
+        engine.SetLocationParent(home, hold);
+        engine.SetLocationMarker(hold, cell, At(-kRoadEnd, 0.0f));
+        engine.SetLocationMarker(home, cityCell, At(kRoadEnd, 0.0f));
+
+        auto* sender = ActorAt(engine, kSender, nullptr, At(100.0f, 100.0f));
+        engine.SetSaveParentCell(sender, cityCell);
+        const auto result = FindFor(sender, player);
+
+        SECTION("should come from the city rather than from the hold above it")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(result.point.x > 0.0f);
+        }
+    }
+
+    SECTION("when the street they stand on names no location, as a city street does not")
+    {
+        // The rung the real dispatch needed. Not one of WhiterunWorld's 113
+        // exterior cells fills XLCN -- the field is set once, on the
+        // worldspace, and reads WhiterunLocation there. Asking only the cell
+        // answers for the visitor indoors and for nobody out in the street,
+        // which is the wrong half of the city.
+        auto* streets = engine.AddExteriorCell(city, 5, -2, nullptr);
+        engine.SetWorldSpaceLocation(city, home);
+        engine.SetLocationMarker(home, cityCell, At(kRoadEnd, 0.0f));
+
+        auto* sender = ActorAt(engine, kSender, nullptr, At(100.0f, 100.0f));
+        engine.SetSaveParentCell(sender, streets);
+        const auto result = FindFor(sender, player);
+
+        SECTION("should read the city off the worldspace and still bring them in")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(result.point.x > 0.0f);
+        }
+    }
+
+    SECTION("when a gate into the city is loaded after all")
+    {
+        // The player standing at the gate is the case the city tiers were
+        // built for, and they are still the better answer there: a real door
+        // beats a marker read off a record. The marker rung is a fallback
+        // from the gate search, not a replacement for it.
+        engine.SetLocationMarker(home, cityCell, At(kRoadEnd, 0.0f));
+        constexpr std::uint32_t kGate = 0x00D06010u;
+        auto* gate = engine.AddLoadDoor(cell, kGate, cityCell, At(-2000.0f, 0.0f));
+        gate->data.location = At(-1500.0f, 0.0f);
+
+        auto* sender = ActorAt(engine, kSender, nullptr, At(100.0f, 100.0f));
+        engine.SetSaveParentCell(sender, cityCell);
+        const auto result = FindFor(sender, player);
+
+        SECTION("should use the gate rather than the home marker")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(result.tier == VisitArrivalPoint::Tier::CityApproach);
+            // Toward the gate, which is west -- the opposite side from the
+            // marker, so the two cannot be confused for one another.
+            REQUIRE(result.point.x < 0.0f);
+        }
+    }
+}
+
+TEST_CASE("VisitArrivalPoint will not read a marker out of ground the player does not stand on",
+          "[VisitArrivalPoint][engine]")
+{
+    // The limit on the rung above. A marker is a usable bearing only where its
+    // worldspace and the player's measure from the same origin, which is what
+    // a shared parent chain means. Without one the numbers stop being
+    // comparable: Solstheim's (19855,-7422) and Tamriel's are different places
+    // written the same way, and routing between them would put the visitor on
+    // a bearing built out of nothing.
+    //
+    // That is the failure this module exists to prevent, so it declines --
+    // which for Solstheim is also just true. It is a boat, not a walk.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    auto* skyrim = engine.AddWorldSpace(kWorld);
+    auto* cell = engine.AddExteriorCell(skyrim, 0, 0, nullptr);
+    LayRoad(engine, cell);
+    engine.LoadGrid({cell});
+    PollFineRoads();
+    LayGround(engine);
+    CoverEverywhere(engine);
+
+    auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+    auto* home = engine.AddLocation(0x00D07001u, "Far Shore", {}, "FarShoreLocation");
+
+    SECTION("when their island answers to no parent at all")
+    {
+        auto* island = engine.AddWorldSpace(kOtherWorld);
+        auto* islandCell = engine.AddExteriorCell(island, 0, 0, home);
+        engine.SetLocationMarker(home, islandCell, At(kRoadEnd, 0.0f));
+        auto* sender = ActorAt(engine, kSender, nullptr, At(100.0f, 100.0f));
+        engine.SetSaveParentCell(sender, islandCell);
+
+        SECTION("should decline rather than invent a bearing out of it")
+        {
+            REQUIRE_FALSE(FindFor(sender, player).Ok());
+        }
+    }
+
+    SECTION("when their realm hangs off that island rather than off Skyrim")
+    {
+        // Apocrypha's parent is Solstheim, so climbing it arrives at a root
+        // the player has never stood in. Having A parent is not the test --
+        // arriving at the SAME one is.
+        auto* island = engine.AddWorldSpace(kOtherWorld);
+        auto* realm = engine.AddWorldSpace(0x00D00005u);
+        engine.SetWorldSpaceParent(realm, island);
+        auto* realmCell = engine.AddExteriorCell(realm, 0, 0, home);
+        engine.SetLocationMarker(home, realmCell, At(kRoadEnd, 0.0f));
+        auto* sender = ActorAt(engine, kSender, nullptr, At(100.0f, 100.0f));
+        engine.SetSaveParentCell(sender, realmCell);
+
+        SECTION("should still decline")
+        {
+            REQUIRE_FALSE(FindFor(sender, player).Ok());
+        }
+    }
+}
+
+TEST_CASE("VisitArrivalPoint compares two cities that measure from the same origin", "[VisitArrivalPoint][engine]")
+{
+    // Neither end is standing in Tamriel, and they still compare. Two walled
+    // cities that each hang under Skyrim measure from Skyrim's origin and so
+    // from each other's, which makes a player in one and a visitor living in
+    // the other a real bearing that declining would throw away.
+    //
+    // A worldspace being "the player's own" is therefore not the test.
+    // Arriving at the same root is, and that is what the check is written
+    // against.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    auto* skyrim = engine.AddWorldSpace(kWorld);
+    auto* ourCity = engine.AddWorldSpace(kCityWorld);
+    auto* theirCity = engine.AddWorldSpace(0x00D00004u);
+    engine.SetWorldSpaceParent(ourCity, skyrim);
+    engine.SetWorldSpaceParent(theirCity, skyrim);
+
+    // The road, and the player on it, are inside the city the player is in.
+    auto* ourCell = engine.AddExteriorCell(ourCity, 0, 0, nullptr);
+    LayRoad(engine, ourCell);
+    engine.LoadGrid({ourCell});
+    PollFineRoads();
+    LayGround(engine);
+    CoverEverywhere(engine);
+    auto* player = ActorAt(engine, kPlayer, ourCell, At(0.0f, 0.0f));
+
+    auto* home = engine.AddLocation(0x00D08001u, "The Other City", {}, "OtherCityLocation");
+    auto* theirCell = engine.AddExteriorCell(theirCity, 4, -2, home);
+    engine.SetLocationMarker(home, theirCell, At(kRoadEnd, 0.0f));
+    auto* sender = ActorAt(engine, kSender, nullptr, At(100.0f, 100.0f));
+    engine.SetSaveParentCell(sender, theirCell);
+
+    SECTION("should bring the visitor in from the side their city is on")
+    {
+        const auto result = FindFor(sender, player);
+        REQUIRE(result.Ok());
+        REQUIRE(result.point.x > 0.0f);
+    }
+}

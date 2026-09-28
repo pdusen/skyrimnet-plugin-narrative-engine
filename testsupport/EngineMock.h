@@ -455,6 +455,24 @@ namespace NarrativeEngine::Testing
         // by their FormID.
         RE::TESWorldSpace* AddWorldSpace(std::uint32_t formID, std::string editorID = {});
 
+        // Hang a worldspace under a parent, the way a walled city hangs under
+        // Tamriel.
+        //
+        // The link is what decides whether two worldspaces measure from the
+        // same origin, so a chain built here is a chain of shared coordinates:
+        // a city under Skyrim, and Skyrim under nothing. Leave a worldspace
+        // parentless to build the other kind -- Solstheim, whose numbers mean
+        // nothing anywhere else.
+        void SetWorldSpaceParent(RE::TESWorldSpace* child, RE::TESWorldSpace* parent);
+
+        // Name the place a worldspace IS, the way WhiterunWorld names
+        // WhiterunLocation.
+        //
+        // This is where a city's location actually lives: its exterior cells
+        // leave the field empty, so anything asking a street cell which place
+        // it belongs to has to come here instead.
+        void SetWorldSpaceLocation(RE::TESWorldSpace* worldSpace, RE::BGSLocation* location);
+
         // Add an exterior cell to a worldspace's cell map at the given grid
         // coordinates, optionally belonging to a location.
         //

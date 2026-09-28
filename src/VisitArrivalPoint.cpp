@@ -769,6 +769,112 @@ namespace NarrativeEngine::VisitArrivalPoint
             return best;
         }
 
+        // Do two worldspaces put a position in the same numbers?
+        //
+        // A walled city is its own worldspace, but not its own coordinate
+        // system. Whiterun's cells sit at grid (4,-2) and its map marker at
+        // (19855,-7422), which is the same square of Tamriel the city occupies
+        // on the map. The gate proves it: a city gate and the spot it lands
+        // you on are one doorway measured from both sides, and across the five
+        // walled cities the two readings differ by 26 to 792 units -- the
+        // depth of a gateway. Same origin.
+        //
+        // The parent link is what says so, and NOT the parent-use flags.
+        // `kUseLandData` looks like the right question and is not: Markarth
+        // does not set it, because it is carved into a cliff and supplies its
+        // own landscape rather than drawing Tamriel's -- and Markarth's gate
+        // still reads 103 units. Drawing the parent's terrain and measuring
+        // from the parent's origin are different claims, and only the second
+        // one matters here.
+        //
+        // So the frame is the root of the parent chain. Tamriel and every city
+        // under it share one; Solstheim is its own root, and Apocrypha's root
+        // is Solstheim rather than Tamriel, so neither offers a bearing to
+        // somebody standing in Skyrim. Which is also just true -- Solstheim is
+        // a boat, not a walk.
+        RE::TESWorldSpace* GroundFrameOf(RE::FormID worldSpace)
+        {
+            auto* ws = RE::TESForm::LookupByID<RE::TESWorldSpace>(worldSpace);
+            // Depth-capped because a cycle here would hang the beat, and
+            // nothing in the game needs more than one hop anyway.
+            for (int depth = 0; ws && ws->parentWorld && depth < 8; ++depth) {
+                ws = ws->parentWorld;
+            }
+            return ws;
+        }
+
+        bool SharesCoordinateFrame(RE::FormID a, RE::FormID b)
+        {
+            if (a == b) {
+                return true;
+            }
+            auto* frameA = GroundFrameOf(a);
+            return frameA && frameA == GroundFrameOf(b);
+        }
+
+        // The deepest place the visitor can be said to come FROM, in
+        // numbers the player's worldspace can read.
+        //
+        // Reached when the two are in different worldspaces and no door
+        // joins them in the loaded grid -- the player is not at the city
+        // they live in, they are somewhere else in Skyrim entirely. The
+        // gate is still the way out, but it is thousands of units away in
+        // an unloaded cell and nothing here can find it.
+        //
+        // It does not need finding. What the route wants from the sender
+        // is a bearing, and `MarkerFromLocation` already walks their
+        // location chain outward and stops at the first marker it meets --
+        // the deepest one, so Whiterun rather than Whiterun Hold. That
+        // marker stands in the city's own worldspace and is no less a
+        // Tamriel coordinate for it.
+        //
+        // This is a PATHING anchor and nothing else. Where the visitor
+        // actually stands, and where they are put back afterwards, is the
+        // sender's own origin, which this does not touch.
+        bool HomeMarkerBearing(RE::Actor* sender,
+                               RE::FormID senderWorldSpace,
+                               RE::FormID playerWorldSpace,
+                               RoadRoute::Origin& out,
+                               std::string& trail)
+        {
+            if (!sender) {
+                return false;
+            }
+
+            // The worldspace's own Location, which is the rung that answers
+            // for anybody standing in the street.
+            //
+            // A city cell does not name its location: all 113 exterior cells
+            // of WhiterunWorld leave XLCN empty, and the field is set once, on
+            // the worldspace record, where it reads WhiterunLocation. So
+            // asking the cell works for the sender indoors at the Bannered
+            // Mare and for nobody outside it, which is the wrong half.
+            auto* worldLocation = [senderWorldSpace]() -> RE::BGSLocation* {
+                auto* ws = RE::TESForm::LookupByID<RE::TESWorldSpace>(senderWorldSpace);
+                return ws ? ws->location : nullptr;
+            }();
+
+            RoadRoute::Origin marker;
+            auto* saveCell = RoadRoute::CellOf(sender);
+            const bool found = (saveCell && RoadRoute::MarkerFromLocation(saveCell->GetLocation(), marker, trail))
+                               || RoadRoute::MarkerFromLocation(worldLocation, marker, trail)
+                               || RoadRoute::MarkerFromLocation(sender->GetEditorLocation(), marker, trail)
+                               || RoadRoute::MarkerFromLocation(sender->GetCurrentLocation(), marker, trail);
+            if (!found) {
+                return false;
+            }
+            if (!SharesCoordinateFrame(marker.worldSpace, playerWorldSpace)) {
+                trail += "[off-frame]";
+                return false;
+            }
+
+            out = marker;
+            // Read in the player's worldspace from here on, because that
+            // is the graph the route is planned over.
+            out.worldSpace = playerWorldSpace;
+            return true;
+        }
+
         struct Endpoints
         {
             bool resolved = false;
@@ -819,7 +925,7 @@ namespace NarrativeEngine::VisitArrivalPoint
 
         // Engine state: both ends of the route, resolved through load
         // doors where either party is indoors.
-        const auto ends = MainThread::Run(pt, [sender, player](const MainThread::Token& mt) {
+        auto ends = MainThread::Run(pt, [sender, player](const MainThread::Token& mt) {
             Endpoints out;
             out.senderSource = ResolveActorOrigin(mt, sender, "sender", out.sender);
             out.playerSource = ResolveActorOrigin(mt, player, "player", out.player);
@@ -871,6 +977,13 @@ namespace NarrativeEngine::VisitArrivalPoint
             return result;
         }
 
+        // Set when the two ends were in different worldspaces and the
+        // visitor's end has been re-read off their home's map marker
+        // instead, which puts both in the player's numbers and lets the
+        // ordinary road search below do the rest.
+        std::string homeMarkerTrail;
+        bool viaHomeMarker = false;
+
         if (ends.sender.worldSpace != ends.player.worldSpace) {
             // A walled city, almost always. The two are not in the
             // same coordinate system, so nothing can be routed between
@@ -890,52 +1003,101 @@ namespace NarrativeEngine::VisitArrivalPoint
             const auto gateway = MainThread::Run(
                 pt, [&](const MainThread::Token&) { return FindCityGateway(cityAnchorPos, ends.sender.worldSpace); });
             if (!gateway.Ok()) {
-                logger::info("VisitArrivalPoint: sender=0x{:08X} tier=none — different worldspaces "
-                             "(sender=0x{:08X} player=0x{:08X}) and no door between them in the loaded "
-                             "cells",
+                // No gate in the loaded grid, which is the ordinary case
+                // rather than an odd one: it means the player is not at
+                // the city, they are out in Skyrim somewhere. Every
+                // dispatch whose visitor lived behind a set of walls
+                // declined here, and there are five such cities holding a
+                // large share of everybody worth visiting.
+                //
+                // The gate is not needed to answer. Anchor the visitor on
+                // their home's map marker, which is in the same ground
+                // frame as the player, and fall through to the road
+                // search that handles every other visitor.
+                const RE::FormID senderWorldSpace = ends.sender.worldSpace;
+                RoadRoute::Origin viaMarker;
+                viaHomeMarker = MainThread::Run(pt, [&](const MainThread::Token&) {
+                    return HomeMarkerBearing(
+                        sender, senderWorldSpace, ends.player.worldSpace, viaMarker, homeMarkerTrail);
+                });
+                if (!viaHomeMarker) {
+                    logger::info("VisitArrivalPoint: sender=0x{:08X} tier=none — different worldspaces "
+                                 "(sender=0x{:08X} player=0x{:08X}), no door between them in the loaded "
+                                 "cells, and no home marker sharing the player's ground ('{}')",
+                                 senderId,
+                                 senderWorldSpace,
+                                 ends.player.worldSpace,
+                                 homeMarkerTrail);
+                    return result;
+                }
+
+                ends.sender = viaMarker;
+                logger::info("VisitArrivalPoint: sender=0x{:08X} lives in ws=0x{:08X} with no gate loaded; "
+                             "routing from their home marker at ({:.0f},{:.0f}) in the player's ws=0x{:08X} "
+                             "instead ({})",
+                             senderId,
+                             senderWorldSpace,
+                             ends.sender.position.x,
+                             ends.sender.position.y,
+                             ends.player.worldSpace,
+                             homeMarkerTrail);
+            } else {
+                const auto gatePos = gateway.nearSide->GetPosition();
+                logger::info("VisitArrivalPoint: sender=0x{:08X} across worldspaces "
+                             "(sender=0x{:08X} player=0x{:08X}); player_indoors={} measured from "
+                             "({:.0f},{:.0f}); gate at ({:.0f},{:.0f}), {:.0f}u out",
                              senderId,
                              ends.sender.worldSpace,
-                             ends.player.worldSpace);
-                return result;
-            }
+                             ends.player.worldSpace,
+                             playerIndoors,
+                             cityAnchorPos.x,
+                             cityAnchorPos.y,
+                             gatePos.x,
+                             gatePos.y,
+                             Dist2D(gatePos, cityAnchorPos));
 
-            const auto gatePos = gateway.nearSide->GetPosition();
-            logger::info("VisitArrivalPoint: sender=0x{:08X} across worldspaces "
-                         "(sender=0x{:08X} player=0x{:08X}); player_indoors={} measured from "
-                         "({:.0f},{:.0f}); gate at ({:.0f},{:.0f}), {:.0f}u out",
-                         senderId,
-                         ends.sender.worldSpace,
-                         ends.player.worldSpace,
-                         playerIndoors,
-                         cityAnchorPos.x,
-                         cityAnchorPos.y,
-                         gatePos.x,
-                         gatePos.y,
-                         Dist2D(gatePos, cityAnchorPos));
-
-            // Inside the walls first. Somewhere between the player and
-            // the gate reads as the visitor having already come through
-            // it, which is a shorter and more natural walk than watching
-            // them traverse the gate.
-            GateTally cityTally;
-            auto inside = MainThread::Run(pt, [&](const MainThread::Token&) {
-                return SampleBearingArc(
-                    cityAnchorPos, ends.playerAngleZ, gatePos, minDist, maxDist, coverRadius, cityTally);
-            });
-            if (!inside.empty()) {
-                result.tier = Tier::CityApproach;
-                result.point = inside.front();
-                result.fallbacks.assign(inside.begin() + 1, inside.end());
-                // The point is in the player's worldspace but not
-                // necessarily in the player's CELL: a player still inside
-                // the inn would have the marker built in the inn. The
-                // city side of the gate is the nearest reference known to
-                // be standing on the ground this point is on.
-                if (playerIndoors) {
-                    result.placementAnchor = gateway.nearSide->GetFormID();
+                // Inside the walls first. Somewhere between the player and
+                // the gate reads as the visitor having already come through
+                // it, which is a shorter and more natural walk than watching
+                // them traverse the gate.
+                GateTally cityTally;
+                auto inside = MainThread::Run(pt, [&](const MainThread::Token&) {
+                    return SampleBearingArc(
+                        cityAnchorPos, ends.playerAngleZ, gatePos, minDist, maxDist, coverRadius, cityTally);
+                });
+                if (!inside.empty()) {
+                    result.tier = Tier::CityApproach;
+                    result.point = inside.front();
+                    result.fallbacks.assign(inside.begin() + 1, inside.end());
+                    // The point is in the player's worldspace but not
+                    // necessarily in the player's CELL: a player still inside
+                    // the inn would have the marker built in the inn. The
+                    // city side of the gate is the nearest reference known to
+                    // be standing on the ground this point is on.
+                    if (playerIndoors) {
+                        result.placementAnchor = gateway.nearSide->GetFormID();
+                    }
+                    logger::info("VisitArrivalPoint: sender=0x{:08X} tier=city-approach at "
+                                 "({:.0f},{:.0f},{:.0f}) inside the walls, anchored on 0x{:08X} | city[{}]",
+                                 senderId,
+                                 result.point.x,
+                                 result.point.y,
+                                 result.point.z,
+                                 result.placementAnchor,
+                                 cityTally.Describe());
+                    return result;
                 }
-                logger::info("VisitArrivalPoint: sender=0x{:08X} tier=city-approach at "
-                             "({:.0f},{:.0f},{:.0f}) inside the walls, anchored on 0x{:08X} | city[{}]",
+
+                // Nothing usable inside -- most often because the player can
+                // see the whole way to the gate. So put the visitor on the
+                // far side of it and let them walk in, which is what the
+                // player would expect to see anyway.
+                result.tier = Tier::CityGate;
+                result.point = gateway.arrival;
+                result.point.z += kGroundClearanceUnits;
+                result.placementAnchor = gateway.farSide->GetFormID();
+                logger::info("VisitArrivalPoint: sender=0x{:08X} tier=city-gate at ({:.0f},{:.0f},{:.0f}) "
+                             "outside the gate, anchored on 0x{:08X} | city[{}]",
                              senderId,
                              result.point.x,
                              result.point.y,
@@ -944,25 +1106,15 @@ namespace NarrativeEngine::VisitArrivalPoint
                              cityTally.Describe());
                 return result;
             }
-
-            // Nothing usable inside -- most often because the player can
-            // see the whole way to the gate. So put the visitor on the
-            // far side of it and let them walk in, which is what the
-            // player would expect to see anyway.
-            result.tier = Tier::CityGate;
-            result.point = gateway.arrival;
-            result.point.z += kGroundClearanceUnits;
-            result.placementAnchor = gateway.farSide->GetFormID();
-            logger::info("VisitArrivalPoint: sender=0x{:08X} tier=city-gate at ({:.0f},{:.0f},{:.0f}) "
-                         "outside the gate, anchored on 0x{:08X} | city[{}]",
-                         senderId,
-                         result.point.x,
-                         result.point.y,
-                         result.point.z,
-                         result.placementAnchor,
-                         cityTally.Describe());
-            return result;
         }
+
+        // How the visitor's end was arrived at, for the two log lines that
+        // close this out. After a re-anchor the origin rung alone is
+        // misleading: it names where they were read from, not the marker
+        // the route was actually planned against.
+        const std::string senderVia =
+            viaHomeMarker ? std::string(OriginSourceName(ends.senderSource)) + "->home-marker(" + homeMarkerTrail + ")"
+                          : std::string(OriginSourceName(ends.senderSource));
 
         // Where the player IS IN THIS WORLDSPACE, which is not always
         // where they are standing.
@@ -1090,7 +1242,7 @@ namespace NarrativeEngine::VisitArrivalPoint
                          ends.player.worldSpace,
                          ends.sender.position.x,
                          ends.sender.position.y,
-                         OriginSourceName(ends.senderSource),
+                         senderVia,
                          ends.player.position.x,
                          ends.player.position.y,
                          anchorPos.z,
@@ -1137,7 +1289,7 @@ namespace NarrativeEngine::VisitArrivalPoint
                      ends.player.worldSpace,
                      ends.sender.position.x,
                      ends.sender.position.y,
-                     OriginSourceName(ends.senderSource),
+                     senderVia,
                      anchorPos.x,
                      anchorPos.y,
                      anchorPos.z,

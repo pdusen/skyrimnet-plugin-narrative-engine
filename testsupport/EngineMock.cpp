@@ -964,6 +964,26 @@ namespace NarrativeEngine::Testing
         return worldSpace;
     }
 
+    void EngineMock::SetWorldSpaceParent(RE::TESWorldSpace* child, RE::TESWorldSpace* parent)
+    {
+        if (!child) {
+            return;
+        }
+        child->parentWorld = parent;
+        // The flags a city record carries, so anything reading them sees the
+        // vanilla shape. Nothing in the frame check consults them -- Markarth
+        // sets none of these and still measures from Tamriel's origin.
+        child->parentUseFlags.set(RE::TESWorldSpace::ParentUseFlag::kUseMapData,
+                                  RE::TESWorldSpace::ParentUseFlag::kUseSkyCell);
+    }
+
+    void EngineMock::SetWorldSpaceLocation(RE::TESWorldSpace* worldSpace, RE::BGSLocation* location)
+    {
+        if (worldSpace) {
+            worldSpace->location = location;
+        }
+    }
+
     RE::TESObjectCELL* EngineMock::AddExteriorCell(RE::TESWorldSpace* worldSpace,
                                                    std::int16_t cellX,
                                                    std::int16_t cellY,
