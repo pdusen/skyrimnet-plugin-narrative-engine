@@ -6,7 +6,7 @@
   "description": "AI Director for Skyrim, layered on top of SkyrimNet — judges story-arc pacing per real-time tick.",
   "author": "pdusen",
   "nsfw": false,
-  "version": "0.6.0",
+  "version": "0.6.1",
   "min_skyrimnet_version": "0.25.0",
   "mods": [
     {
