@@ -76,8 +76,7 @@ namespace NarrativeEngine::Settings
         bool debugNotifications = false;
 
         // [Director]
-        // TEMP: 30 for development iteration; ship default is 90.
-        int tickIntervalSeconds = 30;             // wall-clock seconds between evaluations
+        int tickIntervalSeconds = 90;             // UNPAUSED seconds between evaluations
         int decisionLogMaxEntries = 200;          // ring buffer cap
         int decisionLogTailSizeForPrompt = 10;    // entries fed into BuildPromptContext
         int skyrimNetEventTailSizeForPrompt = 40; // maxCount passed to PublicGetRecentEvents
