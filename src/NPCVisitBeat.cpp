@@ -994,13 +994,24 @@ namespace NarrativeEngine
         //
         // So every distance-driven decision waits until they share a
         // worldspace, which happens the moment the visitor walks through
-        // the gate. Interiors count as "not comparable" for the same
-        // reason. The approach TIMEOUT keeps running throughout, so a
+        // the gate. The approach TIMEOUT keeps running throughout, so a
         // visitor who never makes it through still resolves the beat.
+        //
+        // An interior is its own coordinate system, so two references
+        // compare only when they stand in the same one. That is exactly
+        // where a doorstep visit ends: the visitor is placed outside the
+        // player's door and walks in, and treating every interior as
+        // "not comparable" left them trailing the player at arm's length
+        // until the timeout sent them home unheard.
         bool DistancesAreComparable(RE::TESObjectREFR* senderRef, RE::PlayerCharacter* player)
         {
             if (!senderRef || !player) {
                 return false;
+            }
+            auto* senderCell = senderRef->GetParentCell();
+            auto* playerCell = player->GetParentCell();
+            if (senderCell && senderCell == playerCell && senderCell->IsInteriorCell()) {
+                return true;
             }
             const auto senderWs = WorldSpaceOf(senderRef);
             const auto playerWs = WorldSpaceOf(player);

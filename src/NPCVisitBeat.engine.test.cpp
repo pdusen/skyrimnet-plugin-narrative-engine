@@ -1017,6 +1017,61 @@ TEST_CASE("NPCVisitBeat waits for the sender to walk over", "[NPCVisitBeat][engi
         }
     }
 
+    SECTION("when the player is indoors")
+    {
+        // The doorstep tier: the sender is put down outside the player's own
+        // door and has to walk in to reach them. Interior coordinates are
+        // local to the cell, so where the sender stands only means anything
+        // once they are standing in the same one.
+        engine.world.cellIsInterior = true;
+        auto* indoors = RE::PlayerCharacter::GetSingleton()->GetParentCell();
+        REQUIRE(indoors != nullptr);
+        REQUIRE(indoors->IsInteriorCell());
+        PlaceSenderAway(engine, world.sender, 100.0f);
+
+        SECTION("and the sender has walked in after them")
+        {
+            world.sender->parentCell = indoors;
+            StageTick(beat);
+
+            SECTION("should speak the line the model wrote for their arrival")
+            {
+                REQUIRE(DispatchedMethod(engine, "RunSenderNarration"));
+            }
+
+            SECTION("should move the quest on to the conversation")
+            {
+                REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageDiscuss)));
+            }
+        }
+
+        SECTION("and the sender is still outside the door")
+        {
+            // The sender's exterior coordinates happen to sit a hundred units
+            // from the player's interior ones, which says nothing about how
+            // far apart they really are.
+            StageTick(beat);
+
+            SECTION("should leave them to it")
+            {
+                REQUIRE(engine.papyrus.dispatches.empty());
+            }
+        }
+
+        SECTION("and the sender is in some other interior")
+        {
+            auto* elsewhere = engine.AddExteriorCell(world.cell->GetRuntimeData().worldSpace, 5, 5, nullptr);
+            engine.SetCellInterior(elsewhere, true);
+            world.sender->parentCell = elsewhere;
+            StageTick(beat);
+
+            SECTION("should leave them to it")
+            {
+                REQUIRE(engine.papyrus.dispatches.empty());
+            }
+        }
+    }
+
     SECTION("when the sender never arrives")
     {
         TickForSeconds(beat, BeatState::RUNNING, TickMode::Normal, 1.5);
