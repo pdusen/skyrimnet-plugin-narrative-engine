@@ -210,13 +210,15 @@ reads navmesh out of them, and the cover raycast needs geometry to hit. A bridge
 on distance alone — consistent, since beyond view distance cover is moot — and carries no standability
 guarantee. That is accepted rather than mitigated.
 
-For elevation, use `TES::GetLandHeight` if it answers outside the loaded grid (see the implementation plan's
-first step), and otherwise take the height the chain's own line interpolates at that point, plus a small
-upward buffer. Precision does not matter much either way: an actor warped outside the loaded cells stays
-stationary until background travel carries them into the grid, so a point left well above or below the
-terrain costs nothing and is corrected the moment they become a real actor. No special preference for real
-coarse nodes is needed — every coarse node is already in the graph at difficulty 1, so the search routes
-through them wherever they help.
+For elevation, take the height the chain's own line interpolates at that point, plus a small upward buffer.
+`TES::GetLandHeight` is not an option: Step 1 established that it returns `false` for every position outside
+the attached cell grid, and writes `-2048.0` into the out parameter when it does — see
+[`land-height-outside-the-loaded-grid.md`](../engine-findings/land-height-outside-the-loaded-grid.md).
+
+Precision does not matter: an actor warped outside the loaded cells stays stationary until background travel
+carries them into the grid, so a point left well above or below the terrain costs nothing and is grounded the
+moment they become a real actor. No special preference for real coarse nodes is needed — every coarse node is
+already in the graph at difficulty 1, so the search routes through them wherever they help.
 
 **Bridge length buys no wait.** The selection walk runs outward from the player and takes the *first*
 acceptable point, so the point a visitor is actually warped onto is the innermost one that qualifies — at
@@ -335,20 +337,15 @@ candidate class of whichever point won, which is strictly more informative in th
 
 ---
 
-## The one engine question left
+## Settled questions
 
-**Is land height answerable outside the loaded grid?** `StuckRecovery::IsStandable` reads
-`TES::GetLandHeight`, which Phase 14 found has no landscape to answer from when the player is indoors. Whether
-it answers for a point in an unloaded cell decides only which of the two elevation sources the bridge uses —
-the engine's height, or the chain line's own interpolated height plus a buffer — and nothing else in the
-design hangs on it, because a visitor outside the grid does not move until background travel brings them in.
+Nothing is held open against the design. `max` for edge cost, synthetic bridge points placed without
+validation, no bridge reach cap, 512 spacing on both direct lines, and the approach corridor retired rather
+than inherited are each settled in the sections above.
 
-It is answerable only by probing the running game, so it is the first implementation step rather than a
-question held open against the design.
-
-Everything else that was open is settled in the sections above: `max` for edge cost, synthetic bridge points
-placed without validation, no bridge reach cap, 512 spacing on both direct lines, and the approach corridor
-retired rather than inherited.
+The one question that needed a running game — whether land height is answerable outside the loaded grid — was
+answered by Step 1: it is not, and the bridge interpolates its own heights. See
+[`land-height-outside-the-loaded-grid.md`](../engine-findings/land-height-outside-the-loaded-grid.md).
 
 ---
 
@@ -442,7 +439,14 @@ four gated stages, which is the shape the three suites this phase touches alread
 
 ### Step 1 — Can land height be read outside the loaded grid?
 
-- [ ] Complete
+- [X] Complete
+
+**Answer: no.** 76 samples, four rays, standing in cell (8, -5) with a 5x5 attached block: all 18 samples in
+an attached cell returned `true`, all 58 outside returned `false`, and the boundary fell exactly on the grid
+edge on every ray. Failures write `-2048.0` into the out parameter, which is a plausible Skyrim ground height
+rather than an obvious sentinel. The bridge therefore interpolates its own elevation, and the "Plausible is
+not the same as correct" check below was moot — nothing outside the grid answered at all. Written up in
+[`land-height-outside-the-loaded-grid.md`](../engine-findings/land-height-outside-the-loaded-grid.md).
 
 **[CLAUDE + USER]** — Claude writes the probe and the write-up; the user runs the game and pastes the log.
 
