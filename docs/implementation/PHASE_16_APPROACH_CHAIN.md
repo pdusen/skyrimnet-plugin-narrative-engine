@@ -493,7 +493,7 @@ lands in `docs/engine-findings/land-height-outside-the-loaded-grid.md`.
 
 ### Step 2 — Expose the coarse graph's adjacency
 
-- [ ] Complete
+- [X] Complete
 
 **[CLAUDE]**
 

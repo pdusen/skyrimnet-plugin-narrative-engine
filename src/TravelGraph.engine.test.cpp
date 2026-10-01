@@ -5,10 +5,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <set>
 #include <vector>
 
 // Tests for the long-distance road skeleton.
@@ -286,6 +288,143 @@ TEST_CASE("TravelGraph builds a road from the precomputed routes", "[TravelGraph
             // It runs at kDataLoaded and the graph is const for the session
             // afterwards. A second build would double every node.
             REQUIRE(TravelGraph::NodeCount() == 8);
+        }
+    }
+}
+
+TEST_CASE("TravelGraph hands out the edges of one node", "[TravelGraph][engine]")
+{
+    // The graph's own routing has always been able to consume its edges —
+    // FindPath and DistanceField walk them internally. Reading them is what
+    // was missing, and what a composite graph built over this one needs: it
+    // copies every edge out once at assembly time rather than asking for a
+    // route.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    const Road road = BuildRoad(engine);
+    TravelGraph::Initialize();
+
+    const auto northGate = NodeAt(road.northGateX, road.y);
+    const auto crossroads = NodeAt(road.crossroadsX, road.y);
+    const auto milestone = NodeAt(road.milestoneX, road.y);
+    const auto sideTrack = NodeAt(road.milestoneX, road.sideTrackY);
+    REQUIRE(northGate != TravelGraph::kInvalidNode);
+    REQUIRE(crossroads != TravelGraph::kInvalidNode);
+    REQUIRE(milestone != TravelGraph::kInvalidNode);
+    REQUIRE(sideTrack != TravelGraph::kInvalidNode);
+
+    const auto neighbors = [](std::size_t index) {
+        const auto span = TravelGraph::Neighbors(index);
+        return std::set<std::size_t>(span.begin(), span.end());
+    };
+
+    SECTION("when a node sits at the end of the road")
+    {
+        SECTION("should name the one node it continues to")
+        {
+            REQUIRE(neighbors(northGate) == std::set<std::size_t>{crossroads});
+        }
+    }
+
+    SECTION("when a node is a junction")
+    {
+        SECTION("should name every road out of it")
+        {
+            // The milestone is where the branch leaves: two nodes along the
+            // road and one up the side track.
+            const auto southGate = NodeAt(road.southGateX, road.y);
+            REQUIRE(southGate != TravelGraph::kInvalidNode);
+            REQUIRE(neighbors(milestone) == std::set<std::size_t>{crossroads, southGate, sideTrack});
+        }
+    }
+
+    SECTION("when two routes share a stretch of road")
+    {
+        SECTION("should name the shared neighbour once")
+        {
+            // Two preferred paths both run crossroads-to-milestone. A
+            // duplicated edge would be counted twice by anything summing cost
+            // over the graph, and the span is the only place a caller could
+            // see the duplication that EdgeCount already hides.
+            const auto span = TravelGraph::Neighbors(crossroads);
+            REQUIRE(std::count(span.begin(), span.end(), milestone) == 1);
+        }
+    }
+
+    SECTION("when every edge is read back")
+    {
+        SECTION("should agree with itself in both directions")
+        {
+            // Undirectedness is the property a search over this graph relies
+            // on without ever checking: a route found one way has to exist the
+            // other way.
+            for (std::size_t i = 0; i < TravelGraph::NodeCount(); ++i) {
+                for (const auto j : TravelGraph::Neighbors(i)) {
+                    const auto back = TravelGraph::Neighbors(j);
+                    REQUIRE(std::find(back.begin(), back.end(), i) != back.end());
+                }
+            }
+        }
+
+        SECTION("should account for exactly twice the edge count")
+        {
+            // Each undirected edge appears once at each end. This is the check
+            // that the span is the real adjacency row rather than, say, the
+            // wrong node's row of the right length.
+            std::size_t ends = 0;
+            for (std::size_t i = 0; i < TravelGraph::NodeCount(); ++i) {
+                ends += TravelGraph::Neighbors(i).size();
+            }
+            REQUIRE(ends == TravelGraph::EdgeCount() * 2);
+        }
+
+        SECTION("should keep the two worldspaces apart")
+        {
+            // Nothing bridges the island to the mainland, so no edge may cross
+            // between them — the same separation FindPath reports as "no route".
+            for (std::size_t i = 0; i < TravelGraph::NodeCount(); ++i) {
+                const auto* from = TravelGraph::GetNode(i);
+                REQUIRE(from != nullptr);
+                for (const auto j : TravelGraph::Neighbors(i)) {
+                    const auto* to = TravelGraph::GetNode(j);
+                    REQUIRE(to != nullptr);
+                    REQUIRE(to->worldSpace == from->worldSpace);
+                }
+            }
+        }
+    }
+
+    SECTION("when an index outside the graph is asked for")
+    {
+        SECTION("should hand back nothing")
+        {
+            REQUIRE(TravelGraph::Neighbors(TravelGraph::NodeCount()).empty());
+        }
+
+        SECTION("should hand back nothing for the invalid sentinel")
+        {
+            // kInvalidNode is what FindNearestNode returns on a miss, so it
+            // reaches this call whenever a caller forgets to check.
+            REQUIRE(TravelGraph::Neighbors(TravelGraph::kInvalidNode).empty());
+        }
+    }
+}
+
+TEST_CASE("TravelGraph hands out no edges when there is no graph", "[TravelGraph][engine]")
+{
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    (void)engine.AddNavMeshInfoMap(kNavi);
+    TravelGraph::Initialize();
+
+    SECTION("when the record was there but empty")
+    {
+        SECTION("should hand back nothing for node zero")
+        {
+            // An empty graph answers the same way an out-of-range index does,
+            // so a caller that loops over NodeCount() needs no special case.
+            REQUIRE(TravelGraph::NodeCount() == 0);
+            REQUIRE(TravelGraph::Neighbors(0).empty());
         }
     }
 }

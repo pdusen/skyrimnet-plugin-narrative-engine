@@ -879,6 +879,15 @@ namespace NarrativeEngine::TravelGraph
         return index < g_nodes.size() ? &g_nodes[index] : nullptr;
     }
 
+    std::span<const std::size_t> Neighbors(std::size_t index)
+    {
+        std::scoped_lock lock(g_mutex);
+        if (index >= g_adjacency.size()) {
+            return {};
+        }
+        return g_adjacency[index];
+    }
+
     std::size_t FindNearestNode(RE::FormID worldSpace, float x, float y)
     {
         std::scoped_lock lock(g_mutex);
