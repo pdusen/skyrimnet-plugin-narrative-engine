@@ -200,7 +200,7 @@ TEST_CASE("VisitArrivalPoint brings the visitor in from the side of the road the
         SECTION("should arrive on the road rather than beside it")
         {
             REQUIRE(result.Ok());
-            REQUIRE(result.tier == VisitArrivalPoint::Tier::FineRoad);
+            REQUIRE(result.tier == VisitArrivalPoint::Tier::Chain);
             REQUIRE(std::fabs(result.point.y) < 1.0f);
         }
 
@@ -353,10 +353,15 @@ TEST_CASE("VisitArrivalPoint keeps to the road the visitor would actually walk",
     }
 }
 
-TEST_CASE("VisitArrivalPoint keeps the arrival inside the distance band", "[VisitArrivalPoint][engine]")
+TEST_CASE("VisitArrivalPoint takes the nearest point far enough out", "[VisitArrivalPoint][engine]")
 {
-    // A band narrow enough that exactly one node on each side of the player
-    // sits inside it, so both edges are answered by the same fixture.
+    // The minimum distance is a rule; the maximum is not, and since Phase 16
+    // it is not consulted on the road path at all. What replaced the band is
+    // simpler and gives better answers: walk outward from the player and take
+    // the FIRST point that is far enough away and hidden. Where the nearest
+    // acceptable point sits inside the old ceiling the two agree, which is
+    // what this fixture is -- the difference shows up in what becomes
+    // fallback supply rather than in what wins.
     constexpr const char* kNarrowBand = "[Beats]\niVisitMarkerMinDistanceUnits=1200\n"
                                         "iVisitMarkerMaxDistanceUnits=1700\n"
                                         "iVisitArrivalCoverRadiusUnits=64\n"
@@ -387,20 +392,39 @@ TEST_CASE("VisitArrivalPoint keeps the arrival inside the distance band", "[Visi
         REQUIRE(Dist2D(result.point, At(0.0f, 0.0f)) >= 1200.0f);
     }
 
-    SECTION("should skip the nodes past the maximum")
+    SECTION("should land on the nearest node past the minimum")
     {
+        // 1500 is the first node outside the 1200-unit floor. Nothing further
+        // out may win while it is usable, because a visitor who could have
+        // arrived at 1500 should not be put at 3500 for the search's
+        // convenience.
         REQUIRE(result.Ok());
-        REQUIRE(Dist2D(result.point, At(0.0f, 0.0f)) <= 1700.0f);
+        REQUIRE(std::fabs(result.point.x - 1500.0f) < 1.0f);
+    }
+
+    SECTION("should keep the road beyond the old ceiling as fallback supply")
+    {
+        // The old band held these back in a second pool and used them only if
+        // the first was empty; before that it rejected them outright. They are
+        // ordinary candidates now, and every one of them is further out than
+        // the winner, which is what the escort needs to walk a stalled visitor
+        // back along.
+        REQUIRE(result.Ok());
+        REQUIRE_FALSE(result.fallbacks.empty());
+        const float winner = Dist2D(result.point, At(0.0f, 0.0f));
         for (const auto& fallback : result.fallbacks) {
-            REQUIRE(Dist2D(fallback, At(0.0f, 0.0f)) <= 1700.0f);
+            REQUIRE(Dist2D(fallback, At(0.0f, 0.0f)) > winner);
         }
     }
 
-    SECTION("should land on the one node the band admits")
+    SECTION("should report which class of point it stood the visitor on")
     {
+        // Real road inside the loaded grid, which is rank 1 and the best
+        // answer available. The two road tiers this replaces could only say
+        // which generator had succeeded.
         REQUIRE(result.Ok());
-        REQUIRE(std::fabs(result.point.x - 1500.0f) < 1.0f);
-        REQUIRE(result.fallbacks.empty());
+        REQUIRE(result.tier == VisitArrivalPoint::Tier::Chain);
+        REQUIRE(result.pointClass == NarrativeEngine::ApproachChain::PointClass::Fine);
     }
 }
 
@@ -545,6 +569,214 @@ TEST_CASE("VisitArrivalPoint refuses ground the player can see", "[VisitArrivalP
     }
 }
 
+TEST_CASE("VisitArrivalPoint expands off the road for a candidate", "[VisitArrivalPoint][engine]")
+{
+    // The fine graph is a road ribbon, so a node one hop off the chain is
+    // usually the other side of the same road and two hops is a few metres
+    // off it. That is where cheap cover lives when the road itself is in
+    // plain view, and reaching it is the difference between a placed visit
+    // and a declined one.
+    //
+    // Isolating it needs a world where the chain's own points cannot win. The
+    // road here is short — every node on it sits inside the minimum distance,
+    // so none of them is far enough to arrive at — and a two-node spur runs
+    // north off the player's own node, out past that minimum. The spur is a
+    // dead end, so no route ever passes through it: the only way to reach it
+    // is to expand off the chain.
+    constexpr float kFloor = 1200.0f;
+    constexpr const char* kShortBand = "[Beats]\niVisitMarkerMinDistanceUnits=1200\n"
+                                       "iVisitMarkerMaxDistanceUnits=2500\n"
+                                       "iVisitArrivalCoverRadiusUnits=64\n"
+                                       "bVisitArrivalAllowCoarseBearing=false\n"
+                                       "iVisitChainHopRadius=2\n"
+                                       "[FineRoads]\nbFineRoadsEnabled=1\niFineRoadsBackstopSeconds=1\n"
+                                       "bFineRoadsDebugBitmap=0\n"
+                                       "[TravelGraph]\nbTravelGraphEnabled=1\nbTravelGraphDebugBitmap=0\n";
+
+    constexpr float kSpurNearY = 700.0f;
+    constexpr float kSpurFarY = 1400.0f;
+
+    // Indices into the mesh below: a five-node road, then the spur.
+    //   0:(-1000,0) 1:(-500,0) 2:(0,0) 3:(500,0) 4:(1000,0) 5:(0,700) 6:(0,1400)
+    const auto layShortRoadAndSpur = [](EngineMock& engine, RE::TESObjectCELL* cell) {
+        std::vector<Triangle> mesh;
+        for (int i = 0; i < 5; ++i) {
+            Triangle t;
+            t.x = -1000.0f + static_cast<float>(i) * 500.0f;
+            t.y = 0.0f;
+            t.z = kGround;
+            t.neighbor[0] = i > 0 ? i - 1 : -1;
+            t.neighbor[1] = i < 4 ? i + 1 : -1;
+            mesh.push_back(t);
+        }
+        mesh[2].neighbor[2] = 5; // the spur leaves the player's own node
+        Triangle spurNear;
+        spurNear.x = 0.0f;
+        spurNear.y = kSpurNearY;
+        spurNear.z = kGround;
+        spurNear.neighbor[0] = 2;
+        spurNear.neighbor[1] = 6;
+        mesh.push_back(spurNear);
+        Triangle spurFar;
+        spurFar.x = 0.0f;
+        spurFar.y = kSpurFarY;
+        spurFar.z = kGround;
+        spurFar.neighbor[0] = 5;
+        mesh.push_back(spurFar);
+        engine.AddNavMesh(cell, kRoadMesh, mesh);
+    };
+
+    SECTION("when the only point far enough out is two hops off the chain")
+    {
+        EngineMock engine;
+        const ConfiguredSettings settings{kShortBand};
+        auto* space = engine.AddWorldSpace(kWorld);
+        auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+        layShortRoadAndSpur(engine, cell);
+        engine.LoadGrid({cell});
+        PollFineRoads();
+        LayGround(engine);
+        CoverEverywhere(engine);
+        auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+        auto* sender = ActorAt(engine, kSender, cell, At(1000.0f, 0.0f));
+        const auto result = FindFor(sender, player);
+
+        SECTION("should stand the visitor on it")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(std::fabs(result.point.y - kSpurFarY) < 1.0f);
+            REQUIRE(Dist2D(result.point, At(0.0f, 0.0f)) >= kFloor);
+        }
+
+        SECTION("should still call it a fine point")
+        {
+            // A hop-expanded node is real road the engine has loaded, so it
+            // gets the same gates and the same class as an on-chain one. Only
+            // its rank differs, and rank only breaks ties.
+            REQUIRE(result.Ok());
+            REQUIRE(result.pointClass == NarrativeEngine::ApproachChain::PointClass::Fine);
+        }
+    }
+
+    SECTION("when the expansion is switched off")
+    {
+        EngineMock engine;
+        const ConfiguredSettings settings{"[Beats]\niVisitMarkerMinDistanceUnits=1200\n"
+                                          "iVisitMarkerMaxDistanceUnits=2500\n"
+                                          "iVisitArrivalCoverRadiusUnits=64\n"
+                                          "bVisitArrivalAllowCoarseBearing=false\n"
+                                          "iVisitChainHopRadius=0\n"
+                                          "[FineRoads]\nbFineRoadsEnabled=1\n"
+                                          "iFineRoadsBackstopSeconds=1\nbFineRoadsDebugBitmap=0\n"
+                                          "[TravelGraph]\nbTravelGraphEnabled=1\n"
+                                          "bTravelGraphDebugBitmap=0\n"};
+        auto* space = engine.AddWorldSpace(kWorld);
+        auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+        layShortRoadAndSpur(engine, cell);
+        engine.LoadGrid({cell});
+        PollFineRoads();
+        LayGround(engine);
+        CoverEverywhere(engine);
+        auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+        auto* sender = ActorAt(engine, kSender, cell, At(1000.0f, 0.0f));
+        const auto result = FindFor(sender, player);
+
+        SECTION("should not reach the spur at all")
+        {
+            // A radius of 0 is the on-chain-only search. Nothing on the chain
+            // is far enough out, and the spur is not on it, so the visit
+            // declines -- which is what says the win above came from the
+            // expansion rather than from the spur being on the route.
+            REQUIRE_FALSE(result.Ok());
+        }
+    }
+}
+
+TEST_CASE("VisitArrivalPoint checks synthetic ground inside the grid", "[VisitArrivalPoint][engine]")
+{
+    // A synthetic point is gated by WHERE IT IS, not by which line produced
+    // it. Inside the loaded grid it can be navmesh-checked and cover-tested
+    // like any road node, and it must be: waving it through for being
+    // synthetic would place an actor on ground nobody looked at, while
+    // refusing it for being synthetic would throw away the one part of each
+    // direct line that can actually be verified.
+    //
+    // No fine graph and no coarse graph here, so every chain point except the
+    // two endpoints is synthetic.
+    constexpr const char* kNoRoads = "[Beats]\niVisitMarkerMinDistanceUnits=800\n"
+                                     "iVisitMarkerMaxDistanceUnits=2500\n"
+                                     "iVisitArrivalCoverRadiusUnits=64\n"
+                                     "bVisitArrivalAllowCoarseBearing=false\n"
+                                     "[FineRoads]\nbFineRoadsEnabled=1\niFineRoadsBackstopSeconds=1\n"
+                                     "bFineRoadsDebugBitmap=0\n"
+                                     "[TravelGraph]\nbTravelGraphEnabled=1\nbTravelGraphDebugBitmap=0\n";
+
+    SECTION("when the ground under it is walkable")
+    {
+        EngineMock engine;
+        const ConfiguredSettings settings{kNoRoads};
+        auto* space = engine.AddWorldSpace(kWorld);
+        auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+        engine.LoadGrid({cell});
+        PollFineRoads();
+        LayGround(engine);
+        CoverEverywhere(engine);
+        REQUIRE(FineRoads::NodeCount() == 0);
+
+        auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+        auto* sender = ActorAt(engine, kSender, cell, At(4000.0f, 0.0f));
+        const auto result = FindFor(sender, player);
+
+        SECTION("should use it and say it was synthetic")
+        {
+            REQUIRE(result.Ok());
+            REQUIRE(result.tier == VisitArrivalPoint::Tier::Chain);
+            REQUIRE(result.pointClass == NarrativeEngine::ApproachChain::PointClass::Direct);
+        }
+
+        SECTION("should keep it on the line home")
+        {
+            // The direct line runs outward from the visitor, so a point on it
+            // is on the bearing home by construction.
+            REQUIRE(result.Ok());
+            REQUIRE(result.point.x > 0.0f);
+            REQUIRE(std::fabs(result.point.y) < 1.0f);
+        }
+    }
+
+    SECTION("when there is no navmesh under it")
+    {
+        EngineMock engine;
+        const ConfiguredSettings settings{kNoRoads};
+        auto* space = engine.AddWorldSpace(kWorld);
+        auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+        engine.LoadGrid({cell});
+        PollFineRoads();
+        // Outdoors with a ground height, but no navmesh patch at all, so
+        // every in-grid candidate fails the walkable check.
+        engine.world.cellIsInterior = false;
+        engine.terrain.landHeight = kGround;
+        CoverEverywhere(engine);
+
+        auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+        auto* sender = ActorAt(engine, kSender, cell, At(4000.0f, 0.0f));
+        const auto result = FindFor(sender, player);
+
+        SECTION("should refuse it rather than place an actor on it")
+        {
+            REQUIRE_FALSE(result.Ok());
+            REQUIRE(result.tier == VisitArrivalPoint::Tier::None);
+        }
+
+        SECTION("should hand back no fallbacks either")
+        {
+            // A declined search that still supplied an escort ladder would
+            // have the beat warping a visitor it never placed.
+            REQUIRE(result.fallbacks.empty());
+        }
+    }
+}
+
 TEST_CASE("VisitArrivalPoint refuses road that has stopped being navmesh", "[VisitArrivalPoint][engine]")
 {
     EngineMock engine;
@@ -571,11 +803,13 @@ TEST_CASE("VisitArrivalPoint refuses road that has stopped being navmesh", "[Vis
     }
 }
 
-TEST_CASE("VisitArrivalPoint falls back to the bearing home when there is no road", "[VisitArrivalPoint][engine]")
+TEST_CASE("VisitArrivalPoint still places a visitor with no fine road", "[VisitArrivalPoint][engine]")
 {
     // No fine graph at all — the ordinary case indoors, on a fresh load, and
-    // anywhere off the road network. What is left is the coarse skeleton, and
-    // all it can honestly supply is a direction.
+    // anywhere off the road network. Before Phase 16 this was a tier of its
+    // own: manufacture a bearing from the coarse skeleton and sample an arc
+    // around it. The chain needs no such thing, because its two direct lines
+    // run outward from the visitor and one of them always reaches the player.
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
 
@@ -606,29 +840,30 @@ TEST_CASE("VisitArrivalPoint falls back to the bearing home when there is no roa
     SECTION("should still place the visitor toward home")
     {
         REQUIRE(result.Ok());
-        REQUIRE(result.tier == VisitArrivalPoint::Tier::CoarseBearing);
+        REQUIRE(result.tier == VisitArrivalPoint::Tier::Chain);
         REQUIRE(result.point.x > playerPos.x);
     }
 
-    SECTION("should aim straight down the bearing when the ground allows it")
+    SECTION("should stand them on the route rather than beside it")
     {
+        // Both direct lines run from the visitor to a point on the road
+        // network or to the player, so a point on either is on the bearing
+        // home by construction. There is no arc to be off-centre of any more.
         REQUIRE(result.Ok());
-        // The arc is sampled either side of the bearing and scored on how far
-        // off it a candidate is, so on open usable ground the winner is the
-        // one dead on it.
         REQUIRE(std::fabs(result.point.y - playerPos.y) < 1.0f);
     }
 
-    SECTION("should stay inside the band")
+    SECTION("should keep the minimum distance")
     {
+        // The floor still applies. The ceiling does not, and must not: this
+        // is exactly the shape of world where the only usable ground was
+        // slightly too far out and the visit was declined over it.
         REQUIRE(result.Ok());
-        const float distance = Dist2D(result.point, playerPos);
-        REQUIRE(distance >= 800.0f);
-        REQUIRE(distance <= 2500.0f);
+        REQUIRE(Dist2D(result.point, playerPos) >= 800.0f);
     }
 }
 
-TEST_CASE("VisitArrivalPoint declines when the bearing fallback is switched off", "[VisitArrivalPoint][engine]")
+TEST_CASE("VisitArrivalPoint declines rather than place outside the loaded grid", "[VisitArrivalPoint][engine]")
 {
     constexpr const char* kRoadOnly = "[Beats]\niVisitMarkerMinDistanceUnits=800\n"
                                       "iVisitMarkerMaxDistanceUnits=2500\n"
@@ -659,12 +894,15 @@ TEST_CASE("VisitArrivalPoint declines when the bearing fallback is switched off"
     auto* player = ActorAt(engine, kPlayer, cell, At(2048.0f, 2048.0f));
     auto* sender = ActorAt(engine, kSender, cell, At(20480.0f, 2048.0f));
 
-    SECTION("should hold out for a road rather than arrive off one")
+    SECTION("should hold out for loaded ground rather than reach past it")
     {
         const auto result = FindFor(sender, player);
-        // The stricter reading of "visitors arrive by road". Ground that would
-        // have been perfectly usable is refused because nothing can say it is
-        // a route anyone walks.
+        // bVisitArrivalAllowCoarseBearing used to gate a bearing fallback that
+        // no longer exists; it now asks the same question of the chain. False
+        // confines every arrival to cells the engine has attached, where a
+        // point can be navmesh-checked and cover-tested, and declines rather
+        // than reaching past them. With no grid loaded here, that is every
+        // candidate the chain has.
         REQUIRE_FALSE(result.Ok());
     }
 }
@@ -1029,8 +1267,9 @@ TEST_CASE("VisitArrivalPoint still arrives when the road under the player is a s
     //
     // Every one of those three was inside the minimum distance, and the
     // bearing fallback then had nothing to aim at, because it only ever read
-    // the coarse path. `CorridorTarget` had a perfectly good node on the
-    // road home the whole time.
+    // the coarse path. The approach chain has no such gap: the coarse
+    // skeleton and the stub are one graph, bridged, so the route carries on
+    // past the stub instead of ending at it.
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
 
@@ -1076,7 +1315,7 @@ TEST_CASE("VisitArrivalPoint still arrives when the road under the player is a s
     SECTION("should fall back to the bearing rather than decline")
     {
         REQUIRE(result.Ok());
-        REQUIRE(result.tier == VisitArrivalPoint::Tier::CoarseBearing);
+        REQUIRE(result.tier == VisitArrivalPoint::Tier::Chain);
     }
 
     SECTION("should still bring the visitor in from the direction of home")
@@ -1085,12 +1324,14 @@ TEST_CASE("VisitArrivalPoint still arrives when the road under the player is a s
         REQUIRE(result.point.x > playerPos.x);
     }
 
-    SECTION("should keep the arrival inside the band")
+    SECTION("should keep the minimum distance")
     {
+        // The floor still applies; the ceiling does not. On a stub the only
+        // ground on the route home may be a whole cell out, and refusing it
+        // over a walk being long is how this shape of world used to lose its
+        // visits altogether.
         REQUIRE(result.Ok());
-        const float distance = Dist2D(result.point, playerPos);
-        REQUIRE(distance >= 800.0f);
-        REQUIRE(distance <= 2500.0f);
+        REQUIRE(Dist2D(result.point, playerPos) >= 800.0f);
     }
 }
 
@@ -1222,13 +1463,18 @@ TEST_CASE("VisitArrivalPoint never measures the road from interior coordinates",
     }
 }
 
-TEST_CASE("VisitArrivalPoint does not take its bearing from the nearest scrap of road", "[VisitArrivalPoint][engine]")
+TEST_CASE("VisitArrivalPoint does not arrive from the nearest scrap of road", "[VisitArrivalPoint][engine]")
 {
     // The coarse graph holds one node per navmesh cell, so the node nearest
     // the player can sit most of a cell away in a direction decided by where
-    // the road runs rather than by where the visitor lives. Aiming the
+    // the road runs rather than by where the visitor lives. Aiming the old
     // fallback arc at it produced arrivals 115, 159 and 207 degrees off home
     // in one run.
+    //
+    // Phase 14 answered that with an approach corridor, which Phase 16
+    // retires: the chain is a route FROM the visitor, so the points on it are
+    // on the way home whether or not anything checks. This fixture is the
+    // regression test for that claim rather than for the corridor.
     //
     // The road here runs due east to the visitor, but it starts with a spur
     // hanging SOUTH of the player, and that spur holds the node nearest to
@@ -1262,13 +1508,16 @@ TEST_CASE("VisitArrivalPoint does not take its bearing from the nearest scrap of
     REQUIRE(FineRoads::NodeCount() == 0);
     const auto result = FindFor(sender, player);
 
-    SECTION("should aim down the road home rather than at the spur")
+    SECTION("should come in from the road home rather than off the spur")
     {
-        // The spur node is due south. An arrival south of the player is the
-        // bug; east of them is the road the visitor would walk.
+        // The spur node is due south, and an arrival south of the player is
+        // the bug. North is where the road is: the player is standing off it,
+        // so the visitor comes in along it and reaches them from there. The
+        // old assertion asked for EAST, which was the bearing arc's answer --
+        // the chain's is the route, and the route runs down the road.
         REQUIRE(result.Ok());
-        REQUIRE(result.tier == VisitArrivalPoint::Tier::CoarseBearing);
-        REQUIRE(result.point.x > playerPos.x);
+        REQUIRE(result.tier == VisitArrivalPoint::Tier::Chain);
+        REQUIRE(result.point.y > playerPos.y);
     }
 }
 
@@ -1326,7 +1575,7 @@ TEST_CASE("VisitArrivalPoint walks a city visitor out to a player who is nowhere
 
         SECTION("should route them onto the road, not merely somewhere eastward")
         {
-            REQUIRE(result.tier == VisitArrivalPoint::Tier::FineRoad);
+            REQUIRE(result.tier == VisitArrivalPoint::Tier::Chain);
         }
 
         SECTION("should build the marker from the player, who shares that ground")

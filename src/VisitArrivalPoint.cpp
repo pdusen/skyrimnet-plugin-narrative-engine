@@ -1,6 +1,8 @@
 #include <VisitArrivalPoint.h>
 
+#include <ApproachChain.h>
 #include <CameraVisibility.h>
+#include <FineRoads.h>
 #include <logger.h>
 #include <MainThread.h>
 #include <RoadRoute.h>
@@ -18,6 +20,8 @@
 #include <cstddef>
 #include <cstdio>
 #include <string>
+#include <unordered_map>
+#include <utility>
 
 namespace NarrativeEngine::VisitArrivalPoint
 {
@@ -53,7 +57,7 @@ namespace NarrativeEngine::VisitArrivalPoint
         constexpr std::size_t kMaxFallbacks = 6;
         constexpr float kFallbackSeparationUnits = 400.0f;
 
-        // Tier 2's arc around the bearing home, and how finely it is
+        // The city approach's arc around the gate, and how finely it is
         // sampled.
         //
         // The bearing is only as good as the coarse node it points at,
@@ -78,128 +82,7 @@ namespace NarrativeEngine::VisitArrivalPoint
         // coarse path until it has actually gone somewhere.
         constexpr float kBearingMinSeparationUnits = 1000.0f;
 
-        // How far out a coarse node has to be before the bearing to it
-        // says anything about which way home is.
-        //
-        // The coarse graph is sampled at one node per navmesh cell, so
-        // `FindNearestNode` can hand back a node anywhere within roughly
-        // half a cell diagonal of the player -- and which side it lands
-        // on is decided by where the road network happens to run, not by
-        // where the visitor lives. Aiming the arc at it produced
-        // arrivals 115, 159 and 207 degrees off the direction home in
-        // one run.
-        //
-        // A whole cell is the smallest separation at which the answer
-        // stops being an artefact of the sampling, so that is the floor.
-        // It is deliberately larger than `kBearingMinSeparationUnits`,
-        // which guards a different thing: that the visitor does not
-        // appear on top of the player.
-        constexpr float kBearingAimMinUnits = 4096.0f;
-
-        // The stretch of road a visitor would actually walk in on.
-        //
-        // Routing straight from the player to the sender does not give
-        // this. `RoadRoute::Route` picks which frontier to hand off at by
-        // total journey cost, and its own header records that the coarse
-        // half of that sum underestimates in a way nobody has verified —
-        // so when the forward branch has no cover, the search will take
-        // the rearward one and the visitor walks in from behind. Two of
-        // six arrivals in the first broad run did exactly that.
-        //
-        // So the corridor is built the other way round, as the coarse
-        // route decides it:
-        //
-        //   1. Coarse path from the sender's origin to the player. This
-        //      is the province-scale route and has no frontier heuristic
-        //      in it.
-        //   2. Walk back from the player's end of that path to the first
-        //      node genuinely clear of them. That node is where the
-        //      approach comes THROUGH.
-        //   3. Route the player to THAT, not to the sender. The
-        //      destination is now close, so Route takes its
-        //      destination-within-fine branch and returns a plain fine
-        //      path with no handoff to choose.
-        //
-        // What comes back is the road between the player and the way in,
-        // which is the only stretch a candidate has any business being
-        // on.
-        //
-        // A rejected alternative, recorded because it is the obvious one:
-        // requiring each candidate to be closer to the sender than the
-        // player is. Roads run away before they curve back, and that test
-        // refuses every one that does.
-        bool CorridorTarget(RE::FormID worldSpace,
-                            const RE::NiPoint3& senderPos,
-                            const RE::NiPoint3& playerPos,
-                            RE::NiPoint3& out,
-                            RE::NiPoint3& aim,
-                            bool& haveAim,
-                            std::string& why)
-        {
-            haveAim = false;
-            const auto fromSender = TravelGraph::FindNearestNode(worldSpace, senderPos.x, senderPos.y);
-            const auto toPlayer = TravelGraph::FindNearestNode(worldSpace, playerPos.x, playerPos.y);
-            if (fromSender == TravelGraph::kInvalidNode || toPlayer == TravelGraph::kInvalidNode) {
-                why = "no coarse node for one end";
-                return false;
-            }
-            if (fromSender == toPlayer) {
-                why = "both ends share one coarse node";
-                return false;
-            }
-
-            const auto path = TravelGraph::FindPath(fromSender, toPlayer);
-            if (path.empty()) {
-                why = "no coarse route between them";
-                return false;
-            }
-
-            // Backwards from the player's end: the first node far enough
-            // out to point somewhere is the way in.
-            //
-            // `aim` is a second, stricter pick off the same path. The way
-            // in wants to be NEAR, so that routing to it keeps the plan
-            // inside fine coverage; a bearing wants to be FAR, so that it
-            // describes the road home rather than the nearest scrap of
-            // road. One walk answers both.
-            bool haveWayIn = false;
-            for (auto it = path.rbegin(); it != path.rend(); ++it) {
-                const auto* node = TravelGraph::GetNode(*it);
-                if (!node) {
-                    continue;
-                }
-                const RE::NiPoint3 at{node->x, node->y, node->z};
-                const float away = Dist2D(at, playerPos);
-                if (!haveWayIn && away >= kBearingMinSeparationUnits) {
-                    out = at;
-                    haveWayIn = true;
-                }
-                // Never the player's own nearest node, however far off it
-                // sits: it says where the network is, not where home is.
-                if (it != path.rbegin() && away >= kBearingAimMinUnits) {
-                    aim = at;
-                    haveAim = true;
-                    break;
-                }
-            }
-
-            if (!haveAim) {
-                // Nothing on the route is far enough to be a direction.
-                // The visitor's own origin is then the honest answer --
-                // a straight line home, which ignores the road but does
-                // not point away from it.
-                aim = senderPos;
-                haveAim = true;
-            }
-            if (haveWayIn) {
-                why = "ok";
-                return true;
-            }
-            why = "every coarse node on the route sits on top of the player";
-            return false;
-        }
-
-        // Largest elevation difference from the player a Tier 2
+        // Largest elevation difference from the player a city-approach
         // candidate may have, either way.
         //
         // A reachability proxy, not an aesthetic one: the navmesh gate
@@ -285,6 +168,11 @@ namespace NarrativeEngine::VisitArrivalPoint
             int offNavmesh = 0;
             int notLevel = 0;
             int inView = 0;
+            // On the far side of the player from the visitor. Only hop
+            // expansion can produce one: hops are undirected, so a
+            // breadth-first walk off a chain node near the player comes
+            // back out behind them.
+            int behindPlayer = 0;
             // Nothing walkable joining the candidate to the player along
             // the straight line. Counted apart from the rest because it
             // is the only gate about REACHING the point rather than
@@ -327,9 +215,11 @@ namespace NarrativeEngine::VisitArrivalPoint
                 }
                 return "considered=" + std::to_string(considered) + " " + span + " tooNear=" + std::to_string(tooNear)
                        + " pastReach=" + std::to_string(tooFar) + " offNavmesh=" + std::to_string(offNavmesh)
-                       + " notLevel=" + std::to_string(notLevel) + " inView=" + std::to_string(inView) + " noCorridor="
-                       + std::to_string(noCorridor) + " unseen=" + std::to_string(unseen) + " survived="
-                       + std::to_string(considered - tooNear - offNavmesh - notLevel - inView - noCorridor);
+                       + " notLevel=" + std::to_string(notLevel) + " inView=" + std::to_string(inView)
+                       + " noCorridor=" + std::to_string(noCorridor) + " behindPlayer=" + std::to_string(behindPlayer)
+                       + " unseen=" + std::to_string(unseen) + " survived="
+                       + std::to_string(considered - tooNear - offNavmesh - notLevel - inView - noCorridor
+                                        - behindPlayer);
             }
         };
 
@@ -350,59 +240,328 @@ namespace NarrativeEngine::VisitArrivalPoint
             return CameraVisibility::IsPositionBehindCover(pos, kCoverProbeHeightUnits, coverRadius);
         }
 
-        // ---- Tier 1 -------------------------------------------------
+        // ---- The chain walk ----------------------------------------
         //
-        // Walk the fine path outward from the player and keep every node
-        // that clears the gates, in road order.
+        // One candidate the arrival search may consider.
         //
-        // The whole path is scanned rather than stopping at the first
-        // node past the band: a road can curve back toward the player,
-        // so road order and straight-line distance do not rise together
-        // and an early exit would miss usable ground beyond a bend.
-        std::vector<RE::NiPoint3> WalkFinePath(const std::vector<RE::NiPoint3>& finePath,
-                                               const RE::NiPoint3& playerPos,
-                                               float playerAngleZ,
-                                               float minDist,
-                                               float maxDist,
-                                               float coverRadius,
-                                               GateTally& tally)
+        // Rank is how safe the point is to stand on, which is the reverse
+        // of how cheap it was to route through: real road the engine has
+        // loaded first, unvalidated ground outside the grid last. It
+        // decides between candidates AT THE SAME DISTANCE — which is
+        // exactly what hop expansion produces, a handful of points metres
+        // apart — and never overrides the outward walk itself.
+        struct Candidate
         {
-            // Two pools, because the band's ceiling is a preference and
-            // not a rule. Anything inside it wins; a point past it is
-            // held back and used only if the band yielded nothing, which
-            // beats declining the visit over a walk being a bit long.
-            std::vector<RE::NiPoint3> inBand;
-            std::vector<RE::NiPoint3> beyondBand;
+            RE::NiPoint3 standing{};
+            ApproachChain::PointClass cls = ApproachChain::PointClass::Coarse;
+            bool insideGrid = false;
+            int rank = 5;
+            int hopCount = 0;
+            // Position along the chain, visitor-first. Fallbacks are
+            // ordered by this and not by distance, because the escort
+            // walks a stalled visitor BACK ALONG THEIR OWN PATH.
+            std::size_t chainIndex = 0;
+            float distance = 0.0f;
+        };
 
-            for (const auto& node : finePath) {
-                const float distance = Dist2D(node, playerPos);
-                tally.Saw(distance);
-                if (distance < minDist) {
+        int RankOf(ApproachChain::PointClass cls, bool insideGrid, int hopCount)
+        {
+            using PC = ApproachChain::PointClass;
+            if (cls == PC::Fine) {
+                return hopCount == 0 ? 1 : 2;
+            }
+            if (cls == PC::Coarse) {
+                return 5;
+            }
+            // Connector and Direct are both synthetic. What decides their
+            // rank is WHERE THEY ARE, not which line produced them: a
+            // synthetic point inside the loaded grid can be navmesh
+            // checked and cover tested like any fine node, and should be,
+            // because a validated off-road spot beats an unvalidated one
+            // every time. Gating by segment instead of by position would
+            // throw away the one part of each synthetic run that can
+            // actually be verified.
+            return insideGrid ? 3 : 4;
+        }
+
+        // Every point the search may consider: the chain itself, plus the
+        // fine nodes within `hopRadius` hops of a fine point on it.
+        //
+        // Hop expansion earns its place because the fine graph is a road
+        // RIBBON — a 1-hop neighbour is usually the other side of the same
+        // road, and a 2-hop neighbour is a few metres off it. That is
+        // where cheap cover lives when the road itself is in plain view,
+        // and it converts a declined visit into a placed one without
+        // moving the visitor anywhere the player would find strange.
+        //
+        // Hops are undirected, so an expanded node can sit back toward the
+        // player or behind them. The minimum-distance gate in the walk
+        // already rules that out, which is why the Phase 14 approach
+        // corridor is not carried over: it would be a check that never
+        // changes an answer.
+        std::vector<Candidate> GatherCandidates(const ApproachChain::Chain& chain,
+                                                const FineRoads::Graph& fine,
+                                                int hopRadius,
+                                                const RE::NiPoint3& anchorPos)
+        {
+            std::vector<Candidate> out;
+            out.reserve(chain.points.size() * 2);
+
+            // Cheapest hop count found for each fine node, so a node
+            // reachable from two chain points is kept once at its best
+            // standing rather than twice.
+            std::unordered_map<std::size_t, int> hopsByNode;
+            for (std::size_t i = 0; i < chain.points.size(); ++i) {
+                const auto& point = chain.points[i];
+                Candidate candidate;
+                candidate.standing = point.position;
+                candidate.standing.z += kGroundClearanceUnits;
+                candidate.cls = point.cls;
+                candidate.insideGrid = point.insideLoadedGrid;
+                candidate.hopCount = 0;
+                candidate.rank = RankOf(point.cls, point.insideLoadedGrid, 0);
+                candidate.chainIndex = i;
+                candidate.distance = Dist2D(point.position, anchorPos);
+                out.push_back(candidate);
+                if (point.fineNode != FineRoads::kInvalidNode) {
+                    hopsByNode.emplace(point.fineNode, 0);
+                }
+            }
+
+            if (hopRadius <= 0 || fine.nodes.empty()) {
+                return out;
+            }
+
+            // Breadth-first off every fine node the chain touches, which
+            // `FineRoads::Graph::adjacency` already answers — no new graph
+            // work, and bounded by the radius rather than by the graph.
+            std::vector<std::pair<std::size_t, int>> frontier;
+            for (const auto& entry : hopsByNode) {
+                frontier.emplace_back(entry.first, entry.second);
+            }
+            while (!frontier.empty()) {
+                std::vector<std::pair<std::size_t, int>> next;
+                for (const auto& entry : frontier) {
+                    const auto node = entry.first;
+                    const auto hops = entry.second;
+                    if (hops >= hopRadius || node >= fine.adjacency.size()) {
+                        continue;
+                    }
+                    for (const auto neighbor : fine.adjacency[node]) {
+                        if (neighbor >= fine.nodes.size()) {
+                            continue;
+                        }
+                        const auto existing = hopsByNode.find(neighbor);
+                        if (existing != hopsByNode.end() && existing->second <= hops + 1) {
+                            continue;
+                        }
+                        hopsByNode[neighbor] = hops + 1;
+                        next.emplace_back(neighbor, hops + 1);
+                    }
+                }
+                frontier = std::move(next);
+            }
+
+            // Which chain point each expanded node hangs off, so its
+            // fallback ordering stays the chain's rather than becoming
+            // arbitrary.
+            for (const auto& entry : hopsByNode) {
+                if (entry.second == 0) {
+                    continue; // already in, as an on-chain point
+                }
+                const auto& n = fine.nodes[entry.first];
+                Candidate candidate;
+                candidate.standing = RE::NiPoint3{n.x, n.y, n.z};
+                candidate.standing.z += kGroundClearanceUnits;
+                candidate.cls = ApproachChain::PointClass::Fine;
+                candidate.insideGrid = true; // fine nodes come from attached cells
+                candidate.hopCount = entry.second;
+                candidate.rank = RankOf(ApproachChain::PointClass::Fine, true, entry.second);
+                candidate.distance = Dist2D(candidate.standing, anchorPos);
+                std::size_t nearestChain = 0;
+                float nearestDist = -1.0f;
+                for (std::size_t i = 0; i < chain.points.size(); ++i) {
+                    if (chain.points[i].fineNode == FineRoads::kInvalidNode) {
+                        continue;
+                    }
+                    const float d = Dist2D(chain.points[i].position, candidate.standing);
+                    if (nearestDist < 0.0f || d < nearestDist) {
+                        nearestDist = d;
+                        nearestChain = i;
+                    }
+                }
+                candidate.chainIndex = nearestChain;
+                out.push_back(candidate);
+            }
+            return out;
+        }
+
+        // Does this candidate's class let it be stood on at all?
+        //
+        // Two questions for anything inside the loaded grid, and neither
+        // is the retired approach corridor: `IsOnNavmesh` says the point
+        // is walkable ground, and `HasNavmeshCorridor` says the visitor
+        // can walk FROM it TO the player. The second was added in Phase 14
+        // against a real failure — a visitor halting at a dead end 550
+        // units below the player — and being on navmesh does not imply it.
+        //
+        // Outside the grid neither is answerable: there is no navmesh to
+        // read and no geometry for a ray to hit. Such a point is accepted
+        // on distance alone, which is consistent rather than lax, because
+        // beyond view distance cover is moot.
+        // Which way the approach comes in, as the CHAIN reckons it.
+        //
+        // The first chain point at least `minDist` from the player,
+        // walking outward. Returns false when the chain never gets that
+        // far, which leaves the directional gate below switched off.
+        //
+        // Not the visitor's straight-line bearing, and the difference is
+        // the whole point. A visitor who lives due east may be reached by
+        // a road that leaves to the WEST and loops round — ordinary
+        // geography — and in that case the first stretch of their journey
+        // is westward. Aiming anything at where they live refuses the
+        // correct answer outright, which is the failure Phase 14 built an
+        // approach corridor to avoid. The chain already encodes the real
+        // route, so the direction can simply be read off it.
+        bool ApproachReference(const ApproachChain::Chain& chain,
+                               const RE::NiPoint3& anchorPos,
+                               float minDist,
+                               RE::NiPoint3& out)
+        {
+            for (auto it = chain.points.rbegin(); it != chain.points.rend(); ++it) {
+                if (Dist2D(it->position, anchorPos) >= minDist) {
+                    out = it->position;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // True when `pos` is not on the far side of the player from the
+        // way the approach comes in.
+        //
+        // One dot product, and it is load-bearing. Hop expansion walks
+        // `FineRoads::Graph::adjacency` without regard to direction, so
+        // expanding off a chain node near the player reaches straight
+        // through them and out the other side — and a point there is the
+        // exact tell this module exists to remove, a visitor who appears
+        // having already walked past the person they came to see.
+        //
+        // The minimum-distance gate does NOT subsume this, which the
+        // regression suite established the hard way: a node 1,000 units
+        // behind the player clears any floor worth setting. Perpendicular
+        // counts as inside the half-plane, so a spot a few metres off the
+        // road is still reachable — which is what hop expansion is for.
+        bool NotBehindPlayer(const RE::NiPoint3& pos, const RE::NiPoint3& anchorPos, const RE::NiPoint3& approachPos)
+        {
+            const float inboundX = approachPos.x - anchorPos.x;
+            const float inboundY = approachPos.y - anchorPos.y;
+            if (std::fabs(inboundX) < 1e-3f && std::fabs(inboundY) < 1e-3f) {
+                return true; // no direction to be behind
+            }
+            const float toPosX = pos.x - anchorPos.x;
+            const float toPosY = pos.y - anchorPos.y;
+            return toPosX * inboundX + toPosY * inboundY >= 0.0f;
+        }
+
+        bool PassesClassGates(const Candidate& candidate,
+                              const RE::NiPoint3& anchorPos,
+                              const RE::NiPoint3& approachPos,
+                              bool haveApproach,
+                              GateTally& tally)
+        {
+            if (haveApproach && !NotBehindPlayer(candidate.standing, anchorPos, approachPos)) {
+                ++tally.behindPlayer;
+                return false;
+            }
+            if (!candidate.insideGrid) {
+                return true;
+            }
+            if (!StuckRecovery::IsOnNavmesh(candidate.standing)) {
+                ++tally.offNavmesh;
+                return false;
+            }
+            if (!StuckRecovery::HasNavmeshCorridor(candidate.standing, anchorPos)) {
+                ++tally.noCorridor;
+                return false;
+            }
+            return true;
+        }
+
+        // One walk outward from the player, over every candidate.
+        //
+        // Replaces the band and the two road tiers under it. The band's
+        // ceiling was always a preference rather than a rule — a point
+        // 6,000 units out beat no visit — and once the chain supplies
+        // candidates the whole way home, the simpler rule gives better
+        // answers: take the FIRST point far enough away that is hidden.
+        //
+        // The design's second step, "if nothing is obscured, take the
+        // first point beyond the player's view", needs no second pass.
+        // Outward IS the order, and a point outside the loaded grid is
+        // beyond any view the player has of real geometry — so once every
+        // point inside the grid has been refused, the walk arrives at the
+        // bridge, coarse and direct-line points on its own. That is what
+        // they are for.
+        std::vector<Candidate> WalkChain(const std::vector<Candidate>& candidates,
+                                         const RE::NiPoint3& anchorPos,
+                                         const RE::NiPoint3& approachPos,
+                                         bool haveApproach,
+                                         float playerAngleZ,
+                                         float minDist,
+                                         float coverRadius,
+                                         bool allowOutsideGrid,
+                                         GateTally& tally)
+        {
+            std::vector<Candidate> eligible;
+            for (const auto& candidate : candidates) {
+                tally.Saw(candidate.distance);
+                if (candidate.distance < minDist) {
                     ++tally.tooNear;
                     continue;
                 }
-                if (distance > kMaxReachUnits) {
-                    // Past the loaded grid there is no actor to place.
+                if (!candidate.insideGrid && !allowOutsideGrid) {
+                    // The stricter reading of "visitors arrive from
+                    // somewhere real": confine every arrival to ground
+                    // the engine has attached, and decline rather than
+                    // reach past it.
                     ++tally.tooFar;
                     continue;
                 }
-                // The graph is a snapshot and cells unload out from
-                // under it, so being on navmesh is re-checked rather
-                // than inherited from the triangle the node came from.
-                if (!StuckRecovery::IsOnNavmesh(node)) {
-                    ++tally.offNavmesh;
+                if (!PassesClassGates(candidate, anchorPos, approachPos, haveApproach, tally)) {
                     continue;
                 }
-                RE::NiPoint3 standing = node;
-                standing.z += kGroundClearanceUnits;
+                eligible.push_back(candidate);
+            }
 
+            // Outward from the player, with rank and then hop count
+            // breaking ties between candidates at the same distance.
+            std::sort(eligible.begin(), eligible.end(), [](const Candidate& a, const Candidate& b) {
+                if (a.distance != b.distance) {
+                    return a.distance < b.distance;
+                }
+                if (a.rank != b.rank) {
+                    return a.rank < b.rank;
+                }
+                return a.hopCount < b.hopCount;
+            });
+
+            std::vector<Candidate> kept;
+            for (const auto& candidate : eligible) {
                 const char* passedBy = "cover";
-                if (!BehindCover(standing, coverRadius)) {
+                if (!candidate.insideGrid) {
+                    // Nothing to test against: no navmesh to read and no
+                    // geometry for a ray to hit. Accepted on distance
+                    // alone, which is consistent rather than lax, because
+                    // out there cover is moot.
+                    passedBy = "outside-grid";
+                } else if (!BehindCover(candidate.standing, coverRadius)) {
                     // No geometry to hide behind. Usable anyway if the
-                    // player is both far enough away and facing
-                    // elsewhere -- on open ground that is the difference
-                    // between a visit and no visit.
-                    if (distance < kUnseenDistanceUnits || !OutsidePlayerView(standing, playerPos, playerAngleZ)) {
+                    // player is both far enough away and facing elsewhere
+                    // — on open ground that is the difference between a
+                    // visit and no visit.
+                    if (candidate.distance < kUnseenDistanceUnits
+                        || !OutsidePlayerView(candidate.standing, anchorPos, playerAngleZ)) {
                         ++tally.inView;
                         continue;
                     }
@@ -410,48 +569,62 @@ namespace NarrativeEngine::VisitArrivalPoint
                     passedBy = "unseen";
                 }
 
-                // Last, because it is the most expensive gate and the
-                // cheapest way to pay for it is to ask it of the fewest
-                // candidates. Being on navmesh says the point is
-                // walkable ground; it does not say the visitor can walk
-                // FROM it to the player, and a visitor who halts at a
-                // dead end 550 units below the player is the failure
-                // this answers.
-                if (!StuckRecovery::HasNavmeshCorridor(standing, playerPos)) {
-                    ++tally.noCorridor;
+                bool tooClose = false;
+                for (const auto& existing : kept) {
+                    if (Dist2D(existing.standing, candidate.standing) < kFallbackSeparationUnits) {
+                        tooClose = true;
+                        break;
+                    }
+                }
+                if (tooClose) {
                     continue;
                 }
-
-                auto& pool = (distance <= maxDist) ? inBand : beyondBand;
-                const std::size_t before = pool.size();
-                AppendSeparated(pool, standing);
-                if (pool.size() != before) {
-                    // Elevation is in here because the cover gate is at
-                    // its least trustworthy uphill: rays that graze a
-                    // slope read as blocked while the figure standing on
-                    // it is skylined from below.
-                    logger::debug("VisitArrivalPoint: candidate ({:.0f},{:.0f},{:.0f}) kept — {:.0f}u out, "
-                                  "{:+.0f}u in elevation, passed by {}, {}",
-                                  standing.x,
-                                  standing.y,
-                                  standing.z,
-                                  distance,
-                                  standing.z - playerPos.z,
-                                  passedBy,
-                                  (distance <= maxDist) ? "in band" : "past the band");
-                }
-                if (inBand.size() > kMaxFallbacks) {
+                kept.push_back(candidate);
+                logger::debug("VisitArrivalPoint: candidate ({:.0f},{:.0f},{:.0f}) kept — {:.0f}u out, "
+                              "{:+.0f}u in elevation, class={} rank={} hops={} in_grid={}, passed by {}",
+                              candidate.standing.x,
+                              candidate.standing.y,
+                              candidate.standing.z,
+                              candidate.distance,
+                              candidate.standing.z - anchorPos.z,
+                              ApproachChain::PointClassName(candidate.cls),
+                              candidate.rank,
+                              candidate.hopCount,
+                              candidate.insideGrid,
+                              passedBy);
+                if (kept.size() > kMaxFallbacks) {
                     break;
                 }
             }
-
-            if (!inBand.empty()) {
-                return inBand;
+            if (kept.empty()) {
+                return {};
             }
-            return beyondBand;
+
+            // The winner is the nearest acceptable point; the rest are
+            // fallback supply and go back into CHAIN order, outward of it,
+            // because that is what the escort promises to walk back along.
+            std::vector<Candidate> ordered;
+            ordered.push_back(kept.front());
+            std::vector<Candidate> rest(kept.begin() + 1, kept.end());
+            std::sort(rest.begin(), rest.end(), [](const Candidate& a, const Candidate& b) {
+                if (a.chainIndex != b.chainIndex) {
+                    return a.chainIndex > b.chainIndex;
+                }
+                return a.distance < b.distance;
+            });
+            for (const auto& candidate : rest) {
+                ordered.push_back(candidate);
+            }
+            return ordered;
         }
 
-        // ---- Tier 2 -------------------------------------------------
+        // ---- The city approach's candidate generator ---------------
+        //
+        // Phase 16 took the road path off this: the approach chain has real
+        // candidates everywhere and no bearing to aim. Tier::CityApproach
+        // still places a visitor between the player and the city gate by
+        // sampling an arc, and that tier is deliberately out of scope for
+        // this phase, so the primitive stays with one caller instead of two.
 
         struct BearingCandidate
         {
@@ -464,25 +637,6 @@ namespace NarrativeEngine::VisitArrivalPoint
             // distance.
             float score = 0.0f;
         };
-
-        // The first coarse node on the route that is far enough from the
-        // player to mean a direction. Returns false when the coarse path
-        // never gets clear of them.
-        bool BearingHome(const std::vector<std::size_t>& coarsePath, const RE::NiPoint3& playerPos, RE::NiPoint3& out)
-        {
-            for (const auto index : coarsePath) {
-                const auto* node = TravelGraph::GetNode(index);
-                if (!node) {
-                    continue;
-                }
-                const RE::NiPoint3 at{node->x, node->y, node->z};
-                if (Dist2D(at, playerPos) >= kBearingMinSeparationUnits) {
-                    out = at;
-                    return true;
-                }
-            }
-            return false;
-        }
 
         std::vector<RE::NiPoint3> SampleBearingArc(const RE::NiPoint3& playerPos,
                                                    float playerAngleZ,
@@ -893,10 +1047,8 @@ namespace NarrativeEngine::VisitArrivalPoint
     const char* TierName(Tier tier)
     {
         switch (tier) {
-        case Tier::FineRoad:
-            return "fine-road";
-        case Tier::CoarseBearing:
-            return "coarse-bearing";
+        case Tier::Chain:
+            return "chain";
         case Tier::CityApproach:
             return "city-approach";
         case Tier::CityGate:
@@ -1132,112 +1284,50 @@ namespace NarrativeEngine::VisitArrivalPoint
         const RE::NiPoint3& anchorPos = ends.player.position;
 
         // Pure queries over both graphs — deliberately NOT inside a
-        // main-thread hop.
-        //
-        // Route toward the corridor's way-in rather than toward the
-        // sender directly. See CorridorTarget: routing at the sender
-        // lets Route's frontier heuristic pick the branch behind the
-        // player, and it did.
-        RE::NiPoint3 corridor{};
-        RE::NiPoint3 corridorAim{};
-        bool haveCorridorAim = false;
-        std::string corridorWhy;
-        const bool haveCorridor = CorridorTarget(ends.player.worldSpace,
-                                                 ends.sender.position,
-                                                 anchorPos,
-                                                 corridor,
-                                                 corridorAim,
-                                                 haveCorridorAim,
-                                                 corridorWhy);
-        const RE::NiPoint3 routeTo = haveCorridor ? corridor : ends.sender.position;
-        if (!haveCorridor) {
-            // Falling back to the sender's own position restores the old
-            // behaviour, frontier heuristic and all. Logged, because a
-            // visit that arrives from a strange direction wants this line
-            // to explain itself.
-            logger::debug("VisitArrivalPoint: sender=0x{:08X} no approach corridor ({}) — routing at the "
-                          "sender directly",
-                          senderId,
-                          corridorWhy);
-        }
-        const auto plan = RoadRoute::Route(ends.player.worldSpace, ends.player.position, routeTo);
-
-        GateTally fineTally;
-        GateTally bearingTally;
-        std::vector<RE::NiPoint3> kept;
-        Tier tier = Tier::None;
-
-        if (plan.valid && !plan.finePath.empty()) {
-            kept = MainThread::Run(pt, [&](const MainThread::Token&) {
-                return WalkFinePath(
-                    plan.finePath, anchorPos, ends.playerAngleZ, minDist, maxDist, coverRadius, fineTally);
-            });
-            if (!kept.empty()) {
-                tier = Tier::FineRoad;
-            }
+        // main-thread hop. Only the grid read is an engine call.
+        const auto loadedGrid =
+            MainThread::Run(pt, [](const MainThread::Token& mt) { return ApproachChain::ReadLoadedGrid(mt); });
+        const auto chain = ApproachChain::Build(loadedGrid, ends.player.worldSpace, ends.sender.position, anchorPos);
+        if (!chain.valid) {
+            // The visitor-to-player line is meant to make this
+            // unreachable. Logged loudly rather than quietly declined,
+            // because reaching it means the graph was built wrong rather
+            // than that the world was unhelpful.
+            logger::warn("VisitArrivalPoint: sender=0x{:08X} no approach chain in ws=0x{:08X} — declining",
+                         senderId,
+                         ends.player.worldSpace);
+            return result;
         }
 
-        if (tier == Tier::None) {
-            // What the bearing aims at, best first.
-            //
-            // The corridor's way-in comes first because it is the better
-            // answer AND because it is usually the only one. Routing at
-            // the corridor target puts the destination inside fine
-            // coverage, which is the branch of `Route` that returns an
-            // EMPTY coarsePath -- so on the old ordering the bearing
-            // fallback had nothing to aim at in exactly the case the
-            // corridor had just succeeded. Rorikstead and Loreius Farm
-            // both declined every visit that way: a fine path of three
-            // and fifteen nodes, exhausted, and then no fallback,
-            // although `CorridorTarget` had a perfectly good coarse node
-            // on the road home the whole time.
-            RE::NiPoint3 toward{};
-            bool haveToward = false;
-            const char* towardSource = "none";
-            if (haveCorridorAim) {
-                toward = corridorAim;
-                haveToward = true;
-                towardSource = "corridor";
-            } else if (plan.valid && BearingHome(plan.coarsePath, anchorPos, toward)) {
-                haveToward = true;
-                towardSource = "coarse-route";
-            }
+        // Which way the approach comes in, read off the chain rather than
+        // aimed at where the visitor lives.
+        RE::NiPoint3 approachRef{};
+        const bool haveApproachRef = ApproachReference(chain, anchorPos, minDist, approachRef);
 
-            if (!cfg.visitArrivalAllowCoarseBearing) {
-                logger::info("VisitArrivalPoint: sender=0x{:08X} no fine-road point and the bearing fallback "
-                             "is switched off",
-                             senderId);
-            } else if (!haveToward) {
-                logger::info("VisitArrivalPoint: sender=0x{:08X} no usable bearing — no approach corridor ({}) "
-                             "and none of the {} coarse node(s) on the route is {:.0f}u clear of the player",
-                             senderId,
-                             corridorWhy,
-                             plan.coarsePath.size(),
-                             kBearingMinSeparationUnits);
-            } else {
-                logger::info("VisitArrivalPoint: sender=0x{:08X} falling back to a bearing toward "
-                             "({:.0f},{:.0f}), {:.0f}u out, from the {}",
-                             senderId,
-                             toward.x,
-                             toward.y,
-                             Dist2D(toward, anchorPos),
-                             towardSource);
-                kept = MainThread::Run(pt, [&](const MainThread::Token&) {
-                    return SampleBearingArc(
-                        anchorPos, ends.playerAngleZ, toward, minDist, maxDist, coverRadius, bearingTally);
-                });
-                if (!kept.empty()) {
-                    tier = Tier::CoarseBearing;
-                }
-            }
-        }
+        const auto fine = FineRoads::Snapshot();
+        const int hopRadius = std::max(0, cfg.visitChainHopRadius);
+        const auto candidates = GatherCandidates(chain, fine, hopRadius, anchorPos);
+
+        GateTally tally;
+        const auto kept = MainThread::Run(pt, [&](const MainThread::Token&) {
+            return WalkChain(candidates,
+                             anchorPos,
+                             approachRef,
+                             haveApproachRef,
+                             ends.playerAngleZ,
+                             minDist,
+                             coverRadius,
+                             cfg.visitArrivalAllowCoarseBearing,
+                             tally);
+        });
+
+        const Tier tier = kept.empty() ? Tier::None : Tier::Chain;
 
         if (tier == Tier::None) {
             logger::info("VisitArrivalPoint: sender=0x{:08X} tier=none — ws=0x{:08X} "
-                         "home=({:.0f},{:.0f}) via={} player=({:.0f},{:.0f},{:.0f}){} band=[{:.0f},{:.0f}] "
-                         "cover_r={:.0f} "
-                         "plan_valid={} within_fine={} fine_nodes={} coarse_nodes={} coarse_allowed={} "
-                         "| fine[{}] | bearing[{}]",
+                         "home=({:.0f},{:.0f}) via={} player=({:.0f},{:.0f},{:.0f}){} min={:.0f} "
+                         "cover_r={:.0f} chain={} points cost={:.0f} candidates={} outside_grid_allowed={} "
+                         "| {}",
                          senderId,
                          ends.player.worldSpace,
                          ends.sender.position.x,
@@ -1248,21 +1338,21 @@ namespace NarrativeEngine::VisitArrivalPoint
                          anchorPos.z,
                          ends.player.viaLoadDoor ? " via-door" : "",
                          minDist,
-                         maxDist,
                          coverRadius,
-                         plan.valid,
-                         plan.destinationWithinFine,
-                         plan.finePath.size(),
-                         plan.coarsePath.size(),
+                         chain.points.size(),
+                         chain.cost,
+                         candidates.size(),
                          cfg.visitArrivalAllowCoarseBearing,
-                         fineTally.Describe(),
-                         bearingTally.Describe());
+                         tally.Describe());
             return result;
         }
 
         result.tier = tier;
-        result.point = kept.front();
-        result.fallbacks.assign(kept.begin() + 1, kept.end());
+        result.pointClass = kept.front().cls;
+        result.point = kept.front().standing;
+        for (std::size_t i = 1; i < kept.size(); ++i) {
+            result.fallbacks.push_back(kept[i].standing);
+        }
 
         // Where the visitor lives, and where they were actually put, as
         // bearings from the player.
@@ -1280,12 +1370,13 @@ namespace NarrativeEngine::VisitArrivalPoint
             ToDegrees(std::atan2(ends.sender.position.y - anchorPos.y, ends.sender.position.x - anchorPos.x));
         const float pointBearing = ToDegrees(std::atan2(result.point.y - anchorPos.y, result.point.x - anchorPos.x));
 
-        logger::info("VisitArrivalPoint: sender=0x{:08X} tier={} — ws=0x{:08X} home=({:.0f},{:.0f}) via={} "
-                     "player=({:.0f},{:.0f},{:.0f}){} point=({:.0f},{:.0f},{:.0f}) dist={:.0f}u dz={:+.0f}u "
-                     "bearing_home={:.0f}deg bearing_arrival={:.0f}deg within_fine={} "
-                     "fine_nodes={} coarse_nodes={} fallbacks={} | fine[{}] | bearing[{}]",
+        logger::info("VisitArrivalPoint: sender=0x{:08X} tier={} class={} — ws=0x{:08X} home=({:.0f},{:.0f}) "
+                     "via={} player=({:.0f},{:.0f},{:.0f}){} point=({:.0f},{:.0f},{:.0f}) dist={:.0f}u "
+                     "dz={:+.0f}u bearing_home={:.0f}deg bearing_arrival={:.0f}deg in_grid={} hops={} "
+                     "chain={} points cost={:.0f} candidates={} fallbacks={} | {}",
                      senderId,
                      TierName(tier),
+                     ApproachChain::PointClassName(result.pointClass),
                      ends.player.worldSpace,
                      ends.sender.position.x,
                      ends.sender.position.y,
@@ -1301,12 +1392,13 @@ namespace NarrativeEngine::VisitArrivalPoint
                      result.point.z - anchorPos.z,
                      homeBearing,
                      pointBearing,
-                     plan.destinationWithinFine,
-                     plan.finePath.size(),
-                     plan.coarsePath.size(),
+                     kept.front().insideGrid,
+                     kept.front().hopCount,
+                     chain.points.size(),
+                     chain.cost,
+                     candidates.size(),
                      result.fallbacks.size(),
-                     fineTally.Describe(),
-                     bearingTally.Describe());
+                     tally.Describe());
 
         // Where the escort will send them if they cannot walk it, in the
         // order it will try. StuckRecovery logs each warp as it happens, but

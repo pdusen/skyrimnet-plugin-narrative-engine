@@ -59,10 +59,15 @@ units out, the band and the walk agree; where it is 6,000, the band has to be ov
 - **A defined fallback ordering** for `StuckRecovery`: a consumed-once hop to a fine neighbour when the
   visitor stalls inside the loaded grid, and the remaining chain outward of the chosen point when they stall
   beyond it — walking them back along their own path, which is what that module already promises.
-- Retiring `SampleBearingArc`, `BearingHome` and the Phase 14 approach corridor. The first two exist to
-  manufacture candidates where the route had none and the third to disambiguate the bearing they produced;
-  the chain has real candidates everywhere and no bearing to aim. `SampleBearingArc` is local to
-  `VisitArrivalPoint` (`AmbushSpawnPoints` has its own ring search), so nothing else loses a primitive.
+- Retiring `BearingHome` and the Phase 14 approach corridor (`CorridorTarget`). The first manufactures a
+  bearing where the route had no candidates, the second disambiguates the branch that bearing aimed at; the
+  chain has real candidates everywhere and no bearing to aim.
+
+  **`SampleBearingArc` survives**, against the first draft of this doc. It is not only the road path's
+  candidate generator — the deferred `Tier::CityApproach` calls it too, to place a visitor between the player
+  and the city gate. Retiring it would mean rewriting a tier this phase promises not to touch, so it stays and
+  loses only its road-path caller. The same goes for `iVisitMarkerMaxDistanceUnits`, which the chain walk has
+  no use for and the city approach still bands against.
 
 ### Deferred (explicitly out)
 
@@ -239,17 +244,27 @@ side of the same road, and a 2-hop neighbour is a few metres off it. That is exa
 a spot behind a rock four metres off the road, when the road itself is in plain view. It converts a declined
 visit into a placed one without moving the visitor anywhere the player would find strange.
 
-**The one constraint it must inherit.** Hops are undirected, so an expanded node can sit back toward the
-player, or behind them. The minimum-distance requirement already rules that out — a node behind the player is
-either inside the minimum radius and rejected, or far enough out to be a legitimate place to arrive from.
-Off-path candidates therefore pass the same distance gates as chain nodes; hop expansion widens the pool, it
-does not relax it.
+**Hops are undirected, and the minimum distance does not fix that.** An expanded node can sit back toward the
+player or straight past them: breadth-first off a chain node near the player reaches through them and out the
+other side. The first draft of this doc held that the minimum-distance requirement already ruled that out. It
+does not, and Step 4's regression suite established it the hard way — a node 1,000 units behind the player
+clears any floor worth setting, and the search duly arrived there, which is the exact tell this module exists
+to remove.
 
-**The approach corridor is not carried over.** Phase 14 added it to choose between road branches when the
-bearing was manufactured from an arc; with a real chain there is no bearing to aim and no branch to
-disambiguate. The one job it could still do here — keeping a hop-expanded neighbour from landing past the
-player — is the minimum-distance requirement's job already, so the corridor would be a check that never
-changes an answer. It is retired with `SampleBearingArc` and `BearingHome`.
+So off-path candidates pass one gate chain nodes do not need: they must lie in the **half-plane toward the
+approach**. One dot product, perpendicular counts as inside it (a spot a few metres off the road has to stay
+reachable), and it costs nothing.
+
+**The direction comes off the chain, not off the visitor.** Aiming that half-plane at where the visitor lives
+is wrong, and wrong in a way that refuses the correct answer: a visitor who lives due east may be reached by a
+road that leaves to the *west* and loops round, so the first stretch of their journey runs away from home.
+Phase 14 built the approach corridor to avoid exactly that. The reference is therefore the first chain point
+at least `iVisitMarkerMinDistanceUnits` from the player, walking outward — the route's own answer to "which
+way do they come in", which the chain already encodes.
+
+**The approach corridor is still not carried over.** It existed to manufacture that direction from a bearing
+and a branch choice, and the chain supplies it directly. What survives of its purpose is the half-plane above,
+which is three lines rather than a corridor walk.
 
 ### Selection
 
@@ -260,6 +275,11 @@ One walk, outward from the player, along the chain.
    (`kUnseenDistanceUnits`, 3,000 today).
 2. If nothing along the chain is obscured, take the **first point beyond the player's maximum view distance**.
    Bridge, coarse and direct-line points satisfy this by construction, which is what they are for.
+
+   This needs no second pass over the chain. Outward *is* the order, and a point outside the loaded grid is
+   beyond any view the player has of real geometry — so once every point inside the grid has been refused, the
+   walk arrives at those points on its own. Implementing it as a literal second pass instead, as Step 4 first
+   did, accepts visible ground 3,000 units away that the first pass had just rejected.
 3. If the chain yields nothing at all, decline — a defensive branch that should be unreachable. The
    visitor-to-player line guarantees a chain, and its far end is by definition as far from the player as the
    visitor is, so some point on it clears the view distance in every case where the visitor was a plausible
@@ -271,11 +291,16 @@ At equal standing, the order is:
 
 | Rank | Class | Gates applied |
 | --- | --- | --- |
-| 1 | Fine, on chain | Navmesh re-check, cover or unseen-distance, distance band |
-| 2 | Fine, off chain (by hop count) | The same, plus hop count as the tiebreak |
+| 1 | Fine, on chain | Navmesh re-check, a walkable corridor to the player, cover or unseen-distance |
+| 2 | Fine, off chain (by hop count) | The same, plus the half-plane gate and hop count as the tiebreak |
 | 3 | Synthetic, **inside** the loaded grid | The same — being off-road does not make it unverifiable |
 | 4 | Synthetic, **outside** the loaded grid | Distance only — nothing else is answerable there |
 | 5 | Coarse | Distance only |
+
+The navmesh gate is two questions, not one: `IsOnNavmesh` says the point is walkable ground, and
+`HasNavmeshCorridor` says the visitor can walk FROM it to the player. Phase 14 added the second against a real
+failure — a visitor halting at a dead end 550 units below the player — and it is carried over unchanged. It is
+not the retired approach corridor, which was about choosing a road branch.
 
 **Rank 3 is not a special case for one segment.** A synthetic point is gated by *where it is*, not by which
 line produced it. Both direct lines, and the coarse-to-fine bridge, end inside the loaded grid, so their last
@@ -325,7 +350,7 @@ a visitor who is stuck with no fine neighbour left unconsumed and no chain left 
 | --- | --- |
 | `Tier::FineRoad`, `Tier::CoarseBearing` | One selection walk over the chain |
 | `WalkFinePath` band with a preference | First-acceptable, outward |
-| `SampleBearingArc` | Hop expansion (retired) |
+| `SampleBearingArc` on the road path | Hop expansion (the city tier keeps the primitive) |
 | `BearingHome` | The graph's own coarse nodes (retired) |
 | The Phase 14 approach corridor | The minimum-distance gate (retired) |
 | `Route`'s two-container plan | One weighted graph and one search |
@@ -383,7 +408,7 @@ include/ApproachChain.h       the weighted graph, the search, and the chain it r
 src/ApproachChain.cpp
 src/ApproachChain.engine.test.cpp
 include/VisitArrivalPoint.h   Tier loses its two road entries, gains candidate class
-src/VisitArrivalPoint.cpp     selection walk replaces WalkFinePath / SampleBearingArc / BearingHome
+src/VisitArrivalPoint.cpp     selection walk replaces WalkFinePath / CorridorTarget / BearingHome
 src/VisitArrivalPoint.engine.test.cpp
 include/RoadRoute.h           possibly a chain-shaped query beside Route
 src/RoadRoute.cpp
@@ -419,7 +444,8 @@ every early return, and every gate that can reject — is covered before its box
 Four things this phase makes easy to get wrong:
 
 - **Deleting code means deleting its tests and checking what that uncovers.** Step 4 retires
-  `SampleBearingArc`, `BearingHome` and the approach corridor. The risk is not that their cases fail, it is
+  `BearingHome` and the approach corridor, and takes a caller off `SampleBearingArc`. The risk is not
+  that their cases fail, it is
   that they quietly disappear and take a branch's coverage with them. Count the cases in
   `src/VisitArrivalPoint.engine.test.cpp` before and after, and account for the difference.
 - **An unreachable branch still gets a case.** Selection step 3 and `Chain::valid == false` are both meant to
@@ -619,7 +645,7 @@ case fails if the heuristic is scaled by difficulty.
 
 ### Step 4 — The selection walk in `VisitArrivalPoint`
 
-- [ ] Complete
+- [X] Complete
 
 **[CLAUDE]**
 
@@ -632,9 +658,10 @@ retire the three primitives the chain makes unnecessary.
 
 **Sub-tasks:**
 
-1. Settings — `iVisitChainHopRadius` (`2`), documented in the deployed INI. Retire
-   `bVisitArrivalAllowCoarseBearing` or repurpose it as "may the chain place outside the loaded grid at all",
-   which is the same switch aimed at the new design; say which in the INI comment.
+1. Settings — `iVisitChainHopRadius` (`2`), documented in the deployed INI.
+   `bVisitArrivalAllowCoarseBearing` is repurposed as "may the chain place a visitor outside the loaded grid
+   at all", which is the same switch aimed at the new design: false confines every arrival to ground the
+   engine has attached, and declines rather than reaching past it.
 2. `Tier` loses `FineRoad` and `CoarseBearing` and keeps `None`, `Doorstep`, `CityApproach`, `CityGate`.
    `Result` gains the winning point's `ApproachChain::PointClass`, which is strictly more informative than the
    two tiers it replaces.
@@ -645,7 +672,8 @@ retire the three primitives the chain makes unnecessary.
    `FineRoads::Graph::adjacency`, ranked after on-chain fine points with hop count as the tiebreak.
 5. The rank table's five classes, each with exactly the gates the design gives it — in particular, synthetic
    points *inside* the grid get the navmesh and cover gates, and are not waved through for being synthetic.
-6. Delete `SampleBearingArc`, `BearingHome` and the approach corridor, with their tests and settings.
+6. Delete `BearingHome` and `CorridorTarget`, with their tests. `SampleBearingArc` keeps its city-tier
+   caller and loses only its road-path one.
 7. Update the arrival log line at `src/NPCVisitBeat.cpp:1091` to report the class instead of the retired tier.
    This is the only non-test consumer of `Result::tier`.
 8. Tests: first-acceptable-outward preferred over a better-hidden point further out; the minimum-distance gate
@@ -666,7 +694,7 @@ retire the three primitives the chain makes unnecessary.
 - Never return a point in an unloaded cell for the in-grid ranks. The sender is warped there and needs 3D.
 
 **Verify [CLAUDE]:** `pwsh -File build.ps1 build` and `pwsh -File build.ps1 test` pass; the retired symbols are
-gone from the tree (`grep -rn "SampleBearingArc\|BearingHome" src include` is empty).
+gone from the tree (`grep -rn "BearingHome\|CorridorTarget" src include` is empty).
 
 ---
 
@@ -807,7 +835,7 @@ pair governing the unstuck hop.
 All seven steps checked, and:
 
 1. `pwsh -File build.ps1 build`, `pwsh -File build.ps1 test` and `pwsh -File format.ps1` are all clean.
-2. `grep -rn "SampleBearingArc\|BearingHome" src include` is empty, and `Tier` holds only `None`,
+2. `grep -rn "BearingHome\|CorridorTarget" src include` is empty, and `Tier` holds only `None`,
    `Doorstep`, `CityApproach` and `CityGate`.
 3. Every visit log line names a `PointClass` for the winning point, and a declined visit names the reason.
 4. The A-star correctness oracle in `src/ApproachChain.engine.test.cpp` passes against Dijkstra on every

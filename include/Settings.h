@@ -434,11 +434,26 @@ namespace NarrativeEngine::Settings
         // see PHASE_14_VISIT_BEAT_REFACTOR.md, Step 2.
         int visitArrivalCoverRadiusUnits = 64;
 
-        // When the road graph yields no usable arrival point, fall back
-        // to a bearing toward the sender's home. False makes a failed
-        // road search decline the visit outright, which is the stricter
-        // reading of "visitors arrive by road".
+        // May the arrival search place a visitor outside the attached
+        // cell grid at all?
+        //
+        // Before Phase 16 this gated a bearing fallback that no longer
+        // exists; it now aims the same question at the approach chain.
+        // False confines every arrival to ground the engine has loaded —
+        // navmesh-checked and cover-tested — and declines rather than
+        // reaching past it, which is the stricter reading of "visitors
+        // arrive from somewhere real".
         bool visitArrivalAllowCoarseBearing = true;
+
+        // How many hops off the chain's fine segment the arrival search
+        // expands for extra candidates.
+        //
+        // The fine graph is a road ribbon, so a 1-hop neighbour is
+        // usually the other side of the same road and a 2-hop neighbour
+        // is a few metres off it — which is exactly where cheap cover
+        // lives when the road itself is in plain view. 0 collapses the
+        // search to on-chain points only.
+        int visitChainHopRadius = 2;
 
         // Spacing of the synthetic points ApproachChain lays along its
         // bridge and its two direct lines.

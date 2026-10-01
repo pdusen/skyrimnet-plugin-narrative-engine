@@ -464,6 +464,8 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("Beats", "iVisitArrivalCoverRadiusUnits", dst.visitArrivalCoverRadiusUnits));
             dst.visitArrivalAllowCoarseBearing =
                 ini.GetBoolValue("Beats", "bVisitArrivalAllowCoarseBearing", dst.visitArrivalAllowCoarseBearing);
+            dst.visitChainHopRadius =
+                static_cast<int>(ini.GetLongValue("Beats", "iVisitChainHopRadius", dst.visitChainHopRadius));
             dst.visitChainBridgeSpacingUnits = static_cast<int>(
                 ini.GetLongValue("Beats", "iVisitChainBridgeSpacingUnits", dst.visitChainBridgeSpacingUnits));
             dst.visitChainDifficultyCoarse = static_cast<int>(
@@ -602,6 +604,11 @@ namespace NarrativeEngine::Settings
             // forever laying points that never advance.
             if (dst.visitChainBridgeSpacingUnits < 1)
                 dst.visitChainBridgeSpacingUnits = 1;
+            // A negative hop radius is not a smaller search, it is an
+            // ill-formed one; zero is the real floor and means "on-chain
+            // candidates only".
+            if (dst.visitChainHopRadius < 0)
+                dst.visitChainHopRadius = 0;
             // Difficulty 1 is the floor of the scale rather than a
             // middle value, and the reason is the search: ApproachChain
             // runs A-star with plain euclidean distance as its

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <ApproachChain.h>
 #include <PluginThread.h>
 
 #include <RE/Skyrim.h>
@@ -81,11 +82,18 @@
 // business on the main thread.
 namespace NarrativeEngine::VisitArrivalPoint
 {
+    // Which KIND of answer the search gave, not which point it picked.
+    //
+    // The two road tiers that used to live here — FineRoad and
+    // CoarseBearing — were really saying which candidate generator
+    // happened to succeed. The approach chain has one generator and
+    // candidates of several classes, so `Result::pointClass` carries that
+    // instead, which is strictly more informative. What remains are the
+    // cases that short-circuit before a chain is built at all.
     enum class Tier : std::uint8_t
     {
         None,
-        FineRoad,
-        CoarseBearing,
+        Chain,        // the approach chain; see Result::pointClass for what won
         CityApproach, // inside the player's walled worldspace, toward the gate
         CityGate,     // the far side of that gate, in the visitor's worldspace
         Doorstep,     // the player is indoors; the far side of their own door
@@ -110,6 +118,16 @@ namespace NarrativeEngine::VisitArrivalPoint
         std::vector<RE::NiPoint3> fallbacks;
 
         Tier tier = Tier::None;
+
+        // Which class of chain point won, when `tier` is `Tier::Chain`.
+        //
+        // Meaningless for the city and doorstep tiers, which do not build
+        // a chain. Replaces the two road tiers in the log: "fine" says
+        // the visitor is standing on real road, "coarse" says they are on
+        // unvalidated ground outside the grid, and those were two
+        // different tiers before only because they came from two
+        // different searches.
+        ApproachChain::PointClass pointClass = ApproachChain::PointClass::Coarse;
 
         // The reference a placement marker must be created from, or 0
         // to create it from the player.
