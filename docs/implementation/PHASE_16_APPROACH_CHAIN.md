@@ -457,9 +457,13 @@ lands in `docs/engine-findings/land-height-outside-the-loaded-grid.md`.
 
 1. Add a one-shot debug dump on the pattern already at `src/GossipHarvest.cpp:218` — `static bool dumped`,
    gated on `Settings::Get().debugMode`, fired from a Tick once the player is outdoors. It samples
-   `TES::GetLandHeight` along a straight line from the player out to 40,000 units at 2,048-unit steps, and
-   logs for each sample: the offset, whether the cell is loaded, whether the call returned true, and the height
-   it gave.
+   `TES::GetLandHeight` along **four cardinal rays** from the player out to 40,000 units at 2,048-unit steps,
+   and logs for each sample: the ray, the offset, the world position, its cell coordinates, whether that cell
+   is in the attached grid, whether the call returned true, and the height it gave.
+
+   Four rays rather than one, because a single ray that runs into the sea or off the edge of the worldspace
+   answers nothing and costs a second trip through the game to find out. Four cost ten lines of throwaway code
+   and make one run conclusive.
 2. The user loads an outdoor save, waits for the dump, and pastes the log. 40,000 units crosses well past the
    5x5 loaded grid (~20,480 units edge to edge), so the same run covers both sides of the boundary.
 3. Write `docs/engine-findings/land-height-outside-the-loaded-grid.md`: what was asked, what came back, where the

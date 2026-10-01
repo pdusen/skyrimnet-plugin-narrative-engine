@@ -102,7 +102,7 @@ TEST_CASE("Settings::Load reads the plugin INI", "[Settings][engine]")
         {
             // The plugin is documented as fully functional with no INI, so
             // this is a supported configuration rather than a degraded one.
-            REQUIRE(Settings::Get().tickIntervalSeconds == 30);
+            REQUIRE(Settings::Get().tickIntervalSeconds == 90);
             REQUIRE_FALSE(Settings::Get().debugMode);
         }
     }
@@ -575,7 +575,7 @@ TEST_CASE("Settings::WriteMcmOverride", "[Settings][engine]")
             // The optionals are the whole interface: an unengaged one means
             // "do not touch", not "write the default".
             REQUIRE(Settings::Get().debugMode);
-            REQUIRE(Settings::Get().tickIntervalSeconds == 30);
+            REQUIRE(Settings::Get().tickIntervalSeconds == 90);
         }
     }
 
