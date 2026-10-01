@@ -445,6 +445,33 @@ namespace NarrativeEngine::Settings
         // arrive from somewhere real".
         bool visitArrivalAllowCoarseBearing = true;
 
+        // Stuck-recovery hop, for a visitor who stalls INSIDE the loaded
+        // grid.
+        //
+        // The fix there is a short hop onto validated road nearby, not a
+        // long warp back out along the chain that discards the walk they
+        // have already done. Two numbers bound it:
+        //
+        //   * MinHop — the fine graph is dense along a road, and the
+        //     nodes nearest a stalled actor are the ones most likely to
+        //     be caught on the same obstacle, so the nearest neighbour is
+        //     usually not far enough to be a fix.
+        //   * MaxRetreat — hops are undirected and the escort's goal is
+        //     the player, so without a bound a hop is as free to move the
+        //     visitor backwards as forwards, and a backwards hop is not
+        //     recovery but undoing the approach.
+        //
+        // The bound is small on purpose, and the geometry is what makes a
+        // small number permissive rather than restrictive: a hop of
+        // length h taken perpendicular to the player, from distance d,
+        // increases the distance to them by about h^2 / 2d — for a
+        // 300-unit hop at the 1,000 units where the escort is still
+        // running at all, 44 units. Sideways is therefore almost free,
+        // while a 300-unit hop taken straight backwards costs the full
+        // 300 and is refused.
+        int visitChainUnstuckMinHopUnits = 300;
+        int visitChainUnstuckMaxRetreatUnits = 150;
+
         // How many hops off the chain's fine segment the arrival search
         // expands for extra candidates.
         //

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <FineRoads.h>
 #include <MainThread.h>
 
 #include <RE/Skyrim.h>
@@ -249,6 +250,44 @@ namespace NarrativeEngine::StuckRecovery
         // list and clears all tracking.
         void Begin(std::vector<RE::NiPoint3> fallbacks);
 
+        // A two-source ladder, for a caller that has a road graph as well
+        // as a list of positions.
+        //
+        // Where an actor stalls decides which source answers. INSIDE the
+        // loaded grid it is caught on local geometry — a fence corner, a
+        // doorway, a boulder — and the fix is a short hop onto validated
+        // road nearby, not a long warp back out along the route that
+        // throws away the walk it has already done. OUTSIDE it there is
+        // no road graph to read and the positions are all there is.
+        //
+        // The visit beat is the only caller; the ambush beat keeps the
+        // plain `Begin` above, and the two numbers live here rather than
+        // in `Options` so that it cannot pick them up by accident.
+        struct Ladder
+        {
+            // Chain points outward of the chosen arrival, in chain order.
+            // Never re-sorted — the ordering IS the point, because the
+            // escort walks a stalled actor back along its own path.
+            std::vector<RE::NiPoint3> chainOutward;
+
+            // The loaded road graph, or empty when none is. Empty sends
+            // every escalation to `chainOutward`.
+            FineRoads::Graph fine;
+
+            // How far a hop must move the actor, and how much further
+            // from the goal it may leave them. See
+            // Settings::visitChainUnstuckMinHopUnits for the geometry
+            // that makes the second number small and still permissive.
+            float minHopUnits = 300.0f;
+            float maxRetreatUnits = 150.0f;
+        };
+
+        // Named apart from `Begin` rather than overloading it: the two
+        // take very different things and `Begin({})` is ambiguous between
+        // them, which is a call site picking the wrong semantics by
+        // accident rather than a compile error worth having.
+        void BeginLadder(Ladder ladder);
+
         // Register an actor at the position it was actually placed, so
         // the first check has a baseline that isn't a guess.
         void Track(RE::Actor* actor, const RE::NiPoint3& placedAt);
@@ -329,8 +368,24 @@ namespace NarrativeEngine::StuckRecovery
             bool fallbacksRetired = false;
         };
 
+        // One fine node the ladder may hop an actor onto.
+        struct HopTarget_
+        {
+            RE::NiPoint3 pos{};
+            bool consumed = false;
+        };
+
+        // Pick an unconsumed fine node to hop `actor` onto, and mark it
+        // spent. Returns false when none is eligible.
+        bool TakeFineHop_(const RE::NiPoint3& from, const RE::NiPoint3& goal, RE::NiPoint3& out);
+
         std::string m_label;
         std::vector<RE::NiPoint3> m_fallbacks;
+        // The ladder's road half. Per-visit state, not persisted: the
+        // escort already lives only as long as the beat that began it.
+        std::vector<HopTarget_> m_hopTargets;
+        float m_minHopUnits = 0.0f;
+        float m_maxRetreatUnits = 0.0f;
         // Shared across actors, not per-actor. Each fallback is handed
         // out once: they are distinct PLACES, and sending three actors
         // to the same one stacks them on a single point where they shove

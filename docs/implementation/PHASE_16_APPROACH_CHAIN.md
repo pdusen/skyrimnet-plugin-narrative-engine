@@ -700,7 +700,7 @@ gone from the tree (`grep -rn "BearingHome\|CorridorTarget" src include` is empt
 
 ### Step 5 — The stuck-recovery ladder
 
-- [ ] Complete
+- [X] Complete
 
 **[CLAUDE]**
 
@@ -730,8 +730,11 @@ and the chain outward of the chosen point beyond it.
        float maxRetreatUnits = 150.0f;
    };
 
-   void Begin(Ladder ladder);
+   void BeginLadder(Ladder ladder);
    ```
+
+   Named apart from `Begin` rather than overloading it: `Begin({})` is ambiguous between the two, which is a
+   call site picking the wrong semantics by accident rather than a compile error worth having.
 
 3. Keep `Begin(std::vector<RE::NiPoint3>)` exactly as it is. `AmbushBeat` uses it at
    `src/AmbushBeat.cpp:904` and is not part of this phase.

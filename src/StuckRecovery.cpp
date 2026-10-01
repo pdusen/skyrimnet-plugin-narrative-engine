@@ -281,8 +281,79 @@ namespace NarrativeEngine::StuckRecovery
     {
         m_fallbacks = std::move(fallbacks);
         m_nextFallback = 0;
+        m_hopTargets.clear();
+        m_minHopUnits = 0.0f;
+        m_maxRetreatUnits = 0.0f;
         m_tracks.clear();
         logger::info("StuckRecovery[{}]: escort begun with {} fallback position(s)", m_label, m_fallbacks.size());
+    }
+
+    void Escort::BeginLadder(Ladder ladder)
+    {
+        m_fallbacks = std::move(ladder.chainOutward);
+        m_nextFallback = 0;
+        m_minHopUnits = std::max(1.0f, ladder.minHopUnits);
+        m_maxRetreatUnits = std::max(0.0f, ladder.maxRetreatUnits);
+        m_hopTargets.clear();
+        m_hopTargets.reserve(ladder.fine.nodes.size());
+        for (const auto& node : ladder.fine.nodes) {
+            HopTarget_ target;
+            target.pos = RE::NiPoint3{node.x, node.y, node.z + kGroundClearanceUnits};
+            m_hopTargets.push_back(target);
+        }
+        m_tracks.clear();
+        logger::info("StuckRecovery[{}]: escort begun with {} chain fallback(s) and {} road node(s) to hop "
+                     "between (min hop {:.0f}u, max retreat {:.0f}u)",
+                     m_label,
+                     m_fallbacks.size(),
+                     m_hopTargets.size(),
+                     m_minHopUnits,
+                     m_maxRetreatUnits);
+    }
+
+    bool Escort::TakeFineHop_(const RE::NiPoint3& from, const RE::NiPoint3& goal, RE::NiPoint3& out)
+    {
+        if (m_hopTargets.empty()) {
+            return false;
+        }
+        const float goalDist = from.GetDistance(goal);
+
+        // Nearest eligible, because the premise of the whole manoeuvre is
+        // that the actor keeps the progress it has made: the shortest hop
+        // that actually clears the obstacle is the one that discards
+        // least.
+        std::size_t best = m_hopTargets.size();
+        float bestHop = 0.0f;
+        for (std::size_t i = 0; i < m_hopTargets.size(); ++i) {
+            auto& target = m_hopTargets[i];
+            if (target.consumed) {
+                continue;
+            }
+            const float hop = from.GetDistance(target.pos);
+            if (hop <= m_minHopUnits) {
+                // Near enough to be caught on the same thing.
+                continue;
+            }
+            if (target.pos.GetDistance(goal) > goalDist + m_maxRetreatUnits) {
+                // Backwards. Not recovery, just undoing the approach.
+                continue;
+            }
+            if (best == m_hopTargets.size() || hop < bestHop) {
+                best = i;
+                bestHop = hop;
+            }
+        }
+        if (best == m_hopTargets.size()) {
+            return false;
+        }
+        // Spent whether or not the hop works. A node that did not
+        // dislodge the actor is evidence against itself, and retrying it
+        // is the ping-pong this rule exists to stop: two nodes either
+        // side of one obstacle trade the actor back and forth, each hop
+        // looking like progress and none of it being any.
+        m_hopTargets[best].consumed = true;
+        out = m_hopTargets[best].pos;
+        return true;
     }
 
     void Escort::Track(RE::Actor* actor, const RE::NiPoint3& placedAt)
@@ -313,6 +384,9 @@ namespace NarrativeEngine::StuckRecovery
     {
         m_fallbacks.clear();
         m_nextFallback = 0;
+        m_hopTargets.clear();
+        m_minHopUnits = 0.0f;
+        m_maxRetreatUnits = 0.0f;
         m_tracks.clear();
         m_sinceCheck = 0.0;
     }
@@ -406,7 +480,40 @@ namespace NarrativeEngine::StuckRecovery
         }
         track.stalls.push_back(pos);
 
-        // Step 1 — the caller's unused-but-validated positions.
+        // Step 1 — a short hop onto road the actor has not already tried,
+        // when it stalled somewhere the road graph can answer for.
+        //
+        // Before the chain fallbacks, because it discards less: the actor
+        // keeps the distance it has already walked and only steps around
+        // whatever has it. Outside the loaded grid `IsOnNavmesh` is false
+        // everywhere, so this arm simply does not apply and the chain
+        // answers instead.
+        if (!track.fallbacksRetired && !m_hopTargets.empty() && IsOnNavmesh(pos)) {
+            RE::NiPoint3 hop{};
+            if (TakeFineHop_(pos, goal, hop)) {
+                WarpTo(token, actor, hop);
+                track.lastPos = hop;
+                track.gapBeforeWarp = goalDist;
+                outcome.action = Action::WarpedToFallback;
+                outcome.movedTo = hop;
+                logger::info("StuckRecovery[{}]: '{}' moved only {:.0f}u at ({:.0f},{:.0f},{:.0f}) -> road "
+                             "node at ({:.0f},{:.0f},{:.0f}), {:.0f}u away, {:+.0f}u from the goal",
+                             m_label,
+                             actor->GetName(),
+                             moved,
+                             pos.x,
+                             pos.y,
+                             pos.z,
+                             hop.x,
+                             hop.y,
+                             hop.z,
+                             pos.GetDistance(hop),
+                             hop.GetDistance(goal) - goalDist);
+                return outcome;
+            }
+        }
+
+        // Step 2 — the caller's unused-but-validated positions.
         if (!track.fallbacksRetired && m_nextFallback < m_fallbacks.size()) {
             const auto dest = m_fallbacks[m_nextFallback++];
             WarpTo(token, actor, dest);
@@ -430,7 +537,7 @@ namespace NarrativeEngine::StuckRecovery
             return outcome;
         }
 
-        // Step 2 — out of vetted positions, so close the gap directly.
+        // Step 3 — out of vetted positions, so close the gap directly.
         // Each stall moves the actor another step along the line it was
         // supposed to walk, which both shortens the route and skips
         // whatever it was caught on.

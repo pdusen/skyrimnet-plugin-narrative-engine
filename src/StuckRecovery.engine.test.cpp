@@ -1,11 +1,14 @@
 #include <StuckRecovery.h>
 
+#include <FineRoads.h>
+
 #include <EngineMock.h>
 #include <PluginThread.h>
 #include <ThreadRole.h>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -649,6 +652,224 @@ TEST_CASE("StuckRecovery::Escort stops spending fallbacks on the same dead end",
         {
             // 7159 units out against the 7000 it started from.
             REQUIRE(cycleTo(NiPoint3{7000.0f, 1500.0f, 0.0f}).action == Action::WarpedToFallback);
+        }
+    }
+}
+
+TEST_CASE("StuckRecovery::Escort hops a stalled actor along the road", "[StuckRecovery][engine]")
+{
+    // The ladder's road half. An actor that stalls INSIDE the loaded grid is
+    // caught on local geometry — a fence corner, a doorway, a boulder — and
+    // the fix is a short hop onto validated road nearby, not a long warp back
+    // out along the route that discards the walk it has already done.
+    //
+    // The goal is at the origin and the actor is 4,000 units east of it, so
+    // "toward the goal" is west and "backwards" is east. The road below is
+    // laid out so that each eligibility rule has a node that only it refuses.
+    EngineMock engine;
+    engine.world.cellIsInterior = false;
+    engine.terrain.landHeight = 0.0f;
+    engine.AddNavmeshPatch(engine.GroundCell(), 0x00A60001u, -40000.0f, -40000.0f, 40000.0f, 40000.0f, 0.0f);
+
+    const NiPoint3 stuckAt{4000.0f, 0.0f, 0.0f};
+
+    // Nodes, with what each one is for:
+    //   (4100,0)   100u away — inside the minimum hop, so probably caught on
+    //              the same obstacle.
+    //   (4000,600) 600u away, perpendicular — the lateral hop the bound is
+    //              supposed to allow: it costs only 44u of distance to goal.
+    //   (4600,0)   600u away, straight backwards — costs the full 600u.
+    //   (3400,0)   600u away, straight toward the goal — ideal, and nearer
+    //              than the lateral one is in walked terms? No: same 600u, so
+    //              the tiebreak is which comes first by hop length.
+    const auto ladderFor = [&](std::vector<NiPoint3> nodes) {
+        Escort::Ladder ladder;
+        ladder.minHopUnits = 300.0f;
+        ladder.maxRetreatUnits = 150.0f;
+        for (const auto& node : nodes) {
+            NarrativeEngine::FineRoads::Node fine;
+            fine.x = node.x;
+            fine.y = node.y;
+            fine.z = node.z;
+            ladder.fine.nodes.push_back(fine);
+            ladder.fine.adjacency.emplace_back();
+        }
+        return ladder;
+    };
+
+    Options opts;
+
+    SECTION("when a node is nearer than the minimum hop")
+    {
+        Escort escort{"test"};
+        escort.BeginLadder(ladderFor({NiPoint3{4100.0f, 0.0f, 0.0f}}));
+        auto* actor = PlaceActor(engine, stuckAt);
+        escort.Track(actor, stuckAt);
+
+        SECTION("should refuse it and fall through")
+        {
+            // The road graph is dense along a road, and the nodes closest to a
+            // stalled actor are the ones most likely caught on the same thing.
+            // With no chain fallbacks either, that leaves the close-in step.
+            const auto outcome = Check(escort, actor, kGoal, opts);
+            REQUIRE(outcome.action != Action::WarpedToFallback);
+        }
+    }
+
+    SECTION("when a node is far enough and sideways")
+    {
+        Escort escort{"test"};
+        escort.BeginLadder(ladderFor({NiPoint3{4000.0f, 600.0f, 0.0f}}));
+        auto* actor = PlaceActor(engine, stuckAt);
+        escort.Track(actor, stuckAt);
+
+        SECTION("should hop onto it")
+        {
+            // A 600-unit hop perpendicular to the goal from 4,000 units out
+            // costs about 600*600/(2*4000) = 45 units of distance to the goal,
+            // well inside the 150-unit bound. Sideways movement is almost
+            // free, which is the whole reason a small bound is permissive.
+            const auto outcome = Check(escort, actor, kGoal, opts);
+            REQUIRE(outcome.action == Action::WarpedToFallback);
+            REQUIRE(std::fabs(outcome.movedTo.y - 600.0f) < 1.0f);
+        }
+    }
+
+    SECTION("when the only node is straight backwards")
+    {
+        Escort escort{"test"};
+        escort.BeginLadder(ladderFor({NiPoint3{4600.0f, 0.0f, 0.0f}}));
+        auto* actor = PlaceActor(engine, stuckAt);
+        escort.Track(actor, stuckAt);
+
+        SECTION("should refuse it rather than undo the approach")
+        {
+            // 600 units directly away from the goal costs the full 600, four
+            // times the bound. Hops are undirected, so without this a hop is
+            // as free to move the actor backwards as forwards -- and a
+            // backwards hop is not recovery.
+            const auto outcome = Check(escort, actor, kGoal, opts);
+            REQUIRE(outcome.action != Action::WarpedToFallback);
+        }
+    }
+
+    SECTION("when two nodes sit either side of one obstacle")
+    {
+        Escort escort{"test"};
+        escort.BeginLadder(ladderFor({NiPoint3{4000.0f, 600.0f, 0.0f}, NiPoint3{4000.0f, -600.0f, 0.0f}}));
+        auto* actor = PlaceActor(engine, stuckAt);
+        escort.Track(actor, stuckAt);
+
+        SECTION("should spend each one once and then stop")
+        {
+            // Without consumption the two trade the actor back and forth, each
+            // hop looking like progress and none of it being any. A node is
+            // spent whether or not the hop worked, because a node that did not
+            // dislodge the actor is evidence against itself.
+            // Each cycle stalls somewhere NEW, more than
+            // kStallConvergenceUnits from the places before it. Coming to rest
+            // twice in one spot is a different finding — the obstacle is
+            // between there and the goal — and the escort already retires the
+            // whole ladder for it, which would mask what this case is about.
+            const auto first = Check(escort, actor, kGoal, opts);
+            REQUIRE(first.action == Action::WarpedToFallback);
+            MoveActorTo(actor, NiPoint3{4000.0f, 300.0f, 0.0f});
+            REQUIRE(Check(escort, actor, kGoal, opts).action == Action::Moving);
+            const auto second = Check(escort, actor, kGoal, opts);
+            REQUIRE(second.action == Action::WarpedToFallback);
+            REQUIRE(std::fabs(second.movedTo.y - first.movedTo.y) > 1.0f);
+
+            // Both spent now. The third stall has no road left.
+            MoveActorTo(actor, NiPoint3{4000.0f, -300.0f, 0.0f});
+            REQUIRE(Check(escort, actor, kGoal, opts).action == Action::Moving);
+            const auto third = Check(escort, actor, kGoal, opts);
+            REQUIRE(third.action != Action::WarpedToFallback);
+        }
+    }
+
+    SECTION("when the road is spent but chain points remain")
+    {
+        Escort escort{"test"};
+        auto ladder = ladderFor({NiPoint3{4000.0f, 600.0f, 0.0f}});
+        ladder.chainOutward = {NiPoint3{6000.0f, 0.0f, 0.0f}, NiPoint3{8000.0f, 0.0f, 0.0f}};
+        escort.BeginLadder(std::move(ladder));
+        auto* actor = PlaceActor(engine, stuckAt);
+        escort.Track(actor, stuckAt);
+
+        SECTION("should take the road first and the chain after")
+        {
+            // The road hop comes first because it discards less: the actor
+            // keeps the distance it has already walked. Only once there is no
+            // road left does the escort start walking it back out along the
+            // route.
+            const auto first = Check(escort, actor, kGoal, opts);
+            REQUIRE(first.action == Action::WarpedToFallback);
+            REQUIRE(std::fabs(first.movedTo.y - 600.0f) < 1.0f);
+
+            // A new stall spot, for the reason given in the case above.
+            MoveActorTo(actor, NiPoint3{4000.0f, 300.0f, 0.0f});
+            REQUIRE(Check(escort, actor, kGoal, opts).action == Action::Moving);
+            const auto second = Check(escort, actor, kGoal, opts);
+            REQUIRE(second.action == Action::WarpedToFallback);
+            REQUIRE(std::fabs(second.movedTo.x - 6000.0f) < 1.0f);
+        }
+    }
+
+    SECTION("when there is no road graph at all")
+    {
+        Escort escort{"test"};
+        Escort::Ladder ladder;
+        ladder.chainOutward = {NiPoint3{6000.0f, 0.0f, 0.0f}};
+        escort.BeginLadder(std::move(ladder));
+        auto* actor = PlaceActor(engine, stuckAt);
+        escort.Track(actor, stuckAt);
+
+        SECTION("should go straight to the chain")
+        {
+            // Outside the loaded grid there is no graph to read, which is the
+            // ordinary case for a visitor who has not reached the player's
+            // cells yet. An empty graph sends every escalation to the chain.
+            const auto outcome = Check(escort, actor, kGoal, opts);
+            REQUIRE(outcome.action == Action::WarpedToFallback);
+            REQUIRE(std::fabs(outcome.movedTo.x - 6000.0f) < 1.0f);
+        }
+    }
+
+    SECTION("when the actor is off navmesh")
+    {
+        Escort escort{"test"};
+        auto ladder = ladderFor({NiPoint3{4000.0f, 600.0f, 0.0f}});
+        ladder.chainOutward = {NiPoint3{6000.0f, 0.0f, 0.0f}};
+        escort.BeginLadder(std::move(ladder));
+        auto* actor = PlaceActor(engine, stuckAt);
+        escort.Track(actor, stuckAt);
+        // No navmesh anywhere, which is what being outside the loaded grid
+        // looks like to every query this module has.
+        engine.terrain.cellPresent = false;
+
+        SECTION("should not try to hop it along a road it cannot be on")
+        {
+            const auto outcome = Check(escort, actor, kGoal, opts);
+            REQUIRE(outcome.action == Action::WarpedToFallback);
+            REQUIRE(std::fabs(outcome.movedTo.x - 6000.0f) < 1.0f);
+        }
+    }
+
+    SECTION("when a plain Begin is used instead")
+    {
+        Escort escort{"test"};
+        escort.Begin(std::vector<NiPoint3>{NiPoint3{6000.0f, 0.0f, 0.0f}});
+        auto* actor = PlaceActor(engine, stuckAt);
+        escort.Track(actor, stuckAt);
+
+        SECTION("should behave exactly as it did before the ladder existed")
+        {
+            // AmbushBeat's call, untouched by Phase 16. The road half has to
+            // be inert for it rather than merely unused, which is why the two
+            // numbers live on the Ladder and not in Options.
+            const auto outcome = Check(escort, actor, kGoal, opts);
+            REQUIRE(outcome.action == Action::WarpedToFallback);
+            REQUIRE(std::fabs(outcome.movedTo.x - 6000.0f) < 1.0f);
         }
     }
 }

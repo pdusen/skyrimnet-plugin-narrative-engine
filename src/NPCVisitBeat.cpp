@@ -6,6 +6,7 @@
 #include <CameraVisibility.h>
 #include <DebugNotify.h>
 #include <EngineUtils.h>
+#include <FineRoads.h>
 #include <LocationKeywords.h>
 #include <logger.h>
 #include <MainThread.h>
@@ -1386,10 +1387,19 @@ namespace NarrativeEngine
                     return false;
                 }
                 senderActor->EvaluatePackage();
-                // Fallbacks are further along the visitor's own road, so
+                // Two sources, and where the sender stalls decides which
+                // answers. Inside the loaded grid a short hop onto road
+                // nearby keeps the walk they have already done; outside
+                // it the chain's own points are all there is, and
                 // escalating through them walks a stuck sender BACK ALONG
                 // THEIR ROUTE rather than sideways onto unrelated terrain.
-                g_escort.Begin(fallbacks);
+                const auto& escortCfg = Settings::Get();
+                StuckRecovery::Escort::Ladder ladder;
+                ladder.chainOutward = fallbacks;
+                ladder.fine = FineRoads::Snapshot();
+                ladder.minHopUnits = static_cast<float>(std::max(1, escortCfg.visitChainUnstuckMinHopUnits));
+                ladder.maxRetreatUnits = static_cast<float>(std::max(0, escortCfg.visitChainUnstuckMaxRetreatUnits));
+                g_escort.BeginLadder(std::move(ladder));
                 g_escort.Track(senderActor, placedAt);
                 logger::info("NPCVisitBeat: armed sender 0x{:08X} '{}' at ({:.0f},{:.0f},{:.0f}); escort has "
                              "{} fallback(s)",

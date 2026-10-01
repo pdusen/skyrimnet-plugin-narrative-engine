@@ -464,6 +464,10 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("Beats", "iVisitArrivalCoverRadiusUnits", dst.visitArrivalCoverRadiusUnits));
             dst.visitArrivalAllowCoarseBearing =
                 ini.GetBoolValue("Beats", "bVisitArrivalAllowCoarseBearing", dst.visitArrivalAllowCoarseBearing);
+            dst.visitChainUnstuckMinHopUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitChainUnstuckMinHopUnits", dst.visitChainUnstuckMinHopUnits));
+            dst.visitChainUnstuckMaxRetreatUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitChainUnstuckMaxRetreatUnits", dst.visitChainUnstuckMaxRetreatUnits));
             dst.visitChainHopRadius =
                 static_cast<int>(ini.GetLongValue("Beats", "iVisitChainHopRadius", dst.visitChainHopRadius));
             dst.visitChainBridgeSpacingUnits = static_cast<int>(
@@ -609,6 +613,16 @@ namespace NarrativeEngine::Settings
             // candidates only".
             if (dst.visitChainHopRadius < 0)
                 dst.visitChainHopRadius = 0;
+            // A minimum hop of zero makes every neighbour eligible,
+            // including the one the actor is standing on, so the escort
+            // would spend an escalation warping somebody where they
+            // already are.
+            if (dst.visitChainUnstuckMinHopUnits < 1)
+                dst.visitChainUnstuckMinHopUnits = 1;
+            // A negative retreat bound would refuse every hop, including
+            // the lateral ones the rule exists to allow.
+            if (dst.visitChainUnstuckMaxRetreatUnits < 0)
+                dst.visitChainUnstuckMaxRetreatUnits = 0;
             // Difficulty 1 is the floor of the scale rather than a
             // middle value, and the reason is the search: ApproachChain
             // runs A-star with plain euclidean distance as its
