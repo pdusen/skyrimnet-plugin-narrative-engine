@@ -464,6 +464,16 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("Beats", "iVisitArrivalCoverRadiusUnits", dst.visitArrivalCoverRadiusUnits));
             dst.visitArrivalAllowCoarseBearing =
                 ini.GetBoolValue("Beats", "bVisitArrivalAllowCoarseBearing", dst.visitArrivalAllowCoarseBearing);
+            dst.visitChainBridgeSpacingUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitChainBridgeSpacingUnits", dst.visitChainBridgeSpacingUnits));
+            dst.visitChainDifficultyCoarse = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitChainDifficultyCoarse", dst.visitChainDifficultyCoarse));
+            dst.visitChainDifficultyFine =
+                static_cast<int>(ini.GetLongValue("Beats", "iVisitChainDifficultyFine", dst.visitChainDifficultyFine));
+            dst.visitChainDifficultyConnector = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitChainDifficultyConnector", dst.visitChainDifficultyConnector));
+            dst.visitChainDifficultyDirect = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitChainDifficultyDirect", dst.visitChainDifficultyDirect));
             dst.visitComposeMemoryRenderCap = static_cast<int>(
                 ini.GetLongValue("Beats", "iVisitComposeMemoryRenderCap", dst.visitComposeMemoryRenderCap));
             dst.visitComposeDialogueRenderCap = static_cast<int>(
@@ -585,6 +595,32 @@ namespace NarrativeEngine::Settings
                 dst.ambushMaxDurationSeconds = 1;
             if (dst.ambushPerBeatCooldownGameHours < 0)
                 dst.ambushPerBeatCooldownGameHours = 0;
+
+            // Approach-chain clamps.
+            //
+            // A spacing of zero or less would make the bridge loop
+            // forever laying points that never advance.
+            if (dst.visitChainBridgeSpacingUnits < 1)
+                dst.visitChainBridgeSpacingUnits = 1;
+            // Difficulty 1 is the floor of the scale rather than a
+            // middle value, and the reason is the search: ApproachChain
+            // runs A-star with plain euclidean distance as its
+            // heuristic, which underestimates the true cost — and so
+            // returns an optimal route — only while no edge is cheaper
+            // than its own length. One difficulty below 1 silently turns
+            // the search into a greedy walk that still returns a path,
+            // so the floor is enforced here rather than trusted.
+            for (int* difficulty : {&dst.visitChainDifficultyCoarse,
+                                    &dst.visitChainDifficultyFine,
+                                    &dst.visitChainDifficultyConnector,
+                                    &dst.visitChainDifficultyDirect}) {
+                if (*difficulty < 1) {
+                    logger::warn("Settings: an approach-chain difficulty of {} is below the floor of 1, "
+                                 "which would break the A-star heuristic's admissibility; clamping to 1.",
+                                 *difficulty);
+                    *difficulty = 1;
+                }
+            }
         }
     } // namespace
 

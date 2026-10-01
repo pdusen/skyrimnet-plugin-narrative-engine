@@ -440,6 +440,33 @@ namespace NarrativeEngine::Settings
         // reading of "visitors arrive by road".
         bool visitArrivalAllowCoarseBearing = true;
 
+        // Spacing of the synthetic points ApproachChain lays along its
+        // bridge and its two direct lines.
+        //
+        // 512 is a measurement, not a preference: background travel
+        // advances an unloaded actor in a fixed 866-unit step, so a
+        // point one spacing outside the loaded grid is carried inside it
+        // on a single tick. It also bounds, by construction, how far
+        // outside the grid a visitor can be put down — the selection
+        // walk takes the first acceptable point, so the innermost
+        // synthetic point is the one that gets used.
+        int visitChainBridgeSpacingUnits = 512;
+
+        // Cost multipliers per node class, read by ApproachChain's edge
+        // cost: length x max(difficulty of the two endpoints). Ratios
+        // are what matter, not the absolute values — at these settings a
+        // road route wins over a straight line by roughly three to one
+        // across the province, which is the intended margin.
+        //
+        // 1 is the floor of the scale and not a middle value, because
+        // the A-star heuristic is plain euclidean distance and stays
+        // admissible only while nothing is cheaper than 1. The read path
+        // clamps to it.
+        int visitChainDifficultyCoarse = 1;    // coarse road nodes
+        int visitChainDifficultyFine = 2;      // loaded fine road nodes
+        int visitChainDifficultyConnector = 3; // bridge, player, visitor
+        int visitChainDifficultyDirect = 4;    // both direct lines
+
         // Compose-prompt content caps for narrative_engine_visit_compose.prompt.
         // Same shrink-for-local-LLMs motivation as the letter-compose
         // caps above. Only affects the visit compose prompt; the
