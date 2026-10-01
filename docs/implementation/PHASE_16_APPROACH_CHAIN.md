@@ -56,11 +56,13 @@ units out, the band and the walk agree; where it is 6,000, the band has to be ov
 - **Chain construction** across four segments: coarse run, bridge, fine run, and a straight-line fallback.
 - **Off-path candidates** by hop expansion over `FineRoads::Graph::adjacency`.
 - **A single selection walk** outward from the player, replacing the band and the two tiers under it.
-- **A defined fallback ordering** for `StuckRecovery`, which is the remaining chain outward of the chosen
-  point — walking the visitor back along their own path, which is what that module already promises.
-- Retiring `SampleBearingArc` and `BearingHome`. Both exist to manufacture candidates where the route had
-  none; the chain has candidates everywhere. `SampleBearingArc` is local to `VisitArrivalPoint`
-  (`AmbushSpawnPoints` has its own ring search), so nothing else loses a primitive.
+- **A defined fallback ordering** for `StuckRecovery`: a consumed-once hop to a fine neighbour when the
+  visitor stalls inside the loaded grid, and the remaining chain outward of the chosen point when they stall
+  beyond it — walking them back along their own path, which is what that module already promises.
+- Retiring `SampleBearingArc`, `BearingHome` and the Phase 14 approach corridor. The first two exist to
+  manufacture candidates where the route had none and the third to disambiguate the bearing they produced;
+  the chain has real candidates everywhere and no bearing to aim. `SampleBearingArc` is local to
+  `VisitArrivalPoint` (`AmbushSpawnPoints` has its own ring search), so nothing else loses a primitive.
 
 ### Deferred (explicitly out)
 
@@ -133,10 +135,9 @@ Difficulty is a property of nodes; a search needs a cost per edge. The reading t
 cost(edge) = euclidean length x max(difficulty of its two endpoints)
 ```
 
-`max` rather than an average, so that one expensive node is genuinely expensive to pass through rather than
-being diluted by a cheap neighbour. The difficulty ratings do not make this decision for us, and it is worth
-confirming before implementation — an average would make a long cheap approach to a single costly node far
-more attractive than intended.
+`max` rather than an average, settled: one expensive node has to be genuinely expensive to pass through
+rather than diluted by a cheap neighbour. An average would make a long cheap approach to a single costly node
+far more attractive than intended, which is the one behaviour this cost function exists to prevent.
 
 **The ratios matter, not the labels.** Worked against real numbers, for a visitor 100,000 units away:
 
@@ -196,23 +197,32 @@ single background tick and becomes a real, loaded, walking actor immediately.
 number is recorded here because this design depends on it, and it is cheap to re-measure if it is ever in
 doubt.)
 
-Two consequences have to be accepted or designed around:
+The same 512 spacing governs both direct lines, for the same reason and not merely for consistency: the
+spacing is what bounds, by construction, how far outside the grid a visitor can be put down. A coarser
+spacing on the direct lines would shrink the graph by a hundred-odd nodes and raise that bound in exchange,
+which is the wrong trade on the one segment that exists for the cases where nothing else reaches.
 
-**Bridge points cannot be validated.** They are outside the loaded grid by construction, which is their
-purpose, and both in-grid gates need loaded cells: `StuckRecovery::IsOnNavmesh` reads navmesh out of them, and
-the cover raycast needs geometry to hit. A bridge point is therefore accepted on distance alone, which is
-consistent — beyond view distance, cover is moot — but carries **no standability guarantee**. `kMaxReachUnits`
-exists today precisely to avoid placing an actor on ground nobody checked.
+One consequence has to be designed around, and one apparent consequence turns out not to be real:
 
-*Mitigation to decide:* prefer real **coarse nodes** wherever the bridge line passes near one, and use
-synthetic fill only between them. Coarse nodes derive from the game's own preferred-path data, so they are
-walkable by construction; the synthetic points are the unvalidated part. This is the open question below.
+**Bridge points cannot be validated, and are placed anyway.** They are outside the loaded grid by
+construction, which is their purpose, and both in-grid gates need loaded cells: `StuckRecovery::IsOnNavmesh`
+reads navmesh out of them, and the cover raycast needs geometry to hit. A bridge point is therefore accepted
+on distance alone — consistent, since beyond view distance cover is moot — and carries no standability
+guarantee. That is accepted rather than mitigated.
 
-**Bridge length buys a wait.** A visitor placed beyond the grid is in low process and covers the remaining
-distance at the background rate — roughly 25,000 units per game hour gross, and less in net progress because
-the simulation wanders. A bridge point 4,000 units out is a few game minutes; one 12,000 units out is closer
-to half a game hour before they are even near. The far end of the bridge is where a visit stops feeling like
-a response to anything, so the bridge wants a cap rather than reaching as far as the geometry allows.
+For elevation, use `TES::GetLandHeight` if it answers outside the loaded grid (see the implementation plan's
+first step), and otherwise take the height the chain's own line interpolates at that point, plus a small
+upward buffer. Precision does not matter much either way: an actor warped outside the loaded cells stays
+stationary until background travel carries them into the grid, so a point left well above or below the
+terrain costs nothing and is corrected the moment they become a real actor. No special preference for real
+coarse nodes is needed — every coarse node is already in the graph at difficulty 1, so the search routes
+through them wherever they help.
+
+**Bridge length buys no wait.** The selection walk runs outward from the player and takes the *first*
+acceptable point, so the point a visitor is actually warped onto is the innermost one that qualifies — at
+most one spacing step beyond the furthest loaded cell, whatever the total length of the bridge behind it. The
+chain may stretch 100,000 units; the warp target does not move with it. So there is no cap to choose and no
+reach limit to tune.
 
 ### Off-path candidates
 
@@ -227,10 +237,17 @@ side of the same road, and a 2-hop neighbour is a few metres off it. That is exa
 a spot behind a rock four metres off the road, when the road itself is in plain view. It converts a declined
 visit into a placed one without moving the visitor anywhere the player would find strange.
 
-**Two constraints it must inherit.** Hops are undirected, so an expanded node can sit back toward the player,
-or behind them. That is the precise failure the Phase 14 approach corridor was added to prevent, where a
-bearing aimed at the nearest scrap of road instead of the road home. Off-path candidates therefore pass the
-same distance and corridor constraints as chain nodes; hop expansion widens the pool, it does not relax it.
+**The one constraint it must inherit.** Hops are undirected, so an expanded node can sit back toward the
+player, or behind them. The minimum-distance requirement already rules that out — a node behind the player is
+either inside the minimum radius and rejected, or far enough out to be a legitimate place to arrive from.
+Off-path candidates therefore pass the same distance gates as chain nodes; hop expansion widens the pool, it
+does not relax it.
+
+**The approach corridor is not carried over.** Phase 14 added it to choose between road branches when the
+bearing was manufactured from an arc; with a real chain there is no bearing to aim and no branch to
+disambiguate. The one job it could still do here — keeping a hop-expanded neighbour from landing past the
+player — is the minimum-distance requirement's job already, so the corridor would be a check that never
+changes an answer. It is retired with `SampleBearingArc` and `BearingHome`.
 
 ### Selection
 
@@ -241,15 +258,18 @@ One walk, outward from the player, along the chain.
    (`kUnseenDistanceUnits`, 3,000 today).
 2. If nothing along the chain is obscured, take the **first point beyond the player's maximum view distance**.
    Bridge, coarse and direct-line points satisfy this by construction, which is what they are for.
-3. If the chain yields nothing at all, decline. A declined visit is a normal outcome and not an error, and
-   there is deliberately no "arrive from anywhere" fallback — a visitor appearing opposite their own home is
-   the exact tell this module exists to remove.
+3. If the chain yields nothing at all, decline — a defensive branch that should be unreachable. The
+   visitor-to-player line guarantees a chain, and its far end is by definition as far from the player as the
+   visitor is, so some point on it clears the view distance in every case where the visitor was a plausible
+   sender at all. The branch stays because declining is a normal outcome elsewhere in the module and costs
+   nothing here, but it is not a case the design expects to exercise, and a log line reporting it is a sign
+   the graph was built wrong rather than that the world was unhelpful.
 
 At equal standing, the order is:
 
 | Rank | Class | Gates applied |
 | --- | --- | --- |
-| 1 | Fine, on chain | Navmesh re-check, cover or unseen-distance, band, corridor |
+| 1 | Fine, on chain | Navmesh re-check, cover or unseen-distance, distance band |
 | 2 | Fine, off chain (by hop count) | The same, plus hop count as the tiebreak |
 | 3 | Synthetic, **inside** the loaded grid | The same — being off-road does not make it unverifiable |
 | 4 | Synthetic, **outside** the loaded grid | Distance only — nothing else is answerable there |
@@ -263,14 +283,39 @@ throw away the one part of each synthetic run that can actually be verified.
 
 ### Stuck recovery
 
-`StuckRecovery::Escort` keeps its contract unchanged. What changes is where its ladder comes from: the
-fallbacks are the remaining chain points **outward of the chosen one, in chain order**, so each escalation
-walks the visitor back along the path they were supposed to have travelled. That is what the module's header
-already asks for and says not to re-sort, and the chain supplies it directly instead of the current
-near-player candidate pool.
+`StuckRecovery::Escort` keeps its contract unchanged. What changes is where its ladder comes from, and the
+ladder now has two sources depending on where the visitor got stuck.
+
+**Stuck inside the fine road graph: hop to a neighbouring fine node.** A visitor who stalls within the
+loaded grid is caught on local geometry — a fence corner, a doorway, a boulder — and the fix is a short hop
+onto validated road nearby, not a long warp back out along the chain that discards the walk they have
+already done. A neighbouring node of the fine graph is eligible when it is:
+
+- **More than `iVisitChainUnstuckMinHopUnits` from where they are standing.** The fine graph is dense along a
+  road, and the nodes nearest a stalled actor are the ones most likely to be caught on the same obstacle, so
+  the nearest neighbour is usually not far enough to be a fix.
+- **No more than `iVisitChainUnstuckMaxRetreatUnits` further from the player than they already are.** Hops
+  are undirected and the escort's goal is the player's position, so without this a hop is as free to move the
+  visitor backwards as forwards — and a backwards hop is not recovery, it is undoing the approach.
+
+The retreat bound is small on purpose, and the geometry is what makes a small number permissive rather than
+restrictive. A hop of length `h` taken perpendicular to the player, from a distance `d`, increases the
+distance to the player by about `h² / 2d` — for a 300-unit hop at the 1,000 units where the escort is still
+running at all, 44 units. Sideways movement is therefore almost free, while a 300-unit hop taken straight
+backwards costs the full 300 and is refused. The bound separates the two without having to compute a bearing.
+
+Each node used this way is **out of contention for the rest of the visit**, whether or not the hop worked.
+Without that, two nodes either side of one obstacle trade the visitor back and forth, each hop looking like
+progress and none of it being any. Consumption is per-visit state, not persisted: the chain and its escort
+already live only as long as the beat does.
+
+**Stuck outside it: walk back along the chain.** Here the fallbacks are the remaining chain points **outward
+of the chosen one, in chain order**, so each escalation retreats along the path they were supposed to have
+travelled. That is what the module's header already asks for and says not to re-sort, and the chain supplies
+it directly instead of the current near-player candidate pool.
 
 Its final rung — stepping in toward the goal along a bare line by `closeInStepUnits` — stays as the answer for
-a visitor who is stuck with no chain left outward of them.
+a visitor who is stuck with no fine neighbour left unconsumed and no chain left outward of them.
 
 ### What this replaces
 
@@ -280,6 +325,7 @@ a visitor who is stuck with no chain left outward of them.
 | `WalkFinePath` band with a preference | First-acceptable, outward |
 | `SampleBearingArc` | Hop expansion (retired) |
 | `BearingHome` | The graph's own coarse nodes (retired) |
+| The Phase 14 approach corridor | The minimum-distance gate (retired) |
 | `Route`'s two-container plan | One weighted graph and one search |
 | The unfilled fine-to-coarse join | The bridge, at difficulty 3 |
 | Declining when nothing is near | A graph that is always connected |
@@ -289,25 +335,20 @@ candidate class of whichever point won, which is strictly more informative in th
 
 ---
 
-## Open engine questions
+## The one engine question left
 
-1. **Is `max` the right way to turn node difficulty into edge cost?** The alternative is an average, which
-   would make a long cheap approach to one costly node far more attractive than intended. It decides routing
-   behaviour everywhere, so it wants settling before any code.
-2. **May the bridge place a visitor on unvalidated ground?** Or is it restricted to real coarse nodes, with
-   synthetic fill used only to *order* the chain and never as a warp target? This decides whether the bridge
-   is a placement tier or only a connectivity device.
-3. **How far out may the bridge reach** before the resulting background-travel wait makes the visit
-   pointless? A number, in units, informed by the ~25,000 u/game-hour rate.
-4. **Is land height answerable outside the loaded grid?** `StuckRecovery::IsStandable` reads
-   `TES::GetLandHeight`, which Phase 14 found has no landscape to answer from when the player is indoors. If
-   it also answers nothing outside the grid, question 2 resolves itself and the bridge is coarse-only.
-5. **Does the corridor constraint have meaning for off-chain nodes at 2 hops?** The corridor was built to
-   choose between road branches; 2 hops may be inside its tolerance everywhere, making the check free but
-   also useless.
-6. **Does the direct line need its own spacing?** It shares 512 with the bridge today, which across 100,000
-   units is ~196 nodes for a segment the search should almost never choose. A coarser spacing there would
-   cost nothing in quality and shrink the graph.
+**Is land height answerable outside the loaded grid?** `StuckRecovery::IsStandable` reads
+`TES::GetLandHeight`, which Phase 14 found has no landscape to answer from when the player is indoors. Whether
+it answers for a point in an unloaded cell decides only which of the two elevation sources the bridge uses —
+the engine's height, or the chain line's own interpolated height plus a buffer — and nothing else in the
+design hangs on it, because a visitor outside the grid does not move until background travel brings them in.
+
+It is answerable only by probing the running game, so it is the first implementation step rather than a
+question held open against the design.
+
+Everything else that was open is settled in the sections above: `max` for edge cost, synthetic bridge points
+placed without validation, no bridge reach cap, 512 spacing on both direct lines, and the approach corridor
+retired rather than inherited.
 
 ---
 
@@ -322,7 +363,8 @@ New:
 | --- | --- | --- |
 | `iVisitChainBridgeSpacingUnits` | `512` | Bridge and direct-line spacing; under one 866-unit background step |
 | `iVisitChainHopRadius` | `2` | How far off the fine chain to expand for candidates |
-| `iVisitChainMaxBridgeUnits` | TBD | How far beyond the grid the bridge may place a visitor |
+| `iVisitChainUnstuckMinHopUnits` | `300` | How far a fine-neighbour unstuck hop must move a stalled visitor |
+| `iVisitChainUnstuckMaxRetreatUnits` | `150` | How much further from the player that hop may leave them |
 | `iVisitChainDifficultyCoarse` | `1` | Cost multiplier for coarse road nodes |
 | `iVisitChainDifficultyFine` | `2` | Cost multiplier for loaded fine road nodes |
 | `iVisitChainDifficultyConnector` | `3` | Bridge points, player and visitor nodes, their connectors |
@@ -348,7 +390,7 @@ src/VisitArrivalPoint.cpp     selection walk replaces WalkFinePath / SampleBeari
 src/VisitArrivalPoint.engine.test.cpp
 include/RoadRoute.h           possibly a chain-shaped query beside Route
 src/RoadRoute.cpp
-include/Settings.h            three new keys
+include/Settings.h            seven new keys
 src/Settings.cpp
 statics/SKSE/Plugins/NarrativeEngine.ini
 CMakeLists.txt                ApproachChain in NARRATIVEENGINE_MOCKED_SOURCES
@@ -358,10 +400,415 @@ CMakeLists.txt                ApproachChain in NARRATIVEENGINE_MOCKED_SOURCES
 
 ## Implementation plan
 
-To be written.
+Sequential, and the tree builds and passes at every step boundary. There is no window where the module is
+knowingly broken: Step 2 is additive, Step 3 adds a module nothing calls yet, and Steps 4 and 5 each replace
+one subsystem's internals while leaving every signature its callers use in place until the step that changes
+them.
+
+Only Step 1 and the last two steps need a running game. Step 1 is first because its answer picks the bridge's
+elevation source and nothing else in the design waits on it; the validation and tuning steps are last because
+both read a log that only exists once visits are being dispatched over real terrain.
+
+Every step is entirely Claude's work or entirely the user's, except Step 1, which is split and says so.
+Verification is attributed separately, since a step Claude implements may still need a running game to
+confirm.
+
+### Test coverage is part of every step, not a step of its own
+
+**A step that changes C++ lands its tests in the same step.** No catch-up testing step at the end, and no step
+is complete with its tests deferred to the next one. Every branch a step adds — including every failure path,
+every early return, and every gate that can reject — is covered before its box is checked.
+
+Four things this phase makes easy to get wrong:
+
+- **Deleting code means deleting its tests and checking what that uncovers.** Step 4 retires
+  `SampleBearingArc`, `BearingHome` and the approach corridor. The risk is not that their cases fail, it is
+  that they quietly disappear and take a branch's coverage with them. Count the cases in
+  `src/VisitArrivalPoint.engine.test.cpp` before and after, and account for the difference.
+- **An unreachable branch still gets a case.** Selection step 3 and `Chain::valid == false` are both meant to
+  be impossible. Each gets a test that constructs the impossible state directly and asserts the module
+  degrades rather than crashes, because "unreachable" is a claim about today's callers.
+- **A search needs a correctness oracle, not just a smoke test.** The A-star in Step 3 is checked against a
+  Dijkstra over the same fixture graph: same cost, same node sequence. A pathfinder that returns *a* path on
+  every fixture looks correct and tells you nothing.
+- **`pwsh -File build.ps1 test` passing is a floor, not the bar.** It also has to be true that the new
+  branches are reached. A suite that builds and passes while never entering the new code is worse than no
+  suite, because it looks like coverage.
+
+The `/unit-test` skill is the tool for the new module in Step 3: it writes a Catch2 suite for one C++ module in
+four gated stages, which is the shape the three suites this phase touches already have.
+
+---
+
+### Step 1 — Can land height be read outside the loaded grid?
+
+- [ ] Complete
+
+**[CLAUDE + USER]** — Claude writes the probe and the write-up; the user runs the game and pastes the log.
+
+**Goal:** Settle the bridge's elevation source. `TES::GetLandHeight` is known to answer nothing when the
+player is indoors (Phase 14); whether it answers for a point in an *unloaded exterior cell* is unknown, and it
+is the one thing in this design that cannot be settled on paper.
+
+**Files:** none committed. The probe is a temporary local edit, reverted before the step's commit; the finding
+lands in `docs/engine-findings/land-height-outside-the-loaded-grid.md`.
+
+**Sub-tasks:**
+
+1. Add a one-shot debug dump on the pattern already at `src/GossipHarvest.cpp:218` — `static bool dumped`,
+   gated on `Settings::Get().debugMode`, fired from a Tick once the player is outdoors. It samples
+   `TES::GetLandHeight` along a straight line from the player out to 40,000 units at 2,048-unit steps, and
+   logs for each sample: the offset, whether the cell is loaded, whether the call returned true, and the height
+   it gave.
+2. The user loads an outdoor save, waits for the dump, and pastes the log. 40,000 units crosses well past the
+   5x5 loaded grid (~20,480 units edge to edge), so the same run covers both sides of the boundary.
+3. Write `docs/engine-findings/land-height-outside-the-loaded-grid.md`: what was asked, what came back, where the
+   boundary is, and whether the heights outside it are plausible or garbage. A "no" is as useful as a "yes" and
+   is written up the same way.
+4. Revert the probe. Update the bridge section of this doc to state the chosen elevation source as a decision
+   rather than a branch, and drop "The one engine question left".
+5. Run `pwsh -File format.ps1`.
+
+**Specifics:**
+
+- **Plausible is not the same as correct.** A function that returns `true` with a stale or zero height is
+  worse than one that returns `false`, because the design would trust it. Compare two or three of the
+  outside-grid answers against the height the player actually stands at when they walk there.
+- The probe is throwaway and goes nowhere near a commit. Write it as a local edit, keep the diff in the
+  scratchpad if it is worth keeping at all, and revert it in this step rather than the next.
+
+**Verify [USER]:** the log shows a sample series crossing the grid boundary, with a clear answer on each side.
+
+**Verify [CLAUDE]:** `git status` is clean of the probe before the step is checked.
+
+---
+
+### Step 2 — Expose the coarse graph's adjacency
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+**Goal:** The composite graph needs coarse *edges*. `TravelGraph` holds them in `g_adjacency` and exposes
+`FindPath`, `DistanceField`, `GetNode`, `FindNearestNode` and `EdgeCount` — every way of consuming the edges
+except reading them. Nothing in Phase 16 can start until that is addressable.
+
+**Files:** `include/TravelGraph.h`, `src/TravelGraph.cpp`, `src/TravelGraph.engine.test.cpp`.
+
+**Sub-tasks:**
+
+1. Add an accessor beside `GetNode`:
+
+   ```cpp
+   // Indices of the nodes sharing an edge with `index`, or an empty
+   // span when the index is out of range. Undirected: `b` appears in
+   // Neighbors(a) exactly when `a` appears in Neighbors(b).
+   std::span<const std::size_t> Neighbors(std::size_t index);
+   ```
+
+2. Tests: the neighbours of a known node in a fixture graph; symmetry across every edge; an out-of-range
+   index; an empty graph; and that the sum of all neighbour counts is exactly twice `EdgeCount()`.
+
+**Specifics:**
+
+- **A span, not a copy.** `FineRoads::Snapshot` copies because its graph is rebuilt under a lock as cells
+  stream; the coarse graph is built once at startup and never mutated, so handing out a view is safe and the
+  chain builder reads it once per node.
+- Purely additive. No existing behaviour changes, and no caller is touched in this step.
+
+**Verify [CLAUDE]:** `pwsh -File build.ps1 test` passes, with the symmetry case failing if the accessor
+returns the wrong row.
+
+---
+
+### Step 3 — The `ApproachChain` module
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+**Goal:** The composite weighted graph, the search over it, and the chain it returns — standalone, with no
+caller. This is the phase's substance; Steps 4 and 5 are consumers.
+
+**Files:** `include/ApproachChain.h`, `src/ApproachChain.cpp`, `src/ApproachChain.engine.test.cpp`,
+`include/Settings.h`, `src/Settings.cpp`, `statics/SKSE/Plugins/NarrativeEngine.ini`, `CMakeLists.txt`.
+
+**Sub-tasks:**
+
+1. Settings — five of the seven new keys: `iVisitChainBridgeSpacingUnits` (`512`) and the four difficulties
+   (`iVisitChainDifficultyCoarse` `1`, `...Fine` `2`, `...Connector` `3`, `...Direct` `4`). Document each in
+   the deployed INI, including that difficulty 1 is the floor and why.
+2. The API:
+
+   ```cpp
+   enum class PointClass : std::uint8_t { Coarse, Fine, Connector, Direct };
+
+   struct Point
+   {
+       RE::NiPoint3 position{};
+       PointClass cls = PointClass::Direct;
+       bool insideLoadedGrid = false;
+       // Set only when cls == Fine, so hop expansion can start from it.
+       std::size_t fineNode = FineRoads::kInvalidNode;
+   };
+
+   struct Chain
+   {
+       // Ordered visitor -> player. Empty only when the graph could not
+       // be built at all, which the direct line is there to prevent.
+       std::vector<Point> points;
+       bool valid = false;
+   };
+
+   Chain Build(RE::FormID worldSpace, const RE::NiPoint3& visitorOrigin, const RE::NiPoint3& playerPos);
+   ```
+
+3. Graph assembly, in the order the design's table gives: every coarse node and its edges at difficulty 1;
+   every loaded fine node and its edges at difficulty 2; the player and visitor nodes and their connectors at
+   3; the two direct lines out of the visitor at 4, one node every `iVisitChainBridgeSpacingUnits`.
+4. Fine-network selection: when the loaded grid holds several disconnected pieces, pick the one holding the
+   closest node to the player, and attach both bridges to that one — the coarse-to-fine bridge where it is
+   cheapest, the visitor line at whichever of its nodes is nearest the visitor. Other networks are left out of
+   the graph entirely; an unbridged network is an island the search can never enter.
+5. Edge cost `euclidean length x max(difficulty of its two endpoints)`, and A-star with euclidean distance to
+   the player as the heuristic.
+6. Elevation for synthetic points, per Step 1's finding.
+7. One debug-gated log line per build: worldspace, node and edge counts by class, which fine network was
+   selected and how many were rejected, the chain's length in points, its total cost, and the class histogram
+   of the result. This line is what Steps 6 and 7 read.
+8. Add `src/ApproachChain.cpp` to `NARRATIVEENGINE_MOCKED_SOURCES` and write the suite:
+   - **Correctness oracle:** A-star's cost and node sequence equal a Dijkstra's over the same fixture.
+   - **Connectivity:** both graphs empty still yields a valid chain, on the visitor-to-player line alone.
+   - **Road preference:** a fixture where the road is 1.4x the straight-line distance returns the road; the
+     worked ratio in the design (3:1 at 100,000 units) is asserted as a cost comparison, not a feel.
+   - **`max` not average:** a fixture with one costly node on an otherwise cheap approach, where averaging
+     would pick it and `max` does not.
+   - **Ordering:** the chain runs visitor to player, not the reverse.
+   - **Disconnected fine networks:** the player-adjacent one is used and both bridges attach to it.
+   - **Spacing:** direct-line nodes sit one spacing apart, and the innermost point outside the grid is within
+     one spacing of the boundary — the bound the whole 512 argument rests on.
+   - **`insideLoadedGrid`** is right on both sides of the boundary.
+   - **Degenerate inputs:** visitor and player at the same position; a zero worldspace; a spacing setting of 0
+     or negative, clamped rather than looping forever.
+   - **`valid == false`** constructed directly, asserting a caller reading an invalid chain degrades cleanly.
+9. Run `pwsh -File format.ps1`.
+
+**Specifics:**
+
+- **Pure query, no token.** Like `RoadRoute::Route`, graph assembly and search touch no engine state and take
+  no `MainThread::Token`. Elevation is the one exception: if Step 1 says `GetLandHeight` answers, that call
+  marshals, and it is the only part of this module that does.
+- **The heuristic has to stay admissible.** Euclidean distance underestimates only while no difficulty is
+  below 1. If a future tuning pass sets a difficulty under 1, A-star stops being optimal — assert the floor at
+  settings-load time rather than trusting the INI.
+- Difficulty and `PointClass` are different numbers and inversely related. Do not derive one from the other,
+  however much the enums tempt it.
+
+**Verify [CLAUDE]:** `pwsh -File build.ps1 build` and `pwsh -File build.ps1 test` both pass, and the oracle
+case fails if the heuristic is scaled by difficulty.
+
+---
+
+### Step 4 — The selection walk in `VisitArrivalPoint`
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+**Goal:** Replace the band and the two road tiers with one outward walk over the chain, add hop expansion, and
+retire the three primitives the chain makes unnecessary.
+
+**Files:** `include/VisitArrivalPoint.h`, `src/VisitArrivalPoint.cpp`,
+`src/VisitArrivalPoint.engine.test.cpp`, `src/NPCVisitBeat.cpp`, `include/Settings.h`, `src/Settings.cpp`,
+`statics/SKSE/Plugins/NarrativeEngine.ini`.
+
+**Sub-tasks:**
+
+1. Settings — `iVisitChainHopRadius` (`2`), documented in the deployed INI. Retire
+   `bVisitArrivalAllowCoarseBearing` or repurpose it as "may the chain place outside the loaded grid at all",
+   which is the same switch aimed at the new design; say which in the INI comment.
+2. `Tier` loses `FineRoad` and `CoarseBearing` and keeps `None`, `Doorstep`, `CityApproach`, `CityGate`.
+   `Result` gains the winning point's `ApproachChain::PointClass`, which is strictly more informative than the
+   two tiers it replaces.
+3. The walk: outward from the player, first point at least `iVisitMarkerMinDistanceUnits` away that is
+   obscured — behind cover, or beyond `kUnseenDistanceUnits` and out of view. Then the first point beyond the
+   player's maximum view distance. Then decline.
+4. Hop expansion: every fine node within `iVisitChainHopRadius` hops of a fine point on the chain, over
+   `FineRoads::Graph::adjacency`, ranked after on-chain fine points with hop count as the tiebreak.
+5. The rank table's five classes, each with exactly the gates the design gives it — in particular, synthetic
+   points *inside* the grid get the navmesh and cover gates, and are not waved through for being synthetic.
+6. Delete `SampleBearingArc`, `BearingHome` and the approach corridor, with their tests and settings.
+7. Update the arrival log line at `src/NPCVisitBeat.cpp:1091` to report the class instead of the retired tier.
+   This is the only non-test consumer of `Result::tier`.
+8. Tests: first-acceptable-outward preferred over a better-hidden point further out; the minimum-distance gate
+   rejecting; cover and unseen-distance each rejecting alone; hop expansion finding cover four metres off an
+   exposed road; `iVisitChainHopRadius` of 0 collapsing to on-chain only; each of the five ranks winning when
+   it is the best available; a synthetic in-grid point refused by the navmesh gate; an out-of-grid point
+   accepted on distance alone; the three surviving tiers short-circuiting before any chain is built; and the
+   decline branch constructed directly.
+9. Run `pwsh -File format.ps1`.
+
+**Specifics:**
+
+- **The city and interior tiers are not touched.** They short-circuit before any chain is built, and their
+  existing cases must still pass unchanged — that is the regression test for this step's blast radius.
+- **Count the cases before and after.** Removing three primitives removes their tests; the net case count
+  should rise. If it falls, something lost coverage rather than gaining it.
+- Distance for every gate is straight-line to the player. Chain order decides traversal order only.
+- Never return a point in an unloaded cell for the in-grid ranks. The sender is warped there and needs 3D.
+
+**Verify [CLAUDE]:** `pwsh -File build.ps1 build` and `pwsh -File build.ps1 test` pass; the retired symbols are
+gone from the tree (`grep -rn "SampleBearingArc\|BearingHome" src include` is empty).
+
+---
+
+### Step 5 — The stuck-recovery ladder
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+**Goal:** Give `Escort` the two-source ladder: a consumed-once hop to a fine neighbour inside the loaded grid,
+and the chain outward of the chosen point beyond it.
+
+**Files:** `include/StuckRecovery.h`, `src/StuckRecovery.cpp`, `src/StuckRecovery.engine.test.cpp`,
+`src/NPCVisitBeat.cpp`, `include/Settings.h`, `src/Settings.cpp`,
+`statics/SKSE/Plugins/NarrativeEngine.ini`.
+
+**Sub-tasks:**
+
+1. Settings — `iVisitChainUnstuckMinHopUnits` (`300`) and `iVisitChainUnstuckMaxRetreatUnits` (`150`),
+   documented in the deployed INI with the `h² / 2d` reasoning in one line.
+2. Add a ladder-shaped `Begin` beside the existing one:
+
+   ```cpp
+   struct Ladder
+   {
+       // Chain points outward of the chosen arrival, in chain order.
+       // Never re-sorted; the ordering is the point.
+       std::vector<RE::NiPoint3> chainOutward;
+       // Empty when no fine graph is loaded, which sends every
+       // escalation to chainOutward.
+       FineRoads::Graph fine;
+       float minHopUnits = 300.0f;
+       float maxRetreatUnits = 150.0f;
+   };
+
+   void Begin(Ladder ladder);
+   ```
+
+3. Keep `Begin(std::vector<RE::NiPoint3>)` exactly as it is. `AmbushBeat` uses it at
+   `src/AmbushBeat.cpp:904` and is not part of this phase.
+4. Escalation order inside `Update`: an eligible unconsumed fine neighbour when the actor is inside the fine
+   graph; otherwise the next chain point outward; otherwise the existing `closeInStepUnits` line probe.
+5. Eligibility, all three conditions: further than `minHopUnits` from where the actor stands, no more than
+   `maxRetreatUnits` further from the goal than the actor already is, and not already consumed. A node is
+   consumed when it is used, whether or not the hop worked.
+6. Per-visit consumption state, cleared by `Clear()` and by `Begin`, and not persisted — the escort already
+   lives only as long as the beat.
+7. `NPCVisitBeat` builds the `Ladder` at `src/NPCVisitBeat.cpp:1392` from the chain and the fine snapshot
+   instead of passing a bare fallback list.
+8. Tests: a neighbour beyond the minimum chosen; a nearer one skipped; one that retreats past the bound
+   refused; a lateral one at 1,000 units accepted (the 44-unit case the design computes); consumption blocking
+   reuse after a successful hop and after a failed one; both nodes either side of an obstacle consumed, then
+   the fall-through to chain order; an actor outside the fine graph going straight to chain order; an empty
+   `fine` graph; an empty `chainOutward`; and both exhausted falling through to the close-in probe.
+9. Run `pwsh -File format.ps1`.
+
+**Specifics:**
+
+- **The goal is the player, not the arrival point.** `Escort::Update` already takes `goal` and
+  `NPCVisitBeat` passes `player->GetPosition()`, which is what makes "further from the goal" the right
+  retreat measure.
+- **`Options` is shared with `AmbushBeat`.** Put the two new numbers in `Ladder`, not in `Options`, so the
+  ambush path cannot pick them up by accident.
+- The ladder is a visit concept. `StuckRecovery` stays generic — it is handed a ladder, it does not know a
+  chain exists.
+
+**Verify [CLAUDE]:** `pwsh -File build.ps1 build` and `pwsh -File build.ps1 test` pass; `AmbushBeat`'s own
+escort cases pass untouched.
+
+---
+
+### Step 6 — In-game validation
+
+- [ ] Complete
+
+**[USER]**
+
+**Goal:** Confirm against real terrain that the chain reads correctly, which no fixture can establish. Each
+scenario names what the log must show, so a run that disagrees is a finding rather than an impression.
+
+**Files:** none.
+
+**Sub-tasks:** run a visit in each of the following, with debug mode on, and keep the log.
+
+1. **Open country, visitor far away.** Expect: a chain whose middle is coarse, a winning point of class Fine
+   or a synthetic one inside the grid, and a visitor who walks in along a road rather than across country.
+2. **Visitor a few thousand units off-road.** Expect: the visitor-to-fine-network direct line chosen over a
+   detour to the coarse skeleton and back — visible as a Direct-class run handing off to Fine in the class
+   histogram.
+3. **No fine graph loaded.** Expect: the visitor-to-player line load-bearing, a point outside the grid, and a
+   visitor who covers the gap under background travel and then walks.
+4. **Nothing near the player is hidden.** Expect: a point just outside the loaded grid, within one spacing of
+   the boundary, rather than a declined visit.
+5. **A visitor who gets stuck inside the grid.** Expect: a hop to a fine neighbour that keeps their progress,
+   no node reused, and no ping-pong between two nodes.
+6. **The three untouched tiers.** A doorstep visit, a walled-city visit, and a city-gate visit, each still
+   behaving as it did before this phase.
+
+**Verify [USER]:** the visitor arrives from the direction of their home in every scenario, and no visit
+declines for want of a point.
+
+**Verify [CLAUDE]:** read the logs and confirm the class histogram matches the scenario in each — the design's
+claim that the chain "reads coarse in the middle and dense near the player" is a prediction, and this is where
+it is checked.
+
+---
+
+### Step 7 — Tune the ratios and the two unstuck numbers
+
+- [ ] Complete
+
+**[USER + CLAUDE]**
+
+**Goal:** Settle the five numbers that can only be settled against a real log: the four difficulties and the
+pair governing the unstuck hop.
+
+**Files:** `statics/SKSE/Plugins/NarrativeEngine.ini`, `src/Settings.cpp` (defaults only).
+
+**Sub-tasks:**
+
+1. From Step 6's logs, check whether the road preference is decisive and not overwhelming — a visitor taking a
+   wildly indirect road to avoid a short off-road stretch means the direct difficulty is too high, and one
+   cutting across country where a road existed means it is too low.
+2. Check the unstuck hop against the stuck cases: hops that fail to clear the obstacle mean
+   `iVisitChainUnstuckMinHopUnits` is too low, and hops that visibly teleport the visitor backwards or
+   sideways across a road mean it is too high or the retreat bound is too loose.
+3. Change defaults, not knobs. Both settings stay independently tunable.
+4. Record the final values and the log line that decided each in this doc, the way Phase 14 recorded
+   `iVisitArrivalCoverRadiusUnits`.
+5. Run `pwsh -File format.ps1`.
+
+**Verify [USER]:** a visit in each of Step 6's first three scenarios behaves the same way twice running.
 
 ---
 
 ## Done condition
 
-To be written.
+All seven steps checked, and:
+
+1. `pwsh -File build.ps1 build`, `pwsh -File build.ps1 test` and `pwsh -File format.ps1` are all clean.
+2. `grep -rn "SampleBearingArc\|BearingHome" src include` is empty, and `Tier` holds only `None`,
+   `Doorstep`, `CityApproach` and `CityGate`.
+3. Every visit log line names a `PointClass` for the winning point, and a declined visit names the reason.
+4. The A-star correctness oracle in `src/ApproachChain.engine.test.cpp` passes against Dijkstra on every
+   fixture graph in the suite.
+5. `docs/engine-findings/land-height-outside-the-loaded-grid.md` exists, and the bridge section of this doc states
+   one elevation source rather than a branch.
+6. The seven new settings are in the deployed INI with their defaults and a line on what each decides.
+7. No probe, harness or captured log from any step is in the repository.
+
+**Explicitly not required:** progressive advancement along the chain, any change to background travel, and any
+improvement to the interior or walled-city tiers. All three are deferred by the Scope section and a Phase 16
+that touches them has overrun.
