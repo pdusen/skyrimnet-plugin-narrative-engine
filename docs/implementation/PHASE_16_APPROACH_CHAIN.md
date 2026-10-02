@@ -245,17 +245,21 @@ a spot behind a rock four metres off the road, when the road itself is in plain 
 visit into a placed one without moving the visitor anywhere the player would find strange.
 
 **The one constraint it must inherit.** Hops are undirected, so an expanded node can sit back toward the
-player or across them. The minimum distance rules that out by itself, and the arithmetic is why: two hops
-along a road ribbon is a few hundred units, so every node the expansion can reach on the far side of the
-player is well inside a 3,000-unit floor and refused on distance before direction is ever a question.
-Off-path candidates therefore pass exactly the gates chain nodes pass; hop expansion widens the pool, it does
-not relax it.
+player or across them, and the minimum distance is what rules those out: a node on the far side of the player
+sits at most one two-hop reach away from them, so a floor above that reach refuses every one of them on
+distance before direction is ever a question. Off-path candidates therefore pass exactly the gates chain nodes
+pass; hop expansion widens the pool, it does not relax it.
 
-That depends on the floor actually being the shipped 3,000, and Step 4 spent a detour learning it. With the
-fixtures pinned at 800 the search placed a visitor 1,000 units behind the player; the floor was the whole
-answer and the fixtures were testing a configuration we do not ship. Both are corrected.
-`iVisitMarkerMinDistanceUnits` is therefore load bearing for direction as well as for pacing, and lowering it
-re-opens that failure.
+How far two hops reach is a measurement, not an estimate, and an earlier draft of this section guessed it
+wrong. Over every exterior cell in Skyrim and all three DLC the median two-hop reach is 226 units and the
+**maximum is 1,784** — see
+[`fine-road-hop-spans.md`](../engine-findings/fine-road-hop-spans.md). So the shipped 3,000 floor holds with
+1.7x to spare, 1,800 would be the least that clears vanilla at all, and 1,600 does not: four measured spans
+exceed it.
+
+`iVisitMarkerMinDistanceUnits` is therefore load bearing for direction as well as for pacing. The dependency
+is on vanilla's tail, though, which says nothing about mod-added roads — bounding the expansion in units
+rather than hops would make the guarantee independent of navmesh geometry and free the floor to go lower.
 
 **The approach corridor is not carried over.** It existed to manufacture a direction from a bearing and a
 branch choice, and nothing now needs one: the chain is a route *from* the visitor, so its points are on the

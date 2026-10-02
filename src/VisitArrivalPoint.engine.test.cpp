@@ -58,11 +58,12 @@ namespace
     // The band is the shipped default. Cover radius is one actor's width, and
     // the bearing fallback is on unless a case says otherwise.
     // The shipped floor, not a convenient one. 3,000 is what makes a
-    // directional test unnecessary: two hops along a road ribbon is a few
-    // hundred units, so every node hop expansion can reach across the player
-    // is well inside the floor and rejected on distance before direction is
-    // ever a question. A fixture at 800 exercises a configuration we do not
-    // ship, and is the only place an arrival could land behind the player.
+    // directional test unnecessary: two hops reach a measured 1,784 units at
+    // worst across all of vanilla, so every node hop expansion can get to on
+    // the far side of the player is inside the floor and rejected on distance
+    // before direction is ever a question. A fixture at 800 exercises a
+    // configuration we do not ship, and is the only place an arrival could
+    // land behind the player.
     constexpr const char* kSettings = "[Beats]\niVisitMarkerMinDistanceUnits=3000\n"
                                       "iVisitMarkerMaxDistanceUnits=5000\n"
                                       "iVisitArrivalCoverRadiusUnits=64\n"

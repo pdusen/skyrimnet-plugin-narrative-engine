@@ -288,14 +288,15 @@ namespace NarrativeEngine::VisitArrivalPoint
         // moving the visitor anywhere the player would find strange.
         //
         // Hops are undirected, so an expanded node can sit back toward the
-        // player, and two hops along a road ribbon is a few hundred units.
-        // The minimum-distance gate in the walk is what rules those out:
-        // at a floor of 3,000 units, anything hop expansion can reach
-        // across the player is well inside it and rejected on distance
-        // before direction is ever a question. That is why neither the
+        // player. The minimum-distance gate in the walk is what rules
+        // those out: a node on the far side of the player is at most one
+        // two-hop reach away from them, and that reach is a measured
+        // 1,784 units at worst across all of vanilla, median 226 (see
+        // docs/engine-findings/fine-road-hop-spans.md). At a 3,000-unit
+        // floor every one of them is inside it and rejected on distance
+        // before direction is ever a question, which is why neither the
         // Phase 14 approach corridor nor any other directional test is
-        // carried over — with a correct floor they would never change an
-        // answer.
+        // carried over — they would never change an answer.
         std::vector<Candidate> GatherCandidates(const ApproachChain::Chain& chain,
                                                 const FineRoads::Graph& fine,
                                                 int hopRadius,

@@ -431,12 +431,13 @@ namespace NarrativeEngine::Settings
         //
         // It is doing more work than it looks like. A visitor has to
         // arrive far enough out to read as having walked there, AND far
-        // enough out that hop expansion cannot reach across the player:
-        // two hops along a road ribbon is a few hundred units, so at
-        // 3,000 anything on the far side of them is well inside the floor
-        // and rejected on distance before direction is ever a question.
-        // At the old 800 it was not, and the search duly arrived 1,000
-        // units behind the player.
+        // enough out that hop expansion cannot reach across the player.
+        // Hops are undirected, so a node on the far side of the player is
+        // at most one two-hop reach away from them — and that reach is a
+        // measured 1,784 units at worst across all of vanilla, median 226
+        // (docs/engine-findings/fine-road-hop-spans.md). 3,000 clears it
+        // with 1.7x to spare; the old 800 did not, and the search duly
+        // arrived 1,000 units behind the player.
         int visitMarkerMinDistanceUnits = 3000; // closest the sender may arrive
         int visitMarkerMaxDistanceUnits = 5000; // city approach only; see above
 
