@@ -71,9 +71,14 @@ units out, the band and the walk agree; where it is 6,000, the band has to be ov
 
 ### Deferred (explicitly out)
 
-- **The interior and walled-city cases.** `Tier::Doorstep`, `Tier::CityApproach` and `Tier::CityGate` keep
-  working exactly as they do now and short-circuit before any chain is built. They are not improved here and
-  not regressed.
+- **The walled-city cases.** `Tier::CityApproach` and `Tier::CityGate` keep working exactly as they do now
+  and short-circuit before any chain is built. They are not improved here and not regressed. Step 6 found
+  both of them badly broken — the approach tier cannot validate ground inside the walls at all, and the gate
+  tier has no distance floor — and that work is [`PHASE_17_CITY_ARRIVALS.md`](PHASE_17_CITY_ARRIVALS.md)
+  rather than scope creep here.
+- **`Tier::Doorstep`**, with one exception. It short-circuits as before, but Step 6 found it reading the
+  wrong load door out of an interior that has two, so Step 7 fixes which door `RoadRoute::ResolveOrigin`
+  picks. That is the origin resolution every tier shares, not the tier.
 - **Anything that moves the visitor along the chain.** The chain makes progressive advancement *possible*;
   this phase does not do it. One warp, as today.
 - **Changing background travel.** Out of reach — see the note under the bridge.
@@ -150,9 +155,33 @@ far more attractive than intended, which is the one behaviour this cost function
 - A road route is typically 1.2 to 1.5 times straight-line, so about 130,000 units at difficulty 1.
 
 The road wins by roughly three to one, which is the intended margin: roads are preferred decisively, and the
-direct line is reached for only when the road network genuinely cannot get there. The fine and bridge
-segments are short enough that their higher difficulties barely register in a cross-map total — they matter
-near the player, which is exactly where the design wants fidelity rather than speed.
+direct line is reached for only when the road network genuinely cannot get there.
+
+**That worked example is the wrong comparison, and Step 6 proved it.** It weighs the direct line against the
+road, which the ratios do settle. What actually decides the shape of every chain is a comparison it never
+makes: the **connector** against the road. At the player's end there are two ways onto the skeleton, and
+their costs are
+
+```text
+straight connector to the nearest coarse node :  3 x L_straight     (max(connector 3, coarse 1) = 3)
+onto the fine road and out over the bridge    :  2 x L_road + 3 x B  (plus a short hop on, at 3)
+```
+
+so, setting the bridge aside, the fine road is chosen only while `2 x L_road < 3 x L_straight` — that is,
+only while the real road is **less than 1.5 times** its own straight line. Over the six to twenty thousand
+units that separate a player from their nearest coarse node, a Skyrim road is routinely worse than that, and
+the bridge's own `x 3` is charged on top. A straight line across open country priced at 1.5 times a fine road
+is a straight line that wins, and in Step 6's session it won six times out of six.
+
+The arithmetic that makes raising the connector difficulty the fix rather than a blunt instrument: the leg
+being punished (player to coarse, measured at 6,381 to 20,960 units) and the leg being paid (the bridge,
+a few hundred units, because fine and coarse describe the same roads) are both connectors. Multiplying both
+by a larger number costs the shortcut far more than the entry fee. Step 8 settles the number; the
+requirement is that a road up to about 2.5 times its straight line still beats cutting across country, which
+puts the connector above 5.
+
+The fine and bridge segments are short enough that their higher difficulties barely register in a cross-map
+total — they matter near the player, which is exactly where the design wants fidelity rather than speed.
 
 ### The search
 
@@ -168,8 +197,14 @@ line across 100,000 units at 512-unit spacing adds about 196. Under a thousand n
 ### The chain
 
 The chain is the search's result: an ordered list of points from the visitor to the player, each carrying the
-class of graph it came from. Because difficulty made roads cheap, it reads coarse in the middle and dense
-near the player without that having been imposed on it.
+class of graph it came from. The intent is that it reads coarse in the middle and dense near the player
+without that having been imposed on it.
+
+**Conditional on the ratios, and false at the ones first shipped.** Step 6 measured `fine=0` in all six
+chains it produced: the near end was not dense, it was a single straight connector to the first coarse node.
+"Because difficulty made roads cheap" is only true of the middle of the chain, where coarse at 1 competes
+with a direct line at 4. Near the player it competes with a connector at 3, and loses. See the cost function
+above.
 
 **Origin** is `RoadRoute::ResolveOrigin`, unchanged: the visitor's own position outdoors, the far side of
 their load door indoors, or their home location's map marker when neither is available.
@@ -403,8 +438,12 @@ New:
 | `iVisitChainUnstuckMaxRetreatUnits` | `150` | How much further from the player that hop may leave them |
 | `iVisitChainDifficultyCoarse` | `1` | Cost multiplier for coarse road nodes |
 | `iVisitChainDifficultyFine` | `2` | Cost multiplier for loaded fine road nodes |
-| `iVisitChainDifficultyConnector` | `3` | Bridge points, player and visitor nodes, their connectors |
-| `iVisitChainDifficultyDirect` | `4` | Both direct lines out of the visitor |
+| `iVisitChainDifficultyConnector` | `8` | Bridge points, player and visitor nodes, their connectors |
+| `iVisitChainDifficultyDirect` | `12` | Both direct lines out of the visitor |
+
+The connector and direct defaults were `3` and `4` through Step 6, which measured what that costs: a straight
+connector at 3 undercuts a fine road at 2 on any road more than 1.5 times its own straight line, so the fine
+network never appeared on a single route. Step 8 raises them and Step 10 settles them.
 
 The four difficulties are settings rather than constants for the same reason `iVisitArrivalCoverRadiusUnits`
 became one in Phase 14: the ratios only settle against a real log, and they are the knob that decides whether
@@ -787,7 +826,7 @@ escort cases pass untouched.
 
 ### Step 6 — In-game validation
 
-- [ ] Complete
+- [X] Complete
 
 **[USER]**
 
@@ -819,39 +858,249 @@ declines for want of a point.
 claim that the chain "reads coarse in the middle and dense near the player" is a prediction, and this is where
 it is checked.
 
+#### What it found
+
+Run 2026-10-02, nine dispatches across Nightgate Inn, the Redoran's Retreat flats, Swindler's Den and
+Whiterun. Every visit completed and every visitor arrived from the direction of their home, so both of the
+user-facing criteria passed. The prediction did not.
+
+**The fine network was never on a route.** All six chain-tier dispatches:
+
+```text
+chain=37 points [coarse=35 fine=0 connector=2 direct=0] inGrid=4
+chain=74 points [coarse=72 fine=0 connector=2 direct=0] inGrid=4
+chain=74 points [coarse=72 fine=0 connector=2 direct=0] inGrid=4
+chain=74 points [coarse=72 fine=0 connector=2 direct=0] inGrid=4
+chain=73 points [coarse=71 fine=0 connector=2 direct=0] inGrid=1
+chain=98 points [coarse=96 fine=0 connector=2 direct=0] inGrid=1
+```
+
+`fine=0` every time, against 81 / 144 / 225 / 608 / 831 fine nodes built and selected. The two connectors
+are the player and the visitor themselves. Cause is the cost function, worked out in that section above: a
+straight connector at difficulty 3 undercuts a winding road at 2. Not a search defect — `EdgeCost` and the
+A-star agree with the Dijkstra oracle, and the route returned is genuinely the cheapest one the published
+ratios allow.
+
+**Everything downstream of that went unused.** All 42 kept candidates were `class=coarse`, `hops=0`, and
+graded:
+
+| Grade | Candidates |
+| --- | --- |
+| `outside-grid` (Unverifiable) | 40 |
+| `unseen` | 2 |
+| `cover` | 0 |
+
+So Step 4's cover preference and the 5,000-unit open-ground rule decided nothing, and Step 5's ladder
+reported "1,435 road node(s) to hop between" without ever having a reason to hop. `bVisitArrivalAllowCoarseBearing`
+in its repurposed sense — may the chain place outside the grid — is the only thing that kept five of the six
+from declining.
+
+**The arrival landed wherever the first coarse node was**, because `playerCoarseAttach` is a plain
+`graph.Link` with no points along it: 11,402u, 6,381u, 9,609u, 6,381u, 14,167u and 20,960u, four of the six
+outside the loaded grid. The 20,960 is Swindler's Den, where the cell scan and then
+`FineRoads: 25 cell(s), 0 node(s)` both confirmed no fine graph exists — so there the long connector is the
+only leg available, and no difficulty spread changes that it has no candidates on it. Steps 8 and 9 take
+these two.
+
+**Background travel covers those distances far faster than a walk**, which is why the arrivals read correctly
+in play: 20,960u at placement, 9,169u 1.3 seconds later, 2,030u at 21 seconds, greeting at 980u.
+
+**The doorstep tier placed a visitor at the wrong door.** `WhiterunBanneredMare` has two load doors, and
+`RoadRoute::ResolveOrigin` took the one flagged `MinimalUse` — the back door, 767 units from the entrance the
+player used. Step 7 takes it.
+
+**The city-approach tier cannot fire, and the city-gate tier has no floor.** Inside Whiterun, 38 of 45 and
+then 45 of 45 arc samples were rejected off-navmesh and `survived=0` both times, and the escort's close-in
+probe found nowhere standable three steps running on ordinary city street. Separately, a player standing
+1,168 units inside the gate got a visitor placed at the gate and greeted them 789 units away 1.3 seconds
+after arming. Both are deferred to Phase 17 and written up in
+[`standable-ground-inside-walled-cities.md`](../engine-findings/standable-ground-inside-walled-cities.md).
+
+Scenarios 2 and 5 were not run; the off-road staging and the forced stall are still unmeasured, and Step 10
+carries them.
+
 ---
 
-### Step 7 — Tune the ratios and the two unstuck numbers
+### Step 7 — Pick the door a visitor would actually use
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+**Goal:** Stop the doorstep tier putting a visitor at a door the player never uses.
+
+**Files:** `src/RoadRoute.cpp`, `src/RoadRoute.engine.test.cpp`, `testsupport/EngineMock.h`,
+`testsupport/EngineMock.cpp`.
+
+**Sub-tasks:**
+
+1. In `ResolveOrigin`'s interior walk, collect every load door with an exterior landing instead of stopping
+   at the first one.
+2. Drop any whose base `RE::TESObjectDOOR` carries `Flag::kMinimalUse`, unless that would leave nothing — in
+   which case take them, because a back door beats a map marker.
+3. Among what remains, take the one nearest the actor inside the cell. That is the door they would walk to,
+   and in a one-door cell it is the only door, so the common case is unchanged.
+4. Mock support: a door base needs a flag field the test can set, and `ForEachReference` needs to be able to
+   return two load doors in a chosen order.
+5. Tests: one door unchanged; a normal door and a `MinimalUse` door in each order, both resolving to the
+   normal one; two normal doors resolving to the nearer; two `MinimalUse` doors resolving to the nearer
+   rather than failing; an interior-to-interior door still skipped; and the map-marker fallback still reached
+   when no door has an exterior landing.
+6. Run `pwsh -File format.ps1`.
+
+**Specifics:**
+
+- **`MinimalUse` is the engine's own answer, not a heuristic.** Bethesda sets it to mean "NPCs should not
+  route through this door". `WRDragonDoor01MinUse` (`0x08648C`) carries it and `WRDragonDoor01` (`0x0252C7`)
+  does not, which is exactly the pair in `WhiterunBanneredMare`.
+- **The blast radius, measured over the Spriggit export.** 544 vanilla interiors have a load door; **279**
+  have more than one; **60** of those mix a normal door with a `MinimalUse` one, so reference order alone
+  decides the answer today. The remaining 219 hold two normal doors, where "first wins" is arbitrary rather
+  than wrong — nearest is a better answer there too.
+- The comment being deleted is as wrong as the code: "cells with several exits are rare, and any of them is a
+  defensible answer" is false twice over, and should not survive as a justification.
+
+**Verify [CLAUDE]:** `build.ps1 test` clean, and the mutation check is the ordering one — make
+`ForEachReference` hand back the `MinimalUse` door first and confirm the resolution does not change.
+
+---
+
+### Step 8 — Price cross-country at what it costs
+
+- [ ] Complete
+
+**[CLAUDE + USER]**
+
+**Goal:** Make the fine network reachable by preference rather than by accident, by widening the gap between
+the road difficulties and the connector difficulties until a straight line across open country stops
+undercutting a road.
+
+**Files:** `statics/SKSE/Plugins/NarrativeEngine.ini`, `src/Settings.cpp` (defaults only),
+`src/ApproachChain.engine.test.cpp`.
+
+**Sub-tasks:**
+
+1. Raise `iVisitChainDifficultyConnector` and `iVisitChainDifficultyDirect`, leaving coarse at 1 and fine at
+   2. Starting point `8` and `12`: the requirement is that a road up to about 2.5 times its own straight line
+   still beats cutting across country, which from the break-even in the cost function needs the connector
+   above 5. The direct line keeps its margin over the connector, so cutting to the road near the player stays
+   cheaper than cutting the whole way.
+2. Re-work the cross-map comparison in the cost function section at the new numbers. A 100,000-unit direct
+   line at 12 is 1,200,000 against a 130,000-unit road at 1: the margin grows, which is the intended
+   direction.
+3. Add an `ApproachChain` test that pins the preference rather than the numbers: a fine ribbon between the
+   player and a coarse node, laid out so the road is twice its straight line, must still produce a chain with
+   `fine > 0`. At the ratios shipped before this step that test fails, which is the regression it exists to
+   prevent.
+4. Keep both as settings. Change defaults, not knobs.
+5. Run `pwsh -File format.ps1`.
+
+**Specifics:**
+
+- **Why raising the connector helps rather than cutting both ways.** Entering the fine network and leaving it
+  over the bridge are both connector-priced, so a larger multiplier raises the entry fee too. It still wins,
+  because the legs are nothing like the same length: the connector being punished measured 6,381 to 20,960
+  units in Step 6, and the bridge is a few hundred, since fine and coarse describe the same roads and the
+  bridge is laid between the closest pair.
+- **The A-star heuristic stays admissible.** It is euclidean distance, and admissibility needs only that no
+  edge is cheaper than its own length — coarse at 1 is the floor and does not move. Raising the expensive end
+  of the scale is free in that respect; lowering coarse below 1 would not be, which is why the floor is
+  clamped.
+- **This is the step that makes Steps 4 and 5 live.** Until a fine node is on the chain there is nothing
+  in-grid to cover-test and no `fineNode` for the ladder to hop from. Both were written, tested against
+  fixtures, and have never run against real terrain.
+
+**Verify [CLAUDE]:** the oracle still agrees with Dijkstra on every fixture graph, and the new preference test
+fails when the connector difficulty is put back to 3.
+
+**Verify [USER]:** Step 10.
+
+---
+
+### Step 9 — Lay the endpoint connectors instead of linking them
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+**Goal:** Put candidates along the player's and the visitor's own connectors, so the nearest acceptable point
+is not whatever the first coarse node happens to be.
+
+**Files:** `src/ApproachChain.cpp`, `src/ApproachChain.engine.test.cpp`.
+
+**Sub-tasks:**
+
+1. Replace the `graph.Link` calls that attach the player and the visitor to the coarse skeleton and the fine
+   network with `LayLine` at `visitChainBridgeSpacingUnits` and connector difficulty — the same treatment the
+   bridge and the two direct lines already get.
+2. Leave the cost unchanged in kind: `LayLine` over a straight segment totals the same length at the same
+   difficulty, so this adds candidates without re-pricing anything. Say so in a comment, because a reader
+   will otherwise assume subdividing changed the route.
+3. Tests: a player 20,000 units from the only coarse node produces candidates between the two rather than one
+   edge; the laid segment steps one `visitChainBridgeSpacingUnits` in 2D; and the total chain cost is
+   unchanged from the linked version to within float tolerance.
+4. Run `pwsh -File format.ps1`.
+
+**Specifics:**
+
+- **This is the only fix for the no-fine-network case.** At Swindler's Den there is no fine graph anywhere in
+  the 5x5, so the chain's near end is a long connector or nothing, whatever the difficulties say. Step 6 put
+  the arrival 20,960 units out there, and subdividing is what makes a 2,000-unit arrival available at all.
+- Points laid outside the loaded grid keep the synthetic lift and stay unvalidated, exactly as the bridge's
+  do — that rule is about where a point is, not which segment laid it.
+
+**Verify [CLAUDE]:** `build.ps1 test` clean, and the cost-unchanged assertion is what distinguishes this step
+from a re-pricing.
+
+---
+
+### Step 10 — Re-run Step 6's sites and settle the numbers
 
 - [ ] Complete
 
 **[USER + CLAUDE]**
 
-**Goal:** Settle the five numbers that can only be settled against a real log: the four difficulties and the
-pair governing the unstuck hop.
+**Goal:** Confirm Steps 7 to 9 changed the chain's shape rather than only its code, and settle the five
+numbers that can only be settled against a real log.
 
-**Files:** `statics/SKSE/Plugins/NarrativeEngine.ini`, `src/Settings.cpp` (defaults only).
+**Files:** `statics/SKSE/Plugins/NarrativeEngine.ini`, `src/Settings.cpp` (defaults only), this doc.
 
-**Sub-tasks:**
+**Sub-tasks [USER]:** re-run the sites from Step 6 — `cow Tamriel 17 11` (Nightgate Inn), `cow Tamriel -5 1`
+(the Redoran's Retreat flats), `cow Tamriel -12 0` (Swindler's Den, no fine graph in the 5x5), and inside the
+Bannered Mare — plus the two scenarios that were skipped:
 
-1. From Step 6's logs, check whether the road preference is decisive and not overwhelming — a visitor taking a
-   wildly indirect road to avoid a short off-road stretch means the direct difficulty is too high, and one
-   cutting across country where a road existed means it is too low.
-2. Check the unstuck hop against the stuck cases: hops that fail to clear the obstacle mean
-   `iVisitChainUnstuckMinHopUnits` is too low, and hops that visibly teleport the visitor backwards or
-   sideways across a road mean it is too high or the retreat bound is too loose.
-3. Change defaults, not knobs. Both settings stay independently tunable.
-4. Record the final values and the log line that decided each in this doc, the way Phase 14 recorded
+1. **Visitor off-road.** `cow Tamriel -7 1`, `prid` a candidate and `moveto player`, return to
+   `cow Tamriel -5 1`, dispatch. This is the Direct-to-Fine handoff, and nothing has measured it.
+2. **A forced stall.** After arming, `prid` the sender from the log line and `setav speedmult 0`. This is the
+   ladder, and nothing has measured that either.
+
+**Sub-tasks [CLAUDE]:**
+
+1. `fine > 0` on at least the two road sites, with a winning point inside the loaded grid. That pair is the
+   whole test of Step 8 — a histogram that still reads `fine=0` means the ratio is still wrong and no tuning
+   elsewhere matters.
+2. Check the road preference is decisive and not overwhelming: a visitor taking a wildly indirect road to
+   avoid a short off-road stretch means the direct difficulty is too high, and one cutting across country
+   where a road existed means it is too low.
+3. Check the unstuck hop against the stall. Hops that fail to clear the obstacle mean
+   `iVisitChainUnstuckMinHopUnits` is too low; hops that visibly teleport the visitor backwards or sideways
+   across a road mean it is too high or the retreat bound is too loose. Expect exactly one fine hop per visit,
+   then chain fallbacks, then close-ins.
+4. Confirm a cover or unseen grade is now reachable. Step 6 graded 40 of 42 candidates `outside-grid` and
+   none on cover; a run that still grades everything out-of-grid means Step 9 did not land.
+5. Change defaults, not knobs. All five stay independently tunable.
+6. Record the final values and the log line that decided each in this doc, the way Phase 14 recorded
    `iVisitArrivalCoverRadiusUnits`.
-5. Run `pwsh -File format.ps1`.
+7. Run `pwsh -File format.ps1`.
 
-**Verify [USER]:** a visit in each of Step 6's first three scenarios behaves the same way twice running.
+**Verify [USER]:** a visit at each of the three outdoor sites behaves the same way twice running, and a
+visitor to an indoor player waits at the door the player walked in by.
 
 ---
 
 ## Done condition
 
-All seven steps checked, and:
+All ten steps checked, and:
 
 1. `pwsh -File build.ps1 build`, `pwsh -File build.ps1 test` and `pwsh -File format.ps1` are all clean.
 2. `grep -rn "BearingHome\|CorridorTarget" src include` is empty, and `Tier` holds only `None`,
@@ -863,7 +1112,15 @@ All seven steps checked, and:
    one elevation source rather than a branch.
 6. The seven new settings are in the deployed INI with their defaults and a line on what each decides.
 7. No probe, harness or captured log from any step is in the repository.
+8. A chain built on real terrain beside a road reads `fine > 0`, and the winning point is inside the loaded
+   grid. Step 6 found neither, and the rest of the phase is scaffolding until both hold.
+9. A visitor to an indoor player waits at the door the player walked in by, in a cell with more than one.
 
 **Explicitly not required:** progressive advancement along the chain, any change to background travel, and any
-improvement to the interior or walled-city tiers. All three are deferred by the Scope section and a Phase 16
-that touches them has overrun.
+improvement to the walled-city tiers. All three are deferred by the Scope section and a Phase 16 that touches
+them has overrun. The walled-city work Step 6 turned up is
+[`PHASE_17_CITY_ARRIVALS.md`](PHASE_17_CITY_ARRIVALS.md).
+
+The doorstep tier is the one exception to that deferral, added by Step 7: Step 6 found it placing a visitor at
+the wrong door of a two-door interior, which is a defect in the origin resolution this phase depends on rather
+than an improvement to a tier it left alone.
