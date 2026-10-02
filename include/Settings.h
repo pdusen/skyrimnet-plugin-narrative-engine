@@ -435,10 +435,15 @@ namespace NarrativeEngine::Settings
         // Hops are undirected, so a node on the far side of the player is
         // at most one two-hop reach away from them — and that reach is a
         // measured 1,784 units at worst across all of vanilla, median 226
-        // (docs/engine-findings/fine-road-hop-spans.md). 3,000 clears it
-        // with 1.7x to spare; the old 800 did not, and the search duly
-        // arrived 1,000 units behind the player.
-        int visitMarkerMinDistanceUnits = 3000; // closest the sender may arrive
+        // (docs/engine-findings/fine-road-hop-spans.md). 2,000 clears
+        // that maximum by 216 units; the old 800 did not clear it at all,
+        // and the search duly arrived 1,000 units behind the player.
+        //
+        // The margin is over VANILLA's tail. A mod-added road with
+        // coarser navmesh could in principle reach further, and the
+        // durable fix for that is to bound the expansion in units rather
+        // than hops — which would also free this number to go lower.
+        int visitMarkerMinDistanceUnits = 2000; // closest the sender may arrive
         int visitMarkerMaxDistanceUnits = 5000; // city approach only; see above
 
         // Silhouette half-width the arrival search's cover gate tests

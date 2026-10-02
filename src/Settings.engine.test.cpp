@@ -168,10 +168,10 @@ TEST_CASE("Settings holds the measured visit-arrival defaults", "[Settings][engi
         // doing two jobs: a visitor has to arrive far enough out to read as
         // having walked there, and far enough out that hop expansion cannot
         // reach a node across the player. Two hops along a road ribbon is a
-        // few hundred units, so 3,000 settles the second by itself and no
-        // directional test is needed. The ceiling is the city approach's
-        // alone now.
-        REQUIRE(Settings::Get().visitMarkerMinDistanceUnits == 3000);
+        // measured 1,784 units at worst across all of vanilla, so 2,000
+        // settles the second by itself and no directional test is needed. The
+        // ceiling is the city approach's alone now.
+        REQUIRE(Settings::Get().visitMarkerMinDistanceUnits == 2000);
         REQUIRE(Settings::Get().visitMarkerMaxDistanceUnits == 5000);
     }
 

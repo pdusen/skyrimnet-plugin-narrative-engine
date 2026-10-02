@@ -57,14 +57,14 @@ namespace
 
     // The band is the shipped default. Cover radius is one actor's width, and
     // the bearing fallback is on unless a case says otherwise.
-    // The shipped floor, not a convenient one. 3,000 is what makes a
+    // The shipped floor, not a convenient one. 2,000 is what makes a
     // directional test unnecessary: two hops reach a measured 1,784 units at
     // worst across all of vanilla, so every node hop expansion can get to on
     // the far side of the player is inside the floor and rejected on distance
     // before direction is ever a question. A fixture at 800 exercises a
     // configuration we do not ship, and is the only place an arrival could
     // land behind the player.
-    constexpr const char* kSettings = "[Beats]\niVisitMarkerMinDistanceUnits=3000\n"
+    constexpr const char* kSettings = "[Beats]\niVisitMarkerMinDistanceUnits=2000\n"
                                       "iVisitMarkerMaxDistanceUnits=5000\n"
                                       "iVisitArrivalCoverRadiusUnits=64\n"
                                       "bVisitArrivalAllowCoarseBearing=true\n"
@@ -90,7 +90,7 @@ namespace
     // 500 units out to 7000 either side. Deliberately symmetric: which half of
     // it the search walks is decided only by where the visitor lives.
     //
-    // Long enough that the shipped 3,000-unit floor still leaves several nodes
+    // Long enough that the shipped 2,000-unit floor still leaves several nodes
     // beyond it to rank. At seven nodes a side the floor landed on the
     // second-to-last one and there was nothing left to choose between.
     constexpr float kNodeSpacing = 500.0f;
@@ -243,11 +243,11 @@ TEST_CASE("VisitArrivalPoint brings the visitor in from the side of the road the
         {
             REQUIRE(result.Ok());
             // Nodes sit every 500 units, so the first at or past the shipped
-            // 3,000-unit floor is the one at 3000 exactly. Everything nearer
+            // 2,000-unit floor is the one at 2000 exactly. Everything nearer
             // is refused on distance -- including anything hop expansion
             // could reach on the far side of the player, which is why no
             // directional test is needed here.
-            REQUIRE(std::fabs(result.point.x - 3000.0f) < 1.0f);
+            REQUIRE(std::fabs(result.point.x - 2000.0f) < 1.0f);
         }
 
         SECTION("should check for cover over a whole visitor, not just their feet")
@@ -303,7 +303,7 @@ TEST_CASE("VisitArrivalPoint brings the visitor in from the side of the road the
             REQUIRE(result.Ok());
             // Same road, same gates, opposite end. Anything asymmetric here is
             // a bias in the walk rather than a fact about the world.
-            REQUIRE(std::fabs(result.point.x + 3000.0f) < 1.0f);
+            REQUIRE(std::fabs(result.point.x + 2000.0f) < 1.0f);
         }
     }
 }
@@ -517,7 +517,7 @@ TEST_CASE("VisitArrivalPoint reaches past the band rather than declining", "[Vis
             // not a preference: a visitor who could have arrived at the floor
             // should not be put at 7000 because the search liked it better.
             REQUIRE(result.Ok());
-            REQUIRE(std::fabs(Dist2D(result.point, At(0.0f, 0.0f)) - 3000.0f) < 1.0f);
+            REQUIRE(std::fabs(Dist2D(result.point, At(0.0f, 0.0f)) - 2000.0f) < 1.0f);
         }
     }
 }
@@ -556,8 +556,23 @@ TEST_CASE("VisitArrivalPoint will use open ground the player is not facing", "[V
 
         SECTION("should keep them far enough back to be unnoticeable")
         {
+            // Open ground is a concession to where the player happens to be
+            // looking, so it is held to a much longer distance than the
+            // arrival floor: far enough out that a figure appearing is small
+            // and ambiguous even if they turn a moment later. The first road
+            // node at or past that distance is the one at 5000.
             REQUIRE(result.Ok());
-            REQUIRE(Dist2D(result.point, At(0.0f, 0.0f)) >= 3000.0f);
+            REQUIRE(std::fabs(Dist2D(result.point, At(0.0f, 0.0f)) - 5000.0f) < 1.0f);
+        }
+
+        SECTION("should refuse open ground nearer than that")
+        {
+            // Between the 2,000-unit floor and the open-ground distance there
+            // are five usable road nodes, and every one of them is passed
+            // over. Accepting the nearest would be treating "the player is
+            // not looking" as equivalent to cover.
+            REQUIRE(result.Ok());
+            REQUIRE(Dist2D(result.point, At(0.0f, 0.0f)) > 2000.0f);
         }
     }
 
@@ -573,6 +588,76 @@ TEST_CASE("VisitArrivalPoint will use open ground the player is not facing", "[V
             // The concession is to the player's attention, not to the
             // difficulty of finding cover. Facing the spot puts it back.
             REQUIRE_FALSE(result.Ok());
+        }
+    }
+}
+
+TEST_CASE("VisitArrivalPoint prefers cover to open ground", "[VisitArrivalPoint][engine]")
+{
+    // Open ground the player is not facing is a fallback, not an equal. It
+    // depends on where somebody happens to be looking, and a player who turns
+    // is a player who watched the arrival; real geometry does not care which
+    // way they face.
+    //
+    // So the whole of the covered pool is considered before any of the open
+    // pool, even though the outward walk reaches the open ground first. The
+    // road here is exposed except for one patch of cover further out than the
+    // nearest acceptable open node.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    auto* space = engine.AddWorldSpace(kWorld);
+    auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+    LayRoad(engine, cell);
+    AttachGridAround(engine, space, cell);
+    PollFineRoads();
+    LayGround(engine);
+
+    // Exposed everywhere, except a rock beside the node at 6000.
+    constexpr float kCoveredX = 6000.0f;
+    engine.visibility.pickHitFraction = 1.0f;
+    engine.visibility.coverPatches.push_back({kCoveredX, 0.0f, 300.0f, 0.0f});
+
+    // Facing west, so the eastern road behind them is out of view and its
+    // nodes from 5000 out are acceptable as open ground.
+    auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+    player->data.angle.z = 3.0f * 3.14159265f / 2.0f;
+    auto* sender = ActorAt(engine, kSender, cell, At(kRoadEnd, 0.0f));
+    const auto result = FindFor(sender, player);
+
+    SECTION("when cover sits further out than usable open ground")
+    {
+        SECTION("should take the cover and walk past the open ground")
+        {
+            // 5000 and 5500 are both acceptable open ground and both nearer.
+            // The covered node at 6000 wins anyway.
+            REQUIRE(result.Ok());
+            REQUIRE(std::fabs(result.point.x - kCoveredX) < 1.0f);
+        }
+
+        SECTION("should still keep the open ground as escort supply")
+        {
+            // A fallback is only ever reached once the visitor is stuck, and
+            // every grade that got this far is one the player is not
+            // watching. Throwing the rest away to keep the ladder tidy would
+            // leave the escort with less to work with for no gain.
+            REQUIRE(result.Ok());
+            REQUIRE_FALSE(result.fallbacks.empty());
+        }
+    }
+
+    SECTION("when the cover is removed")
+    {
+        engine.visibility.coverPatches.clear();
+        const auto exposed = FindFor(sender, player);
+
+        SECTION("should fall back to the nearest usable open ground")
+        {
+            // The same world with nothing to hide behind: now the open pool
+            // is the best there is, and the nearest member of it wins. This
+            // is the pair that says the case above was a preference rather
+            // than a distance accident.
+            REQUIRE(exposed.Ok());
+            REQUIRE(std::fabs(Dist2D(exposed.point, At(0.0f, 0.0f)) - 5000.0f) < 1.0f);
         }
     }
 }
@@ -897,7 +982,7 @@ TEST_CASE("VisitArrivalPoint still places a visitor with no fine road", "[VisitA
         // is exactly the shape of world where the only usable ground was
         // slightly too far out and the visit was declined over it.
         REQUIRE(result.Ok());
-        REQUIRE(Dist2D(result.point, playerPos) >= 800.0f);
+        REQUIRE(Dist2D(result.point, playerPos) >= 2000.0f);
     }
 }
 
@@ -1369,7 +1454,7 @@ TEST_CASE("VisitArrivalPoint still arrives when the road under the player is a s
         // over a walk being long is how this shape of world used to lose its
         // visits altogether.
         REQUIRE(result.Ok());
-        REQUIRE(Dist2D(result.point, playerPos) >= 800.0f);
+        REQUIRE(Dist2D(result.point, playerPos) >= 2000.0f);
     }
 }
 

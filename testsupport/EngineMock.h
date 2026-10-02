@@ -383,6 +383,24 @@ namespace NarrativeEngine::Testing
             float pickHitFraction = 1.0f;
             int pickCalls = 0;
 
+            // Cover that exists only in places.
+            //
+            // One fraction for the whole world cannot express "the road is in
+            // plain view but there is a rock four metres off it", which is the
+            // situation both the arrival search's hop expansion and its
+            // preference for cover over open ground exist for. Each patch
+            // overrides the fraction for rays aimed within `radiusUnits` of
+            // its centre, measured in the XY plane; the global fraction still
+            // answers everywhere else.
+            struct CoverPatch
+            {
+                float x = 0.0f;
+                float y = 0.0f;
+                float radiusUnits = 128.0f;
+                float hitFraction = 0.0f; // blocked, i.e. cover
+            };
+            std::vector<CoverPatch> coverPatches;
+
             // The highest point any ray was cast TO, in game units. The
             // cover fan's whole job is to sweep a body-shaped silhouette,
             // and whether it reached over a visitor's head is not

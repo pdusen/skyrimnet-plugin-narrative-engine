@@ -110,13 +110,21 @@ namespace NarrativeEngine::VisitArrivalPoint
         constexpr float kMaxReachUnits = 8000.0f;
 
         // A point this far away, with the player facing elsewhere, may be
-        // used even with no cover at all.
+        // used even with no cover at all — but only once nothing with
+        // real cover has been found. See `Acceptance`.
         //
         // Cover exists to hide the instant somebody appears. If the
         // player is not looking that way, that instant is already
         // hidden, and insisting on geometry as well turns "no visit" into
-        // the common outcome on open ground.
-        constexpr float kUnseenDistanceUnits = 3000.0f;
+        // the common outcome on open ground. Players are not watching the
+        // direction a visitor will come from most of the time, and this
+        // is the concession that takes advantage of it.
+        //
+        // Far enough out that a figure appearing is small and ambiguous
+        // even if the player turns a moment later. Deliberately well
+        // above the arrival floor, so this is a fallback for open ground
+        // rather than a second way of satisfying the ordinary case.
+        constexpr float kUnseenDistanceUnits = 5000.0f;
 
         // Half-angle of the arc treated as "the player can see this".
         //
@@ -255,6 +263,8 @@ namespace NarrativeEngine::VisitArrivalPoint
             // walks a stalled visitor BACK ALONG THEIR OWN PATH.
             std::size_t chainIndex = 0;
             float distance = 0.0f;
+            // Filled by the walk, not by the gatherer.
+            int grade = 0;
         };
 
         int RankOf(ApproachChain::PointClass cls, bool insideGrid, int hopCount)
@@ -292,7 +302,7 @@ namespace NarrativeEngine::VisitArrivalPoint
         // those out: a node on the far side of the player is at most one
         // two-hop reach away from them, and that reach is a measured
         // 1,784 units at worst across all of vanilla, median 226 (see
-        // docs/engine-findings/fine-road-hop-spans.md). At a 3,000-unit
+        // docs/engine-findings/fine-road-hop-spans.md). At a 2,000-unit
         // floor every one of them is inside it and rejected on distance
         // before direction is ever a question, which is why neither the
         // Phase 14 approach corridor nor any other directional test is
@@ -423,6 +433,73 @@ namespace NarrativeEngine::VisitArrivalPoint
             return true;
         }
 
+        // How hidden a candidate is, best first.
+        //
+        // These are PREFERENCES, not alternatives. The whole of the
+        // better grade is considered before any of the worse one, so a
+        // point with real cover always beats an uncovered one — even when
+        // the uncovered one is nearer and the outward walk reaches it
+        // first.
+        enum class Acceptance : std::uint8_t
+        {
+            // Real geometry between the player and the arrival. The
+            // instant somebody appears is hidden whatever the player is
+            // doing.
+            Cover = 0,
+            // No cover, but far enough out AND outside the arc the player
+            // is facing. Players are not watching the direction a visitor
+            // comes from most of the time, and on open ground this is the
+            // difference between a visit and no visit — but it depends on
+            // where the player happens to be looking, so it is a
+            // fallback rather than an equal.
+            Unseen = 1,
+            // Outside the loaded grid, where neither question is
+            // answerable: no navmesh to read, no geometry for a ray to
+            // hit. Accepted on distance alone, which is consistent rather
+            // than lax, because out there cover is moot — and last,
+            // because a verified spot beats an unverifiable one.
+            Unverifiable = 2,
+            Rejected = 3,
+        };
+
+        const char* AcceptanceName(Acceptance acceptance)
+        {
+            switch (acceptance) {
+            case Acceptance::Cover:
+                return "cover";
+            case Acceptance::Unseen:
+                return "unseen";
+            case Acceptance::Unverifiable:
+                return "outside-grid";
+            case Acceptance::Rejected:
+            default:
+                return "rejected";
+            }
+        }
+
+        // Graded once per candidate, because the cover test is a raycast
+        // and grading per preference pass would pay for it twice.
+        Acceptance GradeCandidate(const Candidate& candidate,
+                                  const RE::NiPoint3& anchorPos,
+                                  float playerAngleZ,
+                                  float coverRadius,
+                                  GateTally& tally)
+        {
+            if (!candidate.insideGrid) {
+                return Acceptance::Unverifiable;
+            }
+            if (BehindCover(candidate.standing, coverRadius)) {
+                return Acceptance::Cover;
+            }
+            if (candidate.distance >= kUnseenDistanceUnits
+                && OutsidePlayerView(candidate.standing, anchorPos, playerAngleZ)) {
+                ++tally.unseen;
+                return Acceptance::Unseen;
+            }
+            ++tally.inView;
+            return Acceptance::Rejected;
+        }
+
         // One walk outward from the player, over every candidate.
         //
         // Replaces the band and the two road tiers under it. The band's
@@ -479,63 +556,74 @@ namespace NarrativeEngine::VisitArrivalPoint
                 return a.hopCount < b.hopCount;
             });
 
+            // Grade what survived, and find the best grade anything
+            // reached. Cover is preferred outright: the whole of it is
+            // considered before any uncovered point, however near.
+            auto best = Acceptance::Rejected;
+            std::vector<Candidate> graded;
+            for (auto& candidate : eligible) {
+                const auto grade = GradeCandidate(candidate, anchorPos, playerAngleZ, coverRadius, tally);
+                if (grade == Acceptance::Rejected) {
+                    continue;
+                }
+                candidate.grade = static_cast<int>(grade);
+                if (grade < best) {
+                    best = grade;
+                }
+                graded.push_back(candidate);
+            }
+            if (graded.empty()) {
+                return {};
+            }
+
+            // The winner comes from the best grade, nearest first, because
+            // `graded` is still in outward order. Fallbacks may come from
+            // any grade: they are only ever reached when the visitor is
+            // already stuck, every grade here is one the player is not
+            // watching, and starving the escort to keep the ladder tidy
+            // helps nobody.
             std::vector<Candidate> kept;
-            for (const auto& candidate : eligible) {
-                const char* passedBy = "cover";
-                if (!candidate.insideGrid) {
-                    // Nothing to test against: no navmesh to read and no
-                    // geometry for a ray to hit. Accepted on distance
-                    // alone, which is consistent rather than lax, because
-                    // out there cover is moot.
-                    passedBy = "outside-grid";
-                } else if (!BehindCover(candidate.standing, coverRadius)) {
-                    // No geometry to hide behind. Usable anyway if the
-                    // player is both far enough away and facing elsewhere
-                    // — on open ground that is the difference between a
-                    // visit and no visit.
-                    if (candidate.distance < kUnseenDistanceUnits
-                        || !OutsidePlayerView(candidate.standing, anchorPos, playerAngleZ)) {
-                        ++tally.inView;
+            for (const bool winnersOnly : {true, false}) {
+                for (const auto& candidate : graded) {
+                    const bool isBest = candidate.grade == static_cast<int>(best);
+                    if (winnersOnly != isBest) {
                         continue;
                     }
-                    ++tally.unseen;
-                    passedBy = "unseen";
-                }
-
-                bool tooClose = false;
-                for (const auto& existing : kept) {
-                    if (Dist2D(existing.standing, candidate.standing) < kFallbackSeparationUnits) {
-                        tooClose = true;
+                    bool tooClose = false;
+                    for (const auto& existing : kept) {
+                        if (Dist2D(existing.standing, candidate.standing) < kFallbackSeparationUnits) {
+                            tooClose = true;
+                            break;
+                        }
+                    }
+                    if (tooClose) {
+                        continue;
+                    }
+                    kept.push_back(candidate);
+                    logger::debug("VisitArrivalPoint: candidate ({:.0f},{:.0f},{:.0f}) kept — {:.0f}u out, "
+                                  "{:+.0f}u in elevation, class={} rank={} hops={} in_grid={}, passed by {}",
+                                  candidate.standing.x,
+                                  candidate.standing.y,
+                                  candidate.standing.z,
+                                  candidate.distance,
+                                  candidate.standing.z - anchorPos.z,
+                                  ApproachChain::PointClassName(candidate.cls),
+                                  candidate.rank,
+                                  candidate.hopCount,
+                                  candidate.insideGrid,
+                                  AcceptanceName(static_cast<Acceptance>(candidate.grade)));
+                    if (kept.size() > kMaxFallbacks) {
                         break;
                     }
                 }
-                if (tooClose) {
-                    continue;
-                }
-                kept.push_back(candidate);
-                logger::debug("VisitArrivalPoint: candidate ({:.0f},{:.0f},{:.0f}) kept — {:.0f}u out, "
-                              "{:+.0f}u in elevation, class={} rank={} hops={} in_grid={}, passed by {}",
-                              candidate.standing.x,
-                              candidate.standing.y,
-                              candidate.standing.z,
-                              candidate.distance,
-                              candidate.standing.z - anchorPos.z,
-                              ApproachChain::PointClassName(candidate.cls),
-                              candidate.rank,
-                              candidate.hopCount,
-                              candidate.insideGrid,
-                              passedBy);
                 if (kept.size() > kMaxFallbacks) {
                     break;
                 }
             }
-            if (kept.empty()) {
-                return {};
-            }
 
-            // The winner is the nearest acceptable point; the rest are
-            // fallback supply and go back into CHAIN order, outward of it,
-            // because that is what the escort promises to walk back along.
+            // The rest are fallback supply and go back into CHAIN order,
+            // outward of the winner, because that is what the escort
+            // promises to walk back along.
             std::vector<Candidate> ordered;
             ordered.push_back(kept.front());
             std::vector<Candidate> rest(kept.begin() + 1, kept.end());

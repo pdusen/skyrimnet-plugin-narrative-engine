@@ -2107,7 +2107,20 @@ RE::NiAVObject* RE::TES::Pick(RE::bhkPickData& a_pickData)
             mock->visibility.highestPickTargetZ = targetZ;
         }
     }
-    a_pickData.rayOutput.hitFraction = mock->visibility.pickHitFraction;
+    float fraction = mock->visibility.pickHitFraction;
+    if (!mock->visibility.coverPatches.empty() && scale > 0.0f) {
+        const float toX = a_pickData.rayInput.to.quad.m128_f32[0] / scale;
+        const float toY = a_pickData.rayInput.to.quad.m128_f32[1] / scale;
+        for (const auto& patch : mock->visibility.coverPatches) {
+            const float dx = toX - patch.x;
+            const float dy = toY - patch.y;
+            if (dx * dx + dy * dy <= patch.radiusUnits * patch.radiusUnits) {
+                fraction = patch.hitFraction;
+                break;
+            }
+        }
+    }
+    a_pickData.rayOutput.hitFraction = fraction;
     return nullptr;
 }
 

@@ -42,7 +42,7 @@ in-band, hold beyond-band as a fallback pool, reject past 8,000. The band's ceil
 which is a sign it was never really a band.
 
 What the design wants is simpler and gives different answers: walk outward from the player and take the
-**first** point that is far enough away and hidden. Where the nearest acceptable point happens to be 3,000
+nearest point that is far enough away and hidden. Where the nearest acceptable point happens to be 3,000
 units out, the band and the walk agree; where it is 6,000, the band has to be overridden to get there.
 
 ---
@@ -253,8 +253,8 @@ pass; hop expansion widens the pool, it does not relax it.
 How far two hops reach is a measurement, not an estimate, and an earlier draft of this section guessed it
 wrong. Over every exterior cell in Skyrim and all three DLC the median two-hop reach is 226 units and the
 **maximum is 1,784** — see
-[`fine-road-hop-spans.md`](../engine-findings/fine-road-hop-spans.md). So the shipped 3,000 floor holds with
-1.7x to spare, 1,800 would be the least that clears vanilla at all, and 1,600 does not: four measured spans
+[`fine-road-hop-spans.md`](../engine-findings/fine-road-hop-spans.md). The shipped floor of 2,000 clears that
+maximum by 216 units; 1,800 would be the least that clears it at all, and 1,600 does not — four measured spans
 exceed it.
 
 `iVisitMarkerMinDistanceUnits` is therefore load bearing for direction as well as for pacing. The dependency
@@ -267,18 +267,33 @@ way home by construction, and the floor handles everything hop expansion adds.
 
 ### Selection
 
-One walk, outward from the player, along the chain.
+One walk outward from the player, along the chain. Every point at least `iVisitMarkerMinDistanceUnits` away
+is **graded**, and the winner is the nearest point of the best grade anything reached:
 
-1. Take the **first** point at least `iVisitMarkerMinDistanceUnits` from the player that is **obscured** —
-   behind cover, or far enough away and outside the player's view that cover is unnecessary
-   (`kUnseenDistanceUnits`, 3,000 today).
-2. If nothing along the chain is obscured, take the **first point beyond the player's maximum view distance**.
-   Bridge, coarse and direct-line points satisfy this by construction, which is what they are for.
+1. **Cover.** Real geometry between the player and the arrival, so the instant somebody appears is hidden
+   whatever the player is doing.
+2. **Unseen.** No cover, but at least `kUnseenDistanceUnits` (5,000) away *and* outside the arc the player is
+   facing. Players are not watching the direction a visitor comes from most of the time, and on open ground
+   this is the difference between a visit and no visit. It is a fallback rather than an equal, because it
+   depends on where somebody happens to be looking and a player who turns is a player who watched the
+   arrival.
+3. **Unverifiable.** Outside the loaded grid, where neither question can be asked: no navmesh to read, no
+   geometry for a ray to hit. Accepted on distance alone — consistent rather than lax, since out there cover
+   is moot — and last, because a verified spot beats an unverifiable one. Bridge, coarse and direct-line
+   points are what this grade is for.
 
-   This needs no second pass over the chain. Outward *is* the order, and a point outside the loaded grid is
-   beyond any view the player has of real geometry — so once every point inside the grid has been refused, the
-   walk arrives at those points on its own. Implementing it as a literal second pass instead, as Step 4 first
-   did, accepts visible ground 3,000 units away that the first pass had just rejected.
+The grades are preferences, not alternatives: the whole of a better grade is considered before any of a worse
+one, so cover 6,000 units out beats open ground at 5,000 even though the walk reaches the open ground first.
+Within a grade the order is the outward walk, so the nearest acceptable point wins.
+
+Two things this shape gets right that a cheaper one does not. Grading each point **once** matters because the
+cover test is a raycast, and deciding preference by re-walking the chain per grade would pay for it twice. And
+the distances are deliberately far apart: at a 2,000-unit floor against a 5,000-unit open-ground distance,
+there is a wide band where only real cover will do, which is where the ordinary visit lands.
+
+**Fallbacks may come from any grade**, not just the winner's. They are reached only once the visitor is stuck,
+every grade that got this far is one the player is not watching, and starving the escort to keep the ladder
+tidy helps nobody.
 3. If the chain yields nothing at all, decline — a defensive branch that should be unreachable. The
    visitor-to-player line guarantees a chain, and its far end is by definition as far from the player as the
    visitor is, so some point on it clears the view distance in every case where the visitor was a plausible
@@ -290,7 +305,7 @@ At equal standing, the order is:
 
 | Rank | Class | Gates applied |
 | --- | --- | --- |
-| 1 | Fine, on chain | Navmesh re-check, a walkable corridor to the player, cover or unseen-distance |
+| 1 | Fine, on chain | Navmesh re-check, a walkable corridor to the player, then graded for cover |
 | 2 | Fine, off chain (by hop count) | The same, plus hop count as the tiebreak |
 | 3 | Synthetic, **inside** the loaded grid | The same — being off-road does not make it unverifiable |
 | 4 | Synthetic, **outside** the loaded grid | Distance only — nothing else is answerable there |
