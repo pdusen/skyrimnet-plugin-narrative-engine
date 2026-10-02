@@ -826,8 +826,8 @@ TEST_CASE("VisitArrivalPoint checks synthetic ground inside the grid", "[VisitAr
     //
     // No fine graph and no coarse graph here, so every chain point except the
     // two endpoints is synthetic.
-    constexpr const char* kNoRoads = "[Beats]\niVisitMarkerMinDistanceUnits=800\n"
-                                     "iVisitMarkerMaxDistanceUnits=2500\n"
+    constexpr const char* kNoRoads = "[Beats]\niVisitMarkerMinDistanceUnits=2000\n"
+                                     "iVisitMarkerMaxDistanceUnits=5000\n"
                                      "iVisitArrivalCoverRadiusUnits=64\n"
                                      "bVisitArrivalAllowCoarseBearing=false\n"
                                      "[FineRoads]\nbFineRoadsEnabled=1\niFineRoadsBackstopSeconds=1\n"
@@ -864,6 +864,80 @@ TEST_CASE("VisitArrivalPoint checks synthetic ground inside the grid", "[VisitAr
             REQUIRE(result.Ok());
             REQUIRE(result.point.x > 0.0f);
             REQUIRE(std::fabs(result.point.y) < 1.0f);
+        }
+    }
+
+    SECTION("when it is exposed and nearer than the open-ground distance")
+    {
+        EngineMock engine;
+        const ConfiguredSettings settings{kNoRoads};
+        auto* space = engine.AddWorldSpace(kWorld);
+        auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+        AttachGridAround(engine, space, cell);
+        PollFineRoads();
+        LayGround(engine);
+        // Walkable, but nothing to hide behind anywhere.
+        engine.visibility.pickHitFraction = 1.0f;
+        REQUIRE(FineRoads::NodeCount() == 0);
+
+        auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+        auto* sender = ActorAt(engine, kSender, cell, At(4000.0f, 0.0f));
+        const auto result = FindFor(sender, player);
+
+        SECTION("should refuse it the way it would refuse exposed road")
+        {
+            // The distinguishing case for how a direct-line point is graded.
+            // Every candidate here is synthetic, inside the loaded grid, on
+            // navmesh, and between the 2,000-unit floor and the 5,000-unit
+            // open-ground distance -- so cover is the only thing that could
+            // accept one, and there is none.
+            //
+            // A point graded on its CLASS rather than its position would be
+            // accepted on distance alone, because that is what "outside the
+            // grid, nothing to test" means. These are inside the grid and
+            // there is plenty to test, so the visit declines instead.
+            REQUIRE_FALSE(result.Ok());
+        }
+    }
+
+    SECTION("when it is exposed but beyond the open-ground distance")
+    {
+        EngineMock engine;
+        const ConfiguredSettings settings{kNoRoads};
+        auto* space = engine.AddWorldSpace(kWorld);
+        auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+        AttachGridAround(engine, space, cell);
+        PollFineRoads();
+        LayGround(engine);
+        engine.visibility.pickHitFraction = 1.0f;
+
+        // Facing west, with the visitor away to the east.
+        auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+        player->data.angle.z = 3.0f * 3.14159265f / 2.0f;
+        auto* sender = ActorAt(engine, kSender, cell, At(9000.0f, 0.0f));
+        const auto result = FindFor(sender, player);
+
+        SECTION("should use it as unwatched open ground, not as unverified")
+        {
+            // With no road graph at all the line from the player to the
+            // visitor is the whole chain, and the stretch of it inside the
+            // loaded cells is as verifiable as any road: navmesh under it, a
+            // walkable corridor home, and a cover test that can be asked.
+            // So it earns the open-ground grade on the same terms a road node
+            // would, rather than being written off for having come from a
+            // synthetic line.
+            REQUIRE(result.Ok());
+            REQUIRE(result.pointClass == NarrativeEngine::ApproachChain::PointClass::Direct);
+            REQUIRE(Dist2D(result.point, At(0.0f, 0.0f)) >= 5000.0f);
+        }
+
+        SECTION("should stand them on ground it actually checked")
+        {
+            // The claim "these are not unverified" in full: the winning point
+            // is on navmesh the search re-read, not merely inside the grid.
+            REQUIRE(result.Ok());
+            RE::NiPoint3 grounded{};
+            REQUIRE(StuckRecovery::IsStandable(result.point, grounded));
         }
     }
 
