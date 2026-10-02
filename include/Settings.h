@@ -424,8 +424,21 @@ namespace NarrativeEngine::Settings
         // measured straight-line from the player. Read by
         // VisitArrivalPoint; before Phase 14 these were parsed and never
         // consumed, with the live band baked into the SpawnMarker alias.
-        int visitMarkerMinDistanceUnits = 800;  // closest the sender may arrive
-        int visitMarkerMaxDistanceUnits = 5000; // farthest the sender may arrive
+        // The floor is the only distance rule left since Phase 16 — the
+        // walk takes the first acceptable point outward, so the ceiling
+        // is not consulted on the road path at all (the city approach
+        // still bands against it).
+        //
+        // It is doing more work than it looks like. A visitor has to
+        // arrive far enough out to read as having walked there, AND far
+        // enough out that hop expansion cannot reach across the player:
+        // two hops along a road ribbon is a few hundred units, so at
+        // 3,000 anything on the far side of them is well inside the floor
+        // and rejected on distance before direction is ever a question.
+        // At the old 800 it was not, and the search duly arrived 1,000
+        // units behind the player.
+        int visitMarkerMinDistanceUnits = 3000; // closest the sender may arrive
+        int visitMarkerMaxDistanceUnits = 5000; // city approach only; see above
 
         // Silhouette half-width the arrival search's cover gate tests
         // across. One actor, not a group, so this is the narrow end of

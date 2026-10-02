@@ -244,27 +244,22 @@ side of the same road, and a 2-hop neighbour is a few metres off it. That is exa
 a spot behind a rock four metres off the road, when the road itself is in plain view. It converts a declined
 visit into a placed one without moving the visitor anywhere the player would find strange.
 
-**Hops are undirected, and the minimum distance does not fix that.** An expanded node can sit back toward the
-player or straight past them: breadth-first off a chain node near the player reaches through them and out the
-other side. The first draft of this doc held that the minimum-distance requirement already ruled that out. It
-does not, and Step 4's regression suite established it the hard way — a node 1,000 units behind the player
-clears any floor worth setting, and the search duly arrived there, which is the exact tell this module exists
-to remove.
+**The one constraint it must inherit.** Hops are undirected, so an expanded node can sit back toward the
+player or across them. The minimum distance rules that out by itself, and the arithmetic is why: two hops
+along a road ribbon is a few hundred units, so every node the expansion can reach on the far side of the
+player is well inside a 3,000-unit floor and refused on distance before direction is ever a question.
+Off-path candidates therefore pass exactly the gates chain nodes pass; hop expansion widens the pool, it does
+not relax it.
 
-So off-path candidates pass one gate chain nodes do not need: they must lie in the **half-plane toward the
-approach**. One dot product, perpendicular counts as inside it (a spot a few metres off the road has to stay
-reachable), and it costs nothing.
+That depends on the floor actually being the shipped 3,000, and Step 4 spent a detour learning it. With the
+fixtures pinned at 800 the search placed a visitor 1,000 units behind the player; the floor was the whole
+answer and the fixtures were testing a configuration we do not ship. Both are corrected.
+`iVisitMarkerMinDistanceUnits` is therefore load bearing for direction as well as for pacing, and lowering it
+re-opens that failure.
 
-**The direction comes off the chain, not off the visitor.** Aiming that half-plane at where the visitor lives
-is wrong, and wrong in a way that refuses the correct answer: a visitor who lives due east may be reached by a
-road that leaves to the *west* and loops round, so the first stretch of their journey runs away from home.
-Phase 14 built the approach corridor to avoid exactly that. The reference is therefore the first chain point
-at least `iVisitMarkerMinDistanceUnits` from the player, walking outward — the route's own answer to "which
-way do they come in", which the chain already encodes.
-
-**The approach corridor is still not carried over.** It existed to manufacture that direction from a bearing
-and a branch choice, and the chain supplies it directly. What survives of its purpose is the half-plane above,
-which is three lines rather than a corridor walk.
+**The approach corridor is not carried over.** It existed to manufacture a direction from a bearing and a
+branch choice, and nothing now needs one: the chain is a route *from* the visitor, so its points are on the
+way home by construction, and the floor handles everything hop expansion adds.
 
 ### Selection
 
@@ -292,7 +287,7 @@ At equal standing, the order is:
 | Rank | Class | Gates applied |
 | --- | --- | --- |
 | 1 | Fine, on chain | Navmesh re-check, a walkable corridor to the player, cover or unseen-distance |
-| 2 | Fine, off chain (by hop count) | The same, plus the half-plane gate and hop count as the tiebreak |
+| 2 | Fine, off chain (by hop count) | The same, plus hop count as the tiebreak |
 | 3 | Synthetic, **inside** the loaded grid | The same — being off-road does not make it unverifiable |
 | 4 | Synthetic, **outside** the loaded grid | Distance only — nothing else is answerable there |
 | 5 | Coarse | Distance only |
@@ -669,7 +664,9 @@ retire the three primitives the chain makes unnecessary.
    obscured — behind cover, or beyond `kUnseenDistanceUnits` and out of view. Then the first point beyond the
    player's maximum view distance. Then decline.
 4. Hop expansion: every fine node within `iVisitChainHopRadius` hops of a fine point on the chain, over
-   `FineRoads::Graph::adjacency`, ranked after on-chain fine points with hop count as the tiebreak.
+   `FineRoads::Graph::adjacency`, ranked after on-chain fine points with hop count as the tiebreak. No
+   directional gate — see the off-path section; the distance floor is what keeps the expansion from reaching
+   across the player, provided that floor is the shipped 3,000.
 5. The rank table's five classes, each with exactly the gates the design gives it — in particular, synthetic
    points *inside* the grid get the navmesh and cover gates, and are not waved through for being synthetic.
 6. Delete `BearingHome` and `CorridorTarget`, with their tests. `SampleBearingArc` keeps its city-tier

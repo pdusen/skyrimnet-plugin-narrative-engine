@@ -57,8 +57,14 @@ namespace
 
     // The band is the shipped default. Cover radius is one actor's width, and
     // the bearing fallback is on unless a case says otherwise.
-    constexpr const char* kSettings = "[Beats]\niVisitMarkerMinDistanceUnits=800\n"
-                                      "iVisitMarkerMaxDistanceUnits=2500\n"
+    // The shipped floor, not a convenient one. 3,000 is what makes a
+    // directional test unnecessary: two hops along a road ribbon is a few
+    // hundred units, so every node hop expansion can reach across the player
+    // is well inside the floor and rejected on distance before direction is
+    // ever a question. A fixture at 800 exercises a configuration we do not
+    // ship, and is the only place an arrival could land behind the player.
+    constexpr const char* kSettings = "[Beats]\niVisitMarkerMinDistanceUnits=3000\n"
+                                      "iVisitMarkerMaxDistanceUnits=5000\n"
                                       "iVisitArrivalCoverRadiusUnits=64\n"
                                       "bVisitArrivalAllowCoarseBearing=true\n"
                                       "[FineRoads]\nbFineRoadsEnabled=1\niFineRoadsBackstopSeconds=1\n"
@@ -80,11 +86,15 @@ namespace
     constexpr float kStandingZ = kGround + StuckRecovery::kGroundClearanceUnits;
 
     // A straight road through the player, running east-west, with a node every
-    // 500 units out to 3500 either side. Deliberately symmetric: which half of
+    // 500 units out to 7000 either side. Deliberately symmetric: which half of
     // it the search walks is decided only by where the visitor lives.
+    //
+    // Long enough that the shipped 3,000-unit floor still leaves several nodes
+    // beyond it to rank. At seven nodes a side the floor landed on the
+    // second-to-last one and there was nothing left to choose between.
     constexpr float kNodeSpacing = 500.0f;
-    constexpr int kNodesPerSide = 7;
-    constexpr float kRoadEnd = kNodeSpacing * kNodesPerSide; // 3500
+    constexpr int kNodesPerSide = 14;
+    constexpr float kRoadEnd = kNodeSpacing * kNodesPerSide; // 7000
 
     // Wide enough to hold the whole road and every bearing sample.
     constexpr float kWorldEdge = 30000.0f;
@@ -131,6 +141,30 @@ namespace
         engine.visibility.pickHitFraction = 0.0f;
     }
 
+    // Attach the 5x5 block of cells the engine loads at the default
+    // uGridsToLoad, centred on the cell `roadCell` sits in, and keep the road
+    // cell itself as the one carrying navmesh.
+    //
+    // Loading the single road cell instead — as this suite used to — puts the
+    // grid at one cell across, so every position with a negative coordinate
+    // falls OUTSIDE it. The arrival search then treats half the road as
+    // unloaded ground and accepts it on distance alone, skipping the navmesh
+    // and cover gates that several cases here exist to check. The real engine
+    // never presents a one-cell grid, so neither should the fixture.
+    void AttachGridAround(EngineMock& engine, RE::TESWorldSpace* space, RE::TESObjectCELL* roadCell)
+    {
+        std::vector<RE::TESObjectCELL*> cells{roadCell};
+        for (std::int16_t cx = -2; cx <= 2; ++cx) {
+            for (std::int16_t cy = -2; cy <= 2; ++cy) {
+                if (cx == 0 && cy == 0) {
+                    continue; // the road cell, already in
+                }
+                cells.push_back(engine.AddExteriorCell(space, cx, cy, nullptr));
+            }
+        }
+        engine.LoadGrid(cells);
+    }
+
     void PollFineRoads()
     {
         const NarrativeEngine::ScopedThreadRole role{NarrativeEngine::ThreadRole::Plugin};
@@ -175,7 +209,7 @@ TEST_CASE("VisitArrivalPoint brings the visitor in from the side of the road the
     auto* space = engine.AddWorldSpace(kWorld);
     auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
     LayRoad(engine, cell);
-    engine.LoadGrid({cell});
+    AttachGridAround(engine, space, cell);
     PollFineRoads();
     LayGround(engine);
     CoverEverywhere(engine);
@@ -207,9 +241,12 @@ TEST_CASE("VisitArrivalPoint brings the visitor in from the side of the road the
         SECTION("should take the nearest usable node rather than the farthest")
         {
             REQUIRE(result.Ok());
-            // Nodes sit every 500 units; the first at or past the 800-unit
-            // floor is the one at 1000.
-            REQUIRE(std::fabs(result.point.x - 1000.0f) < 1.0f);
+            // Nodes sit every 500 units, so the first at or past the shipped
+            // 3,000-unit floor is the one at 3000 exactly. Everything nearer
+            // is refused on distance -- including anything hop expansion
+            // could reach on the far side of the player, which is why no
+            // directional test is needed here.
+            REQUIRE(std::fabs(result.point.x - 3000.0f) < 1.0f);
         }
 
         SECTION("should check for cover over a whole visitor, not just their feet")
@@ -265,7 +302,7 @@ TEST_CASE("VisitArrivalPoint brings the visitor in from the side of the road the
             REQUIRE(result.Ok());
             // Same road, same gates, opposite end. Anything asymmetric here is
             // a bias in the walk rather than a fact about the world.
-            REQUIRE(std::fabs(result.point.x + 1000.0f) < 1.0f);
+            REQUIRE(std::fabs(result.point.x + 3000.0f) < 1.0f);
         }
     }
 }
@@ -331,7 +368,7 @@ TEST_CASE("VisitArrivalPoint keeps to the road the visitor would actually walk",
         }
         engine.AddNavMesh(cell, kRoadMesh, fineRoad);
     }
-    engine.LoadGrid({cell});
+    AttachGridAround(engine, space, cell);
     PollFineRoads();
     LayGround(engine);
     CoverEverywhere(engine);
@@ -375,7 +412,7 @@ TEST_CASE("VisitArrivalPoint takes the nearest point far enough out", "[VisitArr
     auto* space = engine.AddWorldSpace(kWorld);
     auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
     LayRoad(engine, cell);
-    engine.LoadGrid({cell});
+    AttachGridAround(engine, space, cell);
     PollFineRoads();
     LayGround(engine);
     CoverEverywhere(engine);
@@ -442,7 +479,7 @@ TEST_CASE("VisitArrivalPoint reaches past the band rather than declining", "[Vis
     auto* space = engine.AddWorldSpace(kWorld);
     auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
     LayRoad(engine, cell);
-    engine.LoadGrid({cell});
+    AttachGridAround(engine, space, cell);
     PollFineRoads();
     LayGround(engine);
     CoverEverywhere(engine);
@@ -475,11 +512,11 @@ TEST_CASE("VisitArrivalPoint reaches past the band rather than declining", "[Vis
 
         SECTION("should still prefer it over anything further out")
         {
-            // The reach is a fallback and must not become the default:
-            // a visitor who could have arrived at 1000 units should not
-            // be put at 5000 because the search liked it better.
+            // Reaching further out is what happens when nothing nearer works,
+            // not a preference: a visitor who could have arrived at the floor
+            // should not be put at 7000 because the search liked it better.
             REQUIRE(result.Ok());
-            REQUIRE(Dist2D(result.point, At(0.0f, 0.0f)) <= 2500.0f);
+            REQUIRE(std::fabs(Dist2D(result.point, At(0.0f, 0.0f)) - 3000.0f) < 1.0f);
         }
     }
 }
@@ -495,7 +532,7 @@ TEST_CASE("VisitArrivalPoint will use open ground the player is not facing", "[V
     auto* space = engine.AddWorldSpace(kWorld);
     auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
     LayRoad(engine, cell);
-    engine.LoadGrid({cell});
+    AttachGridAround(engine, space, cell);
     PollFineRoads();
     LayGround(engine);
     // Wide open: every ray reaches, so nowhere is covered.
@@ -546,7 +583,7 @@ TEST_CASE("VisitArrivalPoint refuses ground the player can see", "[VisitArrivalP
     auto* space = engine.AddWorldSpace(kWorld);
     auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
     LayRoad(engine, cell);
-    engine.LoadGrid({cell});
+    AttachGridAround(engine, space, cell);
     PollFineRoads();
     LayGround(engine);
     // Every ray reaches its endpoint: open ground, nothing to hide behind.
@@ -633,7 +670,7 @@ TEST_CASE("VisitArrivalPoint expands off the road for a candidate", "[VisitArriv
         auto* space = engine.AddWorldSpace(kWorld);
         auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
         layShortRoadAndSpur(engine, cell);
-        engine.LoadGrid({cell});
+        AttachGridAround(engine, space, cell);
         PollFineRoads();
         LayGround(engine);
         CoverEverywhere(engine);
@@ -673,7 +710,7 @@ TEST_CASE("VisitArrivalPoint expands off the road for a candidate", "[VisitArriv
         auto* space = engine.AddWorldSpace(kWorld);
         auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
         layShortRoadAndSpur(engine, cell);
-        engine.LoadGrid({cell});
+        AttachGridAround(engine, space, cell);
         PollFineRoads();
         LayGround(engine);
         CoverEverywhere(engine);
@@ -717,7 +754,7 @@ TEST_CASE("VisitArrivalPoint checks synthetic ground inside the grid", "[VisitAr
         const ConfiguredSettings settings{kNoRoads};
         auto* space = engine.AddWorldSpace(kWorld);
         auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
-        engine.LoadGrid({cell});
+        AttachGridAround(engine, space, cell);
         PollFineRoads();
         LayGround(engine);
         CoverEverywhere(engine);
@@ -750,7 +787,7 @@ TEST_CASE("VisitArrivalPoint checks synthetic ground inside the grid", "[VisitAr
         const ConfiguredSettings settings{kNoRoads};
         auto* space = engine.AddWorldSpace(kWorld);
         auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
-        engine.LoadGrid({cell});
+        AttachGridAround(engine, space, cell);
         PollFineRoads();
         // Outdoors with a ground height, but no navmesh patch at all, so
         // every in-grid candidate fails the walkable check.
@@ -784,7 +821,7 @@ TEST_CASE("VisitArrivalPoint refuses road that has stopped being navmesh", "[Vis
     auto* space = engine.AddWorldSpace(kWorld);
     auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
     LayRoad(engine, cell);
-    engine.LoadGrid({cell});
+    AttachGridAround(engine, space, cell);
     PollFineRoads();
     // Ground and cover, but no navmesh patch under any of it. The fine graph
     // still remembers a road here, because it is a snapshot and the cells it
@@ -916,7 +953,7 @@ TEST_CASE("VisitArrivalPoint declines when nothing can route the two ends togeth
     auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
     auto* farCell = engine.AddExteriorCell(elsewhere, 0, 0, nullptr);
     LayRoad(engine, cell);
-    engine.LoadGrid({cell});
+    AttachGridAround(engine, space, cell);
     PollFineRoads();
     LayGround(engine);
     CoverEverywhere(engine);
@@ -973,7 +1010,7 @@ TEST_CASE("VisitArrivalPoint finds a visitor who is not loaded", "[VisitArrivalP
     auto* space = engine.AddWorldSpace(kWorld);
     auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
     LayRoad(engine, cell);
-    engine.LoadGrid({cell});
+    AttachGridAround(engine, space, cell);
     PollFineRoads();
     LayGround(engine);
     CoverEverywhere(engine);
@@ -1091,7 +1128,7 @@ TEST_CASE("VisitArrivalPoint measures a visitor indoors from their doorstep", "[
     auto* space = engine.AddWorldSpace(kWorld);
     auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
     LayRoad(engine, cell);
-    engine.LoadGrid({cell});
+    AttachGridAround(engine, space, cell);
     PollFineRoads();
     LayGround(engine);
     CoverEverywhere(engine);
@@ -1301,7 +1338,7 @@ TEST_CASE("VisitArrivalPoint still arrives when the road under the player is a s
         stub.push_back(t);
     }
     engine.AddNavMesh(cell, kRoadMesh, stub);
-    engine.LoadGrid({cell});
+    AttachGridAround(engine, space, cell);
     PollFineRoads();
     REQUIRE(FineRoads::NodeCount() == 3);
 
@@ -1548,7 +1585,7 @@ TEST_CASE("VisitArrivalPoint walks a city visitor out to a player who is nowhere
 
     auto* cell = engine.AddExteriorCell(skyrim, 0, 0, nullptr);
     LayRoad(engine, cell);
-    engine.LoadGrid({cell});
+    AttachGridAround(engine, skyrim, cell);
     PollFineRoads();
     LayGround(engine);
     CoverEverywhere(engine);
@@ -1692,7 +1729,7 @@ TEST_CASE("VisitArrivalPoint will not read a marker out of ground the player doe
     auto* skyrim = engine.AddWorldSpace(kWorld);
     auto* cell = engine.AddExteriorCell(skyrim, 0, 0, nullptr);
     LayRoad(engine, cell);
-    engine.LoadGrid({cell});
+    AttachGridAround(engine, skyrim, cell);
     PollFineRoads();
     LayGround(engine);
     CoverEverywhere(engine);

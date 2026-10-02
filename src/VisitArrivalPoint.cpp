@@ -168,11 +168,6 @@ namespace NarrativeEngine::VisitArrivalPoint
             int offNavmesh = 0;
             int notLevel = 0;
             int inView = 0;
-            // On the far side of the player from the visitor. Only hop
-            // expansion can produce one: hops are undirected, so a
-            // breadth-first walk off a chain node near the player comes
-            // back out behind them.
-            int behindPlayer = 0;
             // Nothing walkable joining the candidate to the player along
             // the straight line. Counted apart from the rest because it
             // is the only gate about REACHING the point rather than
@@ -215,11 +210,9 @@ namespace NarrativeEngine::VisitArrivalPoint
                 }
                 return "considered=" + std::to_string(considered) + " " + span + " tooNear=" + std::to_string(tooNear)
                        + " pastReach=" + std::to_string(tooFar) + " offNavmesh=" + std::to_string(offNavmesh)
-                       + " notLevel=" + std::to_string(notLevel) + " inView=" + std::to_string(inView)
-                       + " noCorridor=" + std::to_string(noCorridor) + " behindPlayer=" + std::to_string(behindPlayer)
-                       + " unseen=" + std::to_string(unseen) + " survived="
-                       + std::to_string(considered - tooNear - offNavmesh - notLevel - inView - noCorridor
-                                        - behindPlayer);
+                       + " notLevel=" + std::to_string(notLevel) + " inView=" + std::to_string(inView) + " noCorridor="
+                       + std::to_string(noCorridor) + " unseen=" + std::to_string(unseen) + " survived="
+                       + std::to_string(considered - tooNear - offNavmesh - notLevel - inView - noCorridor);
             }
         };
 
@@ -295,10 +288,14 @@ namespace NarrativeEngine::VisitArrivalPoint
         // moving the visitor anywhere the player would find strange.
         //
         // Hops are undirected, so an expanded node can sit back toward the
-        // player or behind them. The minimum-distance gate in the walk
-        // already rules that out, which is why the Phase 14 approach
-        // corridor is not carried over: it would be a check that never
-        // changes an answer.
+        // player, and two hops along a road ribbon is a few hundred units.
+        // The minimum-distance gate in the walk is what rules those out:
+        // at a floor of 3,000 units, anything hop expansion can reach
+        // across the player is well inside it and rejected on distance
+        // before direction is ever a question. That is why neither the
+        // Phase 14 approach corridor nor any other directional test is
+        // carried over — with a correct floor they would never change an
+        // answer.
         std::vector<Candidate> GatherCandidates(const ApproachChain::Chain& chain,
                                                 const FineRoads::Graph& fine,
                                                 int hopRadius,
@@ -409,71 +406,8 @@ namespace NarrativeEngine::VisitArrivalPoint
         // read and no geometry for a ray to hit. Such a point is accepted
         // on distance alone, which is consistent rather than lax, because
         // beyond view distance cover is moot.
-        // Which way the approach comes in, as the CHAIN reckons it.
-        //
-        // The first chain point at least `minDist` from the player,
-        // walking outward. Returns false when the chain never gets that
-        // far, which leaves the directional gate below switched off.
-        //
-        // Not the visitor's straight-line bearing, and the difference is
-        // the whole point. A visitor who lives due east may be reached by
-        // a road that leaves to the WEST and loops round — ordinary
-        // geography — and in that case the first stretch of their journey
-        // is westward. Aiming anything at where they live refuses the
-        // correct answer outright, which is the failure Phase 14 built an
-        // approach corridor to avoid. The chain already encodes the real
-        // route, so the direction can simply be read off it.
-        bool ApproachReference(const ApproachChain::Chain& chain,
-                               const RE::NiPoint3& anchorPos,
-                               float minDist,
-                               RE::NiPoint3& out)
+        bool PassesClassGates(const Candidate& candidate, const RE::NiPoint3& anchorPos, GateTally& tally)
         {
-            for (auto it = chain.points.rbegin(); it != chain.points.rend(); ++it) {
-                if (Dist2D(it->position, anchorPos) >= minDist) {
-                    out = it->position;
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        // True when `pos` is not on the far side of the player from the
-        // way the approach comes in.
-        //
-        // One dot product, and it is load-bearing. Hop expansion walks
-        // `FineRoads::Graph::adjacency` without regard to direction, so
-        // expanding off a chain node near the player reaches straight
-        // through them and out the other side — and a point there is the
-        // exact tell this module exists to remove, a visitor who appears
-        // having already walked past the person they came to see.
-        //
-        // The minimum-distance gate does NOT subsume this, which the
-        // regression suite established the hard way: a node 1,000 units
-        // behind the player clears any floor worth setting. Perpendicular
-        // counts as inside the half-plane, so a spot a few metres off the
-        // road is still reachable — which is what hop expansion is for.
-        bool NotBehindPlayer(const RE::NiPoint3& pos, const RE::NiPoint3& anchorPos, const RE::NiPoint3& approachPos)
-        {
-            const float inboundX = approachPos.x - anchorPos.x;
-            const float inboundY = approachPos.y - anchorPos.y;
-            if (std::fabs(inboundX) < 1e-3f && std::fabs(inboundY) < 1e-3f) {
-                return true; // no direction to be behind
-            }
-            const float toPosX = pos.x - anchorPos.x;
-            const float toPosY = pos.y - anchorPos.y;
-            return toPosX * inboundX + toPosY * inboundY >= 0.0f;
-        }
-
-        bool PassesClassGates(const Candidate& candidate,
-                              const RE::NiPoint3& anchorPos,
-                              const RE::NiPoint3& approachPos,
-                              bool haveApproach,
-                              GateTally& tally)
-        {
-            if (haveApproach && !NotBehindPlayer(candidate.standing, anchorPos, approachPos)) {
-                ++tally.behindPlayer;
-                return false;
-            }
             if (!candidate.insideGrid) {
                 return true;
             }
@@ -505,8 +439,6 @@ namespace NarrativeEngine::VisitArrivalPoint
         // they are for.
         std::vector<Candidate> WalkChain(const std::vector<Candidate>& candidates,
                                          const RE::NiPoint3& anchorPos,
-                                         const RE::NiPoint3& approachPos,
-                                         bool haveApproach,
                                          float playerAngleZ,
                                          float minDist,
                                          float coverRadius,
@@ -528,7 +460,7 @@ namespace NarrativeEngine::VisitArrivalPoint
                     ++tally.tooFar;
                     continue;
                 }
-                if (!PassesClassGates(candidate, anchorPos, approachPos, haveApproach, tally)) {
+                if (!PassesClassGates(candidate, anchorPos, tally)) {
                     continue;
                 }
                 eligible.push_back(candidate);
@@ -1299,11 +1231,6 @@ namespace NarrativeEngine::VisitArrivalPoint
             return result;
         }
 
-        // Which way the approach comes in, read off the chain rather than
-        // aimed at where the visitor lives.
-        RE::NiPoint3 approachRef{};
-        const bool haveApproachRef = ApproachReference(chain, anchorPos, minDist, approachRef);
-
         const auto fine = FineRoads::Snapshot();
         const int hopRadius = std::max(0, cfg.visitChainHopRadius);
         const auto candidates = GatherCandidates(chain, fine, hopRadius, anchorPos);
@@ -1312,8 +1239,6 @@ namespace NarrativeEngine::VisitArrivalPoint
         const auto kept = MainThread::Run(pt, [&](const MainThread::Token&) {
             return WalkChain(candidates,
                              anchorPos,
-                             approachRef,
-                             haveApproachRef,
                              ends.playerAngleZ,
                              minDist,
                              coverRadius,

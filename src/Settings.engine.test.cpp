@@ -161,12 +161,17 @@ TEST_CASE("Settings holds the measured visit-arrival defaults", "[Settings][engi
         REQUIRE(Settings::Get().visitArrivalCoverRadiusUnits == 64);
     }
 
-    SECTION("should keep the band the two distance keys describe")
+    SECTION("should keep the floor far enough out to settle the direction")
     {
-        // Both were parsed and never read before this phase. The arrival
-        // distance is observably a function of them now, so they are load
-        // bearing rather than documentation.
-        REQUIRE(Settings::Get().visitMarkerMinDistanceUnits == 800);
+        // Both were parsed and never read before Phase 14. Since Phase 16
+        // the floor is the only distance rule the road path has, and it is
+        // doing two jobs: a visitor has to arrive far enough out to read as
+        // having walked there, and far enough out that hop expansion cannot
+        // reach a node across the player. Two hops along a road ribbon is a
+        // few hundred units, so 3,000 settles the second by itself and no
+        // directional test is needed. The ceiling is the city approach's
+        // alone now.
+        REQUIRE(Settings::Get().visitMarkerMinDistanceUnits == 3000);
         REQUIRE(Settings::Get().visitMarkerMaxDistanceUnits == 5000);
     }
 
