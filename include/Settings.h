@@ -234,17 +234,20 @@ namespace NarrativeEngine::Settings
         int holdGridPruneIsolationRadius = 5;
 
         // [TravelGraph]
-        // EXPERIMENTAL. Builds a road graph at kDataLoaded from the NAVI
-        // record's precomputed preferred-path chains — the same data the
-        // engine uses to move actors travelling outside the loaded cell
-        // grid. Nothing consumes the graph yet; this is a diagnostic to
-        // establish whether that data is an accurate road network.
-        bool travelGraphEnabled = false;
+        // Builds a road graph at kDataLoaded from the NAVI record's
+        // precomputed preferred-path chains — the same data the engine
+        // uses to move actors travelling outside the loaded cell grid.
+        // The long-distance skeleton of a visit's approach chain: with
+        // this off, an arriving visitor has no roads to cross the map on
+        // and the chain collapses to the direct line.
+        bool travelGraphEnabled = true;
         // Debug: after the graph builds, dump one 24-bit BMP per
         // worldspace to the SKSE log directory. Nodes are black, edges
         // gray, empty space white. Worldspaces with no nodes are
-        // skipped. Overwrites existing files each session.
-        bool travelGraphDebugBitmap = true;
+        // skipped. Overwrites existing files each session. Off by
+        // default now that the graph itself is on by default — an
+        // install with no INI should not be writing images.
+        bool travelGraphDebugBitmap = false;
         // World units per bitmap pixel. Lower = larger, more detailed
         // image. 256 puts a 4096-unit cell at 16 pixels and renders
         // Tamriel at roughly 1330x820. Automatically raised if it would
@@ -258,11 +261,13 @@ namespace NarrativeEngine::Settings
         bool travelGraphLogCalibration = false;
 
         // [FineRoads]
-        // EXPERIMENTAL. High-resolution road graph for the loaded cell
-        // grid, extracted from kPreferred-flagged navmesh triangles.
-        // Complements TravelGraph, which only carries the long-distance
-        // skeleton and has no spurs. Nothing consumes it yet.
-        bool fineRoadsEnabled = false;
+        // High-resolution road graph for the loaded cell grid, extracted
+        // from kPreferred-flagged navmesh triangles. Complements
+        // TravelGraph, which only carries the long-distance skeleton and
+        // has no spurs. The dense near end of a visit's approach chain,
+        // and the only source of road nodes the escort can hop a stuck
+        // visitor along.
+        bool fineRoadsEnabled = true;
         // Rescans are normally event-driven: cell-loaded, load-game, and
         // fast-travel-end sinks flag the graph and the next tick picks it
         // up. This is only a backstop, in unpaused seconds. It exists
@@ -280,8 +285,10 @@ namespace NarrativeEngine::Settings
         int fineRoadsBackstopSeconds = 180;
         // Debug: dump the active local graph to a BMP in the SKSE log
         // directory whenever it changes. Road nodes red, frontier nodes
-        // (where the road leaves loaded cells) blue, edges gray.
-        bool fineRoadsDebugBitmap = true;
+        // (where the road leaves loaded cells) blue, edges gray. Off by
+        // default for the same reason as TravelGraph's, and more so:
+        // this one rewrites itself every time the grid changes.
+        bool fineRoadsDebugBitmap = false;
         // World units per pixel for that bitmap. Much finer than
         // TravelGraph's, since this covers ~5x5 cells rather than a
         // whole worldspace.

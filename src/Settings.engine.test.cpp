@@ -183,6 +183,40 @@ TEST_CASE("Settings holds the measured visit-arrival defaults", "[Settings][engi
     }
 }
 
+TEST_CASE("Settings leaves the road graphs the visit chain needs switched on", "[Settings][engine]")
+{
+    // Both shipped off while they were diagnostics that nothing consumed.
+    // Phase 16 made them load bearing: TravelGraph is the long-distance
+    // skeleton an arriving visitor crosses the map on, FineRoads is the dense
+    // near end of the same chain and the only source of road nodes the escort
+    // can hop a stuck visitor along. Off, a visit still happens -- it just
+    // routes on the straight line from the visitor's home to the player and
+    // arrives having walked through whatever lay between.
+    //
+    // That failure is invisible in the game and quiet in the log, which is
+    // why it is pinned here rather than left to the INI.
+    IniFixture files;
+    Settings::Load();
+
+    SECTION("should build the long-distance skeleton")
+    {
+        REQUIRE(Settings::Get().travelGraphEnabled);
+    }
+
+    SECTION("should build the local road graph")
+    {
+        REQUIRE(Settings::Get().fineRoadsEnabled);
+    }
+
+    SECTION("should leave both bitmaps off")
+    {
+        // The graphs are not diagnostics any more, so their diagnostics do
+        // not belong in everybody's log directory.
+        REQUIRE_FALSE(Settings::Get().travelGraphDebugBitmap);
+        REQUIRE_FALSE(Settings::Get().fineRoadsDebugBitmap);
+    }
+}
+
 TEST_CASE("Settings MCM override wins over the plugin INI", "[Settings][engine]")
 {
     // The cascade is the module's reason for existing: the plugin INI carries
