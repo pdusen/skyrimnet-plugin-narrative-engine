@@ -490,12 +490,19 @@ TEST_CASE("ApproachChain routes a far-off visitor along the road", "[ApproachCha
     }
 }
 
-TEST_CASE("ApproachChain bridges to the fine network nearest the player", "[ApproachChain][engine]")
+TEST_CASE("ApproachChain bridges every fine network in the grid", "[ApproachChain][engine]")
 {
     // Two unconnected pieces of road in the loaded grid, which is the ordinary
-    // case either side of a ridge or a bridgeless river. Only one is worth
-    // putting in the graph: an unbridged network is an island the search can
-    // never enter, so the others are cost without reach.
+    // case either side of a ridge or a bridgeless river. Both go in, and each
+    // gets its own bridge to the coarse skeleton.
+    //
+    // This used to keep only the network holding the node nearest the player,
+    // on the grounds that an unbridged network is an island the search can
+    // never enter. True, and the premise was the mistake: they were islands
+    // because only one was bridged. A live session measured the cost of that —
+    // 249 fine nodes loaded in two networks, 81 of them kept, and a chain that
+    // used no fine road at all, because the nearest single node happened to
+    // belong to the smaller piece.
     EngineMock engine;
     const ConfiguredSettings settings{kSettings};
     LayCoarseRoad(engine);
@@ -506,17 +513,36 @@ TEST_CASE("ApproachChain bridges to the fine network nearest the player", "[Appr
     auto* farCell = engine.AddExteriorCell(space, 14, 17, nullptr);
     LayFineRoad(engine, nearCell);
     LayFarFineRoad(engine, farCell);
-    StandOutdoorsAndLoad(engine, space, PlayerSpot(), {nearCell, farCell});
-    REQUIRE(FineRoads::NodeCount() == 5);
 
     const auto grid = GridAround(4, 10);
-    const auto chain = ApproachChain::Build(grid, kMainland, VisitorSpot(), PlayerSpot());
 
-    SECTION("when the grid holds more than one network")
+    SECTION("when only the near network is loaded")
     {
-        SECTION("should use the one holding the closest node to the player")
+        StandOutdoorsAndLoad(engine, space, PlayerSpot(), {nearCell});
+        REQUIRE(FineRoads::NodeCount() == 3);
+        const auto chain = ApproachChain::Build(grid, kMainland, VisitorSpot(), PlayerSpot());
+
+        SECTION("should route over it")
         {
             REQUIRE(chain.valid);
+            REQUIRE(CountClass(chain, PointClass::Fine) > 0);
+        }
+    }
+
+    SECTION("when both networks are loaded")
+    {
+        StandOutdoorsAndLoad(engine, space, PlayerSpot(), {nearCell, farCell});
+        REQUIRE(FineRoads::NodeCount() == 5);
+        const auto chain = ApproachChain::Build(grid, kMainland, VisitorSpot(), PlayerSpot());
+
+        SECTION("should still route over the one that is useful")
+        {
+            // Every fine point on the route belongs to the road beside the
+            // player. The far network being present does not mean taking it:
+            // it sits 27,000 units off the skeleton, so its own bridge prices
+            // it out without any rule having to exclude it.
+            REQUIRE(chain.valid);
+            REQUIRE(CountClass(chain, PointClass::Fine) > 0);
             for (const auto& point : chain.points) {
                 if (point.cls != PointClass::Fine) {
                     continue;
@@ -525,21 +551,31 @@ TEST_CASE("ApproachChain bridges to the fine network nearest the player", "[Appr
             }
         }
 
-        SECTION("should leave the far network out of the graph entirely")
+        SECTION("should put it in the graph with a way in and a way out")
         {
-            // Not merely unused by the route -- absent. A node the search can
-            // reach but never profitably use still costs every expansion that
-            // touches it.
+            // Proof it is there at all, and reachable: loading a second piece
+            // of road grows the graph, because that piece gets its own bridge
+            // to the skeleton AND its own attachment from the player. Under
+            // the old single-network rule it added nothing whatsoever.
+            const auto both = ChainTesting::SearchBothWays(grid, kMainland, VisitorSpot(), PlayerSpot());
+            REQUIRE(both.built);
+
+            StandOutdoorsAndLoad(engine, space, PlayerSpot(), {nearCell});
+            REQUIRE(FineRoads::NodeCount() == 3);
+            const auto nearOnly = ChainTesting::SearchBothWays(grid, kMainland, VisitorSpot(), PlayerSpot());
+            REQUIRE(nearOnly.built);
+
+            REQUIRE(both.nodeCount > nearOnly.nodeCount);
+        }
+
+        SECTION("should still agree with the oracle")
+        {
+            // More networks means more bridges means more ways through the
+            // graph, which is exactly the shape of change that breaks an
+            // inadmissible heuristic.
             const auto oracle = ChainTesting::SearchBothWays(grid, kMainland, VisitorSpot(), PlayerSpot());
             REQUIRE(oracle.built);
-            const auto withBoth = oracle.nodeCount;
-            // Three fine nodes are selected out of five, so a graph that kept
-            // both networks would carry two more.
-            REQUIRE(withBoth > 0);
-            for (const auto& point : chain.points) {
-                REQUIRE(point.position.x != FarFine::x0);
-                REQUIRE(point.position.x != FarFine::x1);
-            }
+            REQUIRE(std::fabs(oracle.astarCost - oracle.dijkstraCost) < 1.0f);
         }
     }
 }
@@ -1028,6 +1064,109 @@ TEST_CASE("ApproachChain lays its endpoint connectors rather than linking them",
             // The last piece joins the run to the coarse node itself.
             total += Dist(laid.back().position, coarseWestEnd);
             REQUIRE(std::fabs(total - straight) < 1.0f);
+        }
+    }
+}
+
+TEST_CASE("ApproachChain keeps the road when a stub sits nearer the player", "[ApproachChain][engine]")
+{
+    // The measured failure, in miniature. Two road nodes twenty units from the
+    // player, unconnected to anything — a courtyard, a strip of path, whatever
+    // the navmesh happened to flag there. Under the old rule the network
+    // holding the node NEAREST the player was the only one kept, so a stub like
+    // this evicted every other piece of road in the grid and the chain came
+    // back with no fine road on it at all.
+    //
+    // Live measurement of that rule: 249 fine nodes loaded across two
+    // networks, 81 kept, `fine=0` on the chain.
+    //
+    // The fixture is the winding-ribbon one, which has a reason to prefer fine
+    // road, plus the stub. The stub is laid before the first poll because
+    // FineRoads caches its extraction per cell for the session.
+    constexpr float kRow = 43008.0f;
+    constexpr float kPlayerX = 19000.0f;
+    constexpr float kRibbonSouth = 37000.0f;
+    constexpr std::uint32_t kStubMesh = 0x00C16001u;
+
+    EngineMock engine;
+    const ConfiguredSettings settings{"[FineRoads]\nbFineRoadsEnabled=1\niFineRoadsBackstopSeconds=1\n"
+                                      "bFineRoadsDebugBitmap=0\n"
+                                      "[TravelGraph]\nbTravelGraphEnabled=1\nbTravelGraphDebugBitmap=0\n"
+                                      "[Beats]\niVisitChainBridgeSpacingUnits=512\n"
+                                      "iVisitChainDifficultyCoarse=1\niVisitChainDifficultyFine=2\n"
+                                      "iVisitChainDifficultyConnector=8\niVisitChainDifficultyDirect=12\n"};
+
+    auto* navi = engine.AddNavMeshInfoMap(kNavi);
+    std::uint32_t nextForm = 0x00C16100u;
+    std::vector<const RE::BSNavmeshInfo*> road;
+    for (int cell = 7; cell <= 20; ++cell) {
+        road.push_back(
+            engine.AddNavmeshInfo(navi, nextForm++, kMainland, static_cast<std::int16_t>(cell), 10, 0.0f, 0.0f, 0.0f));
+    }
+    engine.AddPreferredPath(navi, road);
+    TravelGraph::Initialize();
+
+    const auto player = At(kPlayerX, kRow);
+    const auto visitor = At(CellCentre(20) + 300.0f, kRow);
+
+    auto* space = engine.AddWorldSpace(kMainland);
+    auto* cell = engine.AddExteriorCell(space, 4, 10, nullptr);
+
+    auto f0 = Road(kPlayerX + 100.0f, kRow);
+    f0.neighbor[0] = 1;
+    auto f1 = Road(25000.0f, kRow);
+    f1.neighbor[0] = 0;
+    f1.neighbor[1] = 2;
+    auto f2 = Road(25000.0f, kRibbonSouth);
+    f2.neighbor[0] = 1;
+    f2.neighbor[1] = 3;
+    auto f3 = Road(30600.0f, kRibbonSouth);
+    f3.neighbor[0] = 2;
+    f3.neighbor[1] = 4;
+    auto f4 = Road(30600.0f, kRow);
+    f4.neighbor[0] = 3;
+    // The stub goes in FIRST, so it is network 0 and the ribbon is network 1.
+    // That ordering is the point: a build that bridges only one network
+    // bridges this one, and the ribbon is then enterable from the player and
+    // leads nowhere — which is the failure both halves of this fix address.
+    auto s0 = Road(kPlayerX + 20.0f, kRow + 20.0f);
+    s0.neighbor[0] = 1;
+    auto s1 = Road(kPlayerX + 20.0f, kRow + 220.0f);
+    s1.neighbor[0] = 0;
+    engine.AddNavMesh(cell, kStubMesh, {s0, s1});
+
+    engine.AddNavMesh(cell, kFineMesh, {f0, f1, f2, f3, f4});
+
+    StandOutdoorsAndLoad(engine, space, player, {cell});
+    REQUIRE(FineRoads::NodeCount() == 7);
+
+    const auto grid = GridAround(4, 10);
+    const auto chain = ApproachChain::Build(grid, kMainland, visitor, player);
+
+    SECTION("when a nearer network leads nowhere")
+    {
+        SECTION("should still walk the ribbon")
+        {
+            // Counted at the ribbon's southern leg, which only the ribbon has.
+            // Under the old rule this is zero: the ribbon was not in the graph
+            // to walk.
+            REQUIRE(chain.valid);
+            std::size_t southern = 0;
+            for (const auto& point : chain.points) {
+                if (point.cls == PointClass::Fine && std::fabs(point.position.y - kRibbonSouth) < 1.0f) {
+                    ++southern;
+                }
+            }
+            REQUIRE(southern == 2);
+        }
+
+        SECTION("should agree with the oracle with both networks bridged")
+        {
+            // Two bridges to the same coarse node is the shape that would
+            // break an inadmissible heuristic.
+            const auto oracle = ChainTesting::SearchBothWays(grid, kMainland, visitor, player);
+            REQUIRE(oracle.built);
+            REQUIRE(std::fabs(oracle.astarCost - oracle.dijkstraCost) < 1.0f);
         }
     }
 }

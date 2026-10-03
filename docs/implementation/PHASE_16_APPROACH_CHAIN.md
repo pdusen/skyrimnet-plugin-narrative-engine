@@ -103,18 +103,34 @@ construction order told it to.
 | **3** | Bridge points, the player's world-map position, the visitor's, and any connectors they need |
 | **4** | Two direct lines out of the visitor, one node every 512 units — see below |
 
-**Multiple disconnected fine networks.** The loaded grid can hold several unconnected pieces of road. Prefer
-the one holding the closest point to the player, and bridge to that one — **both** bridges, the coarse-to-fine
-one and the visitor-to-fine one, attach to the same selected network, at whatever point on it each is
-cheapest to reach. The rule governs *bridge construction*, not the search: an unbridged network is an island
-the search can never enter, so adding the others is cost without reach.
+**Multiple disconnected fine networks.** The loaded grid can hold several unconnected pieces of road — two
+valleys either side of a ridge, a bridgeless river. **Every one of them goes in, and every one gets its own
+bridge to the coarse skeleton** at whichever pair of nodes is cheapest to join.
+
+This started out the other way: only the network holding the node closest to the player went in, on the
+grounds that an unbridged network is an island the search can never enter, so the rest would be cost without
+reach. The reasoning was sound and the premise was the mistake — the islands were islands *because only one
+network was bridged*. Bridging each removes the objection by construction, and the heuristic it replaces was
+measured picking wrong: a player standing in open country had **249 fine nodes loaded in two networks and 81
+selected**, so two thirds of the road around them was discarded for being on the wrong side of whichever
+single node happened to be nearest, and the chain used no fine road at all.
+
+**The player attaches to each of them**, at that network's nearest node, rather than to the nearest node
+overall. Bridging alone is not enough: one attachment leaves every other network enterable only through its
+own bridge and exitable only the same way, so a dead-end stub nearer the player than the road makes the road
+reachable in principle and useless in fact. Measured in the fixture that reproduces it — two stub nodes twenty
+units from the player against a ribbon starting a hundred — the chain used no fine road until the player had an
+attachment to each.
+
+The cost of carrying the rest is small and bounded. Node counts run to a few hundred over a loaded grid, each
+extra bridge is one `LayLine` whose length cannot exceed the grid's own diagonal, and a bridge too long to be
+worth walking prices itself out at connector difficulty without any rule having to exclude it. Which is the
+right division of labour: the graph says what exists and the cost function decides what is worth using.
 
 **Two direct lines, both out of the visitor, both difficulty 4 at 512-unit spacing.**
 
-- **Visitor to the selected fine network.** Which network that is does not change — it is still the
-  player-adjacent one chosen below, by closest point to the player. What differs is only the *attach point*:
-  this line meets that same network at whichever of its nodes is nearest the visitor. Network selection is a
-  player-side decision; where a bridge touches it is a per-bridge one.
+- **Visitor to the nearest fine node.** Whichever node that is, in whichever network — the same rule as
+  every other attachment, now that every network is in the graph and reachable.
 
   This is the useful line. It lets somebody off-road but reasonably close cut straight to the road near the
   player and finish the approach on difficulty 2, instead of detouring out to the coarse skeleton and back.
@@ -651,16 +667,16 @@ caller. This is the phase's substance; Steps 4 and 5 are consumers.
 3. Graph assembly, in the order the design's table gives: every coarse node and its edges at difficulty 1;
    every loaded fine node and its edges at difficulty 2; the player and visitor nodes and their connectors at
    3; the two direct lines out of the visitor at 4, one node every `iVisitChainBridgeSpacingUnits`.
-4. Fine-network selection: when the loaded grid holds several disconnected pieces, pick the one holding the
-   closest node to the player, and attach both bridges to that one — the coarse-to-fine bridge where it is
-   cheapest, the visitor line at whichever of its nodes is nearest the visitor. Other networks are left out of
-   the graph entirely; an unbridged network is an island the search can never enter.
+4. Fine networks: every disconnected piece in the loaded grid goes in, and each gets its own bridge to the
+   coarse skeleton at whichever pair of nodes is cheapest to join. The visitor's direct line attaches at the
+   nearest fine node overall. Nothing is excluded — a bridge too long to be worth walking prices itself out
+   at connector difficulty, which is the cost function's job rather than a selection rule's.
 5. Edge cost `euclidean length x max(difficulty of its two endpoints)`, and A-star with euclidean distance to
    the player as the heuristic.
 6. Elevation for synthetic points, per Step 1's finding.
-7. One debug-gated log line per build: worldspace, node and edge counts by class, which fine network was
-   selected and how many were rejected, the chain's length in points, its total cost, and the class histogram
-   of the result. This line is what Steps 6 and 7 read.
+7. One debug-gated log line per build: worldspace, node and edge counts by class, how many fine networks
+   were bridged, the chain's length in points, its total cost, and the class histogram of the result. This
+   line is what Steps 6 and 7 read.
 8. Add `src/ApproachChain.cpp` to `NARRATIVEENGINE_MOCKED_SOURCES` and write the suite:
    - **Correctness oracle:** A-star's cost and node sequence equal a Dijkstra's over the same fixture.
    - **Connectivity:** both graphs empty still yields a valid chain, on the visitor-to-player line alone.

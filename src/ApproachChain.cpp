@@ -160,69 +160,54 @@ namespace NarrativeEngine::ApproachChain
             return best;
         }
 
-        // Which fine nodes belong to the network holding the node closest
-        // to the player, plus how many networks there were.
+        // Which network each fine node belongs to, and how many there are.
         //
-        // The loaded grid can hold several unconnected pieces of road —
-        // two valleys either side of a ridge, a bridgeless river. Only one
-        // is worth putting in the graph: an unbridged network is an island
-        // the search can never enter, so adding the others is cost without
-        // reach. The one holding the closest node to the player is the one
-        // a visit cares about, because every arrival point is chosen by
-        // walking outward from the player.
-        struct FineSelection
+        // The loaded grid can hold several unconnected pieces of road — two
+        // valleys either side of a ridge, a bridgeless river. All of them go
+        // in the graph and each gets its own bridge to the coarse skeleton,
+        // so none of them is an island.
+        //
+        // This used to pick one network — the one holding the node closest to
+        // the player — and drop the rest, on the grounds that an unbridged
+        // network is unreachable and so cost without reach. True, and the
+        // premise was the mistake: they were unreachable BECAUSE only one was
+        // bridged. Measured in a session before this changed: a player in open
+        // country had 249 fine nodes loaded across two networks and 81 of them
+        // selected, so two thirds of the road around them was discarded for
+        // being on the wrong side of whichever single node happened to be
+        // nearest, and the chain used no fine road at all.
+        struct FineComponents
         {
-            std::vector<bool> selected;
-            std::size_t networkCount = 0;
-            std::size_t selectedSize = 0;
+            // Component label per node, parallel to `fine.nodes`.
+            std::vector<std::size_t> label;
+            std::size_t count = 0;
         };
 
-        FineSelection SelectFineNetwork(const FineRoads::Graph& fine, const RE::NiPoint3& playerPos)
+        FineComponents LabelFineNetworks(const FineRoads::Graph& fine)
         {
-            FineSelection out;
-            out.selected.assign(fine.nodes.size(), false);
+            FineComponents out;
+            out.label.assign(fine.nodes.size(), FineRoads::kInvalidNode);
             if (fine.nodes.empty()) {
                 return out;
             }
 
-            // Label every node with its component.
-            std::vector<std::size_t> component(fine.nodes.size(), FineRoads::kInvalidNode);
             std::vector<std::size_t> stack;
             for (std::size_t seed = 0; seed < fine.nodes.size(); ++seed) {
-                if (component[seed] != FineRoads::kInvalidNode) {
+                if (out.label[seed] != FineRoads::kInvalidNode) {
                     continue;
                 }
-                const std::size_t label = out.networkCount++;
+                const std::size_t label = out.count++;
                 stack.push_back(seed);
-                component[seed] = label;
+                out.label[seed] = label;
                 while (!stack.empty()) {
                     const auto at = stack.back();
                     stack.pop_back();
                     for (const auto next : fine.adjacency[at]) {
-                        if (next < component.size() && component[next] == FineRoads::kInvalidNode) {
-                            component[next] = label;
+                        if (next < out.label.size() && out.label[next] == FineRoads::kInvalidNode) {
+                            out.label[next] = label;
                             stack.push_back(next);
                         }
                     }
-                }
-            }
-
-            std::size_t closest = 0;
-            float bestDist = kInf;
-            for (std::size_t i = 0; i < fine.nodes.size(); ++i) {
-                const auto& n = fine.nodes[i];
-                const float d = Dist(RE::NiPoint3{n.x, n.y, n.z}, playerPos);
-                if (d < bestDist) {
-                    bestDist = d;
-                    closest = i;
-                }
-            }
-
-            const auto chosen = component[closest];
-            for (std::size_t i = 0; i < fine.nodes.size(); ++i) {
-                if (component[i] == chosen) {
-                    out.selected[i] = true;
-                    ++out.selectedSize;
                 }
             }
             return out;
@@ -377,7 +362,7 @@ namespace NarrativeEngine::ApproachChain
             std::size_t visitorNode = FineRoads::kInvalidNode;
             std::size_t playerNode = FineRoads::kInvalidNode;
             std::size_t coarseCount = 0;
-            std::size_t fineSelected = 0;
+            std::size_t fineCount = 0;
             std::size_t fineNetworks = 0;
             bool ok = false;
         };
@@ -456,24 +441,28 @@ namespace NarrativeEngine::ApproachChain
             }
             out.coarseCount = coarseNodes.size();
 
-            // ---- difficulty 2: the selected fine network ------------
+            // ---- difficulty 2: every loaded fine network ------------
             const auto fine = FineRoads::Snapshot();
             const bool fineUsable = !fine.nodes.empty() && fine.worldSpace == worldSpace;
-            const auto selection = fineUsable ? SelectFineNetwork(fine, playerPos) : FineSelection{};
-            out.fineSelected = selection.selectedSize;
-            out.fineNetworks = selection.networkCount;
+            const auto components = fineUsable ? LabelFineNetworks(fine) : FineComponents{};
+            out.fineCount = fineUsable ? fine.nodes.size() : 0;
+            out.fineNetworks = components.count;
 
             std::unordered_map<std::size_t, std::size_t> fineToGraph;
             std::vector<std::size_t> fineNodes;
+            // Graph indices of this build's fine nodes, grouped by network, so
+            // each one can be bridged on its own.
+            std::vector<std::vector<std::size_t>> fineByNetwork(components.count);
             if (fineUsable) {
                 for (std::size_t i = 0; i < fine.nodes.size(); ++i) {
-                    if (!selection.selected[i]) {
-                        continue;
-                    }
                     const auto& n = fine.nodes[i];
                     const auto added = graph.Add(RE::NiPoint3{n.x, n.y, n.z}, PointClass::Fine, fineDifficulty, i);
                     fineToGraph.emplace(i, added);
                     fineNodes.push_back(added);
+                    const auto label = components.label[i];
+                    if (label < fineByNetwork.size()) {
+                        fineByNetwork[label].push_back(added);
+                    }
                 }
                 for (const auto& [fineIndex, graphIndex] : fineToGraph) {
                     for (const auto neighbor : fine.adjacency[fineIndex]) {
@@ -503,13 +492,28 @@ namespace NarrativeEngine::ApproachChain
             // existed: a player standing where no fine graph loads got an
             // arrival 20,960 units away, because the only thing between
             // them and their nearest coarse node was one edge.
-            const auto playerFineAttach = NearestOf(graph, fineNodes, playerPos);
-            if (playerFineAttach != FineRoads::kInvalidNode) {
+            // Onto each network separately, not just the nearest node
+            // overall. One attachment leaves every other piece of road
+            // enterable only through its own bridge and exitable only the same
+            // way, which for a dead-end stub means the road beside it is in
+            // the graph and still unreachable from the player: two nodes of
+            // courtyard twenty units away can make a whole ribbon useless.
+            // Each network is inside the loaded grid, so each attachment is
+            // short and priced at connector difficulty like any other
+            // cross-country step.
+            for (const auto& network : fineByNetwork) {
+                if (network.empty()) {
+                    continue;
+                }
+                const auto attach = NearestOf(graph, network, playerPos);
+                if (attach == FineRoads::kInvalidNode) {
+                    continue;
+                }
                 LayLine(graph,
                         grid,
                         worldSpace,
                         out.playerNode,
-                        playerFineAttach,
+                        attach,
                         PointClass::Connector,
                         connectorDifficulty,
                         spacing);
@@ -542,34 +546,44 @@ namespace NarrativeEngine::ApproachChain
                         spacing);
             }
 
-            // The bridge: coarse skeleton to the selected fine network,
-            // at whichever pair of nodes is cheapest to join. This is the
-            // gap RoadRoute measures and then throws away, and filling it
-            // is what lets a visitor be placed on a connected point just
-            // outside the loaded grid rather than the visit declining.
-            if (!fineNodes.empty() && !coarseNodes.empty()) {
-                std::size_t bestFine = FineRoads::kInvalidNode;
-                std::size_t bestCoarse = FineRoads::kInvalidNode;
-                float bestDist = kInf;
-                for (const auto fineIndex : fineNodes) {
-                    for (const auto coarseIndex : coarseNodes) {
-                        const float d = Dist(graph.nodes[fineIndex].pos, graph.nodes[coarseIndex].pos);
-                        if (d < bestDist) {
-                            bestDist = d;
-                            bestFine = fineIndex;
-                            bestCoarse = coarseIndex;
+            // The bridges: coarse skeleton to each fine network, at whichever
+            // pair of nodes is cheapest to join. This is the gap RoadRoute
+            // measures and then throws away, and filling it is what lets a
+            // visitor be placed on a connected point just outside the loaded
+            // grid rather than the visit declining.
+            //
+            // One per network rather than one overall, so no loaded road is an
+            // island. A network far from any skeleton node gets a long bridge
+            // and prices itself out at connector difficulty, which is the cost
+            // function's job and not a selection rule's.
+            if (!coarseNodes.empty()) {
+                for (const auto& network : fineByNetwork) {
+                    if (network.empty()) {
+                        continue;
+                    }
+                    std::size_t bestFine = FineRoads::kInvalidNode;
+                    std::size_t bestCoarse = FineRoads::kInvalidNode;
+                    float bestDist = kInf;
+                    for (const auto fineIndex : network) {
+                        for (const auto coarseIndex : coarseNodes) {
+                            const float d = Dist(graph.nodes[fineIndex].pos, graph.nodes[coarseIndex].pos);
+                            if (d < bestDist) {
+                                bestDist = d;
+                                bestFine = fineIndex;
+                                bestCoarse = coarseIndex;
+                            }
                         }
                     }
-                }
-                if (bestFine != FineRoads::kInvalidNode) {
-                    LayLine(graph,
-                            grid,
-                            worldSpace,
-                            bestFine,
-                            bestCoarse,
-                            PointClass::Connector,
-                            connectorDifficulty,
-                            spacing);
+                    if (bestFine != FineRoads::kInvalidNode) {
+                        LayLine(graph,
+                                grid,
+                                worldSpace,
+                                bestFine,
+                                bestCoarse,
+                                PointClass::Connector,
+                                connectorDifficulty,
+                                spacing);
+                    }
                 }
             }
 
@@ -713,13 +727,13 @@ namespace NarrativeEngine::ApproachChain
         chain.cost = result.cost;
         chain.valid = true;
 
-        logger::debug("ApproachChain: ws={:08X} graph={} nodes/{} edges (coarse={} fine={} of {} network(s)) "
+        logger::debug("ApproachChain: ws={:08X} graph={} nodes/{} edges (coarse={} fine={} in {} network(s)) "
                       "-- chain={} points cost={:.0f} [coarse={} fine={} connector={} direct={}] inGrid={}",
                       worldSpace,
                       assembly.graph.nodes.size(),
                       assembly.graph.EdgeEnds() / 2,
                       assembly.coarseCount,
-                      assembly.fineSelected,
+                      assembly.fineCount,
                       assembly.fineNetworks,
                       chain.points.size(),
                       chain.cost,
