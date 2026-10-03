@@ -72,11 +72,11 @@ Paths that are almost always worth inspecting when they appear in `--stat`:
 
 - `esp/plugin/**` — renamed / renumbered forms, added quests, editor-ID
   changes. These are the diffs that surface save-compat concerns.
-- `statics/SKSE/Plugins/SkyrimNet/prompts/**` — prompt changes affect LLM
-  behavior; often not fully captured in the commit subject.
+- `statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/prompts/**` — prompt
+  changes affect LLM behavior; often not fully captured in the commit subject.
 - `statics/MCM/**` and `statics/SKSE/Plugins/NarrativeEngine.ini` — user
   tunables added / removed / renamed.
-- `statics/SKSE/Plugins/SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml`
+- `statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/settings/NarrativeEngine.yaml`
   — action / hook surface exposed to SkyrimNet.
 - `dashboard/**` — dashboard tabs / controls the player interacts with.
 
@@ -319,11 +319,11 @@ accepted `$Version` before the packaged artifact is built (`package.ps1` runs
 `build.ps1` which syncs these into the mod folder — the archive will bake in
 whatever version is on disk at packaging time):
 
-- `statics/SKSE/Plugins/SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml`
+- `statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/settings/NarrativeEngine.yaml`
   — update the `version: "..."` key in the top-level `plugin:` block.
 - `statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/manifest.json`
   — update the top-level `version` key to the same value. The build refuses to
-  configure while it disagrees with `manifest.yaml`.
+  configure while it disagrees with the settings schema.
 - `statics/MCM/Config/NarrativeEngine/config.json` — update the
   `valueOptions.value` string on the version-display item under the `About`
   header (the row labeled `"NarrativeEngine"`). Only replace the leading
@@ -338,7 +338,7 @@ Then commit and push the bump so the tag created in step 8 lands on a commit
 that exists on origin:
 
 ```powershell
-git add statics/SKSE/Plugins/SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml `
+git add statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/settings/NarrativeEngine.yaml `
         statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/manifest.json `
         statics/MCM/Config/NarrativeEngine/config.json
 git commit -m "chore(release): v$Version"

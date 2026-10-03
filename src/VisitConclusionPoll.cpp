@@ -31,7 +31,7 @@ namespace NarrativeEngine::VisitConclusionPoll
     namespace
     {
         // Prompt template ID + variant. Matches the file under
-        // statics/SKSE/Plugins/SkyrimNet/prompts/.
+        // statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/prompts/
         constexpr const char* kPromptName = "narrative_engine_visit_conclusion_poll";
         constexpr const char* kPromptVariant = "narrative_engine_director";
 

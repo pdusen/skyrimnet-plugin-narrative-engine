@@ -746,8 +746,8 @@ namespace NarrativeEngine::BeatSystem
         //
         // The SkyrimNet-side prompt template is still named
         // `narrative_engine_action_select` — the file lives in
-        // statics/SKSE/Plugins/SkyrimNet/prompts/ and hasn't been
-        // renamed to `_beat_select` yet. Renaming there would only
+        // statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/prompts/
+        // and hasn't been renamed to `_beat_select` yet. Renaming there would only
         // require a file rename plus one string-constant flip on the
         // SkyrimNetAPI::SendCustomPromptToLLM call below.
         //

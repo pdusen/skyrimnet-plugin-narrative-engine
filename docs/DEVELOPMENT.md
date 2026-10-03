@@ -94,8 +94,8 @@ forms easy to find in long lists. Examples:
 What does *not* take the prefix:
 
 - The plugin file (`NarrativeEngine.esp`) — that's a filename, not an EditorID.
-- The SkyrimNet plugin folder + manifest name (`SKSE/Plugins/SkyrimNet/config/plugins/NarrativeEngine/`,
-  `plugin.name: NarrativeEngine`) and the Beta 25 content plugin id (`pdusen.narrative-engine`) — SkyrimNet's own
+- The SkyrimNet content plugin id and its folder (`SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/`) and
+  the settings config name (`settings/NarrativeEngine.yaml`, `plugin.name: NarrativeEngine`) — SkyrimNet's own
   plugin identifier surface.
 - C++ namespaces / classes (`namespace NarrativeEngine`, `class ClosureDeliveryAction`) — these live entirely on
   the C++ side and the form-naming convention doesn't reach them.
@@ -636,19 +636,39 @@ formatter appears in the ecosystem, add its hook to `.pre-commit-config.yaml` un
 
 ## Writing SkyrimNet `.prompt` files
 
-The `.prompt` files we ship under `statics/SKSE/Plugins/SkyrimNet/prompts/` are Jinja templates that render to
+The `.prompt` files we ship under `statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/prompts/` are
+Jinja templates that render to
 Markdown chat messages sent to an LLM. They use SkyrimNet's `[ system ] ... [ end system ]` /
 `[ user ] ... [ end user ]` section markers and follow specific conventions about what to tell the LLM (and
 what to deliberately hide — e.g. the cadence at which the call fires). When authoring or editing one, read and
 follow [`docs/CUSTOM_PROMPTS.md`](CUSTOM_PROMPTS.md).
 
-The build deploys every prompt twice: to the loose `SkyrimNet/prompts/` folder that SkyrimNet reads before Beta 25
-(0.25.0), and to `SkyrimNet/external/pdusen.narrative-engine/prompts/`, the plugin folder Beta 25 reads instead.
-The settings schema, `SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml`, is deployed a second time as
-`external/pdusen.narrative-engine/settings/NarrativeEngine.yaml`, which Beta 25 prefers over the old path. Keep one
-copy in the source tree, at the old paths; `CMakeLists.txt` makes the second. The plugin folder's `manifest.json`
-lives in `statics/` like any other file, and the configure step fails if its `id` differs from its folder name or its
-`version` differs from the one in `manifest.yaml`.
+### The SkyrimNet plugin folder
+
+Everything we hand to SkyrimNet lives in one folder, `statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/`,
+laid out the way **SkyrimNet Beta 25 (0.25.0)** expects:
+
+| Path inside the folder          | What it is                                                        |
+| ------------------------------- | ----------------------------------------------------------------- |
+| `manifest.json`                 | Identity: `id`, `version`, `min_skyrimnet_version`                |
+| `prompts/**`                    | Our `.prompt` templates, recursively (`submodules/` included)     |
+| `settings/NarrativeEngine.yaml` | The LLM variants and the settings schema SkyrimNet's UI exposes   |
+
+There is nothing special about these files in the build: the `statics/` deploy mirrors the tree verbatim, so what is
+in the source tree is what SkyrimNet reads. **Beta 25 is a hard floor.** Up to v0.6.1 the build also deployed a second
+copy of each file to the pre-Beta-25 paths — loose `SkyrimNet/prompts/` and
+`SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml` — so one build served either SkyrimNet. That mapping is gone,
+and so is support for Beta 24 and earlier; those versions cannot see a plugin folder at all.
+
+Two rules the configure step enforces, so neither can ship broken:
+
+- `manifest.json`'s `id` must equal its folder name. SkyrimNet rejects the whole folder when they disagree.
+- `manifest.json`'s `version` must equal the `plugin.version` in `settings/NarrativeEngine.yaml`, which is the single
+  source of truth the release skill bumps.
+
+The settings config is named by its **filename**: `NarrativeEngine.yaml` is config `NarrativeEngine`, which
+`plugin.name` inside it has to match. Renaming the file renames the config, and any override a player has already
+tuned is keyed by the old name.
 
 ## Markdown conventions
 

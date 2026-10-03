@@ -1,13 +1,18 @@
 # Writing SkyrimNet custom prompts
 
-`.prompt` files under `statics/SKSE/Plugins/SkyrimNet/prompts/` are Jinja templates that SkyrimNet renders at LLM
-call time. The rendered Markdown is parsed into chat-API messages and sent to the configured LLM. Our SKSE side
-invokes a named template with `SkyrimNetAPI::SendCustomPromptToLLM(name, variant, contextJson, callback)`;
-SkyrimNet auto-discovers `Data/SKSE/Plugins/SkyrimNet/prompts/<name>.prompt` (no manifest registration needed),
-renders it with the JSON we passed, and ships the result.
+`.prompt` files under `statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/prompts/` are Jinja templates
+that SkyrimNet renders at LLM call time. The rendered Markdown is parsed into chat-API messages and sent to the
+configured LLM. Our SKSE side invokes a named template with
+`SkyrimNetAPI::SendCustomPromptToLLM(name, variant, contextJson, callback)`; SkyrimNet auto-discovers
+`<our plugin folder>/prompts/<name>.prompt` (no manifest registration needed), renders it with the JSON we passed,
+and ships the result.
 
-The build's `statics/` deploy mirrors `statics/SKSE/Plugins/SkyrimNet/prompts/` straight into the mod folder, so
-new prompts are picked up on the next build.
+That folder is our **SkyrimNet Beta 25 (0.25.0) plugin folder**, and Beta 25 is a hard floor — it does not read the
+loose `Data/SKSE/Plugins/SkyrimNet/prompts/` directory that earlier betas did, and earlier betas cannot read the
+plugin folder. See [`DEVELOPMENT.md`](DEVELOPMENT.md#the-skyrimnet-plugin-folder) for the whole folder layout.
+
+The build's `statics/` deploy mirrors the tree straight into the mod folder, so new prompts are picked up on the
+next build.
 
 ## Required structure: split into `system` and `user`
 
@@ -264,8 +269,8 @@ Patterns worth copying from `gamemaster_action_selector.prompt`:
 
 ## File naming + invocation
 
-- Path: `statics/SKSE/Plugins/SkyrimNet/prompts/<name>.prompt`. The `statics/` deploy mirrors it into the mod
-  folder unchanged.
+- Path: `statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/prompts/<name>.prompt`. The `statics/`
+  deploy mirrors it into the mod folder unchanged.
 - Filename: lowercase `snake_case`, prefixed with `narrative_engine_` so it can't collide with another
   SkyrimNet plugin's prompts. SkyrimNet's auto-discovery is filename-based; no manifest entry needed.
   Suffix the filename with what the prompt *does* (`_story_eval`, `_action_select`, …) so multiple

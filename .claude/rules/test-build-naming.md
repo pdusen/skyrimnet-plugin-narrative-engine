@@ -19,8 +19,8 @@ The archive lands in `out/`, which is gitignored. Nothing about a test build is 
 ## The version is read, never chosen
 
 Use the version the mod currently advertises. It lives in
-`statics/SKSE/Plugins/SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml`, as the `version` key
-under the top-level `plugin:` block, and between releases it matches the latest `git tag`. Read it;
+`statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/settings/NarrativeEngine.yaml`,
+as the `version` key under the top-level `plugin:` block, and between releases it matches the latest `git tag`. Read it;
 do not carry a number over from an earlier build in the same session.
 
 **Never invent the next version.** A test build is a build *of* the current version — it is not a
