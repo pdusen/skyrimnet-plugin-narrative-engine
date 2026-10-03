@@ -175,6 +175,7 @@ namespace NarrativeEngine::GossipState_
         std::size_t rejectedNoContent = 0;
         std::size_t rejectedSameEvent = 0;
         std::size_t rejectedIsolated = 0;
+        std::size_t rejectedUnavailable = 0;
     };
 
     // Session totals. Reset at OnSessionStart, not persisted — they

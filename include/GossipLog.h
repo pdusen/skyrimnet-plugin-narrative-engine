@@ -156,6 +156,11 @@ namespace NarrativeEngine::GossipLog
         std::size_t rejectedNoContent = 0;
         std::size_t rejectedSameEvent = 0;
         std::size_t rejectedIsolated = 0;
+        // Owners who could not have carried a rumor at all: dead, away, or
+        // with nowhere for a conversation to go. Counted apart from
+        // `isolated`, which means the owner is fine and their contacts are
+        // not — two different refusals that would otherwise be one number.
+        std::size_t rejectedUnavailable = 0;
     };
     void Harvest(const HarvestStats& stats);
 

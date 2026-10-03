@@ -260,6 +260,45 @@ namespace NarrativeEngine::GossipSim
         std::int64_t sourceMemoryId = 0;
     };
 
+    // Why `npc` cannot carry a rumor at this moment, or None if they can.
+    //
+    // ONE definition of the conditions, used by both ends of a rumor's
+    // life: the drain asks it of a carrier before letting them hold
+    // conversations, and the harvest and the seed path ask it of a
+    // prospective ORIGIN. Everything that stops somebody spreading a
+    // rumor has to stop them starting one, and the only way to be sure of
+    // that is for there to be a single thing to ask.
+    //
+    // Before this existed the two ends disagreed. The harvest's only
+    // availability gate measured the share of an owner's CONTACTS who
+    // could hold a conversation and never whether the owner could, so a
+    // dead mage surrounded by live ones passed it: Ancano was picked as an
+    // origin in two consecutive validation runs, each time costing an
+    // evaluation call, a composition call and a sixty-day claim on the
+    // memory, and each time the rumor burned out on its first step with
+    // `conversations=0`.
+    enum class CarryBlock : std::uint8_t
+    {
+        None,
+        // Dead, or the form no longer resolves. Permanent.
+        Gone,
+        // Down, restrained or disabled. A carrier defers a step and tries
+        // again; a prospective origin is refused, because a seed starts its
+        // infectious window NOW and time spent unconscious is window spent.
+        // The memory is released rather than claimed, so the next sweep can
+        // pick it up once they are back.
+        TemporarilyOut,
+        // Nobody on any materialised rung and the province rung switched
+        // off, or every rung weight zeroed. Nowhere for a conversation to go.
+        NoContacts,
+    };
+    CarryBlock WhyCannotCarry(const GossipThread::Token&, RE::FormID npc);
+
+    // The verdict as the trace words it: "dead", "away", "no-contacts", or
+    // "none". Shared so a refusal at seed time and a retirement mid-spread
+    // name the same condition the same way.
+    std::string_view DescribeCarryBlock(CarryBlock block);
+
     // The share of `npc`'s named contact weight that currently resolves to
     // somebody able to hold a conversation, in [0, 1]. Returns 0 when they
     // have no named contacts at all.

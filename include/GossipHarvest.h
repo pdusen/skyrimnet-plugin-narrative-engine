@@ -167,6 +167,10 @@ namespace NarrativeEngine::GossipHarvest
         // The origin's contacts are mostly unreachable, so it could not
         // have spread the rumor anywhere.
         std::size_t rejectedIsolated = 0;
+        // The origin ITSELF could not have carried it: dead, away, or with
+        // no rung to speak on. Whatever stops somebody spreading a rumor
+        // stops them starting one, and this counts the latter.
+        std::size_t rejectedUnavailable = 0;
     };
     Stats GetStats(const GossipState&);
 } // namespace NarrativeEngine::GossipHarvest

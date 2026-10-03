@@ -288,6 +288,47 @@ namespace NarrativeEngine::GossipSim
             }
         }
 
+        // Everything that stops somebody carrying a rumor, in the order the
+        // drain used to test it inline. Both the drain and the seed path go
+        // through here, which is the only way "whatever stops them spreading
+        // one stops them starting one" can be true by construction rather
+        // than by two lists being kept in step by hand.
+        //
+        // Token-free because the drain has no token to pass; the public
+        // WhyCannotCarry gates the same call for outside callers.
+        CarryBlock CarryBlockFor(RE::FormID npc)
+        {
+            switch (ActorAvailability(npc)) {
+            case Availability::Gone:
+                return CarryBlock::Gone;
+            case Availability::TemporarilyOut:
+                return CarryBlock::TemporarilyOut;
+            case Availability::Available:
+                break;
+            }
+
+            const auto& weights = Settings::Get().gossipTierWeights;
+            float totalWeight = 0.0f;
+            for (const auto w : weights) {
+                totalWeight += std::max(0.0f, w);
+            }
+            // Every rung zeroed is a configuration with no contact model at
+            // all; treat it as having nobody rather than dividing by zero.
+            if (totalWeight <= 0.0f) {
+                return CarryBlock::NoContacts;
+            }
+
+            // Somebody with nothing on any materialised rung can still reach
+            // strangers through the province lottery, so "no contacts" means
+            // only that the province rung is also switched off.
+            const auto& pools = PoolsFor(npc);
+            const bool anyLocal = std::any_of(pools.begin(), pools.end(), [](const auto& p) { return !p.empty(); });
+            if (!anyLocal && weights[kProvince] <= 0.0f) {
+                return CarryBlock::NoContacts;
+            }
+            return CarryBlock::None;
+        }
+
         void ScheduleLocked(std::uint32_t rumorId, RE::FormID carrier, double dueGameDay)
         {
             g_queue.push({dueGameDay, rumorId, carrier});
@@ -532,7 +573,7 @@ namespace NarrativeEngine::GossipSim
 
             const auto& cfg = Settings::Get();
 
-            const auto recover = [&](const char* reason) {
+            const auto recover = [&](std::string_view reason) {
                 carrier.recovered = true;
                 GossipLog::Retire(rumorId, carrierId, reason);
                 const bool anyLive = std::any_of(
@@ -550,20 +591,26 @@ namespace NarrativeEngine::GossipSim
                 recover("age");
                 return;
             }
-            switch (ActorAvailability(carrierId)) {
-            case Availability::Gone:
-                recover("dead");
+
+            switch (const auto block = CarryBlockFor(carrierId)) {
+            case CarryBlock::Gone:
+            case CarryBlock::NoContacts:
+                recover(DescribeCarryBlock(block));
                 return;
-            case Availability::TemporarilyOut:
+            case CarryBlock::TemporarilyOut:
                 // Down but not out. Skip this step and try again next one;
                 // do NOT recover, which would make them permanently immune.
                 // Their infectious clock keeps running — time spent
                 // unconscious is time not spent talking, which is correct
                 // and needs no clock-pausing machinery.
+                //
+                // This is the one condition the seed path treats differently:
+                // a carrier has a window already running and can afford to
+                // wait, while a seed would spend its whole window waiting.
                 carrier.nextStepGameDay = nowGameDay + std::max(0.01f, cfg.gossipStepDays);
                 ScheduleLocked(rumorId, carrierId, carrier.nextStepGameDay);
                 return;
-            case Availability::Available:
+            case CarryBlock::None:
                 break;
             }
 
@@ -572,20 +619,6 @@ namespace NarrativeEngine::GossipSim
             float totalWeight = 0.0f;
             for (const auto w : weights) {
                 totalWeight += std::max(0.0f, w);
-            }
-            // Every rung zeroed is a configuration with no contact model at
-            // all; treat it as having nobody rather than dividing by zero.
-            if (totalWeight <= 0.0f) {
-                recover("no-contacts");
-                return;
-            }
-            // A carrier with nothing on any materialised rung can still reach
-            // strangers through the province lottery, so "no contacts" now
-            // means only that the province rung is also switched off.
-            const bool anyLocal = std::any_of(pools.begin(), pools.end(), [](const auto& p) { return !p.empty(); });
-            if (!anyLocal && weights[kProvince] <= 0.0f) {
-                recover("no-contacts");
-                return;
             }
 
             const double step = std::max(0.01f, cfg.gossipStepDays);
@@ -1124,7 +1157,7 @@ namespace NarrativeEngine::GossipSim
         SweepAndReap(gt);
     }
 
-    std::uint32_t SeedRumor(const GossipThread::Token&,
+    std::uint32_t SeedRumor(const GossipThread::Token& gt,
                             RE::FormID originNpc,
                             float notability,
                             std::int64_t sourceMemoryId,
@@ -1136,6 +1169,27 @@ namespace NarrativeEngine::GossipSim
         }
         const auto* p = GossipGraph::Find(originNpc);
         if (!p) {
+            return 0;
+        }
+
+        // The same question the drain asks a carrier before letting them
+        // speak. A rumor whose origin cannot hold a conversation is not a
+        // slow rumor, it is a dead one: the first step retires them and it
+        // burns out having told nobody, which is what Ancano did in two
+        // consecutive runs.
+        //
+        // Refusing here is what releases the memory — GossipContent abandons
+        // the claim when this returns 0 — so the memory goes back in the pool
+        // for whoever can actually spread it. The harvest has its own copy of
+        // this gate so the model calls are never spent in the first place;
+        // this one is the invariant, and holds whatever the caller did.
+        if (const auto block = WhyCannotCarry(gt, originNpc); block != CarryBlock::None) {
+            GossipLog::Note(std::format("seed refused - {} cannot carry a rumor ({})",
+                                        GossipGraph::NpcName(originNpc),
+                                        DescribeCarryBlock(block)));
+            logger::warn("GossipSim: seed refused — origin 0x{:08X} cannot carry a rumor ({})",
+                         originNpc,
+                         DescribeCarryBlock(block));
             return 0;
         }
 
@@ -1191,6 +1245,26 @@ namespace NarrativeEngine::GossipSim
         // touching the form is allowed.
         DebugNotify::PostActorNamed(originNpc, "[NE] New rumor spreading from {}");
         return id;
+    }
+
+    std::string_view DescribeCarryBlock(CarryBlock block)
+    {
+        switch (block) {
+        case CarryBlock::Gone:
+            return "dead";
+        case CarryBlock::TemporarilyOut:
+            return "away";
+        case CarryBlock::NoContacts:
+            return "no-contacts";
+        case CarryBlock::None:
+            break;
+        }
+        return "none";
+    }
+
+    CarryBlock WhyCannotCarry(const GossipThread::Token&, RE::FormID npc)
+    {
+        return CarryBlockFor(npc);
     }
 
     float AvailableContactShare(const GossipThread::Token&, RE::FormID npc)

@@ -392,6 +392,7 @@ namespace NarrativeEngine::GossipHarvest
             g_stats.rejectedClaimed += sweep.rejectedClaimed;
             g_stats.rejectedSameEvent += sweep.rejectedSameEvent;
             g_stats.rejectedIsolated += sweep.rejectedIsolated;
+            g_stats.rejectedUnavailable += sweep.rejectedUnavailable;
             g_stats.rejectedDiary += sweep.rejectedDiary;
             g_stats.rejectedNoContent += sweep.rejectedNoContent;
         }
@@ -688,6 +689,33 @@ namespace NarrativeEngine::GossipHarvest
                         continue;
                     }
                     if (!q.reachable.has_value()) {
+                        // The owner first, their contacts second. These are
+                        // different refusals and the share cannot express the
+                        // first one: it measures how many of somebody's
+                        // contacts can hold a conversation, so a dead mage
+                        // surrounded by live ones scores high and sails
+                        // through. Ancano was picked as an origin twice that
+                        // way, each time spending an evaluation call, a
+                        // composition call and a sixty-day claim on a rumor
+                        // that burned out on its first step having told
+                        // nobody.
+                        //
+                        // Asked of GossipSim so it is the SAME question the
+                        // drain asks a carrier before letting them speak.
+                        if (const auto block = GossipSim::WhyCannotCarry(gt, q.owner);
+                            block != GossipSim::CarryBlock::None) {
+                            q.reachable = false;
+                            ++sweep.rejectedUnavailable;
+                            const auto* best = q.byImportance.front();
+                            GossipLog::Memory(best->memoryId,
+                                              q.owner,
+                                              best->importance,
+                                              std::format("cannot carry a rumor ({}) -- {} candidate(s) skipped",
+                                                          GossipSim::DescribeCarryBlock(block),
+                                                          q.byImportance.size()));
+                            continue;
+                        }
+
                         const float share = GossipSim::AvailableContactShare(gt, q.owner);
                         q.reachable = share >= cfg.gossipMinAvailableContactShare;
                         if (!*q.reachable) {
@@ -827,6 +855,7 @@ namespace NarrativeEngine::GossipHarvest
         out.rejectedNoContent = h.rejectedNoContent;
         out.rejectedSameEvent = h.rejectedSameEvent;
         out.rejectedIsolated = h.rejectedIsolated;
+        out.rejectedUnavailable = h.rejectedUnavailable;
         return out;
     }
 } // namespace NarrativeEngine::GossipHarvest

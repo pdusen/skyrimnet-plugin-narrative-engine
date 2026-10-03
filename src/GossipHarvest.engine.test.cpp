@@ -156,6 +156,11 @@ namespace
         return Rumors().size();
     }
 
+    GossipHarvest::Stats Stats()
+    {
+        return GossipHarvest::GetStats(NarrativeEngine::Testing::LiveGossipState());
+    }
+
     bool OfferedMemory(std::int64_t id)
     {
         const auto rumors = Rumors();
@@ -174,13 +179,58 @@ TEST_CASE("GossipHarvest turns a memory into a rumor", "[GossipHarvest][engine]"
     ResetGossipState();
     REQUIRE(SkyrimNet::Initialize());
     FakeLLM().Reset();
-    BuildGossipWorld(engine);
+    const auto world = BuildGossipWorld(engine);
     GossipGraph::Initialize();
     REQUIRE(GossipGraph::IsReady());
     SetMemories(nlohmann::json::array({MemoryRow(101, "A College mage was caught after hours.")}));
     // The content layer answers the evaluation and the composition from one
     // response, so a verdict and its bands travel together.
     SetJson(FakeLLM().promptResponse, R"({"verdict":"seed","bands":["a","b","c"]})");
+
+    SECTION("when nobody who holds it could carry a rumor")
+    {
+        // The gate that was missing. Its predecessor measured the share of an
+        // owner's CONTACTS who could hold a conversation and never whether
+        // the owner could, so a dead mage surrounded by live ones passed:
+        // Ancano was chosen as an origin twice, and each time an evaluation
+        // call, a composition call and a sixty-day claim were spent on a
+        // rumor that burned out on its first step having told nobody.
+        for (const auto npc : {world.hulda, world.saadia, world.ysolda, world.valga}) {
+            auto* actor = engine.PlacedActorFor(npc);
+            REQUIRE(actor != nullptr);
+            actor->AsActorState()->actorState1.lifeState = RE::ACTOR_LIFE_STATE::kDead;
+        }
+        const bool swept = Sweep();
+
+        SECTION("should still run the sweep")
+        {
+            // Refusing every owner is not a failed sweep. The boundary was
+            // spent correctly and there was nothing to seed.
+            REQUIRE(swept);
+        }
+
+        SECTION("should seed nothing")
+        {
+            REQUIRE(Offered() == 0);
+        }
+
+        SECTION("should spend no model call finding that out")
+        {
+            // The whole saving. Refusing at the seed path alone would still
+            // have paid for the evaluation and the composition before
+            // discovering the origin cannot speak.
+            REQUIRE(Stats().sentForGeneration == 0);
+        }
+
+        SECTION("should say the owner could not carry it, not that they were isolated")
+        {
+            // Two different refusals. One means the owner is fine and their
+            // contacts are not; this one means the owner is not. Collapsing
+            // them loses the only number that would have caught Ancano.
+            REQUIRE(Stats().rejectedUnavailable > 0);
+            REQUIRE(Stats().rejectedIsolated == 0);
+        }
+    }
 
     SECTION("when somebody in the drawn bucket holds something worth telling")
     {

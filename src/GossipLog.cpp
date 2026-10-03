@@ -227,7 +227,7 @@ namespace NarrativeEngine::GossipLog
     {
         Emit(std::format("HARVEST bucket={}/{}  actors={}  memories={}  candidates={}  sent={}  "
                          "(rejected: {} diary, {} no-content, {} claimed, {} same-event, "
-                         "{} isolated, {} unfiltered)",
+                         "{} isolated, {} cannot-carry, {} unfiltered)",
                          stats.bucket,
                          stats.bucketCount,
                          stats.bucketPopulation,
@@ -239,6 +239,7 @@ namespace NarrativeEngine::GossipLog
                          stats.rejectedClaimed,
                          stats.rejectedSameEvent,
                          stats.rejectedIsolated,
+                         stats.rejectedUnavailable,
                          stats.rejectedUnfiltered));
     }
 

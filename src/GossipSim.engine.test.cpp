@@ -153,6 +153,16 @@ namespace
         return rumors.front();
     }
 
+    // Dead, rather than bleeding out. EngineMock has a helper for the
+    // transient states and not for this one, and the whole point of the case
+    // below is the permanent one.
+    void Kill(NarrativeEngine::Testing::EngineMock& engine, std::uint32_t npc)
+    {
+        auto* actor = engine.PlacedActorFor(npc);
+        REQUIRE(actor != nullptr);
+        actor->AsActorState()->actorState1.lifeState = RE::ACTOR_LIFE_STATE::kDead;
+    }
+
     float ContactShare(std::uint32_t npc)
     {
         float share = 0.0f;
@@ -673,6 +683,69 @@ TEST_CASE("GossipSim summarises the world for the trace", "[GossipSim][engine]")
             REQUIRE(std::any_of(lines.begin(), lines.end(), [](const std::string& line) {
                 return line.find("(no rumors)") != std::string::npos;
             }));
+        }
+    }
+}
+
+TEST_CASE("GossipSim will not start a rumor with somebody who cannot spread one", "[GossipSim][engine]")
+{
+    // The invariant: every condition that stops an NPC spreading a rumor has
+    // to stop them starting one. They are one function now -- the drain asks
+    // it of a carrier before letting them speak and the seed path asks it of
+    // a prospective origin -- because two lists kept in step by hand had
+    // already drifted apart once.
+    //
+    // The drift cost real work. The harvest's only availability gate measured
+    // the share of an owner's CONTACTS who could hold a conversation, never
+    // whether the owner could, so a dead mage surrounded by live ones passed
+    // it. Ancano was chosen as an origin in two consecutive validation runs;
+    // each time an evaluation call, a composition call and a sixty-day claim
+    // on the memory were spent on a rumor that retired its origin on the
+    // first step and burned out with conversations=0.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    ResetGossipState();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    FakeLLM().Reset();
+    const GossipWorld world = BuildGossipWorld(engine);
+    GossipGraph::Initialize();
+    WindTo(kDayOne);
+
+    SECTION("when the origin is dead")
+    {
+        Kill(engine, world.hulda);
+
+        SECTION("should refuse the seed")
+        {
+            REQUIRE(Seed(world.hulda) == 0);
+            REQUIRE(Rumors().empty());
+        }
+    }
+
+    SECTION("when the origin is down but will be back")
+    {
+        // A carrier in this state defers a step and tries again, because
+        // their infectious window is already running. A seed would START its
+        // window here and spend the whole of it unconscious, so it is
+        // refused -- which releases the memory for the next sweep instead of
+        // claiming it for sixty days.
+        engine.SetActorBleedingOut(engine.PlacedActorFor(world.hulda), true);
+
+        SECTION("should refuse the seed")
+        {
+            REQUIRE(Seed(world.hulda) == 0);
+            REQUIRE(Rumors().empty());
+        }
+    }
+
+    SECTION("when the origin can hold a conversation")
+    {
+        SECTION("should seed as normal")
+        {
+            // The other half of the invariant. A gate that refuses everybody
+            // satisfies the assertions above and breaks the subsystem.
+            REQUIRE(Seed(world.hulda) != 0);
+            REQUIRE(Rumors().size() == 1);
         }
     }
 }
