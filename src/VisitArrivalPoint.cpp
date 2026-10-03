@@ -302,18 +302,31 @@ namespace NarrativeEngine::VisitArrivalPoint
         // moving the visitor anywhere the player would find strange.
         //
         // Hops are undirected, so an expanded node can sit back toward the
-        // player. The minimum-distance gate in the walk is what rules
-        // those out: a node on the far side of the player is at most one
-        // two-hop reach away from them, and that reach is a measured
-        // 1,784 units at worst across all of vanilla, median 226 (see
-        // docs/engine-findings/fine-road-hop-spans.md). At a 2,000-unit
-        // floor every one of them is inside it and rejected on distance
-        // before direction is ever a question, which is why neither the
-        // Phase 14 approach corridor nor any other directional test is
-        // carried over — they would never change an answer.
+        // player, and `hopReachUnits` is what stops one ending up across
+        // them.
+        //
+        // The floor alone was thought to be enough: a two-hop reach is a
+        // measured 1,784 units at worst across all of vanilla, median 226
+        // (docs/engine-findings/fine-road-hop-spans.md), so at a 2,000-unit
+        // floor no hop could reach the far side. That arithmetic measured
+        // from the wrong origin. The budget is spent from a CHAIN POINT, and
+        // chain points sit anywhere inside the floor, so a hop westward from
+        // a chain point east of the player lands west of them with room to
+        // spare. Measured: a visitor from Winterhold placed 2,003 units west
+        // of Nightgate Inn while every point on their route was 11,106 units
+        // east, because the western node was in-grid with cover and the
+        // eastern ones were outside the grid and only unverifiable.
+        //
+        // With a reach of `b`, an accepted candidate — at least the floor
+        // from the player — hangs off a chain point at least `floor - b`
+        // out, which is far enough along the route to inherit its direction.
+        // That is the floor settling direction for real rather than by
+        // assertion, and it is why no half-plane or approach corridor is
+        // carried over from Phase 14.
         std::vector<Candidate> GatherCandidates(const ApproachChain::Chain& chain,
                                                 const FineRoads::Graph& fine,
                                                 int hopRadius,
+                                                float hopReachUnits,
                                                 const RE::NiPoint3& anchorPos)
         {
             std::vector<Candidate> out;
@@ -401,6 +414,11 @@ namespace NarrativeEngine::VisitArrivalPoint
                         nearestDist = d;
                         nearestChain = i;
                     }
+                }
+                if (nearestDist < 0.0f || nearestDist > hopReachUnits) {
+                    // Further from the route than an expanded node is
+                    // allowed to be, whatever the hop count says.
+                    continue;
                 }
                 candidate.chainIndex = nearestChain;
                 out.push_back(candidate);
@@ -1390,7 +1408,8 @@ namespace NarrativeEngine::VisitArrivalPoint
 
         const auto fine = FineRoads::Snapshot();
         const int hopRadius = std::max(0, cfg.visitChainHopRadius);
-        const auto candidates = GatherCandidates(chain, fine, hopRadius, anchorPos);
+        const float hopReach = static_cast<float>(std::max(0, cfg.visitChainHopReachUnits));
+        const auto candidates = GatherCandidates(chain, fine, hopRadius, hopReach, anchorPos);
 
         GateTally tally;
         const auto kept = MainThread::Run(pt, [&](const MainThread::Token&) {

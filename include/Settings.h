@@ -529,6 +529,25 @@ namespace NarrativeEngine::Settings
         // is a few metres off it — which is exactly where cheap cover
         // lives when the road itself is in plain view. 0 collapses the
         // search to on-chain points only.
+        // How far from the chain point it hangs off an expanded
+        // candidate may sit. Hops bound how far the search walks the road
+        // ribbon; this bounds where it is allowed to end up, and the two
+        // are not the same because a hop's length is terrain, not policy.
+        //
+        // It is also what makes the distance floor settle direction. Every
+        // accepted candidate is at least iVisitMarkerMinDistanceUnits from
+        // the player, so with a reach of 400 it hangs off a chain point at
+        // least 1,600 out — far enough along the route to inherit its
+        // direction. Crossing the player would cost more than the reach by
+        // construction.
+        //
+        // Without it, a visitor from Winterhold arrived at Nightgate Inn
+        // from due west: every on-chain point was 11,106 units east and
+        // outside the loaded grid, and one node two hops off the chain sat
+        // 2,003 units west, in the grid, with cover. Grade beat distance
+        // and the off-route point won.
+        int visitChainHopReachUnits = 400;
+
         int visitChainHopRadius = 2;
 
         // Spacing of the synthetic points ApproachChain lays along its

@@ -448,7 +448,8 @@ New:
 | `iVisitChainBridgeSpacingUnits` | `512` | Bridge and direct-line spacing; under one 866-unit background step |
 | `iVisitChainCoarseDetailUnits` | `16384` | How near the player a coarse edge is laid rather than linked |
 | `iVisitArrivalCoverProximityUnits` | `512` | How near the arrival a blocker must be to count as its cover |
-| `iVisitChainHopRadius` | `2` | How far off the fine chain to expand for candidates |
+| `iVisitChainHopRadius` | `2` | How many hops off the fine chain to expand for candidates |
+| `iVisitChainHopReachUnits` | `400` | How far from its chain point an expanded candidate may sit |
 | `iVisitChainUnstuckMinHopUnits` | `300` | How far a fine-neighbour unstuck hop must move a stalled visitor |
 | `iVisitChainUnstuckMaxRetreatUnits` | `150` | How much further from the player that hop may leave them |
 | `iVisitChainDifficultyCoarse` | `1` | Cost multiplier for coarse road nodes |
@@ -1302,6 +1303,81 @@ there at all.
 
 ---
 
+### Step 15 — Bound hop expansion in units, not hops
+
+- [X] Complete
+
+**[CLAUDE]**
+
+**Goal:** Stop an off-route point beating every on-route one, which is how a visitor from the north-east
+arrived from due west at Nightgate Inn.
+
+**Files:** `src/VisitArrivalPoint.cpp`, `src/VisitArrivalPoint.engine.test.cpp`, `include/Settings.h`,
+`src/Settings.cpp`, `statics/SKSE/Plugins/NarrativeEngine.ini`.
+
+**Sub-tasks:**
+
+1. `iVisitChainHopReachUnits`, default `400`: an expanded node is a candidate only while it is within that
+   many units of the fine chain point it hangs off. `GatherCandidates` already computes that distance to
+   order fallbacks, so the check costs nothing.
+2. Keep `iVisitChainHopRadius` as well. Hops bound how far the search walks the ribbon; units bound where it
+   may end up. Dropping either leaves one of the two failure modes it was built against.
+3. Rewrite the comment that claims the distance floor makes a directional test unnecessary. It is wrong, and
+   this step is why.
+4. Tests: a node inside the reach is still offered; one past it is not; and the Nightgate shape — every
+   on-chain point far out and out of grid, one hop point near and on the far side — picks nothing on the far
+   side.
+
+**Specifics:**
+
+- **The measurement, from `NarrativeEngine.2.log`.** Player at `(73021,50240)` at Nightgate Inn, visitor from
+  Winterhold, `home=(115577,114656)`, `bearing_home=57deg`. The kept candidates:
+
+  ```text
+  (71022,50109)  2003u out  class=fine    hops=2  in_grid=true   passed by cover
+  (84098,51036) 11106u out  class=coarse  hops=0  in_grid=false  passed by outside-grid
+  (84968,47141) 12343u out  class=coarse  hops=0  in_grid=false  passed by outside-grid
+  ...
+  ```
+
+  **Every on-chain point is east**, 11,106 units out and further, which is the road sweeping around the east
+  side of the mountain exactly as it should. The route was right. What won was the one off-route point: a fine
+  node two hops to the side, 2,003 units **west**, `bearing_arrival=-176deg`. It won because grade beats
+  distance — it was in-grid with cover, and every on-chain alternative was outside the grid and therefore
+  only Unverifiable.
+
+- **The guarantee this invalidates.** `GatherCandidates` claimed a hop could never place a visitor across the
+  player, because two hops reach a measured 1,784 units at worst and the floor is 2,000. The arithmetic was
+  measured from the wrong origin: the budget is spent from a **chain point**, and chain points sit anywhere
+  inside the floor. 2,003 units of westward reach from a chain point east of the player is what the log shows.
+
+- **Why units fix it and a bigger road weight does not.** Bounding the reach at `b` means every accepted
+  candidate — necessarily 2,000 units or more from the player — hangs off a chain point at least `2000 - b`
+  out. At 400 that is 1,600: far enough along the route that the candidate inherits the route's direction.
+  Crossing the player would cost more than `b` by construction. The floor's directional guarantee becomes
+  true instead of asserted, with no half-plane and no corridor.
+
+- **Not a weights problem.** The user's first reading was that the coarse route around the mountain was losing
+  to something straighter, and it is worth saying plainly that the chain disproves it: the coarse run in that
+  log is east, at difficulty 1, for 11,000 units. Re-weighting would have changed nothing, because the route
+  was never the thing choosing the arrival.
+
+**Verify [CLAUDE]:** removing the reach check puts the far-side point back in the candidate set and fails the
+Nightgate case.
+
+**Done.** `iVisitChainHopReachUnits`, 400. Widening it a thousandfold fails
+"VisitArrivalPoint expands off the road for a candidate" and nothing else.
+
+That case had to be rewritten, and the rewrite is the interesting part: it used to hang its spur off the
+player's own node, which is precisely the shape this step forbids — a point reachable within the reach of a
+chain point at the player's feet is inside the floor by construction. So the old fixture encoded the Nightgate
+behaviour as correct. It now hangs the spur off a chain point out along the route, where expansion is meant to
+look, and a second section keeps the old geometry to assert the decline.
+
+**Verify [USER]:** at Nightgate Inn, a visitor from Winterhold arrives from the east.
+
+---
+
 ### Step 13 — Re-run Step 6's sites and settle the numbers
 
 - [ ] Complete
@@ -1348,7 +1424,7 @@ visitor to an indoor player waits at the door the player walked in by.
 
 ## Done condition
 
-All fourteen steps checked, and:
+All fifteen steps checked, and:
 
 1. `pwsh -File build.ps1 build`, `pwsh -File build.ps1 test` and `pwsh -File format.ps1` are all clean.
 2. `grep -rn "BearingHome\|CorridorTarget" src include` is empty, and `Tier` holds only `None`,

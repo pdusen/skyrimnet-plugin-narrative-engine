@@ -751,74 +751,71 @@ TEST_CASE("VisitArrivalPoint expands off the road for a candidate", "[VisitArriv
     // plain view, and reaching it is the difference between a placed visit
     // and a declined one.
     //
-    // Isolating it needs a world where the chain's own points cannot win. The
-    // road here is short — every node on it sits inside the minimum distance,
-    // so none of them is far enough to arrive at — and a two-node spur runs
-    // north off the player's own node, out past that minimum. The spur is a
-    // dead end, so no route ever passes through it: the only way to reach it
-    // is to expand off the chain.
+    // Isolating it needs a world where the chain's own points cannot win, so
+    // the road here is exposed along its whole length and the only cover is
+    // on a short spur hanging off it, out along the route.
     constexpr float kFloor = 1200.0f;
-    constexpr const char* kShortBand = "[Beats]\niVisitMarkerMinDistanceUnits=1200\n"
-                                       "iVisitMarkerMaxDistanceUnits=2500\n"
-                                       "iVisitArrivalCoverRadiusUnits=64\n"
-                                       "bVisitArrivalAllowCoarseBearing=false\n"
-                                       "iVisitChainHopRadius=2\n"
-                                       "[FineRoads]\nbFineRoadsEnabled=1\niFineRoadsBackstopSeconds=1\n"
-                                       "bFineRoadsDebugBitmap=0\n"
-                                       "[TravelGraph]\nbTravelGraphEnabled=1\nbTravelGraphDebugBitmap=0\n";
+    constexpr float kRoadEastEnd = 4000.0f;
+    constexpr float kSpurX = 2500.0f;
+    constexpr float kSpurY = 300.0f;
+    constexpr const char* kBand = "[Beats]\niVisitMarkerMinDistanceUnits=1200\n"
+                                  "iVisitMarkerMaxDistanceUnits=2500\n"
+                                  "iVisitArrivalCoverRadiusUnits=64\n"
+                                  "bVisitArrivalAllowCoarseBearing=false\n"
+                                  "iVisitChainHopRadius=2\niVisitChainHopReachUnits=400\n"
+                                  "[FineRoads]\nbFineRoadsEnabled=1\niFineRoadsBackstopSeconds=1\n"
+                                  "bFineRoadsDebugBitmap=0\n"
+                                  "[TravelGraph]\nbTravelGraphEnabled=1\n"
+                                  "bTravelGraphDebugBitmap=0\n";
 
-    constexpr float kSpurNearY = 700.0f;
-    constexpr float kSpurFarY = 1400.0f;
-
-    // Indices into the mesh below: a five-node road, then the spur.
-    //   0:(-1000,0) 1:(-500,0) 2:(0,0) 3:(500,0) 4:(1000,0) 5:(0,700) 6:(0,1400)
-    const auto layShortRoadAndSpur = [](EngineMock& engine, RE::TESObjectCELL* cell) {
+    // A road east along y=0 from the player to the sender, with a one-node
+    // spur 300 units north of the node at x=2500.
+    const auto layRoadAndSpur = [](EngineMock& engine, RE::TESObjectCELL* cell) {
         std::vector<Triangle> mesh;
-        for (int i = 0; i < 5; ++i) {
+        const int nodes = 9; // 0..4000 in 500s
+        for (int i = 0; i < nodes; ++i) {
             Triangle t;
-            t.x = -1000.0f + static_cast<float>(i) * 500.0f;
+            t.x = static_cast<float>(i) * 500.0f;
             t.y = 0.0f;
             t.z = kGround;
             t.neighbor[0] = i > 0 ? i - 1 : -1;
-            t.neighbor[1] = i < 4 ? i + 1 : -1;
+            t.neighbor[1] = i < nodes - 1 ? i + 1 : -1;
             mesh.push_back(t);
         }
-        mesh[2].neighbor[2] = 5; // the spur leaves the player's own node
-        Triangle spurNear;
-        spurNear.x = 0.0f;
-        spurNear.y = kSpurNearY;
-        spurNear.z = kGround;
-        spurNear.neighbor[0] = 2;
-        spurNear.neighbor[1] = 6;
-        mesh.push_back(spurNear);
-        Triangle spurFar;
-        spurFar.x = 0.0f;
-        spurFar.y = kSpurFarY;
-        spurFar.z = kGround;
-        spurFar.neighbor[0] = 5;
-        mesh.push_back(spurFar);
+        const int spurRoot = static_cast<int>(kSpurX / 500.0f);
+        mesh[spurRoot].neighbor[2] = nodes;
+        Triangle spur;
+        spur.x = kSpurX;
+        spur.y = kSpurY;
+        spur.z = kGround;
+        spur.neighbor[0] = spurRoot;
+        mesh.push_back(spur);
         engine.AddNavMesh(cell, kRoadMesh, mesh);
     };
 
-    SECTION("when the only point far enough out is two hops off the chain")
+    SECTION("when the only cover is a hop off the chain")
     {
         EngineMock engine;
-        const ConfiguredSettings settings{kShortBand};
+        const ConfiguredSettings settings{kBand};
         auto* space = engine.AddWorldSpace(kWorld);
         auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
-        layShortRoadAndSpur(engine, cell);
+        layRoadAndSpur(engine, cell);
         AttachGridAround(engine, space, cell);
         PollFineRoads();
         LayGround(engine);
-        CoverEverywhere(engine);
+        // The road itself is in plain view; only the spur is hidden.
+        engine.visibility.pickHitFraction = 1.0f;
+        engine.visibility.coverPatches.push_back({kSpurX, kSpurY, 150.0f, 0.99f});
+
         auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
-        auto* sender = ActorAt(engine, kSender, cell, At(1000.0f, 0.0f));
+        player->data.angle.z = 3.14159265f / 2.0f; // watching the road east
+        auto* sender = ActorAt(engine, kSender, cell, At(kRoadEastEnd, 0.0f));
         const auto result = FindFor(sender, player);
 
         SECTION("should stand the visitor on it")
         {
             REQUIRE(result.Ok());
-            REQUIRE(std::fabs(result.point.y - kSpurFarY) < 1.0f);
+            REQUIRE(std::fabs(result.point.y - kSpurY) < 1.0f);
             REQUIRE(Dist2D(result.point, At(0.0f, 0.0f)) >= kFloor);
         }
 
@@ -829,6 +826,69 @@ TEST_CASE("VisitArrivalPoint expands off the road for a candidate", "[VisitArriv
             // its rank differs, and rank only breaks ties.
             REQUIRE(result.Ok());
             REQUIRE(result.pointClass == NarrativeEngine::ApproachChain::PointClass::Fine);
+        }
+    }
+
+    SECTION("when the spur hangs off the player's own position")
+    {
+        // The Nightgate Inn failure in miniature, and the reason expansion is
+        // bounded in units rather than hops alone.
+        //
+        // The road east is all inside the floor, so nothing on the route is
+        // far enough out to arrive at. A spur runs NORTH off the player's own
+        // node and past the floor, with the only cover on it. Reaching it
+        // would place a visitor who is walking in from the east somewhere due
+        // north, off a route that never went that way — which is what a
+        // tester watched happen, at 2,003 units west of an inn whose every
+        // on-chain point was 11,106 units east.
+        EngineMock engine;
+        const ConfiguredSettings settings{kBand};
+        auto* space = engine.AddWorldSpace(kWorld);
+        auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+        std::vector<Triangle> mesh;
+        for (int i = 0; i < 3; ++i) {
+            Triangle t;
+            t.x = static_cast<float>(i) * 500.0f;
+            t.y = 0.0f;
+            t.z = kGround;
+            t.neighbor[0] = i > 0 ? i - 1 : -1;
+            t.neighbor[1] = i < 2 ? i + 1 : -1;
+            mesh.push_back(t);
+        }
+        mesh[0].neighbor[2] = 3; // the spur leaves the player's own node
+        Triangle spurNear;
+        spurNear.x = 0.0f;
+        spurNear.y = 700.0f;
+        spurNear.z = kGround;
+        spurNear.neighbor[0] = 0;
+        spurNear.neighbor[1] = 4;
+        mesh.push_back(spurNear);
+        Triangle spurFar;
+        spurFar.x = 0.0f;
+        spurFar.y = 1400.0f;
+        spurFar.z = kGround;
+        spurFar.neighbor[0] = 3;
+        mesh.push_back(spurFar);
+        auto* cellMesh = cell;
+        engine.AddNavMesh(cellMesh, kRoadMesh, mesh);
+        AttachGridAround(engine, space, cell);
+        PollFineRoads();
+        LayGround(engine);
+        engine.visibility.pickHitFraction = 1.0f;
+        engine.visibility.coverPatches.push_back({0.0f, 1400.0f, 200.0f, 0.99f});
+
+        auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+        auto* sender = ActorAt(engine, kSender, cell, At(1000.0f, 0.0f));
+        const auto result = FindFor(sender, player);
+
+        SECTION("should decline rather than arrive from a direction nobody travelled")
+        {
+            // 1,400 units from a chain point at the player's feet is past the
+            // 400-unit reach, so the spur is not a candidate however good its
+            // cover is. Every accepted point hangs off a chain point at least
+            // `floor - reach` out, which is what ties the arrival to the
+            // route without a half-plane or a corridor.
+            REQUIRE_FALSE(result.Ok());
         }
     }
 
@@ -846,21 +906,23 @@ TEST_CASE("VisitArrivalPoint expands off the road for a candidate", "[VisitArriv
                                           "bTravelGraphDebugBitmap=0\n"};
         auto* space = engine.AddWorldSpace(kWorld);
         auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
-        layShortRoadAndSpur(engine, cell);
+        layRoadAndSpur(engine, cell);
         AttachGridAround(engine, space, cell);
         PollFineRoads();
         LayGround(engine);
-        CoverEverywhere(engine);
+        engine.visibility.pickHitFraction = 1.0f;
+        engine.visibility.coverPatches.push_back({kSpurX, kSpurY, 150.0f, 0.99f});
         auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
-        auto* sender = ActorAt(engine, kSender, cell, At(1000.0f, 0.0f));
+        player->data.angle.z = 3.14159265f / 2.0f;
+        auto* sender = ActorAt(engine, kSender, cell, At(kRoadEastEnd, 0.0f));
         const auto result = FindFor(sender, player);
 
         SECTION("should not reach the spur at all")
         {
-            // A radius of 0 is the on-chain-only search. Nothing on the chain
-            // is far enough out, and the spur is not on it, so the visit
-            // declines -- which is what says the win above came from the
-            // expansion rather than from the spur being on the route.
+            // A radius of 0 is the on-chain-only search. The road is watched
+            // along its whole length and the spur is not on the chain, so the
+            // visit declines -- which is what says the win above came from
+            // the expansion rather than from the spur being on the route.
             REQUIRE_FALSE(result.Ok());
         }
     }
