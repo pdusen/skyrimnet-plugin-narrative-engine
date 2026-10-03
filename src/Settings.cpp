@@ -177,6 +177,7 @@ namespace NarrativeEngine::Settings
             dst.debugMode = ini.GetBoolValue("General", "bDebugMode", dst.debugMode);
             dst.debugNotifications = ini.GetBoolValue("General", "bDebugNotifications", dst.debugNotifications);
             dst.traceMode = ini.GetBoolValue("General", "bTraceMode", dst.traceMode);
+            dst.traceKeyPresses = ini.GetBoolValue("General", "bTraceKeyPresses", dst.traceKeyPresses);
 
             dst.tickIntervalSeconds =
                 static_cast<int>(ini.GetLongValue("Director", "iTickIntervalSeconds", dst.tickIntervalSeconds));

@@ -66,6 +66,15 @@ namespace NarrativeEngine::Settings
         // off, or vice versa. Logged via logger::trace, which spdlog
         // is configured to pass through (see logger.h).
         bool traceMode = false;
+        // Trace a line for every individual key press the dashboard's
+        // input sink sees, including the ones that match nothing. That
+        // sink fires on every input event the game receives, so this is
+        // the loudest thing in the log by a wide margin — a line per
+        // keystroke of ordinary play. Carved out of traceMode because it
+        // buries the per-tick chatter traceMode is usually turned on for.
+        // Needs traceMode as well, since that is what opens the trace
+        // level at all.
+        bool traceKeyPresses = false;
 
         // Corner-of-the-screen notices when a beat does something the
         // player would otherwise only learn about later, or not at all:

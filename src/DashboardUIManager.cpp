@@ -97,6 +97,11 @@ namespace NarrativeEngine::DashboardUIManager
                 // per-key TRACE lines only emit when the player has
                 // enabled bTraceMode in the ini.
                 const bool trace = Settings::Get().traceMode;
+                // And the subset that fires for keys which match nothing,
+                // which is most of them. Separate switch: a line per
+                // keystroke of ordinary play buries everything else
+                // traceMode is on for.
+                const bool tracePresses = trace && Settings::Get().traceKeyPresses;
 
                 bool fire = false;
                 for (auto* e = *a_event; e; e = e->next) {
@@ -140,7 +145,7 @@ namespace NarrativeEngine::DashboardUIManager
                         continue;
                     }
 
-                    if (trace) {
+                    if (tracePresses) {
                         // GetAsyncKeyState here is used purely for the
                         // diagnostic — the actual match logic below reads
                         // it too, but this trace line captures the state
@@ -225,7 +230,7 @@ namespace NarrativeEngine::DashboardUIManager
                     }
 
                     if (static_cast<int>(dxsc) != Settings::Get().dashboardHotkeyDXSC) {
-                        if (trace) {
+                        if (tracePresses) {
                             logger::trace("DashboardUIManager[trace]:  reject DXSC {} != configured {}",
                                           dxsc,
                                           Settings::Get().dashboardHotkeyDXSC);

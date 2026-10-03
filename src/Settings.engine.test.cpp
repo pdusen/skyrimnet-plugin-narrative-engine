@@ -128,6 +128,35 @@ TEST_CASE("Settings::Load reads the plugin INI", "[Settings][engine]")
         }
     }
 
+    SECTION("when only trace mode is asked for")
+    {
+        WriteIni(kPluginIni, "[General]\nbTraceMode=1\n");
+        Settings::Load();
+
+        SECTION("should leave per-key-press tracing off")
+        {
+            // The dashboard's hotkey sink sees every input event the game
+            // receives, so tracing each one costs a log line per keystroke of
+            // ordinary play. Turning trace mode on to watch a beat tick should
+            // not also do that, which is why this is its own switch and why
+            // the switch is off by default.
+            REQUIRE(Settings::Get().traceMode);
+            REQUIRE_FALSE(Settings::Get().traceKeyPresses);
+        }
+    }
+
+    SECTION("when per-key-press tracing is asked for")
+    {
+        WriteIni(kPluginIni, "[General]\nbTraceMode=1\nbTraceKeyPresses=1\n");
+        Settings::Load();
+
+        SECTION("should read both flags")
+        {
+            REQUIRE(Settings::Get().traceMode);
+            REQUIRE(Settings::Get().traceKeyPresses);
+        }
+    }
+
     SECTION("when a string setting is present")
     {
         WriteIni(kPluginIni, "[CombatEvents]\nsSpellNameBlocklist=Healing;Muffle\n");
