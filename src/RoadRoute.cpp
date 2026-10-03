@@ -3,6 +3,7 @@
 #include <FineRoads.h>
 #include <logger.h>
 #include <TravelGraph.h>
+#include <VisitorTravelLog.h>
 
 #include <algorithm>
 #include <cmath>
@@ -17,6 +18,12 @@ namespace NarrativeEngine::RoadRoute
     namespace
     {
         constexpr float kCellUnits = 4096.0f;
+
+        // How much lower one door's landing has to be than another's before
+        // elevation decides instead of distance. One storey, measured: the
+        // Bannered Mare's balcony landing sits 194 units above its front
+        // door's.
+        constexpr float kDoorStoreyUnits = 128.0f;
         constexpr float kInf = std::numeric_limits<float>::max();
 
         // How close the destination must be to a fine node before we
@@ -284,11 +291,25 @@ namespace NarrativeEngine::RoadRoute
             return RE::BSContainer::ForEachResult::kContinue;
         });
 
-        // A door the engine does not mark Minimal Use first, then the one
-        // the occupant is standing nearest — which in a one-door cell is
-        // the only door, so the common case is untouched. Minimal Use is
-        // a last resort rather than a disqualification: a back door still
-        // beats falling through to a map marker.
+        // A door the engine does not mark Minimal Use first; then the one at
+        // street level; then the one the occupant is standing nearest. In a
+        // one-door cell it is the only door, so the common case is untouched.
+        //
+        // Minimal Use is a last resort rather than a disqualification: a back
+        // door still beats falling through to a map marker.
+        //
+        // Elevation comes before distance because nearest was the right answer
+        // to the wrong question. WhiterunBanneredMare has three ways out, and
+        // with the player standing UPSTAIRS the nearest was a mod-added
+        // balcony door at 942 units, not flagged Minimal Use, whose landing
+        // sits 194 units above the front door's. The balcony genuinely was
+        // nearest. It is also somewhere a visitor cannot be walked to, and
+        // somewhere nobody leaves a building by: a main entrance is at street
+        // level and the upper doors are balconies.
+        //
+        // kDoorStoreyUnits is below the 194 the measurement shows and well
+        // above the jitter between two doors on one floor, so two street-level
+        // doors are still settled by distance.
         const Doorway* chosen = nullptr;
         for (const auto& way : doorways) {
             if (chosen == nullptr) {
@@ -301,8 +322,31 @@ namespace NarrativeEngine::RoadRoute
                 }
                 continue;
             }
+            const float drop = chosen->arrival.z - way.arrival.z;
+            if (drop > kDoorStoreyUnits) {
+                chosen = &way; // a storey lower: street level against a balcony
+                continue;
+            }
+            if (drop < -kDoorStoreyUnits) {
+                continue; // the one already held is the lower
+            }
             if (way.fromRef < chosen->fromRef) {
                 chosen = &way;
+            }
+        }
+
+        if (VisitorTravelLog::IsActive() && doorways.size() > 1) {
+            for (const auto& way : doorways) {
+                VisitorTravelLog::Write("ENDS",
+                                        "  way out: door 0x{:08X} lands at ({:.0f},{:.0f},{:.0f}), {:.0f}u from "
+                                        "the occupant, minimal_use={}{}",
+                                        way.farDoor,
+                                        way.arrival.x,
+                                        way.arrival.y,
+                                        way.arrival.z,
+                                        way.fromRef,
+                                        way.minimalUse ? 1 : 0,
+                                        (chosen == &way) ? " <- taken" : "");
             }
         }
 

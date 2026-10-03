@@ -1421,8 +1421,6 @@ namespace NarrativeEngine
                 ladder.fine = FineRoads::Snapshot();
                 ladder.minHopUnits = static_cast<float>(std::max(1, escortCfg.visitChainUnstuckMinHopUnits));
                 ladder.maxRetreatUnits = static_cast<float>(std::max(0, escortCfg.visitChainUnstuckMaxRetreatUnits));
-                g_escort.BeginLadder(std::move(ladder));
-                g_escort.Track(senderActor, placedAt);
                 VisitorTravelLog::Write("ESCORT",
                                         "armed: {} chain fallback(s) and {} road node(s) to hop between, "
                                         "min hop {}u, max retreat {}u",
@@ -1430,6 +1428,8 @@ namespace NarrativeEngine
                                         ladder.fine.nodes.size(),
                                         static_cast<int>(ladder.minHopUnits),
                                         static_cast<int>(ladder.maxRetreatUnits));
+                g_escort.BeginLadder(std::move(ladder));
+                g_escort.Track(senderActor, placedAt);
                 logger::info("NPCVisitBeat: armed sender 0x{:08X} '{}' at ({:.0f},{:.0f},{:.0f}); escort has "
                              "{} fallback(s)",
                              senderActor->GetFormID(),

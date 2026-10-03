@@ -160,6 +160,22 @@ TEST_CASE("VisitorTravelLog writes a visit transcript", "[VisitorTravelLog][engi
         }
     }
 
+    SECTION("when a tier answers before any search runs")
+    {
+        // Doorstep and city visits return before the chain is built. The
+        // first traced run left four of eleven visits with no closing line at
+        // all, because End was only called on the chain tier's own return.
+        VisitorTravelLog::OnSessionStart();
+        VisitorTravelLog::Begin(0x0001C1A5u, "Faralda");
+        VisitorTravelLog::End(0x0001C1A5u, "doorstep", "doorstep");
+        VisitorTravelLog::OnSessionEnd();
+
+        SECTION("should still close the transcript")
+        {
+            REQUIRE(AnyLineContains("tier=doorstep"));
+        }
+    }
+
     SECTION("when the setting is off")
     {
         const ConfiguredSettings disabled{kOff};

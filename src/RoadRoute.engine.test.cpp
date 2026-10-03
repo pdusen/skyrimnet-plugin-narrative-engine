@@ -523,6 +523,7 @@ TEST_CASE("RoadRoute places a reference on the road network", "[RoadRoute][engin
         // doors themselves and not from the order they are walked in.
         constexpr float kBackX = 37000.0f;
         constexpr float kBackY = 37000.0f;
+        constexpr float kDoorstepZ = -3237.0f;
         constexpr std::uint32_t kRef = 0x00B13200u;
 
         SECTION("and the back door is walked first")
@@ -553,6 +554,31 @@ TEST_CASE("RoadRoute places a reference on the road network", "[RoadRoute][engin
             {
                 REQUIRE(origin.valid);
                 REQUIRE(origin.position.x == kDoorstepX);
+            }
+        }
+
+        SECTION("and one of them opens onto a balcony")
+        {
+            // WhiterunBanneredMare, with the player upstairs: three ways out,
+            // and the nearest was a mod-added balcony door 942 units off
+            // whose landing sits 194 units above the front door's. Nearest
+            // was the right answer to the wrong question — a visitor on a
+            // balcony cannot be walked to, and nobody leaves a building that
+            // way.
+            constexpr float kUpstairsZ = 200.0f;
+            engine.AddLoadDoor(
+                inn, 0x00B132A0u, outside, RE::NiPoint3{kBackX, kBackY, kDoorstepZ + 194.0f}, At(0.0f, 0.0f), false);
+            engine.AddLoadDoor(
+                inn, 0x00B132B0u, outside, RE::NiPoint3{kDoorstepX, kDoorstepY, kDoorstepZ}, At(0.0f, -3000.0f), false);
+            auto* ref = engine.AddReference(inn, kRef, RE::NiPoint3{0.0f, 0.0f, kUpstairsZ});
+            const auto origin = ResolveFor(ref);
+
+            SECTION("should come out at street level even from upstairs")
+            {
+                // The balcony is 3,000 units nearer and still loses.
+                REQUIRE(origin.valid);
+                REQUIRE(origin.position.x == kDoorstepX);
+                REQUIRE(origin.position.z == kDoorstepZ);
             }
         }
 

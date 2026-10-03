@@ -1432,6 +1432,62 @@ refused candidates in it.
 **Verify [USER]:** after the next run, `NarrativeEngine_VisitorTravel.log` explains an arrival without
 needing the game.
 
+**What the first traced run showed, and three faults in the trace itself.** It did the job — both of the run's
+visible problems were diagnosed from the file without touching the game, and one of them was diagnosed
+*against* the summary that had looked fine. The faults, all mine and all fixed:
+
+1. `ENDS` and `GRID` were written after the tier branches, so a doorstep or city visit recorded neither.
+2. `End` was only called on the chain tier's return, so four of eleven visits had no closing line.
+3. The `ESCORT armed` line read the ladder after `std::move`, and reported `0 chain fallback(s) and 0 road
+   node(s)` against the plugin log's `6` and `859`. A use-after-move, caught only because the two logs
+   disagreed — which is an argument for the trace rather than against it.
+
+---
+
+### Step 17 — Take the door somebody would walk out of, not the nearest one
+
+- [X] Complete
+
+**[CLAUDE]**
+
+**Goal:** Stop a visitor waiting on a first-floor balcony because the player happened to be standing upstairs.
+
+**Files:** `src/RoadRoute.cpp`, `src/RoadRoute.engine.test.cpp`, `testsupport/EngineMock.h`,
+`testsupport/EngineMock.cpp`, `src/VisitorTravelLog.cpp` (the door choice into the trace).
+
+**Sub-tasks:**
+
+1. Among the doors that survive the `MinimalUse` filter, prefer the one whose **exterior landing is lowest**
+   when another is more than `kDoorStoreyUnits` (128) above it. Nearest decides only within that band.
+2. Log every door considered into the travel trace, not only the one taken — the plugin log records the
+   choice and the travel log should record what it was chosen over.
+3. Tests: a ground door and a balcony door with the player upstairs resolves to the ground one; two
+   street-level doors still resolve to the nearer; the `MinimalUse` filter still runs first; the existing
+   single-door and marker-fallback cases unchanged.
+
+**Specifics:**
+
+- **Measured.** `WhiterunBanneredMare` has three ways out in the user's load order. With the player upstairs
+  the walk picked `0xFE1F8AAA` at 942 units — a mod-added balcony door, not flagged `MinimalUse`, whose
+  landing at `(25784,-8003,-3043)` sits 194 units above the front door's `(25670,-7633,-3237)`. Nearest was
+  the right answer to the wrong question: the player was upstairs, so the balcony *was* nearest.
+- **Why elevation rather than another distance rule.** A building's main entrance is at street level and its
+  upper doors are balconies, and a visitor on a balcony cannot be walked to at all. 194 units is the storey
+  the measurement shows; 128 is below that and above the few-unit jitter between two doors on one floor.
+- **The risk, stated.** A building whose main entrance is up outside steps would now lose to a lower side
+  door. Nothing in vanilla's multi-door interiors looks like that — the ones that do, like Dragonsreach, are
+  single-door — but it is the case to watch, and `MinimalUse` is what usually marks the loser anyway.
+
+**Verify [CLAUDE]:** the balcony fixture resolves to the ground door from upstairs and from down, and the
+two-street-door fixture still goes to the nearer.
+
+**Done.** The balcony fixture stands its two doors 3,000 units apart with the balcony the nearer, and the
+ground door still wins. Raising `kDoorStoreyUnits` a thousandfold fails that case and nothing else. Every
+door considered now goes into the travel trace with its landing, its distance and its flag, so the file
+records what the choice was made against.
+
+**Verify [USER]:** a visit with the player upstairs in the Bannered Mare puts the visitor at the front door.
+
 ---
 
 ### Step 13 — Re-run Step 6's sites and settle the numbers
@@ -1480,7 +1536,7 @@ visitor to an indoor player waits at the door the player walked in by.
 
 ## Done condition
 
-All sixteen steps checked, and:
+All seventeen steps checked, and:
 
 1. `pwsh -File build.ps1 build`, `pwsh -File build.ps1 test` and `pwsh -File format.ps1` are all clean.
 2. `grep -rn "BearingHome\|CorridorTarget" src include` is empty, and `Tier` holds only `None`,

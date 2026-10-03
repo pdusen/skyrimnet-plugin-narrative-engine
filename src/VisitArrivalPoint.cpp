@@ -1232,6 +1232,7 @@ namespace NarrativeEngine::VisitArrivalPoint
                          result.point.z,
                          result.placementAnchor,
                          ends.player.worldSpace);
+            VisitorTravelLog::End(senderId, TierName(result.tier), "doorstep");
             return result;
         }
 
@@ -1345,6 +1346,7 @@ namespace NarrativeEngine::VisitArrivalPoint
                                  result.point.z,
                                  result.placementAnchor,
                                  cityTally.Describe());
+                    VisitorTravelLog::End(senderId, TierName(result.tier), "city");
                     return result;
                 }
 
@@ -1432,6 +1434,7 @@ namespace NarrativeEngine::VisitArrivalPoint
                              minDist,
                              result.fallbacks.size(),
                              cityTally.Describe());
+                VisitorTravelLog::End(senderId, TierName(result.tier), "city");
                 return result;
             }
         }
@@ -1457,8 +1460,6 @@ namespace NarrativeEngine::VisitArrivalPoint
         // them out their own front door; that doorstep is the anchor.
         //
         // Outdoors the two are the same value, so nothing changes there.
-        const RE::NiPoint3& anchorPos = ends.player.position;
-
         VisitorTravelLog::Write("ENDS",
                                 "player ws=0x{:08X} pos=({:.0f},{:.0f},{:.0f}) cell=({},{}) indoors={} "
                                 "via={}{}",
@@ -1472,32 +1473,26 @@ namespace NarrativeEngine::VisitArrivalPoint
                                 OriginSourceName(ends.playerSource),
                                 ends.player.exteriorDoor != 0 ? std::format(" door=0x{:08X}", ends.player.exteriorDoor)
                                                               : std::string{});
+        // Both ends, before any tier has decided, so a doorstep or city
+        // visit records them too. The player's position above IS the anchor
+        // every distance is measured from — for an indoor player that is
+        // their own doorstep, which is why the door is named with it.
         VisitorTravelLog::Write("ENDS",
-                                "visitor ws=0x{:08X} pos=({:.0f},{:.0f},{:.0f}) cell=({},{}) via={} — "
-                                "anchor for the search is ({:.0f},{:.0f})",
+                                "visitor ws=0x{:08X} pos=({:.0f},{:.0f},{:.0f}) cell=({},{}) via={}",
                                 ends.sender.worldSpace,
                                 ends.sender.position.x,
                                 ends.sender.position.y,
                                 ends.sender.position.z,
                                 static_cast<int>(std::floor(ends.sender.position.x / 4096.0f)),
                                 static_cast<int>(std::floor(ends.sender.position.y / 4096.0f)),
-                                OriginSourceName(ends.senderSource),
-                                anchorPos.x,
-                                anchorPos.y);
+                                OriginSourceName(ends.senderSource));
+
+        const RE::NiPoint3& anchorPos = ends.player.position;
 
         // Pure queries over both graphs — deliberately NOT inside a
         // main-thread hop. Only the grid read is an engine call.
         const auto loadedGrid =
             MainThread::Run(pt, [](const MainThread::Token& mt) { return ApproachChain::ReadLoadedGrid(mt); });
-        VisitorTravelLog::Write("TIER",
-                                "chain: floor {:.0f}u, cover radius {:.0f}u, hop radius {} within {}u, "
-                                "outside-grid points {}",
-                                minDist,
-                                coverRadius,
-                                std::max(0, cfg.visitChainHopRadius),
-                                std::max(0, cfg.visitChainHopReachUnits),
-                                cfg.visitArrivalAllowCoarseBearing ? "allowed" : "refused");
-
         if (loadedGrid.valid) {
             VisitorTravelLog::Write("GRID",
                                     "attached ws=0x{:08X} cells x[{}..{}] y[{}..{}] — only points inside this "
@@ -1510,6 +1505,15 @@ namespace NarrativeEngine::VisitArrivalPoint
         } else {
             VisitorTravelLog::Write("GRID", "no attached exterior grid — the player is indoors");
         }
+
+        VisitorTravelLog::Write("TIER",
+                                "chain: floor {:.0f}u, cover radius {:.0f}u, hop radius {} within {}u, "
+                                "outside-grid points {}",
+                                minDist,
+                                coverRadius,
+                                std::max(0, cfg.visitChainHopRadius),
+                                std::max(0, cfg.visitChainHopReachUnits),
+                                cfg.visitArrivalAllowCoarseBearing ? "allowed" : "refused");
 
         const auto chain = ApproachChain::Build(loadedGrid, ends.player.worldSpace, ends.sender.position, anchorPos);
         if (!chain.valid) {
