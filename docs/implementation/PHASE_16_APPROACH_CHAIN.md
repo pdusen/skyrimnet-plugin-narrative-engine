@@ -475,7 +475,7 @@ New:
 
 The connector and direct defaults were `3` and `4` through Step 6, which measured what that costs: a straight
 connector at 3 undercuts a fine road at 2 on any road more than 1.5 times its own straight line, so the fine
-network never appeared on a single route. Step 8 raises them and Step 13 settles them.
+network never appeared on a single route. Step 8 raises them and Step 17 settles them.
 
 The four difficulties are settings rather than constants for the same reason `iVisitArrivalCoverRadiusUnits`
 became one in Phase 14: the ratios only settle against a real log, and they are the knob that decides whether
@@ -949,7 +949,7 @@ after arming. Both are written up in
 [`standable-ground-inside-walled-cities.md`](../engine-findings/standable-ground-inside-walled-cities.md),
 and Steps 10 and 11 take them.
 
-Scenarios 2 and 5 were not run; the off-road staging and the forced stall are still unmeasured, and Step 13
+Scenarios 2 and 5 were not run; the off-road staging and the forced stall are still unmeasured, and Step 17
 carries them.
 
 ---
@@ -1057,7 +1057,7 @@ ratios: at 3 the chain holds no fine points at all, at 8 it walks all five. The 
 one number different — which is the whole claim, and it needs no mutation because the failing configuration is
 one of its own sections.
 
-**Verify [USER]:** Step 13.
+**Verify [USER]:** Step 17.
 
 ---
 
@@ -1244,7 +1244,7 @@ off, under 2,600 with it on, and the route costing the same within 2% either way
 
 ---
 
-### Step 14 — Make the cover gate measure cover
+### Step 13 — Make the cover gate measure cover
 
 - [X] Complete
 
@@ -1300,7 +1300,7 @@ standing behind.
   the ray measures instead, so it works at every range and the grade survives.
 
 - **It will pass fewer candidates, and that is the point.** Expect `survived` to fall and more arrivals to
-  come from the unseen grade or from outside the grid. Step 13's run is where that gets read.
+  come from the unseen grade or from outside the grid. Step 17's run is where that gets read.
 
 **Verify [CLAUDE]:** the old gate accepts the fraction-0.4 blocker and the new one does not, with every other
 refusal unchanged.
@@ -1319,7 +1319,7 @@ there at all.
 
 ---
 
-### Step 15 — Bound hop expansion in units, not hops
+### Step 14 — Bound hop expansion in units, not hops
 
 - [X] Complete
 
@@ -1394,7 +1394,7 @@ look, and a second section keeps the old geometry to assert the decline.
 
 ---
 
-### Step 16 — A dedicated trace of the whole journey
+### Step 15 — A dedicated trace of the whole journey
 
 - [X] Complete
 
@@ -1460,7 +1460,7 @@ visible problems were diagnosed from the file without touching the game, and one
 
 ---
 
-### Step 17 — Take the door somebody would walk out of, not the nearest one
+### Step 16 — Take the door somebody would walk out of, not the nearest one
 
 - [X] Complete
 
@@ -1506,7 +1506,7 @@ records what the choice was made against.
 
 ---
 
-### Step 13 — Re-run Step 6's sites and settle the numbers
+### Step 17 — Re-run Step 6's sites and settle the numbers
 
 - [ ] Complete
 
