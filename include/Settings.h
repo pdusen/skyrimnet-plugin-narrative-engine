@@ -532,8 +532,8 @@ namespace NarrativeEngine::Settings
         // clamps to it.
         int visitChainDifficultyCoarse = 1;    // coarse road nodes
         int visitChainDifficultyFine = 2;      // loaded fine road nodes
-        int visitChainDifficultyConnector = 3; // bridge, player, visitor
-        int visitChainDifficultyDirect = 4;    // both direct lines
+        int visitChainDifficultyConnector = 8; // bridge, player, visitor
+        int visitChainDifficultyDirect = 12;   // both direct lines
 
         // Compose-prompt content caps for narrative_engine_visit_compose.prompt.
         // Same shrink-for-local-LLMs motivation as the letter-compose

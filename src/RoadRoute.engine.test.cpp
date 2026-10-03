@@ -514,6 +514,89 @@ TEST_CASE("RoadRoute places a reference on the road network", "[RoadRoute][engin
         }
     }
 
+    SECTION("when the building has two ways out")
+    {
+        // WhiterunBanneredMare's shape: a front door and a Minimal Use back
+        // door whose landings are 767 units apart. Which one
+        // ForEachReference reaches first is not stable — two sessions on one
+        // build resolved it each way — so the choice has to come from the
+        // doors themselves and not from the order they are walked in.
+        constexpr float kBackX = 37000.0f;
+        constexpr float kBackY = 37000.0f;
+        constexpr std::uint32_t kRef = 0x00B13200u;
+
+        SECTION("and the back door is walked first")
+        {
+            engine.AddLoadDoor(inn, 0x00B13210u, outside, At(kBackX, kBackY), At(-500.0f, 0.0f), true);
+            engine.AddLoadDoor(inn, 0x00B13220u, outside, At(kDoorstepX, kDoorstepY), At(500.0f, 0.0f), false);
+            auto* ref = engine.AddReference(inn, kRef, At(0.0f, 0.0f));
+            const auto origin = ResolveFor(ref);
+
+            SECTION("should come out of the front door anyway")
+            {
+                REQUIRE(origin.valid);
+                REQUIRE(origin.position.x == kDoorstepX);
+                REQUIRE(origin.position.y == kDoorstepY);
+            }
+        }
+
+        SECTION("and the front door is walked first")
+        {
+            // The same world with the walk reversed. This pair is the test:
+            // one of them passed before this logic existed, by luck.
+            engine.AddLoadDoor(inn, 0x00B13230u, outside, At(kDoorstepX, kDoorstepY), At(500.0f, 0.0f), false);
+            engine.AddLoadDoor(inn, 0x00B13240u, outside, At(kBackX, kBackY), At(-500.0f, 0.0f), true);
+            auto* ref = engine.AddReference(inn, kRef, At(0.0f, 0.0f));
+            const auto origin = ResolveFor(ref);
+
+            SECTION("should come out of the front door")
+            {
+                REQUIRE(origin.valid);
+                REQUIRE(origin.position.x == kDoorstepX);
+            }
+        }
+
+        SECTION("and neither door is marked Minimal Use")
+        {
+            // Nothing distinguishes them but where they stand, so the one the
+            // occupant would walk to wins. 219 of the vanilla multi-door
+            // interiors are this case, where the old walk was arbitrary
+            // rather than wrong.
+            engine.AddLoadDoor(inn, 0x00B13250u, outside, At(kBackX, kBackY), At(-2000.0f, 0.0f), false);
+            engine.AddLoadDoor(inn, 0x00B13260u, outside, At(kDoorstepX, kDoorstepY), At(200.0f, 0.0f), false);
+            auto* ref = engine.AddReference(inn, kRef, At(0.0f, 0.0f));
+            const auto origin = ResolveFor(ref);
+
+            SECTION("should take the nearer one")
+            {
+                REQUIRE(origin.valid);
+                REQUIRE(origin.position.x == kDoorstepX);
+            }
+        }
+
+        SECTION("and both doors are marked Minimal Use")
+        {
+            // Minimal Use is a last resort, not a disqualification: a back
+            // door is a real place somebody can emerge, and a map marker
+            // sits outside the town walls.
+            engine.AddLoadDoor(inn, 0x00B13270u, outside, At(kBackX, kBackY), At(-2000.0f, 0.0f), true);
+            engine.AddLoadDoor(inn, 0x00B13280u, outside, At(kDoorstepX, kDoorstepY), At(200.0f, 0.0f), true);
+            auto* location = engine.AddLocation(0x00B13290u, "The Inn", {});
+            engine.SetLocationMarker(location, outside, At(kMarkerX, kMarkerX));
+            engine.world.playerHasLocation = true;
+            engine.world.playerLocationOverride = location;
+            auto* ref = engine.AddReference(inn, kRef, At(0.0f, 0.0f));
+            const auto origin = ResolveFor(ref);
+
+            SECTION("should take the nearer door rather than the marker")
+            {
+                REQUIRE(origin.valid);
+                REQUIRE(origin.position.x == kDoorstepX);
+                REQUIRE(origin.position.x != kMarkerX);
+            }
+        }
+    }
+
     SECTION("when the reference is indoors and the world outside has unloaded")
     {
         // The ordinary case, and the one that was broken. Standing inside a

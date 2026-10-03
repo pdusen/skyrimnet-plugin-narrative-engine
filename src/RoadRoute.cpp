@@ -179,6 +179,24 @@ namespace NarrativeEngine::RoadRoute
         return false;
     }
 
+    namespace
+    {
+        // Minimal Use is the engine's own "NPCs should not route through
+        // this door" — Bethesda sets it on back doors, service entrances
+        // and the like. WRDragonDoor01MinUse (0x08648C) carries it and
+        // WRDragonDoor01 (0x0252C7) does not, and those two are exactly
+        // the pair in WhiterunBanneredMare.
+        bool IsMinimalUseDoor(RE::TESObjectREFR* ref)
+        {
+            if (!ref) {
+                return false;
+            }
+            auto* base = ref->GetBaseObject();
+            auto* door = base ? base->As<RE::TESObjectDOOR>() : nullptr;
+            return door && door->flags.any(RE::TESObjectDOOR::Flag::kMinimalUse);
+        }
+    } // namespace
+
     Origin ResolveOrigin(const MainThread::Token&, RE::TESObjectREFR* ref)
     {
         Origin origin;
@@ -201,17 +219,30 @@ namespace NarrativeEngine::RoadRoute
             return origin;
         }
 
-        // Indoors. Walk the cell's references for a load door and take
-        // where it comes out. First exterior-landing door wins — cells
+        // Indoors. Collect every load door that lands outdoors, then
+        // choose between them.
+        //
+        // This used to stop at the first one, on the grounds that "cells
         // with several exits are rare, and any of them is a defensible
-        // answer to "where would they emerge".
-        RE::NiPoint3 arrival{};
-        RE::FormID arrivalWorldSpace = 0;
-        RE::FormID arrivalDoor = 0;
-        bool found = false;
+        // answer". Both halves are false. 279 of the 544 vanilla
+        // interiors that have a load door have more than one, and which
+        // one `ForEachReference` reaches first is not stable: two
+        // sessions a half-hour apart on the same build resolved
+        // WhiterunBanneredMare to its front door once and to its back
+        // door once. A visitor waiting at the back of an inn the player
+        // walked into the front of is not a defensible answer.
+        struct Doorway
+        {
+            RE::FormID worldSpace = 0;
+            RE::FormID farDoor = 0;
+            RE::NiPoint3 arrival{};
+            float fromRef = 0.0f;
+            bool minimalUse = false;
+        };
+        std::vector<Doorway> doorways;
 
         cell->ForEachReference([&](RE::TESObjectREFR* candidate) {
-            if (found || !candidate) {
+            if (!candidate) {
                 return RE::BSContainer::ForEachResult::kContinue;
             }
             auto* teleport = candidate->extraList.GetByType<RE::ExtraTeleport>();
@@ -235,22 +266,61 @@ namespace NarrativeEngine::RoadRoute
             if (!ws) {
                 return RE::BSContainer::ForEachResult::kContinue;
             }
-            arrivalWorldSpace = ws->GetFormID();
-            arrivalDoor = linked->GetFormID();
+            Doorway way;
+            way.worldSpace = ws->GetFormID();
+            way.farDoor = linked->GetFormID();
             // teleportData->position is the arrival spot just outside the
             // far door, which is closer to "where they emerge" than the
             // door reference itself.
-            arrival = teleport->teleportData->position;
-            found = true;
-            return RE::BSContainer::ForEachResult::kStop;
+            way.arrival = teleport->teleportData->position;
+            // Measured between the near side and the occupant, both of
+            // which are in this interior's own frame. The far side's
+            // coordinates are the exterior's and would mean nothing here.
+            const auto nearSide = candidate->GetPosition();
+            const auto occupant = ref->GetPosition();
+            way.fromRef = Dist2D(nearSide.x, nearSide.y, occupant.x, occupant.y);
+            way.minimalUse = IsMinimalUseDoor(candidate);
+            doorways.push_back(way);
+            return RE::BSContainer::ForEachResult::kContinue;
         });
 
-        if (found) {
+        // A door the engine does not mark Minimal Use first, then the one
+        // the occupant is standing nearest — which in a one-door cell is
+        // the only door, so the common case is untouched. Minimal Use is
+        // a last resort rather than a disqualification: a back door still
+        // beats falling through to a map marker.
+        const Doorway* chosen = nullptr;
+        for (const auto& way : doorways) {
+            if (chosen == nullptr) {
+                chosen = &way;
+                continue;
+            }
+            if (chosen->minimalUse != way.minimalUse) {
+                if (!way.minimalUse) {
+                    chosen = &way;
+                }
+                continue;
+            }
+            if (way.fromRef < chosen->fromRef) {
+                chosen = &way;
+            }
+        }
+
+        if (chosen != nullptr) {
+            if (doorways.size() > 1) {
+                logger::debug("RoadRoute: cell 0x{:08X} has {} way(s) out; took door 0x{:08X} {:.0f}u from "
+                              "the occupant (minimal_use={})",
+                              cell->GetFormID(),
+                              doorways.size(),
+                              chosen->farDoor,
+                              chosen->fromRef,
+                              chosen->minimalUse);
+            }
             origin.valid = true;
-            origin.worldSpace = arrivalWorldSpace;
-            origin.position = arrival;
+            origin.worldSpace = chosen->worldSpace;
+            origin.position = chosen->arrival;
             origin.viaLoadDoor = true;
-            origin.exteriorDoor = arrivalDoor;
+            origin.exteriorDoor = chosen->farDoor;
             return origin;
         }
 

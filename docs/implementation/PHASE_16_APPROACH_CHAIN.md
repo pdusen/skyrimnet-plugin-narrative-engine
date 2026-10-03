@@ -923,7 +923,7 @@ carries them.
 
 ### Step 7 — Pick the door a visitor would actually use
 
-- [ ] Complete
+- [X] Complete
 
 **[CLAUDE]**
 
@@ -963,11 +963,16 @@ carries them.
 **Verify [CLAUDE]:** `build.ps1 test` clean, and the mutation check is the ordering one — make
 `ForEachReference` hand back the `MinimalUse` door first and confirm the resolution does not change.
 
+**Done.** Both doors of a two-door cell are now collected and chosen between. The mutation check ran: dropping
+the Minimal Use comparison and leaving pure nearest fails this case and nothing else, because the fixture
+stands its two doors equidistant from the occupant, which is what makes the walk's order the deciding factor
+when the flag is ignored.
+
 ---
 
 ### Step 8 — Price cross-country at what it costs
 
-- [ ] Complete
+- [X] Complete
 
 **[CLAUDE + USER]**
 
@@ -1013,13 +1018,19 @@ undercutting a road.
 **Verify [CLAUDE]:** the oracle still agrees with Dijkstra on every fixture graph, and the new preference test
 fails when the connector difficulty is put back to 3.
 
+**Done.** Connector `8`, direct `12`, in the INI and in `Settings.h`. The new case,
+"ApproachChain walks a winding road rather than cutting across it", builds one fixture and runs it at both
+ratios: at 3 the chain holds no fine points at all, at 8 it walks all five. The same world, the same geometry,
+one number different — which is the whole claim, and it needs no mutation because the failing configuration is
+one of its own sections.
+
 **Verify [USER]:** Step 10.
 
 ---
 
 ### Step 9 — Lay the endpoint connectors instead of linking them
 
-- [ ] Complete
+- [X] Complete
 
 **[CLAUDE]**
 
@@ -1051,6 +1062,12 @@ is not whatever the first coarse node happens to be.
 
 **Verify [CLAUDE]:** `build.ps1 test` clean, and the cost-unchanged assertion is what distinguishes this step
 from a re-pricing.
+
+**Done.** All four endpoint attachments are laid. The new case,
+"ApproachChain lays its endpoint connectors rather than linking them", stands a player 14,624 units from the
+only coarse node with no fine graph at all: over twenty points now sit along that segment at one spacing each,
+one of them inside the 2,000-to-5,000 band the arrival search wants, and the segment's summed length still
+equals the straight line it replaced to within a unit.
 
 ---
 

@@ -782,6 +782,255 @@ TEST_CASE("ApproachChain reads the attached grid off the engine", "[ApproachChai
     }
 }
 
+TEST_CASE("ApproachChain walks a winding road rather than cutting across it", "[ApproachChain][engine]")
+{
+    // The comparison the shipped ratios are really about, and the one the
+    // design originally failed to make. A chain's middle is coarse against a
+    // direct line, which difficulty settles easily. Its NEAR END is a fine
+    // road against the player's own connector to the skeleton — a straight
+    // line — and a road is never straight.
+    //
+    // Measured in a live session at the 1/2/3/4 first shipped: six chains in a
+    // row, every one of them `fine=0`, every arrival on the first coarse node
+    // between 6,381 and 20,960 units out. Not a search defect; the connector
+    // was genuinely cheaper.
+    //
+    // The fixture is that arithmetic. One coarse node reachable from the
+    // player's end, a fine ribbon that reaches the same node the long way
+    // round, and nothing else to choose between:
+    //
+    //   player ---------- 11,720u straight ---------- C (coarse, cell 7)
+    //      |                                           |
+    //      +--- 23,516u of fine road, three corners ---+
+    //
+    // Connector route : 11,720 x connector
+    // Fine route      : 100 x connector  +  23,516 x 2  +  120 x connector
+    //
+    // At connector 3 that is 35,160 against 47,692 and the straight line wins.
+    // At 8 it is 93,760 against 48,792 and the road wins. Nothing about the
+    // geometry changed; only what cutting across it costs.
+    constexpr float kRow = 43008.0f; // cell row 10's centre, where the coarse road runs
+    constexpr float kPlayerX = 19000.0f;
+    constexpr float kRibbonSouth = 37000.0f;
+
+    EngineMock engine;
+
+    // A coarse road whose western end is the only node the player can reach,
+    // running east from there to where the visitor lives.
+    auto* navi = engine.AddNavMeshInfoMap(kNavi);
+    std::uint32_t nextForm = 0x00C13000u;
+    std::vector<const RE::BSNavmeshInfo*> road;
+    for (int cell = 7; cell <= 20; ++cell) {
+        road.push_back(
+            engine.AddNavmeshInfo(navi, nextForm++, kMainland, static_cast<std::int16_t>(cell), 10, 0.0f, 0.0f, 0.0f));
+    }
+    engine.AddPreferredPath(navi, road);
+    TravelGraph::Initialize();
+    REQUIRE(TravelGraph::NodeCount() == 14);
+
+    const auto player = At(kPlayerX, kRow);
+    const auto visitor = At(CellCentre(20) + 300.0f, kRow);
+    const auto coarseWestEnd = At(CellCentre(7), kRow);
+
+    auto* space = engine.AddWorldSpace(kMainland);
+    auto* cell = engine.AddExteriorCell(space, 4, 10, nullptr);
+
+    // The ribbon: east, south, east, north, ending 120 units short of the
+    // coarse road's western end.
+    auto f0 = Road(kPlayerX + 100.0f, kRow);
+    f0.neighbor[0] = 1;
+    auto f1 = Road(25000.0f, kRow);
+    f1.neighbor[0] = 0;
+    f1.neighbor[1] = 2;
+    auto f2 = Road(25000.0f, kRibbonSouth);
+    f2.neighbor[0] = 1;
+    f2.neighbor[1] = 3;
+    auto f3 = Road(30600.0f, kRibbonSouth);
+    f3.neighbor[0] = 2;
+    f3.neighbor[1] = 4;
+    auto f4 = Road(30600.0f, kRow);
+    f4.neighbor[0] = 3;
+    engine.AddNavMesh(cell, kFineMesh, {f0, f1, f2, f3, f4});
+
+    StandOutdoorsAndLoad(engine, space, player, {cell});
+    REQUIRE(FineRoads::NodeCount() == 5);
+    const auto grid = GridAround(4, 10);
+
+    // Both ends of the comparison, on one world. Same graph, same geometry,
+    // one number different.
+    const float straight = Dist(player, coarseWestEnd);
+    REQUIRE(straight > 11000.0f);
+    REQUIRE(straight < 12500.0f);
+
+    SECTION("when cutting across country is priced at three")
+    {
+        const ConfiguredSettings cheap{"[FineRoads]\nbFineRoadsEnabled=1\niFineRoadsBackstopSeconds=1\n"
+                                       "bFineRoadsDebugBitmap=0\n"
+                                       "[TravelGraph]\nbTravelGraphEnabled=1\nbTravelGraphDebugBitmap=0\n"
+                                       "[Beats]\niVisitChainBridgeSpacingUnits=512\n"
+                                       "iVisitChainDifficultyCoarse=1\niVisitChainDifficultyFine=2\n"
+                                       "iVisitChainDifficultyConnector=3\niVisitChainDifficultyDirect=4\n"};
+        const auto chain = ApproachChain::Build(grid, kMainland, visitor, player);
+
+        SECTION("should ignore the fine road entirely")
+        {
+            // Not an assertion that this is correct — it is the bug, pinned.
+            // If a later change makes the old ratios route over fine road, the
+            // arithmetic in this comment has stopped describing the module and
+            // the case below is no longer evidence of anything.
+            REQUIRE(chain.valid);
+            REQUIRE(CountClass(chain, PointClass::Fine) == 0);
+        }
+    }
+
+    SECTION("when cutting across country is priced at eight")
+    {
+        const ConfiguredSettings shipped{"[FineRoads]\nbFineRoadsEnabled=1\niFineRoadsBackstopSeconds=1\n"
+                                         "bFineRoadsDebugBitmap=0\n"
+                                         "[TravelGraph]\nbTravelGraphEnabled=1\nbTravelGraphDebugBitmap=0\n"
+                                         "[Beats]\niVisitChainBridgeSpacingUnits=512\n"
+                                         "iVisitChainDifficultyCoarse=1\niVisitChainDifficultyFine=2\n"
+                                         "iVisitChainDifficultyConnector=8\niVisitChainDifficultyDirect=12\n"};
+        const auto chain = ApproachChain::Build(grid, kMainland, visitor, player);
+
+        SECTION("should walk the whole ribbon")
+        {
+            // All five nodes, because the ribbon is a path and taking it means
+            // taking the corners.
+            REQUIRE(chain.valid);
+            REQUIRE(CountClass(chain, PointClass::Fine) == 5);
+        }
+
+        SECTION("should still reach the visitor over the coarse skeleton")
+        {
+            // The near end changing is the point; the middle should not.
+            REQUIRE(HasClass(chain, PointClass::Coarse));
+        }
+
+        SECTION("should leave a point near the player to arrive at")
+        {
+            // What the whole exercise is for. The nearest chain point past a
+            // 2,000-unit floor should now be road beside the player rather
+            // than a coarse node 11,720 units away.
+            bool nearby = false;
+            for (const auto& point : chain.points) {
+                const float out = Dist2D(point.position, player);
+                if (out >= 2000.0f && out <= 7000.0f) {
+                    nearby = true;
+                    break;
+                }
+            }
+            REQUIRE(nearby);
+        }
+    }
+}
+
+TEST_CASE("ApproachChain lays its endpoint connectors rather than linking them", "[ApproachChain][engine]")
+{
+    // A player standing nowhere near a fine road still needs somewhere to
+    // arrive. Their connector to the coarse skeleton used to be one edge, so
+    // the chain held nothing at all between them and the first coarse node —
+    // and the arrival search, which takes the nearest acceptable point past
+    // its distance floor, had no choice but that node. A live session put a
+    // visitor 20,960 units away for exactly this reason.
+    //
+    // Everything here is inside the loaded grid on purpose: points laid
+    // outside it are lifted clear of their own line, which is right for the
+    // bridge and would make the cost arithmetic below approximate.
+    constexpr float kRow = 43008.0f; // cell row 10's centre
+    constexpr float kPlayerX = 12000.0f;
+    constexpr int kCoarseWestCell = 6; // centre 26,624 — inside a grid of cells 2..6
+
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+
+    auto* navi = engine.AddNavMeshInfoMap(kNavi);
+    std::uint32_t nextForm = 0x00C14000u;
+    std::vector<const RE::BSNavmeshInfo*> road;
+    for (int cell = kCoarseWestCell; cell <= 20; ++cell) {
+        road.push_back(
+            engine.AddNavmeshInfo(navi, nextForm++, kMainland, static_cast<std::int16_t>(cell), 10, 0.0f, 0.0f, 0.0f));
+    }
+    engine.AddPreferredPath(navi, road);
+    TravelGraph::Initialize();
+    REQUIRE(TravelGraph::NodeCount() == 15);
+
+    const auto player = At(kPlayerX, kRow);
+    const auto visitor = At(CellCentre(20) + 300.0f, kRow);
+    const auto coarseWestEnd = At(CellCentre(kCoarseWestCell), kRow);
+    const float straight = Dist(player, coarseWestEnd);
+
+    auto* space = engine.AddWorldSpace(kMainland);
+    auto* cell = engine.AddExteriorCell(space, 4, 10, nullptr);
+    StandOutdoorsAndLoad(engine, space, player, {cell});
+    REQUIRE(FineRoads::NodeCount() == 0);
+
+    const auto grid = GridAround(4, 10);
+    REQUIRE(grid.Contains(kMainland, player));
+    REQUIRE(grid.Contains(kMainland, coarseWestEnd));
+
+    const auto chain = ApproachChain::Build(grid, kMainland, visitor, player);
+    REQUIRE(chain.valid);
+
+    // The run of laid points between the player and the first coarse node,
+    // taken off the end of the chain the player is at.
+    std::vector<ApproachChain::Point> laid;
+    for (std::size_t i = chain.points.size(); i-- > 0;) {
+        if (chain.points[i].cls == PointClass::Coarse) {
+            break;
+        }
+        laid.push_back(chain.points[i]);
+    }
+
+    SECTION("when the nearest road is 14,000 units off")
+    {
+        SECTION("should put points along the way")
+        {
+            // 14,624 units at a 512 spacing is 28 steps, so 27 points inside
+            // the segment plus the player's own node. A single edge gives one.
+            REQUIRE(laid.size() > 20);
+        }
+
+        SECTION("should step one spacing at a time")
+        {
+            REQUIRE(laid.size() > 2);
+            for (std::size_t i = 1; i + 1 < laid.size(); ++i) {
+                REQUIRE(std::fabs(Dist2D(laid[i - 1].position, laid[i].position) - kSpacing) < 1.0f);
+            }
+        }
+
+        SECTION("should give the arrival search something inside the floor")
+        {
+            // The failure this step exists to remove: nothing between the
+            // distance floor and the first road node.
+            bool usable = false;
+            for (const auto& point : laid) {
+                const float out = Dist2D(point.position, player);
+                if (out >= 2000.0f && out <= 5000.0f) {
+                    usable = true;
+                    break;
+                }
+            }
+            REQUIRE(usable);
+        }
+
+        SECTION("should cost exactly what the single edge it replaced cost")
+        {
+            // Subdividing a straight segment adds points, not price: same
+            // length, same difficulty at both ends of every piece. If this
+            // drifts, the step has quietly re-priced the route and the
+            // difficulty settings no longer mean what the INI says.
+            float total = 0.0f;
+            for (std::size_t i = 1; i < laid.size(); ++i) {
+                total += Dist(laid[i - 1].position, laid[i].position);
+            }
+            // The last piece joins the run to the coarse node itself.
+            total += Dist(laid.back().position, coarseWestEnd);
+            REQUIRE(std::fabs(total - straight) < 1.0f);
+        }
+    }
+}
+
 TEST_CASE("ApproachChain names its point classes", "[ApproachChain][engine]")
 {
     SECTION("should give each class a name for the log")

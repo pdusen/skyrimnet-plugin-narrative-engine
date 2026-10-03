@@ -464,22 +464,54 @@ namespace NarrativeEngine::ApproachChain
             // The player reaches the road network directly: onto the
             // fine network they are standing beside, and onto the coarse
             // skeleton so a cross-province route has somewhere to arrive.
+            //
+            // Laid rather than linked. A single edge costs the same as a
+            // laid one — same length, same difficulty at both ends, and
+            // LayLine falls back to one edge when the gap is under a
+            // spacing — so this does not re-price anything. What it adds
+            // is points along the way, and without them the nearest
+            // candidate past the distance floor is the first road node,
+            // however far out that is. Measured in a session before this
+            // existed: a player standing where no fine graph loads got an
+            // arrival 20,960 units away, because the only thing between
+            // them and their nearest coarse node was one edge.
             const auto playerFineAttach = NearestOf(graph, fineNodes, playerPos);
             if (playerFineAttach != FineRoads::kInvalidNode) {
-                graph.Link(out.playerNode, playerFineAttach);
+                LayLine(graph,
+                        grid,
+                        worldSpace,
+                        out.playerNode,
+                        playerFineAttach,
+                        PointClass::Connector,
+                        connectorDifficulty,
+                        spacing);
             }
             const auto playerCoarseAttach = NearestOf(graph, coarseNodes, playerPos);
             if (playerCoarseAttach != FineRoads::kInvalidNode) {
-                graph.Link(out.playerNode, playerCoarseAttach);
+                LayLine(graph,
+                        grid,
+                        worldSpace,
+                        out.playerNode,
+                        playerCoarseAttach,
+                        PointClass::Connector,
+                        connectorDifficulty,
+                        spacing);
             }
 
             // The visitor reaches the coarse skeleton the same way. They
             // do NOT get a cheap connector onto the fine network — that
-            // is what the difficulty-4 direct line below is for, and a
-            // connector would undercut it.
+            // is what the direct line below is for, and a connector would
+            // undercut it.
             const auto visitorCoarseAttach = NearestOf(graph, coarseNodes, visitorOrigin);
             if (visitorCoarseAttach != FineRoads::kInvalidNode) {
-                graph.Link(out.visitorNode, visitorCoarseAttach);
+                LayLine(graph,
+                        grid,
+                        worldSpace,
+                        out.visitorNode,
+                        visitorCoarseAttach,
+                        PointClass::Connector,
+                        connectorDifficulty,
+                        spacing);
             }
 
             // The bridge: coarse skeleton to the selected fine network,

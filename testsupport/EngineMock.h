@@ -699,10 +699,18 @@ namespace NarrativeEngine::Testing
         // `destination`, at `arrival`. That arrival point is where an occupant
         // leaving the building actually appears, which is not where either door
         // itself stands.
+        //
+        // `doorPosition` is where the near side stands inside its own cell,
+        // which is what anything choosing between two ways out of one room
+        // measures against. `minimalUse` sets the flag the engine uses to mean
+        // "NPCs should not route through this door" — a back door, a service
+        // entrance. A vanilla inn routinely has one of each.
         RE::TESObjectREFR* AddLoadDoor(RE::TESObjectCELL* cell,
                                        std::uint32_t formID,
                                        RE::TESObjectCELL* destination,
-                                       RE::NiPoint3 arrival);
+                                       RE::NiPoint3 arrival,
+                                       RE::NiPoint3 doorPosition = {},
+                                       bool minimalUse = false);
 
         // A door carrying teleport data that names no door on the other side,
         // which is what an unlinked or broken door looks like in a save.

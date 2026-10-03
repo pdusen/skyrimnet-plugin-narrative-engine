@@ -2524,9 +2524,11 @@ namespace NarrativeEngine::Testing
     RE::TESObjectREFR* EngineMock::AddLoadDoor(RE::TESObjectCELL* cell,
                                                std::uint32_t formID,
                                                RE::TESObjectCELL* destination,
-                                               RE::NiPoint3 arrival)
+                                               RE::NiPoint3 arrival,
+                                               RE::NiPoint3 doorPosition,
+                                               bool minimalUse)
     {
-        auto* door = AddReference(cell, formID, RE::NiPoint3{});
+        auto* door = AddReference(cell, formID, doorPosition);
         // The door on the far side. Nothing reads its own position — what
         // matters is the cell it stands in, which is how a caller tells a way
         // outdoors from a door into another room.
@@ -2538,6 +2540,21 @@ namespace NarrativeEngine::Testing
         data->position = arrival;
 
         Refs().teleportByList[static_cast<const void*>(&door->extraList)] = MakeTeleport(data);
+
+        // A base form, because the Minimal Use flag lives on the base rather
+        // than the placement. Given to every fabricated load door whether or
+        // not the flag is set, so that reading the flag is the same operation
+        // in both cases rather than one of them hitting a null base.
+        auto& object = Refs().objects.emplace_back(sizeof(RE::TESObjectDOOR) + 0x40, 256);
+        WireFormDefaults(object, false);
+        auto* base = object.As<RE::TESObjectDOOR>();
+        base->formType = RE::FormType::Door;
+        base->formID = formID + 0x00D00000u;
+        if (minimalUse) {
+            base->flags.set(RE::TESObjectDOOR::Flag::kMinimalUse);
+        }
+        FormTable().insert({base->formID, object.As<RE::TESForm>()});
+        PlacedBases()[static_cast<const void*>(door)] = base;
         return door;
     }
 
