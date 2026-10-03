@@ -447,6 +447,7 @@ New:
 | --- | --- | --- |
 | `iVisitChainBridgeSpacingUnits` | `512` | Bridge and direct-line spacing; under one 866-unit background step |
 | `iVisitChainCoarseDetailUnits` | `16384` | How near the player a coarse edge is laid rather than linked |
+| `iVisitArrivalCoverProximityUnits` | `512` | How near the arrival a blocker must be to count as its cover |
 | `iVisitChainHopRadius` | `2` | How far off the fine chain to expand for candidates |
 | `iVisitChainUnstuckMinHopUnits` | `300` | How far a fine-neighbour unstuck hop must move a stalled visitor |
 | `iVisitChainUnstuckMaxRetreatUnits` | `150` | How much further from the player that hop may leave them |
@@ -1226,6 +1227,81 @@ off, under 2,600 with it on, and the route costing the same within 2% either way
 
 ---
 
+### Step 14 — Make the cover gate measure cover
+
+- [X] Complete
+
+**[CLAUDE]**
+
+**Goal:** Stop a hill somewhere between the player and the arrival being read as something the visitor is
+standing behind.
+
+**Files:** `include/CameraVisibility.h`, `src/CameraVisibility.cpp`, `src/CameraVisibility.engine.test.cpp`,
+`src/VisitArrivalPoint.cpp`, `src/AmbushSpawnPoints.cpp`, `include/Settings.h`, `src/Settings.cpp`,
+`statics/SKSE/Plugins/NarrativeEngine.ini`.
+
+**Sub-tasks:**
+
+1. A ray counts toward cover only when what stopped it is **near the arrival**: blocked, and the remaining
+   distance behind the blocker no more than `iVisitArrivalCoverProximityUnits`. All nine still have to pass.
+2. The setting, default `512` — a rock, a tree, a wall, a building beside the spot. Tunable because the right
+   number is a judgement about how far the player may walk before the arrival stops being hidden, and that
+   settles against a log rather than an argument.
+3. `AmbushSpawnPoints` passes `kNoCoverProximityLimit` and keeps its measured behaviour. Its probes sit in a
+   ring close to the player, where rays are short and this failure does not arise; changing it would be a
+   second subsystem altered on evidence that is about visits.
+4. Tests: a blocker near the spot is cover; the same fraction-0.4 blocker that the old gate accepted is not;
+   the silhouette, too-close, overhead and no-camera refusals all unchanged.
+
+**Specifics:**
+
+- **This is the failure Phase 14's Step 6 measured and deliberately did not act on.** Its table, over 514
+  road candidates, is the whole argument:
+
+  | Distances looked at | Passed as covered | Candidates |
+  | ------------------- | ----------------- | ---------- |
+  | up to 999 | 0.0% | 22 |
+  | 1000 – 1999 | 2.8% | 106 |
+  | 2000 – 2999 | 74.9% | 203 |
+  | 4000 – 4999 | 74.4% | 82 |
+  | 9000 – 9999 | 100.0% | 101 |
+
+  A gate that passes 100% of candidates at nine thousand units is not measuring cover; it is measuring
+  whether four kilometres of Skyrim contains anything at all, and it always does. Phase 14 wrote the
+  diagnosis down exactly: "cover proved that way is a hill somewhere in between rather than something the
+  visitor is standing behind, and it stops being true the moment either of them moves."
+
+- **Why it got worse after 0.6.0, which is how the user described it.** Nothing about the gate changed. The
+  arrivals moved into the range where it fails: the band was 800 to 2,500 units, `b7f9340` widened it to
+  5,000, `15333d8` removed the ceiling, and this phase set the floor to 2,000 and took the ceiling off the
+  chain tier. Pre-0.6.0 arrivals sat almost entirely in the two buckets where the gate passes 0.0% and 2.8%;
+  they now sit in the 74.9%-to-100% ones. The same defect, asked far more often.
+
+- **This is not the change `3d6f870` reverted.** That one scoped the raycast by *range* — trust it under
+  2,000 units, let the facing arc decide past that — and cost arrivals on open road that a run had just
+  confirmed working. With the floor now at 2,000 it would retire the cover grade altogether. This fixes what
+  the ray measures instead, so it works at every range and the grade survives.
+
+- **It will pass fewer candidates, and that is the point.** Expect `survived` to fall and more arrivals to
+  come from the unseen grade or from outside the grid. Step 13's run is where that gets read.
+
+**Verify [CLAUDE]:** the old gate accepts the fraction-0.4 blocker and the new one does not, with every other
+refusal unchanged.
+
+**Done.** Both tolerances are distances now, which they had to be: `kReachedFractionThreshold` is 5% of the
+ray, so on a 10,000-unit one it reads a boulder 400 units in front of the arrival as "reached the endpoint",
+clear — the exact cover being looked for, discarded for being far from the camera. The cover gate therefore
+takes any hit as a blocker and asks how many units short of the spot it sits.
+
+Mutating the proximity test out fails `CameraVisibility::IsPositionBehindCover` and
+"VisitArrivalPoint refuses cover the raycast cannot support", and nothing else. The visit case is a pair on
+one world: nine blocked rays at 60% of the way out decline, the same nine at 99% accept.
+
+**Verify [USER]:** a visitor at the `cow Tamriel -7 1` site is hidden when they appear, or does not appear
+there at all.
+
+---
+
 ### Step 13 — Re-run Step 6's sites and settle the numbers
 
 - [ ] Complete
@@ -1272,7 +1348,7 @@ visitor to an indoor player waits at the door the player walked in by.
 
 ## Done condition
 
-All thirteen steps checked, and:
+All fourteen steps checked, and:
 
 1. `pwsh -File build.ps1 build`, `pwsh -File build.ps1 test` and `pwsh -File format.ps1` are all clean.
 2. `grep -rn "BearingHome\|CorridorTarget" src include` is empty, and `Tier` holds only `None`,

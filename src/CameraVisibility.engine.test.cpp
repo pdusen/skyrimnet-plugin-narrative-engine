@@ -41,7 +41,16 @@ namespace
 
     // A hit fraction below the module's 0.95 threshold: something solid stopped
     // the ray well short of the target.
+    // Stopped 40% of the way along, which on the 2,000-unit ray these cases
+    // use puts the blocker 1,200 units short of the spot: a hill in between,
+    // not cover. The old gate accepted it.
     constexpr float kBlocked = 0.4f;
+    // Stopped at 99% of the way, 20 units short of the spot — something the
+    // visitor is actually standing behind.
+    constexpr float kBlockedAtTheSpot = 0.99f;
+    // What the visit path asks for, and far enough to cover the heights and
+    // lateral offsets of the silhouette itself.
+    constexpr float kProximity = 512.0f;
     constexpr float kClear = 1.0f;
 
     RE::Actor* PlaceActorAt(EngineMock& engine, float x)
@@ -282,25 +291,53 @@ TEST_CASE("CameraVisibility::IsPositionBehindCover", "[CameraVisibility][engine]
 {
     // The inverse question, asked of a candidate spawn point rather than an
     // actor: is every part of a body-sized silhouette here blocked from the
-    // camera. Nine rays, and all nine have to be stopped.
+    // camera, by something near enough to the spot to still be blocking it
+    // after either of them moves. Nine rays, and all nine have to pass.
     EngineMock engine;
     const NiPoint3 spot{kWellBeyondFloor, 0.0f, 0.0f};
 
-    SECTION("when everything is blocked")
+    SECTION("when something near the spot blocks every line")
     {
-        engine.visibility.pickHitFraction = kBlocked;
+        engine.visibility.pickHitFraction = kBlockedAtTheSpot;
 
         SECTION("should say the spot is covered")
         {
-            REQUIRE(CameraVisibility::IsPositionBehindCover(spot, 128.0f, 40.0f));
+            REQUIRE(CameraVisibility::IsPositionBehindCover(spot, 128.0f, 40.0f, kProximity));
         }
 
         SECTION("should test a silhouette rather than a point")
         {
             // A single line would let a lamp post pass as cover for a whole
             // body, and an ambusher would appear out of thin air beside it.
-            (void)CameraVisibility::IsPositionBehindCover(spot, 128.0f, 40.0f);
+            (void)CameraVisibility::IsPositionBehindCover(spot, 128.0f, 40.0f, kProximity);
             REQUIRE(engine.visibility.pickCalls > 1);
+        }
+    }
+
+    SECTION("when the only thing blocking is a long way short of the spot")
+    {
+        // The failure this rule exists for. Every ray is stopped, so the old
+        // gate called this covered — and a tester watched a visitor appear in
+        // plain sight behind a hill that was nowhere near them.
+        //
+        // Measured over 514 road candidates: the gate passed 0.0% of
+        // candidates under 1,000 units and 100% of 101 at nine thousand. The
+        // ray got longer; the terrain did not get kinder.
+        engine.visibility.pickHitFraction = kBlocked;
+
+        SECTION("should refuse to call it covered")
+        {
+            REQUIRE_FALSE(CameraVisibility::IsPositionBehindCover(spot, 128.0f, 40.0f, kProximity));
+        }
+
+        SECTION("should still accept it for a caller that asks for no limit")
+        {
+            // The ambush beat probes a ring close to the player, where a short
+            // ray makes "something stopped it" and "the spot is hidden" the
+            // same claim. kNoCoverProximityLimit is that reading, kept
+            // explicit rather than defaulted.
+            REQUIRE(
+                CameraVisibility::IsPositionBehindCover(spot, 128.0f, 40.0f, CameraVisibility::kNoCoverProximityLimit));
         }
     }
 
@@ -310,26 +347,27 @@ TEST_CASE("CameraVisibility::IsPositionBehindCover", "[CameraVisibility][engine]
 
         SECTION("should say the spot is not covered")
         {
-            REQUIRE_FALSE(CameraVisibility::IsPositionBehindCover(spot, 128.0f, 40.0f));
+            REQUIRE_FALSE(CameraVisibility::IsPositionBehindCover(spot, 128.0f, 40.0f, kProximity));
         }
     }
 
     SECTION("when the spot is too close to raycast meaningfully")
     {
-        engine.visibility.pickHitFraction = kBlocked;
+        engine.visibility.pickHitFraction = kBlockedAtTheSpot;
 
         SECTION("should refuse to call it covered")
         {
             // Same floor as the visibility check, and the same reason: a very
             // short ray can start inside nearby geometry and report nonsense.
             // Nothing this close to the player counts as hidden.
-            REQUIRE_FALSE(CameraVisibility::IsPositionBehindCover(NiPoint3{kInsideFloor, 0.0f, 0.0f}, 128.0f, 40.0f));
+            REQUIRE_FALSE(
+                CameraVisibility::IsPositionBehindCover(NiPoint3{kInsideFloor, 0.0f, 0.0f}, 128.0f, 40.0f, kProximity));
         }
     }
 
     SECTION("when the camera is directly overhead")
     {
-        engine.visibility.pickHitFraction = kBlocked;
+        engine.visibility.pickHitFraction = kBlockedAtTheSpot;
         engine.visibility.cameraX = 0.0f;
         engine.visibility.cameraY = 0.0f;
         engine.visibility.cameraZ = 5000.0f;
@@ -338,21 +376,22 @@ TEST_CASE("CameraVisibility::IsPositionBehindCover", "[CameraVisibility][engine]
         {
             // Straight down there is no horizontal axis to widen the test
             // along, so there is no silhouette to prove blocked.
-            REQUIRE_FALSE(CameraVisibility::IsPositionBehindCover(NiPoint3{0.0f, 0.0f, 0.0f}, 128.0f, 40.0f));
+            REQUIRE_FALSE(
+                CameraVisibility::IsPositionBehindCover(NiPoint3{0.0f, 0.0f, 0.0f}, 128.0f, 40.0f, kProximity));
         }
     }
 
     SECTION("when the camera cannot be resolved")
     {
         engine.visibility.cameraPresent = false;
-        engine.visibility.pickHitFraction = kBlocked;
+        engine.visibility.pickHitFraction = kBlockedAtTheSpot;
 
         SECTION("should refuse to call it covered")
         {
             // No camera, no way to prove cover. Failing open here is the safe
             // direction: an ambush that declines a spot costs nothing, while
             // one that spawns in the open is the failure players report.
-            REQUIRE_FALSE(CameraVisibility::IsPositionBehindCover(spot, 128.0f, 40.0f));
+            REQUIRE_FALSE(CameraVisibility::IsPositionBehindCover(spot, 128.0f, 40.0f, kProximity));
         }
     }
 }

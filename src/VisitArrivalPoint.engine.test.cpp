@@ -135,11 +135,15 @@ namespace
             engine.GroundCell(), kGroundMesh, -kWorldEdge, -kWorldEdge, kWorldEdge, kWorldEdge, kGround);
     }
 
-    // Every ray from the camera blocked, so cover exists everywhere and the
-    // only thing left to decide is which node wins.
+    // Every ray blocked right at the spot it was cast to, so cover exists
+    // everywhere and the only thing left to decide is which node wins.
+    //
+    // 0.99 rather than 0: the gate asks WHERE the blocker is, and a ray
+    // stopped at its own origin is a hill beside the player rather than
+    // something the visitor stands behind.
     void CoverEverywhere(EngineMock& engine)
     {
-        engine.visibility.pickHitFraction = 0.0f;
+        engine.visibility.pickHitFraction = 0.99f;
     }
 
     // Attach the 5x5 block of cells the engine loads at the default
@@ -615,7 +619,7 @@ TEST_CASE("VisitArrivalPoint prefers cover to open ground", "[VisitArrivalPoint]
     // Exposed everywhere, except a rock beside the node at 6000.
     constexpr float kCoveredX = 6000.0f;
     engine.visibility.pickHitFraction = 1.0f;
-    engine.visibility.coverPatches.push_back({kCoveredX, 0.0f, 300.0f, 0.0f});
+    engine.visibility.coverPatches.push_back({kCoveredX, 0.0f, 300.0f, 0.99f});
 
     // Facing west, so the eastern road behind them is out of view and its
     // nodes from 5000 out are acceptable as open ground.
@@ -659,6 +663,53 @@ TEST_CASE("VisitArrivalPoint prefers cover to open ground", "[VisitArrivalPoint]
             REQUIRE(exposed.Ok());
             REQUIRE(std::fabs(Dist2D(exposed.point, At(0.0f, 0.0f)) - 5000.0f) < 1.0f);
         }
+    }
+}
+
+TEST_CASE("VisitArrivalPoint refuses cover the raycast cannot support", "[VisitArrivalPoint][engine]")
+{
+    // What a tester reported after 0.6.0: a visitor appearing in a spot she
+    // was not really hidden in. Nothing about the cover gate had changed —
+    // the arrivals had moved out to where it stops working.
+    //
+    // Every ray here is stopped, but stopped 60% of the way out: a hill
+    // between the player and the road, not something anybody is standing
+    // behind. Phase 14 measured the consequence over 514 candidates, where
+    // the gate passed 0.0% under 1,000 units and 100% of 101 at nine
+    // thousand, and wrote down what it meant: "cover proved that way is a
+    // hill somewhere in between rather than something the visitor is standing
+    // behind, and it stops being true the moment either of them moves."
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    auto* space = engine.AddWorldSpace(kWorld);
+    auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+    LayRoad(engine, cell);
+    AttachGridAround(engine, space, cell);
+    PollFineRoads();
+    LayGround(engine);
+    engine.visibility.pickHitFraction = 0.4f;
+
+    // Watching the road the sender would come in on, so the open-ground grade
+    // cannot rescue the visit and the cover claim is the only thing on offer.
+    auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+    player->data.angle.z = 3.14159265f / 2.0f;
+    auto* sender = ActorAt(engine, kSender, cell, At(kRoadEnd, 0.0f));
+
+    SECTION("should decline rather than ride a blocker a mile back")
+    {
+        const auto result = FindFor(sender, player);
+        REQUIRE_FALSE(result.Ok());
+        REQUIRE(result.tier == VisitArrivalPoint::Tier::None);
+    }
+
+    SECTION("should accept the same world once the blocker is at the spot")
+    {
+        // The control. Same geometry, same nine blocked rays, the blocker
+        // moved from 60% of the way out to 99% — which is the difference
+        // between a hill in between and cover.
+        engine.visibility.pickHitFraction = 0.99f;
+        const auto result = FindFor(sender, player);
+        REQUIRE(result.Ok());
     }
 }
 

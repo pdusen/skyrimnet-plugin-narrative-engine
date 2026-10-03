@@ -79,5 +79,14 @@ namespace NarrativeEngine::CameraVisibility
     //     the player watch attackers materialize in front of them.
     //
     // `bodyHeightUnits` is a nominal humanoid height (~128u).
-    bool IsPositionBehindCover(const RE::NiPoint3& worldPos, float bodyHeightUnits, float coverRadiusUnits);
+    // Pass as `coverProximityUnits` to accept a blocker anywhere along
+    // the ray, which is what this did before the proximity rule existed.
+    // Only right where the rays are short: over a long one, "something
+    // stopped it" and "the spot is hidden" stop being the same claim.
+    inline constexpr float kNoCoverProximityLimit = -1.0f;
+
+    bool IsPositionBehindCover(const RE::NiPoint3& worldPos,
+                               float bodyHeightUnits,
+                               float coverRadiusUnits,
+                               float coverProximityUnits);
 } // namespace NarrativeEngine::CameraVisibility

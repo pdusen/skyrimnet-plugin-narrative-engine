@@ -238,7 +238,11 @@ namespace NarrativeEngine::VisitArrivalPoint
 
         bool BehindCover(const RE::NiPoint3& pos, float coverRadius)
         {
-            return CameraVisibility::IsPositionBehindCover(pos, kCoverProbeHeightUnits, coverRadius);
+            return CameraVisibility::IsPositionBehindCover(
+                pos,
+                kCoverProbeHeightUnits,
+                coverRadius,
+                static_cast<float>(std::max(0, Settings::Get().visitArrivalCoverProximityUnits)));
         }
 
         // ---- The chain walk ----------------------------------------

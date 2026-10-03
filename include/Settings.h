@@ -467,6 +467,20 @@ namespace NarrativeEngine::Settings
         // the range CameraVisibility::IsPositionBehindCover was built
         // for. The value is a measurement rather than a preference —
         // see PHASE_14_VISIT_BEAT_REFACTOR.md, Step 2.
+        // How near the arrival a blocker has to be to count as its
+        // cover. A ray from the camera to a point thousands of units away
+        // is stopped by something almost always, and a hill most of the
+        // way back hides the spot only until the player walks a few
+        // paces. Measured over 514 road candidates in Phase 14: 0.0% of
+        // candidates under 1,000 units passed the gate, 74.9% in the
+        // 2,000s, 100% of 101 at nine thousand — the ray getting longer,
+        // not the terrain getting kinder.
+        //
+        // 512 is a rock, a tree, a wall, a building beside the spot.
+        // Tunable because the right number is a judgement about how far
+        // the player may move before the arrival stops being hidden.
+        int visitArrivalCoverProximityUnits = 512;
+
         int visitArrivalCoverRadiusUnits = 64;
 
         // May the arrival search place a visitor outside the attached

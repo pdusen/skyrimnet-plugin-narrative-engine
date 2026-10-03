@@ -241,9 +241,11 @@ namespace
         }
         engine.terrain.landHeight = 0.0f;
         engine.AddNavmeshPatch(engine.GroundCell(), kGroundMesh, -20000.0f, -20000.0f, 20000.0f, 20000.0f, 0.0f);
-        // Every ray blocked, so the cover gate never rejects and the search
-        // has a Tier 1 answer to give.
-        engine.visibility.pickHitFraction = 0.0f;
+        // Every ray blocked right at the spot it was cast to, so the cover
+        // gate never rejects and the search has a Tier 1 answer to give. The
+        // gate asks where the blocker is, so a fraction near 1 is what reads
+        // as cover rather than as a hill in between.
+        engine.visibility.pickHitFraction = 0.99f;
         return cell;
     }
 
