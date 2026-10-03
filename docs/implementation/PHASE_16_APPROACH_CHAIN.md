@@ -71,14 +71,11 @@ units out, the band and the walk agree; where it is 6,000, the band has to be ov
 
 ### Deferred (explicitly out)
 
-- **The walled-city cases.** `Tier::CityApproach` and `Tier::CityGate` keep working exactly as they do now
-  and short-circuit before any chain is built. They are not improved here and not regressed. Step 6 found
-  both of them badly broken — the approach tier cannot validate ground inside the walls at all, and the gate
-  tier has no distance floor — and that work is [`PHASE_17_CITY_ARRIVALS.md`](PHASE_17_CITY_ARRIVALS.md)
-  rather than scope creep here.
-- **`Tier::Doorstep`**, with one exception. It short-circuits as before, but Step 6 found it reading the
-  wrong load door out of an interior that has two, so Step 7 fixes which door `RoadRoute::ResolveOrigin`
-  picks. That is the origin resolution every tier shares, not the tier.
+- **Rebuilding the walled-city or doorstep tiers.** They keep their shape: both short-circuit before any
+  chain is built, and neither gets a chain. What Step 6 found broken in them is repaired in place by Steps 10
+  to 12 — ground that can be validated inside the walls, a distance floor on the gate arrival, the right load
+  door out of an interior. Those are defects in machinery every tier shares, not new tiers, and they are
+  fixed here rather than deferred.
 - **Anything that moves the visitor along the chain.** The chain makes progressive advancement *possible*;
   this phase does not do it. One warp, as today.
 - **Changing background travel.** Out of reach — see the note under the bridge.
@@ -433,6 +430,7 @@ New:
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `iVisitChainBridgeSpacingUnits` | `512` | Bridge and direct-line spacing; under one 866-unit background step |
+| `iVisitChainCoarseDetailUnits` | `16384` | How near the player a coarse edge is laid rather than linked |
 | `iVisitChainHopRadius` | `2` | How far off the fine chain to expand for candidates |
 | `iVisitChainUnstuckMinHopUnits` | `300` | How far a fine-neighbour unstuck hop must move a stalled visitor |
 | `iVisitChainUnstuckMaxRetreatUnits` | `150` | How much further from the player that hop may leave them |
@@ -443,7 +441,7 @@ New:
 
 The connector and direct defaults were `3` and `4` through Step 6, which measured what that costs: a straight
 connector at 3 undercuts a fine road at 2 on any road more than 1.5 times its own straight line, so the fine
-network never appeared on a single route. Step 8 raises them and Step 10 settles them.
+network never appeared on a single route. Step 8 raises them and Step 13 settles them.
 
 The four difficulties are settings rather than constants for the same reason `iVisitArrivalCoverRadiusUnits`
 became one in Phase 14: the ratios only settle against a real log, and they are the knob that decides whether
@@ -913,10 +911,11 @@ player used. Step 7 takes it.
 then 45 of 45 arc samples were rejected off-navmesh and `survived=0` both times, and the escort's close-in
 probe found nowhere standable three steps running on ordinary city street. Separately, a player standing
 1,168 units inside the gate got a visitor placed at the gate and greeted them 789 units away 1.3 seconds
-after arming. Both are deferred to Phase 17 and written up in
-[`standable-ground-inside-walled-cities.md`](../engine-findings/standable-ground-inside-walled-cities.md).
+after arming. Both are written up in
+[`standable-ground-inside-walled-cities.md`](../engine-findings/standable-ground-inside-walled-cities.md),
+and Steps 10 and 11 take them.
 
-Scenarios 2 and 5 were not run; the off-road staging and the forced stall are still unmeasured, and Step 10
+Scenarios 2 and 5 were not run; the off-road staging and the forced stall are still unmeasured, and Step 13
 carries them.
 
 ---
@@ -1024,7 +1023,7 @@ ratios: at 3 the chain holds no fine points at all, at 8 it walks all five. The 
 one number different — which is the whole claim, and it needs no mutation because the failing configuration is
 one of its own sections.
 
-**Verify [USER]:** Step 10.
+**Verify [USER]:** Step 13.
 
 ---
 
@@ -1071,7 +1070,147 @@ equals the straight line it replaced to within a unit.
 
 ---
 
-### Step 10 — Re-run Step 6's sites and settle the numbers
+### Step 10 — Ground that answers inside the walls
+
+- [X] Complete
+
+**[CLAUDE]**
+
+**Goal:** Let a standability question asked inside a walled city have an answer, so the city-approach tier can
+choose a point at all.
+
+**Files:** `include/StuckRecovery.h`, `src/StuckRecovery.cpp`, `src/StuckRecovery.engine.test.cpp`.
+
+**Sub-tasks:**
+
+1. `NavmeshSurfaceZ` reads the navmesh's own surface height at a position's XY, from the triangle nearest that
+   position's own height, with no reference to landscape.
+2. `IsStandable` tries terrain first and falls through to it. Terrain-first is what keeps outdoor behaviour
+   where it was; the fall-through is reached both when the terrain query fails and when it succeeds but
+   disagrees with the navmesh, which is why it did not matter which of those a city hits.
+3. `kNavmeshSurfaceWindowUnits`, 512. Bounded because navmesh under a position is not always the ground
+   there: a path at the foot of a cliff is navmesh under whoever stands on top of it. Wider than a city's
+   own tiers, far narrower than a ravine, and the arrival search's elevation gate is 400 anyway.
+4. `HasNavmeshCorridor` resolves ground the same way. Without it the corridor test rejects points
+   `IsStandable` has just accepted, which is exactly what the re-run measured: `offNavmesh` inside Whiterun
+   fell from 39 to 30 while `noCorridor` rose from 4 to 10.
+5. Tests: a street with no landscape at all; the same street with landscape 400 units below the paving; a
+   position off the edge of the navmesh, still refused; a position 2,000 units above it, refused for the
+   window; and a corridor across navmesh-only ground.
+
+**Specifics:**
+
+- **Why terrain cannot answer in there.** `WhiterunWorld` carries a landscape record in 7 of its 113 cells
+  and `WindhelmWorld` in 2 of 57 — the ground somebody walks on inside the walls is authored static geometry,
+  and what makes it walkable is the navmesh. `MarkarthWorld` is the opposite at 140 of 146, so this is not a
+  property of cities in general, which is why the fix reads both sources rather than switching on one.
+- Written up in
+  [`standable-ground-inside-walled-cities.md`](../engine-findings/standable-ground-inside-walled-cities.md).
+
+**Open against the city tiers, and not settled by this step [USER]:**
+
+- **`kMaxElevationDeltaUnits`, 400.** Five of 45 samples in the Gildergreen run were standable and rejected
+  for elevation. Whiterun is built in tiers and 400 units is less than one of them.
+- **The arc's distances inside a city.** Whiterun's navmesh covers 13 cells spanning about 11,600 x 7,400
+  units, clipped to them — no mesh crosses its own cell boundary. Sampling 2,000 to 8,000 units from a player
+  anywhere but the far end therefore lands outside the walls, in filler cells with no navmesh: 45 of 45
+  off-navmesh from a player standing 1,360 units inside the gate. A floor sized for open country may simply
+  be wrong in a space this small.
+
+**Verify [CLAUDE]:** every pre-existing `IsStandable`, `GroundPoint` and `Escort` case passes untouched.
+
+**Done.** The two-source resolution is `WalkableGround`, which `IsStandable` wraps with the water test and
+`HasNavmeshCorridor` uses directly. The corridor takes ground rather than standability on purpose: a road that
+fords a stream is a road, and an actor wades. Four cases cover a street with no landscape, a street with
+landscape 400 units beneath it, a position off the mesh and a position 2,000 units above it.
+
+---
+
+### Step 11 — A floor on the gate arrival, and a ladder for the city tiers
+
+- [X] Complete
+
+**[CLAUDE]**
+
+**Goal:** Stop a visitor materialising in front of a player standing at a gate, and stop the escort beginning
+a city visit with nothing to work with.
+
+**Files:** `src/VisitArrivalPoint.cpp`, `src/VisitArrivalPoint.engine.test.cpp`.
+
+**Sub-tasks:**
+
+1. When the gate's landing is nearer the player than `iVisitMarkerMinDistanceUnits`, walk the arrival out
+   along the player-to-gate line until the floor is satisfied, trying `1`, `0.75`, `0.5` and `0.25` of the
+   shortfall and taking the first that holds up.
+2. **A pushed point in the other worldspace is accepted on distance alone**, because nothing there can be
+   asked. The gate's far side is in Tamriel and Tamriel is not loaded while the player is inside the city, so
+   requiring `IsStandable` of it can only ever fail — which is what the re-run measured: `gate was 1484u,
+   floor 2000u, 0 fallback(s)`, the push rejected four times and the arrival left at the gate. This is the
+   same rule the chain already applies to a point outside the loaded grid, for the same reason.
+3. The probes not taken, and the gate's own landing, become the tier's fallbacks. The landing goes last: it
+   is the one position in there the engine vouches for, being where it puts anybody walking through.
+4. Tests: a player deep in the city, unchanged; a player inside the floor, pushed out and still on the
+   bearing through the gate; the gate surviving as the last fallback; the anchor still the far door.
+5. The log line names the arrival's distance, the gate's own, and the floor, because that is the number the
+   next session is read against.
+
+**Specifics:**
+
+- **Declining was not a candidate.** A player standing at a city gate is an ordinary place to stand, and the
+  alternative the user has now watched twice is a visitor appearing inside conversation range.
+
+**Verify [CLAUDE]:** `escort begun with 0 chain fallback(s)` no longer appears on a city visit.
+
+**Done.** The push keeps all four probes and the gate behind them, so a pushed arrival always carries four
+fallbacks — which is what the test asserts, because that count only holds if the probes are not being
+validated. The earlier version asked `IsStandable` of them and a measured visit rejected all four.
+
+---
+
+### Step 12 — Subdivide the coarse skeleton near the player
+
+- [X] Complete
+
+**[CLAUDE]**
+
+**Goal:** Stop the chain jumping ten thousand units between consecutive coarse nodes, which is what puts an
+arrival that far out when the player happens to be standing beside a road node.
+
+**Files:** `src/ApproachChain.cpp`, `src/ApproachChain.engine.test.cpp`.
+
+**Sub-tasks:**
+
+1. Lay the coarse-to-coarse edges that fall near the player at `visitChainBridgeSpacingUnits`, and link the
+   rest as now.
+2. Bound it by distance from the player, not by hop count. `iVisitChainCoarseDetailUnits`, default 16,384 —
+   four cells, comfortably past the loaded grid's corner, which is as far as any arrival is ever placed.
+3. Tests: two coarse nodes 11,000 units apart near the player produce candidates between them; the same pair
+   far from the player stay one edge; the chain's cost is unchanged either way.
+4. Run `pwsh -File format.ps1`.
+
+**Specifics:**
+
+- **Why this was invisible until now.** Step 9 laid the endpoint connectors, which is what the near end of a
+  chain is made of when the player is out in open country. A player standing *beside* a coarse node has a
+  short connector and joins the skeleton immediately — and the skeleton is one node per exterior navmesh,
+  which over Tamriel's 622 nodes averages about 8,000 units. The re-run measured `inGrid=6`, `tooNear=3` and
+  an arrival at 11,582 units: three candidates inside the floor, then nothing at all until the next coarse
+  node.
+- **Why bounded.** Laying every coarse edge would take the graph from about 1,000 nodes to ten thousand for
+  points no arrival search will ever look at — it only ever walks outward from the player until it finds
+  something, and gives up long before the far end of the province.
+
+**Verify [CLAUDE]:** the oracle still agrees with Dijkstra, and a cost assertion either side of the bound
+shows that subdividing changed what is available rather than what anything costs.
+
+**Done.** `iVisitChainCoarseDetailUnits`, 16,384, and the laid points carry `PointClass::Coarse` rather than
+Connector — priced as the road they subdivide, not as cutting across it. The new case stands a player 624
+units from a skeleton node and reads the nearest chain point past the 2,000 floor: 4,096-plus with the pass
+off, under 2,600 with it on, and the route costing the same within 2% either way.
+
+---
+
+### Step 13 — Re-run Step 6's sites and settle the numbers
 
 - [ ] Complete
 
@@ -1117,7 +1256,7 @@ visitor to an indoor player waits at the door the player walked in by.
 
 ## Done condition
 
-All ten steps checked, and:
+All thirteen steps checked, and:
 
 1. `pwsh -File build.ps1 build`, `pwsh -File build.ps1 test` and `pwsh -File format.ps1` are all clean.
 2. `grep -rn "BearingHome\|CorridorTarget" src include` is empty, and `Tier` holds only `None`,
@@ -1127,17 +1266,17 @@ All ten steps checked, and:
    fixture graph in the suite.
 5. `docs/engine-findings/land-height-outside-the-loaded-grid.md` exists, and the bridge section of this doc states
    one elevation source rather than a branch.
-6. The seven new settings are in the deployed INI with their defaults and a line on what each decides.
+6. The eight new settings are in the deployed INI with their defaults and a line on what each decides.
 7. No probe, harness or captured log from any step is in the repository.
 8. A chain built on real terrain beside a road reads `fine > 0`, and the winning point is inside the loaded
    grid. Step 6 found neither, and the rest of the phase is scaffolding until both hold.
 9. A visitor to an indoor player waits at the door the player walked in by, in a cell with more than one.
+10. A visit with the player inside a walled city logs `tier=city-approach` with `survived > 0` at least once,
+    and a gate arrival is never nearer the player than the distance floor.
 
-**Explicitly not required:** progressive advancement along the chain, any change to background travel, and any
-improvement to the walled-city tiers. All three are deferred by the Scope section and a Phase 16 that touches
-them has overrun. The walled-city work Step 6 turned up is
-[`PHASE_17_CITY_ARRIVALS.md`](PHASE_17_CITY_ARRIVALS.md).
+**Explicitly not required:** progressive advancement along the chain, and any change to background travel.
+Both are deferred by the Scope section and a Phase 16 that touches them has overrun.
 
-The doorstep tier is the one exception to that deferral, added by Step 7: Step 6 found it placing a visitor at
-the wrong door of a two-door interior, which is a defect in the origin resolution this phase depends on rather
-than an improvement to a tier it left alone.
+The city and doorstep tiers are not in that list. They keep their shape, but the defects Step 6 found in them
+— ground that cannot be validated inside the walls, a gate arrival with no floor, the wrong load door out of
+an interior — are in machinery every tier shares, and Steps 10 to 12 repair them here.

@@ -418,12 +418,40 @@ namespace NarrativeEngine::ApproachChain
                 coarseToGraph.emplace(i, added);
                 coarseNodes.push_back(added);
             }
+            // Linked, except near the player, where the gaps are laid like
+            // every other long segment in this graph.
+            //
+            // One node per exterior navmesh puts the skeleton's nodes about
+            // 8,000 units apart over Tamriel, and a player standing beside one
+            // joins it immediately — so the chain's near end is a single edge
+            // to the next node however far that is. Measured: an arrival 11,582
+            // units out with three candidates inside the distance floor and
+            // nothing between them and that node.
+            //
+            // Bounded by distance from the player rather than by hop count,
+            // because what matters is whether the arrival search will ever walk
+            // there, and it only ever walks outward until something is
+            // acceptable. Laying the whole skeleton would take the graph from
+            // about a thousand nodes to ten thousand to no purpose.
+            const float detailRadius = static_cast<float>(std::max(0, cfg.visitChainCoarseDetailUnits));
             for (const auto& [coarseIndex, graphIndex] : coarseToGraph) {
                 for (const auto neighbor : TravelGraph::Neighbors(coarseIndex)) {
                     const auto it = coarseToGraph.find(neighbor);
-                    if (it != coarseToGraph.end()) {
-                        graph.Link(graphIndex, it->second);
+                    if (it == coarseToGraph.end()) {
+                        continue;
                     }
+                    if (neighbor < coarseIndex) {
+                        continue; // laid once, from the lower end
+                    }
+                    const bool nearPlayer = detailRadius > 0.0f
+                                            && (Dist(graph.nodes[graphIndex].pos, playerPos) <= detailRadius
+                                                || Dist(graph.nodes[it->second].pos, playerPos) <= detailRadius);
+                    if (!nearPlayer) {
+                        graph.Link(graphIndex, it->second);
+                        continue;
+                    }
+                    LayLine(
+                        graph, grid, worldSpace, graphIndex, it->second, PointClass::Coarse, coarseDifficulty, spacing);
                 }
             }
             out.coarseCount = coarseNodes.size();

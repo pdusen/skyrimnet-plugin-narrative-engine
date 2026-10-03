@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 // Tests for the one ordered run of points from a visitor to the player.
@@ -1027,6 +1028,119 @@ TEST_CASE("ApproachChain lays its endpoint connectors rather than linking them",
             // The last piece joins the run to the coarse node itself.
             total += Dist(laid.back().position, coarseWestEnd);
             REQUIRE(std::fabs(total - straight) < 1.0f);
+        }
+    }
+}
+
+TEST_CASE("ApproachChain fills in the skeleton beside the player", "[ApproachChain][engine]")
+{
+    // A player standing BESIDE a coarse node is the case the laid endpoint
+    // connectors do not help with. Their connector is a few hundred units and
+    // joins the skeleton immediately, and the skeleton is one node per
+    // exterior navmesh -- 622 of them over Tamriel, about 8,000 units apart.
+    // So the chain's near end becomes one long edge to the next node, and the
+    // arrival search, which takes the nearest acceptable point past its floor,
+    // has nothing between.
+    //
+    // Measured in a live session: `inGrid=6`, `tooNear=3`, an arrival 11,582
+    // units out. Three candidates inside the floor and then nothing at all.
+    constexpr float kRow = 43008.0f;
+    constexpr float kPlayerX = 26000.0f; // 624 units short of the cell-6 node
+
+    EngineMock engine;
+
+    auto* navi = engine.AddNavMeshInfoMap(kNavi);
+    std::uint32_t nextForm = 0x00C15000u;
+    std::vector<const RE::BSNavmeshInfo*> road;
+    for (int cell = 6; cell <= 20; ++cell) {
+        road.push_back(
+            engine.AddNavmeshInfo(navi, nextForm++, kMainland, static_cast<std::int16_t>(cell), 10, 0.0f, 0.0f, 0.0f));
+    }
+    engine.AddPreferredPath(navi, road);
+    TravelGraph::Initialize();
+    REQUIRE(TravelGraph::NodeCount() == 15);
+
+    const auto player = At(kPlayerX, kRow);
+    const auto visitor = At(CellCentre(20) + 300.0f, kRow);
+
+    auto* space = engine.AddWorldSpace(kMainland);
+    auto* cell = engine.AddExteriorCell(space, 4, 10, nullptr);
+    StandOutdoorsAndLoad(engine, space, player, {cell});
+    const auto grid = GridAround(6, 10);
+
+    // The nearest chain point at least 2,000 units out -- which is what the
+    // arrival search will take, and the only number that matters here.
+    const auto nearestPastFloor = [&player](const ApproachChain::Chain& chain) {
+        float best = 1e9f;
+        for (const auto& point : chain.points) {
+            const float out = Dist2D(point.position, player);
+            if (out >= 2000.0f && out < best) {
+                best = out;
+            }
+        }
+        return best;
+    };
+
+    constexpr const char* kBase = "[FineRoads]\nbFineRoadsEnabled=1\niFineRoadsBackstopSeconds=1\n"
+                                  "bFineRoadsDebugBitmap=0\n"
+                                  "[TravelGraph]\nbTravelGraphEnabled=1\nbTravelGraphDebugBitmap=0\n"
+                                  "[Beats]\niVisitChainBridgeSpacingUnits=512\n"
+                                  "iVisitChainDifficultyCoarse=1\niVisitChainDifficultyFine=2\n"
+                                  "iVisitChainDifficultyConnector=8\niVisitChainDifficultyDirect=12\n";
+
+    SECTION("when the detail pass is switched off")
+    {
+        const ConfiguredSettings off{std::string(kBase) + "iVisitChainCoarseDetailUnits=0\n"};
+        const auto chain = ApproachChain::Build(grid, kMainland, visitor, player);
+
+        SECTION("should leave a gap the width of a navmesh")
+        {
+            // The node beside the player, then nothing until the next one a
+            // whole cell further on.
+            REQUIRE(chain.valid);
+            REQUIRE(nearestPastFloor(chain) > 4000.0f);
+        }
+    }
+
+    SECTION("when the detail pass reaches four cells")
+    {
+        const ConfiguredSettings on{std::string(kBase) + "iVisitChainCoarseDetailUnits=16384\n"};
+        const auto chain = ApproachChain::Build(grid, kMainland, visitor, player);
+
+        SECTION("should offer a point just past the floor")
+        {
+            REQUIRE(chain.valid);
+            const float nearest = nearestPastFloor(chain);
+            REQUIRE(nearest >= 2000.0f);
+            REQUIRE(nearest < 2600.0f);
+        }
+
+        SECTION("should still be coarse road rather than something synthetic")
+        {
+            // Laid along a skeleton edge, so the points carry the class of
+            // what they subdivide. A chain that called them connectors would
+            // price them at 8 and route around its own roads.
+            REQUIRE(chain.valid);
+            bool coarseNearby = false;
+            for (const auto& point : chain.points) {
+                const float out = Dist2D(point.position, player);
+                if (out >= 2000.0f && out < 2600.0f && point.cls == PointClass::Coarse) {
+                    coarseNearby = true;
+                }
+            }
+            REQUIRE(coarseNearby);
+        }
+
+        SECTION("should not have changed what the route costs")
+        {
+            // Subdividing a straight edge adds points, not price. Compared
+            // against the same world with the pass off, which is the only
+            // honest way to say the cost did not move.
+            REQUIRE(chain.valid);
+            const ConfiguredSettings off{std::string(kBase) + "iVisitChainCoarseDetailUnits=0\n"};
+            const auto plain = ApproachChain::Build(grid, kMainland, visitor, player);
+            REQUIRE(plain.valid);
+            REQUIRE(std::fabs(chain.cost - plain.cost) < plain.cost * 0.02f);
         }
     }
 }

@@ -1441,19 +1441,20 @@ TEST_CASE("VisitArrivalPoint walks a city visitor in through the gate", "[VisitA
             REQUIRE(std::fabs(result.point.y) < 1.0f);
         }
 
-        SECTION("should stand them on ground it checked")
+        SECTION("should keep every probe it did not take, and the gate last")
         {
+            // Four probes plus the gate's own landing, so the escort has a
+            // ladder that walks back toward the door rather than one step.
+            //
+            // This also pins that the probes are NOT validated. The arrival is
+            // in the other worldspace by construction -- FindCityGateway looks
+            // for a door whose far side lands there -- and that worldspace is
+            // not loaded while the player is inside the walls, so a
+            // standability question about it has no answer. Asking anyway
+            // rejected all four on a measured visit and left the visitor at
+            // the gate.
             REQUIRE(result.Ok());
-            RE::NiPoint3 grounded{};
-            REQUIRE(StuckRecovery::IsStandable(result.point, grounded));
-        }
-
-        SECTION("should keep the gate itself as escort supply")
-        {
-            // The one position in here the engine vouches for: it is where
-            // anybody walking through the door lands.
-            REQUIRE(result.Ok());
-            REQUIRE_FALSE(result.fallbacks.empty());
+            REQUIRE(result.fallbacks.size() == 4);
             const auto& last = result.fallbacks.back();
             REQUIRE(std::fabs(last.x - kGateArrivalX) < 1.0f);
         }

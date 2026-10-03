@@ -164,6 +164,11 @@ namespace NarrativeEngine::StuckRecovery
     // navmesh over it and no landscape record to read.
     bool NavmeshSurfaceZ(const RE::NiPoint3& pos, float& zOut);
 
+    // Ground an actor could walk on at `pos`'s XY, from whichever source
+    // can answer: terrain with navmesh over it, or failing that the
+    // navmesh's own surface. No water test — callers that care add one.
+    bool WalkableGround(const RE::NiPoint3& pos, RE::NiPoint3& out, float& outGroundZ);
+
     // Grounded, dry, and on navmesh. Terrain answers for outdoor Skyrim;
     // where it does not — inside a walled city, where there is almost no
     // landscape — the navmesh's own surface answers instead.

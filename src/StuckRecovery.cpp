@@ -275,19 +275,15 @@ namespace NarrativeEngine::StuckRecovery
         return found;
     }
 
-    bool IsStandable(const RE::NiPoint3& pos, RE::NiPoint3& out)
+    bool WalkableGround(const RE::NiPoint3& pos, RE::NiPoint3& out, float& outGroundZ)
     {
-        auto* tes = RE::TES::GetSingleton();
-
         // Terrain first, which is what the whole of outdoor Skyrim is.
         float groundZ = 0.0f;
         RE::NiPoint3 grounded{};
-        if (GroundPoint(pos, grounded, groundZ)) {
-            auto* cell = tes ? tes->GetCell(grounded) : nullptr;
-            if (!IsUnderwater(cell, grounded, groundZ) && IsOnNavmesh(grounded)) {
-                out = grounded;
-                return true;
-            }
+        if (GroundPoint(pos, grounded, groundZ) && IsOnNavmesh(grounded)) {
+            out = grounded;
+            outGroundZ = groundZ;
+            return true;
         }
 
         // Then the navmesh's own surface, because inside a walled city there
@@ -300,21 +296,28 @@ namespace NarrativeEngine::StuckRecovery
         // nowhere to stand on open street.
         //
         // Reached whether the terrain query failed or merely disagreed with
-        // the navmesh, because both happen in there and the log cannot tell
-        // them apart. See
+        // the navmesh, because both happen in there and nothing we can read
+        // tells those apart. See
         // docs/engine-findings/standable-ground-inside-walled-cities.md.
         float surfaceZ = 0.0f;
         if (!NavmeshSurfaceZ(pos, surfaceZ)) {
             return false;
         }
-        RE::NiPoint3 onMesh = pos;
-        onMesh.z = surfaceZ + kGroundClearanceUnits;
-        auto* cell = tes ? tes->GetCell(onMesh) : nullptr;
-        if (IsUnderwater(cell, onMesh, surfaceZ)) {
+        out = pos;
+        out.z = surfaceZ + kGroundClearanceUnits;
+        outGroundZ = surfaceZ;
+        return true;
+    }
+
+    bool IsStandable(const RE::NiPoint3& pos, RE::NiPoint3& out)
+    {
+        float groundZ = 0.0f;
+        if (!WalkableGround(pos, out, groundZ)) {
             return false;
         }
-        out = onMesh;
-        return true;
+        auto* tes = RE::TES::GetSingleton();
+        auto* cell = tes ? tes->GetCell(out) : nullptr;
+        return !IsUnderwater(cell, out, groundZ);
     }
 
     bool HasNavmeshCorridor(const RE::NiPoint3& from, const RE::NiPoint3& to)
@@ -340,9 +343,18 @@ namespace NarrativeEngine::StuckRecovery
             // query; what gets tested is where the terrain actually is.
             const RE::NiPoint3 at{from.x + dx * t, from.y + dy * t, from.z + dz * t};
 
+            // The same two-source resolution IsStandable uses, and for the
+            // same reason: a city street is navmesh with no terrain under it.
+            // Asking only the terrain here rejected points IsStandable had
+            // just accepted -- measured inside Whiterun as off-navmesh falling
+            // from 39 of 45 to 30 while noCorridor rose from 4 to 10, the same
+            // samples moving from one gate to the next.
+            //
+            // Ground rather than standability, so the water test stays out of
+            // it: a road that fords a stream is a road, and an actor wades.
             RE::NiPoint3 grounded{};
             float groundZ = 0.0f;
-            if (GroundPoint(at, grounded, groundZ) && IsOnNavmesh(grounded)) {
+            if (WalkableGround(at, grounded, groundZ)) {
                 gap = 0;
                 continue;
             }

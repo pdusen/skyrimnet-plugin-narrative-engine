@@ -1292,35 +1292,40 @@ namespace NarrativeEngine::VisitArrivalPoint
                     if (span > 1.0f) {
                         const float ux = dx / span;
                         const float uy = dy / span;
-                        // Furthest first: the nearest push that satisfies the
-                        // floor is still the one the design asked for, and the
-                        // shorter probes exist so a gate that opens onto a
-                        // cliff or a bridge is not a decline.
+                        // Furthest first, so the push that satisfies the
+                        // floor is the one taken and the shorter ones fall to
+                        // the escort behind it.
+                        //
+                        // Accepted on distance rather than validated, which is
+                        // the rule the chain already applies to a point outside
+                        // the loaded grid. FindCityGateway searches the LOADED
+                        // grid for a door whose far side lands in the other
+                        // worldspace, so this arrival is by construction in a
+                        // worldspace that is not loaded -- GetCell resolves its
+                        // coordinates against the grid that IS, which out
+                        // beyond the city walls holds no ground at all.
+                        //
+                        // Asking anyway failed all four probes on a measured
+                        // visit and left the arrival at the gate, 1,484 units
+                        // from a player with a 2,000-unit floor. Nothing was
+                        // wrong with the probes; the question has no answer
+                        // from in here.
                         const float needed = minDist - gateOut;
                         for (const float fraction : {1.0f, 0.75f, 0.5f, 0.25f}) {
                             const float reach = needed * fraction;
-                            RE::NiPoint3 probe{
-                                result.point.x + ux * reach, result.point.y + uy * reach, result.point.z};
-                            RE::NiPoint3 standing{};
-                            if (!StuckRecovery::IsStandable(probe, standing)) {
-                                continue;
-                            }
-                            pushed.push_back(standing);
+                            pushed.push_back(
+                                RE::NiPoint3{result.point.x + ux * reach, result.point.y + uy * reach, result.point.z});
                         }
                     }
                 }
                 if (!pushed.empty()) {
                     // The gate itself stays on the end of the ladder. It is
                     // where the engine puts anybody walking through, so it is
-                    // the one position here known to be standable.
+                    // the one position out here the engine vouches for -- and
+                    // so the one to reach for last rather than first.
                     pushed.push_back(result.point);
                     result.point = pushed.front();
                     result.fallbacks.assign(pushed.begin() + 1, pushed.end());
-                } else {
-                    // Nothing standable further out, so the gate it is. Still
-                    // better than declining: the visitor arrives close, which
-                    // is what happened before this and what the player saw.
-                    result.fallbacks.clear();
                 }
 
                 logger::info("VisitArrivalPoint: sender=0x{:08X} tier=city-gate at ({:.0f},{:.0f},{:.0f}) "

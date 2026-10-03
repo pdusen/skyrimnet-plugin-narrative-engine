@@ -530,6 +530,17 @@ namespace NarrativeEngine::Settings
         // the A-star heuristic is plain euclidean distance and stays
         // admissible only while nothing is cheaper than 1. The read path
         // clamps to it.
+        // How near the player a coarse road edge has to be before the
+        // chain lays points along it instead of linking its ends. The
+        // skeleton is one node per exterior navmesh, which over Tamriel's
+        // 622 nodes averages about 8,000 units apart, so a player standing
+        // beside one has nothing at all to arrive at until the next. 16,384
+        // is four cells — past the far corner of the loaded grid, and as
+        // far out as any arrival is ever placed. Laying the whole skeleton
+        // instead would take the graph from about a thousand nodes to ten
+        // thousand for points no search looks at.
+        int visitChainCoarseDetailUnits = 16384;
+
         int visitChainDifficultyCoarse = 1;    // coarse road nodes
         int visitChainDifficultyFine = 2;      // loaded fine road nodes
         int visitChainDifficultyConnector = 8; // bridge, player, visitor

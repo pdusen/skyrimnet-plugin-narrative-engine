@@ -472,6 +472,8 @@ namespace NarrativeEngine::Settings
                 static_cast<int>(ini.GetLongValue("Beats", "iVisitChainHopRadius", dst.visitChainHopRadius));
             dst.visitChainBridgeSpacingUnits = static_cast<int>(
                 ini.GetLongValue("Beats", "iVisitChainBridgeSpacingUnits", dst.visitChainBridgeSpacingUnits));
+            dst.visitChainCoarseDetailUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitChainCoarseDetailUnits", dst.visitChainCoarseDetailUnits));
             dst.visitChainDifficultyCoarse = static_cast<int>(
                 ini.GetLongValue("Beats", "iVisitChainDifficultyCoarse", dst.visitChainDifficultyCoarse));
             dst.visitChainDifficultyFine =
