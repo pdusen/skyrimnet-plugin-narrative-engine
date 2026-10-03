@@ -170,9 +170,26 @@ namespace NarrativeEngine::GossipLog
     // "released" or "expired".
     void Claim(std::int64_t memoryId, std::string_view action, std::size_t outstanding);
 
+    // One line of a whole-world state summary: the same figures the
+    // dashboard's Gossip tab renders, written at session start and at the
+    // end of every tick.
+    //
+    // Free-form text for the same reason Note is, and for a stronger one:
+    // the summary is a projection of GossipState, and this module is
+    // deliberately ignorant of the simulation's types. GossipSim composes
+    // the lines; this only gives them a tag of their own so a session's
+    // worth of them can be read on its own with `grep STATE`.
+    //
+    // The pair of summaries either side of a load is the point. A session
+    // start summary that disagrees with the previous session's last tick
+    // summary is a co-save round trip that lost something, and before this
+    // existed the only way to see that was to infer it from the absence of
+    // later activity.
+    void State(std::string_view text);
+
     // Free-form note line, for anything that does not fit the shapes
     // above: queue-depth warnings, catch-up drains, content-generation
-    // failures, and the end-of-session census.
+    // failures, the end-of-tick marker, and the end-of-session census.
     //
     // The census is written by GossipSim rather than here, so that this
     // module never has to know the simulation's types. Plugin.cpp orders

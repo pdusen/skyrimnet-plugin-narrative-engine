@@ -121,8 +121,13 @@ namespace NarrativeEngine::GossipLog
                << "#   WASTED  a telling that landed on someone who already knew (consumes quota)\n"
                << "#   RETIRE  a carrier stopped telling\n"
                << "#   BURNOUT the rumor's last carrier retired; carries the full summary\n"
-               << "#   NOTE    seeder summaries, catch-up drains, census\n"
-               << "# Hold crossings are flagged inline as XHOLD <from>-><to>.\n\n";
+               << "#   STATE   a whole-world summary: every rumor and its state\n"
+               << "#   NOTE    seeder summaries, catch-up drains, tick ends, census\n"
+               << "# Hold crossings are flagged inline as XHOLD <from>-><to>.\n"
+               << "# A STATE block is written at session start and at the end of\n"
+               << "# every tick, so the pair either side of a load is what a save\n"
+               << "# round trip can be checked against. Every tick closes with a\n"
+               << "# NOTE naming its end.\n\n";
         g_file.flush();
         logger::info("GossipLog: opened '{}' for session {}", path.string(), g_sessionCounter);
     }
@@ -245,6 +250,11 @@ namespace NarrativeEngine::GossipLog
     void Claim(std::int64_t memoryId, std::string_view action, std::size_t outstanding)
     {
         Emit(std::format("CLAIM   m{:<8}  {:<9} outstanding={}", memoryId, action, outstanding));
+    }
+
+    void State(std::string_view text)
+    {
+        Emit(std::format("STATE   {}", text));
     }
 
     void Note(std::string_view text)

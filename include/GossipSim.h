@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <GossipDispatch.h>
@@ -296,6 +297,30 @@ namespace NarrativeEngine::GossipSim
     // the rumors that have not been reaped, which is what the dashboard
     // wants: a rumor is listed until its last carrier retires.
     std::vector<RumorView> GetRumorViews(const GossipState&);
+
+    // Write `st` into the gossip log as a STATE block: a header of the
+    // same counters the dashboard's Gossip tab puts above the list, then
+    // one line per rumor carrying the same per-rumor figures the tab
+    // shows. `reason` names the moment, and is the first thing on the
+    // header line.
+    //
+    // Takes the image explicitly for the same reason the other
+    // projections do, and here it decides correctness rather than
+    // style: at session start the only complete picture of the incoming
+    // world is the freshly published snapshot, while the live state and
+    // the pool cache still describe the outgoing one.
+    //
+    // Written at session start and at the end of every tick, which is
+    // what makes a co-save round trip checkable without inference. A
+    // session-start block that does not match the previous session's
+    // last tick block is a load that lost something — and a rumor the
+    // load left unschedulable shows up as one whose figures never move
+    // again, which is how it reads in the trace rather than something to
+    // be deduced from an absence of activity.
+    //
+    // No-op when the gossip log is closed, so the composition cost is
+    // not paid when nothing would be written.
+    void LogStateSummary(std::string_view reason, const GossipState& st);
 
     // Serialisation never touches live state and never waits on the
     // gossip worker.

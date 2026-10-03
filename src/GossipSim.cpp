@@ -952,7 +952,7 @@ namespace NarrativeEngine::GossipSim
         const auto clock = incoming->simGameDay;
         {
             std::scoped_lock lock(g_snapshotMutex);
-            g_snapshot = std::move(incoming);
+            g_snapshot = incoming;
         }
         // The session's opening fingerprint, and deliberately info rather
         // than debug: this one line says what the incoming world actually
@@ -962,6 +962,18 @@ namespace NarrativeEngine::GossipSim
                      rumors,
                      claims,
                      clock);
+
+        // The same thing at full width in the gossip trace. `incoming` and
+        // not Snapshot(): the two are the same object here, and reading the
+        // local says so rather than inviting the question.
+        //
+        // This is the opening half of the pair. Whatever the previous
+        // session's last tick wrote, THIS is what came back — so a rumor
+        // the co-save dropped, a band text that did not survive, a carrier
+        // count that shrank, or a queue that came back empty are all one
+        // diff away instead of being inferred from what stops happening
+        // afterwards.
+        LogStateSummary("session start: this is what the save loaded", *incoming);
     }
 
     void OnSessionEnd()
@@ -1323,6 +1335,105 @@ namespace NarrativeEngine::GossipSim
         }
         out.queuedEvents = st.queue.size();
         return out;
+    }
+
+    void LogStateSummary(std::string_view reason, const GossipState& st)
+    {
+        if (!GossipLog::IsActive()) {
+            return;
+        }
+
+        // ONE image, handed in. Four separate reads could each land on a
+        // different publication, and a carrier count from one instant
+        // beside a rumor list from another is exactly the kind of
+        // disagreement these blocks exist to expose.
+        const auto stats = GetStats(st);
+        const auto harvest = GossipHarvest::GetStats(st);
+        auto rumors = GetRumorViews(st);
+
+        // GetRumorViews hands back the dashboard's order, newest first.
+        // Re-sorted by id here because the whole point of writing these
+        // blocks at session start AND at every tick end is that two of
+        // them can be put side by side: in newest-first order a single
+        // seed shifts every row, and a diff of two blocks says nothing.
+        // The per-rumor figures are the tab's; only the order is ours.
+        std::sort(rumors.begin(), rumors.end(), [](const RumorView& a, const RumorView& b) { return a.id < b.id; });
+
+        std::size_t stalled = 0;
+        std::size_t infectious = 0;
+        for (const auto& r : rumors) {
+            if (r.stalled) {
+                ++stalled;
+            }
+            infectious += r.activeCarriers;
+        }
+
+        GossipLog::State(std::format("{} -- clock day {:.3f}  rumors={} ({} live, {} stalled)  "
+                                     "carriers={} ({} infectious)  queued={}  claims={}  participants={}",
+                                     reason,
+                                     st.simGameDay,
+                                     rumors.size(),
+                                     stats.liveRumors,
+                                     stalled,
+                                     stats.totalCarriers,
+                                     infectious,
+                                     stats.queuedEvents,
+                                     GossipClaims::Count(st),
+                                     GossipGraph::ParticipantCount()));
+
+        for (const auto& r : rumors) {
+            // Band 0, clipped. The bands are written once by a model call
+            // nobody will make again, so losing them across a save leaves a
+            // rumor that spreads and says nothing -- and the only way to see
+            // that from a trace is for the text to be in it. The count comes
+            // first because that is the part a round trip breaks.
+            constexpr std::size_t kTextClip = 48;
+            std::string text = r.text;
+            if (text.size() > kTextClip) {
+                text.resize(kTextClip);
+                text += "...";
+            }
+
+            GossipLog::State(std::format("  r{:02} {:<7} n={:.2f}  age={:.1f}d  idle={:.1f}d  "
+                                         "carriers={} ({} infectious)  depth={}  holds={}  settlements={}  "
+                                         "told={}  wasted={}  origin={} @{}  memory={}  bands={} \"{}\"",
+                                         r.id,
+                                         r.live ? (r.stalled ? "stalled" : "live") : "done",
+                                         r.notability,
+                                         r.ageDays,
+                                         r.idleDays,
+                                         r.carriers,
+                                         r.activeCarriers,
+                                         r.maxDepth,
+                                         r.holds,
+                                         r.settlements,
+                                         r.transmissions,
+                                         r.wasted,
+                                         r.originName.empty() ? "?" : r.originName,
+                                         r.originLocation.empty() ? "-" : r.originLocation,
+                                         r.sourceMemoryId,
+                                         r.bands.size(),
+                                         text));
+        }
+
+        if (rumors.empty()) {
+            // Said out loud rather than left as a header with nothing under
+            // it. An empty world and a summary that failed to find the world
+            // it was given read identically otherwise.
+            GossipLog::State("  (no rumors)");
+        }
+
+        GossipLog::State(std::format("  session so far: {} told, {} knew, {} missed, {} away, {} capped  |  "
+                                     "harvest {} sweep(s), {} sent  |  memories {} written ({} failed)",
+                                     stats.transmissionsThisSession,
+                                     stats.wastedThisSession,
+                                     stats.notCaughtThisSession,
+                                     stats.unavailableThisSession,
+                                     stats.cappedThisSession,
+                                     harvest.sweeps,
+                                     harvest.sentForGeneration,
+                                     stats.memoriesWritten,
+                                     stats.memoryWriteFailures));
     }
 
     void OnSave(SKSE::SerializationInterface* intfc, const GossipState& state)

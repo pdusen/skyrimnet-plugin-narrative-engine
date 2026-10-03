@@ -40,8 +40,15 @@ namespace NarrativeEngine::GossipTick
             return EventLogUtil::NowGameTimeSeconds() / 86400.0;
         }
 
-        // The whole of gossip, for one beat of in-world time.
-        void RunTick(const GossipThread::Token& gt, double asOf, const GossipDispatch::CancellationHandle& cancel)
+        // The whole of gossip, for one beat of in-world time. Returns false
+        // when the tick was abandoned part-way rather than run to the end.
+        //
+        // Split out from RunTick purely so that every one of the early
+        // returns below lands somewhere a close-out line is guaranteed to
+        // follow. A marker that the tick has ended is only worth anything
+        // if it is written on the paths where something went wrong, and
+        // those are exactly the paths that return early.
+        bool RunTickBody(const GossipThread::Token& gt, double asOf, const GossipDispatch::CancellationHandle& cancel)
         {
             // A load or revert stages state rather than writing live, so
             // adopt before anything reads it. A sweep against the outgoing
@@ -50,7 +57,7 @@ namespace NarrativeEngine::GossipTick
             GossipSim::AdoptPendingState();
 
             if (cancel && cancel->IsCancelled()) {
-                return;
+                return false;
             }
 
             // 0. Stamp the clock BEFORE the harvest. A rumor seeded during
@@ -66,14 +73,14 @@ namespace NarrativeEngine::GossipTick
             const bool swept = GossipHarvest::RunSweep(gt, asOf, cancel);
 
             if (cancel && cancel->IsCancelled()) {
-                return;
+                return false;
             }
 
             // 3-4. Advance the world to the horizon and prune.
             GossipSim::Advance(gt, asOf, cancel);
 
             if (cancel && cancel->IsCancelled()) {
-                return;
+                return false;
             }
 
             // 5. One publication point, at the end of the job and nowhere
@@ -86,6 +93,45 @@ namespace NarrativeEngine::GossipTick
 
             if (!swept) {
                 logger::debug("GossipTick: tick at day {:.3f} could not sweep; boundary stays owed", asOf);
+            }
+
+            // 6. The world as this tick leaves it, from the image that was
+            // just published rather than from live state — so what the trace
+            // says and what the dashboard draws are the same numbers, taken
+            // at the same instant.
+            //
+            // After the publish because a summary of a half-advanced drain
+            // is worse than none: it would show carriers stepped to
+            // different game days and transmission counts that do not match
+            // the carrier set they came from.
+            GossipSim::LogStateSummary(std::format("tick end: simulated through day {:.3f}", asOf),
+                                       *GossipSim::Snapshot());
+            return true;
+        }
+
+        // The unit of work the dispatcher runs, and the only place the
+        // close-out line is written.
+        void RunTick(const GossipThread::Token& gt, double asOf, const GossipDispatch::CancellationHandle& cancel)
+        {
+            const bool completed = RunTickBody(gt, asOf, cancel);
+
+            // THE last line of every tick, on every path, whatever else the
+            // tick did or failed to do.
+            //
+            // A gossip trace is read by scrolling to where the interesting
+            // thing happened and then working out which tick it belongs to,
+            // and until this existed there was no way to do that: ticks ran
+            // into each other, a tick that did nothing at all wrote nothing
+            // at all, and a tick abandoned by a load looked the same as one
+            // that simply had no work. One terminator per tick makes all
+            // three distinguishable and bounds every other line in the file
+            // to the tick it came from.
+            if (completed) {
+                GossipLog::Note(std::format("tick end: day {:.3f}", asOf));
+            } else {
+                GossipLog::Note(std::format("tick end: day {:.3f} -- ABANDONED part-way; the world it was "
+                                            "simulating was replaced under it",
+                                            asOf));
             }
         }
     } // namespace

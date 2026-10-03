@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <chrono>
 #include <future>
+#include <iterator>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -65,11 +66,14 @@ namespace
     using NarrativeEngine::Testing::ConfiguredSettings;
     using NarrativeEngine::Testing::EngineMock;
     namespace GossipGraph = NarrativeEngine::GossipGraph;
+    namespace GossipLog = NarrativeEngine::GossipLog;
     namespace GossipSim = NarrativeEngine::GossipSim;
     using NarrativeEngine::Testing::BuildGossipWorld;
+    using NarrativeEngine::Testing::ClearGossipTrace;
     using NarrativeEngine::Testing::FakeSkyrimNetState;
     using NarrativeEngine::Testing::FakeSkyrimNetStateFunc;
     using NarrativeEngine::Testing::GossipSpies;
+    using NarrativeEngine::Testing::GossipTraceLines;
     using NarrativeEngine::Testing::kFakeSkyrimNetStateExport;
     using NarrativeEngine::Testing::LiveGossipState;
     using NarrativeEngine::Testing::ResetGossipState;
@@ -542,6 +546,73 @@ TEST_CASE("GossipTick runs a tick in order", "[GossipTick][engine]")
             DrainTicks();
             REQUIRE(SimulatedDay() > 9.0);
             REQUIRE(PublishedDay() == SimulatedDay());
+        }
+    }
+}
+
+TEST_CASE("GossipTick closes every tick in the trace", "[GossipTick][engine]")
+{
+    // The trace is read by finding the interesting line and then working out
+    // which tick it belongs to, and nothing in the file used to say where one
+    // tick stopped and the next began. Worse, the two cases a reader most
+    // needs to tell apart -- a tick that had no work, and a tick abandoned
+    // part-way by a load -- both wrote nothing whatsoever.
+    EngineMock engine;
+    const ConfiguredSettings settings{"[Gossip]\nbGossipEnabled=1\nbGossipLogEnabled=1\n"
+                                      "iGossipTickIntervalSeconds=1\nfGossipHarvestIntervalGameHours=1.0\n"};
+    const RunningGossip gossip;
+    GossipSpies().Reset();
+    BuildGossipWorld(engine);
+    GossipGraph::Initialize();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    FakeSkyrimNet().Reset();
+    ResetGossipState();
+    SetSimulatedDay(9.0);
+    SetGameDay(engine, 10.0);
+    GossipTick::OnSessionStart();
+
+    SECTION("when a tick has run")
+    {
+        ClearGossipTrace();
+        GossipLog::OnSessionStart();
+        PollWith(60.0);
+        DrainTicks();
+        GossipLog::OnSessionEnd();
+
+        const auto lines = GossipTraceLines();
+        std::vector<std::string> records;
+        std::copy_if(lines.begin(), lines.end(), std::back_inserter(records), [](const std::string& line) {
+            return !line.starts_with("#") && !line.empty();
+        });
+        REQUIRE_FALSE(records.empty());
+
+        SECTION("should make the tick end the last thing it wrote")
+        {
+            // Last, not merely present. A terminator that another emitter can
+            // get in behind does not bound anything, and the drain, the reap
+            // and the publish all run after the work a reader is looking at.
+            REQUIRE(records.back().find("NOTE") != std::string::npos);
+            REQUIRE(records.back().find("tick end") != std::string::npos);
+        }
+
+        SECTION("should leave exactly one terminator per tick")
+        {
+            const auto ends = std::count_if(records.begin(), records.end(), [](const std::string& line) {
+                return line.find("NOTE") != std::string::npos && line.find("tick end") != std::string::npos;
+            });
+            REQUIRE(ends == 1);
+        }
+
+        SECTION("should summarise the world it finished with before closing")
+        {
+            // The summary is what a session-start block is compared against,
+            // so it has to be inside the tick it describes rather than
+            // arriving with the next one.
+            const auto summary = std::find_if(records.begin(), records.end(), [](const std::string& line) {
+                return line.find("STATE") != std::string::npos && line.find("tick end") != std::string::npos;
+            });
+            REQUIRE(summary != records.end());
+            REQUIRE(summary < records.end() - 1);
         }
     }
 }

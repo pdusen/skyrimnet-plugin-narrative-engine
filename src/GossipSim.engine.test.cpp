@@ -4,6 +4,7 @@
 #include <EngineMock.h>
 #include <FakeSkyrimNet.h>
 #include <GossipGraph.h>
+#include <GossipLog.h>
 #include <GossipSpies.h>
 #include <GossipState.h>
 #include <GossipThread.h>
@@ -21,6 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Tests for how a rumor spreads.
@@ -52,13 +54,16 @@ namespace
 {
     namespace GossipSim = NarrativeEngine::GossipSim;
     namespace GossipGraph = NarrativeEngine::GossipGraph;
+    namespace GossipLog = NarrativeEngine::GossipLog;
     namespace GossipThread = NarrativeEngine::GossipThread;
     using NarrativeEngine::GossipState;
     using NarrativeEngine::Testing::BuildGossipWorld;
+    using NarrativeEngine::Testing::ClearGossipTrace;
     using NarrativeEngine::Testing::ConfiguredSettings;
     using NarrativeEngine::Testing::EngineMock;
     using NarrativeEngine::Testing::FakeSkyrimNetState;
     using NarrativeEngine::Testing::FakeSkyrimNetStateFunc;
+    using NarrativeEngine::Testing::GossipTraceLines;
     using NarrativeEngine::Testing::GossipWorld;
     using NarrativeEngine::Testing::kFakeSkyrimNetStateExport;
     using NarrativeEngine::Testing::LiveGossipState;
@@ -477,6 +482,34 @@ TEST_CASE("GossipSim survives a save and load", "[GossipSim][engine]")
             // against.
             REQUIRE(GossipSim::LastSimulatedGameDay() == kDayOne);
         }
+
+        SECTION("should write down what came back, for the previous session to be read against")
+        {
+            // The session-start half of the pair, and it has to read the
+            // STAGING area: this is the only moment the incoming world is
+            // complete AND still unadopted, which is exactly where
+            // OnSessionStart runs in Plugin.cpp. Summarise live state here
+            // instead and the block describes the world being replaced.
+            ClearGossipTrace();
+            GossipLog::OnSessionStart();
+            GossipSim::OnSessionStart();
+            GossipLog::OnSessionEnd();
+
+            const auto lines = GossipTraceLines();
+            const auto said = [&](std::string_view needle) {
+                return std::any_of(lines.begin(), lines.end(), [&](const std::string& line) {
+                    return !line.starts_with("#") && line.find("STATE") != std::string::npos
+                           && line.find(needle) != std::string::npos;
+                });
+            };
+            REQUIRE(said("session start"));
+            REQUIRE(said("r01"));
+            REQUIRE(said("bands=3"));
+            // No name assertion: the harness's ResolveFormID hands back a
+            // FormID of its own, so the restored origin is deliberately
+            // somebody the graph has never heard of. The name is checked
+            // where no resolve stands in the way, in the summary's own case.
+        }
     }
 
     SECTION("when the version is one no build ever wrote")
@@ -500,6 +533,93 @@ TEST_CASE("GossipSim survives a save and load", "[GossipSim][engine]")
         {
             GossipSim::OnSave(nullptr, *GossipSim::Snapshot());
             REQUIRE(engine.cosave.written.empty());
+        }
+    }
+}
+
+TEST_CASE("GossipSim summarises the world for the trace", "[GossipSim][engine]")
+{
+    // The block written at session start and at every tick end. Its whole
+    // value is that two of them can be compared: one from before a save and
+    // one from after the load. That only works if every figure a rumor can
+    // lose across a co-save round trip is actually in the line -- the carrier
+    // counts, the depth, the provenance, and the band text, which is written
+    // once by a model call nobody will make again.
+    EngineMock engine;
+    const ConfiguredSettings settings{"[Gossip]\nbGossipEnabled=1\nbGossipLogEnabled=1\niGossipRandomSeed=12345\n"};
+    ResetGossipState();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    FakeLLM().Reset();
+    const GossipWorld world = BuildGossipWorld(engine);
+    GossipGraph::Initialize();
+    WindTo(kDayOne);
+
+    SECTION("when a rumor is going round")
+    {
+        REQUIRE(Seed(world.hulda) != 0);
+        ClearGossipTrace();
+        GossipLog::OnSessionStart();
+        GossipSim::LogStateSummary("under test", LiveGossipState());
+        GossipLog::OnSessionEnd();
+
+        const auto lines = GossipTraceLines();
+        const auto state = [&](std::string_view needle) {
+            return std::any_of(lines.begin(), lines.end(), [&](const std::string& line) {
+                return !line.starts_with("#") && line.find("STATE") != std::string::npos
+                       && line.find(needle) != std::string::npos;
+            });
+        };
+
+        SECTION("should say what it is a summary of")
+        {
+            REQUIRE(state("under test"));
+            REQUIRE(state("clock day"));
+        }
+
+        SECTION("should carry the counters the dashboard puts above the list")
+        {
+            REQUIRE(state("rumors="));
+            REQUIRE(state("carriers="));
+            REQUIRE(state("queued="));
+            REQUIRE(state("claims="));
+        }
+
+        SECTION("should name the rumor and where it came from")
+        {
+            // Provenance is the half of a round trip that silently points at
+            // the wrong person: the ids in a co-save belong to the load order
+            // that wrote it, so a resolve that went wrong renames the origin
+            // rather than failing.
+            REQUIRE(state("r01"));
+            REQUIRE(state("Hulda"));
+            REQUIRE(state("memory=5001"));
+        }
+
+        SECTION("should carry what the rumor actually says")
+        {
+            // A rumor that comes back from a save with its bands gone spreads
+            // and says nothing, and the trace is the only place that would
+            // show it.
+            REQUIRE(state("bands=3"));
+            REQUIRE(state("first"));
+        }
+    }
+
+    SECTION("when there is nothing to report")
+    {
+        ClearGossipTrace();
+        GossipLog::OnSessionStart();
+        GossipSim::LogStateSummary("empty world", LiveGossipState());
+        GossipLog::OnSessionEnd();
+
+        SECTION("should say so rather than writing a header over nothing")
+        {
+            // An empty world and a summary that failed to find the world it
+            // was handed read identically without this.
+            const auto lines = GossipTraceLines();
+            REQUIRE(std::any_of(lines.begin(), lines.end(), [](const std::string& line) {
+                return line.find("(no rumors)") != std::string::npos;
+            }));
         }
     }
 }
