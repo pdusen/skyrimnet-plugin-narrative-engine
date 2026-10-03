@@ -209,7 +209,7 @@ namespace NarrativeEngine
 
         RE::FormID g_paramSenderFormID = 0;
         BeatParamHelpers::UrgencyHint g_paramUrgency = BeatParamHelpers::UrgencyHint::Medium;
-        std::string g_paramJustification;
+        nlohmann::json g_paramMotivatingMemory;
 
         // Session flags — atomics used across the worker Tick and the
         // marshaled main-thread tasks.
@@ -331,7 +331,7 @@ namespace NarrativeEngine
                 std::scoped_lock lock(g_sessionMutex);
                 g_paramSenderFormID = 0;
                 g_paramUrgency = BeatParamHelpers::UrgencyHint::Medium;
-                g_paramJustification.clear();
+                g_paramMotivatingMemory = nullptr;
             }
             g_subPhase.Reset();
             g_hardAbortFired.store(false, std::memory_order_release);
@@ -929,12 +929,12 @@ namespace NarrativeEngine
         {
             RE::FormID senderFormID = 0;
             VisitComposer::UrgencyHint urgency = VisitComposer::UrgencyHint::Medium;
-            std::string justification;
+            nlohmann::json motivatingMemory;
             {
                 std::scoped_lock lock(g_sessionMutex);
                 senderFormID = g_paramSenderFormID;
                 urgency = g_paramUrgency;
-                justification = g_paramJustification;
+                motivatingMemory = g_paramMotivatingMemory;
             }
             BeatContext composeCtx;
             composeCtx.desiredDirection = PhaseTracker::Direction::Raise;
@@ -945,7 +945,7 @@ namespace NarrativeEngine
             VisitComposer::Compose(composeCtx,
                                    urgency,
                                    senderFormID,
-                                   std::move(justification),
+                                   std::move(motivatingMemory),
                                    [](std::optional<VisitComposer::VisitBriefing> briefing) {
                                        if (!briefing) {
                                            SetSubPhase(ComposeSubPhase::Failed, "compose_llm_failed");
@@ -1991,13 +1991,20 @@ namespace NarrativeEngine
                "situation is urgent and needs an answer now.\n"
                "\n"
                "Parameters:\n"
+               "  - `sender_npc_form_id` (REQUIRED, string): hex FormID of "
+               "ONE entry from the visit senders listed with this action "
+               "(e.g. `\"0xA2C8E\"`).\n"
+               "  - `motivating_memory` (REQUIRED, integer): the number of "
+               "the ONE memory in that sender's list that gives them their "
+               "reason to come now. The visit is built from that memory, so "
+               "pick the one that carries the topic you intend.\n"
                "  - `urgency_hint` (optional, string): `low` / `medium` / "
                "`high`. Defaults to `medium`. One input among several to the "
                "brief-composition prompt; not a hard directive.\n"
                "\n"
-               "Do NOT include other parameter fields — sender, briefing, "
-               "topic, mood, and tags are decided by the beat's own compose "
-               "LLM call. Extra fields will be silently ignored.";
+               "Do NOT include other parameter fields — briefing, mood, and "
+               "tags are decided by the beat's own compose LLM call. Extra "
+               "fields will be silently ignored.";
     }
 
     BeatPolarity NPCVisitBeat::Polarity() const
@@ -2047,12 +2054,14 @@ namespace NarrativeEngine
         const auto senderParsed = BeatParamHelpers::ParseSenderFormID(parameters, &failureReason);
         const auto urgency = BeatParamHelpers::ParseUrgencyHint(parameters);
 
-        // parameter_justification is optional; missing / non-string is
-        // treated as "compose LLM invents motivation from memory tail."
-        std::string justification;
+        // motivating_memory_entry is optional; BeatSystem injects it
+        // only when the Director named one of the sender's memories.
+        // Missing / non-object is treated as "compose LLM picks the
+        // topic from the memory tail."
+        nlohmann::json motivatingMemory;
         if (parameters.is_object()) {
-            if (auto it = parameters.find("parameter_justification"); it != parameters.end() && it->is_string()) {
-                justification = it->get<std::string>();
+            if (auto it = parameters.find("motivating_memory_entry"); it != parameters.end() && it->is_object()) {
+                motivatingMemory = *it;
             }
         }
 
@@ -2065,7 +2074,7 @@ namespace NarrativeEngine
             std::scoped_lock lock(g_sessionMutex);
             g_paramSenderFormID = *senderParsed;
             g_paramUrgency = urgency;
-            g_paramJustification = std::move(justification);
+            g_paramMotivatingMemory = std::move(motivatingMemory);
         }
         logger::info("NPCVisitBeat::OnStart: sender=0x{:08X} urgency={}",
                      senderParsed.value_or(0),

@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -445,6 +446,120 @@ TEST_CASE("SenderCandidatePool::Build applies the sender watermark", "[SenderCan
             const auto pool = Pool::Build(DefaultOptions());
             REQUIRE(pool.size() == 1);
             REQUIRE(pool[0].memories.size() == 2);
+        }
+    }
+}
+
+TEST_CASE("SenderCandidatePool::FetchMemories", "[SenderCandidatePool][engine]")
+{
+    // For a caller that already knows its sender. It used to get the tail by
+    // running a pool build filtered down to that one actor, and the build only
+    // walks the first few engagement rows -- so a sender ranked below them
+    // came back with no memories at all, and the visit composer wrote the
+    // whole visit with nothing of the sender's own to go on.
+    //
+    // Happy path, re-run per leaf: SkyrimNet up, the sender holding two
+    // memories worth telling, and nobody at all in the engagement list.
+    EngineMock engine;
+    const ConfiguredSettings settings{"[General]\nbDebugMode=0\n"};
+    auto& fake = FakeState();
+    REQUIRE(SkyrimNet::Initialize());
+    fake.Reset();
+    (void)engine.AddActor(kYsolda);
+    engine.calendar.hoursPassed = 48.0f;
+    SetJson(fake.memoriesJson, "[" + MemoryRow("newer", 0.9, 40.0) + "," + MemoryRow("older", 0.9, 10.0) + "]");
+
+    SECTION("when the sender ranks nowhere in the engagement list")
+    {
+        const auto memories = Pool::FetchMemories(kYsolda, DefaultOptions());
+
+        SECTION("should still return their memories")
+        {
+            REQUIRE(memories.size() == 2);
+        }
+
+        SECTION("should ask SkyrimNet about that sender")
+        {
+            REQUIRE(fake.lastFormID == kYsolda);
+        }
+
+        SECTION("should not walk the engagement list at all")
+        {
+            REQUIRE(fake.engagementCalls == 0);
+        }
+
+        SECTION("should present them oldest first, as a build does")
+        {
+            REQUIRE(memories[0].value("content", "") == "older");
+            REQUIRE(memories[1].value("content", "") == "newer");
+        }
+    }
+
+    SECTION("when a memory falls under the importance threshold")
+    {
+        SetJson(fake.memoriesJson,
+                "[" + MemoryRow("worth telling", 0.9, 40.0) + "," + MemoryRow("idle chatter", 0.1, 30.0) + "]");
+        auto opts = DefaultOptions();
+        opts.memoryImportanceThreshold = 0.5;
+
+        SECTION("should drop it by the same rule a build uses")
+        {
+            const auto memories = Pool::FetchMemories(kYsolda, opts);
+            REQUIRE(memories.size() == 1);
+            REQUIRE(memories[0].value("content", "") == "worth telling");
+        }
+    }
+
+    SECTION("when there are more memories than the cap")
+    {
+        auto opts = DefaultOptions();
+        opts.maxMemoriesPerCandidate = 1;
+
+        SECTION("should keep the most recent")
+        {
+            const auto memories = Pool::FetchMemories(kYsolda, opts);
+            REQUIRE(memories.size() == 1);
+            REQUIRE(memories[0].value("content", "") == "newer");
+        }
+    }
+
+    SECTION("when the sender has a watermark")
+    {
+        // Hours, against a clock of 48: only the memory at hour 40 is newer.
+        SetJson(fake.memoriesJson,
+                "[" + MemoryRow("since", 0.9, 40.0 * 3600.0) + "," + MemoryRow("before", 0.9, 10.0 * 3600.0) + "]");
+        auto opts = DefaultOptions();
+        opts.memoryWatermarkProvider = [](RE::FormID) { return std::optional<double>{20.0}; };
+
+        SECTION("should drop what predates it")
+        {
+            const auto memories = Pool::FetchMemories(kYsolda, opts);
+            REQUIRE(memories.size() == 1);
+            REQUIRE(memories[0].value("content", "") == "since");
+        }
+    }
+
+    SECTION("when SkyrimNet holds nothing for the sender")
+    {
+        SetJson(fake.memoriesJson, "[]");
+
+        SECTION("should return an empty list rather than nothing")
+        {
+            const auto memories = Pool::FetchMemories(kYsolda, DefaultOptions());
+            REQUIRE(memories.is_array());
+            REQUIRE(memories.empty());
+        }
+    }
+
+    SECTION("when the memory database is still rebuilding")
+    {
+        fake.memorySystemReady = false;
+
+        SECTION("should return an empty list without asking")
+        {
+            const auto memories = Pool::FetchMemories(kYsolda, DefaultOptions());
+            REQUIRE(memories.empty());
+            REQUIRE(fake.memoriesForActorCalls == 0);
         }
     }
 }

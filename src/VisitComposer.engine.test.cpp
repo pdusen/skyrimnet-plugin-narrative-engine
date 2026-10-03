@@ -122,7 +122,9 @@ namespace
     // The compose callback is delivered on a worker, so the call is made and
     // then waited on. Every wait is bounded and its arrival asserted, so a
     // composer that stops answering fails the run rather than hanging it.
-    std::optional<VisitComposer::VisitBriefing> ComposeFor(std::uint32_t sender, bool& answered)
+    std::optional<VisitComposer::VisitBriefing> ComposeFor(std::uint32_t sender,
+                                                           bool& answered,
+                                                           const nlohmann::json& motivatingMemory = nullptr)
     {
         std::optional<VisitComposer::VisitBriefing> result;
         answered = false;
@@ -130,7 +132,7 @@ namespace
         VisitComposer::Compose(ctx,
                                VisitComposer::UrgencyHint::Medium,
                                sender,
-                               "she has been meaning to say something",
+                               motivatingMemory,
                                [&](std::optional<VisitComposer::VisitBriefing> briefing) {
                                    result = std::move(briefing);
                                    answered = true;
@@ -542,8 +544,109 @@ TEST_CASE("VisitComposer writes what a visitor arrives carrying", "[VisitCompose
             // for an answer to go, and the model call is the expensive part.
             BeatContext ctx;
             const int before = fake.sendPromptCalls;
-            VisitComposer::Compose(ctx, VisitComposer::UrgencyHint::Medium, kYsolda, "", nullptr);
+            VisitComposer::Compose(ctx, VisitComposer::UrgencyHint::Medium, kYsolda, nullptr, nullptr);
             REQUIRE(fake.sendPromptCalls == before);
+        }
+    }
+}
+
+TEST_CASE("VisitComposer tells the model only what the visitor knows", "[VisitComposer][engine]")
+{
+    // The compose prompt is the visitor's whole world: whatever reaches it is
+    // something the visitor can turn up talking about. Two things go wrong here
+    // and both have happened. The Director, which also sees what the player has
+    // just done, used to hand its own prose about the visitor's motive straight
+    // to this prompt, and a visitor arrived knowing about a conversation held
+    // two minutes before they appeared. And the visitor's own memories, which
+    // should anchor everything, were coming back empty for anyone ranked below
+    // the first few rows of engagement.
+    //
+    // Happy path, re-run per leaf: a live named sender holding one memory,
+    // nobody in the engagement list, and a model answering properly.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    const RunningDispatch dispatch;
+    auto& fake = FakeState();
+    REQUIRE(SkyrimNet::Initialize());
+    fake.Reset();
+    (void)engine.AddActor(kYsolda);
+    SetJson(fake.memoriesJson, "[" + MemoryRow("She spoke of the mammoth tusk.") + "]");
+    SetJson(fake.promptResponse, ComposeAnswer());
+    const nlohmann::json chosen = {
+        {"type", "EXPERIENCE"},
+        {"content", "She promised to bring the tusk back by Tirdas."},
+        {"age", "2 days ago"},
+        {"emotion", "anxious"},
+        {"location", "Whiterun"},
+    };
+    bool answered = false;
+
+    SECTION("when the sender ranks nowhere in the engagement list")
+    {
+        (void)ComposeFor(kYsolda, answered);
+        const auto context = nlohmann::json::parse(fake.lastContextJson);
+
+        SECTION("should still give the model the sender's own memories")
+        {
+            REQUIRE(answered);
+            REQUIRE(context["sender_memories"].size() == 1);
+            REQUIRE(context["sender_memories"][0].value("content", "") == "She spoke of the mammoth tusk.");
+        }
+    }
+
+    SECTION("when the Director named the memory that sends them")
+    {
+        (void)ComposeFor(kYsolda, answered, chosen);
+        const auto context = nlohmann::json::parse(fake.lastContextJson);
+
+        SECTION("should say there is one")
+        {
+            REQUIRE(answered);
+            REQUIRE(context["has_motivating_memory"] == true);
+        }
+
+        SECTION("should hand the model that memory whole")
+        {
+            REQUIRE(context["motivating_memory"] == chosen);
+        }
+
+        SECTION("should send no prose of the Director's")
+        {
+            // The field the leak travelled in. Nothing the Director writes
+            // may reach this prompt any more.
+            REQUIRE_FALSE(context.contains("parameter_justification"));
+        }
+    }
+
+    SECTION("when the Director named none")
+    {
+        (void)ComposeFor(kYsolda, answered);
+        const auto context = nlohmann::json::parse(fake.lastContextJson);
+
+        SECTION("should say there is none")
+        {
+            // The prompt branches on this to let the composer pick a topic
+            // from the memory tail instead.
+            REQUIRE(answered);
+            REQUIRE(context["has_motivating_memory"] == false);
+        }
+
+        SECTION("should still send an object the template can read")
+        {
+            REQUIRE(context["motivating_memory"].is_object());
+        }
+    }
+
+    SECTION("when what arrives in its place is not a memory")
+    {
+        (void)ComposeFor(kYsolda, answered, "she has been meaning to say something");
+        const auto context = nlohmann::json::parse(fake.lastContextJson);
+
+        SECTION("should treat it as none")
+        {
+            REQUIRE(answered);
+            REQUIRE(context["has_motivating_memory"] == false);
+            REQUIRE(context["motivating_memory"].empty());
         }
     }
 }

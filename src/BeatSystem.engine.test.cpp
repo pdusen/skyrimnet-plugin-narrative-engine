@@ -9,6 +9,7 @@
 #include <EvalDispatch.h>
 #include <IBeat.h>
 #include <MainThread.h>
+#include <NPCVisitBeat.h>
 #include <PhaseTracker.h>
 #include <PluginThread.h>
 #include <Settings.h>
@@ -80,6 +81,11 @@ namespace
     // Which case is running. A fake registered by an earlier case sees a
     // different value and declines, so the candidate list stays attributable.
     std::atomic<int> g_activeCase{0};
+
+    // The sender the visit composer offers in the motivating-memory case, and
+    // the unique base that makes them somebody in particular.
+    constexpr std::uint32_t kVisitor = 0x0001A6A0u;
+    constexpr std::uint32_t kVisitorBase = 0x0001A6A2u;
 
     FakeSkyrimNetState& FakeLLM()
     {
@@ -790,6 +796,132 @@ TEST_CASE("BeatSystem carries the running beat across a save", "[BeatSystem][eng
         {
             BeatSystem::OnSave(FakeInterface());
             REQUIRE(engine.cosave.written.empty());
+        }
+    }
+}
+
+TEST_CASE("BeatSystem hands a sender beat the memory the Director chose", "[BeatSystem][engine]")
+{
+    // A letter or a visit is composed by a second model that sees only the
+    // sender's world. The Director sees more -- what the player has just done
+    // -- and used to pass its topic on as prose of its own, which carried
+    // that knowledge to senders who could not have it. It now names one of
+    // the memories it was shown for its sender by number, and this system
+    // swaps the number for the memory before the beat starts. Resolved here
+    // because only here is the exact list the Director was shown still in
+    // hand.
+    //
+    // Happy path, re-run per leaf: one unique NPC the visit composer will
+    // offer, holding two memories, and a fake registered under the visit
+    // beat's own name so the composer's candidates are collected for it.
+    EngineMock engine;
+    // kSettings ends inside its [Director] section, which is where this key lives.
+    const ConfiguredSettings settings{std::string{kSettings} + "iVisitMinSenderCandidates=1\n"};
+    g_activeCase = 9;
+    BeatSystem::OnRevert();
+    DecisionLog::Clear();
+    NarrativeEngine::NPCVisitBeat_Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    FakeLLM().Reset();
+    auto* sender = engine.AddActor(kVisitor);
+    auto* base = engine.AddNPC(kVisitorBase);
+    base->actorData.actorBaseFlags.set(RE::ACTOR_BASE_DATA::Flag::kUnique);
+    engine.SetActorBase(sender, base);
+    engine.world.playerHasLocation = true;
+    engine.calendar.hoursPassed = 48.0f;
+    Say(FakeLLM().engagementJson,
+        R"([{"formId":)" + std::to_string(kVisitor)
+            + R"(,"name":"Nirya","totalMemoryImportance":12.5,"lastEventTime":100.0}])");
+    // Presented oldest first, so "the appointment" is number 1 and "the
+    // diary" number 2 whatever order SkyrimNet returns them in.
+    Say(FakeLLM().memoriesJson,
+        R"([{"type":"EXPERIENCE","content":"the diary","importance_score":0.9,"game_time":40.0},)"
+        R"({"type":"RELATIONSHIP","content":"the appointment","importance_score":0.9,"game_time":10.0}])");
+    auto* beat = RegisterBeat("npc_visit");
+
+    const auto startedWith = [&] { return nlohmann::json::parse(beat->lastParameters); };
+
+    SECTION("when the Director names one of the sender's memories")
+    {
+        Say(FakeLLM().promptResponse, Answer("npc_visit", R"({"sender_npc_form_id":"0x1A6A0","motivating_memory":2})"));
+        REQUIRE(Consider(SettledSnapshot(), PlainRecord()));
+
+        SECTION("should start the beat with that memory")
+        {
+            REQUIRE(beat->starts.load() == 1);
+            REQUIRE(startedWith()["motivating_memory_entry"].value("content", "") == "the diary");
+        }
+
+        SECTION("should carry the whole entry the Director was shown")
+        {
+            REQUIRE(startedWith()["motivating_memory_entry"].value("type", "") == "EXPERIENCE");
+        }
+
+        SECTION("should log the number rather than the memory")
+        {
+            // The decision log is persisted, and a memory can run to a whole
+            // diary entry. The number is the Director's decision; the memory
+            // is only what it pointed at.
+            const auto tail = DecisionLog::Tail(1);
+            REQUIRE(tail.size() == 1);
+            const auto logged = nlohmann::json::parse(tail.front().beatParametersJSON);
+            REQUIRE(logged["motivating_memory"] == 2);
+            REQUIRE_FALSE(logged.contains("motivating_memory_entry"));
+        }
+    }
+
+    SECTION("when the Director names the first memory")
+    {
+        // Pins the count as starting from one, matching the prompt's numbering.
+        Say(FakeLLM().promptResponse, Answer("npc_visit", R"({"sender_npc_form_id":"0x1A6A0","motivating_memory":1})"));
+        REQUIRE(Consider(SettledSnapshot(), PlainRecord()));
+
+        SECTION("should start the beat with the oldest")
+        {
+            REQUIRE(startedWith()["motivating_memory_entry"].value("content", "") == "the appointment");
+        }
+    }
+
+    SECTION("when the number names no memory the sender has")
+    {
+        Say(FakeLLM().promptResponse, Answer("npc_visit", R"({"sender_npc_form_id":"0x1A6A0","motivating_memory":7})"));
+        REQUIRE(Consider(SettledSnapshot(), PlainRecord()));
+
+        SECTION("should still start the beat, with no memory to work from")
+        {
+            // The composer falls back to choosing a topic from the sender's
+            // own memories, which is a weaker visit but not a wrong one.
+            REQUIRE(beat->starts.load() == 1);
+            REQUIRE_FALSE(startedWith().contains("motivating_memory_entry"));
+        }
+    }
+
+    SECTION("when the sender is not one the Director was offered")
+    {
+        Say(FakeLLM().promptResponse, Answer("npc_visit", R"({"sender_npc_form_id":"0x1A6FF","motivating_memory":1})"));
+        REQUIRE(Consider(SettledSnapshot(), PlainRecord()));
+
+        SECTION("should resolve no memory")
+        {
+            // There is no list it could have been read from.
+            REQUIRE_FALSE(startedWith().contains("motivating_memory_entry"));
+        }
+    }
+
+    SECTION("when the Director also writes prose about the sender's motive")
+    {
+        // The field the leak travelled in. A model that still emits it must
+        // not have it handed on to the beat.
+        Say(FakeLLM().promptResponse,
+            R"({"action":"npc_visit","parameters":{"sender_npc_form_id":"0x1A6A0","motivating_memory":2},)"
+            R"("narrative_note":"because the road was quiet",)"
+            R"("parameter_justification":"She heard about the Alik'r in Whiterun."})");
+        REQUIRE(Consider(SettledSnapshot(), PlainRecord()));
+
+        SECTION("should pass none of it to the beat")
+        {
+            REQUIRE(beat->starts.load() == 1);
+            REQUIRE(beat->lastParameters.find("Alik'r") == std::string::npos);
         }
     }
 }

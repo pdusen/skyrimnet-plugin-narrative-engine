@@ -5,7 +5,7 @@
    Receives:
      desired_direction, tension_delta, urgency_hint, min_words, max_words,
      player_name, sender_name, sender_form_id, sender_memories,
-     sender_recent_dialogue, parameter_justification
+     sender_recent_dialogue, has_motivating_memory, motivating_memory
 
    Returns:
      { briefing, narration, topic_tag, mood }
@@ -20,31 +20,25 @@ scene: what's on {{ sender_name }}'s mind, what they mean to say, and
 a third-person narration that primes the dialogue system to have them
 speak in character.
 
-{% if length(parameter_justification) > 0 %}
+{% if has_motivating_memory %}
 ## Why {{ sender_name }} is coming to see {{ player_name }}
 
-The Director's stated in-fiction reason for {{ sender_name }} to visit
-{{ player_name }} right now is:
+The Director chose this visit because of one of {{ sender_name }}'s own
+memories:
 
-> {{ parameter_justification }}
+- [{{ motivating_memory.type }}, {{ motivating_memory.age }}{% if length(motivating_memory.emotion) > 0 %}, felt {{ motivating_memory.emotion }}{% endif %}{% if length(motivating_memory.location) > 0 %}, at {{ motivating_memory.location }}{% endif %}] {{ motivating_memory.content }}
 
-**The motivation for this visit MUST be rooted in that justification.**
-It is the seed the Director already identified for {{ sender_name }}'s
-own frame; your job is to embody it, not to invent a fresh reason. The
-memories and recent dialogue below exist to give you specifics — names,
-prior events, tone — that let you make the justification concrete in
-{{ sender_name }}'s voice. Do NOT compose a visit whose subject is
-disconnected from the justification above.
+**The visit MUST be about the matter this memory raises.** It is the
+reason {{ sender_name }} has set out now; your job is to embody it, not
+to invent a fresh one. The memories and recent dialogue below exist to
+give you specifics — names, prior events, tone — that let you make it
+concrete in {{ sender_name }}'s voice. Do NOT compose a visit whose
+subject is disconnected from the memory above.
 
-The justification is written in {{ sender_name }}'s frame — grounded in
-what {{ sender_name }} could plausibly know. Stay in that frame. Do not
-introduce facts about {{ player_name }}'s recent activities that
-{{ sender_name }} would have no way of knowing about (recent combats,
-places {{ player_name }} has just been, encounters {{ sender_name }}
-wasn't part of and hasn't heard about through the sender's own memory
-tail). If the justification implies knowledge {{ sender_name }} clearly
-wouldn't have, refine the topic toward something they DO know while
-preserving the emotional weight.
+That memory and the ones below are everything {{ sender_name }} knows.
+Do not introduce facts about {{ player_name }}'s recent activities that
+appear in none of them (recent combats, places {{ player_name }} has
+just been, encounters {{ sender_name }} wasn't part of).
 {% else %}
 Anchor the visit in something concrete from {{ sender_name }}'s recent
 memories (below). The specific matter they've come to discuss should
@@ -123,12 +117,17 @@ person, a plea for help they want to make eye-to-eye, a threat
 delivered face-to-face.
 
 ## Content guidance
-- The visit is about ONE concrete matter. Pick a broad domain — money,
-  secrets, a warning, an apology, grief, a request, rivalry, social
-  obligation — and invent a specific situation within that domain
-  yourself. Do not pull a topic from any list; come up with one fresh.
-  Anchor it in what {{ sender_name }} actually remembers about
-  {{ player_name }}.
+- The visit is about ONE concrete matter.
+{% if has_motivating_memory -%}
+  That matter is the one the memory above raises; do NOT substitute a
+  different topic.
+{%- else -%}
+  Pick a broad domain — money, secrets, a warning, an apology, grief, a
+  request, rivalry, social obligation — and invent a specific situation
+  within that domain yourself. Do not pull a topic from any list; come
+  up with one fresh. Anchor it in what {{ sender_name }} actually
+  remembers about {{ player_name }}.
+{%- endif %}
 - Voice should match {{ sender_name }}'s personality and station. If
   they're a merchant, they think like a merchant; if they're a thane,
   like a thane. The memories below are their own experience — use them

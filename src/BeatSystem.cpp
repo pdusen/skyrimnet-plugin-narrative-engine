@@ -3,6 +3,7 @@
 #include <AlphaCanon.h>
 #include <AmbushAttackerGroups.h>
 #include <AsyncDispatch.h>
+#include <BeatParamHelpers.h>
 #include <BeatRegistry.h>
 #include <BeatWorkDispatch.h>
 #include <CombatEventLog.h>
@@ -34,6 +35,7 @@
 #include <cstdint>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -907,7 +909,7 @@ namespace NarrativeEngine::BeatSystem
                                      std::string chosenBeat,
                                      nlohmann::json parameters,
                                      std::string narrativeNote,
-                                     std::string parameterJustification,
+                                     std::optional<nlohmann::json> motivatingMemory,
                                      PhaseTracker::Direction direction,
                                      int tensionDelta,
                                      FinalizedCallback onFinalized)
@@ -941,10 +943,12 @@ namespace NarrativeEngine::BeatSystem
                 rec.narrativeNote = std::move(narrativeNote);
             }
 
-            // Inject parameter_justification into params for the
-            // compose step to consume as sender-motivation seed.
-            if (!parameterJustification.empty()) {
-                parameters["parameter_justification"] = std::move(parameterJustification);
+            // Inject the memory the Director's `motivating_memory` number
+            // named, for the compose step to consume as the topic seed.
+            // After the record dump on purpose: the log keeps the number,
+            // not a copy of a memory that can run to a diary entry.
+            if (motivatingMemory) {
+                parameters["motivating_memory_entry"] = std::move(*motivatingMemory);
             }
 
             // Re-check global preconditions off-main — they may have
@@ -978,6 +982,38 @@ namespace NarrativeEngine::BeatSystem
             EvaluationPipeline::ApplyDecision(pt, rec);
             if (onFinalized)
                 onFinalized();
+        }
+
+        // Looks the Director's `motivating_memory` number up in the
+        // memory list the beat-select prompt showed for the sender it
+        // chose. Resolved here, against the candidates the prompt was
+        // built from, because a fresh fetch at compose time can return
+        // a differently-ordered or differently-capped list. Nullopt —
+        // and a warning — when the sender isn't among the candidates or
+        // the number doesn't name one of their memories; the compose
+        // step then picks its own topic from the sender's memories.
+        template <typename SenderCandidate>
+        std::optional<nlohmann::json> ResolveMotivatingMemory(const nlohmann::json& parameters,
+                                                              const std::vector<SenderCandidate>& candidates,
+                                                              const std::string& beatName)
+        {
+            const auto senderId = BeatParamHelpers::ParseSenderFormID(parameters, nullptr);
+            const auto sender = std::find_if(candidates.begin(), candidates.end(), [&](const SenderCandidate& c) {
+                return senderId && c.formId == *senderId;
+            });
+            if (sender == candidates.end()) {
+                logger::warn("BeatSystem: '{}' sender is not among the candidates offered; no motivating memory",
+                             beatName);
+                return std::nullopt;
+            }
+            std::string reason;
+            auto memory = BeatParamHelpers::ResolveMotivatingMemory(parameters, sender->memories, &reason);
+            if (!memory) {
+                logger::warn("BeatSystem: '{}' motivating memory unresolved ({}); the composer will pick a topic",
+                             beatName,
+                             reason);
+            }
+            return memory;
         }
 
         // The shared body invoked by both ConsiderBeat and
@@ -1083,10 +1119,11 @@ namespace NarrativeEngine::BeatSystem
                 narrativeNote = LLMTextSanitizer::Sanitize(it->get<std::string>());
                 LLMTextSanitizer::TruncateUTF8(narrativeNote, 200);
             }
-            std::string parameterJustification;
-            if (auto it = parsed.find("parameter_justification"); it != parsed.end() && it->is_string()) {
-                parameterJustification = LLMTextSanitizer::Sanitize(it->get<std::string>());
-                LLMTextSanitizer::TruncateUTF8(parameterJustification, 400);
+            std::optional<nlohmann::json> motivatingMemory;
+            if (chosenBeat == "npc_letter") {
+                motivatingMemory = ResolveMotivatingMemory(parameters, letterSenderCandidates, chosenBeat);
+            } else if (chosenBeat == "npc_visit") {
+                motivatingMemory = ResolveMotivatingMemory(parameters, visitSenderCandidates, chosenBeat);
             }
 
             FinalizeWithLLMResponse(pt,
@@ -1096,7 +1133,7 @@ namespace NarrativeEngine::BeatSystem
                                     std::move(chosenBeat),
                                     std::move(parameters),
                                     std::move(narrativeNote),
-                                    std::move(parameterJustification),
+                                    std::move(motivatingMemory),
                                     direction,
                                     tensionDelta,
                                     std::move(onFinalized));

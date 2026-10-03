@@ -3,7 +3,7 @@
    sender; this call embodies them and writes the letter.
    Receives the JSON object produced by LetterComposer::BuildComposePromptContext:
      desired_direction, tension_delta, urgency_hint, min_words, max_words,
-     player_name, parameter_justification,
+     player_name, has_motivating_memory, motivating_memory,
      sender { form_id, name, memories, recent_dialogue },
      npc { UUID } — required by SkyrimNet's system_head / character_profile
                     submodules; keys every character-bio decorator. #}
@@ -14,31 +14,25 @@ to write a personal letter to **{{ player_name }}**. A courier will deliver
 this letter to them. Write in your own voice, from your own knowledge of
 {{ player_name }}, about the specific matter identified below.
 
-{% if length(parameter_justification) > 0 %}
+{% if has_motivating_memory %}
 ## Why {{ sender.name }} is writing to {{ player_name }}
 
-The Director's stated in-fiction reason for {{ sender.name }} to write
-{{ player_name }} right now is:
+The Director chose this letter because of one of {{ sender.name }}'s own
+memories:
 
-> {{ parameter_justification }}
+- [{{ motivating_memory.type }}, {{ motivating_memory.age }}{% if length(motivating_memory.emotion) > 0 %}, felt {{ motivating_memory.emotion }}{% endif %}{% if length(motivating_memory.location) > 0 %}, at {{ motivating_memory.location }}{% endif %}] {{ motivating_memory.content }}
 
-**The subject of this letter MUST be rooted in that justification.**
-It is the seed the Director already identified for {{ sender.name }}'s
-own frame; your job is to embody it, not to invent a fresh reason. The
-memories and recent dialogue below exist to give you specifics — names,
-prior events, tone — that let you make the justification concrete in
-{{ sender.name }}'s voice. Do NOT compose a letter whose subject is
-disconnected from the justification above.
+**The subject of this letter MUST be the matter this memory raises.**
+It is the reason {{ sender.name }} is writing now; your job is to embody
+it, not to invent a fresh one. The memories and recent dialogue below
+exist to give you specifics — names, prior events, tone — that let you
+make it concrete in {{ sender.name }}'s voice. Do NOT compose a letter
+whose subject is disconnected from the memory above.
 
-The justification is written in {{ sender.name }}'s frame — grounded in
-what {{ sender.name }} could plausibly know. Stay in that frame. Do not
-introduce facts about {{ player_name }}'s recent activities that
-{{ sender.name }} would have no way of knowing about (recent combats,
-places {{ player_name }} has just been, encounters {{ sender.name }}
-wasn't part of and hasn't heard about through their own memory tail).
-If the justification implies knowledge {{ sender.name }} clearly
-wouldn't have, refine the subject toward something they DO know while
-preserving the emotional weight.
+That memory and the ones below are everything {{ sender.name }} knows.
+Do not introduce facts about {{ player_name }}'s recent activities that
+appear in none of them (recent combats, places {{ player_name }} has
+just been, encounters {{ sender.name }} wasn't part of).
 {% else %}
 Your recent memories about {{ player_name }} are listed at the bottom of
 this prompt. Ground the letter in what you actually remember — a specific
@@ -105,14 +99,14 @@ as one input among several, not a directive.
 
 ## Content guidance
 - The letter is about ONE concrete matter.
-{% if length(parameter_justification) == 0 -%}
+{% if not has_motivating_memory -%}
   Pick a broad domain — money, work, news, a request, a grievance,
   gossip, social obligation — and invent a specific situation within
   that domain yourself. Do not pull a topic from any list; come up with
   one fresh. Anchor it in what you actually know about {{ player_name }}
   from the memories below.
 {%- else -%}
-  That matter is the one identified in the justification above; do NOT
+  That matter is the one the memory above raises; do NOT
   substitute a different topic. Use the memories and dialogue below to
   give it concrete detail — names, prior events, tone — in
   {{ sender.name }}'s voice.

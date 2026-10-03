@@ -129,59 +129,30 @@ namespace NarrativeEngine::VisitComposer
             return SenderCandidatePool::GetPlayerDisplayName();
         }
 
-        // Fresh-fetch memories for a specific sender after the pool
-        // build has already resolved them once. Used inside Compose
+        // Fresh-fetch memories for the chosen sender at compose time,
         // so any events that landed between action-select and compose
-        // surface in the prompt. Mirrors LetterComposer's
-        // FetchSenderMemories in spirit — visits keep diaries enabled
-        // (they're useful narration seeds) and don't retry with a
-        // fresh SenderCandidatePool build (the sender was already
-        // vetted at action-select time; a stale filter mismatch is
-        // acceptable at this point).
+        // surface in the prompt. Fetched for the sender directly rather
+        // than through a pool build: the build walks only the top few
+        // engagement rows, and a sender ranked below them came back
+        // with no memories at all. Visits keep diaries enabled (they're
+        // useful narration seeds).
+        //
+        // NOTE: no per-sender watermark filter here. The pool-side
+        // watermark on the action-select build already kept
+        // pre-watermark memories out of the list the Director picked
+        // the motivating memory from. Leaving the full tail intact so
+        // the composer has maximum voice / tone context.
         nlohmann::json FetchSenderMemoriesFresh(RE::FormID formId, int renderCap)
         {
-            if (!SkyrimNetAPI::IsAvailable() || formId == 0) {
+            if (formId == 0) {
                 return nlohmann::json::array();
             }
             SenderCandidatePool::BuildOptions opts;
-            opts.maxCandidates = 1;
             opts.maxMemoriesPerCandidate = std::max(0, renderCap);
             opts.memoryImportanceThreshold = static_cast<double>(Settings::Get().letterMemoryImportanceThreshold);
             opts.excludeDiaryEntries = false;
             opts.memoryFetchMultiplier = 4;
-            opts.shuffleResult = false;
-            opts.requireMemories = false;
-            // NOTE: no per-sender watermark filter here. The pool-side
-            // watermark on the action-select build already guaranteed
-            // this sender's `parameter_justification` isn't rooted in
-            // a pre-watermark memory, and the visit compose prompt
-            // treats that justification as the authoritative topic
-            // seed. Leaving the full tail intact so the composer has
-            // maximum voice / tone context.
-            opts.extraViabilityFilter = [formId](RE::Actor* actor, std::string* skipReasonOut) -> bool {
-                if (!actor) {
-                    if (skipReasonOut)
-                        *skipReasonOut = "missing-actor";
-                    return false;
-                }
-                if (actor->GetFormID() != formId) {
-                    if (skipReasonOut)
-                        *skipReasonOut = "not-target-sender";
-                    return false;
-                }
-                // Skip the full visit-viability re-check here.
-                // The sender was already vetted at beat-select
-                // time; NPCVisitBeat's compose result handler
-                // catches any final "sender no longer valid"
-                // case (death mid-round-trip, etc.) via its own
-                // resolution guards.
-                return true;
-            };
-
-            auto results = SenderCandidatePool::Build(opts);
-            if (results.empty())
-                return nlohmann::json::array();
-            return std::move(results.front().memories);
+            return SenderCandidatePool::FetchMemories(formId, opts);
         }
 
         nlohmann::json BuildComposePromptContext(const BeatContext& ctx,
@@ -191,7 +162,7 @@ namespace NarrativeEngine::VisitComposer
                                                  RE::FormID senderFormID,
                                                  const nlohmann::json& senderMemories,
                                                  const nlohmann::json& senderRecentDialogue,
-                                                 const std::string& parameterJustification)
+                                                 const nlohmann::json& motivatingMemory)
         {
             const auto& cfg = Settings::Get();
 
@@ -211,7 +182,8 @@ namespace NarrativeEngine::VisitComposer
             root["sender_form_id"] = idBuf;
             root["sender_memories"] = senderMemories;
             root["sender_recent_dialogue"] = senderRecentDialogue;
-            root["parameter_justification"] = parameterJustification;
+            root["has_motivating_memory"] = motivatingMemory.is_object();
+            root["motivating_memory"] = motivatingMemory.is_object() ? motivatingMemory : nlohmann::json::object();
             return root;
         }
     } // namespace
@@ -285,7 +257,7 @@ namespace NarrativeEngine::VisitComposer
     void Compose(const BeatContext& ctx,
                  UrgencyHint urgencyHint,
                  RE::FormID senderNpcFormID,
-                 std::string parameterJustification,
+                 nlohmann::json motivatingMemory,
                  std::function<void(std::optional<VisitBriefing>)> callback)
     {
         if (!callback)
@@ -365,14 +337,8 @@ namespace NarrativeEngine::VisitComposer
         SenderDialogue::FilterByMemoryAge(recentDialogue, memories, nowGameSeconds);
         SenderDialogue::AnnotateAges(recentDialogue, nowGameSeconds);
 
-        const auto promptCtx = BuildComposePromptContext(ctx,
-                                                         urgencyHint,
-                                                         playerName,
-                                                         senderName,
-                                                         senderNpcFormID,
-                                                         memories,
-                                                         recentDialogue,
-                                                         parameterJustification);
+        const auto promptCtx = BuildComposePromptContext(
+            ctx, urgencyHint, playerName, senderName, senderNpcFormID, memories, recentDialogue, motivatingMemory);
         const auto promptCtxStr = promptCtx.dump();
         if (Settings::Get().debugMode) {
             logger::debug("VisitComposer: prompt context: {}", promptCtxStr);

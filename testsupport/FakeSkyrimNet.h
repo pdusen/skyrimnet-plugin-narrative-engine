@@ -71,7 +71,9 @@ namespace NarrativeEngine::Testing
 
         char lastPromptName[128]{};
         char lastVariant[128]{};
-        char lastContextJson[1024]{};
+        // Sized for a compose prompt's whole context — memories, dialogue and
+        // the motivating memory — so a test can parse what the model was sent.
+        char lastContextJson[8192]{};
         char lastEventFilter[128]{};
         char lastContextQuery[256]{};
         char lastQueryJson[1024]{};

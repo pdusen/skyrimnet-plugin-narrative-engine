@@ -432,6 +432,14 @@ namespace NarrativeEngine::SenderCandidatePool
         return out;
     }
 
+    nlohmann::json FetchMemories(RE::FormID formId, const BuildOptions& opts)
+    {
+        if (!SkyrimNetAPI::IsAvailable() || !SkyrimNetAPI::IsMemorySystemReady()) {
+            return nlohmann::json::array();
+        }
+        return FetchAndShapeMemories(formId, GetPlayerDisplayName(), opts);
+    }
+
     std::size_t CountViable(const ViabilityFilter& extraFilter, std::size_t min)
     {
         if (!SkyrimNetAPI::IsAvailable() || !SkyrimNetAPI::IsMemorySystemReady()) {

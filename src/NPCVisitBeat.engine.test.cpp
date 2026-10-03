@@ -648,6 +648,43 @@ TEST_CASE("NPCVisitBeat sends somebody to the player", "[NPCVisitBeat][engine]")
         }
     }
 
+    SECTION("when the Director named the memory that sends them")
+    {
+        // BeatSystem resolves the Director's number to the memory itself and
+        // passes it on under its own key. The beat's whole job with it is to
+        // get it to the compose prompt intact.
+        auto params = SenderParams();
+        params["motivating_memory_entry"] = {{"type", "EXPERIENCE"}, {"content", "She owes him for the tusk."}};
+        beat.OnStart(BeatContext{}, params);
+        REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+
+        SECTION("should hand that memory to the compose prompt")
+        {
+            REQUIRE(std::string{FakeLLM().lastPromptName} == "narrative_engine_visit_compose");
+            const auto context = nlohmann::json::parse(FakeLLM().lastContextJson);
+            REQUIRE(context["has_motivating_memory"] == true);
+            REQUIRE(context["motivating_memory"].value("content", "") == "She owes him for the tusk.");
+        }
+    }
+
+    SECTION("when the parameters carry prose about the sender's motive")
+    {
+        // The old seed. The Director wrote it having seen what the player had
+        // just done, and a visitor turned up knowing about a conversation held
+        // minutes before they arrived. Nothing of it may reach compose now.
+        auto params = SenderParams();
+        params["parameter_justification"] = "She heard about the Alik'r in Whiterun.";
+        beat.OnStart(BeatContext{}, params);
+        REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+
+        SECTION("should leave it out of the compose prompt")
+        {
+            const std::string sent = FakeLLM().lastContextJson;
+            REQUIRE(sent.find("Alik'r") == std::string::npos);
+            REQUIRE(nlohmann::json::parse(sent)["has_motivating_memory"] == false);
+        }
+    }
+
     SECTION("when the Director named a sender that will not parse")
     {
         beat.OnStart(BeatContext{}, SenderParams("not a form id"));

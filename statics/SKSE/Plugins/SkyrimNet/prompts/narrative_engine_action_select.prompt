@@ -23,7 +23,7 @@ Pick **one** action that best fits the present moment, choose any
 parameters it needs, and return your selection.
 
 ## Output Format
-Return a JSON object with exactly four keys. No markdown fences. No prose
+Return a JSON object with exactly three keys. No markdown fences. No prose
 before or after the object.
 
 - `action` — string. MUST exactly match one of the `name` values in the
@@ -37,13 +37,6 @@ before or after the object.
   action fits this moment. Director-frame commentary — "the beat calls
   for X because Y". Do NOT put words in a sender's mouth here; this is
   YOUR reasoning as the director, not the sender's motivation.
-- `parameter_justification` — one to three sentences, ≤400 characters.
-  In-fiction reasoning for the specific `parameters` values, written
-  in the frame of whoever/whatever the parameters refer to. For a
-  chosen sender: name them by their human-readable name and state
-  their own motivation for the action, grounded strictly in what
-  they'd know from their memories and prior dialogue — never in
-  player-experienced events they weren't part of.
 
 ## Hard Constraints
 - Output strict JSON. No markdown code fences. No prose before or after
@@ -90,11 +83,17 @@ sender and include their `form_id` as `sender_npc_form_id` inside
 `parameters`. Prefer candidates whose recent memories about the player
 support the tone the moment needs.
 
+Then pick the ONE numbered memory of theirs that gives them their reason
+to write now, and include its number as `motivating_memory` inside
+`parameters`. The letter is composed from that memory and the sender's
+own memory tail — nothing else you can see here reaches the writer — so
+the topic you intend must be one the chosen memory carries.
+
         {%- for s in cand.letter_sender_candidates %}
 ##### {{ s.name }} (form_id: {{ s.form_id }})
 
             {%- for mem in s.memories %}
-- [{{ mem.type }}, {{ mem.age }}{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
+{{ loop.index1 }}. [{{ mem.type }}, {{ mem.age }}{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
             {%- endfor %}
         {% endfor -%}
     {% endif %}
@@ -108,11 +107,17 @@ in-person visit right now — an unresolved beat, an emotional weight
 that can't survive being written down, or urgent information that
 needs to land face-to-face.
 
+Then pick the ONE numbered memory of theirs that gives them their reason
+to come now, and include its number as `motivating_memory` inside
+`parameters`. The visit is composed from that memory and the visitor's
+own memory tail — nothing else you can see here reaches them — so the
+topic you intend must be one the chosen memory carries.
+
         {%- for s in cand.visit_sender_candidates %}
 ##### {{ s.name }} (form_id: {{ s.form_id }})
 
             {%- for mem in s.memories %}
-- [{{ mem.type }}, {{ mem.age }}{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
+{{ loop.index1 }}. [{{ mem.type }}, {{ mem.age }}{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
             {%- endfor %}
         {% endfor -%}
     {% endif %}

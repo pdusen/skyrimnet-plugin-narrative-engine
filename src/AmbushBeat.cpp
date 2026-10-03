@@ -1272,7 +1272,7 @@ namespace NarrativeEngine
                "opportunists.\n"
                "  narration_prose (REQUIRED, string) — one to three sentences of in-world prose stating WHO "
                "is attacking and WHAT their motivation is. Refer to the player by the name given under "
-               "'Where the player is', exactly as you would in parameter_justification — never as 'the "
+               "'Where the player is', exactly as that section instructs — never as 'the "
                "player', and never by an epithet such as 'the intruder' or 'the outsider'. Written as "
                "narration, not as an explanation of your choice: describe the attackers and their grievance "
                "the way a chronicler would. It is recorded in the world's event log the moment the fight "

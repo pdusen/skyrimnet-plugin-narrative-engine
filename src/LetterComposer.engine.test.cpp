@@ -102,7 +102,9 @@ namespace
         return j.dump();
     }
 
-    std::optional<LetterComposer::LetterComposition> ComposeFor(std::uint32_t sender, bool& answered)
+    std::optional<LetterComposer::LetterComposition> ComposeFor(std::uint32_t sender,
+                                                                bool& answered,
+                                                                const nlohmann::json& motivatingMemory = nullptr)
     {
         std::optional<LetterComposer::LetterComposition> result;
         answered = false;
@@ -110,7 +112,7 @@ namespace
         LetterComposer::Compose(ctx,
                                 LetterComposer::UrgencyHint::Medium,
                                 sender,
-                                "she has been meaning to write",
+                                motivatingMemory,
                                 [&](std::optional<LetterComposer::LetterComposition> letter) {
                                     result = std::move(letter);
                                     answered = true;
@@ -523,8 +525,90 @@ TEST_CASE("LetterComposer writes what arrives in the post", "[LetterComposer][en
         {
             BeatContext ctx;
             const int before = fake.sendPromptCalls;
-            LetterComposer::Compose(ctx, LetterComposer::UrgencyHint::Medium, kYsolda, "", nullptr);
+            LetterComposer::Compose(ctx, LetterComposer::UrgencyHint::Medium, kYsolda, nullptr, nullptr);
             REQUIRE(fake.sendPromptCalls == before);
+        }
+    }
+}
+
+TEST_CASE("LetterComposer tells the model only what the sender knows", "[LetterComposer][engine]")
+{
+    // The compose prompt is the sender's whole world: whatever reaches it is
+    // something the letter can talk about. The Director, which also sees what
+    // the player has just done, used to hand its own prose about the sender's
+    // motive straight to this prompt, so a sender could write about events
+    // they were never part of. It now names one of the sender's own memories
+    // instead, and that memory is all of the Director that arrives here.
+    //
+    // Happy path, re-run per leaf: a live sender the player cannot see, and a
+    // model answering with a complete letter.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    const RunningDispatch dispatch;
+    auto& fake = FakeState();
+    REQUIRE(SkyrimNet::Initialize());
+    fake.Reset();
+    (void)engine.AddActor(kYsolda);
+    engine.visibility.target3DPresent = false;
+    engine.world.playerHasLocation = false;
+    SetJson(fake.memoriesJson, "[" + MemoryRow("She spoke of the mammoth tusk.") + "]");
+    SetJson(fake.promptResponse, LetterAnswer());
+    const nlohmann::json chosen = {
+        {"type", "EXPERIENCE"},
+        {"content", "She promised to bring the tusk back by Tirdas."},
+        {"age", "2 days ago"},
+        {"emotion", "anxious"},
+        {"location", "Whiterun"},
+    };
+    bool answered = false;
+
+    SECTION("when the Director named the memory that moves them to write")
+    {
+        (void)ComposeFor(kYsolda, answered, chosen);
+        const auto context = nlohmann::json::parse(fake.lastContextJson);
+
+        SECTION("should say there is one")
+        {
+            REQUIRE(answered);
+            REQUIRE(context["has_motivating_memory"] == true);
+        }
+
+        SECTION("should hand the model that memory whole")
+        {
+            REQUIRE(context["motivating_memory"] == chosen);
+        }
+
+        SECTION("should send no prose of the Director's")
+        {
+            REQUIRE_FALSE(context.contains("parameter_justification"));
+        }
+    }
+
+    SECTION("when the Director named none")
+    {
+        (void)ComposeFor(kYsolda, answered);
+        const auto context = nlohmann::json::parse(fake.lastContextJson);
+
+        SECTION("should say there is none")
+        {
+            // The prompt branches on this to let the sender pick a subject
+            // from their memory tail instead.
+            REQUIRE(answered);
+            REQUIRE(context["has_motivating_memory"] == false);
+            REQUIRE(context["motivating_memory"].is_object());
+        }
+    }
+
+    SECTION("when what arrives in its place is not a memory")
+    {
+        (void)ComposeFor(kYsolda, answered, "she has been meaning to write");
+        const auto context = nlohmann::json::parse(fake.lastContextJson);
+
+        SECTION("should treat it as none")
+        {
+            REQUIRE(answered);
+            REQUIRE(context["has_motivating_memory"] == false);
+            REQUIRE(context["motivating_memory"].empty());
         }
     }
 }

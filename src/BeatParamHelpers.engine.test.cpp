@@ -10,8 +10,8 @@
 
 // Mocked-engine tests for the shared beat parameter parsing.
 //
-// Two of the three functions are pure JSON work and would sit happily in the
-// core target; the third looks a sender up in the engine's form table and
+// Three of the four functions are pure JSON work and would sit happily in the
+// core target; the fourth looks a sender up in the engine's form table and
 // checks it is still alive. They are one module and are tested as one, so the
 // whole thing is mocked rather than split.
 //
@@ -223,6 +223,164 @@ TEST_CASE("BeatParamHelpers::ParseUrgencyHint", "[BeatParamHelpers][engine]")
         SECTION("should fall back to medium")
         {
             REQUIRE(Params::ParseUrgencyHint(parameters) == UrgencyHint::Medium);
+        }
+    }
+}
+
+TEST_CASE("BeatParamHelpers::ResolveMotivatingMemory", "[BeatParamHelpers][engine]")
+{
+    // Happy path, re-run per leaf: the Director names the second of three
+    // memories the beat-select prompt showed for its sender. The number is
+    // 1-based because the prompt numbers the list from one. Each memory is
+    // told apart by its content alone, so a case asserting which one came
+    // back cannot pass on a neighbour.
+    json parameters = json::object({{"sender_npc_form_id", "0xA2C8E"}, {"motivating_memory", 2}});
+    const json memories = json::array({
+        json::object({{"type", "EXPERIENCE"}, {"content", "first"}}),
+        json::object({{"type", "KNOWLEDGE"}, {"content", "second"}}),
+        json::object({{"type", "RELATIONSHIP"}, {"content", "third"}}),
+    });
+    std::string reason = "(untouched)";
+
+    SECTION("when the number names one of the memories")
+    {
+        SECTION("should hand back that memory whole")
+        {
+            // Whole, not just its content: the compose prompt renders the type,
+            // age, emotion and place the same way the Director saw them.
+            const auto memory = Params::ResolveMotivatingMemory(parameters, memories, &reason);
+            REQUIRE(memory.has_value());
+            REQUIRE(*memory == memories[1]);
+        }
+
+        SECTION("should leave the failure reason alone")
+        {
+            (void)Params::ResolveMotivatingMemory(parameters, memories, &reason);
+            REQUIRE(reason == "(untouched)");
+        }
+    }
+
+    SECTION("when the number names the first memory")
+    {
+        parameters["motivating_memory"] = 1;
+
+        SECTION("should hand back the first")
+        {
+            const auto memory = Params::ResolveMotivatingMemory(parameters, memories, &reason);
+            REQUIRE(memory.has_value());
+            REQUIRE(memory->value("content", "") == "first");
+        }
+    }
+
+    SECTION("when the number names the last memory")
+    {
+        parameters["motivating_memory"] = 3;
+
+        SECTION("should hand back the last")
+        {
+            const auto memory = Params::ResolveMotivatingMemory(parameters, memories, &reason);
+            REQUIRE(memory.has_value());
+            REQUIRE(memory->value("content", "") == "third");
+        }
+    }
+
+    SECTION("when the number is zero")
+    {
+        // A model counting from zero. Read as an index it would silently hand
+        // the composer a memory the Director never chose.
+        parameters["motivating_memory"] = 0;
+
+        SECTION("should say it is out of range")
+        {
+            REQUIRE_FALSE(Params::ResolveMotivatingMemory(parameters, memories, &reason).has_value());
+            REQUIRE(reason == "motivating_memory_out_of_range");
+        }
+    }
+
+    SECTION("when the number runs past the end of the list")
+    {
+        parameters["motivating_memory"] = 4;
+
+        SECTION("should say it is out of range")
+        {
+            REQUIRE_FALSE(Params::ResolveMotivatingMemory(parameters, memories, &reason).has_value());
+            REQUIRE(reason == "motivating_memory_out_of_range");
+        }
+    }
+
+    SECTION("when the number is negative")
+    {
+        parameters["motivating_memory"] = -1;
+
+        SECTION("should say it is out of range")
+        {
+            REQUIRE_FALSE(Params::ResolveMotivatingMemory(parameters, memories, &reason).has_value());
+            REQUIRE(reason == "motivating_memory_out_of_range");
+        }
+    }
+
+    SECTION("when the sender has no memory list")
+    {
+        SECTION("should say it is out of range")
+        {
+            REQUIRE_FALSE(Params::ResolveMotivatingMemory(parameters, json{}, &reason).has_value());
+            REQUIRE(reason == "motivating_memory_out_of_range");
+        }
+    }
+
+    SECTION("when the number is written as a string")
+    {
+        // The prompt asks for an integer. Same diagnosis as absent,
+        // deliberately, matching how the sender id treats a wrong type.
+        parameters["motivating_memory"] = "2";
+
+        SECTION("should say the field is missing")
+        {
+            REQUIRE_FALSE(Params::ResolveMotivatingMemory(parameters, memories, &reason).has_value());
+            REQUIRE(reason == "motivating_memory_missing");
+        }
+    }
+
+    SECTION("when the number has a fractional part")
+    {
+        parameters["motivating_memory"] = 2.5;
+
+        SECTION("should say the field is missing")
+        {
+            REQUIRE_FALSE(Params::ResolveMotivatingMemory(parameters, memories, &reason).has_value());
+            REQUIRE(reason == "motivating_memory_missing");
+        }
+    }
+
+    SECTION("when the field is missing")
+    {
+        parameters.erase("motivating_memory");
+
+        SECTION("should say the field is missing")
+        {
+            REQUIRE_FALSE(Params::ResolveMotivatingMemory(parameters, memories, &reason).has_value());
+            REQUIRE(reason == "motivating_memory_missing");
+        }
+    }
+
+    SECTION("when the parameters are not an object")
+    {
+        parameters = json::array({2});
+
+        SECTION("should say the parameters were not an object")
+        {
+            REQUIRE_FALSE(Params::ResolveMotivatingMemory(parameters, memories, &reason).has_value());
+            REQUIRE(reason == "parameters_not_object");
+        }
+    }
+
+    SECTION("when the caller wants no failure reason")
+    {
+        parameters["motivating_memory"] = 9;
+
+        SECTION("should reject without writing anywhere")
+        {
+            REQUIRE_FALSE(Params::ResolveMotivatingMemory(parameters, memories, nullptr).has_value());
         }
     }
 }

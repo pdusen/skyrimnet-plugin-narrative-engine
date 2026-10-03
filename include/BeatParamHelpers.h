@@ -41,6 +41,22 @@ namespace NarrativeEngine::BeatParamHelpers
     // Medium — the neutral default the compose prompt expects.
     UrgencyHint ParseUrgencyHint(const nlohmann::json& parameters);
 
+    // Resolve `parameters["motivating_memory"]` — the 1-based number of
+    // one entry in the memory list the beat-select prompt showed for the
+    // chosen sender — to that entry, copied out of `senderMemories` (the
+    // same list the prompt rendered). The Director names its topic this
+    // way rather than in free text so the topic can only ever be something
+    // the sender actually remembers: the Director also sees what the
+    // player has just done, and its prose about a sender's motive kept
+    // carrying that across to a sender who couldn't know it.
+    //
+    // On any failure path (parameters isn't an object, field missing or
+    // not an integer, number outside the list) sets `*failureReason` to a
+    // stable snake_case literal and returns nullopt. Pure JSON.
+    std::optional<nlohmann::json> ResolveMotivatingMemory(const nlohmann::json& parameters,
+                                                          const nlohmann::json& senderMemories,
+                                                          std::string* failureReason);
+
     // Main thread only. Look up an Actor by FormID and enforce the
     // dispatch-time liveness gates: form resolves, form is an Actor,
     // actor is not dead, actor is not disabled. On any failure sets

@@ -257,8 +257,8 @@ namespace NarrativeEngine::LetterComposer
             // NPCLetterBeat_Cooldowns::GetSenderMemoryWatermarkGameHours)
             // already ensured the action-select LLM couldn't pick this
             // sender for a topic rooted in a pre-watermark memory. The
-            // resulting action-select `parameter_justification` is the
-            // authoritative topic seed and is threaded into the
+            // memory the action-select response named as the sender's
+            // motive is the authoritative topic seed and is threaded into the
             // compose prompt directly, so the compose LLM has no
             // reason to re-derive a topic from the memory tail. The
             // full memory tail is left intact here so the compose
@@ -482,7 +482,7 @@ namespace NarrativeEngine::LetterComposer
                                                  RE::FormID senderFormID,
                                                  const nlohmann::json& senderMemories,
                                                  const nlohmann::json& recentDialogue,
-                                                 const std::string& parameterJustification)
+                                                 const nlohmann::json& motivatingMemory)
         {
             const auto& cfg = Settings::Get();
 
@@ -496,7 +496,8 @@ namespace NarrativeEngine::LetterComposer
             root["max_words"] = cfg.letterContentMaxWords;
 
             root["player_name"] = playerName;
-            root["parameter_justification"] = parameterJustification;
+            root["has_motivating_memory"] = motivatingMemory.is_object();
+            root["motivating_memory"] = motivatingMemory.is_object() ? motivatingMemory : nlohmann::json::object();
 
             char idBuf[16];
             std::snprintf(idBuf, sizeof(idBuf), "0x%X", senderFormID);
@@ -678,7 +679,7 @@ namespace NarrativeEngine::LetterComposer
     void Compose(const BeatContext& ctx,
                  UrgencyHint urgencyHint,
                  RE::FormID senderNpcFormID,
-                 std::string parameterJustification,
+                 nlohmann::json motivatingMemory,
                  std::function<void(std::optional<LetterComposition>)> callback)
     {
         if (!callback)
@@ -761,14 +762,8 @@ namespace NarrativeEngine::LetterComposer
         SenderDialogue::FilterByMemoryAge(recentDialogue, memories, nowGameSeconds);
         SenderDialogue::AnnotateAges(recentDialogue, nowGameSeconds);
 
-        const auto promptCtx = BuildComposePromptContext(ctx,
-                                                         urgencyHint,
-                                                         playerName,
-                                                         senderName,
-                                                         senderNpcFormID,
-                                                         memories,
-                                                         recentDialogue,
-                                                         parameterJustification);
+        const auto promptCtx = BuildComposePromptContext(
+            ctx, urgencyHint, playerName, senderName, senderNpcFormID, memories, recentDialogue, motivatingMemory);
         const auto promptCtxStr = promptCtx.dump();
         if (Settings::Get().debugMode) {
             logger::debug("LetterComposer: prompt context: {}", promptCtxStr);

@@ -117,6 +117,15 @@ namespace NarrativeEngine::SenderCandidatePool
     // is unavailable or no viable candidates survive.
     std::vector<Candidate> Build(const BuildOptions& opts);
 
+    // Main-thread. One already-chosen actor's memory tail, shaped by the
+    // same memory rules in `opts` that Build applies to each candidate.
+    // Skips the engagement walk entirely — for a caller that already knows
+    // its sender, the walk can only lose them (it stops after a few rows,
+    // and a sender ranked below those comes back with no memories at all).
+    // Ignores the candidate-level fields of `opts`. Empty when SkyrimNet is
+    // unavailable or holds nothing for the actor.
+    nlohmann::json FetchMemories(RE::FormID formId, const BuildOptions& opts);
+
     // Main-thread. Cheap IsAvailable-time count — same viability walk as
     // Build (universal + extra filter), no memory fetch. Stops walking
     // once `min` viable candidates have been counted. Returns the
