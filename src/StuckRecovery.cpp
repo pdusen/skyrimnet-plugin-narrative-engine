@@ -24,6 +24,14 @@ namespace NarrativeEngine::StuckRecovery
         // floor below when standing on a bridge.
         constexpr float kNavmeshZToleranceUnits = 96.0f;
 
+        // How far from the height asked about the navmesh's own surface may
+        // sit and still be the answer. Wider than the Z tolerance above,
+        // because a city street can be a few hundred units off the anchor it
+        // was probed from, and far narrower than the drop to a ravine floor.
+        // The arrival search's own elevation gate is 400 units, so nothing it
+        // asks about can be accepted at the far end of this window anyway.
+        constexpr float kNavmeshSurfaceWindowUnits = 512.0f;
+
         // How far below the water surface the ground has to be before a
         // point counts as submerged. A small tolerance rather than zero
         // because shoreline terrain and the water plane meet within a
@@ -213,18 +221,100 @@ namespace NarrativeEngine::StuckRecovery
         return true;
     }
 
+    bool NavmeshSurfaceZ(const RE::NiPoint3& pos, float& zOut)
+    {
+        auto* tes = RE::TES::GetSingleton();
+        if (!tes) {
+            return false;
+        }
+        auto* cell = tes->GetCell(pos);
+        if (!cell) {
+            return false;
+        }
+        auto* navMeshes = cell->GetRuntimeData().navMeshes;
+        if (!navMeshes) {
+            return false;
+        }
+
+        bool found = false;
+        float best = 0.0f;
+        for (const auto& meshPtr : navMeshes->navMeshes) {
+            auto* mesh = meshPtr.get();
+            if (!mesh) {
+                continue;
+            }
+            const auto& verts = mesh->vertices;
+            for (const auto& tri : mesh->triangles) {
+                const auto i0 = tri.vertices[0];
+                const auto i1 = tri.vertices[1];
+                const auto i2 = tri.vertices[2];
+                if (i0 >= verts.size() || i1 >= verts.size() || i2 >= verts.size()) {
+                    continue;
+                }
+                float surfaceZ = 0.0f;
+                if (!PointInTriangleXY(
+                        pos.x, pos.y, verts[i0].location, verts[i1].location, verts[i2].location, surfaceZ)) {
+                    continue;
+                }
+                if (std::fabs(surfaceZ - pos.z) > kNavmeshSurfaceWindowUnits) {
+                    // Navmesh under this spot but nowhere near the height
+                    // asked about: a cellar below a street, a path at the
+                    // foot of the cliff somebody is standing on top of.
+                    // Snapping to it would be a warp, not a correction.
+                    continue;
+                }
+                if (!found || std::fabs(surfaceZ - pos.z) < std::fabs(best - pos.z)) {
+                    best = surfaceZ;
+                    found = true;
+                }
+            }
+        }
+        if (found) {
+            zOut = best;
+        }
+        return found;
+    }
+
     bool IsStandable(const RE::NiPoint3& pos, RE::NiPoint3& out)
     {
-        float groundZ = 0.0f;
-        if (!GroundPoint(pos, out, groundZ)) {
-            return false;
-        }
         auto* tes = RE::TES::GetSingleton();
-        auto* cell = tes ? tes->GetCell(out) : nullptr;
-        if (IsUnderwater(cell, out, groundZ)) {
+
+        // Terrain first, which is what the whole of outdoor Skyrim is.
+        float groundZ = 0.0f;
+        RE::NiPoint3 grounded{};
+        if (GroundPoint(pos, grounded, groundZ)) {
+            auto* cell = tes ? tes->GetCell(grounded) : nullptr;
+            if (!IsUnderwater(cell, grounded, groundZ) && IsOnNavmesh(grounded)) {
+                out = grounded;
+                return true;
+            }
+        }
+
+        // Then the navmesh's own surface, because inside a walled city there
+        // is no terrain to read. WhiterunWorld carries landscape in 7 of its
+        // 113 cells and WindhelmWorld in 2 of 57 — the ground in there is
+        // authored static geometry, and what makes it walkable is the navmesh.
+        // Without this, every standability question asked inside the walls
+        // answered no: 45 of 45 arc samples rejected off-navmesh on a measured
+        // visit, and three consecutive escort close-in steps that found
+        // nowhere to stand on open street.
+        //
+        // Reached whether the terrain query failed or merely disagreed with
+        // the navmesh, because both happen in there and the log cannot tell
+        // them apart. See
+        // docs/engine-findings/standable-ground-inside-walled-cities.md.
+        float surfaceZ = 0.0f;
+        if (!NavmeshSurfaceZ(pos, surfaceZ)) {
             return false;
         }
-        return IsOnNavmesh(out);
+        RE::NiPoint3 onMesh = pos;
+        onMesh.z = surfaceZ + kGroundClearanceUnits;
+        auto* cell = tes ? tes->GetCell(onMesh) : nullptr;
+        if (IsUnderwater(cell, onMesh, surfaceZ)) {
+            return false;
+        }
+        out = onMesh;
+        return true;
     }
 
     bool HasNavmeshCorridor(const RE::NiPoint3& from, const RE::NiPoint3& to)

@@ -158,7 +158,15 @@ namespace NarrativeEngine::StuckRecovery
     // ground resolves — void, or an unloaded cell.
     bool GroundPoint(const RE::NiPoint3& pos, RE::NiPoint3& out, float& outGroundZ);
 
-    // Grounded, dry, and on navmesh.
+    // The navmesh's own surface height at `pos`'s XY, independent of
+    // terrain, taken from the triangle nearest `pos`'s own height. This
+    // is what a walled city's ground is: authored static geometry with a
+    // navmesh over it and no landscape record to read.
+    bool NavmeshSurfaceZ(const RE::NiPoint3& pos, float& zOut);
+
+    // Grounded, dry, and on navmesh. Terrain answers for outdoor Skyrim;
+    // where it does not — inside a walled city, where there is almost no
+    // landscape — the navmesh's own surface answers instead.
     bool IsStandable(const RE::NiPoint3& pos, RE::NiPoint3& out);
 
     // Spacing between corridor samples, and the most that will ever be

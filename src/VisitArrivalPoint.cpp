@@ -1269,13 +1269,72 @@ namespace NarrativeEngine::VisitArrivalPoint
                 result.point = gateway.arrival;
                 result.point.z += kGroundClearanceUnits;
                 result.placementAnchor = gateway.farSide->GetFormID();
+
+                // Unless the player is standing at the gate, in which case
+                // "outside it" is a few paces away. A player 1,168 units
+                // inside Whiterun's gate got a visitor placed 1,151 units off
+                // and greeted them 1.3 seconds after arming -- no walk, no
+                // arrival, somebody simply there.
+                //
+                // Keep walking out along the same line the visitor would come
+                // in on until the floor is satisfied. City worldspaces are in
+                // Tamriel's own coordinates (see
+                // docs/engine-findings/city-worldspaces-share-tamriels-origin.md),
+                // so the player's position and the gate's landing can be
+                // measured against each other and extended past one another
+                // without conversion.
+                const float gateOut = Dist2D(result.point, cityAnchorPos);
+                std::vector<RE::NiPoint3> pushed;
+                if (gateOut < minDist) {
+                    const float dx = result.point.x - cityAnchorPos.x;
+                    const float dy = result.point.y - cityAnchorPos.y;
+                    const float span = std::sqrt(dx * dx + dy * dy);
+                    if (span > 1.0f) {
+                        const float ux = dx / span;
+                        const float uy = dy / span;
+                        // Furthest first: the nearest push that satisfies the
+                        // floor is still the one the design asked for, and the
+                        // shorter probes exist so a gate that opens onto a
+                        // cliff or a bridge is not a decline.
+                        const float needed = minDist - gateOut;
+                        for (const float fraction : {1.0f, 0.75f, 0.5f, 0.25f}) {
+                            const float reach = needed * fraction;
+                            RE::NiPoint3 probe{
+                                result.point.x + ux * reach, result.point.y + uy * reach, result.point.z};
+                            RE::NiPoint3 standing{};
+                            if (!StuckRecovery::IsStandable(probe, standing)) {
+                                continue;
+                            }
+                            pushed.push_back(standing);
+                        }
+                    }
+                }
+                if (!pushed.empty()) {
+                    // The gate itself stays on the end of the ladder. It is
+                    // where the engine puts anybody walking through, so it is
+                    // the one position here known to be standable.
+                    pushed.push_back(result.point);
+                    result.point = pushed.front();
+                    result.fallbacks.assign(pushed.begin() + 1, pushed.end());
+                } else {
+                    // Nothing standable further out, so the gate it is. Still
+                    // better than declining: the visitor arrives close, which
+                    // is what happened before this and what the player saw.
+                    result.fallbacks.clear();
+                }
+
                 logger::info("VisitArrivalPoint: sender=0x{:08X} tier=city-gate at ({:.0f},{:.0f},{:.0f}) "
-                             "outside the gate, anchored on 0x{:08X} | city[{}]",
+                             "outside the gate, anchored on 0x{:08X}, {:.0f}u out (gate was {:.0f}u, "
+                             "floor {:.0f}u), {} fallback(s) | city[{}]",
                              senderId,
                              result.point.x,
                              result.point.y,
                              result.point.z,
                              result.placementAnchor,
+                             Dist2D(result.point, cityAnchorPos),
+                             gateOut,
+                             minDist,
+                             result.fallbacks.size(),
                              cityTally.Describe());
                 return result;
             }

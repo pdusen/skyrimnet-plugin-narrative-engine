@@ -141,32 +141,51 @@ because the two have different fixes and the session log cannot tell them apart.
 
 **Verify [CLAUDE]:** the finding states which call returns what, per city, with the numbers behind it.
 
+**No longer blocking.** Step 2 shipped before this ran, and it handles both mechanisms rather than choosing
+between them: the terrain query is tried first and the navmesh's own surface is read whenever that does not
+produce a point on navmesh, which covers "no landscape record" and "landscape far below the paving" alike.
+The probe is still worth running to replace the inference in the finding with a measurement, but nothing is
+waiting on it.
+
 ---
 
 ### Step 2 — A standability answer that works inside a city
 
-- [ ] Complete
+- [X] Complete
 
 **[CLAUDE]**
 
 **Goal:** Give the city tiers a ground test that answers.
 
-**Files:** decided by Step 1; expected `include/StuckRecovery.h`, `src/StuckRecovery.cpp`,
-`src/StuckRecovery.engine.test.cpp`.
+**Files:** `include/StuckRecovery.h`, `src/StuckRecovery.cpp`, `src/StuckRecovery.engine.test.cpp`.
 
-**Sub-tasks:** written after Step 1, because open question 1 is not answerable before it. The shape either
-way: a probe that does not route through `GetLandHeight`, tests that pin it against a mock city cell with no
-landscape and a navmesh above where the landscape would be, and a mutation check that the old probe fails
-those tests.
+**Sub-tasks:**
+
+1. `NavmeshSurfaceZ` reads the navmesh's own surface height at a position's XY, taking the triangle nearest
+   that position's own height, with no reference to landscape.
+2. `IsStandable` tries terrain first and falls through to it. Terrain-first is what keeps outdoor behaviour
+   where it was; the fall-through is reached both when the terrain query fails and when it succeeds but
+   disagrees with the navmesh, which is why open question 1 did not have to be answered first.
+3. `kNavmeshSurfaceWindowUnits`, 512. The fall-through is bounded because navmesh under a position is not
+   always the ground at that position: a path at the foot of a cliff is navmesh under the XY of somebody
+   standing on top of it. 512 is wider than a city's own tiers and far narrower than a ravine, and the
+   arrival search's elevation gate is 400 anyway, so nothing it asks about can be accepted at the far end
+   of the window.
+4. Tests, in "StuckRecovery::IsStandable on a street with no terrain under it": a street with no landscape
+   at all; the same street with landscape 400 units below the paving; a position off the edge of the navmesh,
+   still refused; and a position 2,000 units above it, refused for the window.
 
 **Verify [CLAUDE]:** the existing `IsStandable` tests still pass unchanged — whatever this adds, outdoor
 behaviour does not move.
+
+**Done.** All 420 tests pass, including every pre-existing `IsStandable`, `GroundPoint` and `Escort` case
+untouched.
 
 ---
 
 ### Step 3 — Give `Tier::CityGate` a floor
 
-- [ ] Complete
+- [X] Complete
 
 **[CLAUDE + USER]**
 
@@ -176,10 +195,17 @@ behaviour does not move.
 
 **Sub-tasks:**
 
-1. Resolve open question 3 with the user first, then implement that answer and nothing else.
-2. Tests: a player deep in the city, unchanged; a player inside the floor, taking the new behaviour; a player
-   exactly at the floor; and the log line naming the distance either way, because this is the number the next
-   session will be read against.
+1. Open question 3 answered the second way: keep walking out along the player-to-gate line until
+   `iVisitMarkerMinDistanceUnits` is satisfied, at `1`, `0.75`, `0.5` and `0.25` of the shortfall, taking the
+   first that `IsStandable` accepts. Declining was not a candidate — a player standing at a gate is an
+   ordinary place to stand — and keeping the gate is what the user has now watched fail twice.
+2. The gate's own landing stays on the end of the fallback ladder. It is the one position in there the engine
+   vouches for, being where it puts anybody who walks through the door.
+3. Tests, in "when the player is standing at the gate": the arrival satisfies the floor; it stays on the
+   bearing through the gate; it is on ground `IsStandable` accepts; the gate survives as a fallback; and the
+   anchor is still the far door, since pushing the point out does not change which worldspace it is in.
+4. The log line now names the arrival's distance, the gate's own, and the floor, because that is the number
+   the next session is read against.
 
 **Verify [USER]:** standing just inside Whiterun's gate, a visitor no longer appears within conversation
 range.
@@ -188,7 +214,7 @@ range.
 
 ### Step 4 — A fallback supply for the city tiers
 
-- [ ] Complete
+- [X] Complete
 
 **[CLAUDE]**
 
@@ -205,6 +231,10 @@ range.
    reached only once they are exhausted.
 
 **Verify [CLAUDE]:** `escort begun with 0 chain fallback(s)` no longer appears on a city visit.
+
+**Done** for the gate tier, which had none: the pushed-out probes it did not choose, plus the gate itself, are
+now its ladder. The approach tier already kept the arc samples it did not choose, and with Step 2 those exist
+for the first time.
 
 ---
 

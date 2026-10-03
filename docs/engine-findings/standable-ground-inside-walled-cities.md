@@ -67,6 +67,12 @@ walls — one standing in Whiterun's market, one in Markarth's, since those two 
 in coverage. Until that runs, the safe statement is the measured one: the probe as composed does
 not answer inside Whiterun.
 
+**The shipped fix does not depend on the answer.** `StuckRecovery::IsStandable` tries terrain and
+then reads the navmesh's own surface whenever that did not produce a point on navmesh — which
+covers both mechanisms, since a missing landscape record and a landscape 400 units under the
+paving fail at different calls and look identical from outside. The probe is still worth running
+to turn the inference above into a measurement, but nothing is waiting on it.
+
 ## What this means
 
 A standability gate is the wrong instrument inside a city worldspace. The ground there is

@@ -522,6 +522,78 @@ TEST_CASE("StuckRecovery::GroundPoint", "[StuckRecovery][engine]")
     }
 }
 
+TEST_CASE("StuckRecovery::IsStandable on a street with no terrain under it", "[StuckRecovery][engine]")
+{
+    // A walled city. WhiterunWorld has a landscape record in 7 of its 113
+    // cells and WindhelmWorld in 2 of 57: the ground somebody walks on in
+    // there is authored static geometry, and the only thing that says it is
+    // walkable is the navmesh over it.
+    //
+    // Measured before this worked: 45 of 45 arc samples inside Whiterun
+    // rejected off-navmesh, so the city-approach tier never once chose a
+    // point, and the escort's close-in probe found nowhere standable three
+    // steps running on open street.
+    constexpr std::uint32_t kStreetMesh = 0x00E10001u;
+    constexpr float kStreetZ = -3240.0f;
+
+    EngineMock engine;
+    engine.AddNavmeshPatch(engine.GroundCell(), kStreetMesh, -4000.0f, -4000.0f, 4000.0f, 4000.0f, kStreetZ);
+
+    SECTION("when the cell carries no landscape at all")
+    {
+        engine.terrain.landHeightResolves = false;
+
+        SECTION("should stand them on the navmesh")
+        {
+            NiPoint3 out{};
+            REQUIRE(StuckRecovery::IsStandable(NiPoint3{500.0f, 500.0f, kStreetZ}, out));
+            REQUIRE(out.z == kStreetZ + StuckRecovery::kGroundClearanceUnits);
+            REQUIRE(out.x == 500.0f);
+            REQUIRE(out.y == 500.0f);
+        }
+
+        SECTION("should still refuse where there is no navmesh either")
+        {
+            // Off the edge of the patch. Nothing to read from either source,
+            // which is the honest no.
+            NiPoint3 out{};
+            REQUIRE_FALSE(StuckRecovery::IsStandable(NiPoint3{9000.0f, 9000.0f, kStreetZ}, out));
+        }
+    }
+
+    SECTION("when the landscape is there but far below the street")
+    {
+        // The other way this fails in a city, and the log cannot tell it from
+        // the first: Whiterun sits on a plateau of static geometry, so the
+        // terrain surface can be hundreds of units under the paving. The
+        // terrain answer is then real and useless — it grounds the probe below
+        // the navmesh, which reads as off-navmesh.
+        engine.terrain.landHeightResolves = true;
+        engine.terrain.landHeight = kStreetZ - 400.0f;
+
+        SECTION("should take the street rather than the cellar floor")
+        {
+            NiPoint3 out{};
+            REQUIRE(StuckRecovery::IsStandable(NiPoint3{500.0f, 500.0f, kStreetZ}, out));
+            REQUIRE(out.z == kStreetZ + StuckRecovery::kGroundClearanceUnits);
+        }
+    }
+
+    SECTION("when the navmesh is further off than the window allows")
+    {
+        // The reason the fallback is bounded. A path at the foot of a cliff is
+        // navmesh under the XY of somebody standing on top of it, and warping
+        // them down to it is not a correction.
+        engine.terrain.landHeightResolves = false;
+
+        SECTION("should refuse rather than drop them to it")
+        {
+            NiPoint3 out{};
+            REQUIRE_FALSE(StuckRecovery::IsStandable(NiPoint3{500.0f, 500.0f, kStreetZ + 2000.0f}, out));
+        }
+    }
+}
+
 TEST_CASE("StuckRecovery::IsOnNavmesh", "[StuckRecovery][engine]")
 {
     EngineMock engine;

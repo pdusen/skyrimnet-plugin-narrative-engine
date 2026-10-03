@@ -1407,6 +1407,66 @@ TEST_CASE("VisitArrivalPoint walks a city visitor in through the gate", "[VisitA
         }
     }
 
+    SECTION("when the player is standing at the gate")
+    {
+        // The failure this exists to stop: a player 1,168 units inside
+        // Whiterun's gate got a visitor placed 1,151 units away and greeted
+        // them 1.3 seconds after arming. "Outside the gate" is only an
+        // arrival if the gate is far enough off to walk in from.
+        // Facing the gate, so nothing between the player and it survives
+        // and the search falls through to the gate itself -- which is 1,000
+        // units off, under the floor.
+        engine.visibility.pickHitFraction = 1.0f;
+        auto* player = ActorAt(engine, kPlayer, cityCell, At(5000.0f, 0.0f));
+        player->data.angle.z = 3.0f * 3.14159265f / 2.0f;
+        const auto result = FindFor(sender, player);
+
+        SECTION("should keep walking out until the floor is satisfied")
+        {
+            // The gate's own landing is 1,000 units off, under the 2,000
+            // floor, so the arrival moves further out along the same line the
+            // visitor walks in on.
+            REQUIRE(result.Ok());
+            REQUIRE(result.tier == VisitArrivalPoint::Tier::CityGate);
+            REQUIRE(Dist2D(result.point, At(5000.0f, 0.0f)) >= 2000.0f);
+            REQUIRE(result.point.x > kGateArrivalX);
+        }
+
+        SECTION("should stay on the line through the gate")
+        {
+            // Pushed out along the player-to-gate bearing rather than in some
+            // direction of its own, so the visitor still comes from where the
+            // gate is.
+            REQUIRE(result.Ok());
+            REQUIRE(std::fabs(result.point.y) < 1.0f);
+        }
+
+        SECTION("should stand them on ground it checked")
+        {
+            REQUIRE(result.Ok());
+            RE::NiPoint3 grounded{};
+            REQUIRE(StuckRecovery::IsStandable(result.point, grounded));
+        }
+
+        SECTION("should keep the gate itself as escort supply")
+        {
+            // The one position in here the engine vouches for: it is where
+            // anybody walking through the door lands.
+            REQUIRE(result.Ok());
+            REQUIRE_FALSE(result.fallbacks.empty());
+            const auto& last = result.fallbacks.back();
+            REQUIRE(std::fabs(last.x - kGateArrivalX) < 1.0f);
+        }
+
+        SECTION("should still name the far door as what the marker is built from")
+        {
+            // Pushing the point out does not change which worldspace it is
+            // in, so the anchor is still the door on the far side.
+            REQUIRE(result.Ok());
+            REQUIRE(result.placementAnchor == kGate + 1u);
+        }
+    }
+
     SECTION("when the city has a second gate nearer the player")
     {
         CoverEverywhere(engine);
