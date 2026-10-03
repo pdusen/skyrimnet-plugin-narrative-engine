@@ -1580,9 +1580,40 @@ namespace NarrativeEngine::GossipSim
                     continue;
                 }
                 if (!carrier.recovered) {
-                    ScheduleLocked(r.id, resolved, carrier.nextStepGameDay);
+                    // The STAGING queue, by hand. ScheduleLocked pushes into
+                    // State().queue, and AdoptPendingState then overwrites the
+                    // whole of State() with this staging area — so every entry
+                    // scheduled through it from here was thrown away at the top
+                    // of the next tick, before a single one came due.
+                    //
+                    // What that cost: a rumor that survived a save came back
+                    // with infectious carriers and nothing scheduled, so
+                    // ProcessEventLocked was never called for it. No carrier
+                    // could recover, FinishRumorLocked never ran, `live` stayed
+                    // true, SweepAndReap never reaped it, and OnSave wrote it
+                    // out again. Immortal: frozen on the dashboard, ageing,
+                    // never spreading, and holding a slot against
+                    // iGossipMaxLiveRumors for the rest of the playthrough.
+                    pendingQueue.push({carrier.nextStepGameDay, r.id, resolved});
                 }
                 r.carriers.emplace(resolved, carrier);
+            }
+
+            // A live rumor needs at least one infectious carrier to be
+            // schedulable, and a carrier whose FormID no longer resolves is
+            // dropped above. Lose the last one that way — a mod that defined
+            // them is gone — and the rumor is in exactly the immortal state
+            // the staging fix above exists to prevent, by a route that fix
+            // does not cover. Drop it on the floor instead: every participant
+            // already holds their memories in SkyrimNet's database, which is
+            // all a burned-out rumor leaves behind anyway.
+            const bool anyInfectious =
+                std::any_of(r.carriers.begin(), r.carriers.end(), [](const auto& kv) { return !kv.second.recovered; });
+            if (r.live && !anyInfectious) {
+                logger::warn("GossipSim::OnLoad: r{:02} came back with no carrier the load order still resolves; "
+                             "discarding rather than restoring a rumor nothing can advance",
+                             r.id);
+                continue;
             }
 
             RE::FormID resolvedOrigin = 0;

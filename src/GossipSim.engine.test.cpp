@@ -435,6 +435,30 @@ TEST_CASE("GossipSim survives a save and load", "[GossipSim][engine]")
         {
             REQUIRE(GossipSim::LastSimulatedGameDay() == kDayOne);
         }
+
+        SECTION("should bring back something the drain can actually pick up")
+        {
+            // Every infectious carrier needs its own queue entry, and the
+            // restore has to write them into the STAGING queue: adoption
+            // replaces the whole of the live state, so an entry scheduled into
+            // the live queue during a load is discarded before it comes due.
+            REQUIRE(Stats().queuedEvents > 0);
+        }
+
+        SECTION("should let the rumor reach its end after the round trip")
+        {
+            // The property the counts above cannot see. A rumor restored with
+            // infectious carriers and nothing scheduled is not merely stalled
+            // — it is immortal: no carrier is ever processed, so none can
+            // recover, so the last-carrier check that declares the rumor over
+            // never runs, so the reap never reaches it and the next save
+            // writes it out again. It sits on the dashboard ageing forever and
+            // holds a slot against iGossipMaxLiveRumors, and enough reloads
+            // fill the cap and stop the world seeding anything new.
+            AdvanceTo(kDayOne + 400.0);
+            REQUIRE(Stats().liveRumors == 0);
+            REQUIRE(Stats().queuedEvents == 0);
+        }
     }
 
     SECTION("when a load is staged but not yet adopted")
