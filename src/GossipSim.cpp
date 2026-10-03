@@ -1325,6 +1325,7 @@ namespace NarrativeEngine::GossipSim
         out.notCaughtThisSession = st.counters.notCaught;
         out.unavailableThisSession = st.counters.unavailable;
         out.cappedThisSession = st.counters.capped;
+        out.silentThisSession = st.counters.silent;
         out.memoriesWritten = st.counters.memoriesWritten;
         out.memoryWriteFailures = st.counters.memoryWriteFailures;
         out.liveRumors = static_cast<std::size_t>(
@@ -1423,13 +1424,23 @@ namespace NarrativeEngine::GossipSim
             GossipLog::State("  (no rumors)");
         }
 
-        GossipLog::State(std::format("  session so far: {} told, {} knew, {} missed, {} away, {} capped  |  "
-                                     "harvest {} sweep(s), {} sent  |  memories {} written ({} failed)",
+        // All six outcomes and their total, in the order and the words a
+        // BURNOUT line uses. Printed as a sum rather than as a list because
+        // the whole point of the breakdown is that it reconciles: the five
+        // this line shipped with left out `silent`, which was 28% of every
+        // conversation held, so nothing could be checked against anything.
+        const auto conversations = stats.transmissionsThisSession + stats.wastedThisSession + stats.notCaughtThisSession
+                                   + stats.unavailableThisSession + stats.cappedThisSession + stats.silentThisSession;
+        GossipLog::State(std::format("  session so far: conversations={} ({} told, {} knew, {} missed, {} away, "
+                                     "{} capped, {} silent)  |  harvest {} sweep(s), {} sent  |  "
+                                     "memories {} written ({} failed)",
+                                     conversations,
                                      stats.transmissionsThisSession,
                                      stats.wastedThisSession,
                                      stats.notCaughtThisSession,
                                      stats.unavailableThisSession,
                                      stats.cappedThisSession,
+                                     stats.silentThisSession,
                                      harvest.sweeps,
                                      harvest.sentForGeneration,
                                      stats.memoriesWritten,

@@ -132,6 +132,20 @@ namespace
         return GossipSim::GetStats(LiveGossipState());
     }
 
+    // Every conversation the live rumors recorded drawing, counted from the
+    // rumors rather than from the session counters. The point is to have a
+    // second, independent total for the outcome buckets to be checked
+    // against; summing the buckets and comparing them to themselves would
+    // pass with a bucket missing, which is exactly what happened.
+    std::size_t TotalConversations()
+    {
+        std::size_t total = 0;
+        for (const auto& [id, r] : LiveGossipState().rumors) {
+            total += r.conversations;
+        }
+        return total;
+    }
+
     GossipSim::RumorView OnlyRumor()
     {
         const auto rumors = Rumors();
@@ -277,13 +291,37 @@ TEST_CASE("GossipSim spreads a rumor and stops", "[GossipSim][engine]")
         SECTION("should account for every conversation it drew")
         {
             // Transmissions, wasted tellings, people who did not catch it,
-            // people who were unavailable, and conversations past a carrier's
-            // daily budget. A drawn conversation falling into none of those is
-            // a hole in the model, and the tuning is read off these numbers.
+            // people who were unavailable, conversations past a carrier's
+            // daily budget, and draws that found an empty rung. A drawn
+            // conversation falling into none of those is a hole in the model,
+            // and the tuning is read off these numbers.
+            //
+            // All six, because the readouts built on this are sums. `silent`
+            // was left out of the trace's own session line and was 28% of
+            // every conversation held, which made the other five
+            // irreconcilable against a BURNOUT line or against the census.
             const auto stats = Stats();
             const auto accounted = stats.transmissionsThisSession + stats.wastedThisSession + stats.notCaughtThisSession
-                                   + stats.unavailableThisSession + stats.cappedThisSession;
+                                   + stats.unavailableThisSession + stats.cappedThisSession + stats.silentThisSession;
             REQUIRE(accounted > 0);
+        }
+    }
+
+    SECTION("when a single step has run")
+    {
+        // Short on purpose. The session counters outlive a reap and the
+        // per-rumor tallies do not, so this is the window in which the two
+        // can be compared at all -- and comparing them is the only way the
+        // buckets are checked against a number not built from themselves.
+        AdvanceTo(kDayOne + 0.5);
+
+        SECTION("should put every conversation it drew in exactly one bucket")
+        {
+            const auto stats = Stats();
+            const auto accounted = stats.transmissionsThisSession + stats.wastedThisSession + stats.notCaughtThisSession
+                                   + stats.unavailableThisSession + stats.cappedThisSession + stats.silentThisSession;
+            REQUIRE(TotalConversations() > 0);
+            REQUIRE(accounted == TotalConversations());
         }
     }
 
@@ -582,6 +620,21 @@ TEST_CASE("GossipSim summarises the world for the trace", "[GossipSim][engine]")
             REQUIRE(state("carriers="));
             REQUIRE(state("queued="));
             REQUIRE(state("claims="));
+        }
+
+        SECTION("should break the session's conversations down into all six outcomes")
+        {
+            // Named individually rather than counted, because the gap that
+            // shipped was one missing word in a format string: five buckets
+            // under a total that needed six, so the line could not be
+            // reconciled against a BURNOUT line or the session-end census.
+            REQUIRE(state("conversations="));
+            REQUIRE(state("told"));
+            REQUIRE(state("knew"));
+            REQUIRE(state("missed"));
+            REQUIRE(state("away"));
+            REQUIRE(state("capped"));
+            REQUIRE(state("silent"));
         }
 
         SECTION("should name the rumor and where it came from")

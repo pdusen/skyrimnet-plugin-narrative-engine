@@ -187,10 +187,19 @@ namespace NarrativeEngine::GossipSim
         std::size_t transmissionsThisSession = 0;
         std::size_t wastedThisSession = 0;
         // Conversation outcomes. transmissions + wasted + notCaught +
-        // unavailable + capped accounts for every conversation drawn.
+        // unavailable + capped + silent accounts for every conversation
+        // drawn, exactly. Drop any one of them and the rest describe a
+        // total that does not exist.
         std::size_t notCaughtThisSession = 0;
         std::size_t unavailableThisSession = 0;
         std::size_t cappedThisSession = 0;
+        // Draws that landed on a rung with nobody on it. The sixth bucket,
+        // and not a small one -- it was 28% of every conversation held over
+        // the first fifteen days of a validation run. Without it the five
+        // above do NOT sum to the conversations drawn, so a readout built
+        // from them cannot be reconciled against a BURNOUT line, against
+        // the session-end census, or against itself.
+        std::size_t silentThisSession = 0;
         std::size_t memoriesWritten = 0;
         std::size_t memoryWriteFailures = 0;
     };
