@@ -434,6 +434,22 @@ The one question that needed a running game — whether land height is answerabl
 answered by Step 1: it is not, and the bridge interpolates its own heights. See
 [`land-height-outside-the-loaded-grid.md`](../engine-findings/land-height-outside-the-loaded-grid.md).
 
+**More than one bridge per fine network: considered and rejected.** A loaded network is joined to the coarse
+skeleton at a single point, the cheapest pair, and at Riverwood that point was 7,000 units from a player
+standing on road the route then ignored. Adding a junction wherever the skeleton passes near the network
+sounds like the fix and is not, because a player standing on a road is already as close to the skeleton as
+the road is:
+
+```text
+player -> coarse, straight across country :  3,485u x8 = 27,878
+player -> fine -> coarse, over a junction :  92u + 3,409u x8 = 28,010   (+132, loses)
+```
+
+Stepping onto the road costs 92 units and buys nothing, since the junction crosses the same ground the
+connector did. The near end of the route is unchanged and so is the arrival. It would shorten routes for a
+player **off** the road, which is not the case it was proposed for, so it is not worth the graph it adds.
+What that case needs is the straight-line connector taken away from a player who is standing on a road.
+
 ---
 
 ## Settings
