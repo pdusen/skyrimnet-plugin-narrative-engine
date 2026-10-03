@@ -479,6 +479,15 @@ namespace NarrativeEngine::Settings
         // 512 is a rock, a tree, a wall, a building beside the spot.
         // Tunable because the right number is a judgement about how far
         // the player may move before the arrival stops being hidden.
+        // The dedicated visitor-travel trace, at
+        // SKSE/NarrativeEngine_VisitorTravel.log, rotated five deep. On by
+        // default and gated on nothing else: every arrival defect found so
+        // far was a decision that read correctly in summary and wrongly in
+        // detail, and each one cost either a hand simulation or another
+        // play session because the main log named the winner and not what
+        // it beat. See VisitorTravelLog.h.
+        bool visitorTravelLogEnabled = true;
+
         int visitArrivalCoverProximityUnits = 512;
 
         int visitArrivalCoverRadiusUnits = 64;

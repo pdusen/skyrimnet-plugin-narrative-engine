@@ -16,6 +16,7 @@
 #include <RE/T/TES.h>
 #include <RE/T/TESObjectCELL.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -280,13 +281,41 @@ namespace NarrativeEngine::CameraVisibility
         return reachedCount > 0;
     }
 
+    const char* CoverFailureName(CoverFailure failure)
+    {
+        switch (failure) {
+        case CoverFailure::kNone:
+            return "covered";
+        case CoverFailure::kNoCamera:
+            return "no camera to measure from";
+        case CoverFailure::kTooClose:
+            return "too close to raycast";
+        case CoverFailure::kOverhead:
+            return "camera overhead, no silhouette";
+        case CoverFailure::kNoWorld:
+            return "no world to ask";
+        case CoverFailure::kRayReached:
+            return "a ray reached the silhouette";
+        case CoverFailure::kBlockerTooFar:
+            return "the blocker is too far from the spot";
+        }
+        return "unknown";
+    }
+
     bool IsPositionBehindCover(const RE::NiPoint3& worldPos,
                                float bodyHeightUnits,
                                float coverRadiusUnits,
-                               float coverProximityUnits)
+                               float coverProximityUnits,
+                               CoverProbe* detail)
     {
+        CoverProbe local;
+        CoverProbe& probe = detail ? *detail : local;
+        probe = CoverProbe{};
+        probe.raysPlanned = 9;
+
         RE::NiPoint3 cameraPos;
         if (!GetCameraWorldPos(cameraPos)) {
+            probe.failure = CoverFailure::kNoCamera;
             return false; // no camera, no way to prove cover
         }
 
@@ -295,6 +324,7 @@ namespace NarrativeEngine::CameraVisibility
         const float dz = worldPos.z - cameraPos.z;
         const float distSq = dx * dx + dy * dy + dz * dz;
         if (distSq < kMinDistanceFloor * kMinDistanceFloor) {
+            probe.failure = CoverFailure::kTooClose;
             // Too close to raycast meaningfully — a ray this short can
             // start inside nearby geometry and report nonsense. Nothing
             // this close counts as covered.
@@ -307,6 +337,7 @@ namespace NarrativeEngine::CameraVisibility
         // as cover for a body several times its width.
         const float horizLen = std::sqrt(dx * dx + dy * dy);
         if (horizLen < 1e-3f) {
+            probe.failure = CoverFailure::kOverhead;
             return false; // directly overhead; no meaningful silhouette
         }
         const float rightX = -dy / horizLen;
@@ -322,13 +353,22 @@ namespace NarrativeEngine::CameraVisibility
 
         for (const float hf : kHeightFractions) {
             for (const float lat : lateralOffsets) {
-                const RE::NiPoint3 probe{
+                const RE::NiPoint3 samplePos{
                     worldPos.x + rightX * lat,
                     worldPos.y + rightY * lat,
                     worldPos.z + h * hf,
                 };
-                const float fraction = RaycastHitFraction(cameraPos, probe);
-                if (fraction < 0.0f || fraction >= kNoHitFraction) {
+                ++probe.raysTested;
+                const float fraction = RaycastHitFraction(cameraPos, samplePos);
+                if (fraction < 0.0f) {
+                    probe.failure = CoverFailure::kNoWorld;
+                    return false;
+                }
+                if (fraction >= kNoHitFraction) {
+                    probe.failure = CoverFailure::kRayReached;
+                    probe.failedHeightFraction = hf;
+                    probe.failedLateralUnits = lat;
+                    probe.failedHitFraction = fraction;
                     return false; // nothing stopped this one
                 }
                 if (coverProximityUnits < 0.0f) {
@@ -352,13 +392,20 @@ namespace NarrativeEngine::CameraVisibility
                 // candidates under 1,000 units passed this gate, 74.9% in the
                 // 2,000s, and 100% of 101 at nine thousand. That rise is the
                 // ray getting longer, not the terrain getting kinder.
-                const float px = probe.x - cameraPos.x;
-                const float py = probe.y - cameraPos.y;
-                const float pz = probe.z - cameraPos.z;
+                const float px = samplePos.x - cameraPos.x;
+                const float py = samplePos.y - cameraPos.y;
+                const float pz = samplePos.z - cameraPos.z;
                 const float rayLength = std::sqrt(px * px + py * py + pz * pz);
-                if ((1.0f - fraction) * rayLength > coverProximityUnits) {
+                const float shortfall = (1.0f - fraction) * rayLength;
+                if (shortfall > coverProximityUnits) {
+                    probe.failure = CoverFailure::kBlockerTooFar;
+                    probe.failedHeightFraction = hf;
+                    probe.failedLateralUnits = lat;
+                    probe.failedHitFraction = fraction;
+                    probe.failedShortfallUnits = shortfall;
                     return false;
                 }
+                probe.worstShortfallUnits = std::max(probe.worstShortfallUnits, shortfall);
             }
         }
         return true;

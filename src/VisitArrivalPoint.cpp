@@ -9,6 +9,7 @@
 #include <Settings.h>
 #include <StuckRecovery.h>
 #include <TravelGraph.h>
+#include <VisitorTravelLog.h>
 
 #include <RE/B/BGSLocation.h>
 #include <RE/P/PlayerCharacter.h>
@@ -238,11 +239,38 @@ namespace NarrativeEngine::VisitArrivalPoint
 
         bool BehindCover(const RE::NiPoint3& pos, float coverRadius)
         {
-            return CameraVisibility::IsPositionBehindCover(
-                pos,
-                kCoverProbeHeightUnits,
-                coverRadius,
-                static_cast<float>(std::max(0, Settings::Get().visitArrivalCoverProximityUnits)));
+            const float proximity = static_cast<float>(std::max(0, Settings::Get().visitArrivalCoverProximityUnits));
+            CameraVisibility::CoverProbe probe;
+            const bool covered =
+                CameraVisibility::IsPositionBehindCover(pos, kCoverProbeHeightUnits, coverRadius, proximity, &probe);
+            if (VisitorTravelLog::IsActive()) {
+                if (covered) {
+                    VisitorTravelLog::Write("COVER",
+                                            "  ({:.0f},{:.0f}) covered: all {} ray(s) stopped, worst blocker "
+                                            "{:.0f}u short of the silhouette (limit {:.0f}u)",
+                                            pos.x,
+                                            pos.y,
+                                            probe.raysTested,
+                                            probe.worstShortfallUnits,
+                                            proximity);
+                } else {
+                    VisitorTravelLog::Write(
+                        "COVER",
+                        "  ({:.0f},{:.0f}) exposed after {} of {} ray(s): {} — height {:.2f} of the body, "
+                        "lateral {:+.0f}u, hit at {:.3f} ({:.0f}u short, limit {:.0f}u)",
+                        pos.x,
+                        pos.y,
+                        probe.raysTested,
+                        probe.raysPlanned,
+                        CameraVisibility::CoverFailureName(probe.failure),
+                        probe.failedHeightFraction,
+                        probe.failedLateralUnits,
+                        probe.failedHitFraction,
+                        probe.failedShortfallUnits,
+                        proximity);
+                }
+            }
+            return covered;
         }
 
         // ---- The chain walk ----------------------------------------
@@ -550,9 +578,24 @@ namespace NarrativeEngine::VisitArrivalPoint
                 tally.Saw(candidate.distance);
                 if (candidate.distance < minDist) {
                     ++tally.tooNear;
+                    VisitorTravelLog::Write("GATE",
+                                            "  ({:.0f},{:.0f}) {:<9} hops={} rejected: {:.0f}u is inside the "
+                                            "{:.0f}u floor",
+                                            candidate.standing.x,
+                                            candidate.standing.y,
+                                            ApproachChain::PointClassName(candidate.cls),
+                                            candidate.hopCount,
+                                            candidate.distance,
+                                            minDist);
                     continue;
                 }
                 if (!candidate.insideGrid && !allowOutsideGrid) {
+                    VisitorTravelLog::Write("GATE",
+                                            "  ({:.0f},{:.0f}) {:<9} rejected: outside the loaded grid and "
+                                            "bVisitArrivalAllowCoarseBearing is off",
+                                            candidate.standing.x,
+                                            candidate.standing.y,
+                                            ApproachChain::PointClassName(candidate.cls));
                     // The stricter reading of "visitors arrive from
                     // somewhere real": confine every arrival to ground
                     // the engine has attached, and decline rather than
@@ -585,6 +628,15 @@ namespace NarrativeEngine::VisitArrivalPoint
             std::vector<Candidate> graded;
             for (auto& candidate : eligible) {
                 const auto grade = GradeCandidate(candidate, anchorPos, playerAngleZ, coverRadius, tally);
+                VisitorTravelLog::Write("GRADE",
+                                        "  ({:.0f},{:.0f}) {:<9} hops={} {:.0f}u out, in_grid={} -> {}",
+                                        candidate.standing.x,
+                                        candidate.standing.y,
+                                        ApproachChain::PointClassName(candidate.cls),
+                                        candidate.hopCount,
+                                        candidate.distance,
+                                        candidate.insideGrid ? 1 : 0,
+                                        AcceptanceName(grade));
                 if (grade == Acceptance::Rejected) {
                     continue;
                 }
@@ -604,6 +656,11 @@ namespace NarrativeEngine::VisitArrivalPoint
             // already stuck, every grade here is one the player is not
             // watching, and starving the escort to keep the ladder tidy
             // helps nobody.
+            VisitorTravelLog::Write("PICK",
+                                    "best grade reached: {} — the whole of it is considered before anything "
+                                    "worse, nearest first",
+                                    AcceptanceName(best));
+
             std::vector<Candidate> kept;
             for (const bool winnersOnly : {true, false}) {
                 for (const auto& candidate : graded) {
@@ -1108,6 +1165,7 @@ namespace NarrativeEngine::VisitArrivalPoint
     {
         Result result;
         if (!sender || !player) {
+            VisitorTravelLog::Abandoned(0, "no sender or no player");
             logger::warn("VisitArrivalPoint: no sender or no player");
             return result;
         }
@@ -1117,6 +1175,7 @@ namespace NarrativeEngine::VisitArrivalPoint
         const float maxDist = std::max(minDist + 1.0f, static_cast<float>(cfg.visitMarkerMaxDistanceUnits));
         const float coverRadius = static_cast<float>(std::max(0, cfg.visitArrivalCoverRadiusUnits));
         const RE::FormID senderId = sender->GetFormID();
+        VisitorTravelLog::Begin(senderId, sender->GetDisplayFullName() ? sender->GetDisplayFullName() : "");
 
         // Engine state: both ends of the route, resolved through load
         // doors where either party is indoors.
@@ -1157,6 +1216,10 @@ namespace NarrativeEngine::VisitArrivalPoint
         // somebody stands on by construction. The visitor waits there and
         // the player finds them on the way out.
         if (ends.player.exteriorDoor != 0) {
+            VisitorTravelLog::Write("TIER",
+                                    "doorstep: the player is indoors with a way out, so nothing is searched — "
+                                    "the visitor waits where the engine puts anybody leaving by door 0x{:08X}",
+                                    ends.player.exteriorDoor);
             result.tier = Tier::Doorstep;
             result.point = ends.player.position;
             result.placementAnchor = ends.player.exteriorDoor;
@@ -1261,6 +1324,8 @@ namespace NarrativeEngine::VisitArrivalPoint
                         cityAnchorPos, ends.playerAngleZ, gatePos, minDist, maxDist, coverRadius, cityTally);
                 });
                 if (!inside.empty()) {
+                    VisitorTravelLog::Write(
+                        "TIER", "city-approach: {} of the arc's samples survived inside the walls", inside.size());
                     result.tier = Tier::CityApproach;
                     result.point = inside.front();
                     result.fallbacks.assign(inside.begin() + 1, inside.end());
@@ -1287,6 +1352,10 @@ namespace NarrativeEngine::VisitArrivalPoint
                 // see the whole way to the gate. So put the visitor on the
                 // far side of it and let them walk in, which is what the
                 // player would expect to see anyway.
+                VisitorTravelLog::Write("TIER",
+                                        "city-gate: nothing inside the walls survived, so the visitor is put "
+                                        "beyond the gate | {}",
+                                        cityTally.Describe());
                 result.tier = Tier::CityGate;
                 result.point = gateway.arrival;
                 result.point.z += kGroundClearanceUnits;
@@ -1390,10 +1459,58 @@ namespace NarrativeEngine::VisitArrivalPoint
         // Outdoors the two are the same value, so nothing changes there.
         const RE::NiPoint3& anchorPos = ends.player.position;
 
+        VisitorTravelLog::Write("ENDS",
+                                "player ws=0x{:08X} pos=({:.0f},{:.0f},{:.0f}) cell=({},{}) indoors={} "
+                                "via={}{}",
+                                ends.player.worldSpace,
+                                ends.player.position.x,
+                                ends.player.position.y,
+                                ends.player.position.z,
+                                static_cast<int>(std::floor(ends.player.position.x / 4096.0f)),
+                                static_cast<int>(std::floor(ends.player.position.y / 4096.0f)),
+                                ends.player.viaLoadDoor ? 1 : 0,
+                                OriginSourceName(ends.playerSource),
+                                ends.player.exteriorDoor != 0 ? std::format(" door=0x{:08X}", ends.player.exteriorDoor)
+                                                              : std::string{});
+        VisitorTravelLog::Write("ENDS",
+                                "visitor ws=0x{:08X} pos=({:.0f},{:.0f},{:.0f}) cell=({},{}) via={} — "
+                                "anchor for the search is ({:.0f},{:.0f})",
+                                ends.sender.worldSpace,
+                                ends.sender.position.x,
+                                ends.sender.position.y,
+                                ends.sender.position.z,
+                                static_cast<int>(std::floor(ends.sender.position.x / 4096.0f)),
+                                static_cast<int>(std::floor(ends.sender.position.y / 4096.0f)),
+                                OriginSourceName(ends.senderSource),
+                                anchorPos.x,
+                                anchorPos.y);
+
         // Pure queries over both graphs — deliberately NOT inside a
         // main-thread hop. Only the grid read is an engine call.
         const auto loadedGrid =
             MainThread::Run(pt, [](const MainThread::Token& mt) { return ApproachChain::ReadLoadedGrid(mt); });
+        VisitorTravelLog::Write("TIER",
+                                "chain: floor {:.0f}u, cover radius {:.0f}u, hop radius {} within {}u, "
+                                "outside-grid points {}",
+                                minDist,
+                                coverRadius,
+                                std::max(0, cfg.visitChainHopRadius),
+                                std::max(0, cfg.visitChainHopReachUnits),
+                                cfg.visitArrivalAllowCoarseBearing ? "allowed" : "refused");
+
+        if (loadedGrid.valid) {
+            VisitorTravelLog::Write("GRID",
+                                    "attached ws=0x{:08X} cells x[{}..{}] y[{}..{}] — only points inside this "
+                                    "can be checked for ground or cover",
+                                    loadedGrid.worldSpace,
+                                    loadedGrid.minCellX,
+                                    loadedGrid.maxCellX,
+                                    loadedGrid.minCellY,
+                                    loadedGrid.maxCellY);
+        } else {
+            VisitorTravelLog::Write("GRID", "no attached exterior grid — the player is indoors");
+        }
+
         const auto chain = ApproachChain::Build(loadedGrid, ends.player.worldSpace, ends.sender.position, anchorPos);
         if (!chain.valid) {
             // The visitor-to-player line is meant to make this
@@ -1425,6 +1542,8 @@ namespace NarrativeEngine::VisitArrivalPoint
         const Tier tier = kept.empty() ? Tier::None : Tier::Chain;
 
         if (tier == Tier::None) {
+            VisitorTravelLog::Write("PICK", "nothing survived | {}", tally.Describe());
+            VisitorTravelLog::Abandoned(senderId, "no acceptable point on the chain");
             logger::info("VisitArrivalPoint: sender=0x{:08X} tier=none — ws=0x{:08X} "
                          "home=({:.0f},{:.0f}) via={} player=({:.0f},{:.0f},{:.0f}){} min={:.0f} "
                          "cover_r={:.0f} chain={} points cost={:.0f} candidates={} outside_grid_allowed={} "
@@ -1470,6 +1589,19 @@ namespace NarrativeEngine::VisitArrivalPoint
         const float homeBearing =
             ToDegrees(std::atan2(ends.sender.position.y - anchorPos.y, ends.sender.position.x - anchorPos.x));
         const float pointBearing = ToDegrees(std::atan2(result.point.y - anchorPos.y, result.point.x - anchorPos.x));
+
+        VisitorTravelLog::Write("PICK",
+                                "winner ({:.0f},{:.0f},{:.0f}) {} {:.0f}u out, in_grid={} hops={}, with {} "
+                                "fallback(s) behind it",
+                                result.point.x,
+                                result.point.y,
+                                result.point.z,
+                                ApproachChain::PointClassName(result.pointClass),
+                                Dist2D(result.point, anchorPos),
+                                kept.front().insideGrid ? 1 : 0,
+                                kept.front().hopCount,
+                                result.fallbacks.size());
+        VisitorTravelLog::End(senderId, TierName(tier), ApproachChain::PointClassName(result.pointClass));
 
         logger::info("VisitArrivalPoint: sender=0x{:08X} tier={} class={} — ws=0x{:08X} home=({:.0f},{:.0f}) "
                      "via={} player=({:.0f},{:.0f},{:.0f}){} point=({:.0f},{:.0f},{:.0f}) dist={:.0f}u "

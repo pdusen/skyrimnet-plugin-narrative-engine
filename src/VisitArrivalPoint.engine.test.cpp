@@ -1,4 +1,5 @@
 #include <VisitArrivalPoint.h>
+#include <VisitorTravelLog.h>
 
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
@@ -12,6 +13,9 @@
 
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <string>
 #include <vector>
 
 // Tests for where a visitor appears.
@@ -664,6 +668,95 @@ TEST_CASE("VisitArrivalPoint prefers cover to open ground", "[VisitArrivalPoint]
             REQUIRE(std::fabs(Dist2D(exposed.point, At(0.0f, 0.0f)) - 5000.0f) < 1.0f);
         }
     }
+}
+
+TEST_CASE("VisitArrivalPoint traces the whole search", "[VisitArrivalPoint][engine]")
+{
+    // The travel trace exists so an arrival can be diagnosed from a file
+    // instead of another play session, which only holds if the search
+    // actually writes one. Every defect found in this subsystem so far was a
+    // decision that read correctly in summary — the summary named the winner
+    // and never what it beat.
+    //
+    // So this asserts the transcript's shape rather than its wording: the
+    // stages a reader needs, in the order the decision happens, with the
+    // losers in it.
+    const std::filesystem::path logDir{"Data/SKSE/Plugins/NarrativeEngineTestLogs"};
+    const auto tracePath = logDir / "NarrativeEngine_VisitorTravel.log";
+    std::error_code ec;
+    std::filesystem::remove(tracePath, ec);
+
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    auto* space = engine.AddWorldSpace(kWorld);
+    auto* cell = engine.AddExteriorCell(space, 0, 0, nullptr);
+    LayRoad(engine, cell);
+    AttachGridAround(engine, space, cell);
+    PollFineRoads();
+    LayGround(engine);
+    CoverEverywhere(engine);
+
+    NarrativeEngine::VisitorTravelLog::OnSessionStart();
+    auto* player = ActorAt(engine, kPlayer, cell, At(0.0f, 0.0f));
+    auto* sender = ActorAt(engine, kSender, cell, At(kRoadEnd, 0.0f));
+    const auto result = FindFor(sender, player);
+    NarrativeEngine::VisitorTravelLog::OnSessionEnd();
+    REQUIRE(result.Ok());
+
+    std::vector<std::string> lines;
+    {
+        std::ifstream in{tracePath};
+        std::string line;
+        while (std::getline(in, line)) {
+            lines.push_back(line);
+        }
+    }
+    const auto has = [&lines](std::string_view needle) {
+        return std::any_of(lines.begin(), lines.end(), [needle](const std::string& line) {
+            return line.find(needle) != std::string::npos;
+        });
+    };
+
+    SECTION("should record where both ends resolved and what could be checked")
+    {
+        REQUIRE(has("BEGIN"));
+        REQUIRE(has("ENDS"));
+        REQUIRE(has("player ws="));
+        REQUIRE(has("visitor ws="));
+        REQUIRE(has("GRID"));
+        REQUIRE(has("attached ws="));
+    }
+
+    SECTION("should record how the graph was built and searched")
+    {
+        REQUIRE(has("GRAPH"));
+        REQUIRE(has("coarse skeleton:"));
+        REQUIRE(has("fine road:"));
+        REQUIRE(has("endpoints:"));
+        REQUIRE(has("SEARCH"));
+        REQUIRE(has("route found:"));
+        REQUIRE(has("CHAIN"));
+    }
+
+    SECTION("should record what was refused, not only what won")
+    {
+        // The whole point. A transcript with no GATE or GRADE lines is a
+        // summary with extra steps.
+        REQUIRE(has("GATE"));
+        REQUIRE(has("inside the"));
+        REQUIRE(has("GRADE"));
+        REQUIRE(has("COVER"));
+    }
+
+    SECTION("should close with the verdict")
+    {
+        REQUIRE(has("PICK"));
+        REQUIRE(has("winner"));
+        REQUIRE(has("END"));
+        REQUIRE(has("tier=chain"));
+    }
+
+    // TEMP-NO-REMOVE
 }
 
 TEST_CASE("VisitArrivalPoint refuses cover the raycast cannot support", "[VisitArrivalPoint][engine]")

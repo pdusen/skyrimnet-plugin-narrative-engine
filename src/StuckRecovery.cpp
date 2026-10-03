@@ -1,6 +1,7 @@
 #include <StuckRecovery.h>
 
 #include <logger.h>
+#include <VisitorTravelLog.h>
 
 #include <RE/B/BSNavmesh.h>
 #include <RE/N/NavMesh.h>
@@ -117,6 +118,13 @@ namespace NarrativeEngine::StuckRecovery
             }
             return false;
         }
+    } // namespace
+
+    namespace
+    {
+        // The visit escort's label. StuckRecovery is shared with the ambush
+        // beat, and only one of the two has a travel trace to write to.
+        constexpr const char* kVisitLabel = "visit";
     } // namespace
 
     const char* ActionName(Action action)
@@ -569,6 +577,13 @@ namespace NarrativeEngine::StuckRecovery
 
             if (why) {
                 track.fallbacksRetired = true;
+                if (m_label == kVisitLabel) {
+                    VisitorTravelLog::Write("ESCORT",
+                                            "'{}' retiring {} unused fallback(s) — {}; closing in instead",
+                                            actor->GetName(),
+                                            m_fallbacks.size() - std::min(m_nextFallback, m_fallbacks.size()),
+                                            why);
+                }
                 logger::info("StuckRecovery[{}]: '{}' retiring {} unused fallback(s) — {}; closing in instead",
                              m_label,
                              actor->GetName(),
@@ -598,6 +613,16 @@ namespace NarrativeEngine::StuckRecovery
                 track.gapBeforeWarp = goalDist;
                 outcome.action = Action::WarpedToFallback;
                 outcome.movedTo = hop;
+                if (m_label == kVisitLabel) {
+                    VisitorTravelLog::Write("ESCORT",
+                                            "'{}' moved only {:.0f}u since the last check -> hopping to the road "
+                                            "node at ({:.0f},{:.0f},{:.0f})",
+                                            actor->GetName(),
+                                            moved,
+                                            hop.x,
+                                            hop.y,
+                                            hop.z);
+                }
                 logger::info("StuckRecovery[{}]: '{}' moved only {:.0f}u at ({:.0f},{:.0f},{:.0f}) -> road "
                              "node at ({:.0f},{:.0f},{:.0f}), {:.0f}u away, {:+.0f}u from the goal",
                              m_label,
@@ -623,6 +648,14 @@ namespace NarrativeEngine::StuckRecovery
             track.gapBeforeWarp = goalDist;
             outcome.action = Action::WarpedToFallback;
             outcome.movedTo = dest;
+            if (m_label == kVisitLabel) {
+                VisitorTravelLog::Write("ESCORT",
+                                        "'{}' moved only {:.0f}u since the last check -> fallback {} of {}",
+                                        actor->GetName(),
+                                        moved,
+                                        m_nextFallback,
+                                        m_fallbacks.size());
+            }
             logger::info("StuckRecovery[{}]: '{}' moved only {:.0f}u at ({:.0f},{:.0f},{:.0f}) -> fallback "
                          "{} of {} at ({:.0f},{:.0f},{:.0f})",
                          m_label,

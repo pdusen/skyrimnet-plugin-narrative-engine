@@ -1378,6 +1378,62 @@ look, and a second section keeps the old geometry to assert the decline.
 
 ---
 
+### Step 16 — A dedicated trace of the whole journey
+
+- [X] Complete
+
+**[CLAUDE]**
+
+**Goal:** Make an arrival diagnosable from a file, so the next fault costs a read rather than a hand
+simulation or another play session.
+
+**Files:** `include/VisitorTravelLog.h`, `src/VisitorTravelLog.cpp`,
+`src/VisitorTravelLog.engine.test.cpp`, `src/ApproachChain.cpp`, `src/VisitArrivalPoint.cpp`,
+`src/NPCVisitBeat.cpp`, `src/StuckRecovery.cpp`, `include/CameraVisibility.h`, `src/CameraVisibility.cpp`,
+`include/Settings.h`, `src/Settings.cpp`, `statics/SKSE/Plugins/NarrativeEngine.ini`, `src/Plugin.cpp`,
+`CMakeLists.txt`.
+
+**Sub-tasks:**
+
+1. `VisitorTravelLog`, on the GossipLog pattern: its own stream to
+   `SKSE/NarrativeEngine_VisitorTravel.log`, rotated five deep, session-scoped, mutex-guarded, flushed per
+   line. `bVisitorTravelLogEnabled`, **on by default** and gated on nothing else.
+2. One tagged line per step, in the order the decision happens: `BEGIN ENDS GRID TIER GRAPH SEARCH CHAIN
+   GATE COVER GRADE PICK WARP ESCORT END`. The tag column is padded so a reader can skim one tag down the
+   file.
+3. Instrument the whole path — both ends and the rung that answered them, the attached grid, every node set
+   and attachment and bridge and laid line with its length and difficulty, the route and its cost, every
+   chain point, every rejection with the number that failed it, every grade, the winner and what it beat,
+   the snapshot and marker and warp, and every escort hop and retirement.
+4. `CameraVisibility::CoverProbe` carries why a cover probe answered as it did — which ray, at what height
+   and lateral offset, the hit fraction and the shortfall against the limit. Defaulted to `nullptr` so the
+   ambush caller is untouched.
+5. Only the visit escort mirrors into the trace; `StuckRecovery` is shared with the ambush beat.
+6. Tests: the module's own file lifecycle, enable flag, rotation and post-close writes; plus
+   "VisitArrivalPoint traces the whole search", which drives a real search and asserts the transcript's
+   stages are present — including `GATE` and `GRADE`, because a transcript without the rejections is a
+   summary with extra steps.
+
+**Specifics:**
+
+- **What decided the content.** Every defect in this subsystem so far read correctly in summary and wrongly
+  in detail: a route round the right side of a mountain whose arrival came off an off-route neighbour; a
+  cover claim resting on a hill three thousand units away; a fine network discarded for being on the wrong
+  side of the nearest node; a visitor at the back door of an inn. In each case the summary line named the
+  winner and not the loser, and the diagnosis cost a reproduction. **This file records the losers.**
+
+- **Free-form lines rather than forty typed emitters.** `Write(tag, fmt, args...)` checks `IsActive()`
+  before formatting, so a disabled log costs one atomic read. GossipLog already keeps `Note` for the same
+  reason; a typed emitter per event would be forty functions whose only job is to format one line.
+
+**Verify [CLAUDE]:** a real search writes a transcript whose stages a reader can follow end to end, with the
+refused candidates in it.
+
+**Verify [USER]:** after the next run, `NarrativeEngine_VisitorTravel.log` explains an arrival without
+needing the game.
+
+---
+
 ### Step 13 — Re-run Step 6's sites and settle the numbers
 
 - [ ] Complete
@@ -1424,7 +1480,7 @@ visitor to an indoor player waits at the door the player walked in by.
 
 ## Done condition
 
-All fifteen steps checked, and:
+All sixteen steps checked, and:
 
 1. `pwsh -File build.ps1 build`, `pwsh -File build.ps1 test` and `pwsh -File format.ps1` are all clean.
 2. `grep -rn "BearingHome\|CorridorTarget" src include` is empty, and `Tier` holds only `None`,

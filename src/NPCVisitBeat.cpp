@@ -20,6 +20,7 @@
 #include <VisitArrivalPoint.h>
 #include <VisitComposer.h>
 #include <VisitConclusionPoll.h>
+#include <VisitorTravelLog.h>
 #include <VisitState.h>
 
 #include <nlohmann/json.hpp>
@@ -1137,6 +1138,14 @@ namespace NarrativeEngine
                     }
                 }
                 VisitState::SetSnapshot(snap);
+                VisitorTravelLog::Write("WARP",
+                                        "snapshot: the sender stands at ({:.0f},{:.0f},{:.0f}) in cell 0x{:08X}, "
+                                        "to be returned there afterwards (anchor 0x{:08X})",
+                                        snap.returnPosition.x,
+                                        snap.returnPosition.y,
+                                        snap.returnPosition.z,
+                                        snap.returnCellFormID,
+                                        snap.returnAnchorFormID);
                 logger::info("NPCVisitBeat: snapshotted sender at ({:.1f},{:.1f},{:.1f}) in cell "
                              "0x{:08X}, anchor=0x{:08X}",
                              snap.returnPosition.x,
@@ -1215,6 +1224,11 @@ namespace NarrativeEngine
                         return false;
                     }
                     placeFrom = anchor;
+                    VisitorTravelLog::Write("WARP",
+                                            "the marker is placed from 0x{:08X} rather than the player, because "
+                                            "the arrival is in another worldspace — PlaceObjectAtMe builds its "
+                                            "reference in the caller's cell",
+                                            anchorId);
                     logger::info("NPCVisitBeat: placing the arrival marker from 0x{:08X}, not the player — "
                                  "the arrival is in another worldspace",
                                  anchorId);
@@ -1236,6 +1250,14 @@ namespace NarrativeEngine
                 g_arrivalMarkerFormID.store(marker->GetFormID(), std::memory_order_release);
 
                 sender->MoveTo(marker.get());
+                VisitorTravelLog::Write("WARP",
+                                        "moved sender 0x{:08X} onto marker 0x{:08X} at ({:.0f},{:.0f},{:.0f}), "
+                                        "facing the player",
+                                        snap.senderFormID,
+                                        marker->GetFormID(),
+                                        point.x,
+                                        point.y,
+                                        point.z);
                 logger::info("NPCVisitBeat: warped sender 0x{:08X} to ({:.0f},{:.0f},{:.0f}) via marker "
                              "0x{:08X}",
                              snap.senderFormID,
@@ -1401,6 +1423,13 @@ namespace NarrativeEngine
                 ladder.maxRetreatUnits = static_cast<float>(std::max(0, escortCfg.visitChainUnstuckMaxRetreatUnits));
                 g_escort.BeginLadder(std::move(ladder));
                 g_escort.Track(senderActor, placedAt);
+                VisitorTravelLog::Write("ESCORT",
+                                        "armed: {} chain fallback(s) and {} road node(s) to hop between, "
+                                        "min hop {}u, max retreat {}u",
+                                        ladder.chainOutward.size(),
+                                        ladder.fine.nodes.size(),
+                                        static_cast<int>(ladder.minHopUnits),
+                                        static_cast<int>(ladder.maxRetreatUnits));
                 logger::info("NPCVisitBeat: armed sender 0x{:08X} '{}' at ({:.0f},{:.0f},{:.0f}); escort has "
                              "{} fallback(s)",
                              senderActor->GetFormID(),

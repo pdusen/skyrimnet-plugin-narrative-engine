@@ -35,6 +35,7 @@
 #include <Tick.h>
 #include <TravelEventLog.h>
 #include <TravelGraph.h>
+#include <VisitorTravelLog.h>
 #include <VisitState.h>
 #include <WeatherEventLog.h>
 
@@ -206,6 +207,7 @@ namespace NarrativeEngine
                 // GossipLog only registers here; the trace file itself
                 // is opened per save-game session in OnSessionStart.
                 GossipLog::Initialize();
+                VisitorTravelLog::Initialize();
                 GossipClaims::Initialize();
                 GossipSim::Initialize();
                 GossipContent::Initialize();
@@ -292,6 +294,7 @@ namespace NarrativeEngine
                 // game-time sample, before Tick::Start so the first Poll
                 // has a file to write to.
                 GossipLog::OnSessionStart();
+                VisitorTravelLog::OnSessionStart();
                 GossipSim::OnSessionStart();
                 GossipTick::OnSessionStart();
                 Tick::Start();
@@ -320,6 +323,7 @@ namespace NarrativeEngine
                 // file.
                 GossipSim::OnSessionEnd();
                 GossipLog::OnSessionEnd();
+                VisitorTravelLog::OnSessionEnd();
                 DecisionLog::Clear();
                 CourierUtils::OnRevert();
                 CombatEventLog::OnRevert();
@@ -357,6 +361,7 @@ namespace NarrativeEngine
                 // first poll after loading a day-200 save would read as
                 // a 200-day jump.
                 GossipLog::OnSessionStart();
+                VisitorTravelLog::OnSessionStart();
                 GossipSim::OnSessionStart();
                 GossipTick::OnSessionStart();
                 Tick::Start();

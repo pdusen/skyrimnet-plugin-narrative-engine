@@ -3,6 +3,7 @@
 #include <logger.h>
 #include <Settings.h>
 #include <TravelGraph.h>
+#include <VisitorTravelLog.h>
 
 #include <algorithm>
 #include <array>
@@ -11,6 +12,7 @@
 #include <functional>
 #include <limits>
 #include <queue>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -122,9 +124,20 @@ namespace NarrativeEngine::ApproachChain
                 // Closer together than one step: the segment is one edge
                 // and there is no room for a point inside it.
                 graph.Link(from, to);
+                VisitorTravelLog::Write("GRAPH",
+                                        "  lay {} ({:.0f},{:.0f}) -> ({:.0f},{:.0f}) {:.0f}u difficulty {} "
+                                        "-> one edge, under a spacing",
+                                        PointClassName(cls),
+                                        start.x,
+                                        start.y,
+                                        end.x,
+                                        end.y,
+                                        length,
+                                        difficulty);
                 return;
             }
 
+            std::size_t laid = 0;
             std::size_t previous = from;
             for (float travelled = spacing; travelled < length; travelled += spacing) {
                 const float t = travelled / length;
@@ -139,8 +152,21 @@ namespace NarrativeEngine::ApproachChain
                 const auto added = graph.Add(pos, cls, difficulty);
                 graph.Link(previous, added);
                 previous = added;
+                ++laid;
             }
             graph.Link(previous, to);
+            VisitorTravelLog::Write("GRAPH",
+                                    "  lay {} ({:.0f},{:.0f}) -> ({:.0f},{:.0f}) {:.0f}u difficulty {} "
+                                    "-> {} point(s) at {:.0f}u spacing",
+                                    PointClassName(cls),
+                                    start.x,
+                                    start.y,
+                                    end.x,
+                                    end.y,
+                                    length,
+                                    difficulty,
+                                    laid,
+                                    spacing);
         }
 
         // Index of the graph node nearest `target` among `candidates`.
@@ -440,6 +466,13 @@ namespace NarrativeEngine::ApproachChain
                 }
             }
             out.coarseCount = coarseNodes.size();
+            VisitorTravelLog::Write("GRAPH",
+                                    "coarse skeleton: {} node(s) in ws=0x{:08X} of {} known, "
+                                    "detail laid within {:.0f}u of the player",
+                                    coarseNodes.size(),
+                                    worldSpace,
+                                    TravelGraph::NodeCount(),
+                                    detailRadius);
 
             // ---- difficulty 2: every loaded fine network ------------
             const auto fine = FineRoads::Snapshot();
@@ -472,11 +505,39 @@ namespace NarrativeEngine::ApproachChain
                         }
                     }
                 }
+                if (VisitorTravelLog::IsActive()) {
+                    std::string sizes;
+                    for (std::size_t n = 0; n < fineByNetwork.size(); ++n) {
+                        sizes += (n == 0 ? "" : ", ") + std::to_string(fineByNetwork[n].size());
+                    }
+                    VisitorTravelLog::Write("GRAPH",
+                                            "fine road: {} node(s) in {} network(s) [{}] — every one of them in "
+                                            "the graph, each bridged on its own",
+                                            fine.nodes.size(),
+                                            components.count,
+                                            sizes);
+                }
+            } else {
+                VisitorTravelLog::Write("GRAPH",
+                                        "fine road: none usable (nodes={} ws=0x{:08X} wanted 0x{:08X})",
+                                        fine.nodes.size(),
+                                        fine.worldSpace,
+                                        worldSpace);
             }
 
             // ---- difficulty 3: the endpoints and their connectors ---
             out.playerNode = graph.Add(playerPos, PointClass::Connector, connectorDifficulty);
             out.visitorNode = graph.Add(visitorOrigin, PointClass::Connector, connectorDifficulty);
+            VisitorTravelLog::Write("GRAPH",
+                                    "endpoints: player ({:.0f},{:.0f},{:.0f}) and visitor "
+                                    "({:.0f},{:.0f},{:.0f}), both connector difficulty {}",
+                                    playerPos.x,
+                                    playerPos.y,
+                                    playerPos.z,
+                                    visitorOrigin.x,
+                                    visitorOrigin.y,
+                                    visitorOrigin.z,
+                                    connectorDifficulty);
 
             // The player reaches the road network directly: onto the
             // fine network they are standing beside, and onto the coarse
@@ -509,6 +570,13 @@ namespace NarrativeEngine::ApproachChain
                 if (attach == FineRoads::kInvalidNode) {
                     continue;
                 }
+                VisitorTravelLog::Write("GRAPH",
+                                        "attach player -> fine network of {} node(s), nearest at "
+                                        "({:.0f},{:.0f}) {:.0f}u off",
+                                        network.size(),
+                                        graph.nodes[attach].pos.x,
+                                        graph.nodes[attach].pos.y,
+                                        Dist(graph.nodes[attach].pos, playerPos));
                 LayLine(graph,
                         grid,
                         worldSpace,
@@ -520,6 +588,11 @@ namespace NarrativeEngine::ApproachChain
             }
             const auto playerCoarseAttach = NearestOf(graph, coarseNodes, playerPos);
             if (playerCoarseAttach != FineRoads::kInvalidNode) {
+                VisitorTravelLog::Write("GRAPH",
+                                        "attach player -> coarse skeleton at ({:.0f},{:.0f}) {:.0f}u off",
+                                        graph.nodes[playerCoarseAttach].pos.x,
+                                        graph.nodes[playerCoarseAttach].pos.y,
+                                        Dist(graph.nodes[playerCoarseAttach].pos, playerPos));
                 LayLine(graph,
                         grid,
                         worldSpace,
@@ -536,6 +609,11 @@ namespace NarrativeEngine::ApproachChain
             // undercut it.
             const auto visitorCoarseAttach = NearestOf(graph, coarseNodes, visitorOrigin);
             if (visitorCoarseAttach != FineRoads::kInvalidNode) {
+                VisitorTravelLog::Write("GRAPH",
+                                        "attach visitor -> coarse skeleton at ({:.0f},{:.0f}) {:.0f}u off",
+                                        graph.nodes[visitorCoarseAttach].pos.x,
+                                        graph.nodes[visitorCoarseAttach].pos.y,
+                                        Dist(graph.nodes[visitorCoarseAttach].pos, visitorOrigin));
                 LayLine(graph,
                         grid,
                         worldSpace,
@@ -575,6 +653,15 @@ namespace NarrativeEngine::ApproachChain
                         }
                     }
                     if (bestFine != FineRoads::kInvalidNode) {
+                        VisitorTravelLog::Write("GRAPH",
+                                                "bridge network of {} node(s): fine ({:.0f},{:.0f}) -> coarse "
+                                                "({:.0f},{:.0f}), the cheapest pair at {:.0f}u",
+                                                network.size(),
+                                                graph.nodes[bestFine].pos.x,
+                                                graph.nodes[bestFine].pos.y,
+                                                graph.nodes[bestCoarse].pos.x,
+                                                graph.nodes[bestCoarse].pos.y,
+                                                bestDist);
                         LayLine(graph,
                                 grid,
                                 worldSpace,
@@ -700,8 +787,17 @@ namespace NarrativeEngine::ApproachChain
             return chain;
         }
 
+        VisitorTravelLog::Write("GRAPH",
+                                "assembled: {} node(s), {} edge(s); searching visitor -> player",
+                                assembly.graph.nodes.size(),
+                                assembly.graph.EdgeEnds() / 2);
+
         const auto result = AStar(assembly.graph, assembly.visitorNode, assembly.playerNode);
         if (!result.found) {
+            VisitorTravelLog::Write("SEARCH",
+                                    "no route over {} node(s) — the visitor-to-player line should have made "
+                                    "this impossible",
+                                    assembly.graph.nodes.size());
             logger::warn("ApproachChain: no route from the visitor to the player over {} node(s) -- the "
                          "visitor-to-player line should have made this impossible",
                          assembly.graph.nodes.size());
@@ -726,6 +822,34 @@ namespace NarrativeEngine::ApproachChain
         }
         chain.cost = result.cost;
         chain.valid = true;
+
+        VisitorTravelLog::Write("SEARCH",
+                                "route found: {} point(s), cost {:.0f} [coarse={} fine={} connector={} "
+                                "direct={}], {} inside the loaded grid",
+                                chain.points.size(),
+                                chain.cost,
+                                histogram[static_cast<std::size_t>(PointClass::Coarse)],
+                                histogram[static_cast<std::size_t>(PointClass::Fine)],
+                                histogram[static_cast<std::size_t>(PointClass::Connector)],
+                                histogram[static_cast<std::size_t>(PointClass::Direct)],
+                                inGrid);
+        if (VisitorTravelLog::IsActive()) {
+            // Visitor first, which is the order the chain is in. Every point,
+            // because the whole value of this file is the ones the arrival
+            // search did not pick.
+            for (std::size_t i = 0; i < chain.points.size(); ++i) {
+                const auto& point = chain.points[i];
+                VisitorTravelLog::Write("CHAIN",
+                                        "  #{:<3} ({:.0f},{:.0f},{:.0f}) {:<9} in_grid={} {:.0f}u from the player",
+                                        i,
+                                        point.position.x,
+                                        point.position.y,
+                                        point.position.z,
+                                        PointClassName(point.cls),
+                                        point.insideLoadedGrid ? 1 : 0,
+                                        Dist(point.position, playerPos));
+            }
+        }
 
         logger::debug("ApproachChain: ws={:08X} graph={} nodes/{} edges (coarse={} fine={} in {} network(s)) "
                       "-- chain={} points cost={:.0f} [coarse={} fine={} connector={} direct={}] inGrid={}",

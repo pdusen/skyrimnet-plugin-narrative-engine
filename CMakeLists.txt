@@ -888,6 +888,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/GossipClaims.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipDispatch.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipLog.cpp"
+        "${CMAKE_SOURCE_DIR}/src/VisitorTravelLog.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipTick.cpp"
         "${CMAKE_SOURCE_DIR}/src/EventHistoryWriter.cpp"
         "${CMAKE_SOURCE_DIR}/src/EventLogUtil.cpp"
