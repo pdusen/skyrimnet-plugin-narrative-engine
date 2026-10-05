@@ -450,6 +450,16 @@ namespace NarrativeEngine
                     bookFormID = g_inFlightBookFormID;
                 }
                 const auto count = CourierUtils::GetCourierInventoryCount(bookFormID);
+                if (count > 0) {
+                    // The letter is demonstrably in the barrel, so the
+                    // item-count global owes it at least one. Checked
+                    // here rather than straight after the Papyrus
+                    // AddItemToContainer because this is the first point
+                    // the staging is CONFIRMED rather than merely
+                    // dispatched -- repairing a global off the back of a
+                    // handoff that silently failed would be a guess.
+                    CourierUtils::RepairCourierItemCount();
+                }
                 g_runningLetterInCourier.store(count > 0, std::memory_order_release);
                 g_runningCheckReady.store(true, std::memory_order_release);
                 g_runningCheckInFlight.store(false, std::memory_order_release);

@@ -33,6 +33,7 @@ namespace
     namespace Courier = NarrativeEngine::CourierUtils;
 
     constexpr std::uint32_t kBookFormID = 0x0500082Au;
+    constexpr std::uint32_t kItemCountFormID = 0x00039FBBu;
 
     // The cache is process-global and one-shot, so every case starts by
     // dropping whatever an earlier one resolved.
@@ -225,6 +226,172 @@ TEST_CASE("CourierUtils::GetCourierInventoryCount", "[CourierUtils][engine]")
         {
             (void)Courier::GetCourierInventoryCount(kBookFormID);
             REQUIRE(engine.courier.getInventoryCountsCalls == 0);
+        }
+    }
+}
+
+TEST_CASE("CourierUtils::CountLettersInCourierContainer", "[CourierUtils][engine]")
+{
+    // Letters, not objects. The mock's inventory walk runs production's own
+    // filter across every registered form and reports `inventoryCount` for
+    // each match, so registering a non-book alongside a book is what proves
+    // the filter discriminates rather than just counting everything.
+    EngineMock engine;
+    FreshCourier fresh;
+    (void)engine.AddCourierQuest(false, true);
+    (void)Courier::ResolveCourierQuest();
+
+    SECTION("when the container holds only letters")
+    {
+        (void)engine.AddBook(kBookFormID);
+        engine.courier.inventoryCount = 2;
+
+        SECTION("should count them")
+        {
+            REQUIRE(Courier::CountLettersInCourierContainer() == 2);
+        }
+    }
+
+    SECTION("when the container also holds something that is not a letter")
+    {
+        // The case this filter exists for. QF_WIKill03 stages an inheritance
+        // as one letter plus `pAward` gold in two addItemToContainer calls,
+        // each of which moves the global by exactly one -- so the barrel can
+        // legitimately hold hundreds of objects against a count of two.
+        // Counting objects would read the stack and repair the global to
+        // something absurd.
+        (void)engine.AddBook(kBookFormID);
+        (void)engine.AddStatic(kBookFormID + 1);
+        engine.courier.inventoryCount = 1;
+
+        SECTION("should count only the letters")
+        {
+            REQUIRE(Courier::CountLettersInCourierContainer() == 1);
+        }
+    }
+
+    SECTION("when the container holds nothing")
+    {
+        (void)engine.AddBook(kBookFormID);
+        engine.courier.inventoryCount = -1;
+
+        SECTION("should count nothing")
+        {
+            REQUIRE(Courier::CountLettersInCourierContainer() == 0);
+        }
+    }
+
+    SECTION("when there is no courier container")
+    {
+        Courier::OnRevert();
+
+        SECTION("should count nothing")
+        {
+            REQUIRE(Courier::CountLettersInCourierContainer() == 0);
+        }
+
+        SECTION("should not ask anything for an inventory")
+        {
+            (void)Courier::CountLettersInCourierContainer();
+            REQUIRE(engine.courier.getInventoryCountsCalls == 0);
+        }
+    }
+}
+
+TEST_CASE("CourierUtils::RepairCourierItemCount", "[CourierUtils][engine]")
+{
+    // One letter staged in the barrel, so the global owes at least 1. Each
+    // case varies what the global actually reads.
+    EngineMock engine;
+    FreshCourier fresh;
+    (void)engine.AddCourierQuest(false, true);
+    (void)engine.AddBook(kBookFormID);
+    engine.courier.inventoryCount = 1;
+
+    SECTION("when the count has been driven negative")
+    {
+        // The wedge: every vanilla gate tests `>= 1`, addItemToContainer is a
+        // bare `+= 1` with no floor, and the only write that resets the global
+        // runs at the END of a delivery the low value prevents. Without a
+        // repair this install never receives another letter from anyone.
+        auto* global = engine.AddGlobal(kItemCountFormID, "WICourierItemCount", -3.0f);
+        (void)Courier::ResolveCourierQuest();
+
+        SECTION("should report the value it found")
+        {
+            REQUIRE(Courier::RepairCourierItemCount() == -3);
+        }
+
+        SECTION("should raise it to the staged letter count")
+        {
+            (void)Courier::RepairCourierItemCount();
+            REQUIRE(global->value == 1.0f);
+        }
+    }
+
+    SECTION("when the count is merely short")
+    {
+        auto* global = engine.AddGlobal(kItemCountFormID, "WICourierItemCount", 0.0f);
+        (void)Courier::ResolveCourierQuest();
+
+        SECTION("should raise it")
+        {
+            REQUIRE(Courier::RepairCourierItemCount() == 0);
+            REQUIRE(global->value == 1.0f);
+        }
+    }
+
+    SECTION("when the count already covers the staged letters")
+    {
+        auto* global = engine.AddGlobal(kItemCountFormID, "WICourierItemCount", 1.0f);
+        (void)Courier::ResolveCourierQuest();
+
+        SECTION("should report no repair")
+        {
+            REQUIRE_FALSE(Courier::RepairCourierItemCount().has_value());
+        }
+
+        SECTION("should leave it alone")
+        {
+            (void)Courier::RepairCourierItemCount();
+            REQUIRE(global->value == 1.0f);
+        }
+    }
+
+    SECTION("when the count is higher than the staged letters")
+    {
+        // Raising only. A value above the letter count may be a pending
+        // non-letter delivery we cannot see -- vanilla's inheritance gold is
+        // exactly that -- and cancelling somebody else's courier is worse than
+        // the empty-handed visit an inflated count causes, which
+        // GiveItemsToPlayer clears by itself.
+        auto* global = engine.AddGlobal(kItemCountFormID, "WICourierItemCount", 4.0f);
+        (void)Courier::ResolveCourierQuest();
+
+        SECTION("should report no repair")
+        {
+            REQUIRE_FALSE(Courier::RepairCourierItemCount().has_value());
+        }
+
+        SECTION("should not lower it")
+        {
+            (void)Courier::RepairCourierItemCount();
+            REQUIRE(global->value == 4.0f);
+        }
+    }
+
+    SECTION("when the global did not resolve")
+    {
+        (void)Courier::ResolveCourierQuest();
+
+        SECTION("should report no repair")
+        {
+            REQUIRE_FALSE(Courier::RepairCourierItemCount().has_value());
+        }
+
+        SECTION("should leave the global unresolved")
+        {
+            REQUIRE(Courier::GetCourierItemCountGlobal() == nullptr);
         }
     }
 }
