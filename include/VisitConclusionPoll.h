@@ -122,6 +122,34 @@ namespace NarrativeEngine::VisitConclusionPoll
     // conversation. Returns 0 if the poll is disarmed.
     double DiscussStartedAtGameSeconds();
 
+    // What the poll is waiting on, for the dashboard. There is no
+    // single countdown here: three independent conditions arm the
+    // poll and whichever trips first wins, so all three are reported.
+    //
+    //   * silence -- ACTIVE-PLAY real seconds since the last speech
+    //     turn (TickMode::Normal only), against
+    //     iVisitPollSilenceRealSeconds.
+    //   * interval -- GAME seconds since the last poll, against
+    //     iVisitPollMaxIntervalGameMinutes.
+    //   * turns -- speech turns since the last poll, against
+    //     iVisitPollTurnCountThreshold. Not a clock at all, which is
+    //     exactly why a lone "time to next poll" figure would mislead.
+    //
+    // Every `...Enabled` flag is false when its setting is 0, which
+    // disables that trigger. All zero and `armed` false means no visit
+    // is in Discuss.
+    struct GateInfo
+    {
+        bool armed = false;
+        bool silenceEnabled = false;
+        double silenceRemainingSeconds = 0.0;
+        bool intervalEnabled = false;
+        double intervalRemainingGameSeconds = 0.0;
+        bool turnsEnabled = false;
+        int turnsRemaining = 0;
+    };
+    GateInfo GetGateInfo();
+
     // Per-process ring of the last N poll verdicts. Consumed by
     // the dashboard's Visit tab. Wall-clock timestamp is
     // steady_clock seconds (same time base the dashboard uses).

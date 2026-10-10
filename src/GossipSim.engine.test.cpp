@@ -1,0 +1,751 @@
+#include <GossipSim.h>
+
+#include <ConfiguredSettings.h>
+#include <EngineMock.h>
+#include <FakeSkyrimNet.h>
+#include <GossipGraph.h>
+#include <GossipLog.h>
+#include <GossipSpies.h>
+#include <GossipState.h>
+#include <GossipThread.h>
+#include <GossipWorld.h>
+#include <SkyrimNetAPI.h>
+#include <ThreadRole.h>
+
+#include <SKSE/Interfaces.h>
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <Windows.h>
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
+
+// Tests for how a rumor spreads.
+//
+// This is a discrete-event model over the social graph, advanced by in-world
+// time, and its cost is proportional to the number of tellings rather than to
+// the size of the province — an idle world costs nothing, because a rumor with
+// no live carriers has no events outstanding.
+//
+// Two properties of the model are load-bearing and both are easy to break by
+// simplifying, so both have cases here.
+//
+// Contact is a FINITE DAILY BUDGET per person, divided among their contacts by
+// weight. It is not a rate per pair: a per-pair rate makes a person's social
+// activity scale with the size of the town they live in, and saturates the
+// whole province inside one game day.
+//
+// A carrier's telling quota is spent by tellings that land on somebody who
+// ALREADY KNOWS, not only by ones that land on somebody new. That is the
+// saturation brake, and without it the model does not terminate — a rumor in a
+// town where everyone knows it keeps trying forever.
+//
+// The memories the tellings write are what the player eventually sees, and they
+// go out on two different schedules: a listener catches a rumor once, so their
+// memory is written as it happens; a carrier can tell several people in one
+// tick, so their side accumulates and goes out once, naming everybody.
+
+namespace
+{
+    namespace GossipSim = NarrativeEngine::GossipSim;
+    namespace GossipGraph = NarrativeEngine::GossipGraph;
+    namespace GossipLog = NarrativeEngine::GossipLog;
+    namespace GossipThread = NarrativeEngine::GossipThread;
+    using NarrativeEngine::GossipState;
+    using NarrativeEngine::Testing::BuildGossipWorld;
+    using NarrativeEngine::Testing::ClearGossipTrace;
+    using NarrativeEngine::Testing::ConfiguredSettings;
+    using NarrativeEngine::Testing::EngineMock;
+    using NarrativeEngine::Testing::FakeSkyrimNetState;
+    using NarrativeEngine::Testing::FakeSkyrimNetStateFunc;
+    using NarrativeEngine::Testing::GossipTraceLines;
+    using NarrativeEngine::Testing::GossipWorld;
+    using NarrativeEngine::Testing::kFakeSkyrimNetStateExport;
+    using NarrativeEngine::Testing::LiveGossipState;
+    using NarrativeEngine::Testing::ResetGossipState;
+
+    constexpr const char* kSettings = "[Gossip]\nbGossipEnabled=1\niGossipRandomSeed=12345\n";
+
+    constexpr double kDayOne = 10.0;
+
+    // The version GossipSim stamps its co-save record with. A load carrying
+    // anything else is discarded, so a test reading its own save back has to
+    // name the current one.
+    constexpr std::uint32_t kRecordVersion = 7;
+
+    FakeSkyrimNetState& FakeLLM()
+    {
+        HMODULE module = ::LoadLibraryA("SkyrimNet");
+        REQUIRE(module != nullptr);
+        auto* accessor = reinterpret_cast<FakeSkyrimNetStateFunc>(
+            reinterpret_cast<void*>(::GetProcAddress(module, kFakeSkyrimNetStateExport)));
+        REQUIRE(accessor != nullptr);
+        return *accessor();
+    }
+
+    SKSE::SerializationInterface* FakeInterface()
+    {
+        alignas(16) static std::byte storage[64]{};
+        return reinterpret_cast<SKSE::SerializationInterface*>(storage);
+    }
+
+    template <class Fn> void OnGossipThread(Fn body)
+    {
+        const NarrativeEngine::ScopedThreadRole role{NarrativeEngine::ThreadRole::Plugin};
+        GossipThread::detail::JobDispatcher::Invoke([&](const GossipThread::Token& gt) { body(gt); });
+    }
+
+    void WindTo(double day)
+    {
+        OnGossipThread([&](const GossipThread::Token& gt) { GossipSim::SetHorizon(gt, day); });
+    }
+
+    void AdvanceTo(double day)
+    {
+        OnGossipThread([&](const GossipThread::Token& gt) {
+            GossipSim::SetHorizon(gt, day);
+            GossipSim::Advance(gt, day, {});
+        });
+    }
+
+    std::uint32_t Seed(std::uint32_t origin, std::int64_t memoryId = 5001, float notability = 0.9f)
+    {
+        std::uint32_t id = 0;
+        OnGossipThread([&](const GossipThread::Token& gt) {
+            id = GossipSim::SeedRumor(gt, origin, notability, memoryId, {"first", "second", "third"});
+        });
+        return id;
+    }
+
+    std::vector<GossipSim::RumorView> Rumors()
+    {
+        return GossipSim::GetRumorViews(LiveGossipState());
+    }
+
+    GossipSim::Stats Stats()
+    {
+        return GossipSim::GetStats(LiveGossipState());
+    }
+
+    // Every conversation the live rumors recorded drawing, counted from the
+    // rumors rather than from the session counters. The point is to have a
+    // second, independent total for the outcome buckets to be checked
+    // against; summing the buckets and comparing them to themselves would
+    // pass with a bucket missing, which is exactly what happened.
+    std::size_t TotalConversations()
+    {
+        std::size_t total = 0;
+        for (const auto& [id, r] : LiveGossipState().rumors) {
+            total += r.conversations;
+        }
+        return total;
+    }
+
+    GossipSim::RumorView OnlyRumor()
+    {
+        const auto rumors = Rumors();
+        REQUIRE(rumors.size() == 1);
+        return rumors.front();
+    }
+
+    // Dead, rather than bleeding out. EngineMock has a helper for the
+    // transient states and not for this one, and the whole point of the case
+    // below is the permanent one.
+    void Kill(NarrativeEngine::Testing::EngineMock& engine, std::uint32_t npc)
+    {
+        auto* actor = engine.PlacedActorFor(npc);
+        REQUIRE(actor != nullptr);
+        actor->AsActorState()->actorState1.lifeState = RE::ACTOR_LIFE_STATE::kDead;
+    }
+
+    float ContactShare(std::uint32_t npc)
+    {
+        float share = 0.0f;
+        OnGossipThread([&](const GossipThread::Token& gt) { share = GossipSim::AvailableContactShare(gt, npc); });
+        return share;
+    }
+} // namespace
+
+TEST_CASE("GossipSim starts a rumor with somebody", "[GossipSim][engine]")
+{
+    // Happy path, re-run per leaf: a built graph, a wound clock, and a rumor
+    // about to be introduced.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    ResetGossipState();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    FakeLLM().Reset();
+    const GossipWorld world = BuildGossipWorld(engine);
+    GossipGraph::Initialize();
+    REQUIRE(GossipGraph::IsReady());
+    WindTo(kDayOne);
+
+    SECTION("when somebody in the graph has something to tell")
+    {
+        const auto id = Seed(world.hulda);
+
+        SECTION("should take the rumor")
+        {
+            REQUIRE(id != 0);
+            REQUIRE(Rumors().size() == 1);
+        }
+
+        SECTION("should credit where it came from")
+        {
+            // The origin and the memory it was drawn from are what tie a rumor
+            // back to the thing that happened, and are what stop the harvester
+            // ever offering the same memory again.
+            const auto rumors = Rumors();
+            REQUIRE(rumors.front().originNpc == world.hulda);
+            REQUIRE(rumors.front().sourceMemoryId == 5001);
+        }
+
+        SECTION("should keep the tellings it was written with")
+        {
+            // No model is involved past this point. Every telling the rumor
+            // will ever produce is one of these, chosen by how far it has come.
+            REQUIRE(Rumors().front().bands.size() == 3);
+            REQUIRE(Rumors().front().text == "first");
+        }
+
+        SECTION("should start with its origin carrying it")
+        {
+            REQUIRE(Stats().totalCarriers == 1);
+            REQUIRE(Stats().liveRumors == 1);
+        }
+
+        SECTION("should have something to do")
+        {
+            // One scheduled event per infectious carrier is the whole of the
+            // model's cost. A rumor with nothing queued never spreads.
+            REQUIRE(Stats().queuedEvents > 0);
+        }
+    }
+
+    SECTION("when the origin is nobody the graph knows")
+    {
+        SECTION("should refuse the rumor")
+        {
+            // A rumor with no origin has no contacts to spread through, so it
+            // would sit live forever taking up one of the few slots.
+            REQUIRE(Seed(0x00DEAD01u) == 0);
+            REQUIRE(Rumors().empty());
+        }
+    }
+
+    SECTION("when the live-rumor cap is full")
+    {
+        const ConfiguredSettings capped{
+            "[Gossip]\nbGossipEnabled=1\niGossipRandomSeed=12345\niGossipMaxLiveRumors=1\n"};
+        REQUIRE(Seed(world.hulda, 5001) != 0);
+
+        SECTION("should refuse the next one")
+        {
+            // The cap is what bounds the whole simulation's cost, and the
+            // harvester treats a refusal as temporary — the memory goes back
+            // to the pool rather than being spent.
+            REQUIRE(Seed(world.ysolda, 5002) == 0);
+        }
+    }
+
+    SECTION("when gossip is switched off")
+    {
+        const ConfiguredSettings off{"[Gossip]\nbGossipEnabled=0\n"};
+
+        SECTION("should refuse the rumor")
+        {
+            REQUIRE(Seed(world.hulda) == 0);
+        }
+    }
+}
+
+TEST_CASE("GossipSim spreads a rumor and stops", "[GossipSim][engine]")
+{
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    ResetGossipState();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    FakeLLM().Reset();
+    const GossipWorld world = BuildGossipWorld(engine);
+    GossipGraph::Initialize();
+    WindTo(kDayOne);
+    REQUIRE(Seed(world.hulda) != 0);
+
+    SECTION("when in-world days go by")
+    {
+        AdvanceTo(kDayOne + 5.0);
+
+        SECTION("should reach somebody else")
+        {
+            // Hulda works at an inn with Saadia and lives in a town with
+            // Ysolda, so there is somewhere for it to go. Read off the
+            // session tally rather than off the rumor: a province this small
+            // saturates inside a day, and the rumor has been reaped and its
+            // carriers released long before day fifteen.
+            REQUIRE(Stats().transmissionsThisSession > 0);
+        }
+
+        SECTION("should write what everyone heard into their memories")
+        {
+            // The memories are the only thing the player ever sees of this
+            // whole subsystem. A rumor that spread and wrote nothing did not
+            // happen as far as the game is concerned.
+            REQUIRE(Stats().memoriesWritten > 0);
+        }
+
+        SECTION("should account for every conversation it drew")
+        {
+            // Transmissions, wasted tellings, people who did not catch it,
+            // people who were unavailable, conversations past a carrier's
+            // daily budget, and draws that found an empty rung. A drawn
+            // conversation falling into none of those is a hole in the model,
+            // and the tuning is read off these numbers.
+            //
+            // All six, because the readouts built on this are sums. `silent`
+            // was left out of the trace's own session line and was 28% of
+            // every conversation held, which made the other five
+            // irreconcilable against a BURNOUT line or against the census.
+            const auto stats = Stats();
+            const auto accounted = stats.transmissionsThisSession + stats.wastedThisSession + stats.notCaughtThisSession
+                                   + stats.unavailableThisSession + stats.cappedThisSession + stats.silentThisSession;
+            REQUIRE(accounted > 0);
+        }
+    }
+
+    SECTION("when a single step has run")
+    {
+        // Short on purpose. The session counters outlive a reap and the
+        // per-rumor tallies do not, so this is the window in which the two
+        // can be compared at all -- and comparing them is the only way the
+        // buckets are checked against a number not built from themselves.
+        AdvanceTo(kDayOne + 0.5);
+
+        SECTION("should put every conversation it drew in exactly one bucket")
+        {
+            const auto stats = Stats();
+            const auto accounted = stats.transmissionsThisSession + stats.wastedThisSession + stats.notCaughtThisSession
+                                   + stats.unavailableThisSession + stats.cappedThisSession + stats.silentThisSession;
+            REQUIRE(TotalConversations() > 0);
+            REQUIRE(accounted == TotalConversations());
+        }
+    }
+
+    SECTION("when a very long time goes by")
+    {
+        AdvanceTo(kDayOne + 400.0);
+
+        SECTION("should stop rather than run forever")
+        {
+            // The saturation brake. A carrier's daily quota is spent by
+            // tellings that land on somebody who already knows, so a rumor in
+            // a town where everyone has heard it runs out of budget instead of
+            // retrying forever.
+            REQUIRE(Stats().queuedEvents == 0);
+        }
+
+        SECTION("should have reaped what it finished with")
+        {
+            // Nothing live and nothing queued: the rumor is over and its
+            // storage is back.
+            REQUIRE(Stats().liveRumors == 0);
+        }
+    }
+
+    SECTION("when the clock is wound backwards")
+    {
+        AdvanceTo(kDayOne + 5.0);
+        const auto before = Stats().transmissionsThisSession;
+        AdvanceTo(kDayOne + 1.0);
+
+        SECTION("should do nothing")
+        {
+            // A console time change, or a save loaded from earlier in the
+            // playthrough. Replaying is worse than standing still: every
+            // carrier would step again and write a second memory for a
+            // conversation that already happened.
+            REQUIRE(Stats().transmissionsThisSession == before);
+        }
+    }
+}
+
+TEST_CASE("GossipSim knows who is left to tell", "[GossipSim][engine]")
+{
+    // The harvest asks before spending a model call on somebody: a person
+    // whose whole circle already carries a rumor is a person no new rumor can
+    // travel from.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    ResetGossipState();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    FakeLLM().Reset();
+    const GossipWorld world = BuildGossipWorld(engine);
+    GossipGraph::Initialize();
+    WindTo(kDayOne);
+
+    SECTION("when everybody around them is alive and about")
+    {
+        SECTION("should count the rungs that have somebody on them")
+        {
+            // Not 1.0, and that is the model rather than a gap in the world:
+            // Hulda's household is the inn and her settlement is Whiterun,
+            // the tiers between and above them hold nobody, and a draw on an
+            // empty rung is spent in silence rather than redistributed. Half
+            // her conversations therefore reach nobody however alive her
+            // neighbours are.
+            REQUIRE(ContactShare(world.hulda) > 0.5f);
+        }
+
+        SECTION("should describe it in words a log can print")
+        {
+            // The share alone cannot say which of the three sources it came
+            // from, so the trace has to name the person and the verdict.
+            std::string described;
+            OnGossipThread([&](const GossipThread::Token& gt) {
+                described = GossipSim::DescribeContactAvailability(gt, world.hulda);
+            });
+            REQUIRE(described.find("Hulda") != std::string::npos);
+            REQUIRE(described.find("The Bannered Mare") != std::string::npos);
+        }
+    }
+
+    SECTION("when the only person on a rung is down")
+    {
+        const float whole = ContactShare(world.hulda);
+        engine.SetActorBleedingOut(engine.PlacedActorFor(world.saadia), true);
+
+        SECTION("should stop counting that rung")
+        {
+            // Saadia is the whole of Hulda's household, so a Saadia who is
+            // bleeding out takes the household rung's weight with her. This
+            // is the number the harvester spends or withholds a model call
+            // on, so it has to move when the circle does.
+            REQUIRE(ContactShare(world.hulda) < whole);
+        }
+    }
+
+    SECTION("when the person is not in the graph")
+    {
+        SECTION("should say nobody is reachable")
+        {
+            REQUIRE(ContactShare(0x00DEAD01u) == 0.0f);
+        }
+    }
+}
+
+TEST_CASE("GossipSim survives a save and load", "[GossipSim][engine]")
+{
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    ResetGossipState();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    FakeLLM().Reset();
+    const GossipWorld world = BuildGossipWorld(engine);
+    GossipGraph::Initialize();
+    WindTo(kDayOne);
+    REQUIRE(Seed(world.hulda) != 0);
+    GossipSim::PublishSnapshot();
+
+    SECTION("when the world is written and read back")
+    {
+        GossipSim::OnSave(FakeInterface(), *GossipSim::Snapshot());
+        engine.cosave.readable = engine.cosave.written;
+        engine.cosave.readCursor = 0;
+        ResetGossipState();
+        REQUIRE(Rumors().empty());
+        GossipSim::OnLoad(FakeInterface(), kRecordVersion, 0);
+        REQUIRE(GossipSim::AdoptPendingState());
+
+        SECTION("should bring the rumors back")
+        {
+            REQUIRE(Rumors().size() == 1);
+        }
+
+        SECTION("should put the people they name through the incoming load order")
+        {
+            // The ids in a co-save are the ids of the load order that wrote
+            // it. Trusting them across a changed load order points a rumor's
+            // origin at whichever form now occupies that index, which is
+            // somebody else entirely once a plugin is added or removed.
+            REQUIRE(std::find(engine.cosave.resolveRequests.begin(), engine.cosave.resolveRequests.end(), world.hulda)
+                    != engine.cosave.resolveRequests.end());
+            REQUIRE(OnlyRumor().originNpc == engine.cosave.resolvedFormID);
+        }
+
+        SECTION("should bring back what they say")
+        {
+            // The band text is written once, at seed time, by a model call
+            // nobody is going to make again. Losing it across a save leaves a
+            // rumor that spreads and says nothing.
+            REQUIRE(OnlyRumor().bands == std::vector<std::string>{"first", "second", "third"});
+        }
+
+        SECTION("should bring back the clock they were dated against")
+        {
+            REQUIRE(GossipSim::LastSimulatedGameDay() == kDayOne);
+        }
+
+        SECTION("should bring back something the drain can actually pick up")
+        {
+            // Every infectious carrier needs its own queue entry, and the
+            // restore has to write them into the STAGING queue: adoption
+            // replaces the whole of the live state, so an entry scheduled into
+            // the live queue during a load is discarded before it comes due.
+            REQUIRE(Stats().queuedEvents > 0);
+        }
+
+        SECTION("should let the rumor reach its end after the round trip")
+        {
+            // The property the counts above cannot see. A rumor restored with
+            // infectious carriers and nothing scheduled is not merely stalled
+            // — it is immortal: no carrier is ever processed, so none can
+            // recover, so the last-carrier check that declares the rumor over
+            // never runs, so the reap never reaches it and the next save
+            // writes it out again. It sits on the dashboard ageing forever and
+            // holds a slot against iGossipMaxLiveRumors, and enough reloads
+            // fill the cap and stop the world seeding anything new.
+            AdvanceTo(kDayOne + 400.0);
+            REQUIRE(Stats().liveRumors == 0);
+            REQUIRE(Stats().queuedEvents == 0);
+        }
+    }
+
+    SECTION("when a load is staged but not yet adopted")
+    {
+        GossipSim::OnSave(FakeInterface(), *GossipSim::Snapshot());
+        engine.cosave.readable = engine.cosave.written;
+        engine.cosave.readCursor = 0;
+        GossipSim::OnRevert();
+        GossipSim::OnLoad(FakeInterface(), kRecordVersion, 0);
+
+        SECTION("should answer with the incoming world's clock")
+        {
+            // The window between the load and the first tick of the new
+            // session: live state still describes the outgoing world, and the
+            // scheduler is asking precisely then which one it should anchor
+            // against.
+            REQUIRE(GossipSim::LastSimulatedGameDay() == kDayOne);
+        }
+
+        SECTION("should write down what came back, for the previous session to be read against")
+        {
+            // The session-start half of the pair, and it has to read the
+            // STAGING area: this is the only moment the incoming world is
+            // complete AND still unadopted, which is exactly where
+            // OnSessionStart runs in Plugin.cpp. Summarise live state here
+            // instead and the block describes the world being replaced.
+            ClearGossipTrace();
+            GossipLog::OnSessionStart();
+            GossipSim::OnSessionStart();
+            GossipLog::OnSessionEnd();
+
+            const auto lines = GossipTraceLines();
+            const auto said = [&](std::string_view needle) {
+                return std::any_of(lines.begin(), lines.end(), [&](const std::string& line) {
+                    return !line.starts_with("#") && line.find("STATE") != std::string::npos
+                           && line.find(needle) != std::string::npos;
+                });
+            };
+            REQUIRE(said("session start"));
+            REQUIRE(said("r01"));
+            REQUIRE(said("bands=3"));
+            // No name assertion: the harness's ResolveFormID hands back a
+            // FormID of its own, so the restored origin is deliberately
+            // somebody the graph has never heard of. The name is checked
+            // where no resolve stands in the way, in the summary's own case.
+        }
+    }
+
+    SECTION("when the version is one no build ever wrote")
+    {
+        GossipSim::OnSave(FakeInterface(), *GossipSim::Snapshot());
+        engine.cosave.readable = engine.cosave.written;
+        engine.cosave.readCursor = 0;
+        ResetGossipState();
+        GossipSim::OnLoad(FakeInterface(), 99, 0);
+        (void)GossipSim::AdoptPendingState();
+
+        SECTION("should restore nothing")
+        {
+            REQUIRE(Rumors().empty());
+        }
+    }
+
+    SECTION("when there is no serialization interface")
+    {
+        SECTION("should do nothing")
+        {
+            GossipSim::OnSave(nullptr, *GossipSim::Snapshot());
+            REQUIRE(engine.cosave.written.empty());
+        }
+    }
+}
+
+TEST_CASE("GossipSim summarises the world for the trace", "[GossipSim][engine]")
+{
+    // The block written at session start and at every tick end. Its whole
+    // value is that two of them can be compared: one from before a save and
+    // one from after the load. That only works if every figure a rumor can
+    // lose across a co-save round trip is actually in the line -- the carrier
+    // counts, the depth, the provenance, and the band text, which is written
+    // once by a model call nobody will make again.
+    EngineMock engine;
+    const ConfiguredSettings settings{"[Gossip]\nbGossipEnabled=1\nbGossipLogEnabled=1\niGossipRandomSeed=12345\n"};
+    ResetGossipState();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    FakeLLM().Reset();
+    const GossipWorld world = BuildGossipWorld(engine);
+    GossipGraph::Initialize();
+    WindTo(kDayOne);
+
+    SECTION("when a rumor is going round")
+    {
+        REQUIRE(Seed(world.hulda) != 0);
+        ClearGossipTrace();
+        GossipLog::OnSessionStart();
+        GossipSim::LogStateSummary("under test", LiveGossipState());
+        GossipLog::OnSessionEnd();
+
+        const auto lines = GossipTraceLines();
+        const auto state = [&](std::string_view needle) {
+            return std::any_of(lines.begin(), lines.end(), [&](const std::string& line) {
+                return !line.starts_with("#") && line.find("STATE") != std::string::npos
+                       && line.find(needle) != std::string::npos;
+            });
+        };
+
+        SECTION("should say what it is a summary of")
+        {
+            REQUIRE(state("under test"));
+            REQUIRE(state("clock day"));
+        }
+
+        SECTION("should carry the counters the dashboard puts above the list")
+        {
+            REQUIRE(state("rumors="));
+            REQUIRE(state("carriers="));
+            REQUIRE(state("queued="));
+            REQUIRE(state("claims="));
+        }
+
+        SECTION("should break the session's conversations down into all six outcomes")
+        {
+            // Named individually rather than counted, because the gap that
+            // shipped was one missing word in a format string: five buckets
+            // under a total that needed six, so the line could not be
+            // reconciled against a BURNOUT line or the session-end census.
+            REQUIRE(state("conversations="));
+            REQUIRE(state("told"));
+            REQUIRE(state("knew"));
+            REQUIRE(state("missed"));
+            REQUIRE(state("away"));
+            REQUIRE(state("capped"));
+            REQUIRE(state("silent"));
+        }
+
+        SECTION("should name the rumor and where it came from")
+        {
+            // Provenance is the half of a round trip that silently points at
+            // the wrong person: the ids in a co-save belong to the load order
+            // that wrote it, so a resolve that went wrong renames the origin
+            // rather than failing.
+            REQUIRE(state("r01"));
+            REQUIRE(state("Hulda"));
+            REQUIRE(state("memory=5001"));
+        }
+
+        SECTION("should carry what the rumor actually says")
+        {
+            // A rumor that comes back from a save with its bands gone spreads
+            // and says nothing, and the trace is the only place that would
+            // show it.
+            REQUIRE(state("bands=3"));
+            REQUIRE(state("first"));
+        }
+    }
+
+    SECTION("when there is nothing to report")
+    {
+        ClearGossipTrace();
+        GossipLog::OnSessionStart();
+        GossipSim::LogStateSummary("empty world", LiveGossipState());
+        GossipLog::OnSessionEnd();
+
+        SECTION("should say so rather than writing a header over nothing")
+        {
+            // An empty world and a summary that failed to find the world it
+            // was handed read identically without this.
+            const auto lines = GossipTraceLines();
+            REQUIRE(std::any_of(lines.begin(), lines.end(), [](const std::string& line) {
+                return line.find("(no rumors)") != std::string::npos;
+            }));
+        }
+    }
+}
+
+TEST_CASE("GossipSim will not start a rumor with somebody who cannot spread one", "[GossipSim][engine]")
+{
+    // The invariant: every condition that stops an NPC spreading a rumor has
+    // to stop them starting one. They are one function now -- the drain asks
+    // it of a carrier before letting them speak and the seed path asks it of
+    // a prospective origin -- because two lists kept in step by hand had
+    // already drifted apart once.
+    //
+    // The drift cost real work. The harvest's only availability gate measured
+    // the share of an owner's CONTACTS who could hold a conversation, never
+    // whether the owner could, so a dead mage surrounded by live ones passed
+    // it. Ancano was chosen as an origin in two consecutive validation runs;
+    // each time an evaluation call, a composition call and a sixty-day claim
+    // on the memory were spent on a rumor that retired its origin on the
+    // first step and burned out with conversations=0.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    ResetGossipState();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    FakeLLM().Reset();
+    const GossipWorld world = BuildGossipWorld(engine);
+    GossipGraph::Initialize();
+    WindTo(kDayOne);
+
+    SECTION("when the origin is dead")
+    {
+        Kill(engine, world.hulda);
+
+        SECTION("should refuse the seed")
+        {
+            REQUIRE(Seed(world.hulda) == 0);
+            REQUIRE(Rumors().empty());
+        }
+    }
+
+    SECTION("when the origin is down but will be back")
+    {
+        // A carrier in this state defers a step and tries again, because
+        // their infectious window is already running. A seed would START its
+        // window here and spend the whole of it unconscious, so it is
+        // refused -- which releases the memory for the next sweep instead of
+        // claiming it for sixty days.
+        engine.SetActorBleedingOut(engine.PlacedActorFor(world.hulda), true);
+
+        SECTION("should refuse the seed")
+        {
+            REQUIRE(Seed(world.hulda) == 0);
+            REQUIRE(Rumors().empty());
+        }
+    }
+
+    SECTION("when the origin can hold a conversation")
+    {
+        SECTION("should seed as normal")
+        {
+            // The other half of the invariant. A gate that refuses everybody
+            // satisfies the assertions above and breaks the subsystem.
+            REQUIRE(Seed(world.hulda) != 0);
+            REQUIRE(Rumors().size() == 1);
+        }
+    }
+}

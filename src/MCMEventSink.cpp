@@ -6,6 +6,7 @@
 #include <Settings.h>
 
 #include <atomic>
+#include <string_view>
 
 namespace NarrativeEngine::MCMEventSink
 {
@@ -13,6 +14,16 @@ namespace NarrativeEngine::MCMEventSink
     {
         // Must match the string _ne_MCM.psc passes to SendModEvent.
         constexpr const char* kEventName = "_ne_DashboardHotkeyChanged";
+
+        // Every ModEvent this plugin could possibly have sent starts with
+        // this. The sink is registered on the game-wide ModCallback source,
+        // so most of what arrives belongs to other mods.
+        constexpr std::string_view kOurEventPrefix = "_ne_";
+
+        // One line the first time somebody else's event arrives, then
+        // silence. See the comment on the trace call below for why this is
+        // not simply dropped.
+        std::atomic<bool> g_loggedForeignEvent = false;
 
         struct HotkeyChangedSink : public RE::BSTEventSink<SKSE::ModCallbackEvent>
         {
@@ -23,21 +34,47 @@ namespace NarrativeEngine::MCMEventSink
                     logger::trace("MCMEventSink[trace]: null event pointer");
                     return RE::BSEventNotifyControl::kContinue;
                 }
-                // Trace EVERY ModEvent that lands on the sink, matched or
-                // not. A missing "dashboard hotkey rebound" log line makes
-                // it impossible to tell whether _ne_MCM.psc fired at all
-                // vs fired with a wrong event name — that ambiguity has
-                // burned diagnosis time on the "MCM won't load" report.
+                // This sink is registered on the game-wide ModCallback
+                // source, so it sees every mod's events. It used to trace
+                // all of them, which in a real load order is hundreds of
+                // lines about other people's mods and not one of them can
+                // say anything about ours.
+                //
+                // Two questions made that seem worth it, and both survive
+                // the filter:
+                //
+                //   "Did _ne_MCM.psc fire at all, or fire under a wrong
+                //    name?" — anything we send starts with `_ne_`, and a
+                //    mistyped event name is still ours, so tracing our own
+                //    prefix answers it. That ambiguity burned diagnosis
+                //    time on the "MCM won't load" report and is the reason
+                //    the unfiltered trace existed.
+                //
+                //   "Is the sink even wired up?" — answered once, by the
+                //    first foreign event to arrive, and then dropped. One
+                //    line proves the registration took; the next three
+                //    hundred prove nothing further.
+                const std::string_view eventName{a_event->eventName};
+                const bool isOurs = eventName.starts_with(kOurEventPrefix);
+                if (!isOurs) {
+                    if (!g_loggedForeignEvent.exchange(true, std::memory_order_acq_rel)) {
+                        logger::trace("MCMEventSink[trace]: sink is live — first ModCallback from elsewhere was "
+                                      "'{}'; further foreign events are not logged",
+                                      std::string{eventName});
+                    }
+                    return RE::BSEventNotifyControl::kContinue;
+                }
+
                 const std::string sender = a_event->sender ? std::string{a_event->sender->GetName()} : std::string{};
                 logger::trace("MCMEventSink[trace]: ModCallback received: name='{}' strArg='{}' numArg={:.3f} "
                               "sender='{}' (expect name='{}' -> {})",
-                              std::string{a_event->eventName},
+                              std::string{eventName},
                               std::string{a_event->strArg},
                               a_event->numArg,
                               sender,
                               kEventName,
-                              a_event->eventName == kEventName ? "MATCH" : "skip");
-                if (a_event->eventName != kEventName) {
+                              eventName == kEventName ? "MATCH" : "skip");
+                if (eventName != kEventName) {
                     return RE::BSEventNotifyControl::kContinue;
                 }
 

@@ -122,7 +122,10 @@ namespace NarrativeEngine::AliasWalkFilter
 
         RE::BSReadLockGuard lock(aliasArray->lock);
 
-        const std::size_t n = aliasArray->aliases.size();
+        // BSTArray's size_type is 32-bit, and so is its subscript. Holding
+        // the count and the index in size_t only to narrow them back at
+        // every aliases[i] is the long way round to the same value.
+        const std::uint32_t n = aliasArray->aliases.size();
         // Aggregate diagnostics — walked at the end to give a single
         // summary line per actor. Independent of the story-active
         // decision; useful for post-mortem debugging of alias-fill
@@ -171,7 +174,7 @@ namespace NarrativeEngine::AliasWalkFilter
             return out;
         };
 
-        for (std::size_t i = 0; i < n; ++i) {
+        for (std::uint32_t i = 0; i < n; ++i) {
             const auto* entry = aliasArray->aliases[i];
             if (!entry)
                 continue;

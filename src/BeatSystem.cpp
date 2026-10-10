@@ -3,6 +3,7 @@
 #include <AlphaCanon.h>
 #include <AmbushAttackerGroups.h>
 #include <AsyncDispatch.h>
+#include <BeatParamHelpers.h>
 #include <BeatRegistry.h>
 #include <BeatWorkDispatch.h>
 #include <CombatEventLog.h>
@@ -10,6 +11,7 @@
 #include <EngineUtils.h>
 #include <EvalDispatch.h>
 #include <EvaluationPipeline.h>
+#include <EventLogUtil.h>
 #include <LetterComposer.h>
 #include <LLMTextSanitizer.h>
 #include <logger.h>
@@ -33,6 +35,7 @@
 #include <cstdint>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -376,6 +379,36 @@ namespace NarrativeEngine::BeatSystem
         return info;
     }
 
+    RepetitionWindowInfo GetRepetitionWindowInfo()
+    {
+        RepetitionWindowInfo info;
+        const double window = static_cast<double>(std::max(0, Settings::Get().beatRepetitionWindowSeconds));
+        if (window <= 0.0) {
+            return info;
+        }
+
+        // Same wall clock the ring stamps with. Deliberately not the
+        // active-play cooldown's clock: a beat fired five minutes ago
+        // leaves the ring five real minutes later whatever the player
+        // spent them doing.
+        const double now = EventLogUtil::NowUnixSeconds();
+        std::scoped_lock lock(g_recentMutex);
+        for (const auto& r : g_recentlyFired) {
+            const double expiresIn = window - (now - r.dispatchedAt);
+            if (expiresIn <= 0.0) {
+                // Already out of the window; the ring is trimmed lazily
+                // by ConsiderBeat, so an expired entry can still be
+                // sitting here and must not be reported as blocking.
+                continue;
+            }
+            ++info.suppressedCount;
+            if (info.soonestExpirySeconds == 0.0 || expiresIn < info.soonestExpirySeconds) {
+                info.soonestExpirySeconds = expiresIn;
+            }
+        }
+        return info;
+    }
+
     // ---------------------------------------------------------------
     // Cosave layer
     // ---------------------------------------------------------------
@@ -713,8 +746,8 @@ namespace NarrativeEngine::BeatSystem
         //
         // The SkyrimNet-side prompt template is still named
         // `narrative_engine_action_select` — the file lives in
-        // statics/SKSE/Plugins/SkyrimNet/prompts/ and hasn't been
-        // renamed to `_beat_select` yet. Renaming there would only
+        // statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/prompts/
+        // and hasn't been renamed to `_beat_select` yet. Renaming there would only
         // require a file rename plus one string-constant flip on the
         // SkyrimNetAPI::SendCustomPromptToLLM call below.
         //
@@ -876,7 +909,7 @@ namespace NarrativeEngine::BeatSystem
                                      std::string chosenBeat,
                                      nlohmann::json parameters,
                                      std::string narrativeNote,
-                                     std::string parameterJustification,
+                                     std::optional<nlohmann::json> motivatingMemory,
                                      PhaseTracker::Direction direction,
                                      int tensionDelta,
                                      FinalizedCallback onFinalized)
@@ -910,10 +943,12 @@ namespace NarrativeEngine::BeatSystem
                 rec.narrativeNote = std::move(narrativeNote);
             }
 
-            // Inject parameter_justification into params for the
-            // compose step to consume as sender-motivation seed.
-            if (!parameterJustification.empty()) {
-                parameters["parameter_justification"] = std::move(parameterJustification);
+            // Inject the memory the Director's `motivating_memory` number
+            // named, for the compose step to consume as the topic seed.
+            // After the record dump on purpose: the log keeps the number,
+            // not a copy of a memory that can run to a diary entry.
+            if (motivatingMemory) {
+                parameters["motivating_memory_entry"] = std::move(*motivatingMemory);
             }
 
             // Re-check global preconditions off-main — they may have
@@ -947,6 +982,38 @@ namespace NarrativeEngine::BeatSystem
             EvaluationPipeline::ApplyDecision(pt, rec);
             if (onFinalized)
                 onFinalized();
+        }
+
+        // Looks the Director's `motivating_memory` number up in the
+        // memory list the beat-select prompt showed for the sender it
+        // chose. Resolved here, against the candidates the prompt was
+        // built from, because a fresh fetch at compose time can return
+        // a differently-ordered or differently-capped list. Nullopt —
+        // and a warning — when the sender isn't among the candidates or
+        // the number doesn't name one of their memories; the compose
+        // step then picks its own topic from the sender's memories.
+        template <typename SenderCandidate>
+        std::optional<nlohmann::json> ResolveMotivatingMemory(const nlohmann::json& parameters,
+                                                              const std::vector<SenderCandidate>& candidates,
+                                                              const std::string& beatName)
+        {
+            const auto senderId = BeatParamHelpers::ParseSenderFormID(parameters, nullptr);
+            const auto sender = std::find_if(candidates.begin(), candidates.end(), [&](const SenderCandidate& c) {
+                return senderId && c.formId == *senderId;
+            });
+            if (sender == candidates.end()) {
+                logger::warn("BeatSystem: '{}' sender is not among the candidates offered; no motivating memory",
+                             beatName);
+                return std::nullopt;
+            }
+            std::string reason;
+            auto memory = BeatParamHelpers::ResolveMotivatingMemory(parameters, sender->memories, &reason);
+            if (!memory) {
+                logger::warn("BeatSystem: '{}' motivating memory unresolved ({}); the composer will pick a topic",
+                             beatName,
+                             reason);
+            }
+            return memory;
         }
 
         // The shared body invoked by both ConsiderBeat and
@@ -1052,10 +1119,11 @@ namespace NarrativeEngine::BeatSystem
                 narrativeNote = LLMTextSanitizer::Sanitize(it->get<std::string>());
                 LLMTextSanitizer::TruncateUTF8(narrativeNote, 200);
             }
-            std::string parameterJustification;
-            if (auto it = parsed.find("parameter_justification"); it != parsed.end() && it->is_string()) {
-                parameterJustification = LLMTextSanitizer::Sanitize(it->get<std::string>());
-                LLMTextSanitizer::TruncateUTF8(parameterJustification, 400);
+            std::optional<nlohmann::json> motivatingMemory;
+            if (chosenBeat == "npc_letter") {
+                motivatingMemory = ResolveMotivatingMemory(parameters, letterSenderCandidates, chosenBeat);
+            } else if (chosenBeat == "npc_visit") {
+                motivatingMemory = ResolveMotivatingMemory(parameters, visitSenderCandidates, chosenBeat);
             }
 
             FinalizeWithLLMResponse(pt,
@@ -1065,7 +1133,7 @@ namespace NarrativeEngine::BeatSystem
                                     std::move(chosenBeat),
                                     std::move(parameters),
                                     std::move(narrativeNote),
-                                    std::move(parameterJustification),
+                                    std::move(motivatingMemory),
                                     direction,
                                     tensionDelta,
                                     std::move(onFinalized));
@@ -1287,13 +1355,26 @@ namespace NarrativeEngine::BeatSystem
         // Recency filter — runs on plugin thread, briefly acquires the
         // session-only g_recentMutex.
         if (!prep.candidates.empty()) {
-            const double now = NowUnixSeconds();
-            std::scoped_lock lock(g_recentMutex);
-            TrimRecentlyFiredLocked(now);
-            prep.candidates.erase(std::remove_if(prep.candidates.begin(),
-                                                 prep.candidates.end(),
-                                                 [now](IBeat* b) { return WasFiredRecentlyLocked(b->Name(), now); }),
-                                  prep.candidates.end());
+            const auto before = prep.candidates.size();
+            {
+                const double now = NowUnixSeconds();
+                std::scoped_lock lock(g_recentMutex);
+                TrimRecentlyFiredLocked(now);
+                prep.candidates.erase(
+                    std::remove_if(prep.candidates.begin(),
+                                   prep.candidates.end(),
+                                   [now](IBeat* b) { return WasFiredRecentlyLocked(b->Name(), now); }),
+                    prep.candidates.end());
+            }
+            // The last place a candidate can disappear before the gate
+            // below reports a count. Without this, a beat the registry
+            // offered and that dropped out here looked exactly like a beat
+            // the registry never offered at all.
+            if (debug && prep.candidates.size() != before) {
+                logger::debug("BeatSystem::ConsiderBeat: {} of {} candidate(s) dropped as recently fired",
+                              before - prep.candidates.size(),
+                              before);
+            }
         }
 
         if (prep.candidates.empty()) {

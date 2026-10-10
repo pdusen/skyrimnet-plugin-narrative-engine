@@ -1165,3 +1165,66 @@ body {
 .plot-factions ul { list-style: none; padding: 0; margin: 0; font-size: 12px; }
 .plot-factions li { padding: 2px 0; }
 .plot-factions span { color: #98a0ab; }
+
+/* ---------- Timing readouts (shared across tabs) ------------------------- */
+
+/* Deliberately static. The dashboard is only on screen with the game paused
+   (PrismaUI Focus is called with pauseGame=true), so three of the four clocks
+   these report cannot advance while anyone is reading them. Nothing here
+   animates, and the panel says as much in its footer. */
+
+.timer-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 2px 0;
+}
+
+.timer-label {
+    flex: 1 1 auto;
+    color: #8a909a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.timer-value {
+    flex: 0 0 auto;
+    color: #c9d5e6;
+    font-variant-numeric: tabular-nums;
+}
+
+/* An em dash where a duration would be: nothing is scheduled, or the
+   cooldown is configured off. Dimmed so it does not read as a value. */
+.timer-inactive {
+    color: #5a5e66;
+}
+
+/* The clock a figure is measured on. Never omitted: "120s" of active-play
+   time and "120s" of wall-clock time are different durations. */
+.timer-clock {
+    margin-left: 6px;
+    padding: 0 4px;
+    border: 1px solid #2a2e36;
+    border-radius: 3px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6a6e76;
+    cursor: help;
+}
+
+.timer-note {
+    flex: 0 0 auto;
+    color: #6a6e76;
+    font-size: 11px;
+}
+
+.timer-asof {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid #23262d;
+    color: #5a5e66;
+    font-size: 10px;
+    font-style: italic;
+}

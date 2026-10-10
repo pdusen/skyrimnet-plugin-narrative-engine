@@ -48,6 +48,28 @@ namespace NarrativeEngine::BeatParamHelpers
         return UrgencyHint::Medium;
     }
 
+    std::optional<nlohmann::json> ResolveMotivatingMemory(const nlohmann::json& parameters,
+                                                          const nlohmann::json& senderMemories,
+                                                          std::string* failureReason)
+    {
+        auto fail = [failureReason](const char* reason) -> std::optional<nlohmann::json> {
+            if (failureReason)
+                *failureReason = reason;
+            return std::nullopt;
+        };
+        if (!parameters.is_object())
+            return fail("parameters_not_object");
+        auto it = parameters.find("motivating_memory");
+        if (it == parameters.end() || !it->is_number_integer()) {
+            return fail("motivating_memory_missing");
+        }
+        const auto number = it->get<std::int64_t>();
+        if (!senderMemories.is_array() || number < 1 || number > static_cast<std::int64_t>(senderMemories.size())) {
+            return fail("motivating_memory_out_of_range");
+        }
+        return std::optional<nlohmann::json>{std::in_place, senderMemories[static_cast<std::size_t>(number - 1)]};
+    }
+
     RE::Actor* ResolveLiveSenderActor(RE::FormID senderFormID, std::string* failureReason)
     {
         auto fail = [failureReason](const char* reason) -> RE::Actor* {

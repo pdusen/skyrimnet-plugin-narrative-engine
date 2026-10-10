@@ -1,9 +1,11 @@
 import { useState } from 'react';
 
-import type { GossipTabState, RumorEntry } from '../../types';
+import type { GossipTabState, GossipTimers, RumorEntry } from '../../types';
+import { TimerPanel, TimerRow } from '../TimerPanel';
 
 interface Props {
     gossip: GossipTabState;
+    timers: GossipTimers;
 }
 
 // In-world durations, rendered the way a reader thinks about them. Under a
@@ -109,7 +111,7 @@ function RumorRow({ rumor }: { rumor: RumorEntry }) {
     );
 }
 
-export function GossipTab({ gossip }: Props) {
+export function GossipTab({ gossip, timers }: Props) {
     if (!gossip.enabled) {
         return (
             <div className="gossip-tab">
@@ -127,6 +129,14 @@ export function GossipTab({ gossip }: Props) {
 
     return (
         <div className="gossip-tab">
+            <TimerPanel title="Next up">
+                <TimerRow label="Next schedule check" timer={timers.next_schedule_check} />
+                <TimerRow
+                    label="Next tick"
+                    timer={timers.next_tick}
+                    note="harvest sweep and simulation step are one tick"
+                />
+            </TimerPanel>
             <section className="panel">
                 <h2>Gossip</h2>
                 <div className="gossip-summary">

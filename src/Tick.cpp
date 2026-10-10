@@ -39,6 +39,13 @@ namespace NarrativeEngine::Tick
         double g_unpausedSecondsSinceLastTick = 0.0;
         int g_tickCount = 0;
 
+        // Mirror of the accumulator above, for readers off the plugin
+        // thread. The accumulator itself is plugin-thread-only and gets
+        // its happens-before edge from AsyncDispatch's queue mutex;
+        // SecondsUntilNextTick has no such guarantee about its caller,
+        // so it reads this instead.
+        std::atomic<double> g_unpausedSecondsMirror{0.0};
+
         // First plugin-thread pass after Start() seeds g_lastSampleTime
         // on the plugin thread so we don't need cross-thread visibility
         // on the accumulator globals.
@@ -55,6 +62,7 @@ namespace NarrativeEngine::Tick
             if (g_needsFirstTickInit) {
                 g_lastSampleTime = std::chrono::steady_clock::now();
                 g_unpausedSecondsSinceLastTick = 0.0;
+                g_unpausedSecondsMirror.store(0.0, std::memory_order_relaxed);
                 g_tickCount = 0;
                 g_needsFirstTickInit = false;
                 return;
@@ -91,6 +99,7 @@ namespace NarrativeEngine::Tick
                 return;
             }
             g_unpausedSecondsSinceLastTick += elapsedSec;
+            g_unpausedSecondsMirror.store(g_unpausedSecondsSinceLastTick, std::memory_order_relaxed);
 
             const double intervalSec = static_cast<double>(std::max(1, Settings::Get().tickIntervalSeconds));
             if (g_unpausedSecondsSinceLastTick < intervalSec) {
@@ -109,6 +118,7 @@ namespace NarrativeEngine::Tick
             // Subtract rather than zero so any overshoot rolls into
             // the next interval.
             g_unpausedSecondsSinceLastTick -= intervalSec;
+            g_unpausedSecondsMirror.store(g_unpausedSecondsSinceLastTick, std::memory_order_relaxed);
             ++g_tickCount;
             if (Settings::Get().debugMode) {
                 logger::debug("Tick: firing #{}", g_tickCount);
@@ -165,6 +175,14 @@ namespace NarrativeEngine::Tick
     bool IsEnabled()
     {
         return g_enabled.load(std::memory_order_acquire);
+    }
+
+    double SecondsUntilNextTick()
+    {
+        const double intervalSec = static_cast<double>(std::max(1, Settings::Get().tickIntervalSeconds));
+        const double accumulated = g_unpausedSecondsMirror.load(std::memory_order_relaxed);
+        const double remaining = intervalSec - accumulated;
+        return remaining > 0.0 ? remaining : 0.0;
     }
 
     void Stop()

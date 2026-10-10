@@ -6,6 +6,7 @@
 
 #include <GossipState.h>
 
+#include <DebugNotify.h>
 #include <EventLogUtil.h>
 #include <GossipClaims.h>
 #include <GossipContent.h>
@@ -287,6 +288,47 @@ namespace NarrativeEngine::GossipSim
             }
         }
 
+        // Everything that stops somebody carrying a rumor, in the order the
+        // drain used to test it inline. Both the drain and the seed path go
+        // through here, which is the only way "whatever stops them spreading
+        // one stops them starting one" can be true by construction rather
+        // than by two lists being kept in step by hand.
+        //
+        // Token-free because the drain has no token to pass; the public
+        // WhyCannotCarry gates the same call for outside callers.
+        CarryBlock CarryBlockFor(RE::FormID npc)
+        {
+            switch (ActorAvailability(npc)) {
+            case Availability::Gone:
+                return CarryBlock::Gone;
+            case Availability::TemporarilyOut:
+                return CarryBlock::TemporarilyOut;
+            case Availability::Available:
+                break;
+            }
+
+            const auto& weights = Settings::Get().gossipTierWeights;
+            float totalWeight = 0.0f;
+            for (const auto w : weights) {
+                totalWeight += std::max(0.0f, w);
+            }
+            // Every rung zeroed is a configuration with no contact model at
+            // all; treat it as having nobody rather than dividing by zero.
+            if (totalWeight <= 0.0f) {
+                return CarryBlock::NoContacts;
+            }
+
+            // Somebody with nothing on any materialised rung can still reach
+            // strangers through the province lottery, so "no contacts" means
+            // only that the province rung is also switched off.
+            const auto& pools = PoolsFor(npc);
+            const bool anyLocal = std::any_of(pools.begin(), pools.end(), [](const auto& p) { return !p.empty(); });
+            if (!anyLocal && weights[kProvince] <= 0.0f) {
+                return CarryBlock::NoContacts;
+            }
+            return CarryBlock::None;
+        }
+
         void ScheduleLocked(std::uint32_t rumorId, RE::FormID carrier, double dueGameDay)
         {
             g_queue.push({dueGameDay, rumorId, carrier});
@@ -531,7 +573,7 @@ namespace NarrativeEngine::GossipSim
 
             const auto& cfg = Settings::Get();
 
-            const auto recover = [&](const char* reason) {
+            const auto recover = [&](std::string_view reason) {
                 carrier.recovered = true;
                 GossipLog::Retire(rumorId, carrierId, reason);
                 const bool anyLive = std::any_of(
@@ -549,20 +591,26 @@ namespace NarrativeEngine::GossipSim
                 recover("age");
                 return;
             }
-            switch (ActorAvailability(carrierId)) {
-            case Availability::Gone:
-                recover("dead");
+
+            switch (const auto block = CarryBlockFor(carrierId)) {
+            case CarryBlock::Gone:
+            case CarryBlock::NoContacts:
+                recover(DescribeCarryBlock(block));
                 return;
-            case Availability::TemporarilyOut:
+            case CarryBlock::TemporarilyOut:
                 // Down but not out. Skip this step and try again next one;
                 // do NOT recover, which would make them permanently immune.
                 // Their infectious clock keeps running — time spent
                 // unconscious is time not spent talking, which is correct
                 // and needs no clock-pausing machinery.
+                //
+                // This is the one condition the seed path treats differently:
+                // a carrier has a window already running and can afford to
+                // wait, while a seed would spend its whole window waiting.
                 carrier.nextStepGameDay = nowGameDay + std::max(0.01f, cfg.gossipStepDays);
                 ScheduleLocked(rumorId, carrierId, carrier.nextStepGameDay);
                 return;
-            case Availability::Available:
+            case CarryBlock::None:
                 break;
             }
 
@@ -571,20 +619,6 @@ namespace NarrativeEngine::GossipSim
             float totalWeight = 0.0f;
             for (const auto w : weights) {
                 totalWeight += std::max(0.0f, w);
-            }
-            // Every rung zeroed is a configuration with no contact model at
-            // all; treat it as having nobody rather than dividing by zero.
-            if (totalWeight <= 0.0f) {
-                recover("no-contacts");
-                return;
-            }
-            // A carrier with nothing on any materialised rung can still reach
-            // strangers through the province lottery, so "no contacts" now
-            // means only that the province rung is also switched off.
-            const bool anyLocal = std::any_of(pools.begin(), pools.end(), [](const auto& p) { return !p.empty(); });
-            if (!anyLocal && weights[kProvince] <= 0.0f) {
-                recover("no-contacts");
-                return;
             }
 
             const double step = std::max(0.01f, cfg.gossipStepDays);
@@ -844,8 +878,32 @@ namespace NarrativeEngine::GossipSim
     void PublishSnapshot()
     {
         auto fresh = std::make_shared<const GossipState>(State());
+        // Names the SOURCE, not just the counts. Publishing the wrong
+        // state is a silent, total loss — the snapshot is what the
+        // dashboard renders and what OnSave serialises — and the only way
+        // to see it in a log is to know which state each publish came
+        // from. OnSessionStart logs its own line for the staged publish.
+        logger::debug("GossipSim: published snapshot from live state ({} rumors, {} claims, clock day {:.3f})",
+                      fresh->rumors.size(),
+                      fresh->claims.size(),
+                      fresh->simGameDay);
         std::scoped_lock lock(g_snapshotMutex);
         g_snapshot = std::move(fresh);
+    }
+
+    double LastSimulatedGameDay()
+    {
+        // Staging area first. Between OnLoad and the first tick of the new
+        // session it holds the incoming world's clock while the live state
+        // and the published snapshot still describe the outgoing one, and
+        // the scheduler is asking precisely during that window.
+        {
+            std::scoped_lock lock(g_pendingMutex);
+            if (g_pending) {
+                return g_pending->simGameDay;
+            }
+        }
+        return Snapshot()->simGameDay;
     }
 
     void Initialize()
@@ -877,12 +935,78 @@ namespace NarrativeEngine::GossipSim
         // this MODIFIES the pending state rather than replacing it: the
         // record dispatch has already filled it by now.
         //
-        // The clock re-base that used to live here is gone. Nothing needs
-        // it: SetHorizon stamps the simulation clock from the tick's own
-        // schedule, and GossipTick re-bases its schedule separately.
-        auto& pending = PendingState();
-        pending.counters = {};
-        pending.harvest = {};
+        // The clock re-base that used to live here is gone, and has to
+        // stay gone: SetHorizon stamps the simulation clock from the
+        // tick's own schedule, and GossipTick now DERIVES its schedule
+        // from that same clock. Re-basing simGameDay here would destroy
+        // the one record of when gossip last ran, which is what restarts
+        // the interval on every load.
+        //
+        // This is also the one point where the incoming world is COMPLETE:
+        // it runs at kPostLoadGame, after both record callbacks have
+        // filled the staging area, so the image taken below holds the
+        // rumors and the claims that belong to them.
+        std::shared_ptr<const GossipState> incoming;
+        {
+            std::scoped_lock lock(g_pendingMutex);
+            if (!g_pending) {
+                g_pending.emplace();
+            }
+            g_pending->counters = {};
+            g_pending->harvest = {};
+
+            // A world that has never run a tick gets its schedule anchored
+            // HERE, once, rather than at every load. Without this the
+            // countdown to the first tick restarts on every load, and a
+            // player who reloads more often than the interval never sees a
+            // single tick — the original bug, surviving in the one case the
+            // anchor could not cover.
+            //
+            // Honest as a simulation clock, too: a world with no rumors in
+            // it is trivially simulated up to date, so "simulated through
+            // now" is exactly true. It persists because the image below
+            // becomes the snapshot, and the snapshot is what OnSave writes.
+            if (g_pending->simGameDay < 0.0) {
+                g_pending->simGameDay = NowGameDay();
+                logger::info("GossipSim: no prior simulation clock; anchoring the schedule at day {:.3f}",
+                             g_pending->simGameDay);
+            }
+
+            incoming = std::make_shared<const GossipState>(*g_pending);
+        }
+
+        // Published before anything can read or re-save it: the dashboard
+        // and OnSave both go through the snapshot, and until it carries the
+        // world that was just loaded they are looking at the wrong one.
+        // The live state stays untouched — the gossip thread owns it and
+        // adopts the staging area at the top of its next job.
+        const auto rumors = incoming->rumors.size();
+        const auto claims = incoming->claims.size();
+        const auto clock = incoming->simGameDay;
+        {
+            std::scoped_lock lock(g_snapshotMutex);
+            g_snapshot = incoming;
+        }
+        // The session's opening fingerprint, and deliberately info rather
+        // than debug: this one line says what the incoming world actually
+        // contains, and every "gossip stopped working" report starts by
+        // needing it.
+        logger::info("GossipSim: session start — published staged state ({} rumors, {} claims, clock day {:.3f})",
+                     rumors,
+                     claims,
+                     clock);
+
+        // The same thing at full width in the gossip trace. `incoming` and
+        // not Snapshot(): the two are the same object here, and reading the
+        // local says so rather than inviting the question.
+        //
+        // This is the opening half of the pair. Whatever the previous
+        // session's last tick wrote, THIS is what came back — so a rumor
+        // the co-save dropped, a band text that did not survive, a carrier
+        // count that shrank, or a queue that came back empty are all one
+        // diff away instead of being inferred from what stops happening
+        // afterwards.
+        LogStateSummary("session start: this is what the save loaded", *incoming);
     }
 
     void OnSessionEnd()
@@ -893,29 +1017,40 @@ namespace NarrativeEngine::GossipSim
         // unwinding. The snapshot is immutable and cannot be pulled out
         // from under this.
         const auto snap = Snapshot();
-        const auto& g_rumors = snap->rumors;
-        const auto& g_counters = snap->counters;
-        if (g_rumors.empty()) {
+        const auto& snapRumors = snap->rumors;
+        const auto& snapCounters = snap->counters;
+        // Unconditional, and before the empty-world bail below. A session
+        // that produced nothing has to be distinguishable in the plugin log
+        // from one where the subsystem never ran at all — that ambiguity is
+        // what made an idle gossip system look identical to a broken one.
+        logger::info("GossipSim: session end — {} live rumors, {} claims, clock day {:.3f}, {} memories written "
+                     "({} failed)",
+                     snapRumors.size(),
+                     snap->claims.size(),
+                     snap->simGameDay,
+                     snapCounters.memoriesWritten,
+                     snapCounters.memoryWriteFailures);
+        if (snapRumors.empty()) {
             return;
         }
         // The session-level counterpart of the per-rumor BURNOUT line: the
         // five outcomes sum to every conversation held this session, so a
         // quiet session says whether nobody spoke or nothing landed.
-        const auto conversations = g_counters.transmissions + g_counters.wasted + g_counters.notCaught
-                                   + g_counters.unavailable + g_counters.capped + g_counters.silent;
+        const auto conversations = snapCounters.transmissions + snapCounters.wasted + snapCounters.notCaught
+                                   + snapCounters.unavailable + snapCounters.capped + snapCounters.silent;
         GossipLog::Note(std::format("CENSUS  live rumors={}  conversations={} ({} told, {} knew, {} missed, "
                                     "{} away, {} capped, {} silent)  memories={} (failed {})",
-                                    g_rumors.size(),
+                                    snapRumors.size(),
                                     conversations,
-                                    g_counters.transmissions,
-                                    g_counters.wasted,
-                                    g_counters.notCaught,
-                                    g_counters.unavailable,
-                                    g_counters.capped,
-                                    g_counters.silent,
-                                    g_counters.memoriesWritten,
-                                    g_counters.memoryWriteFailures));
-        for (const auto& [id, rumor] : g_rumors) {
+                                    snapCounters.transmissions,
+                                    snapCounters.wasted,
+                                    snapCounters.notCaught,
+                                    snapCounters.unavailable,
+                                    snapCounters.capped,
+                                    snapCounters.silent,
+                                    snapCounters.memoriesWritten,
+                                    snapCounters.memoryWriteFailures));
+        for (const auto& [id, rumor] : snapRumors) {
             const auto liveCarriers = std::count_if(
                 rumor.carriers.begin(), rumor.carriers.end(), [](const auto& kv) { return !kv.second.recovered; });
             GossipLog::Note(std::format("CENSUS  r{:02} {}  carriers={} (live {})  depth={}  transmissions={}",
@@ -977,6 +1112,10 @@ namespace NarrativeEngine::GossipSim
                                             "iGossipMaxEventsPerTick is too low or something is looping",
                                             cap,
                                             g_queue.size()));
+                logger::warn("GossipSim: drain stopped at the {}-event backstop with {} still due; "
+                             "iGossipMaxEventsPerTick is too low or something is looping",
+                             cap,
+                             g_queue.size());
                 break;
             }
             // THE cancellation checkpoint that matters. Every step past
@@ -1018,7 +1157,7 @@ namespace NarrativeEngine::GossipSim
         SweepAndReap(gt);
     }
 
-    std::uint32_t SeedRumor(const GossipThread::Token&,
+    std::uint32_t SeedRumor(const GossipThread::Token& gt,
                             RE::FormID originNpc,
                             float notability,
                             std::int64_t sourceMemoryId,
@@ -1033,6 +1172,27 @@ namespace NarrativeEngine::GossipSim
             return 0;
         }
 
+        // The same question the drain asks a carrier before letting them
+        // speak. A rumor whose origin cannot hold a conversation is not a
+        // slow rumor, it is a dead one: the first step retires them and it
+        // burns out having told nobody, which is what Ancano did in two
+        // consecutive runs.
+        //
+        // Refusing here is what releases the memory — GossipContent abandons
+        // the claim when this returns 0 — so the memory goes back in the pool
+        // for whoever can actually spread it. The harvest has its own copy of
+        // this gate so the model calls are never spent in the first place;
+        // this one is the invariant, and holds whatever the caller did.
+        if (const auto block = WhyCannotCarry(gt, originNpc); block != CarryBlock::None) {
+            GossipLog::Note(std::format("seed refused - {} cannot carry a rumor ({})",
+                                        GossipGraph::NpcName(originNpc),
+                                        DescribeCarryBlock(block)));
+            logger::warn("GossipSim: seed refused — origin 0x{:08X} cannot carry a rumor ({})",
+                         originNpc,
+                         DescribeCarryBlock(block));
+            return 0;
+        }
+
         const auto liveCount =
             std::count_if(g_rumors.begin(), g_rumors.end(), [](const auto& kv) { return kv.second.live; });
         if (liveCount >= cfg.gossipMaxLiveRumors) {
@@ -1040,6 +1200,7 @@ namespace NarrativeEngine::GossipSim
             // to a third of its configured seeding rate, and took log analysis
             // rather than a log line to find.
             GossipLog::Note(std::format("seed refused - {} live rumors at the iGossipMaxLiveRumors cap", liveCount));
+            logger::warn("GossipSim: seed refused — {} live rumors at the iGossipMaxLiveRumors cap", liveCount);
             return 0;
         }
 
@@ -1072,7 +1233,38 @@ namespace NarrativeEngine::GossipSim
         g_rumors.emplace(id, std::move(rumor));
 
         GossipLog::Seed(id, notability, originNpc, p->settlement ? p->settlement : p->hold, sourceMemoryId);
+
+        // Rumours are the one beat with nothing to watch -- they spread
+        // between NPCs offscreen and only ever surface later in someone
+        // else's dialogue. Without a notice the only evidence a seed
+        // happened at all is the gossip log.
+        //
+        // Posted from the gossip thread, which is why DebugNotify takes
+        // no token and marshals for itself. Only the FormID is safe to
+        // carry across; the name is read on the main thread, where
+        // touching the form is allowed.
+        DebugNotify::PostActorNamed(originNpc, "[NE] New rumor spreading from {}");
         return id;
+    }
+
+    std::string_view DescribeCarryBlock(CarryBlock block)
+    {
+        switch (block) {
+        case CarryBlock::Gone:
+            return "dead";
+        case CarryBlock::TemporarilyOut:
+            return "away";
+        case CarryBlock::NoContacts:
+            return "no-contacts";
+        case CarryBlock::None:
+            break;
+        }
+        return "none";
+    }
+
+    CarryBlock WhyCannotCarry(const GossipThread::Token&, RE::FormID npc)
+    {
+        return CarryBlockFor(npc);
     }
 
     float AvailableContactShare(const GossipThread::Token&, RE::FormID npc)
@@ -1207,6 +1399,7 @@ namespace NarrativeEngine::GossipSim
         out.notCaughtThisSession = st.counters.notCaught;
         out.unavailableThisSession = st.counters.unavailable;
         out.cappedThisSession = st.counters.capped;
+        out.silentThisSession = st.counters.silent;
         out.memoriesWritten = st.counters.memoriesWritten;
         out.memoryWriteFailures = st.counters.memoryWriteFailures;
         out.liveRumors = static_cast<std::size_t>(
@@ -1217,6 +1410,115 @@ namespace NarrativeEngine::GossipSim
         }
         out.queuedEvents = st.queue.size();
         return out;
+    }
+
+    void LogStateSummary(std::string_view reason, const GossipState& st)
+    {
+        if (!GossipLog::IsActive()) {
+            return;
+        }
+
+        // ONE image, handed in. Four separate reads could each land on a
+        // different publication, and a carrier count from one instant
+        // beside a rumor list from another is exactly the kind of
+        // disagreement these blocks exist to expose.
+        const auto stats = GetStats(st);
+        const auto harvest = GossipHarvest::GetStats(st);
+        auto rumors = GetRumorViews(st);
+
+        // GetRumorViews hands back the dashboard's order, newest first.
+        // Re-sorted by id here because the whole point of writing these
+        // blocks at session start AND at every tick end is that two of
+        // them can be put side by side: in newest-first order a single
+        // seed shifts every row, and a diff of two blocks says nothing.
+        // The per-rumor figures are the tab's; only the order is ours.
+        std::sort(rumors.begin(), rumors.end(), [](const RumorView& a, const RumorView& b) { return a.id < b.id; });
+
+        std::size_t stalled = 0;
+        std::size_t infectious = 0;
+        for (const auto& r : rumors) {
+            if (r.stalled) {
+                ++stalled;
+            }
+            infectious += r.activeCarriers;
+        }
+
+        GossipLog::State(std::format("{} -- clock day {:.3f}  rumors={} ({} live, {} stalled)  "
+                                     "carriers={} ({} infectious)  queued={}  claims={}  participants={}",
+                                     reason,
+                                     st.simGameDay,
+                                     rumors.size(),
+                                     stats.liveRumors,
+                                     stalled,
+                                     stats.totalCarriers,
+                                     infectious,
+                                     stats.queuedEvents,
+                                     GossipClaims::Count(st),
+                                     GossipGraph::ParticipantCount()));
+
+        for (const auto& r : rumors) {
+            // Band 0, clipped. The bands are written once by a model call
+            // nobody will make again, so losing them across a save leaves a
+            // rumor that spreads and says nothing -- and the only way to see
+            // that from a trace is for the text to be in it. The count comes
+            // first because that is the part a round trip breaks.
+            constexpr std::size_t kTextClip = 48;
+            std::string text = r.text;
+            if (text.size() > kTextClip) {
+                text.resize(kTextClip);
+                text += "...";
+            }
+
+            GossipLog::State(std::format("  r{:02} {:<7} n={:.2f}  age={:.1f}d  idle={:.1f}d  "
+                                         "carriers={} ({} infectious)  depth={}  holds={}  settlements={}  "
+                                         "told={}  wasted={}  origin={} @{}  memory={}  bands={} \"{}\"",
+                                         r.id,
+                                         r.live ? (r.stalled ? "stalled" : "live") : "done",
+                                         r.notability,
+                                         r.ageDays,
+                                         r.idleDays,
+                                         r.carriers,
+                                         r.activeCarriers,
+                                         r.maxDepth,
+                                         r.holds,
+                                         r.settlements,
+                                         r.transmissions,
+                                         r.wasted,
+                                         r.originName.empty() ? "?" : r.originName,
+                                         r.originLocation.empty() ? "-" : r.originLocation,
+                                         r.sourceMemoryId,
+                                         r.bands.size(),
+                                         text));
+        }
+
+        if (rumors.empty()) {
+            // Said out loud rather than left as a header with nothing under
+            // it. An empty world and a summary that failed to find the world
+            // it was given read identically otherwise.
+            GossipLog::State("  (no rumors)");
+        }
+
+        // All six outcomes and their total, in the order and the words a
+        // BURNOUT line uses. Printed as a sum rather than as a list because
+        // the whole point of the breakdown is that it reconciles: the five
+        // this line shipped with left out `silent`, which was 28% of every
+        // conversation held, so nothing could be checked against anything.
+        const auto conversations = stats.transmissionsThisSession + stats.wastedThisSession + stats.notCaughtThisSession
+                                   + stats.unavailableThisSession + stats.cappedThisSession + stats.silentThisSession;
+        GossipLog::State(std::format("  session so far: conversations={} ({} told, {} knew, {} missed, {} away, "
+                                     "{} capped, {} silent)  |  harvest {} sweep(s), {} sent  |  "
+                                     "memories {} written ({} failed)",
+                                     conversations,
+                                     stats.transmissionsThisSession,
+                                     stats.wastedThisSession,
+                                     stats.notCaughtThisSession,
+                                     stats.unavailableThisSession,
+                                     stats.cappedThisSession,
+                                     stats.silentThisSession,
+                                     harvest.sweeps,
+                                     harvest.sentForGeneration,
+                                     stats.memoriesWritten,
+                                     stats.memoryWriteFailures));
     }
 
     void OnSave(SKSE::SerializationInterface* intfc, const GossipState& state)
@@ -1297,7 +1599,10 @@ namespace NarrativeEngine::GossipSim
                 intfc->WriteRecordData(recovered);
             }
         }
-        logger::debug("GossipSim::OnSave: wrote {} live rumors ({} in memory)", rumorCount, state.rumors.size());
+        logger::debug("GossipSim::OnSave: wrote {} live rumors ({} in memory), clock day {:.3f}",
+                      rumorCount,
+                      state.rumors.size(),
+                      state.simGameDay);
     }
 
     void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t)
@@ -1316,25 +1621,31 @@ namespace NarrativeEngine::GossipSim
         if (!g_pending) {
             g_pending.emplace();
         }
-        auto& g_rumors = g_pending->rumors;
-        auto& g_queue = g_pending->queue;
-        auto& g_nextRumorId = g_pending->nextRumorId;
-        auto& g_simGameDay = g_pending->simGameDay;
-        g_rumors.clear();
-        g_queue = {};
+        // Named for the state they alias, not for the fields they happen to
+        // be. These used to shadow the namespace-scope aliases of the same
+        // names, which point at the LIVE state — so this function read as
+        // though it were filling live while it was filling staging, and the
+        // publish at the end of it took the wrong one. That cost a tester
+        // their whole gossip history. C4459 flagged it the entire time.
+        auto& pendingRumors = g_pending->rumors;
+        auto& pendingQueue = g_pending->queue;
+        auto& pendingNextRumorId = g_pending->nextRumorId;
+        auto& pendingSimGameDay = g_pending->simGameDay;
+        pendingRumors.clear();
+        pendingQueue = {};
         g_pending->bucketHistory.clear();
         g_pending->bucketCount = 0;
 
         std::uint32_t savedBucketCount = 0;
         std::uint32_t historyCount = 0;
         std::uint32_t rumorCount = 0;
-        if (intfc->ReadRecordData(g_nextRumorId) != sizeof(g_nextRumorId)
-            || intfc->ReadRecordData(g_simGameDay) != sizeof(g_simGameDay)
+        if (intfc->ReadRecordData(pendingNextRumorId) != sizeof(pendingNextRumorId)
+            || intfc->ReadRecordData(pendingSimGameDay) != sizeof(pendingSimGameDay)
             || intfc->ReadRecordData(savedBucketCount) != sizeof(savedBucketCount)
             || intfc->ReadRecordData(historyCount) != sizeof(historyCount)) {
             logger::error("GossipSim::OnLoad: short read on header; reverting");
-            g_rumors.clear();
-            g_queue = {};
+            pendingRumors.clear();
+            pendingQueue = {};
             return;
         }
 
@@ -1347,8 +1658,8 @@ namespace NarrativeEngine::GossipSim
             std::uint32_t b = 0;
             if (intfc->ReadRecordData(b) != sizeof(b)) {
                 logger::error("GossipSim::OnLoad: short read on bucket history; reverting");
-                g_rumors.clear();
-                g_queue = {};
+                pendingRumors.clear();
+                pendingQueue = {};
                 return;
             }
             history.push_back(b);
@@ -1374,8 +1685,8 @@ namespace NarrativeEngine::GossipSim
 
         if (intfc->ReadRecordData(rumorCount) != sizeof(rumorCount)) {
             logger::error("GossipSim::OnLoad: short read on rumor count; reverting");
-            g_rumors.clear();
-            g_queue = {};
+            pendingRumors.clear();
+            pendingQueue = {};
             return;
         }
 
@@ -1402,8 +1713,8 @@ namespace NarrativeEngine::GossipSim
                 || intfc->ReadRecordData(r.lastActivityGameDay) != sizeof(r.lastActivityGameDay)
                 || intfc->ReadRecordData(live) != sizeof(live)) {
                 logger::error("GossipSim::OnLoad: short read on rumor {}; reverting", i);
-                g_rumors.clear();
-                g_queue = {};
+                pendingRumors.clear();
+                pendingQueue = {};
                 return;
             }
             std::uint32_t bandCount = 0;
@@ -1411,16 +1722,16 @@ namespace NarrativeEngine::GossipSim
                 || intfc->ReadRecordData(r.sourceActor) != sizeof(r.sourceActor)
                 || intfc->ReadRecordData(bandCount) != sizeof(bandCount)) {
                 logger::error("GossipSim::OnLoad: short read on rumor provenance; reverting");
-                g_rumors.clear();
-                g_queue = {};
+                pendingRumors.clear();
+                pendingQueue = {};
                 return;
             }
             r.bands.resize(bandCount);
             for (auto& b : r.bands) {
                 if (!EventLogUtil::ReadString(intfc, b)) {
                     logger::error("GossipSim::OnLoad: short read on band text; reverting");
-                    g_rumors.clear();
-                    g_queue = {};
+                    pendingRumors.clear();
+                    pendingQueue = {};
                     return;
                 }
             }
@@ -1436,8 +1747,8 @@ namespace NarrativeEngine::GossipSim
             std::uint32_t carrierCount = 0;
             if (intfc->ReadRecordData(carrierCount) != sizeof(carrierCount)) {
                 logger::error("GossipSim::OnLoad: short read on carrier count; reverting");
-                g_rumors.clear();
-                g_queue = {};
+                pendingRumors.clear();
+                pendingQueue = {};
                 return;
             }
             for (std::uint32_t c = 0; c < carrierCount; ++c) {
@@ -1452,8 +1763,8 @@ namespace NarrativeEngine::GossipSim
                     || intfc->ReadRecordData(carrier.nextStepGameDay) != sizeof(carrier.nextStepGameDay)
                     || intfc->ReadRecordData(recovered) != sizeof(recovered)) {
                     logger::error("GossipSim::OnLoad: short read on carrier; reverting");
-                    g_rumors.clear();
-                    g_queue = {};
+                    pendingRumors.clear();
+                    pendingQueue = {};
                     return;
                 }
                 carrier.recovered = recovered != 0;
@@ -1465,20 +1776,72 @@ namespace NarrativeEngine::GossipSim
                     continue;
                 }
                 if (!carrier.recovered) {
-                    ScheduleLocked(r.id, resolved, carrier.nextStepGameDay);
+                    // The STAGING queue, by hand. ScheduleLocked pushes into
+                    // State().queue, and AdoptPendingState then overwrites the
+                    // whole of State() with this staging area — so every entry
+                    // scheduled through it from here was thrown away at the top
+                    // of the next tick, before a single one came due.
+                    //
+                    // What that cost: a rumor that survived a save came back
+                    // with infectious carriers and nothing scheduled, so
+                    // ProcessEventLocked was never called for it. No carrier
+                    // could recover, FinishRumorLocked never ran, `live` stayed
+                    // true, SweepAndReap never reaped it, and OnSave wrote it
+                    // out again. Immortal: frozen on the dashboard, ageing,
+                    // never spreading, and holding a slot against
+                    // iGossipMaxLiveRumors for the rest of the playthrough.
+                    pendingQueue.push({carrier.nextStepGameDay, r.id, resolved});
                 }
                 r.carriers.emplace(resolved, carrier);
+            }
+
+            // A live rumor needs at least one infectious carrier to be
+            // schedulable, and a carrier whose FormID no longer resolves is
+            // dropped above. Lose the last one that way — a mod that defined
+            // them is gone — and the rumor is in exactly the immortal state
+            // the staging fix above exists to prevent, by a route that fix
+            // does not cover. Drop it on the floor instead: every participant
+            // already holds their memories in SkyrimNet's database, which is
+            // all a burned-out rumor leaves behind anyway.
+            const bool anyInfectious =
+                std::any_of(r.carriers.begin(), r.carriers.end(), [](const auto& kv) { return !kv.second.recovered; });
+            if (r.live && !anyInfectious) {
+                logger::warn("GossipSim::OnLoad: r{:02} came back with no carrier the load order still resolves; "
+                             "discarding rather than restoring a rumor nothing can advance",
+                             r.id);
+                continue;
             }
 
             RE::FormID resolvedOrigin = 0;
             if (intfc->ResolveFormID(r.originNpc, resolvedOrigin)) {
                 r.originNpc = resolvedOrigin;
             }
-            g_rumors.emplace(r.id, std::move(r));
+            pendingRumors.emplace(r.id, std::move(r));
         }
 
-        logger::info("GossipSim::OnLoad: restored {} rumors, {} queued events", g_rumors.size(), g_queue.size());
-        PublishSnapshot();
+        // The clock belongs on this line: it is the schedule's anchor, and
+        // whether it survived a round trip decides whether ticks ever fire
+        // again. A rumor count alone cannot tell you that.
+        logger::info("GossipSim::OnLoad: restored {} rumors, {} queued events, clock day {:.3f}",
+                     pendingRumors.size(),
+                     pendingQueue.size(),
+                     pendingSimGameDay);
+
+        // Deliberately does NOT publish. PublishSnapshot copies the LIVE
+        // state, and everything above was written into the STAGING area —
+        // so publishing here put the outgoing world in front of readers,
+        // or in a fresh process a default-constructed one.
+        //
+        // That was not cosmetic. The snapshot is what the dashboard
+        // renders AND what Plugin.cpp's OnSave serialises, so a load
+        // followed by a save wrote an empty gossip world over a populated
+        // co-save and the rumors were gone for good.
+        //
+        // Publishing also cannot happen here even with the right state:
+        // GossipSim and GossipClaims load as two separate records into the
+        // same staging area, and an image taken between them would hold
+        // rumors whose claims had not arrived yet. OnSessionStart runs at
+        // kPostLoadGame, after the whole dispatch, and publishes there.
     }
 
     void OnRevert()
@@ -1498,12 +1861,18 @@ namespace NarrativeEngine::GossipSim
             g_pending->queue = {};
             g_pending->nextRumorId = 1;
             g_pending->lastGameDaySample = -1.0;
-            g_pending->simGameDay = 0.0;
+            g_pending->simGameDay = -1.0;
             g_pending->counters = {};
             g_pending->harvest = {};
             g_pending->bucketHistory.clear();
             g_pending->bucketCount = 0;
         }
+        // A revert wipes the staging area, so one that fires unexpectedly,
+        // twice, or out of order with OnLoad destroys the incoming world
+        // before anything can adopt it. Silent, that is invisible; the
+        // ordering of revert / load / session start is exactly where this
+        // subsystem's persistence bugs have lived.
+        logger::info("GossipSim::OnRevert: simulation staging area cleared");
         // The contact cache is derived rather than owned, so it is not in
         // the pending state. AdoptPendingState clears it on the gossip
         // thread, which is the only thread allowed to touch it — dropping

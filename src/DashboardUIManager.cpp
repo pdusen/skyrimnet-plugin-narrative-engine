@@ -5,6 +5,7 @@
 #include <BeatRegistry.h>
 #include <BeatSystem.h>
 #include <CombatEventLog.h>
+#include <DashboardTimers.h>
 #include <DecisionLog.h>
 #include <GossipClaims.h>
 #include <GossipGraph.h>
@@ -67,11 +68,15 @@ namespace NarrativeEngine::DashboardUIManager
         // non-main thread.
         //
         // The comparison is in DirectX-scan-code space throughout — the
-        // native input space of SKSE's button events and SkyUI's keymap
-        // controls. `Settings::Get().dashboardHotkeyDXSC` is likewise a
-        // scan code (populated from the plugin INI or overridden at
-        // runtime by _ne_MCM.psc's ModEvent), so no scan/VK translation
-        // is needed.
+        // input space of SKSE's *keyboard* button events and SkyUI's
+        // keymap controls. `Settings::Get().dashboardHotkeyDXSC` is
+        // likewise a scan code (populated from the plugin INI or
+        // overridden at runtime by _ne_MCM.psc's ModEvent), so no
+        // scan/VK translation is needed. It does mean every event from
+        // another device has to be dropped before the comparison — see
+        // the device gate in ProcessEvent — because the mouse and the
+        // gamepad number their buttons in their own spaces, which
+        // overlap the scan codes without meaning the same thing.
 
         // DIK_ESCAPE. Used for the "ESC closes the dashboard" affordance
         // below. Modifier reads still use GetAsyncKeyState, which speaks
@@ -96,6 +101,11 @@ namespace NarrativeEngine::DashboardUIManager
                 // per-key TRACE lines only emit when the player has
                 // enabled bTraceMode in the ini.
                 const bool trace = Settings::Get().traceMode;
+                // And the subset that fires for keys which match nothing,
+                // which is most of them. Separate switch: a line per
+                // keystroke of ordinary play buries everything else
+                // traceMode is on for.
+                const bool tracePresses = trace && Settings::Get().traceKeyPresses;
 
                 bool fire = false;
                 for (auto* e = *a_event; e; e = e->next) {
@@ -108,7 +118,38 @@ namespace NarrativeEngine::DashboardUIManager
                     const std::uint32_t dxsc = btn->GetIDCode();
                     if (dxsc == 0)
                         continue;
-                    if (trace) {
+
+                    // Device gate. GetIDCode() is numbered per device, not
+                    // in one shared scan-code space: the mouse counts its
+                    // own buttons from zero, so wheel-down reports 9 —
+                    // the same number as the keyboard's DIK_8 — and right
+                    // mouse reports 1, the same number as DIK_ESCAPE. The
+                    // gamepad numbers its buttons in a third space again.
+                    // A binding is stored as a keyboard scan code, so
+                    // comparing it against any other device compares two
+                    // different alphabets: a tester bound to Shift+8 had
+                    // the dashboard toggle on every scroll notch, because
+                    // sprinting holds Shift and each notch reports 9.
+                    // This sits ahead of every branch below so a wheel
+                    // notch can neither toggle the view, nor close it via
+                    // the ESC affordance, nor bind itself during capture.
+                    // Full collision table and the log signature in
+                    // docs/engine-findings/buttonevent-idcode-is-per-device.md.
+                    if (e->GetDevice() != RE::INPUT_DEVICE::kKeyboard) {
+                        // Traced only when the code would otherwise have
+                        // matched — the whole point is to surface a
+                        // cross-device collision, and tracing every mouse
+                        // click and scroll notch would bury it.
+                        if (trace && static_cast<int>(dxsc) == Settings::Get().dashboardHotkeyDXSC) {
+                            logger::trace("DashboardUIManager[trace]:  reject DXSC {} from non-keyboard device {} "
+                                          "(collides with the configured binding)",
+                                          dxsc,
+                                          static_cast<int>(e->GetDevice()));
+                        }
+                        continue;
+                    }
+
+                    if (tracePresses) {
                         // GetAsyncKeyState here is used purely for the
                         // diagnostic — the actual match logic below reads
                         // it too, but this trace line captures the state
@@ -193,7 +234,7 @@ namespace NarrativeEngine::DashboardUIManager
                     }
 
                     if (static_cast<int>(dxsc) != Settings::Get().dashboardHotkeyDXSC) {
-                        if (trace) {
+                        if (tracePresses) {
                             logger::trace("DashboardUIManager[trace]:  reject DXSC {} != configured {}",
                                           dxsc,
                                           Settings::Get().dashboardHotkeyDXSC);
@@ -675,6 +716,22 @@ namespace NarrativeEngine::DashboardUIManager
             });
         }
 
+        // Backs the Settings tab's Debug Notifications checkbox.
+        // Payload is `"true"` or `"false"`.
+        void OnSetDebugNotifications(const char* argument)
+        {
+            const bool enabled = ParseBoolArg(argument);
+            logger::info("DashboardUIManager: ne_setDebugNotifications({}) received", enabled ? "true" : "false");
+            AsyncDispatch::EnqueueWork([enabled](const PluginThread::Token& pt) {
+                MainThread::FireAndForget(pt, [enabled](const MainThread::Token&) {
+                    Settings::McmOverride mut;
+                    mut.debugNotifications = enabled;
+                    Settings::WriteMcmOverride(mut);
+                    PushFullState();
+                });
+            });
+        }
+
         // Shared implementation for the Settings-tab integer slider
         // listeners. Every slider handler follows the exact same shape:
         // parse the payload as a bare integer, clamp to a per-slider
@@ -964,6 +1021,7 @@ namespace NarrativeEngine::DashboardUIManager
         PrismaUI_API::RegisterJSListener(g_view, "ne_seedDebugPlot", &OnSeedDebugPlot);
         // Phase 08 Settings tab listeners.
         PrismaUI_API::RegisterJSListener(g_view, "ne_setDebugMode", &OnSetDebugMode);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setDebugNotifications", &OnSetDebugNotifications);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setTickInterval", &OnSetTickInterval);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setMinPhaseDuration", &OnSetMinPhaseDuration);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setPhaseIdealDuration", &OnSetPhaseIdealDuration);
@@ -1044,6 +1102,7 @@ namespace NarrativeEngine::DashboardUIManager
             const auto& cfg = Settings::Get();
             j["settings"] = {
                 {"debug_mode", cfg.debugMode},
+                {"debug_notifications", cfg.debugNotifications},
                 {"dashboard_hotkey_display",
                  FormatHotkeyBinding(cfg.dashboardHotkeyDXSC, cfg.dashboardHotkeyModifiers)},
                 {"dashboard_hotkey_capture_active", g_hotkeyCaptureMode.load(std::memory_order_acquire)},
@@ -1264,6 +1323,13 @@ namespace NarrativeEngine::DashboardUIManager
             }
             j["actions"] = std::move(actions);
         }
+
+        // timers — the per-tab "when does the next thing happen, and
+        // how long has this cooldown left" readouts. Every figure is
+        // tagged with the clock that governs it; see DashboardTimers.h
+        // for why four of them are not interchangeable, and why these
+        // are readings as of the push rather than live countdowns.
+        j["timers"] = DashboardTimers::Collect();
 
         // visit — Phase 05 Step 16. The Visit tab renders three
         // sections: the current conversation (when a visit is in

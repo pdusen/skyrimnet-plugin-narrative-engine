@@ -1,0 +1,902 @@
+#include <ApproachChain.h>
+
+#include <logger.h>
+#include <Settings.h>
+#include <TravelGraph.h>
+#include <VisitorTravelLog.h>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstddef>
+#include <functional>
+#include <limits>
+#include <queue>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+namespace NarrativeEngine::ApproachChain
+{
+    namespace
+    {
+        constexpr float kInf = std::numeric_limits<float>::max();
+        constexpr float kCellUnits = 4096.0f;
+
+        // How far above the height its own line interpolates a synthetic
+        // point outside the loaded grid is placed.
+        //
+        // Nothing can ground it: Step 1 of Phase 16 established that
+        // TES::GetLandHeight returns false for every position outside the
+        // attached grid (and writes -2048 into the out parameter while
+        // doing so), so there is no landscape to read. An actor warped
+        // there stays stationary until background travel carries them
+        // into the grid and does not interact with terrain in the
+        // meantime, so erring upward by one actor height costs nothing
+        // and erring downward risks starting them inside a hill.
+        //
+        // Points INSIDE the grid keep their interpolated height, because
+        // the arrival search re-grounds those against real navmesh.
+        constexpr float kSyntheticLiftUnits = 128.0f;
+
+        float Dist(const RE::NiPoint3& a, const RE::NiPoint3& b)
+        {
+            const float dx = a.x - b.x;
+            const float dy = a.y - b.y;
+            const float dz = a.z - b.z;
+            return std::sqrt(dx * dx + dy * dy + dz * dz);
+        }
+
+        struct Node
+        {
+            RE::NiPoint3 pos{};
+            PointClass cls = PointClass::Direct;
+            int difficulty = 1;
+            std::size_t fineNode = FineRoads::kInvalidNode;
+        };
+
+        // The composite graph. Undirected, and small enough that an
+        // adjacency list of indices is the whole of what it needs — the
+        // coarse skeleton is ~620 nodes, a loaded fine graph ~110, and a
+        // direct line across the province at 512-unit spacing ~200.
+        struct Graph
+        {
+            std::vector<Node> nodes;
+            std::vector<std::vector<std::size_t>> adjacency;
+
+            std::size_t Add(const RE::NiPoint3& pos,
+                            PointClass cls,
+                            int difficulty,
+                            std::size_t fineNode = FineRoads::kInvalidNode)
+            {
+                nodes.push_back(Node{pos, cls, difficulty, fineNode});
+                adjacency.emplace_back();
+                return nodes.size() - 1;
+            }
+
+            void Link(std::size_t a, std::size_t b)
+            {
+                if (a == b || a >= nodes.size() || b >= nodes.size()) {
+                    return;
+                }
+                // Deduplicated, because the two bridges can land on the
+                // same pair and a doubled edge would be walked twice by
+                // anything summing cost over the graph.
+                if (std::find(adjacency[a].begin(), adjacency[a].end(), b) != adjacency[a].end()) {
+                    return;
+                }
+                adjacency[a].push_back(b);
+                adjacency[b].push_back(a);
+            }
+
+            [[nodiscard]] std::size_t EdgeEnds() const
+            {
+                std::size_t ends = 0;
+                for (const auto& row : adjacency) {
+                    ends += row.size();
+                }
+                return ends;
+            }
+        };
+
+        // Lay `cls` points every `spacing` units along the open segment
+        // between two nodes already in the graph, and link the run.
+        //
+        // The endpoints are untouched — they belong to whatever put them
+        // there — so this fills the inside of a segment and nothing else.
+        void LayLine(Graph& graph,
+                     const LoadedGrid& grid,
+                     RE::FormID worldSpace,
+                     std::size_t from,
+                     std::size_t to,
+                     PointClass cls,
+                     int difficulty,
+                     float spacing)
+        {
+            if (from >= graph.nodes.size() || to >= graph.nodes.size() || from == to) {
+                return;
+            }
+            const auto start = graph.nodes[from].pos;
+            const auto end = graph.nodes[to].pos;
+            const float length = Dist(start, end);
+            if (!(length > spacing)) {
+                // Closer together than one step: the segment is one edge
+                // and there is no room for a point inside it.
+                graph.Link(from, to);
+                VisitorTravelLog::Write("GRAPH",
+                                        "  lay {} ({:.0f},{:.0f}) -> ({:.0f},{:.0f}) {:.0f}u difficulty {} "
+                                        "-> one edge, under a spacing",
+                                        PointClassName(cls),
+                                        start.x,
+                                        start.y,
+                                        end.x,
+                                        end.y,
+                                        length,
+                                        difficulty);
+                return;
+            }
+
+            std::size_t laid = 0;
+            std::size_t previous = from;
+            for (float travelled = spacing; travelled < length; travelled += spacing) {
+                const float t = travelled / length;
+                RE::NiPoint3 pos{
+                    start.x + (end.x - start.x) * t,
+                    start.y + (end.y - start.y) * t,
+                    start.z + (end.z - start.z) * t,
+                };
+                if (!grid.Contains(worldSpace, pos)) {
+                    pos.z += kSyntheticLiftUnits;
+                }
+                const auto added = graph.Add(pos, cls, difficulty);
+                graph.Link(previous, added);
+                previous = added;
+                ++laid;
+            }
+            graph.Link(previous, to);
+            VisitorTravelLog::Write("GRAPH",
+                                    "  lay {} ({:.0f},{:.0f}) -> ({:.0f},{:.0f}) {:.0f}u difficulty {} "
+                                    "-> {} point(s) at {:.0f}u spacing",
+                                    PointClassName(cls),
+                                    start.x,
+                                    start.y,
+                                    end.x,
+                                    end.y,
+                                    length,
+                                    difficulty,
+                                    laid,
+                                    spacing);
+        }
+
+        // Index of the graph node nearest `target` among `candidates`.
+        std::size_t NearestOf(const Graph& graph,
+                              const std::vector<std::size_t>& candidates,
+                              const RE::NiPoint3& target)
+        {
+            std::size_t best = FineRoads::kInvalidNode;
+            float bestDist = kInf;
+            for (const auto index : candidates) {
+                const float d = Dist(graph.nodes[index].pos, target);
+                if (d < bestDist) {
+                    bestDist = d;
+                    best = index;
+                }
+            }
+            return best;
+        }
+
+        // Which network each fine node belongs to, and how many there are.
+        //
+        // The loaded grid can hold several unconnected pieces of road — two
+        // valleys either side of a ridge, a bridgeless river. All of them go
+        // in the graph and each gets its own bridge to the coarse skeleton,
+        // so none of them is an island.
+        //
+        // This used to pick one network — the one holding the node closest to
+        // the player — and drop the rest, on the grounds that an unbridged
+        // network is unreachable and so cost without reach. True, and the
+        // premise was the mistake: they were unreachable BECAUSE only one was
+        // bridged. Measured in a session before this changed: a player in open
+        // country had 249 fine nodes loaded across two networks and 81 of them
+        // selected, so two thirds of the road around them was discarded for
+        // being on the wrong side of whichever single node happened to be
+        // nearest, and the chain used no fine road at all.
+        struct FineComponents
+        {
+            // Component label per node, parallel to `fine.nodes`.
+            std::vector<std::size_t> label;
+            std::size_t count = 0;
+        };
+
+        FineComponents LabelFineNetworks(const FineRoads::Graph& fine)
+        {
+            FineComponents out;
+            out.label.assign(fine.nodes.size(), FineRoads::kInvalidNode);
+            if (fine.nodes.empty()) {
+                return out;
+            }
+
+            std::vector<std::size_t> stack;
+            for (std::size_t seed = 0; seed < fine.nodes.size(); ++seed) {
+                if (out.label[seed] != FineRoads::kInvalidNode) {
+                    continue;
+                }
+                const std::size_t label = out.count++;
+                stack.push_back(seed);
+                out.label[seed] = label;
+                while (!stack.empty()) {
+                    const auto at = stack.back();
+                    stack.pop_back();
+                    for (const auto next : fine.adjacency[at]) {
+                        if (next < out.label.size() && out.label[next] == FineRoads::kInvalidNode) {
+                            out.label[next] = label;
+                            stack.push_back(next);
+                        }
+                    }
+                }
+            }
+            return out;
+        }
+
+        struct SearchResult
+        {
+            std::vector<std::size_t> path; // start -> goal
+            float cost = 0.0f;
+            bool found = false;
+        };
+
+        // Cost of traversing the edge between two nodes: its length times
+        // the HIGHER of its two endpoints' difficulties.
+        //
+        // `max` rather than an average, so one expensive node is
+        // genuinely expensive to pass through instead of being diluted by
+        // a cheap neighbour. An average would make a long cheap approach
+        // to a single costly node far more attractive than intended,
+        // which is the one behaviour this cost function exists to
+        // prevent.
+        float EdgeCost(const Graph& graph, std::size_t a, std::size_t b)
+        {
+            const int difficulty = std::max(graph.nodes[a].difficulty, graph.nodes[b].difficulty);
+            return Dist(graph.nodes[a].pos, graph.nodes[b].pos) * static_cast<float>(difficulty);
+        }
+
+        // Walk `previous` back from the goal. Returns empty when the trail
+        // does not reach the start, because reporting a partial route
+        // would be worse than reporting none.
+        std::vector<std::size_t> Reconstruct(const std::vector<std::size_t>& previous,
+                                             std::size_t start,
+                                             std::size_t goal)
+        {
+            std::vector<std::size_t> path;
+            for (std::size_t at = goal;; at = previous[at]) {
+                path.push_back(at);
+                if (at == start) {
+                    break;
+                }
+                if (previous[at] == FineRoads::kInvalidNode) {
+                    return {};
+                }
+            }
+            std::reverse(path.begin(), path.end());
+            return path;
+        }
+
+        // Plain Dijkstra over the same graph, with no heuristic. Only the
+        // test suite's oracle calls this; the module itself uses the
+        // A-star below.
+        SearchResult Dijkstra(const Graph& graph, std::size_t start, std::size_t goal)
+        {
+            SearchResult out;
+            if (start >= graph.nodes.size() || goal >= graph.nodes.size()) {
+                return out;
+            }
+            std::vector<float> dist(graph.nodes.size(), kInf);
+            std::vector<std::size_t> previous(graph.nodes.size(), FineRoads::kInvalidNode);
+            std::vector<bool> settled(graph.nodes.size(), false);
+
+            using Entry = std::pair<float, std::size_t>;
+            std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> frontier;
+            dist[start] = 0.0f;
+            frontier.emplace(0.0f, start);
+            while (!frontier.empty()) {
+                const auto [d, current] = frontier.top();
+                frontier.pop();
+                if (settled[current]) {
+                    continue;
+                }
+                settled[current] = true;
+                for (const auto next : graph.adjacency[current]) {
+                    const float tentative = d + EdgeCost(graph, current, next);
+                    if (tentative < dist[next]) {
+                        dist[next] = tentative;
+                        previous[next] = current;
+                        frontier.emplace(tentative, next);
+                    }
+                }
+            }
+            if (dist[goal] == kInf) {
+                return out;
+            }
+            out.path = Reconstruct(previous, start, goal);
+            out.found = !out.path.empty();
+            out.cost = dist[goal];
+            return out;
+        }
+
+        // A-star from `start` to `goal`, with straight-line distance to the
+        // goal as the heuristic.
+        //
+        // That heuristic underestimates the true cost — and so returns the
+        // cheapest route rather than merely a route — only while no edge
+        // costs less than its own length, which is why difficulty 1 is the
+        // floor of the scale and Settings clamps to it.
+        SearchResult AStar(const Graph& graph, std::size_t start, std::size_t goal)
+        {
+            SearchResult out;
+            if (start >= graph.nodes.size() || goal >= graph.nodes.size()) {
+                return out;
+            }
+
+            const auto& goalPos = graph.nodes[goal].pos;
+            std::vector<float> gScore(graph.nodes.size(), kInf);
+            std::vector<std::size_t> previous(graph.nodes.size(), FineRoads::kInvalidNode);
+            std::vector<bool> settled(graph.nodes.size(), false);
+
+            using Entry = std::pair<float, std::size_t>;
+            std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> frontier;
+            gScore[start] = 0.0f;
+            frontier.emplace(Dist(graph.nodes[start].pos, goalPos), start);
+
+            while (!frontier.empty()) {
+                const auto [_, current] = frontier.top();
+                frontier.pop();
+                if (settled[current]) {
+                    continue;
+                }
+                if (current == goal) {
+                    break;
+                }
+                settled[current] = true;
+                for (const auto next : graph.adjacency[current]) {
+                    if (settled[next]) {
+                        continue;
+                    }
+                    const float tentative = gScore[current] + EdgeCost(graph, current, next);
+                    if (tentative < gScore[next]) {
+                        gScore[next] = tentative;
+                        previous[next] = current;
+                        frontier.emplace(tentative + Dist(graph.nodes[next].pos, goalPos), next);
+                    }
+                }
+            }
+
+            if (gScore[goal] == kInf) {
+                return out;
+            }
+            out.path = Reconstruct(previous, start, goal);
+            out.found = !out.path.empty();
+            out.cost = gScore[goal];
+            return out;
+        }
+
+        // Everything `Build` puts into the graph, and where the two
+        // endpoints ended up in it.
+        struct Assembly
+        {
+            Graph graph;
+            std::size_t visitorNode = FineRoads::kInvalidNode;
+            std::size_t playerNode = FineRoads::kInvalidNode;
+            std::size_t coarseCount = 0;
+            std::size_t fineCount = 0;
+            std::size_t fineNetworks = 0;
+            bool ok = false;
+        };
+
+        Assembly Assemble(const LoadedGrid& grid,
+                          RE::FormID worldSpace,
+                          const RE::NiPoint3& visitorOrigin,
+                          const RE::NiPoint3& playerPos)
+        {
+            Assembly out;
+            if (worldSpace == 0) {
+                return out;
+            }
+
+            const auto& cfg = Settings::Get();
+            const float spacing = static_cast<float>(std::max(1, cfg.visitChainBridgeSpacingUnits));
+            const int coarseDifficulty = std::max(1, cfg.visitChainDifficultyCoarse);
+            const int fineDifficulty = std::max(1, cfg.visitChainDifficultyFine);
+            const int connectorDifficulty = std::max(1, cfg.visitChainDifficultyConnector);
+            const int directDifficulty = std::max(1, cfg.visitChainDifficultyDirect);
+
+            Graph& graph = out.graph;
+
+            // ---- difficulty 1: the coarse skeleton ------------------
+            //
+            // Restricted to this worldspace. No coarse edge crosses
+            // between worldspaces, so filtering the nodes leaves the
+            // edges coherent.
+            std::unordered_map<std::size_t, std::size_t> coarseToGraph;
+            std::vector<std::size_t> coarseNodes;
+            for (std::size_t i = 0; i < TravelGraph::NodeCount(); ++i) {
+                const auto* node = TravelGraph::GetNode(i);
+                if (!node || node->worldSpace != worldSpace) {
+                    continue;
+                }
+                const auto added =
+                    graph.Add(RE::NiPoint3{node->x, node->y, node->z}, PointClass::Coarse, coarseDifficulty);
+                coarseToGraph.emplace(i, added);
+                coarseNodes.push_back(added);
+            }
+            // Linked, except near the player, where the gaps are laid like
+            // every other long segment in this graph.
+            //
+            // One node per exterior navmesh puts the skeleton's nodes about
+            // 8,000 units apart over Tamriel, and a player standing beside one
+            // joins it immediately — so the chain's near end is a single edge
+            // to the next node however far that is. Measured: an arrival 11,582
+            // units out with three candidates inside the distance floor and
+            // nothing between them and that node.
+            //
+            // Bounded by distance from the player rather than by hop count,
+            // because what matters is whether the arrival search will ever walk
+            // there, and it only ever walks outward until something is
+            // acceptable. Laying the whole skeleton would take the graph from
+            // about a thousand nodes to ten thousand to no purpose.
+            const float detailRadius = static_cast<float>(std::max(0, cfg.visitChainCoarseDetailUnits));
+            for (const auto& [coarseIndex, graphIndex] : coarseToGraph) {
+                for (const auto neighbor : TravelGraph::Neighbors(coarseIndex)) {
+                    const auto it = coarseToGraph.find(neighbor);
+                    if (it == coarseToGraph.end()) {
+                        continue;
+                    }
+                    if (neighbor < coarseIndex) {
+                        continue; // laid once, from the lower end
+                    }
+                    const bool nearPlayer = detailRadius > 0.0f
+                                            && (Dist(graph.nodes[graphIndex].pos, playerPos) <= detailRadius
+                                                || Dist(graph.nodes[it->second].pos, playerPos) <= detailRadius);
+                    if (!nearPlayer) {
+                        graph.Link(graphIndex, it->second);
+                        continue;
+                    }
+                    LayLine(
+                        graph, grid, worldSpace, graphIndex, it->second, PointClass::Coarse, coarseDifficulty, spacing);
+                }
+            }
+            out.coarseCount = coarseNodes.size();
+            VisitorTravelLog::Write("GRAPH",
+                                    "coarse skeleton: {} node(s) in ws=0x{:08X} of {} known, "
+                                    "detail laid within {:.0f}u of the player",
+                                    coarseNodes.size(),
+                                    worldSpace,
+                                    TravelGraph::NodeCount(),
+                                    detailRadius);
+
+            // ---- difficulty 2: every loaded fine network ------------
+            const auto fine = FineRoads::Snapshot();
+            const bool fineUsable = !fine.nodes.empty() && fine.worldSpace == worldSpace;
+            const auto components = fineUsable ? LabelFineNetworks(fine) : FineComponents{};
+            out.fineCount = fineUsable ? fine.nodes.size() : 0;
+            out.fineNetworks = components.count;
+
+            std::unordered_map<std::size_t, std::size_t> fineToGraph;
+            std::vector<std::size_t> fineNodes;
+            // Graph indices of this build's fine nodes, grouped by network, so
+            // each one can be bridged on its own.
+            std::vector<std::vector<std::size_t>> fineByNetwork(components.count);
+            if (fineUsable) {
+                for (std::size_t i = 0; i < fine.nodes.size(); ++i) {
+                    const auto& n = fine.nodes[i];
+                    const auto added = graph.Add(RE::NiPoint3{n.x, n.y, n.z}, PointClass::Fine, fineDifficulty, i);
+                    fineToGraph.emplace(i, added);
+                    fineNodes.push_back(added);
+                    const auto label = components.label[i];
+                    if (label < fineByNetwork.size()) {
+                        fineByNetwork[label].push_back(added);
+                    }
+                }
+                for (const auto& [fineIndex, graphIndex] : fineToGraph) {
+                    for (const auto neighbor : fine.adjacency[fineIndex]) {
+                        const auto it = fineToGraph.find(neighbor);
+                        if (it != fineToGraph.end()) {
+                            graph.Link(graphIndex, it->second);
+                        }
+                    }
+                }
+                if (VisitorTravelLog::IsActive()) {
+                    std::string sizes;
+                    for (std::size_t n = 0; n < fineByNetwork.size(); ++n) {
+                        sizes += (n == 0 ? "" : ", ") + std::to_string(fineByNetwork[n].size());
+                    }
+                    VisitorTravelLog::Write("GRAPH",
+                                            "fine road: {} node(s) in {} network(s) [{}] — every one of them in "
+                                            "the graph, each bridged on its own",
+                                            fine.nodes.size(),
+                                            components.count,
+                                            sizes);
+                }
+            } else {
+                VisitorTravelLog::Write("GRAPH",
+                                        "fine road: none usable (nodes={} ws=0x{:08X} wanted 0x{:08X})",
+                                        fine.nodes.size(),
+                                        fine.worldSpace,
+                                        worldSpace);
+            }
+
+            // ---- difficulty 3: the endpoints and their connectors ---
+            out.playerNode = graph.Add(playerPos, PointClass::Connector, connectorDifficulty);
+            out.visitorNode = graph.Add(visitorOrigin, PointClass::Connector, connectorDifficulty);
+            VisitorTravelLog::Write("GRAPH",
+                                    "endpoints: player ({:.0f},{:.0f},{:.0f}) and visitor "
+                                    "({:.0f},{:.0f},{:.0f}), both connector difficulty {}",
+                                    playerPos.x,
+                                    playerPos.y,
+                                    playerPos.z,
+                                    visitorOrigin.x,
+                                    visitorOrigin.y,
+                                    visitorOrigin.z,
+                                    connectorDifficulty);
+
+            // The player reaches the road network directly: onto the
+            // fine network they are standing beside, and onto the coarse
+            // skeleton so a cross-province route has somewhere to arrive.
+            //
+            // Laid rather than linked. A single edge costs the same as a
+            // laid one — same length, same difficulty at both ends, and
+            // LayLine falls back to one edge when the gap is under a
+            // spacing — so this does not re-price anything. What it adds
+            // is points along the way, and without them the nearest
+            // candidate past the distance floor is the first road node,
+            // however far out that is. Measured in a session before this
+            // existed: a player standing where no fine graph loads got an
+            // arrival 20,960 units away, because the only thing between
+            // them and their nearest coarse node was one edge.
+            // Onto each network separately, not just the nearest node
+            // overall. One attachment leaves every other piece of road
+            // enterable only through its own bridge and exitable only the same
+            // way, which for a dead-end stub means the road beside it is in
+            // the graph and still unreachable from the player: two nodes of
+            // courtyard twenty units away can make a whole ribbon useless.
+            // Each network is inside the loaded grid, so each attachment is
+            // short and priced at connector difficulty like any other
+            // cross-country step.
+            for (const auto& network : fineByNetwork) {
+                if (network.empty()) {
+                    continue;
+                }
+                const auto attach = NearestOf(graph, network, playerPos);
+                if (attach == FineRoads::kInvalidNode) {
+                    continue;
+                }
+                VisitorTravelLog::Write("GRAPH",
+                                        "attach player -> fine network of {} node(s), nearest at "
+                                        "({:.0f},{:.0f}) {:.0f}u off",
+                                        network.size(),
+                                        graph.nodes[attach].pos.x,
+                                        graph.nodes[attach].pos.y,
+                                        Dist(graph.nodes[attach].pos, playerPos));
+                LayLine(graph,
+                        grid,
+                        worldSpace,
+                        out.playerNode,
+                        attach,
+                        PointClass::Connector,
+                        connectorDifficulty,
+                        spacing);
+            }
+            const auto playerCoarseAttach = NearestOf(graph, coarseNodes, playerPos);
+            if (playerCoarseAttach != FineRoads::kInvalidNode) {
+                VisitorTravelLog::Write("GRAPH",
+                                        "attach player -> coarse skeleton at ({:.0f},{:.0f}) {:.0f}u off",
+                                        graph.nodes[playerCoarseAttach].pos.x,
+                                        graph.nodes[playerCoarseAttach].pos.y,
+                                        Dist(graph.nodes[playerCoarseAttach].pos, playerPos));
+                LayLine(graph,
+                        grid,
+                        worldSpace,
+                        out.playerNode,
+                        playerCoarseAttach,
+                        PointClass::Connector,
+                        connectorDifficulty,
+                        spacing);
+            }
+
+            // The visitor reaches the coarse skeleton the same way. They
+            // do NOT get a cheap connector onto the fine network — that
+            // is what the direct line below is for, and a connector would
+            // undercut it.
+            const auto visitorCoarseAttach = NearestOf(graph, coarseNodes, visitorOrigin);
+            if (visitorCoarseAttach != FineRoads::kInvalidNode) {
+                VisitorTravelLog::Write("GRAPH",
+                                        "attach visitor -> coarse skeleton at ({:.0f},{:.0f}) {:.0f}u off",
+                                        graph.nodes[visitorCoarseAttach].pos.x,
+                                        graph.nodes[visitorCoarseAttach].pos.y,
+                                        Dist(graph.nodes[visitorCoarseAttach].pos, visitorOrigin));
+                LayLine(graph,
+                        grid,
+                        worldSpace,
+                        out.visitorNode,
+                        visitorCoarseAttach,
+                        PointClass::Connector,
+                        connectorDifficulty,
+                        spacing);
+            }
+
+            // The bridges: coarse skeleton to each fine network, at whichever
+            // pair of nodes is cheapest to join. This is the gap RoadRoute
+            // measures and then throws away, and filling it is what lets a
+            // visitor be placed on a connected point just outside the loaded
+            // grid rather than the visit declining.
+            //
+            // One per network rather than one overall, so no loaded road is an
+            // island. A network far from any skeleton node gets a long bridge
+            // and prices itself out at connector difficulty, which is the cost
+            // function's job and not a selection rule's.
+            if (!coarseNodes.empty()) {
+                for (const auto& network : fineByNetwork) {
+                    if (network.empty()) {
+                        continue;
+                    }
+                    std::size_t bestFine = FineRoads::kInvalidNode;
+                    std::size_t bestCoarse = FineRoads::kInvalidNode;
+                    float bestDist = kInf;
+                    for (const auto fineIndex : network) {
+                        for (const auto coarseIndex : coarseNodes) {
+                            const float d = Dist(graph.nodes[fineIndex].pos, graph.nodes[coarseIndex].pos);
+                            if (d < bestDist) {
+                                bestDist = d;
+                                bestFine = fineIndex;
+                                bestCoarse = coarseIndex;
+                            }
+                        }
+                    }
+                    if (bestFine != FineRoads::kInvalidNode) {
+                        VisitorTravelLog::Write("GRAPH",
+                                                "bridge network of {} node(s): fine ({:.0f},{:.0f}) -> coarse "
+                                                "({:.0f},{:.0f}), the cheapest pair at {:.0f}u",
+                                                network.size(),
+                                                graph.nodes[bestFine].pos.x,
+                                                graph.nodes[bestFine].pos.y,
+                                                graph.nodes[bestCoarse].pos.x,
+                                                graph.nodes[bestCoarse].pos.y,
+                                                bestDist);
+                        LayLine(graph,
+                                grid,
+                                worldSpace,
+                                bestFine,
+                                bestCoarse,
+                                PointClass::Connector,
+                                connectorDifficulty,
+                                spacing);
+                    }
+                }
+            }
+
+            // ---- difficulty 4: the two direct lines ----------------
+            //
+            // The first is the useful one: it lets a visitor who is
+            // off-road but close cut straight to the road near the player
+            // and finish on cheap ground. The second is the connectivity
+            // guarantee, and the only segment that exists when no fine
+            // network is loaded.
+            const auto visitorFineAttach = NearestOf(graph, fineNodes, visitorOrigin);
+            if (visitorFineAttach != FineRoads::kInvalidNode) {
+                LayLine(graph,
+                        grid,
+                        worldSpace,
+                        out.visitorNode,
+                        visitorFineAttach,
+                        PointClass::Direct,
+                        directDifficulty,
+                        spacing);
+            }
+            LayLine(graph,
+                    grid,
+                    worldSpace,
+                    out.visitorNode,
+                    out.playerNode,
+                    PointClass::Direct,
+                    directDifficulty,
+                    spacing);
+
+            out.ok = true;
+            return out;
+        }
+    } // namespace
+
+    const char* PointClassName(PointClass cls)
+    {
+        switch (cls) {
+        case PointClass::Coarse:
+            return "coarse";
+        case PointClass::Fine:
+            return "fine";
+        case PointClass::Connector:
+            return "connector";
+        case PointClass::Direct:
+            return "direct";
+        }
+        return "unknown";
+    }
+
+    bool LoadedGrid::Contains(RE::FormID ws, const RE::NiPoint3& pos) const
+    {
+        if (!valid || ws == 0 || ws != worldSpace) {
+            return false;
+        }
+        const auto cx = static_cast<std::int32_t>(std::floor(pos.x / kCellUnits));
+        const auto cy = static_cast<std::int32_t>(std::floor(pos.y / kCellUnits));
+        return cx >= minCellX && cx <= maxCellX && cy >= minCellY && cy <= maxCellY;
+    }
+
+    LoadedGrid ReadLoadedGrid(const MainThread::Token&)
+    {
+        LoadedGrid out;
+        auto* tes = RE::TES::GetSingleton();
+        if (!tes || tes->interiorCell) {
+            return out; // indoors: no exterior grid, which is a normal answer
+        }
+        auto* grid = tes->gridCells;
+        if (!grid || !grid->cells) {
+            return out;
+        }
+
+        bool first = true;
+        for (std::uint32_t gx = 0; gx < grid->length; ++gx) {
+            for (std::uint32_t gy = 0; gy < grid->length; ++gy) {
+                auto* cell = grid->GetCell(gx, gy);
+                if (!cell || cell->IsInteriorCell() || !cell->IsAttached()) {
+                    continue; // in the grid but not loaded yet
+                }
+                auto* coords = cell->GetCoordinates();
+                if (!coords) {
+                    continue;
+                }
+                const auto cx = static_cast<std::int32_t>(coords->cellX);
+                const auto cy = static_cast<std::int32_t>(coords->cellY);
+                if (first) {
+                    out.minCellX = out.maxCellX = cx;
+                    out.minCellY = out.maxCellY = cy;
+                    if (auto* ws = cell->GetRuntimeData().worldSpace) {
+                        out.worldSpace = ws->GetFormID();
+                    }
+                    first = false;
+                    continue;
+                }
+                out.minCellX = std::min(out.minCellX, cx);
+                out.maxCellX = std::max(out.maxCellX, cx);
+                out.minCellY = std::min(out.minCellY, cy);
+                out.maxCellY = std::max(out.maxCellY, cy);
+            }
+        }
+        out.valid = !first && out.worldSpace != 0;
+        return out;
+    }
+
+    Chain Build(const LoadedGrid& grid,
+                RE::FormID worldSpace,
+                const RE::NiPoint3& visitorOrigin,
+                const RE::NiPoint3& playerPos)
+    {
+        Chain chain;
+        const auto assembly = Assemble(grid, worldSpace, visitorOrigin, playerPos);
+        if (!assembly.ok) {
+            logger::debug("ApproachChain: no worldspace to build in");
+            return chain;
+        }
+
+        VisitorTravelLog::Write("GRAPH",
+                                "assembled: {} node(s), {} edge(s); searching visitor -> player",
+                                assembly.graph.nodes.size(),
+                                assembly.graph.EdgeEnds() / 2);
+
+        const auto result = AStar(assembly.graph, assembly.visitorNode, assembly.playerNode);
+        if (!result.found) {
+            VisitorTravelLog::Write("SEARCH",
+                                    "no route over {} node(s) — the visitor-to-player line should have made "
+                                    "this impossible",
+                                    assembly.graph.nodes.size());
+            logger::warn("ApproachChain: no route from the visitor to the player over {} node(s) -- the "
+                         "visitor-to-player line should have made this impossible",
+                         assembly.graph.nodes.size());
+            return chain;
+        }
+
+        std::array<std::size_t, 4> histogram{};
+        std::size_t inGrid = 0;
+        chain.points.reserve(result.path.size());
+        for (const auto index : result.path) {
+            const auto& node = assembly.graph.nodes[index];
+            Point point;
+            point.position = node.pos;
+            point.cls = node.cls;
+            point.insideLoadedGrid = grid.Contains(worldSpace, node.pos);
+            point.fineNode = node.fineNode;
+            if (point.insideLoadedGrid) {
+                ++inGrid;
+            }
+            ++histogram[static_cast<std::size_t>(node.cls)];
+            chain.points.push_back(point);
+        }
+        chain.cost = result.cost;
+        chain.valid = true;
+
+        VisitorTravelLog::Write("SEARCH",
+                                "route found: {} point(s), cost {:.0f} [coarse={} fine={} connector={} "
+                                "direct={}], {} inside the loaded grid",
+                                chain.points.size(),
+                                chain.cost,
+                                histogram[static_cast<std::size_t>(PointClass::Coarse)],
+                                histogram[static_cast<std::size_t>(PointClass::Fine)],
+                                histogram[static_cast<std::size_t>(PointClass::Connector)],
+                                histogram[static_cast<std::size_t>(PointClass::Direct)],
+                                inGrid);
+        if (VisitorTravelLog::IsActive()) {
+            // Visitor first, which is the order the chain is in. Every point,
+            // because the whole value of this file is the ones the arrival
+            // search did not pick.
+            for (std::size_t i = 0; i < chain.points.size(); ++i) {
+                const auto& point = chain.points[i];
+                VisitorTravelLog::Write("CHAIN",
+                                        "  #{:<3} ({:.0f},{:.0f},{:.0f}) {:<9} in_grid={} {:.0f}u from the player",
+                                        i,
+                                        point.position.x,
+                                        point.position.y,
+                                        point.position.z,
+                                        PointClassName(point.cls),
+                                        point.insideLoadedGrid ? 1 : 0,
+                                        Dist(point.position, playerPos));
+            }
+        }
+
+        logger::debug("ApproachChain: ws={:08X} graph={} nodes/{} edges (coarse={} fine={} in {} network(s)) "
+                      "-- chain={} points cost={:.0f} [coarse={} fine={} connector={} direct={}] inGrid={}",
+                      worldSpace,
+                      assembly.graph.nodes.size(),
+                      assembly.graph.EdgeEnds() / 2,
+                      assembly.coarseCount,
+                      assembly.fineCount,
+                      assembly.fineNetworks,
+                      chain.points.size(),
+                      chain.cost,
+                      histogram[static_cast<std::size_t>(PointClass::Coarse)],
+                      histogram[static_cast<std::size_t>(PointClass::Fine)],
+                      histogram[static_cast<std::size_t>(PointClass::Connector)],
+                      histogram[static_cast<std::size_t>(PointClass::Direct)],
+                      inGrid);
+        return chain;
+    }
+} // namespace NarrativeEngine::ApproachChain
+
+namespace NarrativeEngine::ApproachChain_Testing
+{
+    OracleResult SearchBothWays(const ApproachChain::LoadedGrid& grid,
+                                RE::FormID worldSpace,
+                                const RE::NiPoint3& visitorOrigin,
+                                const RE::NiPoint3& playerPos)
+    {
+        using namespace NarrativeEngine::ApproachChain;
+        OracleResult out;
+        const auto assembly = Assemble(grid, worldSpace, visitorOrigin, playerPos);
+        if (!assembly.ok) {
+            return out;
+        }
+        out.nodeCount = assembly.graph.nodes.size();
+        out.edgeCount = assembly.graph.EdgeEnds() / 2;
+
+        const auto fast = AStar(assembly.graph, assembly.visitorNode, assembly.playerNode);
+        const auto slow = Dijkstra(assembly.graph, assembly.visitorNode, assembly.playerNode);
+        out.built = fast.found && slow.found;
+        out.astarCost = fast.cost;
+        out.dijkstraCost = slow.cost;
+        for (const auto index : fast.path) {
+            out.astarPath.push_back(assembly.graph.nodes[index].pos);
+        }
+        for (const auto index : slow.path) {
+            out.dijkstraPath.push_back(assembly.graph.nodes[index].pos);
+        }
+        return out;
+    }
+} // namespace NarrativeEngine::ApproachChain_Testing

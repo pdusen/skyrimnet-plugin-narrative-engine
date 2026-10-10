@@ -1,10 +1,12 @@
 #include <LetterComposer.h>
 
 #include <EvaluationPipeline.h>
+#include <EventLogUtil.h>
 #include <LLMTextSanitizer.h>
 #include <logger.h>
 #include <NPCLetterBeat.h>
 #include <SenderCandidatePool.h>
+#include <SenderDialogue.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
@@ -231,172 +233,6 @@ namespace NarrativeEngine::LetterComposer
         // entries the pick should turn on. Compose uses true: the
         // sender's diary is exactly the kind of private, in-voice
         // material a letter-writing prompt should have on hand.
-        // Fetch the most recent player↔sender dialogue exchanges from
-        // SkyrimNet and trim each entry to `{speaker, text, gameTime}`.
-        // `gameTime` is kept on the trimmed shape so downstream can
-        // apply the "no dialogue older than the oldest kept memory"
-        // filter before rendering; the compose prompt itself doesn't
-        // consume it, so callers should strip it once the filter has
-        // run. Oldest-first is preserved (SkyrimNet's guarantee). Free-
-        // form text fields are sanitized per project rule. Returns an
-        // empty array on any failure or when SkyrimNet has no dialogue
-        // on file.
-        nlohmann::json FetchRecentDialogue(RE::FormID formId, int cap)
-        {
-            // Guard against a nonsense negative setting; SkyrimNet
-            // would clamp anyway but we keep the fetch bounded here.
-            const int safeCap = std::max(0, cap);
-            const auto raw = SkyrimNetAPI::GetRecentDialogue(formId, safeCap);
-            auto parsed = nlohmann::json::parse(raw, nullptr, false);
-            if (!parsed.is_array()) {
-                return nlohmann::json::array();
-            }
-
-            // Resolve player + sender display names up front so we
-            // can rewrite the `speaker` role literal SkyrimNet emits
-            // (`"npc"` / `"player"`) into a human-readable name the
-            // compose prompt can render directly.
-            std::string playerName;
-            if (auto* p = RE::PlayerCharacter::GetSingleton()) {
-                if (auto* n = p->GetName())
-                    playerName = n;
-            }
-            std::string senderName;
-            if (auto* form = RE::TESForm::LookupByID(formId)) {
-                if (auto* a = form->As<RE::Actor>()) {
-                    if (auto* n = a->GetName())
-                        senderName = n;
-                }
-            }
-
-            auto trimmed = nlohmann::json::array();
-            for (auto& e : parsed) {
-                if (!e.is_object())
-                    continue;
-                nlohmann::json out = nlohmann::json::object();
-
-                // Speaker — role literal → display name mapping.
-                // Falls through to the raw string if the value is
-                // something other than the known role literals (older
-                // SkyrimNet builds carried a display name here).
-                if (auto it = e.find("speaker"); it != e.end() && it->is_string()) {
-                    const auto raw = it->get<std::string>();
-                    std::string mapped;
-                    if (raw == "player") {
-                        mapped = playerName;
-                    } else if (raw == "npc") {
-                        std::string npcNameField;
-                        if (auto nit = e.find("npcName"); nit != e.end() && nit->is_string()) {
-                            npcNameField = LLMTextSanitizer::Sanitize(nit->get<std::string>());
-                        }
-                        mapped = !npcNameField.empty() ? npcNameField : senderName;
-                    } else {
-                        mapped = LLMTextSanitizer::Sanitize(raw);
-                    }
-                    if (!mapped.empty())
-                        out["speaker"] = std::move(mapped);
-                }
-
-                // Text — try `data` first (current SkyrimNet shape),
-                // then `text` / `content` / `utterance` for
-                // version-shift resilience.
-                for (const char* candidate : {"data", "text", "content", "utterance"}) {
-                    auto it = e.find(candidate);
-                    if (it != e.end() && it->is_string()) {
-                        auto s = LLMTextSanitizer::Sanitize(it->get<std::string>());
-                        if (!s.empty()) {
-                            out["text"] = std::move(s);
-                            break;
-                        }
-                    }
-                }
-                if (auto it = e.find("gameTime"); it != e.end() && it->is_number()) {
-                    out["gameTime"] = it->get<double>();
-                }
-                if (!out.contains("speaker") || !out.contains("text")) {
-                    continue;
-                }
-                trimmed.push_back(std::move(out));
-            }
-            return trimmed;
-        }
-
-        // Trim dialogue entries older than the oldest memory in `memories`.
-        // Shaped memories carry their in-world age (`age_seconds`);
-        // dialogue carries absolute game-seconds (`gameTime`). Both are
-        // now on the same clock, so the oldest kept memory's age converts
-        // to a game-seconds cutoff by plain subtraction from
-        // `RE::Calendar::GetHoursPassed() * 3600`.
-        //
-        // If `memories` is empty (no lower bound) or the oldest age
-        // resolves to 0 (unknown), no filter is applied — better to
-        // show the LLM the full dialogue window than to silently blank
-        // it based on a missing field.
-        //
-        // Preserves `gameTime` on surviving entries; a follow-up call
-        // to AnnotateDialogueAges converts it into a rendered age
-        // label before the prompt goes out.
-        void FilterDialogueByMemoryAge(nlohmann::json& dialogue, const nlohmann::json& memories)
-        {
-            if (!dialogue.is_array() || dialogue.empty())
-                return;
-
-            // `age_seconds` is the shaped memory's IN-WORLD age. It used to
-            // be `age_hours`, which is real-world elapsed time — mixing that
-            // with the game clock below put the cutoff arbitrarily far in
-            // the past, so the filter silently did nothing on any save
-            // resumed after a break.
-            double oldestMemoryAgeSeconds = 0.0;
-            if (memories.is_array()) {
-                for (const auto& m : memories) {
-                    const double s = m.value("age_seconds", 0.0);
-                    if (s > oldestMemoryAgeSeconds)
-                        oldestMemoryAgeSeconds = s;
-                }
-            }
-            if (oldestMemoryAgeSeconds <= 0.0)
-                return;
-
-            auto* calendar = RE::Calendar::GetSingleton();
-            if (!calendar)
-                return;
-            const double nowGameSeconds = static_cast<double>(calendar->GetHoursPassed()) * 3600.0;
-            const double cutoffGameSeconds = nowGameSeconds - oldestMemoryAgeSeconds;
-
-            auto& arr = dialogue.get_ref<nlohmann::json::array_t&>();
-            arr.erase(std::remove_if(arr.begin(),
-                                     arr.end(),
-                                     [cutoffGameSeconds](const nlohmann::json& e) {
-                                         return e.value("gameTime", 0.0) < cutoffGameSeconds;
-                                     }),
-                      arr.end());
-        }
-
-        // Compute a rendered age label per dialogue entry (`age_str`)
-        // and drop the raw `gameTime` field. Called after the memory-
-        // age filter so we only pay the formatting cost on entries the
-        // prompt will actually see.
-        void AnnotateDialogueAges(nlohmann::json& dialogue)
-        {
-            if (!dialogue.is_array() || dialogue.empty())
-                return;
-            auto* calendar = RE::Calendar::GetSingleton();
-            const double nowGameSeconds = calendar ? static_cast<double>(calendar->GetHoursPassed()) * 3600.0 : 0.0;
-            for (auto& e : dialogue) {
-                if (!e.is_object())
-                    continue;
-                const double gt = e.value("gameTime", 0.0);
-                if (nowGameSeconds > 0.0 && gt > 0.0) {
-                    // Canonical formatter, shared with events and now with
-                    // memories, so every age the prompt shows reads the same.
-                    e["age_str"] = SkyrimNetEvents::FormatRelativeGameTime(std::max(0.0, nowGameSeconds - gt));
-                } else {
-                    e["age_str"] = "";
-                }
-                e.erase("gameTime");
-            }
-        }
-
         nlohmann::json FetchSenderMemories(RE::FormID formId,
                                            const std::string& playerName,
                                            bool includeDiaries,
@@ -421,8 +257,8 @@ namespace NarrativeEngine::LetterComposer
             // NPCLetterBeat_Cooldowns::GetSenderMemoryWatermarkGameHours)
             // already ensured the action-select LLM couldn't pick this
             // sender for a topic rooted in a pre-watermark memory. The
-            // resulting action-select `parameter_justification` is the
-            // authoritative topic seed and is threaded into the
+            // memory the action-select response named as the sender's
+            // motive is the authoritative topic seed and is threaded into the
             // compose prompt directly, so the compose LLM has no
             // reason to re-derive a topic from the memory tail. The
             // full memory tail is left intact here so the compose
@@ -646,7 +482,7 @@ namespace NarrativeEngine::LetterComposer
                                                  RE::FormID senderFormID,
                                                  const nlohmann::json& senderMemories,
                                                  const nlohmann::json& recentDialogue,
-                                                 const std::string& parameterJustification)
+                                                 const nlohmann::json& motivatingMemory)
         {
             const auto& cfg = Settings::Get();
 
@@ -660,7 +496,8 @@ namespace NarrativeEngine::LetterComposer
             root["max_words"] = cfg.letterContentMaxWords;
 
             root["player_name"] = playerName;
-            root["parameter_justification"] = parameterJustification;
+            root["has_motivating_memory"] = motivatingMemory.is_object();
+            root["motivating_memory"] = motivatingMemory.is_object() ? motivatingMemory : nlohmann::json::object();
 
             char idBuf[16];
             std::snprintf(idBuf, sizeof(idBuf), "0x%X", senderFormID);
@@ -842,7 +679,7 @@ namespace NarrativeEngine::LetterComposer
     void Compose(const BeatContext& ctx,
                  UrgencyHint urgencyHint,
                  RE::FormID senderNpcFormID,
-                 std::string parameterJustification,
+                 nlohmann::json motivatingMemory,
                  std::function<void(std::optional<LetterComposition>)> callback)
     {
         if (!callback)
@@ -914,18 +751,19 @@ namespace NarrativeEngine::LetterComposer
         // tail only reaches back N hours, a dialogue line from earlier
         // than that would reference events the LLM has no memory
         // context for, and would read as sudden past-life inserts.
-        auto recentDialogue = FetchRecentDialogue(senderNpcFormID, composeCfg.letterComposeDialogueRenderCap);
-        FilterDialogueByMemoryAge(recentDialogue, memories);
-        AnnotateDialogueAges(recentDialogue);
+        //
+        // Strictly two-party: only the player addressing this sender
+        // and this sender addressing the player. See SenderDialogue.h
+        // for why that needs the event stream rather than SkyrimNet's
+        // dialogue endpoint.
+        const double nowGameSeconds = EventLogUtil::NowGameTimeSeconds();
+        auto recentDialogue =
+            SenderDialogue::Fetch(senderNpcFormID, senderName, playerName, composeCfg.letterComposeDialogueRenderCap);
+        SenderDialogue::FilterByMemoryAge(recentDialogue, memories, nowGameSeconds);
+        SenderDialogue::AnnotateAges(recentDialogue, nowGameSeconds);
 
-        const auto promptCtx = BuildComposePromptContext(ctx,
-                                                         urgencyHint,
-                                                         playerName,
-                                                         senderName,
-                                                         senderNpcFormID,
-                                                         memories,
-                                                         recentDialogue,
-                                                         parameterJustification);
+        const auto promptCtx = BuildComposePromptContext(
+            ctx, urgencyHint, playerName, senderName, senderNpcFormID, memories, recentDialogue, motivatingMemory);
         const auto promptCtxStr = promptCtx.dump();
         if (Settings::Get().debugMode) {
             logger::debug("LetterComposer: prompt context: {}", promptCtxStr);

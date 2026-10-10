@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <GossipDispatch.h>
@@ -120,9 +121,27 @@ namespace NarrativeEngine::GossipSim
     // scheduled tick.
     void PublishSnapshot();
 
-    // kNewGame / kPostLoadGame. Refreshes the graph's relationship
-    // layer and re-bases the game-time sample so a load does not look
-    // like a colossal time jump.
+    // The game day the last completed tick was stamped for, or negative
+    // when this world has never run one.
+    //
+    // Reads the STAGED state whenever a load has just filled it, because
+    // nothing adopts that into the live state until the next tick runs —
+    // and the scheduler has to know the incoming world's clock before it
+    // can decide when that tick is due. Falls back to the published
+    // snapshot when nothing is staged. Safe to call from any thread.
+    double LastSimulatedGameDay();
+
+    // kNewGame / kPostLoadGame, after the whole record dispatch.
+    // Refreshes the graph's relationship layer, then PUBLISHES the staged
+    // state as the snapshot.
+    //
+    // That publish is load-bearing rather than tidy: the snapshot is what
+    // the dashboard renders and what Plugin.cpp's OnSave serialises, so
+    // until it carries the world that was just loaded, a save writes an
+    // empty gossip world over a populated co-save.
+    //
+    // Also anchors the schedule for a world that has never ticked, so the
+    // countdown to its first tick survives a reload instead of restarting.
     void OnSessionStart();
 
     // kPreLoadGame. Writes the live-rumor census into the gossip log
@@ -168,10 +187,19 @@ namespace NarrativeEngine::GossipSim
         std::size_t transmissionsThisSession = 0;
         std::size_t wastedThisSession = 0;
         // Conversation outcomes. transmissions + wasted + notCaught +
-        // unavailable + capped accounts for every conversation drawn.
+        // unavailable + capped + silent accounts for every conversation
+        // drawn, exactly. Drop any one of them and the rest describe a
+        // total that does not exist.
         std::size_t notCaughtThisSession = 0;
         std::size_t unavailableThisSession = 0;
         std::size_t cappedThisSession = 0;
+        // Draws that landed on a rung with nobody on it. The sixth bucket,
+        // and not a small one -- it was 28% of every conversation held over
+        // the first fifteen days of a validation run. Without it the five
+        // above do NOT sum to the conversations drawn, so a readout built
+        // from them cannot be reconciled against a BURNOUT line, against
+        // the session-end census, or against itself.
+        std::size_t silentThisSession = 0;
         std::size_t memoriesWritten = 0;
         std::size_t memoryWriteFailures = 0;
     };
@@ -232,6 +260,45 @@ namespace NarrativeEngine::GossipSim
         std::int64_t sourceMemoryId = 0;
     };
 
+    // Why `npc` cannot carry a rumor at this moment, or None if they can.
+    //
+    // ONE definition of the conditions, used by both ends of a rumor's
+    // life: the drain asks it of a carrier before letting them hold
+    // conversations, and the harvest and the seed path ask it of a
+    // prospective ORIGIN. Everything that stops somebody spreading a
+    // rumor has to stop them starting one, and the only way to be sure of
+    // that is for there to be a single thing to ask.
+    //
+    // Before this existed the two ends disagreed. The harvest's only
+    // availability gate measured the share of an owner's CONTACTS who
+    // could hold a conversation and never whether the owner could, so a
+    // dead mage surrounded by live ones passed it: Ancano was picked as an
+    // origin in two consecutive validation runs, each time costing an
+    // evaluation call, a composition call and a sixty-day claim on the
+    // memory, and each time the rumor burned out on its first step with
+    // `conversations=0`.
+    enum class CarryBlock : std::uint8_t
+    {
+        None,
+        // Dead, or the form no longer resolves. Permanent.
+        Gone,
+        // Down, restrained or disabled. A carrier defers a step and tries
+        // again; a prospective origin is refused, because a seed starts its
+        // infectious window NOW and time spent unconscious is window spent.
+        // The memory is released rather than claimed, so the next sweep can
+        // pick it up once they are back.
+        TemporarilyOut,
+        // Nobody on any materialised rung and the province rung switched
+        // off, or every rung weight zeroed. Nowhere for a conversation to go.
+        NoContacts,
+    };
+    CarryBlock WhyCannotCarry(const GossipThread::Token&, RE::FormID npc);
+
+    // The verdict as the trace words it: "dead", "away", "no-contacts", or
+    // "none". Shared so a refusal at seed time and a retirement mid-spread
+    // name the same condition the same way.
+    std::string_view DescribeCarryBlock(CarryBlock block);
+
     // The share of `npc`'s named contact weight that currently resolves to
     // somebody able to hold a conversation, in [0, 1]. Returns 0 when they
     // have no named contacts at all.
@@ -279,6 +346,30 @@ namespace NarrativeEngine::GossipSim
     // wants: a rumor is listed until its last carrier retires.
     std::vector<RumorView> GetRumorViews(const GossipState&);
 
+    // Write `st` into the gossip log as a STATE block: a header of the
+    // same counters the dashboard's Gossip tab puts above the list, then
+    // one line per rumor carrying the same per-rumor figures the tab
+    // shows. `reason` names the moment, and is the first thing on the
+    // header line.
+    //
+    // Takes the image explicitly for the same reason the other
+    // projections do, and here it decides correctness rather than
+    // style: at session start the only complete picture of the incoming
+    // world is the freshly published snapshot, while the live state and
+    // the pool cache still describe the outgoing one.
+    //
+    // Written at session start and at the end of every tick, which is
+    // what makes a co-save round trip checkable without inference. A
+    // session-start block that does not match the previous session's
+    // last tick block is a load that lost something — and a rumor the
+    // load left unschedulable shows up as one whose figures never move
+    // again, which is how it reads in the trace rather than something to
+    // be deduced from an absence of activity.
+    //
+    // No-op when the gossip log is closed, so the composition cost is
+    // not paid when nothing would be written.
+    void LogStateSummary(std::string_view reason, const GossipState& st);
+
     // Serialisation never touches live state and never waits on the
     // gossip worker.
     //
@@ -307,9 +398,10 @@ namespace NarrativeEngine::GossipSim
     // Move any staged state into the live one and publish it. Returns
     // true if there was something to adopt.
     //
-    // Called at the top of every unit of gossip work AND at
-    // OnSessionStart, which runs at kPostLoadGame — after the record
-    // dispatch that filled the staging area, and before anything re-bases
-    // the simulation clock against state that is about to be replaced.
+    // Called at the top of every unit of gossip work, and nowhere else:
+    // the gossip thread owns the live state, so adoption has to happen on
+    // it. A session start therefore cannot see its own freshly-loaded
+    // state through Snapshot() — it reads LastSimulatedGameDay(), which
+    // consults the staging area directly.
     bool AdoptPendingState();
 } // namespace NarrativeEngine::GossipSim

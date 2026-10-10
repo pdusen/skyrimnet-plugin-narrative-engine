@@ -335,7 +335,16 @@ namespace NarrativeEngine::GossipClaims
         // OnRevert clears the simulation's. Split so the order SKSE
         // dispatches the two records in cannot matter.
         auto& pending = GossipSim::PendingState();
+        const auto had = pending.claims.size();
+        const auto hadEvents = pending.eventClaims.size();
         pending.claims.clear();
         pending.eventClaims.clear();
+        // Paired with GossipSim::OnRevert's line. The two clear different
+        // halves of the same staging area, so seeing only one of them fire
+        // — or seeing either land after OnLoad rather than before it — is
+        // the signature of an ordering bug in the load sequence.
+        logger::info("GossipClaims::OnRevert: ledger staging area cleared ({} claims, {} event claims discarded)",
+                     had,
+                     hadEvents);
     }
 } // namespace NarrativeEngine::GossipClaims

@@ -98,10 +98,16 @@ namespace NarrativeEngine::LetterComposer
     // unavailable, sender no longer viable, LLM error, parse failure,
     // validation failure). Failure reasons are logged so the call site
     // doesn't need to forward error details.
+    //
+    // `motivatingMemory` is the one entry of the sender's own memory
+    // list that the beat-select LLM named as their reason for writing;
+    // the compose prompt treats it as the letter's subject. Null means
+    // beat-select named none, and the prompt has the sender pick a
+    // subject from their memory tail.
     void Compose(const BeatContext& ctx,
                  UrgencyHint urgencyHint,
                  RE::FormID senderNpcFormID,
-                 std::string parameterJustification,
+                 nlohmann::json motivatingMemory,
                  std::function<void(std::optional<LetterComposition>)> callback);
 
     // -----------------------------------------------------------------

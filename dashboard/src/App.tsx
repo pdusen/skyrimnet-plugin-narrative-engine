@@ -58,9 +58,9 @@ export function App() {
             <StatusBanner status={s.status} />
             <TabBar active={shownTab} onChange={setActiveTab} hidden={hiddenTabs} />
             {shownTab === 'director' && <DirectorTab state={s} />}
-            {shownTab === 'letters'  && <LettersTab pool={s.letter_pool} nowSeconds={nowSeconds} />}
-            {shownTab === 'visit'    && <VisitTab visit={s.visit} nowSeconds={nowSeconds} />}
-            {shownTab === 'gossip'   && <GossipTab gossip={s.gossip} />}
+            {shownTab === 'letters'  && <LettersTab pool={s.letter_pool} timers={s.timers.letters} nowSeconds={nowSeconds} />}
+            {shownTab === 'visit'    && <VisitTab visit={s.visit} timers={s.timers.visit} nowSeconds={nowSeconds} />}
+            {shownTab === 'gossip'   && <GossipTab gossip={s.gossip} timers={s.timers.gossip} />}
             {shownTab === 'plots'    && <PlotsTab plots={s.plots} />}
             {shownTab === 'dispatch' && <DispatchTab state={s} nowSeconds={nowSeconds} />}
             {shownTab === 'settings' && <SettingsTab state={s} />}

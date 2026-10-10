@@ -28,4 +28,17 @@ namespace NarrativeEngine::JsonUtils
         }
         return def;
     }
+
+    double NumberOr(const nlohmann::json& obj, std::string_view key, double def)
+    {
+        if (!obj.is_object()) {
+            return def;
+        }
+        // `is_number()` covers integers and floats alike, and excludes the
+        // booleans nlohmann would otherwise happily convert to 0 or 1.
+        if (auto it = obj.find(key); it != obj.end() && it->is_number()) {
+            return it->get<double>();
+        }
+        return def;
+    }
 } // namespace NarrativeEngine::JsonUtils

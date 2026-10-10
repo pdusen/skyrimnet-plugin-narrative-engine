@@ -65,6 +65,8 @@ These rules apply to **every** C++ source file in this repo:
 
 - `.cpp` files go in `src/`.
 - `.h` files go in `include/`.
+- Unit tests are **co-located**: the tests for `src/Foo.cpp` go in `src/Foo.test.cpp`, beside the code they
+  test. There is no `tests/` tree and there should not be one. See [Unit tests](#unit-tests) below.
 
 The CMake build picks up `src/*.cpp` automatically (via the glob in `CMakeLists.txt`) and puts `include/` on the
 include path. That means our own headers should be included with angle brackets — `#include <Foo.h>` — to match the
@@ -96,8 +98,9 @@ forms easy to find in long lists. Examples:
 What does *not* take the prefix:
 
 - The plugin file (`NarrativeEngine.esp`) — that's a filename, not an EditorID.
-- The SkyrimNet plugin folder + manifest name (`SKSE/Plugins/SkyrimNet/config/plugins/NarrativeEngine/`,
-  `plugin.name: NarrativeEngine`) — SkyrimNet's own plugin identifier surface.
+- The SkyrimNet content plugin id and its folder (`SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/`) and
+  the settings config name (`settings/NarrativeEngine.yaml`, `plugin.name: NarrativeEngine`) — SkyrimNet's own
+  plugin identifier surface.
 - C++ namespaces / classes (`namespace NarrativeEngine`, `class ClosureDeliveryAction`) — these live entirely on
   the C++ side and the form-naming convention doesn't reach them.
 - The mod's mod-manager folder (`$SKYRIM_MODS_FOLDER/NarrativeEngine/`) — also a filename.
@@ -128,14 +131,26 @@ environment.
 
 ### SkyrimNet location (one of)
 
-CMake needs SkyrimNet's `CppAPI/` headers on the include path. It looks in two places, in order:
+CMake needs SkyrimNet's `CppAPI/` headers on the include path. Beta 25 removed them from the main
+SkyrimNet archive and ships them in a separate **SkyrimNet Devkit** download, alongside the modding
+docs and the `content-convert` / `content-validate` tools; Beta 24 and earlier carried them inside
+the SkyrimNet mod folder. CMake probes four candidates for `PublicAPI.h` and takes the first that
+has it:
 
-- `SKYRIMNET_DIR` — explicit absolute path to the SkyrimNet mod folder (the one containing
-  `CppAPI/PublicAPI.h`). Takes precedence when set.
-- `$SKYRIM_MODS_FOLDER/SkyrimNet/` — automatic fallback when `SKYRIM_MODS_FOLDER` is set and
-  SkyrimNet is installed at the standard subpath. No additional env var needed in the common case.
+- `$SKYRIMNET_CPPAPI` — the `CppAPI/` directory itself, explicit. Set this if the headers live
+  somewhere the automatic search won't find.
+- `$SKYRIMNET_DIR/CppAPI` — for an explicit path to a root that contains `CppAPI/`.
+- `$SKYRIM_MODS_FOLDER/SkyrimNet Devkit/CppAPI` — Beta 25's devkit installed as a mod. No
+  additional env var needed in the common case.
+- `$SKYRIM_MODS_FOLDER/SkyrimNet/CppAPI` — Beta 24 and earlier.
 
-CMake `FATAL_ERROR`s if neither resolves to a valid `CppAPI/` directory.
+Because every candidate is probed for the header rather than just the directory, a `SKYRIMNET_DIR`
+left over from a pre-Beta-25 install falls through to the devkit instead of breaking the build.
+CMake `FATAL_ERROR`s if none of the four resolves.
+
+`SKYRIMNET_DIR` still means the SkyrimNet **mod** folder everywhere else — `setup-mod-folder.ps1`
+reads it to find `Source/Scripts/SkyrimNetApi.psc`, which Beta 25 did not move. Don't repoint it at
+the devkit; install the devkit as its own mod and leave `SKYRIMNET_DIR` alone (or unset).
 
 ### Required once `.psc` sources exist
 
@@ -220,6 +235,164 @@ Notes:
 - Release builds still produce `.pdb` files (CMake's release config emits them), so Visual Studio's
   debugger can attach to a release build with mostly-meaningful stack traces. You lose some local-variable
   visibility to optimization, but it's enough for the rare interactive-debug session.
+
+## Unit tests
+
+Tests use **Catch2 v3**, pulled in through the same vcpkg manifest as every other dependency, and run under
+CTest. Run them with:
+
+```sh
+pwsh -File build.ps1 test
+```
+
+That builds only the `NarrativeEngineTests` target — no ESP sync, no Papyrus compile, no dashboard bundle —
+and then runs `ctest --output-on-failure`. `catch_discover_tests` registers every `TEST_CASE` with CTest
+individually, so `ctest -R LLMTextSanitizer` selects one and a failure names the case rather than "the test
+binary". You can also run `build/local-release/NarrativeEngineTests.exe` directly for Catch2's own CLI
+(`--list-tests`, tag filters like `[LLMTextSanitizer]`, `-s` for passing assertions).
+
+### Two test executables
+
+There are two, because engine-free code and engine-coupled code need different link closures:
+
+| File | Target | Notes |
+| --- | --- | --- |
+| `src/Foo.cpp` | `NarrativeEngine` (the SKSE DLL) | Picked up by the glob, compiled with `PCH.h`, may touch the engine freely. |
+| `src/Foo.test.cpp` | `NarrativeEngineTests` | Pure-core test. Excluded from the DLL glob by an `EXCLUDE REGEX`, so a co-located test can never end up in the shipped plugin. |
+| `src/Foo.engine.test.cpp` | `NarrativeEngineEngineMockTests` | Test for code that calls CommonLibSSE. Also matches `*.test.cpp`, so the same exclusion keeps it out of the DLL. |
+| Files in `NARRATIVEENGINE_CORE_SOURCES` | `NarrativeEngineCore` (static lib), linked into both the DLL and the core tests | Engine-free production code, compiled once and shared. |
+| Files in `NARRATIVEENGINE_MOCKED_SOURCES` | Compiled into `NarrativeEngineEngineMockTests` (and, separately, into the DLL) | Engine-coupled production code under test. |
+
+Adding a test needs no CMake edit — write the file and the glob finds it. Making a *new module* testable
+does, and which list you add it to is the decision described in the next two sections.
+
+### Mocking CommonLibSSE
+
+Production code that genuinely calls `RE::` functions can be unit-tested without being reshaped to avoid
+them, and without a Skyrim process. `src/EngineUtils.engine.test.cpp` is the worked example.
+
+The mechanism rests on how CommonLibSSE is built. Most of it is headers: struct layouts, member offsets and
+inline helpers all compile straight into our object files. Only some functions are out-of-line, and those
+live in `CommonLibSSE.lib`, where each one resolves its address inside a running `SkyrimSE.exe` through the
+address library. Those out-of-line functions are the only part a test process can't execute — and they are
+ordinary symbols, so the linker will take a different definition if one is offered.
+
+So `NarrativeEngineEngineMockTests` compiles production sources against the **real** CommonLibSSE headers,
+with the same defines and the same forced `PCH.h` as the DLL, and then **does not link `CommonLibSSE.lib`**.
+`testsupport/EngineMock.cpp` defines the engine functions instead. Production code is compiled unmodified:
+`EngineUtils.cpp` still calls `RE::Calendar::GetSingleton()`, and reaches our definition rather than
+Bethesda's.
+
+Three things make this pleasant to live with:
+
+- **The linker is the checklist.** Any engine function the code under test touches that nobody has mocked is
+  an unresolved external, and the build fails naming it. There is no silent fallthrough into real engine
+  code and no way to miss a dependency.
+- **`REL::Module::mock()`.** CommonLibSSE-NG ships its own unit-testing hook, unlocked by
+  `ENABLE_COMMONLIBSSE_TESTING`, which fills in the module singleton so the inline `REL::Module::IsAE()` /
+  `IsVR()` branches throughout the headers resolve deterministically. That is what lets a test pick a
+  runtime — and therefore reach the SE-vs-VR divergence that `EngineUtils::AddFastTravelEndSink` exists to
+  guard against, which otherwise needs a VR install to exercise.
+- **Engine singletons are opaque storage.** The mocked accessors answer out of `EngineMock` rather than by
+  reading through the pointers they hand back, so the "objects" only need a stable, correctly-aligned,
+  suitably-sized address. Nothing has to construct a real `RE::UI`.
+
+`testsupport/CommonLibSSERuntimeStubs.cpp` supplies the rest: `REX::W32` (CommonLibSSE's private Win32
+re-declaration) forwards to the real Win32 API, and the `REL` address-library entry points abort with a
+message telling you to add a mock. Reaching one of those means production code called an engine function
+nothing stands in for.
+
+To put a module under mocked-engine test: add its `.cpp` to `NARRATIVEENGINE_MOCKED_SOURCES`, write
+`src/Foo.engine.test.cpp`, build, and add whatever engine functions the linker names to
+`testsupport/EngineMock.cpp`.
+
+### Relocated inline functions
+
+The linker is only half the checklist. CommonLibSSE also has functions declared **inline in a header**
+whose body resolves an address library id at runtime:
+
+```cpp
+inline BSFixedString* ctor8(const char* a_data)
+{
+    using func_t = decltype(&BSFixedString::ctor8);
+    REL::Relocation<func_t> func{ RELOCATION_ID(67819, 69161) };
+    return func(this, a_data);
+}
+```
+
+There is no symbol, so the linker says nothing and the substitution above cannot reach it. It surfaces only
+when a test runs. `testsupport/RelocationMocks.cpp` handles this second kind.
+
+`REL::Relocation` resolves an id to `Module::base() + IDDatabase::id2offset(id)`, and three facts make that
+interceptable: `Module::mock()` leaves the base at zero; `mapping_t::offset` is a full 64 bits; and
+`IDDatabase::_id2offset` is a plain `std::span` that `CommonLibSSERuntimeStubs.cpp` can assign, because it
+defines `IDDatabase::load_file` itself and a member definition reaches private members. With a base of zero
+an "offset" *is* an absolute address, so the table is literally `{id, &OurFunction}` — no executable memory,
+no hand-written thunks. CommonLibSSE's own source notes that "member functions == free functions in x64",
+which is why a free function taking the object as its first argument stands in for a relocated member.
+
+Registered today: `BSFixedString`'s constructor and its pool release, and `MemoryManager`'s singleton,
+allocate, deallocate and reallocate. Between them those cover string construction and `new` on any engine
+type, which is what most code needs. To add one, put the function and **both** of its `RELOCATION_ID` values
+(SE and AE) in the table in `RelocationMocks.cpp`.
+
+`id2offset` binary-searches the table and, off VR, does **not** verify the entry it landed on carries the id
+it asked for — so an unregistered id would otherwise resolve to a neighbouring stand-in and call it with the
+wrong signature. The table closes that by poisoning: every registered id `X` also registers `X-1` pointing at
+an abort handler, so any unregistered id is found by a poison entry first and dies with a message naming the
+problem. `testsupport/RelocationMocks.test.cpp` is the harness's own self-test.
+
+**Known limits.** Anything that calls a *virtual* on a fabricated engine object needs that object's vtable,
+which is a much larger undertaking than mocking a free function — that is the real remaining ceiling.
+Interning is not reproduced for strings (two equal `BSFixedString`s get two allocations), which no caller can
+observe because nothing compares them by pointer identity.
+
+**When not to reach for this.** Mocking keeps production code unchanged, which is exactly right when the
+module's engine coupling *is* its job. It is the wrong tool when the coupling is incidental — see the next
+section.
+
+### Testing code that talks to the engine
+
+Most of `src/` can't join the core list as written, because engine access is woven through the logic rather
+than sitting at its edges. The way in is to move the engine dependency to the module's boundary, so the
+module keeps its behaviour and the caller supplies what only the game can provide. Two shapes cover almost
+everything, and `SenderCooldownTable` is the worked example of both:
+
+**Reading ambient engine state → make it a parameter.** The table used to call
+`EngineUtils::GetCurrentGameHours()` itself; now `Stamp` and `IsOnCooldown` take a `nowGameHours` argument
+and the beats read the clock. No interface, no injection machinery — "what time is it" became an ordinary
+value a test passes. Reach for this whenever the module only *reads* something (the clock, a setting, a
+player position): gather it at the call site, pass it in.
+
+**Calling an engine service → define a narrow port.** Some dependencies can't be reduced to a value, because
+the behaviour worth testing *is* the conversation. Co-save serialization is the clear case: what matters is
+how many bytes came back, what happens when a record is truncated mid-entry, and what becomes of a FormID
+whose plugin has left the load order. For those, declare an interface naming only the operations the module
+actually uses — `include/CosaveIO.h` is three methods — and let the DLL bind it to the real API
+(`src/SKSECosaveIO.cpp`) while tests bind it to a fake.
+
+Keep the production adapter a straight transcription with no branching of its own. It is the one part that
+unit tests can't reach, so anything that could be wrong belongs on the other side of the port. If an adapter
+starts growing decisions, that's the signal the port is drawn in the wrong place.
+
+What this does **not** justify is inventing a port for everything. A module that merely reads engine data to
+decide something is better served by gathering a plain snapshot and testing the decision — cheaper, and it
+leaves no interface to maintain. Ports are for behaviour you have to stand in for, not for data you can
+simply hand over.
+
+### Test style
+
+Tests are organised as nested `TEST_CASE` / `SECTION` blocks, read like `describe` / `it`. Catch2 re-runs
+everything above a `SECTION` for each leaf path beneath it, so setup written at the top of a `TEST_CASE`
+behaves like a `beforeEach` and each expectation gets fresh state. Nested sections name contextual
+conditions (`"when the response is malformed UTF-8"`, `"and a stray continuation byte appears on its own"`);
+leaf sections name one observable behaviour (`"should drop the orphan byte and keep the rest"`). A failure
+prints the whole path, which is what makes the naming worth the trouble.
+
+Use ordinary values and RAII rather than mocks. Objects constructed in a section are destroyed when that
+section's path finishes; there is no reset hook to write and none is wanted.
+
+`src/LLMTextSanitizer.test.cpp` is the worked example of all of the above.
 
 ## Using the `statics/` folder
 
@@ -467,11 +640,39 @@ formatter appears in the ecosystem, add its hook to `.pre-commit-config.yaml` un
 
 ## Writing SkyrimNet `.prompt` files
 
-The `.prompt` files we ship under `statics/SKSE/Plugins/SkyrimNet/prompts/` are Jinja templates that render to
+The `.prompt` files we ship under `statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/prompts/` are
+Jinja templates that render to
 Markdown chat messages sent to an LLM. They use SkyrimNet's `[ system ] ... [ end system ]` /
 `[ user ] ... [ end user ]` section markers and follow specific conventions about what to tell the LLM (and
 what to deliberately hide — e.g. the cadence at which the call fires). When authoring or editing one, read and
 follow [`docs/CUSTOM_PROMPTS.md`](CUSTOM_PROMPTS.md).
+
+### The SkyrimNet plugin folder
+
+Everything we hand to SkyrimNet lives in one folder, `statics/SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/`,
+laid out the way **SkyrimNet Beta 25 (0.25.0)** expects:
+
+| Path inside the folder          | What it is                                                        |
+| ------------------------------- | ----------------------------------------------------------------- |
+| `manifest.json`                 | Identity: `id`, `version`, `min_skyrimnet_version`                |
+| `prompts/**`                    | Our `.prompt` templates, recursively (`submodules/` included)     |
+| `settings/NarrativeEngine.yaml` | The LLM variants and the settings schema SkyrimNet's UI exposes   |
+
+There is nothing special about these files in the build: the `statics/` deploy mirrors the tree verbatim, so what is
+in the source tree is what SkyrimNet reads. **Beta 25 is a hard floor.** Up to v0.6.1 the build also deployed a second
+copy of each file to the pre-Beta-25 paths — loose `SkyrimNet/prompts/` and
+`SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml` — so one build served either SkyrimNet. That mapping is gone,
+and so is support for Beta 24 and earlier; those versions cannot see a plugin folder at all.
+
+Two rules the configure step enforces, so neither can ship broken:
+
+- `manifest.json`'s `id` must equal its folder name. SkyrimNet rejects the whole folder when they disagree.
+- `manifest.json`'s `version` must equal the `plugin.version` in `settings/NarrativeEngine.yaml`, which is the single
+  source of truth the release skill bumps.
+
+The settings config is named by its **filename**: `NarrativeEngine.yaml` is config `NarrativeEngine`, which
+`plugin.name` inside it has to match. Renaming the file renames the config, and any override a player has already
+tuned is keyed by the old name.
 
 ## Markdown conventions
 

@@ -1,39 +1,52 @@
 Scriptname _ne_VisitQuest extends Quest
 
-; Sender alias — filled at EnsureQuestStarted via Find Matching Reference
-; on `GetFactionRank _ne_VisitSenderFaction >= 4`. Carries both AI packages
-; (Follow when GetStage < 50, Return Travel when GetStage >= 50); the
-; engine's package selector swaps between them as C++ advances the stage.
+; Sender alias — Optional with no fill rule, force-filled from C++ once
+; EnsureQuestStarted has returned. Carries both AI packages (Follow when
+; GetStage < 50, Return Travel when GetStage >= 50); the engine's package
+; selector swaps between them as C++ advances the stage.
 ReferenceAlias Property Sender       Auto
 
-; SpawnMarker alias — filled at EnsureQuestStarted via Find Matching
-; Reference on nearest XMarkerHeading within the distance / line-of-sight
-; bounds relative to PlayerRef. Used by the Stage 10 fragment to warp the
-; sender to an out-of-sight starting point near the player.
-ReferenceAlias Property SpawnMarker  Auto
-
-; ReturnAnchor alias — Fill Type Specific Reference with the reference
-; left blank; runtime-filled by SetReturnAnchor() at Start time pointing
-; at the temp XMarker C++ placed at the sender's pre-dispatch position.
-; The Return Travel package's Destination is `Alias:ReturnAnchor`, so
-; the sender walks toward this marker during ReturnHome.
+; ReturnAnchor alias — Optional with no fill rule, force-filled from C++
+; with an XMarker placed at the sender's own position before they are
+; warped anywhere. The Return Travel package's Destination is
+; `Alias:ReturnAnchor`, so the sender walks toward this marker during
+; ReturnHome, and Shutdown() deletes it.
 ReferenceAlias Property ReturnAnchor Auto
 
-Function MoveSenderToSpawnMarker()
-    Actor senderActor = Sender.GetActorReference()
-    if senderActor == None
-        Debug.Trace("[_ne_VisitQuest] MoveSenderToSpawnMarker: Sender empty")
+; -----------------------------------------------------------------
+; Alias force-fill trampolines
+; -----------------------------------------------------------------
+;
+; ReferenceAlias.ForceRefTo has no CommonLibSSE-NG binding —
+; RE::BGSRefAlias exposes only GetReference() and GetActorReference() —
+; so both fills come back through Papyrus.
+;
+; Each takes a FormID rather than an ObjectReference: a reference passed
+; from C++ arrives non-None but unpacks to null inside ForceRefTo. See
+; docs/engine-findings/passing-references-to-papyrus-from-cpp.md.
+;
+; Game.GetFormEx (SKSE) rather than Game.GetForm, because the return
+; anchor is a dynamically-created reference at 0xFF...... and needs the
+; full 32-bit range.
+
+Function FillSenderSlot(int aiFormID)
+    ObjectReference akRef = Game.GetFormEx(aiFormID) as ObjectReference
+    if akRef == None
+        Debug.Trace("[_ne_VisitQuest] FillSenderSlot: form " + aiFormID + " did not resolve to an ObjectReference")
         return
     endIf
+    Sender.ForceRefTo(akRef)
+    Debug.Trace("[_ne_VisitQuest] FillSenderSlot: Sender forced to " + akRef)
+EndFunction
 
-    ObjectReference spawnMarkerRef = SpawnMarker.GetReference()
-    if spawnMarkerRef == None
-        Debug.Trace("[_ne_VisitQuest] MoveSenderToSpawnMarker: SpawnMarker empty")
+Function FillReturnAnchorSlot(int aiFormID)
+    ObjectReference akRef = Game.GetFormEx(aiFormID) as ObjectReference
+    if akRef == None
+        Debug.Trace("[_ne_VisitQuest] FillReturnAnchorSlot: form " + aiFormID + " did not resolve to an ObjectReference")
         return
     endIf
-
-    senderActor.MoveTo(spawnMarkerRef)
-    senderActor.EvaluatePackage()
+    ReturnAnchor.ForceRefTo(akRef)
+    Debug.Trace("[_ne_VisitQuest] FillReturnAnchorSlot: ReturnAnchor forced to " + akRef)
 EndFunction
 
 Function StartReturnTravel()

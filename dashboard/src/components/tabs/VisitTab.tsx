@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react';
 
-import type { VisitTabState } from '../../types';
+import type { VisitTabState, VisitTimers } from '../../types';
+import { TimerPanel, TimerRow } from '../TimerPanel';
 
 interface Props {
     visit: VisitTabState;
+    timers: VisitTimers;
     nowSeconds: number;
 }
 
@@ -40,9 +42,45 @@ function formatRelativeSeconds(secondsAgo: number): string {
     return `${Math.floor(secondsAgo / 3600)}h ago`;
 }
 
-export function VisitTab({ visit, nowSeconds }: Props): ReactNode {
+export function VisitTab({ visit, timers, nowSeconds }: Props): ReactNode {
+    const poll = timers.conclusion_poll;
     return (
         <div className="visit-tab">
+            <TimerPanel title="Next up">
+                <TimerRow label="Visit beat cooldown" timer={timers.beat_cooldown} />
+                <TimerRow
+                    label="Senders held back"
+                    timer={timers.sender_cooldowns.soonest}
+                    note={
+                        timers.sender_cooldowns.count > 0
+                            ? `${timers.sender_cooldowns.count} on cooldown`
+                            : 'none on cooldown'
+                    }
+                />
+                <TimerRow label="Approach gives up in" timer={timers.approach_timeout} />
+                <TimerRow label="Return home gives up in" timer={timers.return_home_timeout} />
+                {poll.armed ? (
+                    <>
+                        <TimerRow
+                            label="Poll on silence"
+                            timer={poll.silence}
+                            note="whichever of the three trips first"
+                        />
+                        <TimerRow label="Poll on interval" timer={poll.interval} />
+                        <div className="timer-row">
+                            <span className="timer-label">Poll on turns</span>
+                            <span className="timer-value">
+                                {poll.turns_remaining === null ? '—' : `${poll.turns_remaining} to go`}
+                            </span>
+                        </div>
+                    </>
+                ) : (
+                    <div className="timer-row">
+                        <span className="timer-label">Conclusion poll</span>
+                        <span className="timer-value timer-inactive">not armed</span>
+                    </div>
+                )}
+            </TimerPanel>
             <CurrentConversationPanel visit={visit} nowSeconds={nowSeconds} />
             <RecentPollsPanel verdicts={visit.recent_verdicts} nowSeconds={nowSeconds} />
             <VisitHistoryPanel history={visit.history} nowSeconds={nowSeconds} />

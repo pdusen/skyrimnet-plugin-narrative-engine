@@ -203,7 +203,7 @@ namespace NarrativeEngine::SkyrimNetAPI
     std::string GetBioTemplateName(std::uint32_t formId);
 
     // The current save's unique id, e.g. "1771459571413-900550" -- the
-    // name SkyrimNet gives that save's folder under `prompts/_saves/`.
+    // name SkyrimNet gives that save's folder under `saves/`.
     // Empty when no save is loaded, when SkyrimNet is unavailable, or
     // when it predates API v7.
     std::string GetSaveUniqueID();

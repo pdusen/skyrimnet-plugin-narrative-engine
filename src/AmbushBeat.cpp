@@ -3,6 +3,7 @@
 #include <AmbushAttackerGroups.h>
 #include <AmbushSpawnPoints.h>
 #include <BeatRegistry.h>
+#include <DebugNotify.h>
 #include <EngineUtils.h>
 #include <JsonUtils.h>
 #include <LLMTextSanitizer.h>
@@ -934,6 +935,15 @@ namespace NarrativeEngine
                 }
                 g_composeSucceeded.store(true, std::memory_order_release);
                 logger::info("AmbushBeat: armed {} of {} attacker(s); COMPOSE complete", armed, expected);
+                {
+                    std::string groupId;
+                    {
+                        std::scoped_lock lock(g_stateMutex);
+                        groupId = g_activeGroupId;
+                    }
+                    DebugNotify::Post(std::format(
+                        "[NE] Ambush spawned: {} ({} attackers)", groupId.empty() ? "unknown group" : groupId, armed));
+                }
 
                 // Put this group on its cooldown. Stamped here rather
                 // than at OnStart or CLEANUP because this is the first
@@ -1262,12 +1272,14 @@ namespace NarrativeEngine
                "opportunists.\n"
                "  narration_prose (REQUIRED, string) — one to three sentences of in-world prose stating WHO "
                "is attacking and WHAT their motivation is. Refer to the player by the name given under "
-               "'Where the player is', exactly as you would in parameter_justification — never as 'the "
+               "'Where the player is', exactly as that section instructs — never as 'the "
                "player', and never by an epithet such as 'the intruder' or 'the outsider'. Written as "
                "narration, not as an explanation of your choice: describe the attackers and their grievance "
                "the way a chronicler would. It is recorded in the world's event log the moment the fight "
                "begins, so it must read as a statement of what is happening rather than as commentary "
-               "about the decision.";
+               "about the decision. It MUST NOT contain dialogue of any kind: no quoted speech, no line "
+               "attributed to anyone, and no narrated or paraphrased speech either. Leave out what is "
+               "said entirely — the attackers do their own talking once the fight starts.";
     }
 
     double AmbushBeat::RemainingCooldownGameHours() const
@@ -1291,8 +1303,21 @@ namespace NarrativeEngine
 
     bool AmbushBeat::IsAvailable(const BeatContext& ctx) const
     {
-        if (!g_pointersResolved.load(std::memory_order_acquire) || !g_ambushQuest) {
+        // Every refusal below says which one it was. Silent, these four
+        // branches were indistinguishable from a polarity mismatch and from
+        // each other: a tester's log showed `ambush` simply absent from the
+        // candidate list for a whole session with no way to tell whether it
+        // was the location, the cooldown, or no groups loaded.
+        const bool debug = Settings::Get().debugMode;
+        const auto blocked = [debug](const char* reason) {
+            if (debug) {
+                logger::debug("AmbushBeat::IsAvailable: blocked ({})", reason);
+            }
             return false;
+        };
+
+        if (!g_pointersResolved.load(std::memory_order_acquire) || !g_ambushQuest) {
+            return blocked("quest pointers not resolved");
         }
         // Exterior only: the beat spawns a travelling approach, and
         // interiors have neither the room nor the sightlines.
@@ -1304,7 +1329,7 @@ namespace NarrativeEngine
         // in flight.
         auto* pc = RE::PlayerCharacter::GetSingleton();
         if (AmbushLocationBlocker(ctx.playerInInterior, pc ? pc->GetCurrentLocation() : nullptr)) {
-            return false;
+            return blocked("AmbushLocationBlocker — interior, or a location ambushes are barred from");
         }
         // Deliberately no check on the quest stage here. A live ambush is
         // already blocked upstream by BeatSystem's in_flight gate, which
@@ -1323,13 +1348,20 @@ namespace NarrativeEngine
                               stage);
             }
         }
-        if (RemainingCooldownGameHours() > 0.0) {
+        if (const auto remaining = RemainingCooldownGameHours(); remaining > 0.0) {
+            // The remaining hours rather than a bare "on cooldown": whether
+            // it is one hour or twenty decides whether waiting is worth it.
+            if (debug) {
+                logger::debug("AmbushBeat::IsAvailable: blocked (per-beat cooldown: {:.2f}h remaining of {}h)",
+                              remaining,
+                              Settings::Get().ambushPerBeatCooldownGameHours);
+            }
             return false;
         }
         // No eligible attackers means nothing to spawn. This also
         // covers the missing-group-file case, where zero groups loaded.
         if (AmbushAttackerGroups::EnabledGroupCount() == 0) {
-            return false;
+            return blocked("no enabled attacker groups");
         }
         return true;
     }

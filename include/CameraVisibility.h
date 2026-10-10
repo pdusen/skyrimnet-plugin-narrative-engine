@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <RE/Skyrim.h>
 
 // CameraVisibility — "could the player see this actor if they turned
@@ -79,5 +81,53 @@ namespace NarrativeEngine::CameraVisibility
     //     the player watch attackers materialize in front of them.
     //
     // `bodyHeightUnits` is a nominal humanoid height (~128u).
-    bool IsPositionBehindCover(const RE::NiPoint3& worldPos, float bodyHeightUnits, float coverRadiusUnits);
+    // Pass as `coverProximityUnits` to accept a blocker anywhere along
+    // the ray, which is what this did before the proximity rule existed.
+    // Only right where the rays are short: over a long one, "something
+    // stopped it" and "the spot is hidden" stop being the same claim.
+    inline constexpr float kNoCoverProximityLimit = -1.0f;
+
+    // Why a cover probe came back the way it did, for the travel trace.
+    // Nothing reads it to make a decision — it exists so a log can say
+    // which ray failed and by how much, which is the difference between
+    // diagnosing an exposed arrival from a file and reproducing it in
+    // the game.
+    enum class CoverFailure : std::uint8_t
+    {
+        kNone,
+        kNoCamera,
+        kTooClose,
+        kOverhead,
+        kNoWorld,
+        // A ray reached the silhouette: nothing stopped it at all.
+        kRayReached,
+        // Something stopped it, too far short of the spot to be its cover.
+        kBlockerTooFar,
+    };
+
+    const char* CoverFailureName(CoverFailure failure);
+
+    struct CoverProbe
+    {
+        CoverFailure failure = CoverFailure::kNone;
+        // Rays the gate meant to cast, and how many it got through before
+        // answering. A refusal on the first ray and one on the ninth are
+        // different worlds.
+        int raysPlanned = 0;
+        int raysTested = 0;
+        // The ray that decided it, when one did.
+        float failedHeightFraction = 0.0f;
+        float failedLateralUnits = 0.0f;
+        float failedHitFraction = 0.0f;
+        float failedShortfallUnits = 0.0f;
+        // On success: the worst shortfall among the rays, which is how
+        // close this spot came to being refused.
+        float worstShortfallUnits = 0.0f;
+    };
+
+    bool IsPositionBehindCover(const RE::NiPoint3& worldPos,
+                               float bodyHeightUnits,
+                               float coverRadiusUnits,
+                               float coverProximityUnits,
+                               CoverProbe* detail = nullptr);
 } // namespace NarrativeEngine::CameraVisibility

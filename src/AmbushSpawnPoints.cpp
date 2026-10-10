@@ -338,7 +338,13 @@ namespace NarrativeEngine::AmbushSpawnPoints
                 // it; it is kept for the open-plain case, where no cover
                 // exists anywhere and declining to spawn would be the
                 // worse answer.
-                if (!CameraVisibility::IsPositionBehindCover(probe, kActorHeightUnits, kClusterRadiusUnits)) {
+                // Any blocker along the ray, which is what this has always
+                // done. An ambush probes a ring close to the player, so its
+                // rays are short and the long-ray failure the visit gate was
+                // changed for does not arise here; keeping the old rule keeps
+                // the behaviour Phase 11 measured.
+                if (!CameraVisibility::IsPositionBehindCover(
+                        probe, kActorHeightUnits, kClusterRadiusUnits, CameraVisibility::kNoCoverProximityLimit)) {
                     ++tally.rejectedVisible;
                     uncovered.push_back(c);
                     continue;

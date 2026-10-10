@@ -1,6 +1,7 @@
 #include <StuckRecovery.h>
 
 #include <logger.h>
+#include <VisitorTravelLog.h>
 
 #include <RE/B/BSNavmesh.h>
 #include <RE/N/NavMesh.h>
@@ -23,6 +24,14 @@ namespace NarrativeEngine::StuckRecovery
         // on sloped terrain), tight enough not to match a mesh on the
         // floor below when standing on a bridge.
         constexpr float kNavmeshZToleranceUnits = 96.0f;
+
+        // How far from the height asked about the navmesh's own surface may
+        // sit and still be the answer. Wider than the Z tolerance above,
+        // because a city street can be a few hundred units off the anchor it
+        // was probed from, and far narrower than the drop to a ravine floor.
+        // The arrival search's own elevation gate is 400 units, so nothing it
+        // asks about can be accepted at the far end of this window anyway.
+        constexpr float kNavmeshSurfaceWindowUnits = 512.0f;
 
         // How far below the water surface the ground has to be before a
         // point counts as submerged. A small tolerance rather than zero
@@ -109,6 +118,13 @@ namespace NarrativeEngine::StuckRecovery
             }
             return false;
         }
+    } // namespace
+
+    namespace
+    {
+        // The visit escort's label. StuckRecovery is shared with the ambush
+        // beat, and only one of the two has a travel trace to write to.
+        constexpr const char* kVisitLabel = "visit";
     } // namespace
 
     const char* ActionName(Action action)
@@ -213,18 +229,148 @@ namespace NarrativeEngine::StuckRecovery
         return true;
     }
 
+    bool NavmeshSurfaceZ(const RE::NiPoint3& pos, float& zOut)
+    {
+        auto* tes = RE::TES::GetSingleton();
+        if (!tes) {
+            return false;
+        }
+        auto* cell = tes->GetCell(pos);
+        if (!cell) {
+            return false;
+        }
+        auto* navMeshes = cell->GetRuntimeData().navMeshes;
+        if (!navMeshes) {
+            return false;
+        }
+
+        bool found = false;
+        float best = 0.0f;
+        for (const auto& meshPtr : navMeshes->navMeshes) {
+            auto* mesh = meshPtr.get();
+            if (!mesh) {
+                continue;
+            }
+            const auto& verts = mesh->vertices;
+            for (const auto& tri : mesh->triangles) {
+                const auto i0 = tri.vertices[0];
+                const auto i1 = tri.vertices[1];
+                const auto i2 = tri.vertices[2];
+                if (i0 >= verts.size() || i1 >= verts.size() || i2 >= verts.size()) {
+                    continue;
+                }
+                float surfaceZ = 0.0f;
+                if (!PointInTriangleXY(
+                        pos.x, pos.y, verts[i0].location, verts[i1].location, verts[i2].location, surfaceZ)) {
+                    continue;
+                }
+                if (std::fabs(surfaceZ - pos.z) > kNavmeshSurfaceWindowUnits) {
+                    // Navmesh under this spot but nowhere near the height
+                    // asked about: a cellar below a street, a path at the
+                    // foot of the cliff somebody is standing on top of.
+                    // Snapping to it would be a warp, not a correction.
+                    continue;
+                }
+                if (!found || std::fabs(surfaceZ - pos.z) < std::fabs(best - pos.z)) {
+                    best = surfaceZ;
+                    found = true;
+                }
+            }
+        }
+        if (found) {
+            zOut = best;
+        }
+        return found;
+    }
+
+    bool WalkableGround(const RE::NiPoint3& pos, RE::NiPoint3& out, float& outGroundZ)
+    {
+        // Terrain first, which is what the whole of outdoor Skyrim is.
+        float groundZ = 0.0f;
+        RE::NiPoint3 grounded{};
+        if (GroundPoint(pos, grounded, groundZ) && IsOnNavmesh(grounded)) {
+            out = grounded;
+            outGroundZ = groundZ;
+            return true;
+        }
+
+        // Then the navmesh's own surface, because inside a walled city there
+        // is no terrain to read. WhiterunWorld carries landscape in 7 of its
+        // 113 cells and WindhelmWorld in 2 of 57 — the ground in there is
+        // authored static geometry, and what makes it walkable is the navmesh.
+        // Without this, every standability question asked inside the walls
+        // answered no: 45 of 45 arc samples rejected off-navmesh on a measured
+        // visit, and three consecutive escort close-in steps that found
+        // nowhere to stand on open street.
+        //
+        // Reached whether the terrain query failed or merely disagreed with
+        // the navmesh, because both happen in there and nothing we can read
+        // tells those apart. See
+        // docs/engine-findings/standable-ground-inside-walled-cities.md.
+        float surfaceZ = 0.0f;
+        if (!NavmeshSurfaceZ(pos, surfaceZ)) {
+            return false;
+        }
+        out = pos;
+        out.z = surfaceZ + kGroundClearanceUnits;
+        outGroundZ = surfaceZ;
+        return true;
+    }
+
     bool IsStandable(const RE::NiPoint3& pos, RE::NiPoint3& out)
     {
         float groundZ = 0.0f;
-        if (!GroundPoint(pos, out, groundZ)) {
+        if (!WalkableGround(pos, out, groundZ)) {
             return false;
         }
         auto* tes = RE::TES::GetSingleton();
         auto* cell = tes ? tes->GetCell(out) : nullptr;
-        if (IsUnderwater(cell, out, groundZ)) {
-            return false;
+        return !IsUnderwater(cell, out, groundZ);
+    }
+
+    bool HasNavmeshCorridor(const RE::NiPoint3& from, const RE::NiPoint3& to)
+    {
+        const float dx = to.x - from.x;
+        const float dy = to.y - from.y;
+        const float span = std::sqrt(dx * dx + dy * dy);
+        if (span < kCorridorSampleSpacingUnits) {
+            // Nothing between them worth sampling.
+            return true;
         }
-        return IsOnNavmesh(out);
+
+        int samples = static_cast<int>(span / kCorridorSampleSpacingUnits);
+        if (samples > kCorridorMaxSamples) {
+            samples = kCorridorMaxSamples;
+        }
+
+        const float dz = to.z - from.z;
+        int gap = 0;
+        for (int i = 1; i < samples; ++i) {
+            const float t = static_cast<float>(i) / static_cast<float>(samples);
+            // Interpolated z is only a starting height for the ground
+            // query; what gets tested is where the terrain actually is.
+            const RE::NiPoint3 at{from.x + dx * t, from.y + dy * t, from.z + dz * t};
+
+            // The same two-source resolution IsStandable uses, and for the
+            // same reason: a city street is navmesh with no terrain under it.
+            // Asking only the terrain here rejected points IsStandable had
+            // just accepted -- measured inside Whiterun as off-navmesh falling
+            // from 39 of 45 to 30 while noCorridor rose from 4 to 10, the same
+            // samples moving from one gate to the next.
+            //
+            // Ground rather than standability, so the water test stays out of
+            // it: a road that fords a stream is a road, and an actor wades.
+            RE::NiPoint3 grounded{};
+            float groundZ = 0.0f;
+            if (WalkableGround(at, grounded, groundZ)) {
+                gap = 0;
+                continue;
+            }
+            if (++gap > kCorridorGapTolerance) {
+                return false;
+            }
+        }
+        return true;
     }
 
     void WarpTo(const MainThread::Token&, RE::Actor* actor, const RE::NiPoint3& pos)
@@ -245,8 +391,79 @@ namespace NarrativeEngine::StuckRecovery
     {
         m_fallbacks = std::move(fallbacks);
         m_nextFallback = 0;
+        m_hopTargets.clear();
+        m_minHopUnits = 0.0f;
+        m_maxRetreatUnits = 0.0f;
         m_tracks.clear();
         logger::info("StuckRecovery[{}]: escort begun with {} fallback position(s)", m_label, m_fallbacks.size());
+    }
+
+    void Escort::BeginLadder(Ladder ladder)
+    {
+        m_fallbacks = std::move(ladder.chainOutward);
+        m_nextFallback = 0;
+        m_minHopUnits = std::max(1.0f, ladder.minHopUnits);
+        m_maxRetreatUnits = std::max(0.0f, ladder.maxRetreatUnits);
+        m_hopTargets.clear();
+        m_hopTargets.reserve(ladder.fine.nodes.size());
+        for (const auto& node : ladder.fine.nodes) {
+            HopTarget_ target;
+            target.pos = RE::NiPoint3{node.x, node.y, node.z + kGroundClearanceUnits};
+            m_hopTargets.push_back(target);
+        }
+        m_tracks.clear();
+        logger::info("StuckRecovery[{}]: escort begun with {} chain fallback(s) and {} road node(s) to hop "
+                     "between (min hop {:.0f}u, max retreat {:.0f}u)",
+                     m_label,
+                     m_fallbacks.size(),
+                     m_hopTargets.size(),
+                     m_minHopUnits,
+                     m_maxRetreatUnits);
+    }
+
+    bool Escort::TakeFineHop_(const RE::NiPoint3& from, const RE::NiPoint3& goal, RE::NiPoint3& out)
+    {
+        if (m_hopTargets.empty()) {
+            return false;
+        }
+        const float goalDist = from.GetDistance(goal);
+
+        // Nearest eligible, because the premise of the whole manoeuvre is
+        // that the actor keeps the progress it has made: the shortest hop
+        // that actually clears the obstacle is the one that discards
+        // least.
+        std::size_t best = m_hopTargets.size();
+        float bestHop = 0.0f;
+        for (std::size_t i = 0; i < m_hopTargets.size(); ++i) {
+            auto& target = m_hopTargets[i];
+            if (target.consumed) {
+                continue;
+            }
+            const float hop = from.GetDistance(target.pos);
+            if (hop <= m_minHopUnits) {
+                // Near enough to be caught on the same thing.
+                continue;
+            }
+            if (target.pos.GetDistance(goal) > goalDist + m_maxRetreatUnits) {
+                // Backwards. Not recovery, just undoing the approach.
+                continue;
+            }
+            if (best == m_hopTargets.size() || hop < bestHop) {
+                best = i;
+                bestHop = hop;
+            }
+        }
+        if (best == m_hopTargets.size()) {
+            return false;
+        }
+        // Spent whether or not the hop works. A node that did not
+        // dislodge the actor is evidence against itself, and retrying it
+        // is the ping-pong this rule exists to stop: two nodes either
+        // side of one obstacle trade the actor back and forth, each hop
+        // looking like progress and none of it being any.
+        m_hopTargets[best].consumed = true;
+        out = m_hopTargets[best].pos;
+        return true;
     }
 
     void Escort::Track(RE::Actor* actor, const RE::NiPoint3& placedAt)
@@ -277,6 +494,9 @@ namespace NarrativeEngine::StuckRecovery
     {
         m_fallbacks.clear();
         m_nextFallback = 0;
+        m_hopTargets.clear();
+        m_minHopUnits = 0.0f;
+        m_maxRetreatUnits = 0.0f;
         m_tracks.clear();
         m_sinceCheck = 0.0;
     }
@@ -328,13 +548,114 @@ namespace NarrativeEngine::StuckRecovery
             return outcome;
         }
 
-        // Step 1 — the caller's unused-but-validated positions.
-        if (m_nextFallback < m_fallbacks.size()) {
+        // Is the vetted list worth another try for this actor?
+        //
+        // Two questions, asked before spending one. Both were paid for
+        // in game: a visitor consumed all six fallbacks over seventy-two
+        // seconds of a ninety-second approach budget, walking in from
+        // each of them and halting within ten units of the same dead end
+        // every time, and the close-in step that could have worked never
+        // got a turn.
+        if (!track.fallbacksRetired) {
+            const char* why = nullptr;
+
+            // (1) Has it come to rest here before?
+            for (const auto& seen : track.stalls) {
+                if (pos.GetDistance(seen) <= kStallConvergenceUnits) {
+                    why = "it has stalled in this spot before";
+                    break;
+                }
+            }
+
+            // (2) Did the last warp make the gap worse rather than
+            // better? The player moving cannot fake this: the
+            // comparison is against the gap measured immediately before
+            // the warp, not against the previous check.
+            if (!why && track.gapBeforeWarp >= 0.0f && goalDist > track.gapBeforeWarp + kGapRegressionSlackUnits) {
+                why = "the last fallback left it further from the goal than it started";
+            }
+
+            if (why) {
+                track.fallbacksRetired = true;
+                if (m_label == kVisitLabel) {
+                    VisitorTravelLog::Write("ESCORT",
+                                            "'{}' retiring {} unused fallback(s) — {}; closing in instead",
+                                            actor->GetName(),
+                                            m_fallbacks.size() - std::min(m_nextFallback, m_fallbacks.size()),
+                                            why);
+                }
+                logger::info("StuckRecovery[{}]: '{}' retiring {} unused fallback(s) — {}; closing in instead",
+                             m_label,
+                             actor->GetName(),
+                             m_fallbacks.size() - std::min(m_nextFallback, m_fallbacks.size()),
+                             why);
+            }
+        }
+
+        if (track.stalls.size() >= kStallMemory) {
+            track.stalls.erase(track.stalls.begin());
+        }
+        track.stalls.push_back(pos);
+
+        // Step 1 — a short hop onto road the actor has not already tried,
+        // when it stalled somewhere the road graph can answer for.
+        //
+        // Before the chain fallbacks, because it discards less: the actor
+        // keeps the distance it has already walked and only steps around
+        // whatever has it. Outside the loaded grid `IsOnNavmesh` is false
+        // everywhere, so this arm simply does not apply and the chain
+        // answers instead.
+        if (!track.fallbacksRetired && !m_hopTargets.empty() && IsOnNavmesh(pos)) {
+            RE::NiPoint3 hop{};
+            if (TakeFineHop_(pos, goal, hop)) {
+                WarpTo(token, actor, hop);
+                track.lastPos = hop;
+                track.gapBeforeWarp = goalDist;
+                outcome.action = Action::WarpedToFallback;
+                outcome.movedTo = hop;
+                if (m_label == kVisitLabel) {
+                    VisitorTravelLog::Write("ESCORT",
+                                            "'{}' moved only {:.0f}u since the last check -> hopping to the road "
+                                            "node at ({:.0f},{:.0f},{:.0f})",
+                                            actor->GetName(),
+                                            moved,
+                                            hop.x,
+                                            hop.y,
+                                            hop.z);
+                }
+                logger::info("StuckRecovery[{}]: '{}' moved only {:.0f}u at ({:.0f},{:.0f},{:.0f}) -> road "
+                             "node at ({:.0f},{:.0f},{:.0f}), {:.0f}u away, {:+.0f}u from the goal",
+                             m_label,
+                             actor->GetName(),
+                             moved,
+                             pos.x,
+                             pos.y,
+                             pos.z,
+                             hop.x,
+                             hop.y,
+                             hop.z,
+                             pos.GetDistance(hop),
+                             hop.GetDistance(goal) - goalDist);
+                return outcome;
+            }
+        }
+
+        // Step 2 — the caller's unused-but-validated positions.
+        if (!track.fallbacksRetired && m_nextFallback < m_fallbacks.size()) {
             const auto dest = m_fallbacks[m_nextFallback++];
             WarpTo(token, actor, dest);
             track.lastPos = dest;
+            track.gapBeforeWarp = goalDist;
             outcome.action = Action::WarpedToFallback;
             outcome.movedTo = dest;
+            if (m_label == kVisitLabel) {
+                VisitorTravelLog::Write("ESCORT",
+                                        "'{}' moved only {:.0f}u since the last check -> fallback {} of {}",
+                                        actor->GetName(),
+                                        moved,
+                                        m_nextFallback,
+                                        m_fallbacks.size());
+            }
             logger::info("StuckRecovery[{}]: '{}' moved only {:.0f}u at ({:.0f},{:.0f},{:.0f}) -> fallback "
                          "{} of {} at ({:.0f},{:.0f},{:.0f})",
                          m_label,
@@ -351,7 +672,7 @@ namespace NarrativeEngine::StuckRecovery
             return outcome;
         }
 
-        // Step 2 — out of vetted positions, so close the gap directly.
+        // Step 3 — out of vetted positions, so close the gap directly.
         // Each stall moves the actor another step along the line it was
         // supposed to walk, which both shortens the route and skips
         // whatever it was caught on.
@@ -366,7 +687,13 @@ namespace NarrativeEngine::StuckRecovery
             return outcome;
         }
 
-        const float target = std::max(opts.minGoalDistanceUnits, goalDist - opts.closeInStepUnits);
+        // Each consecutive refusal reaches one step further, because the
+        // probe is computed from the actor's own position and a stuck
+        // actor hands back the same point every interval. Without the
+        // multiplier the ladder never climbs: one visit asked about the
+        // same patch of riverbed fifteen times.
+        const float reach = opts.closeInStepUnits * static_cast<float>(track.closeInProbes + 1);
+        const float target = std::max(opts.minGoalDistanceUnits, goalDist - reach);
         const float fraction = (goalDist - target) / std::max(1.0f, goalDist);
         const RE::NiPoint3 probe{pos.x + (goal.x - pos.x) * fraction,
                                  pos.y + (goal.y - pos.y) * fraction,
@@ -374,21 +701,41 @@ namespace NarrativeEngine::StuckRecovery
 
         RE::NiPoint3 dest{};
         if (!StandableAtOrNear(probe, dest)) {
-            // Not fatal: the actor keeps its position and the next
-            // interval steps again from here, which probes further
-            // along the same line.
             ++track.closeInSteps;
+            ++track.closeInProbes;
+
+            // The reach has run into the minimum goal distance, so the
+            // probe has walked the whole line it is allowed to walk and
+            // found nothing standable anywhere on it. Stepping again
+            // would ask about this same point for the rest of the
+            // encounter.
+            if (target <= opts.minGoalDistanceUnits) {
+                track.stranded = true;
+                outcome.action = Action::Stranded;
+                logger::warn("StuckRecovery[{}]: '{}' found nowhere standable anywhere along the {:.0f}u to its "
+                             "goal over {} probe(s) — giving up on it",
+                             m_label,
+                             actor->GetName(),
+                             goalDist,
+                             track.closeInProbes);
+                return outcome;
+            }
+
+            // Not fatal: the actor keeps its position and the next
+            // interval probes further along the same line.
             logger::warn("StuckRecovery[{}]: '{}' close-in step {} found nowhere standable near "
-                         "({:.0f},{:.0f},{:.0f}); will step again",
+                         "({:.0f},{:.0f},{:.0f}); reaching {:.0f}u further next time",
                          m_label,
                          actor->GetName(),
                          track.closeInSteps,
                          probe.x,
                          probe.y,
-                         probe.z);
+                         probe.z,
+                         opts.closeInStepUnits);
             return outcome;
         }
 
+        track.closeInProbes = 0;
         dest.z += kCloseInLiftUnits;
 
         WarpTo(token, actor, dest);

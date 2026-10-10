@@ -8,6 +8,7 @@
 #include <BeatWorkDispatch.h>
 #include <CharacterBios.h>
 #include <CombatEventLog.h>
+#include <CourierUtils.h>
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
 #include <Decorators.h>
@@ -44,6 +45,7 @@
 #include <Tick.h>
 #include <TravelEventLog.h>
 #include <TravelGraph.h>
+#include <VisitorTravelLog.h>
 #include <VisitState.h>
 #include <WeatherEventLog.h>
 
@@ -215,6 +217,7 @@ namespace NarrativeEngine
                 // GossipLog only registers here; the trace file itself
                 // is opened per save-game session in OnSessionStart.
                 GossipLog::Initialize();
+                VisitorTravelLog::Initialize();
                 GossipClaims::Initialize();
                 GossipSim::Initialize();
                 GossipContent::Initialize();
@@ -313,6 +316,7 @@ namespace NarrativeEngine
             case SKSE::MessagingInterface::kNewGame:
                 logger::info("OnMessage: kNewGame");
                 DecisionLog::Clear();
+                CourierUtils::OnRevert();
                 CombatEventLog::OnRevert();
                 WeatherEventLog::OnRevert();
                 TravelEventLog::OnRevert();
@@ -344,6 +348,7 @@ namespace NarrativeEngine
                 // game-time sample, before Tick::Start so the first Poll
                 // has a file to write to.
                 GossipLog::OnSessionStart();
+                VisitorTravelLog::OnSessionStart();
                 GossipSim::OnSessionStart();
                 GossipTick::OnSessionStart();
                 Tick::Start();
@@ -373,7 +378,9 @@ namespace NarrativeEngine
                 GossipSim::OnSessionEnd();
                 GossipLog::OnSessionEnd();
                 PlotLog::OnSessionEnd();
+                VisitorTravelLog::OnSessionEnd();
                 DecisionLog::Clear();
+                CourierUtils::OnRevert();
                 CombatEventLog::OnRevert();
                 WeatherEventLog::OnRevert();
                 TravelEventLog::OnRevert();
@@ -421,6 +428,7 @@ namespace NarrativeEngine
                 // first poll after loading a day-200 save would read as
                 // a 200-day jump.
                 GossipLog::OnSessionStart();
+                VisitorTravelLog::OnSessionStart();
                 GossipSim::OnSessionStart();
                 GossipTick::OnSessionStart();
                 Tick::Start();
@@ -572,7 +580,11 @@ namespace NarrativeEngine
     {
         SKSE::Init(skse);
         SetupLog();
-        logger::info("NarrativeEngine starting up.");
+        // First line of every log. The version belongs here because a log
+        // is usually read long after the build that wrote it, and "which
+        // build produced this?" is the question that decides whether the
+        // rest of the file is worth reading.
+        logger::info("NarrativeEngine v{} starting up.", NARRATIVEENGINE_VERSION);
 
         auto* messaging = SKSE::GetMessagingInterface();
         if (!messaging || !messaging->RegisterListener(OnMessage)) {

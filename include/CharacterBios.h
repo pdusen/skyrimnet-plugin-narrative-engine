@@ -249,7 +249,7 @@ namespace NarrativeEngine::CharacterBios
     //
     // PER SAVE, NOT PER SESSION. SkyrimNet lets a save carry its own
     // edited copy of a character profile under
-    // `prompts/_saves/<save id>/characters/`, so two saves of the same
+    // `saves/<save id>/prompts/characters/`, so two saves of the same
     // playthrough can legitimately disagree about who somebody is.
     //
     // Not at kDataLoaded, where this used to run: there is no save yet,

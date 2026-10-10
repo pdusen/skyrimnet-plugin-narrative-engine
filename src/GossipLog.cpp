@@ -40,29 +40,16 @@ namespace NarrativeEngine::GossipLog
         // Delete .5, shift .4 -> .5 ... current -> .1. Failures are
         // logged and swallowed: a rotation that cannot happen degrades
         // to "this session's file only", which is still useful.
+        // Shared with EventHistoryWriter, and shared specifically so the
+        // copy-rather-than-rename rule for the current file is written
+        // down once. See EventLogUtil.h.
         void RotateFilesLocked()
         {
-            std::error_code ec;
-            const auto oldest = FilePathForSlot(kRotationSlots);
-            if (std::filesystem::exists(oldest, ec)) {
-                std::filesystem::remove(oldest, ec);
-                ec.clear();
+            auto dir = SKSE::log::log_directory();
+            if (!dir) {
+                return;
             }
-            for (int slot = kRotationSlots - 1; slot >= 1; --slot) {
-                const auto src = FilePathForSlot(slot);
-                const auto dst = FilePathForSlot(slot + 1);
-                if (std::filesystem::exists(src, ec)) {
-                    std::filesystem::rename(src, dst, ec);
-                    ec.clear();
-                }
-            }
-            const auto current = FilePathForSlot(0);
-            if (std::filesystem::exists(current, ec)) {
-                std::filesystem::rename(current, FilePathForSlot(1), ec);
-                if (ec) {
-                    logger::warn("GossipLog: rotate of '{}' failed: {}", current.string(), ec.message());
-                }
-            }
+            EventLogUtil::RotateLogFiles(*dir, kFileStem, kRotationSlots, "GossipLog");
         }
 
         void WriteLineLocked(std::string_view body)
@@ -134,8 +121,13 @@ namespace NarrativeEngine::GossipLog
                << "#   WASTED  a telling that landed on someone who already knew (consumes quota)\n"
                << "#   RETIRE  a carrier stopped telling\n"
                << "#   BURNOUT the rumor's last carrier retired; carries the full summary\n"
-               << "#   NOTE    seeder summaries, catch-up drains, census\n"
-               << "# Hold crossings are flagged inline as XHOLD <from>-><to>.\n\n";
+               << "#   STATE   a whole-world summary: every rumor and its state\n"
+               << "#   NOTE    seeder summaries, catch-up drains, tick ends, census\n"
+               << "# Hold crossings are flagged inline as XHOLD <from>-><to>.\n"
+               << "# A STATE block is written at session start and at the end of\n"
+               << "# every tick, so the pair either side of a load is what a save\n"
+               << "# round trip can be checked against. Every tick closes with a\n"
+               << "# NOTE naming its end.\n\n";
         g_file.flush();
         logger::info("GossipLog: opened '{}' for session {}", path.string(), g_sessionCounter);
     }
@@ -235,7 +227,7 @@ namespace NarrativeEngine::GossipLog
     {
         Emit(std::format("HARVEST bucket={}/{}  actors={}  memories={}  candidates={}  sent={}  "
                          "(rejected: {} diary, {} no-content, {} claimed, {} same-event, "
-                         "{} isolated, {} unfiltered)",
+                         "{} isolated, {} cannot-carry, {} unfiltered)",
                          stats.bucket,
                          stats.bucketCount,
                          stats.bucketPopulation,
@@ -247,6 +239,7 @@ namespace NarrativeEngine::GossipLog
                          stats.rejectedClaimed,
                          stats.rejectedSameEvent,
                          stats.rejectedIsolated,
+                         stats.rejectedUnavailable,
                          stats.rejectedUnfiltered));
     }
 
@@ -258,6 +251,11 @@ namespace NarrativeEngine::GossipLog
     void Claim(std::int64_t memoryId, std::string_view action, std::size_t outstanding)
     {
         Emit(std::format("CLAIM   m{:<8}  {:<9} outstanding={}", memoryId, action, outstanding));
+    }
+
+    void State(std::string_view text)
+    {
+        Emit(std::format("STATE   {}", text));
     }
 
     void Note(std::string_view text)

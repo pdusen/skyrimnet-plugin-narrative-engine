@@ -1,5 +1,6 @@
 #pragma once
 
+#include <FineRoads.h>
 #include <MainThread.h>
 
 #include <RE/Skyrim.h>
@@ -40,10 +41,13 @@
 //      moving on its own. These destinations are dropped in from a
 //      little above the ground: they are picked off a bare line with
 //      none of the vetting the runner-ups had, so landing on top of an
-//      obstruction beats landing inside one.
-//   4. Inside `minGoalDistanceUnits` and still stalled? Stranded.
-//      Report it and stop — there is nowhere left to put it that isn't
-//      on top of the player.
+//      obstruction beats landing inside one. A step that finds nowhere
+//      standable reaches another `closeInStepUnits` further along on
+//      the next interval, so the probe walks the line instead of
+//      re-asking about one spot.
+//   4. Inside `minGoalDistanceUnits`, or out of line to probe, and
+//      still stalled? Stranded. Report it and stop — there is nowhere
+//      left to put it that isn't on top of the player.
 //
 // Actors within `arrivedDistanceUnits` of the goal are never touched,
 // and neither is one IN COMBAT, at any range. That second exclusion is
@@ -154,8 +158,85 @@ namespace NarrativeEngine::StuckRecovery
     // ground resolves — void, or an unloaded cell.
     bool GroundPoint(const RE::NiPoint3& pos, RE::NiPoint3& out, float& outGroundZ);
 
-    // Grounded, dry, and on navmesh.
+    // The navmesh's own surface height at `pos`'s XY, independent of
+    // terrain, taken from the triangle nearest `pos`'s own height. This
+    // is what a walled city's ground is: authored static geometry with a
+    // navmesh over it and no landscape record to read.
+    bool NavmeshSurfaceZ(const RE::NiPoint3& pos, float& zOut);
+
+    // Ground an actor could walk on at `pos`'s XY, from whichever source
+    // can answer: terrain with navmesh over it, or failing that the
+    // navmesh's own surface. No water test — callers that care add one.
+    bool WalkableGround(const RE::NiPoint3& pos, RE::NiPoint3& out, float& outGroundZ);
+
+    // Grounded, dry, and on navmesh. Terrain answers for outdoor Skyrim;
+    // where it does not — inside a walled city, where there is almost no
+    // landscape — the navmesh's own surface answers instead.
     bool IsStandable(const RE::NiPoint3& pos, RE::NiPoint3& out);
+
+    // Spacing between corridor samples, and the most that will ever be
+    // taken however long the line is. Thirty-two at 250 units covers
+    // 8000, which is as far as anything is placed.
+    inline constexpr float kCorridorSampleSpacingUnits = 250.0f;
+    inline constexpr int kCorridorMaxSamples = 32;
+
+    // Consecutive off-navmesh samples tolerated before the line counts
+    // as blocked.
+    //
+    // This is what separates a BARRIER from a BEND. A road curving round
+    // a boulder leaves the straight line for a sample or two and comes
+    // back; a ravine, a river gorge or the foot of a cliff produces a
+    // long unbroken run of nothing. Two samples tolerates roughly 750
+    // units of deviation from the straight line, which is more than
+    // ordinary road curvature needs.
+    inline constexpr int kCorridorGapTolerance = 2;
+
+    // How near two stall positions have to be to count as the same
+    // place.
+    //
+    // Deliberately well under the separation the spawn searches
+    // guarantee between their runner-ups — `VisitArrivalPoint` keeps
+    // them 400 units apart — so this can never merge two distinct vetted
+    // positions into one. It is above `movementThresholdUnits`, so
+    // "stopped in the same spot" and "shuffled a little and stopped"
+    // both count as the same dead end. Observed spread in the field was
+    // ten units, so there is a lot of room here.
+    inline constexpr float kStallConvergenceUnits = 200.0f;
+
+    // How many stall positions to remember per actor. Enough to notice a
+    // dead end being revisited after a detour, few enough that the
+    // comparison stays a handful of distance checks.
+    inline constexpr std::size_t kStallMemory = 4;
+
+    // How much further from the goal a warp has to leave an actor before
+    // it counts as having made things worse. Absorbs the ordinary case
+    // where the next vetted position is slightly further out and still a
+    // better place to walk from.
+    inline constexpr float kGapRegressionSlackUnits = 250.0f;
+
+    // Is there unbroken navmesh along the straight line from `from` to
+    // `to`?
+    //
+    // A cheap stand-in for the connectivity question `IsOnNavmesh`
+    // cannot answer. Containment says there is mesh under a point; it
+    // says nothing about whether that mesh is the same island the player
+    // is standing on, and an unreachable ledge across a ravine is
+    // perfectly good navmesh. A proper answer means a breadth-first walk
+    // over triangle adjacency plus cross-mesh portals — see
+    // `docs/engine-findings/navmesh-queries-in-commonlibsse-ng.md`,
+    // which parked that work until field testing showed stranded actors
+    // were common rather than occasional. They are: a visitor walked to
+    // the same dead end from six different placements, 550 units below
+    // the player, and stopped there every time.
+    //
+    // What this does instead is sample the line and ground each sample.
+    // It catches what defeated that visit — a gap the actor cannot cross
+    // — and it does NOT catch a wall or a closed door, which are thin
+    // enough to sit inside the gap tolerance. Endpoints are skipped:
+    // both ends have already been validated by whoever asked.
+    //
+    // MAIN THREAD, like every primitive here.
+    bool HasNavmeshCorridor(const RE::NiPoint3& from, const RE::NiPoint3& to);
 
     // Warp `actor` to `pos` and re-evaluate its package so it resumes
     // whatever it was doing. Both the char-controller flag and the warp
@@ -181,6 +262,44 @@ namespace NarrativeEngine::StuckRecovery
         // units apart are one option, not two. Replaces any previous
         // list and clears all tracking.
         void Begin(std::vector<RE::NiPoint3> fallbacks);
+
+        // A two-source ladder, for a caller that has a road graph as well
+        // as a list of positions.
+        //
+        // Where an actor stalls decides which source answers. INSIDE the
+        // loaded grid it is caught on local geometry — a fence corner, a
+        // doorway, a boulder — and the fix is a short hop onto validated
+        // road nearby, not a long warp back out along the route that
+        // throws away the walk it has already done. OUTSIDE it there is
+        // no road graph to read and the positions are all there is.
+        //
+        // The visit beat is the only caller; the ambush beat keeps the
+        // plain `Begin` above, and the two numbers live here rather than
+        // in `Options` so that it cannot pick them up by accident.
+        struct Ladder
+        {
+            // Chain points outward of the chosen arrival, in chain order.
+            // Never re-sorted — the ordering IS the point, because the
+            // escort walks a stalled actor back along its own path.
+            std::vector<RE::NiPoint3> chainOutward;
+
+            // The loaded road graph, or empty when none is. Empty sends
+            // every escalation to `chainOutward`.
+            FineRoads::Graph fine;
+
+            // How far a hop must move the actor, and how much further
+            // from the goal it may leave them. See
+            // Settings::visitChainUnstuckMinHopUnits for the geometry
+            // that makes the second number small and still permissive.
+            float minHopUnits = 300.0f;
+            float maxRetreatUnits = 150.0f;
+        };
+
+        // Named apart from `Begin` rather than overloading it: the two
+        // take very different things and `Begin({})` is ambiguous between
+        // them, which is a call site picking the wrong semantics by
+        // accident rather than a compile error worth having.
+        void BeginLadder(Ladder ladder);
 
         // Register an actor at the position it was actually placed, so
         // the first check has a baseline that isn't a guess.
@@ -223,10 +342,63 @@ namespace NarrativeEngine::StuckRecovery
             RE::NiPoint3 lastPos{};
             int closeInSteps = 0;
             bool stranded = false;
+
+            // Close-in probes that found nowhere standable since the
+            // last one that did. The reach of the next probe is
+            // multiplied by this, so a refusal moves the probe along the
+            // line rather than re-asking about the spot that refused.
+            //
+            // Without it the probe never advances at all: it is computed
+            // from the actor's own position, and an actor that did not
+            // move gets the same point every interval. One visit spent
+            // fifteen identical probes and sixty of its ninety-second
+            // approach budget on a single patch of riverbed.
+            int closeInProbes = 0;
+
+            // Where this actor has stalled before.
+            //
+            // One stall says it is stuck; two in the same place say the
+            // fallbacks are not the cure. An actor that walks in from
+            // six different placements and halts within ten units of
+            // one spot every time is telling you the obstacle is
+            // between that spot and the goal, and no amount of moving
+            // it around on the far side of the obstacle will help.
+            std::vector<RE::NiPoint3> stalls;
+
+            // How far from the goal it was just before the last warp,
+            // or negative if it has not been warped.
+            //
+            // Compared against the gap at the next stall, this asks the
+            // only question that matters about an intervention: did it
+            // help? A fallback further out than where the actor already
+            // was makes the answer no, and the list should not be
+            // walked to the end to find that out six times over.
+            float gapBeforeWarp = -1.0f;
+
+            // Per-actor rather than shared, unlike the fallback cursor
+            // itself: one actor converging says nothing about whether
+            // the remaining positions are usable for its neighbours.
+            bool fallbacksRetired = false;
         };
+
+        // One fine node the ladder may hop an actor onto.
+        struct HopTarget_
+        {
+            RE::NiPoint3 pos{};
+            bool consumed = false;
+        };
+
+        // Pick an unconsumed fine node to hop `actor` onto, and mark it
+        // spent. Returns false when none is eligible.
+        bool TakeFineHop_(const RE::NiPoint3& from, const RE::NiPoint3& goal, RE::NiPoint3& out);
 
         std::string m_label;
         std::vector<RE::NiPoint3> m_fallbacks;
+        // The ladder's road half. Per-visit state, not persisted: the
+        // escort already lives only as long as the beat that began it.
+        std::vector<HopTarget_> m_hopTargets;
+        float m_minHopUnits = 0.0f;
+        float m_maxRetreatUnits = 0.0f;
         // Shared across actors, not per-actor. Each fallback is handed
         // out once: they are distinct PLACES, and sending three actors
         // to the same one stacks them on a single point where they shove

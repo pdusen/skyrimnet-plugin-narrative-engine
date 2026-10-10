@@ -16,20 +16,16 @@ VirtualMachineAdapter:
       Name: Alias_Sender
       Object: 00082D:NarrativeEngine.esp
       Alias: 1
-    - MutagenObjectType: ScriptObjectProperty
-      Name: Alias_SpawnMarker
-      Object: 00082D:NarrativeEngine.esp
-      Alias: 4
   - Name: _ne_VisitQuest
     Properties:
+    - MutagenObjectType: ScriptObjectProperty
+      Name: ReturnAnchor
+      Object: 00082D:NarrativeEngine.esp
+      Alias: 5
     - MutagenObjectType: ScriptObjectProperty
       Name: Sender
       Object: 00082D:NarrativeEngine.esp
       Alias: 1
-    - MutagenObjectType: ScriptObjectProperty
-      Name: SpawnMarker
-      Object: 00082D:NarrativeEngine.esp
-      Alias: 4
   FileName: _ne__QF__ne_VisitQuest_0500FB2E
   Fragments:
   - Unknown2: 1
@@ -97,55 +93,13 @@ Aliases:
 - ID: 1
   Name: Sender
   Flags:
-  - ReservesLocationOrReference
-  Conditions:
-  - MutagenObjectType: ConditionFloat
-    CompareOperator: GreaterThanOrEqualTo
-    Data:
-      MutagenObjectType: GetFactionRankConditionData
-      Faction: 000819:NarrativeEngine.esp
-    ComparisonValue: 4
+  - Optional
   PackageData:
   - 00082E:NarrativeEngine.esp
   - 00082F:NarrativeEngine.esp
   VoiceTypes: Null
-- ID: 4
-  Name: SpawnMarker
-  Flags:
-  - MatchingRefInLoadedArea
-  - AllowReserved
-  - MatchingRefClosest
-  Conditions:
-  - MutagenObjectType: ConditionFloat
-    Data:
-      MutagenObjectType: IsInListConditionData
-      FormList: 000801:NarrativeEngine.esp
-    ComparisonValue: 1
-  - MutagenObjectType: ConditionFloat
-    CompareOperator: LessThan
-    Data:
-      MutagenObjectType: GetDistanceConditionData
-      UseAliases: True
-    ComparisonValue: 8000
-  - MutagenObjectType: ConditionFloat
-    CompareOperator: GreaterThanOrEqualTo
-    Data:
-      MutagenObjectType: GetDistanceConditionData
-      UseAliases: True
-    ComparisonValue: 3000
-  - MutagenObjectType: ConditionFloat
-    Data:
-      MutagenObjectType: GetLineOfSightConditionData
-      UseAliases: True
-  - MutagenObjectType: ConditionFloat
-    Data:
-      MutagenObjectType: IsInInteriorConditionData
-  VoiceTypes: Null
 - ID: 5
   Name: ReturnAnchor
   Flags:
-  - ReservesLocationOrReference
-  CreateReferenceToObject:
-    Object: 000034:Skyrim.esm
-    AliasID: 1
+  - Optional
   VoiceTypes: Null

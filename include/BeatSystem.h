@@ -74,6 +74,23 @@ namespace NarrativeEngine::BeatSystem
     // Returns std::nullopt when no beat is in flight.
     std::optional<InFlightInfo> GetInFlightInfo();
 
+    // Anti-repetition ring, for the dashboard. `suppressedCount` is how
+    // many beat names are currently inside
+    // `iBeatRepetitionWindowSeconds` and therefore excluded from the
+    // candidate list; `soonestExpirySeconds` is how long until the
+    // first of them becomes eligible again.
+    //
+    // WALL-CLOCK seconds, not the active-play clock the global cooldown
+    // runs on: the ring stamps EventLogUtil::NowUnixSeconds() and
+    // compares against it, so it keeps running through pause, combat
+    // and dialogue. Zero on both fields when nothing is suppressed.
+    struct RepetitionWindowInfo
+    {
+        int suppressedCount = 0;
+        double soonestExpirySeconds = 0.0;
+    };
+    RepetitionWindowInfo GetRepetitionWindowInfo();
+
     // Per-evaluation hook called from EvaluationPipeline on the plugin
     // thread after ParseDecision produces a provisional record. Takes
     // ownership of snapshot and rec.

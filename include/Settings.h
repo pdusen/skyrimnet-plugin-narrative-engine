@@ -66,10 +66,26 @@ namespace NarrativeEngine::Settings
         // off, or vice versa. Logged via logger::trace, which spdlog
         // is configured to pass through (see logger.h).
         bool traceMode = false;
+        // Trace a line for every individual key press the dashboard's
+        // input sink sees, including the ones that match nothing. That
+        // sink fires on every input event the game receives, so this is
+        // the loudest thing in the log by a wide margin — a line per
+        // keystroke of ordinary play. Carved out of traceMode because it
+        // buries the per-tick chatter traceMode is usually turned on for.
+        // Needs traceMode as well, since that is what opens the trace
+        // level at all.
+        bool traceKeyPresses = false;
+
+        // Corner-of-the-screen notices when a beat does something the
+        // player would otherwise only learn about later, or not at all:
+        // a visitor warped in and walking over, a letter handed to the
+        // courier, an ambush spawned, a rumour seeded. A testing aid —
+        // they name factions and NPCs the character has no way of
+        // knowing about — so off unless asked for.
+        bool debugNotifications = false;
 
         // [Director]
-        // TEMP: 30 for development iteration; ship default is 90.
-        int tickIntervalSeconds = 30;             // wall-clock seconds between evaluations
+        int tickIntervalSeconds = 90;             // UNPAUSED seconds between evaluations
         int decisionLogMaxEntries = 200;          // ring buffer cap
         int decisionLogTailSizeForPrompt = 10;    // entries fed into BuildPromptContext
         int skyrimNetEventTailSizeForPrompt = 40; // maxCount passed to PublicGetRecentEvents
@@ -127,7 +143,13 @@ namespace NarrativeEngine::Settings
         // thread. See PHASE_06_BEAT_SYSTEM_REFACTOR.md.
         int beatSystemPollIntervalMs = 250;
         // Beat dispatch knobs.
-        int beatCooldownSeconds = 120;         // wall-clock seconds after beat COMPLETION before next may fire
+        // Seconds of ACTIVE PLAY after beat COMPLETION before the next
+        // may fire -- not wall-clock, despite what this said until the
+        // dashboard had to label it. BeatSystem::RunOneTick only adds to
+        // the accumulator under TickMode::Normal, and ComputeTickMode
+        // returns Paused / Combat / Dialogue ahead of it, so this clock
+        // is frozen in combat and in dialogue as well as while paused.
+        int beatCooldownSeconds = 120;
         int beatRepetitionWindowSeconds = 300; // window during which the same beat name is excluded from picks
 
         // NPCLetterBeat precondition: minimum number of recently-engaged
@@ -225,22 +247,23 @@ namespace NarrativeEngine::Settings
         // precomputed preferred-path chains — the same data the engine
         // uses to move actors travelling outside the loaded cell grid.
         //
-        // On by default because the plot simulation consumes it: travel
-        // distance is what makes one step harder than another, and
-        // without the graph plots fall back to a same-hold /
-        // different-hold comparison that Step 12 measured as almost
-        // constant. Costs a few ms at load and a few hundred nodes.
+        // On by default because two features consume it. It is the
+        // long-distance skeleton of a visit's approach chain: with it
+        // off, an arriving visitor has no roads to cross the map on and
+        // the chain collapses to the direct line. And the plot
+        // simulation reads travel distance from it, which is what makes
+        // one step harder than another: without the graph plots fall
+        // back to a same-hold / different-hold comparison that Step 12
+        // measured as almost constant. Costs a few ms at load and a few
+        // hundred nodes.
         bool travelGraphEnabled = true;
         // Debug: after the graph builds, dump one 24-bit BMP per
         // worldspace to the SKSE log directory. Nodes are black, edges
         // gray, empty space white. Worldspaces with no nodes are
-        // skipped. Overwrites existing files each session.
-        //
-        // Off, matching the shipped INI. It defaulted true while the
-        // graph itself defaulted false, which was harmless only for as
-        // long as nothing switched the graph on -- now that the graph
-        // ships enabled, that default would write a multi-megabyte
-        // bitmap on every load for anyone running without the INI.
+        // skipped. Overwrites existing files each session. Off by
+        // default now that the graph itself is on by default — an
+        // install with no INI should not be writing multi-megabyte
+        // images on every load.
         bool travelGraphDebugBitmap = false;
         // World units per bitmap pixel. Lower = larger, more detailed
         // image. 256 puts a 4096-unit cell at 16 pixels and renders
@@ -255,11 +278,13 @@ namespace NarrativeEngine::Settings
         bool travelGraphLogCalibration = false;
 
         // [FineRoads]
-        // EXPERIMENTAL. High-resolution road graph for the loaded cell
-        // grid, extracted from kPreferred-flagged navmesh triangles.
-        // Complements TravelGraph, which only carries the long-distance
-        // skeleton and has no spurs. Nothing consumes it yet.
-        bool fineRoadsEnabled = false;
+        // High-resolution road graph for the loaded cell grid, extracted
+        // from kPreferred-flagged navmesh triangles. Complements
+        // TravelGraph, which only carries the long-distance skeleton and
+        // has no spurs. The dense near end of a visit's approach chain,
+        // and the only source of road nodes the escort can hop a stuck
+        // visitor along.
+        bool fineRoadsEnabled = true;
         // Rescans are normally event-driven: cell-loaded, load-game, and
         // fast-travel-end sinks flag the graph and the next tick picks it
         // up. This is only a backstop, in unpaused seconds. It exists
@@ -277,8 +302,10 @@ namespace NarrativeEngine::Settings
         int fineRoadsBackstopSeconds = 180;
         // Debug: dump the active local graph to a BMP in the SKSE log
         // directory whenever it changes. Road nodes red, frontier nodes
-        // (where the road leaves loaded cells) blue, edges gray.
-        bool fineRoadsDebugBitmap = true;
+        // (where the road leaves loaded cells) blue, edges gray. Off by
+        // default for the same reason as TravelGraph's, and more so:
+        // this one rewrites itself every time the grid changes.
+        bool fineRoadsDebugBitmap = false;
         // World units per pixel for that bitmap. Much finer than
         // TravelGraph's, since this covers ~5x5 cells rather than a
         // whole worldspace.
@@ -292,12 +319,16 @@ namespace NarrativeEngine::Settings
         // Not the same as the ring-buffered tail the LLM sees. Session
         // rotation keeps the previous 5 files.
         //
-        // Disabled by default. When disabled, the file is never
-        // opened AND each event log skips its per-emit push to the
-        // pending queue (so the queue can't grow unbounded on a
-        // long-running session with the writer off). Flip to true
-        // for Step 9 testing and back to false after.
-        bool eventHistoryEnabled = false;
+        // Enabled by default, to match the gossip trace beside it. A
+        // testing aid is worth most when it was already running before
+        // the odd thing happened, and one that has to be switched on
+        // first never is: the session that needed it is over.
+        //
+        // When disabled, the file is never opened AND each event log
+        // skips its per-emit push to the pending queue, so the queue
+        // cannot grow unbounded on a long session with the writer off.
+        // That is the reason to turn it off, and the only one.
+        bool eventHistoryEnabled = true;
         // Flush cadence in unpaused real seconds (Tick-driven
         // accumulator). Weather / travel events emit slowly; 5s is a
         // comfortable trade between file-write frequency and how long
@@ -326,6 +357,28 @@ namespace NarrativeEngine::Settings
         // WriteBeatEnabledOverride, which authors the MCM INI and
         // updates the field here.
         bool enableNpcLetter = true;
+
+        // Semicolon-separated list of NPCs who may never be chosen as the
+        // sender of a letter beat or the visitor of a visit beat.
+        // Empty by default. Whitespace around the separators is
+        // allowed. Semicolon-separated to match sSpellNameBlocklist,
+        // the other list whose entries are free-text names.
+        //
+        // An entry matches a candidate if it equals EITHER the base
+        // form's EditorID or the candidate's display name, so the same
+        // list works with and without an EditorID-recovery mod
+        // installed — TESNPC::GetFormEditorID() is empty at runtime
+        // without one, and on such an install every match comes from
+        // the name arm. EditorID is the precise identifier and the one
+        // to prefer where it resolves; names are ambiguous across
+        // duplicates, but a collision here fails safe by excluding one
+        // NPC too many rather than letting a blacklisted one through.
+        //
+        // The parsed set lives in Settings.cpp; membership is queried
+        // via Settings::IsSenderBlacklisted. Enforced in
+        // SenderCandidatePool's universal viability walk, so it covers
+        // both composers and the IsAvailable-time CountViable path.
+        std::string blacklistedSenders;
 
         // NPCLetterBeat / LetterPool content + dispatch knobs. See
         // PHASE_04_LETTER_POOL_AND_NPC_LETTER_ACTION.md.
@@ -391,8 +444,166 @@ namespace NarrativeEngine::Settings
         // [Actions] — dispatch / composition
         int visitBriefingMinWords = 40;
         int visitBriefingMaxWords = 120;
-        int visitMarkerMinDistanceUnits = 800;  // closest spawn marker may be
-        int visitMarkerMaxDistanceUnits = 2500; // farthest spawn marker may be
+        // Distance band the arrival search picks a point within,
+        // measured straight-line from the player. Read by
+        // VisitArrivalPoint; before Phase 14 these were parsed and never
+        // consumed, with the live band baked into the SpawnMarker alias.
+        // The floor is the only distance rule left since Phase 16 — the
+        // walk takes the first acceptable point outward, so the ceiling
+        // is not consulted on the road path at all (the city approach
+        // still bands against it).
+        //
+        // It is doing more work than it looks like. A visitor has to
+        // arrive far enough out to read as having walked there, AND far
+        // enough out that hop expansion cannot reach across the player.
+        // Hops are undirected, so a node on the far side of the player is
+        // at most one two-hop reach away from them — and that reach is a
+        // measured 1,784 units at worst across all of vanilla, median 226
+        // (docs/engine-findings/fine-road-hop-spans.md). 2,000 clears
+        // that maximum by 216 units; the old 800 did not clear it at all,
+        // and the search duly arrived 1,000 units behind the player.
+        //
+        // The margin is over VANILLA's tail. A mod-added road with
+        // coarser navmesh could in principle reach further, and the
+        // durable fix for that is to bound the expansion in units rather
+        // than hops — which would also free this number to go lower.
+        int visitMarkerMinDistanceUnits = 2000; // closest the sender may arrive
+        int visitMarkerMaxDistanceUnits = 5000; // city approach only; see above
+
+        // Silhouette half-width the arrival search's cover gate tests
+        // across. One actor, not a group, so this is the narrow end of
+        // the range CameraVisibility::IsPositionBehindCover was built
+        // for. The value is a measurement rather than a preference —
+        // see PHASE_14_VISIT_BEAT_REFACTOR.md, Step 2.
+        // How near the arrival a blocker has to be to count as its
+        // cover. A ray from the camera to a point thousands of units away
+        // is stopped by something almost always, and a hill most of the
+        // way back hides the spot only until the player walks a few
+        // paces. Measured over 514 road candidates in Phase 14: 0.0% of
+        // candidates under 1,000 units passed the gate, 74.9% in the
+        // 2,000s, 100% of 101 at nine thousand — the ray getting longer,
+        // not the terrain getting kinder.
+        //
+        // 512 is a rock, a tree, a wall, a building beside the spot.
+        // Tunable because the right number is a judgement about how far
+        // the player may move before the arrival stops being hidden.
+        // The dedicated visitor-travel trace, at
+        // SKSE/NarrativeEngine_VisitorTravel.log, rotated five deep. On by
+        // default and gated on nothing else: every arrival defect found so
+        // far was a decision that read correctly in summary and wrongly in
+        // detail, and each one cost either a hand simulation or another
+        // play session because the main log named the winner and not what
+        // it beat. See VisitorTravelLog.h.
+        bool visitorTravelLogEnabled = true;
+
+        int visitArrivalCoverProximityUnits = 512;
+
+        int visitArrivalCoverRadiusUnits = 64;
+
+        // May the arrival search place a visitor outside the attached
+        // cell grid at all?
+        //
+        // Before Phase 16 this gated a bearing fallback that no longer
+        // exists; it now aims the same question at the approach chain.
+        // False confines every arrival to ground the engine has loaded —
+        // navmesh-checked and cover-tested — and declines rather than
+        // reaching past it, which is the stricter reading of "visitors
+        // arrive from somewhere real".
+        bool visitArrivalAllowCoarseBearing = true;
+
+        // Stuck-recovery hop, for a visitor who stalls INSIDE the loaded
+        // grid.
+        //
+        // The fix there is a short hop onto validated road nearby, not a
+        // long warp back out along the chain that discards the walk they
+        // have already done. Two numbers bound it:
+        //
+        //   * MinHop — the fine graph is dense along a road, and the
+        //     nodes nearest a stalled actor are the ones most likely to
+        //     be caught on the same obstacle, so the nearest neighbour is
+        //     usually not far enough to be a fix.
+        //   * MaxRetreat — hops are undirected and the escort's goal is
+        //     the player, so without a bound a hop is as free to move the
+        //     visitor backwards as forwards, and a backwards hop is not
+        //     recovery but undoing the approach.
+        //
+        // The bound is small on purpose, and the geometry is what makes a
+        // small number permissive rather than restrictive: a hop of
+        // length h taken perpendicular to the player, from distance d,
+        // increases the distance to them by about h^2 / 2d — for a
+        // 300-unit hop at the 1,000 units where the escort is still
+        // running at all, 44 units. Sideways is therefore almost free,
+        // while a 300-unit hop taken straight backwards costs the full
+        // 300 and is refused.
+        int visitChainUnstuckMinHopUnits = 300;
+        int visitChainUnstuckMaxRetreatUnits = 150;
+
+        // How many hops off the chain's fine segment the arrival search
+        // expands for extra candidates.
+        //
+        // The fine graph is a road ribbon, so a 1-hop neighbour is
+        // usually the other side of the same road and a 2-hop neighbour
+        // is a few metres off it — which is exactly where cheap cover
+        // lives when the road itself is in plain view. 0 collapses the
+        // search to on-chain points only.
+        // How far from the chain point it hangs off an expanded
+        // candidate may sit. Hops bound how far the search walks the road
+        // ribbon; this bounds where it is allowed to end up, and the two
+        // are not the same because a hop's length is terrain, not policy.
+        //
+        // It is also what makes the distance floor settle direction. Every
+        // accepted candidate is at least iVisitMarkerMinDistanceUnits from
+        // the player, so with a reach of 400 it hangs off a chain point at
+        // least 1,600 out — far enough along the route to inherit its
+        // direction. Crossing the player would cost more than the reach by
+        // construction.
+        //
+        // Without it, a visitor from Winterhold arrived at Nightgate Inn
+        // from due west: every on-chain point was 11,106 units east and
+        // outside the loaded grid, and one node two hops off the chain sat
+        // 2,003 units west, in the grid, with cover. Grade beat distance
+        // and the off-route point won.
+        int visitChainHopReachUnits = 400;
+
+        int visitChainHopRadius = 2;
+
+        // Spacing of the synthetic points ApproachChain lays along its
+        // bridge and its two direct lines.
+        //
+        // 512 is a measurement, not a preference: background travel
+        // advances an unloaded actor in a fixed 866-unit step, so a
+        // point one spacing outside the loaded grid is carried inside it
+        // on a single tick. It also bounds, by construction, how far
+        // outside the grid a visitor can be put down — the selection
+        // walk takes the first acceptable point, so the innermost
+        // synthetic point is the one that gets used.
+        int visitChainBridgeSpacingUnits = 512;
+
+        // Cost multipliers per node class, read by ApproachChain's edge
+        // cost: length x max(difficulty of the two endpoints). Ratios
+        // are what matter, not the absolute values — at these settings a
+        // road route wins over a straight line by roughly three to one
+        // across the province, which is the intended margin.
+        //
+        // 1 is the floor of the scale and not a middle value, because
+        // the A-star heuristic is plain euclidean distance and stays
+        // admissible only while nothing is cheaper than 1. The read path
+        // clamps to it.
+        // How near the player a coarse road edge has to be before the
+        // chain lays points along it instead of linking its ends. The
+        // skeleton is one node per exterior navmesh, which over Tamriel's
+        // 622 nodes averages about 8,000 units apart, so a player standing
+        // beside one has nothing at all to arrive at until the next. 16,384
+        // is four cells — past the far corner of the loaded grid, and as
+        // far out as any arrival is ever placed. Laying the whole skeleton
+        // instead would take the graph from about a thousand nodes to ten
+        // thousand for points no search looks at.
+        int visitChainCoarseDetailUnits = 16384;
+
+        int visitChainDifficultyCoarse = 1;    // coarse road nodes
+        int visitChainDifficultyFine = 2;      // loaded fine road nodes
+        int visitChainDifficultyConnector = 8; // bridge, player, visitor
+        int visitChainDifficultyDirect = 12;   // both direct lines
 
         // Compose-prompt content caps for narrative_engine_visit_compose.prompt.
         // Same shrink-for-local-LLMs motivation as the letter-compose
@@ -422,7 +633,7 @@ namespace NarrativeEngine::Settings
         // [Actions] — state machine timing
         // Salutation timeout: seconds after Start before rollback if the sender
         // hasn't closed distance to speak the opening line.
-        int visitApproachTimeoutSeconds = 60;
+        int visitApproachTimeoutSeconds = 90;
         // Distance at which the Salutation opening line fires and the machine
         // advances to Discuss. Kept generous (~900u) so the LLM + TTS pipeline
         // has time to generate the opening line while the sender is still
@@ -962,6 +1173,7 @@ namespace NarrativeEngine::Settings
     struct McmOverride
     {
         std::optional<bool> debugMode;
+        std::optional<bool> debugNotifications;
         std::optional<bool> traceMode;
         std::optional<bool> tickEnabled;
         std::optional<int> tickIntervalSeconds;
@@ -1013,6 +1225,26 @@ namespace NarrativeEngine::Settings
     // by Load / ApplyMcmOverride and read-only afterward, so this is
     // safe to call from any thread (including engine sink threads).
     bool IsSpellNameBlocked(std::string_view spellName);
+
+    // Which arm of the sender blacklist matched a candidate, so the
+    // caller can log it. A surprising exclusion is otherwise hard to
+    // diagnose: the two arms are populated from the same CSV, and
+    // whether the EditorID one can fire at all depends on whether an
+    // EditorID-recovery mod is installed.
+    enum class SenderBlacklistMatch : std::uint8_t
+    {
+        None,
+        EditorID,
+        DisplayName,
+    };
+
+    // Case-insensitive membership check against the parsed sender
+    // blacklist derived from Config::blacklistedSenders. Either
+    // argument may be empty (an unresolved EditorID is the common
+    // case); an empty blacklist always returns None. EditorID is
+    // tested first so that arm is the one reported when both match.
+    // Same threading guarantees as IsSpellNameBlocked.
+    SenderBlacklistMatch IsSenderBlacklisted(std::string_view editorID, std::string_view displayName);
 
     // Write a subset of Config fields to the MCM INI at
     // Data/MCM/Settings/NarrativeEngine.ini. Reads the current file

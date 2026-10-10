@@ -23,6 +23,14 @@ namespace NarrativeEngine::Settings
         // (CombatEventLog HitSink) don't need locking.
         std::unordered_set<std::string> g_spellNameBlocklistSet;
 
+        // Parsed form of Config::blacklistedSenders. Same lifecycle
+        // and threading story as g_spellNameBlocklistSet above: rebuilt
+        // by RebuildBlacklistedSendersSet after every Load /
+        // ApplyMcmOverride, read-only outside that path. One set serves
+        // both match arms — an entry is not declared to be an EditorID
+        // or a name, it is simply tested against both.
+        std::unordered_set<std::string> g_blacklistedSendersSet;
+
         constexpr const char* kPluginIniPath = "Data/SKSE/Plugins/NarrativeEngine.ini";
         constexpr const char* kMcmIniPath = "Data/MCM/Settings/NarrativeEngine.ini";
         // Companion files that MCM Helper reads to populate the MCM page.
@@ -55,27 +63,41 @@ namespace NarrativeEngine::Settings
             return s.substr(start, end - start);
         }
 
-        // Split Config::spellNameBlocklist on ';', trim each piece,
-        // lowercase it, and repopulate g_spellNameBlocklistSet. Called
-        // after every path that mutates g_config.spellNameBlocklist.
-        void RebuildSpellNameBlocklistSet()
+        // Split `raw` on `sep`, trim each piece, lowercase it, and
+        // repopulate `dest`. Shared by the two delimiter-separated
+        // blocklists below, which differ only in their separator.
+        void RebuildLowercasedSet(std::unordered_set<std::string>& dest, std::string_view raw, char sep)
         {
-            g_spellNameBlocklistSet.clear();
-            std::string_view raw{g_config.spellNameBlocklist};
+            dest.clear();
             std::size_t pos = 0;
             while (pos <= raw.size()) {
-                const auto sep = raw.find(';', pos);
-                const auto end = (sep == std::string_view::npos) ? raw.size() : sep;
+                const auto hit = raw.find(sep, pos);
+                const auto end = (hit == std::string_view::npos) ? raw.size() : hit;
                 const std::string_view piece = TrimAsciiSpace(raw.substr(pos, end - pos));
                 if (!piece.empty()) {
-                    g_spellNameBlocklistSet.insert(ToLowerCopy(piece));
+                    dest.insert(ToLowerCopy(piece));
                 }
-                if (sep == std::string_view::npos) {
+                if (hit == std::string_view::npos) {
                     break;
                 }
-                pos = sep + 1;
+                pos = hit + 1;
             }
+        }
+
+        // Called after every path that mutates
+        // g_config.spellNameBlocklist.
+        void RebuildSpellNameBlocklistSet()
+        {
+            RebuildLowercasedSet(g_spellNameBlocklistSet, g_config.spellNameBlocklist, ';');
             logger::info("Settings: spell-name blocklist has {} entries", g_spellNameBlocklistSet.size());
+        }
+
+        // Called after every path that mutates
+        // g_config.blacklistedSenders.
+        void RebuildBlacklistedSendersSet()
+        {
+            RebuildLowercasedSet(g_blacklistedSendersSet, g_config.blacklistedSenders, ';');
+            logger::info("Settings: sender blacklist has {} entries", g_blacklistedSendersSet.size());
         }
 
         // Sync spdlog's level filter to the current traceMode setting.
@@ -153,7 +175,9 @@ namespace NarrativeEngine::Settings
         void ReadIniInto(CSimpleIniA& ini, Config& dst)
         {
             dst.debugMode = ini.GetBoolValue("General", "bDebugMode", dst.debugMode);
+            dst.debugNotifications = ini.GetBoolValue("General", "bDebugNotifications", dst.debugNotifications);
             dst.traceMode = ini.GetBoolValue("General", "bTraceMode", dst.traceMode);
+            dst.traceKeyPresses = ini.GetBoolValue("General", "bTraceKeyPresses", dst.traceKeyPresses);
 
             dst.tickIntervalSeconds =
                 static_cast<int>(ini.GetLongValue("Director", "iTickIntervalSeconds", dst.tickIntervalSeconds));
@@ -381,6 +405,8 @@ namespace NarrativeEngine::Settings
 
             dst.enableNpcLetter = ini.GetBoolValue("Beats", "bEnableNpcLetter", dst.enableNpcLetter);
 
+            dst.blacklistedSenders = ini.GetValue("Beats", "sBlacklistedSenders", dst.blacklistedSenders.c_str());
+
             dst.letterContentMinWords =
                 static_cast<int>(ini.GetLongValue("Beats", "iLetterContentMinWords", dst.letterContentMinWords));
             dst.letterContentMaxWords =
@@ -468,6 +494,34 @@ namespace NarrativeEngine::Settings
                 ini.GetLongValue("Beats", "iVisitMarkerMinDistanceUnits", dst.visitMarkerMinDistanceUnits));
             dst.visitMarkerMaxDistanceUnits = static_cast<int>(
                 ini.GetLongValue("Beats", "iVisitMarkerMaxDistanceUnits", dst.visitMarkerMaxDistanceUnits));
+            dst.visitorTravelLogEnabled =
+                ini.GetBoolValue("Beats", "bVisitorTravelLogEnabled", dst.visitorTravelLogEnabled);
+            dst.visitArrivalCoverProximityUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitArrivalCoverProximityUnits", dst.visitArrivalCoverProximityUnits));
+            dst.visitArrivalCoverRadiusUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitArrivalCoverRadiusUnits", dst.visitArrivalCoverRadiusUnits));
+            dst.visitArrivalAllowCoarseBearing =
+                ini.GetBoolValue("Beats", "bVisitArrivalAllowCoarseBearing", dst.visitArrivalAllowCoarseBearing);
+            dst.visitChainUnstuckMinHopUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitChainUnstuckMinHopUnits", dst.visitChainUnstuckMinHopUnits));
+            dst.visitChainUnstuckMaxRetreatUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitChainUnstuckMaxRetreatUnits", dst.visitChainUnstuckMaxRetreatUnits));
+            dst.visitChainHopReachUnits =
+                static_cast<int>(ini.GetLongValue("Beats", "iVisitChainHopReachUnits", dst.visitChainHopReachUnits));
+            dst.visitChainHopRadius =
+                static_cast<int>(ini.GetLongValue("Beats", "iVisitChainHopRadius", dst.visitChainHopRadius));
+            dst.visitChainBridgeSpacingUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitChainBridgeSpacingUnits", dst.visitChainBridgeSpacingUnits));
+            dst.visitChainCoarseDetailUnits = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitChainCoarseDetailUnits", dst.visitChainCoarseDetailUnits));
+            dst.visitChainDifficultyCoarse = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitChainDifficultyCoarse", dst.visitChainDifficultyCoarse));
+            dst.visitChainDifficultyFine =
+                static_cast<int>(ini.GetLongValue("Beats", "iVisitChainDifficultyFine", dst.visitChainDifficultyFine));
+            dst.visitChainDifficultyConnector = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitChainDifficultyConnector", dst.visitChainDifficultyConnector));
+            dst.visitChainDifficultyDirect = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitChainDifficultyDirect", dst.visitChainDifficultyDirect));
             dst.visitComposeMemoryRenderCap = static_cast<int>(
                 ini.GetLongValue("Beats", "iVisitComposeMemoryRenderCap", dst.visitComposeMemoryRenderCap));
             dst.visitComposeDialogueRenderCap = static_cast<int>(
@@ -589,6 +643,47 @@ namespace NarrativeEngine::Settings
                 dst.ambushMaxDurationSeconds = 1;
             if (dst.ambushPerBeatCooldownGameHours < 0)
                 dst.ambushPerBeatCooldownGameHours = 0;
+
+            // Approach-chain clamps.
+            //
+            // A spacing of zero or less would make the bridge loop
+            // forever laying points that never advance.
+            if (dst.visitChainBridgeSpacingUnits < 1)
+                dst.visitChainBridgeSpacingUnits = 1;
+            // A negative hop radius is not a smaller search, it is an
+            // ill-formed one; zero is the real floor and means "on-chain
+            // candidates only".
+            if (dst.visitChainHopRadius < 0)
+                dst.visitChainHopRadius = 0;
+            // A minimum hop of zero makes every neighbour eligible,
+            // including the one the actor is standing on, so the escort
+            // would spend an escalation warping somebody where they
+            // already are.
+            if (dst.visitChainUnstuckMinHopUnits < 1)
+                dst.visitChainUnstuckMinHopUnits = 1;
+            // A negative retreat bound would refuse every hop, including
+            // the lateral ones the rule exists to allow.
+            if (dst.visitChainUnstuckMaxRetreatUnits < 0)
+                dst.visitChainUnstuckMaxRetreatUnits = 0;
+            // Difficulty 1 is the floor of the scale rather than a
+            // middle value, and the reason is the search: ApproachChain
+            // runs A-star with plain euclidean distance as its
+            // heuristic, which underestimates the true cost — and so
+            // returns an optimal route — only while no edge is cheaper
+            // than its own length. One difficulty below 1 silently turns
+            // the search into a greedy walk that still returns a path,
+            // so the floor is enforced here rather than trusted.
+            for (int* difficulty : {&dst.visitChainDifficultyCoarse,
+                                    &dst.visitChainDifficultyFine,
+                                    &dst.visitChainDifficultyConnector,
+                                    &dst.visitChainDifficultyDirect}) {
+                if (*difficulty < 1) {
+                    logger::warn("Settings: an approach-chain difficulty of {} is below the floor of 1, "
+                                 "which would break the A-star heuristic's admissibility; clamping to 1.",
+                                 *difficulty);
+                    *difficulty = 1;
+                }
+            }
         }
     } // namespace
 
@@ -663,6 +758,7 @@ namespace NarrativeEngine::Settings
                       g_config.tickIntervalSeconds);
         ApplyLogLevelForTraceMode();
         RebuildSpellNameBlocklistSet();
+        RebuildBlacklistedSendersSet();
 
         // The gossip claim ledger is only correct while a claim outlives
         // the window in which its memory can be harvested. A memory
@@ -738,6 +834,7 @@ namespace NarrativeEngine::Settings
                       g_config.tickIntervalSeconds);
         ApplyLogLevelForTraceMode();
         RebuildSpellNameBlocklistSet();
+        RebuildBlacklistedSendersSet();
     }
 
     bool IsSpellNameBlocked(std::string_view spellName)
@@ -746,6 +843,20 @@ namespace NarrativeEngine::Settings
             return false;
         }
         return g_spellNameBlocklistSet.contains(ToLowerCopy(spellName));
+    }
+
+    SenderBlacklistMatch IsSenderBlacklisted(std::string_view editorID, std::string_view displayName)
+    {
+        if (g_blacklistedSendersSet.empty()) {
+            return SenderBlacklistMatch::None;
+        }
+        if (!editorID.empty() && g_blacklistedSendersSet.contains(ToLowerCopy(editorID))) {
+            return SenderBlacklistMatch::EditorID;
+        }
+        if (!displayName.empty() && g_blacklistedSendersSet.contains(ToLowerCopy(displayName))) {
+            return SenderBlacklistMatch::DisplayName;
+        }
+        return SenderBlacklistMatch::None;
     }
 
     void WriteMcmOverride(const McmOverride& mutations)
@@ -757,6 +868,11 @@ namespace NarrativeEngine::Settings
         // case — SaveFile creates the file with just our keys.
         (void)ini.LoadFile(kMcmIniPath);
 
+        if (mutations.debugNotifications) {
+            ini.SetBoolValue("General", "bDebugNotifications", *mutations.debugNotifications);
+            g_config.debugNotifications = *mutations.debugNotifications;
+            logger::info("Settings: MCM override write: bDebugNotifications={}", *mutations.debugNotifications);
+        }
         if (mutations.debugMode) {
             ini.SetBoolValue("General", "bDebugMode", *mutations.debugMode);
             g_config.debugMode = *mutations.debugMode;

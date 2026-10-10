@@ -58,8 +58,13 @@ namespace NarrativeEngine::GossipTick
 
     void Initialize();
 
-    // kNewGame / kPostLoadGame. Re-bases the schedule onto the current
-    // game clock so a load does not read as a colossal backlog.
+    // kNewGame / kPostLoadGame — after the co-save records have been
+    // staged, so the incoming world's simulation clock is readable.
+    //
+    // Re-DERIVES the schedule from that clock rather than re-basing it
+    // onto the current game time. In-world time that passed while gossip
+    // was not running still counts toward the next tick, so a load
+    // neither restarts the interval nor reads as a colossal backlog.
     void OnSessionStart();
 
     // The plugin-thread cadence check, and the ONLY gossip work that
@@ -68,4 +73,26 @@ namespace NarrativeEngine::GossipTick
     // one stamped job per crossed interval. Microseconds, no locks on
     // gossip state, no possibility of blocking.
     void Poll(const PluginThread::Token&, double unpausedElapsedSeconds);
+
+    // What the schedule looks like right now, for the dashboard. Two
+    // different clocks, because the cadence has two stages: Poll only
+    // LOOKS at the schedule every `iGossipTickIntervalSeconds` of
+    // unpaused real time, and what it looks for is a game-day boundary
+    // `fGossipHarvestIntervalGameHours` apart.
+    //
+    // One scheduled tick is both the harvest sweep and the simulation
+    // step -- RunTick sets the horizon, sweeps, then advances -- so
+    // there is one game-time figure here, not two.
+    struct ScheduleInfo
+    {
+        // Unpaused real-time seconds until Poll next consults the
+        // schedule. Zero once the accumulator has crossed.
+        double secondsUntilNextCheck = 0.0;
+        // Game-time hours until the next tick is due. Zero when one is
+        // already owed. Negative `hasNextDue` means the schedule has
+        // not been seeded yet -- no check has run this session.
+        double gameHoursUntilNextTick = 0.0;
+        bool hasNextDue = false;
+    };
+    ScheduleInfo GetScheduleInfo();
 } // namespace NarrativeEngine::GossipTick

@@ -48,3 +48,6 @@ tmp/*
 
 __pycache__/
 *.pyc
+
+# Trace files the mocked-engine tests write, via EngineMock's log directory.
+Data/SKSE/Plugins/NarrativeEngineTestLogs/

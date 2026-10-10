@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <span>
 #include <vector>
 
 #include <RE/Skyrim.h>
@@ -88,6 +89,18 @@ namespace NarrativeEngine::TravelGraph
 
     // Returns nullptr when `index` is out of range.
     const Node* GetNode(std::size_t index);
+
+    // The nodes sharing an edge with `index`, or an empty span when the
+    // index is out of range. Undirected and deduplicated: `b` appears in
+    // Neighbors(a) exactly when `a` appears in Neighbors(b), once each.
+    //
+    // A view rather than a copy, on the same terms as GetNode's pointer:
+    // the graph is const for the session once Initialize has returned, so
+    // the storage behind the span outlives any caller. A reader that wants
+    // the edges of every node — which is what building a composite graph
+    // over this one amounts to — would otherwise pay a vector allocation
+    // per node to be told what is already sitting there.
+    std::span<const std::size_t> Neighbors(std::size_t index);
 
     // Nearest node to a world position, restricted to `worldSpace`.
     // Distance is measured in the XY plane — elevation is deliberately

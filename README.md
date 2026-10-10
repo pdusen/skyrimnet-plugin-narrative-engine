@@ -56,9 +56,15 @@ you tune the pacing and the individual beats to your taste.
 
 ## Requirements
 
-**SkyrimNet, Beta 24 or higher.** NarrativeEngine is a plugin for SkyrimNet and cannot run without it. Beta 24 is a
-hard floor: the gossip system seeds through a filtered memory query that release introduced, and on anything older
-gossip refuses to run and says so in the log. Install SkyrimNet first and confirm it works on its own — if characters
+**SkyrimNet, Beta 25 (0.25.0) or higher — and nothing older.** NarrativeEngine is a plugin for SkyrimNet and cannot
+run without it. Beta 25 is a hard floor in both directions: it reorganised how SkyrimNet discovers plugin content, and
+NarrativeEngine now ships only the new layout. **On Beta 24 or earlier, SkyrimNet will not find any of
+NarrativeEngine's prompts or settings** — the mod loads, the dashboard opens, and then every LLM-driven beat fails
+because the prompt it asked for does not exist. There is no partial-compatibility mode and no configuration that
+restores it; if you are on an older SkyrimNet, update it. NarrativeEngine v0.6.1 was the last release that ran on
+both.
+
+Install SkyrimNet first and confirm it works on its own — if characters
 aren't speaking and NPCs aren't remembering conversations, NarrativeEngine won't run either. SkyrimNet has its own set
 of prerequisites (SKSE, Address Library, PapyrusUtil, a configured LLM provider, and so on); rather than duplicate that
 list here, defer to their maintained
@@ -90,9 +96,9 @@ That EditorID dependency also covers optional configuration: the `[AlphaCanon]` 
 
 1. **Install SkyrimNet and its prerequisites, and confirm SkyrimNet works standalone.** Follow the SkyrimNet install
    guide end to end — SKSE, Address Library, PapyrusUtil, an LLM provider (OpenRouter is the path of least
-   resistance), and SkyrimNet itself. Load a save and verify NPCs are speaking generated dialogue and remembering
-   past conversations. Do **not** install NarrativeEngine until this works — trying to debug both at once is
-   miserable.
+   resistance), and SkyrimNet itself. **Check the version: Beta 25 (0.25.0) or newer.** Load a save and verify NPCs
+   are speaking generated dialogue and remembering past conversations. Do **not** install NarrativeEngine until this
+   works — trying to debug both at once is miserable.
 2. **Install MCM Helper.** Not one of SkyrimNet's prerequisites, but NarrativeEngine needs it — the mod's MCM
    page (credits + dashboard-hotkey rebind) won't register without it. Install through your mod manager the same
    way any other Skyrim mod goes in; no per-mod configuration needed.
@@ -100,7 +106,9 @@ That EditorID dependency also covers optional configuration: the `[AlphaCanon]` 
    Install through your mod manager; the default configuration is fine, nothing needs enabling.
 4. **Install NarrativeEngine.** Add it to your load order *after* SkyrimNet (SkyrimNet must be loaded first so
    NarrativeEngine can register its plugin manifest with it). No FOMOD choices to make — it's a single-option
-   install.
+   install. *Upgrading from v0.6.1 or earlier:* let your mod manager replace the whole mod rather than merging into
+   it, so the pre-Beta-25 content folders don't linger. They are inert if they do — Beta 25 never reads them — but a
+   stale prompt is a confusing thing to find later.
 5. **Launch the game and open the dashboard.** Load a save (or start a new game). Press **F7** — the NarrativeEngine
    dashboard should appear as an overlay. If it doesn't, check `Data/SKSE/Plugins/NarrativeEngine.log` for the
    line reading `DashboardUIManager: initialized`; its absence usually means PrismaUI failed to load, which

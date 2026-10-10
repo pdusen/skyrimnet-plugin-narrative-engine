@@ -16,6 +16,7 @@
 #include <RE/T/TES.h>
 #include <RE/T/TESObjectCELL.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -58,6 +59,13 @@ namespace NarrativeEngine::CameraVisibility
         // clears the check, while still catching obstruction hits
         // (which almost always land at hitFraction << 0.95).
         constexpr float kReachedFractionThreshold = 0.95f;
+
+        // A hit fraction at or above this means the ray was never stopped.
+        // Used by the cover gate, which aims at empty air rather than at a
+        // bone and so wants no slop at all: anything that stopped the ray is
+        // a real blocker, and how near the spot it sits is a separate
+        // question asked in units.
+        constexpr float kNoHitFraction = 1.0f - 1e-4f;
 
         // Ray-from = camera world-space translation from the active
         // camera's cameraRoot node. Returns false if the singleton
@@ -144,11 +152,14 @@ namespace NarrativeEngine::CameraVisibility
         // either nothing was hit or the hit was at/very-near the
         // endpoint — both of which mean the sample point is
         // reachable in an obstruction sense.
-        bool RaycastReachedEndpoint(const RE::NiPoint3& from, const RE::NiPoint3& to)
+        // How far along the ray it got: 1.0 for nothing hit, lower the
+        // earlier something stopped it. Negative when there is no world to
+        // ask, which no caller may read as either answer.
+        float RaycastHitFraction(const RE::NiPoint3& from, const RE::NiPoint3& to)
         {
             auto* tes = RE::TES::GetSingleton();
             if (!tes)
-                return false;
+                return -1.0f;
 
             // Skyrim's Havok world uses a different unit scale than
             // the game-space coords we've been carrying around.
@@ -171,7 +182,16 @@ namespace NarrativeEngine::CameraVisibility
 
             tes->Pick(pd);
 
-            return pd.rayOutput.hitFraction >= kReachedFractionThreshold;
+            return pd.rayOutput.hitFraction;
+        }
+
+        bool RaycastReachedEndpoint(const RE::NiPoint3& from, const RE::NiPoint3& to)
+        {
+            const float fraction = RaycastHitFraction(from, to);
+            if (fraction < 0.0f) {
+                return false; // no world to ask
+            }
+            return fraction >= kReachedFractionThreshold;
         }
     } // namespace
 
@@ -261,10 +281,41 @@ namespace NarrativeEngine::CameraVisibility
         return reachedCount > 0;
     }
 
-    bool IsPositionBehindCover(const RE::NiPoint3& worldPos, float bodyHeightUnits, float coverRadiusUnits)
+    const char* CoverFailureName(CoverFailure failure)
     {
+        switch (failure) {
+        case CoverFailure::kNone:
+            return "covered";
+        case CoverFailure::kNoCamera:
+            return "no camera to measure from";
+        case CoverFailure::kTooClose:
+            return "too close to raycast";
+        case CoverFailure::kOverhead:
+            return "camera overhead, no silhouette";
+        case CoverFailure::kNoWorld:
+            return "no world to ask";
+        case CoverFailure::kRayReached:
+            return "a ray reached the silhouette";
+        case CoverFailure::kBlockerTooFar:
+            return "the blocker is too far from the spot";
+        }
+        return "unknown";
+    }
+
+    bool IsPositionBehindCover(const RE::NiPoint3& worldPos,
+                               float bodyHeightUnits,
+                               float coverRadiusUnits,
+                               float coverProximityUnits,
+                               CoverProbe* detail)
+    {
+        CoverProbe local;
+        CoverProbe& probe = detail ? *detail : local;
+        probe = CoverProbe{};
+        probe.raysPlanned = 9;
+
         RE::NiPoint3 cameraPos;
         if (!GetCameraWorldPos(cameraPos)) {
+            probe.failure = CoverFailure::kNoCamera;
             return false; // no camera, no way to prove cover
         }
 
@@ -273,6 +324,7 @@ namespace NarrativeEngine::CameraVisibility
         const float dz = worldPos.z - cameraPos.z;
         const float distSq = dx * dx + dy * dy + dz * dz;
         if (distSq < kMinDistanceFloor * kMinDistanceFloor) {
+            probe.failure = CoverFailure::kTooClose;
             // Too close to raycast meaningfully — a ray this short can
             // start inside nearby geometry and report nonsense. Nothing
             // this close counts as covered.
@@ -285,6 +337,7 @@ namespace NarrativeEngine::CameraVisibility
         // as cover for a body several times its width.
         const float horizLen = std::sqrt(dx * dx + dy * dy);
         if (horizLen < 1e-3f) {
+            probe.failure = CoverFailure::kOverhead;
             return false; // directly overhead; no meaningful silhouette
         }
         const float rightX = -dy / horizLen;
@@ -300,14 +353,59 @@ namespace NarrativeEngine::CameraVisibility
 
         for (const float hf : kHeightFractions) {
             for (const float lat : lateralOffsets) {
-                const RE::NiPoint3 probe{
+                const RE::NiPoint3 samplePos{
                     worldPos.x + rightX * lat,
                     worldPos.y + rightY * lat,
                     worldPos.z + h * hf,
                 };
-                if (RaycastReachedEndpoint(cameraPos, probe)) {
+                ++probe.raysTested;
+                const float fraction = RaycastHitFraction(cameraPos, samplePos);
+                if (fraction < 0.0f) {
+                    probe.failure = CoverFailure::kNoWorld;
                     return false;
                 }
+                if (fraction >= kNoHitFraction) {
+                    probe.failure = CoverFailure::kRayReached;
+                    probe.failedHeightFraction = hf;
+                    probe.failedLateralUnits = lat;
+                    probe.failedHitFraction = fraction;
+                    return false; // nothing stopped this one
+                }
+                if (coverProximityUnits < 0.0f) {
+                    continue; // caller accepts a blocker anywhere along the ray
+                }
+
+                // How far short of the spot the blocker sits, in units. Both
+                // tolerances here are distances rather than fractions of the
+                // ray, which `RaycastReachedEndpoint` cannot be: 5% of a
+                // 10,000-unit ray is 500 units, so a boulder 400 units in
+                // front of a distant arrival reads as "reached the endpoint"
+                // — clear — when it is exactly the cover being looked for.
+                //
+                // Where the blocker is matters as much as that there is one.
+                // A ray four kilometres long is stopped by something almost
+                // always, and a hill 3,000 units short of the arrival hides it
+                // only until the player walks a few paces. Cover has to be
+                // near the thing it covers.
+                //
+                // Measured over 514 road candidates in Phase 14: 0.0% of
+                // candidates under 1,000 units passed this gate, 74.9% in the
+                // 2,000s, and 100% of 101 at nine thousand. That rise is the
+                // ray getting longer, not the terrain getting kinder.
+                const float px = samplePos.x - cameraPos.x;
+                const float py = samplePos.y - cameraPos.y;
+                const float pz = samplePos.z - cameraPos.z;
+                const float rayLength = std::sqrt(px * px + py * py + pz * pz);
+                const float shortfall = (1.0f - fraction) * rayLength;
+                if (shortfall > coverProximityUnits) {
+                    probe.failure = CoverFailure::kBlockerTooFar;
+                    probe.failedHeightFraction = hf;
+                    probe.failedLateralUnits = lat;
+                    probe.failedHitFraction = fraction;
+                    probe.failedShortfallUnits = shortfall;
+                    return false;
+                }
+                probe.worstShortfallUnits = std::max(probe.worstShortfallUnits, shortfall);
             }
         }
         return true;

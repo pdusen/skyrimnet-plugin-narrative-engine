@@ -7,6 +7,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include <nlohmann/json.hpp>
+
 #include <CharacterEmbedding.h>
 #include <GossipGraph.h>
 #include <logger.h>
@@ -30,8 +32,8 @@ namespace NarrativeEngine::CharacterBios
 {
     namespace
     {
-        const std::filesystem::path kPromptRoot{"Data/SKSE/Plugins/SkyrimNet/prompts"};
-        const std::filesystem::path kModelDirectory{"Data/SKSE/Plugins/SkyrimNet/models"};
+        const std::filesystem::path kSkyrimNetRoot{"Data/SKSE/Plugins/SkyrimNet"};
+        const std::filesystem::path kModelDirectory = kSkyrimNetRoot / "models";
 
         // --- the vector cache -------------------------------------------
         //
@@ -168,15 +170,110 @@ namespace NarrativeEngine::CharacterBios
                 }
             }
         }
-        const std::filesystem::path kSharedBios = kPromptRoot / "characters";
-
-        // Where a save keeps its OWN copies of the profiles it has
-        // edited. Only the ones it has edited: these directories hold a
-        // handful of files each, and everything else still comes from
-        // the shared folder.
-        [[nodiscard]] std::filesystem::path SaveBios(const std::string& saveId)
+        // --- where the bios are ------------------------------------------
+        //
+        // SkyrimNet Beta 25 serves a bio from a stack of LAYERS, each a
+        // folder holding its own `prompts/characters/`, and the highest
+        // layer that has the file provides it. Highest first:
+        //
+        //   saves/<save id>/      this playthrough's own edited profiles
+        //   overlay/              the player's dashboard edits
+        //   pins                  a file the player told one plugin to win
+        //   plugins               external/<id>/ and library/<id>/, in the
+        //                         order content-registry.json gives, with
+        //                         any external one it does not list yet on
+        //                         top -- which is where SkyrimNet puts a
+        //                         newly found layer
+        //   library/skyrimnet.base/   SkyrimNet's shipped defaults
+        //
+        // The loose `prompts/characters/` and `prompts/_saves/` of the
+        // betas before 25 are NOT read: Beta 25 ignores them and leaves
+        // them in place, so a stale copy there would describe somebody
+        // the way SkyrimNet itself no longer does.
+        //
+        // Catalog::Scan is first-wins, so walking this list in order is
+        // the whole of the precedence rule.
+        [[nodiscard]] std::filesystem::path BiosIn(const std::filesystem::path& layer)
         {
-            return kPromptRoot / "_saves" / saveId / "characters";
+            return layer / "prompts" / "characters";
+        }
+
+        struct Layers
+        {
+            std::vector<std::filesystem::path> plugins; // highest first
+            // A pinned bio, keyed by its file name, and the plugin layer
+            // the player chose to provide it.
+            std::vector<std::pair<std::string, std::filesystem::path>> pins;
+        };
+
+        // A plugin the registry does not mention, or one it mentions but
+        // whose folder has gone, is not an error: the registry is
+        // SkyrimNet's record of what it last saw, not a manifest.
+        [[nodiscard]] Layers ReadPluginLayers()
+        {
+            Layers out;
+            const auto registryPath = kSkyrimNetRoot / "content-registry.json";
+            nlohmann::json registry;
+            try {
+                std::ifstream in{registryPath};
+                if (in) {
+                    registry = nlohmann::json::parse(in);
+                }
+            } catch (const std::exception& e) {
+                logger::warn("CharacterBios: could not read {} ({}); reading external plugins in folder order.",
+                             registryPath.string(),
+                             e.what());
+                registry = nlohmann::json{};
+            }
+
+            const auto* plugins =
+                registry.contains("plugins") && registry["plugins"].is_object() ? &registry["plugins"] : nullptr;
+            const auto layerOf = [](const std::string& id, const nlohmann::json& entry) {
+                const auto source = entry.is_object() ? entry.value("source", std::string{}) : std::string{};
+                return kSkyrimNetRoot / (source == "external" ? "external" : "library") / id;
+            };
+            const auto enabled = [](const nlohmann::json& entry) {
+                return entry.is_object() && entry.value("enabled", true) && !entry.value("missing", false);
+            };
+
+            // External layers SkyrimNet has not registered yet go on top.
+            std::error_code ec;
+            for (const auto& dir : std::filesystem::directory_iterator{kSkyrimNetRoot / "external", ec}) {
+                const auto id = dir.path().filename().string();
+                if (dir.is_directory(ec) && !(plugins && plugins->contains(id))) {
+                    out.plugins.push_back(dir.path());
+                }
+            }
+
+            if (plugins && registry.contains("priority") && registry["priority"].is_array()) {
+                for (const auto& idJson : registry["priority"]) {
+                    if (!idJson.is_string()) {
+                        continue;
+                    }
+                    const auto id = idJson.get<std::string>();
+                    if (const auto entry = plugins->find(id); entry != plugins->end() && enabled(*entry)) {
+                        out.plugins.push_back(layerOf(id, *entry));
+                    }
+                }
+            }
+
+            if (plugins && registry.contains("pins") && registry["pins"].is_object()) {
+                constexpr std::string_view kBioPrefix = "prompts/characters/";
+                for (const auto& [file, idJson] : registry["pins"].items()) {
+                    if (!file.starts_with(kBioPrefix) || !idJson.is_string()) {
+                        continue;
+                    }
+                    const auto id = idJson.get<std::string>();
+                    // A pin to an external layer SkyrimNet has not
+                    // registered yet still names a folder on disk.
+                    const auto entry = plugins->find(id);
+                    const auto layer = entry != plugins->end() ? layerOf(id, *entry) : kSkyrimNetRoot / "external" / id;
+                    if (entry == plugins->end() || enabled(*entry)) {
+                        out.pins.emplace_back(file.substr(kBioPrefix.size()), layer);
+                    }
+                }
+            }
+            return out;
         }
 
         [[nodiscard]] std::string ReadFile(const std::filesystem::path& path)
@@ -194,7 +291,7 @@ namespace NarrativeEngine::CharacterBios
         struct Census
         {
             // The save whose overrides were read, or empty when only the
-            // shared directory was used.
+            // shared layers were used.
             std::string saveId;
             std::size_t saveFiles = 0;     // catalogued from this save's own directory
             std::size_t files = 0;         // catalogued in total, with a usable suffix
@@ -291,11 +388,11 @@ namespace NarrativeEngine::CharacterBios
         // The save's own copies FIRST, so they win. SkyrimNet writes an
         // edited profile into the save's directory rather than over the
         // shared one, which is what lets two saves disagree about a
-        // character; scanning the shared folder first would make those
+        // character; scanning any other layer first would make those
         // edits invisible.
         g_census.saveId = SkyrimNetAPI::GetSaveUniqueID();
         if (!g_census.saveId.empty()) {
-            g_census.saveFiles = catalog.Scan(SaveBios(g_census.saveId));
+            g_census.saveFiles = catalog.Scan(BiosIn(kSkyrimNetRoot / "saves" / g_census.saveId));
         } else {
             // A new game before SkyrimNet has minted an id, an older
             // SkyrimNet without the v7 export, or no SkyrimNet at all.
@@ -304,11 +401,29 @@ namespace NarrativeEngine::CharacterBios
             logger::info("CharacterBios: no save id available; reading the shared profiles only.");
         }
 
-        g_census.files = g_census.saveFiles + catalog.Scan(kSharedBios);
+        g_census.files = g_census.saveFiles + catalog.Scan(BiosIn(kSkyrimNetRoot / "overlay"));
+
+        const auto layers = ReadPluginLayers();
+        for (const auto& [file, layer] : layers.pins) {
+            const auto path = BiosIn(layer) / file;
+            std::error_code ec;
+            if (std::filesystem::is_regular_file(path, ec)) {
+                const auto before = catalog.Size();
+                catalog.Add(path.stem().string(), path);
+                g_census.files += catalog.Size() - before;
+            }
+        }
+        for (const auto& layer : layers.plugins) {
+            g_census.files += catalog.Scan(BiosIn(layer));
+        }
+
+        const auto baseBios = BiosIn(kSkyrimNetRoot / "library" / "skyrimnet.base");
+        g_census.files += catalog.Scan(baseBios);
         g_census.generic = catalog.GenericCount();
         if (g_census.files == 0) {
-            logger::warn("CharacterBios: no bio files under {}; plots will have no character prose to work from.",
-                         kSharedBios.string());
+            logger::warn("CharacterBios: no bio files under {} or any layer above it; plots will have no character "
+                         "prose to work from.",
+                         baseBios.string());
             return;
         }
 

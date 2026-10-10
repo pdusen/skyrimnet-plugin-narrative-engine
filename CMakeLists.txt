@@ -1,6 +1,6 @@
 # It's recommended to set a minimum CMake version.
 # If you use CMake features from higher versions, update this to match.
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.24)
 
 # Set your project name. This will be the name of your SKSE .dll file.
 project(NarrativeEngine VERSION 0.0.1 LANGUAGES CXX)
@@ -30,14 +30,93 @@ endif()
 # Otherwise, you can set OUTPUT_FOLDER to any place you'd like :)
 # set(OUTPUT_FOLDER "C:/path/to/any/folder")
 
-# Get the .cpp files from your src/ directory
-# to be passed into add_commonlibsse_plugin
+# ---------------------------------------------------------------------------
+# Source layout: production, core, and co-located tests
+# ---------------------------------------------------------------------------
 #
-# This helper automatically finds all of your .cpp files for you
+# Four kinds of .cpp live under src/, and every one of them is classified by
+# this block alone. Adding a file requires no edit here unless it belongs to
+# the core list below.
 #
-# Please note: the official recommendation is to list our every .cpp
-# file individually after SOURCES
+#   src/Foo.cpp       production. Compiled into the SKSE plugin DLL, with
+#                     PCH.h (RE/Skyrim.h + SKSE/SKSE.h) force-included, so it
+#                     may touch the engine freely.
+#
+#   src/Foo.test.cpp  unit test. Compiled ONLY into the NarrativeEngineTests
+#                     executable, never into the DLL — the EXCLUDE REGEX below
+#                     is what keeps a co-located test out of the shipped
+#                     plugin. Tests live beside the code they test on purpose;
+#                     there is no tests/ tree.
+#
+#   core sources      production code listed in NARRATIVEENGINE_CORE_SOURCES.
+#                     Compiled once into the NarrativeEngineCore static library
+#                     and linked into BOTH the DLL and the test executable, so
+#                     a test can exercise the real production object file
+#                     rather than a recompiled copy.
+#
+#   src/Foo.engine.test.cpp
+#                     unit test for engine-coupled code. Also matches the
+#                     `*.test.cpp` glob, so the same exclusion keeps it out of
+#                     the DLL, but it builds into a SECOND executable that
+#                     compiles production sources against the real CommonLibSSE
+#                     headers and links mocks in place of CommonLibSSE.lib. See
+#                     the mocked-engine section at the bottom of this file.
+#
+# Membership in the core list is not a quality judgement — it is a hard
+# technical constraint: a core source must compile and run with no Skyrim
+# process, no SKSE, no CommonLibSSE, and no PCH. Anything that touches RE::,
+# SKSE::, relocation addresses, hooks, or engine globals cannot go in the list.
+# Such code is not untestable, though — it belongs to the mocked-engine target
+# instead, which stands in for the engine rather than doing without it.
 file(GLOB_RECURSE source_files CONFIGURE_DEPENDS src/*.cpp)
+file(GLOB_RECURSE test_sources CONFIGURE_DEPENDS src/*.test.cpp)
+file(GLOB_RECURSE engine_test_sources CONFIGURE_DEPENDS src/*.engine.test.cpp)
+
+# `*.engine.test.cpp` also matches the `*.test.cpp` glob, so split them apart:
+# whatever is left in test_sources is a pure-core test.
+if(engine_test_sources)
+    list(REMOVE_ITEM test_sources ${engine_test_sources})
+endif()
+
+# Engine-free production sources shared by the DLL and the unit tests.
+#
+# SenderCooldownTable qualifies because its two engine dependencies were pushed
+# out to its call boundaries: the clock is a `nowGameHours` parameter, and the
+# co-save arrives as an `ICosaveIO&` that the DLL binds to SKSE via
+# src/SKSECosaveIO.cpp (which stays out of this list, being the adapter).
+set(NARRATIVEENGINE_CORE_SOURCES
+    "${CMAKE_SOURCE_DIR}/src/BookTextRenderer.cpp"
+    "${CMAKE_SOURCE_DIR}/src/JsonUtils.cpp"
+    "${CMAKE_SOURCE_DIR}/src/LLMTextSanitizer.cpp"
+    "${CMAKE_SOURCE_DIR}/src/SenderCooldownTable.cpp"
+    "${CMAKE_SOURCE_DIR}/src/SkyrimNetEvents.cpp"
+    "${CMAKE_SOURCE_DIR}/src/ThreadRole.cpp"
+)
+
+# Everything the plugin DLL compiles directly: all of src/ minus the tests
+# (which belong to the test executable) and minus the core sources (which
+# arrive via the NarrativeEngineCore link instead).
+list(FILTER source_files EXCLUDE REGEX "\\.test\\.cpp$")
+list(REMOVE_ITEM source_files ${NARRATIVEENGINE_CORE_SOURCES})
+
+# REMOVE_ITEM matches strings, not files, so a core entry written in a
+# different path form than the glob produces would silently stay in the DLL's
+# list and get compiled twice. Fail the configure instead of shipping that.
+foreach(coreSource IN LISTS NARRATIVEENGINE_CORE_SOURCES)
+    if(NOT EXISTS "${coreSource}")
+        message(
+            FATAL_ERROR
+            "NARRATIVEENGINE_CORE_SOURCES names a file that does not exist: ${coreSource}"
+        )
+    endif()
+    if(coreSource IN_LIST source_files)
+        message(
+            FATAL_ERROR
+            "Core source '${coreSource}' was not removed from the plugin source list. "
+            "Write it as \${CMAKE_SOURCE_DIR}/src/<name>.cpp so it matches the glob."
+        )
+    endif()
+endforeach()
 
 find_package(directxtk CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
@@ -50,8 +129,103 @@ find_package(CommonLibSSE CONFIG REQUIRED)
 find_package(minhook CONFIG REQUIRED)
 # simpleini ships as a header-only library — no CMake config, just an include path.
 find_path(SIMPLEINI_INCLUDE_DIRS "SimpleIni.h" REQUIRED)
+# ---------------------------------------------------------------------------
+# Warnings are errors
+# ---------------------------------------------------------------------------
+#
+# An option rather than a hard-coded ON, because -Werror / /WX bakes THIS
+# toolchain's warning set into everyone's build. A newer MSVC that adds a
+# warning, or a different compiler entirely, then fails to compile code that
+# is perfectly fine — and the person it fails for is usually someone who just
+# wants to build the mod, not someone in a position to fix our diagnostics.
+# Defaulting ON keeps our own builds honest; -DNARRATIVEENGINE_WARNINGS_AS_ERRORS=OFF
+# is the way out, and CMake's own `--compile-no-warning-as-error` turns it off
+# for a single build without reconfiguring.
+#
+# CMAKE_COMPILE_WARNING_AS_ERROR is read when a target is CREATED, so it has
+# to be set before add_commonlibsse_plugin below. It needs CMake 3.24, which
+# is why the minimum at the top of this file is 3.24 — on an older CMake the
+# variable is silently ignored, which would look enabled while doing nothing.
+#
+# The compiler-agnostic property rather than a bare /WX so the flag stays
+# correct if this ever builds under anything but MSVC. Warning LEVEL is not
+# set here: add_commonlibsse_plugin already applies /W4 plus CommonLibSSE's
+# own suppression list, and that is the level these errors are judged at.
+option(
+    NARRATIVEENGINE_WARNINGS_AS_ERRORS
+    "Treat compiler warnings as errors"
+    ON
+)
+set(CMAKE_COMPILE_WARNING_AS_ERROR ${NARRATIVEENGINE_WARNINGS_AS_ERRORS})
+
+# ---------------------------------------------------------------------------
+# NarrativeEngineCore — engine-free production code, shared with the tests
+# ---------------------------------------------------------------------------
+#
+# A plain static library so the sources in NARRATIVEENGINE_CORE_SOURCES are
+# compiled once and linked into both the SKSE plugin DLL and the unit-test
+# executable. Without it there is nothing for a test to link against: every
+# production object file would live inside the DLL target, and a test
+# executable would have to recompile the .cpp itself — which tests a copy of
+# the code rather than the artifact that ships.
+#
+# Deliberately minimal. It gets `include/` and C++23 and nothing else: no PCH
+# (PCH.h pulls in RE/Skyrim.h), no CommonLibSSE, no SkyrimNet or PrismaUI
+# headers. That is what makes the library linkable into a console executable
+# that never loads the game, and the constraint is enforced by the compiler —
+# a `RE::` reference in a core source simply fails to build here.
+add_library(NarrativeEngineCore STATIC ${NARRATIVEENGINE_CORE_SOURCES})
+target_compile_features(NarrativeEngineCore PUBLIC cxx_std_23)
+target_include_directories(NarrativeEngineCore PUBLIC include)
+# nlohmann_json is header-only and carries nothing engine-specific, so a core
+# source may parse JSON without breaking the "runs with no Skyrim" rule.
+target_link_libraries(NarrativeEngineCore PUBLIC nlohmann_json::nlohmann_json)
+
+# ---------------------------------------------------------------------------
+# The advertised version
+# ---------------------------------------------------------------------------
+#
+# The SkyrimNet settings schema (`settings/NarrativeEngine.yaml`) is the single
+# source of truth for the version this mod advertises -- the release skill bumps
+# it there and propagates it outward -- so it is read from there rather than
+# restated in `project()`. A fourth copy would be a fourth thing to forget.
+#
+# Read here rather than beside the deployment rules that also want it, because
+# the version has to reach the DLL whether or not this configure has anywhere to
+# deploy to.
+set(STATICS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/statics")
+set(SKYRIMNET_STATICS_DIR "${STATICS_SOURCE_DIR}/SKSE/Plugins/SkyrimNet")
+set(SKYRIMNET_PLUGIN_ID "pdusen.narrative-engine")
+set(SKYRIMNET_PLUGIN_STATICS_DIR
+    "${SKYRIMNET_STATICS_DIR}/external/${SKYRIMNET_PLUGIN_ID}"
+)
+set(SKYRIMNET_YAML_MANIFEST
+    "${SKYRIMNET_PLUGIN_STATICS_DIR}/settings/NarrativeEngine.yaml"
+)
+set(SKYRIMNET_JSON_MANIFEST "${SKYRIMNET_PLUGIN_STATICS_DIR}/manifest.json")
+set_property(
+    DIRECTORY
+    APPEND
+    PROPERTY CMAKE_CONFIGURE_DEPENDS "${SKYRIMNET_YAML_MANIFEST}"
+)
+file(READ "${SKYRIMNET_YAML_MANIFEST}" yaml_manifest)
+if(NOT yaml_manifest MATCHES "\n  version: \"([^\"]+)\"")
+    message(FATAL_ERROR "No plugin version found in ${SKYRIMNET_YAML_MANIFEST}")
+endif()
+set(NARRATIVEENGINE_VERSION "${CMAKE_MATCH_1}")
+message(STATUS "NarrativeEngine version ${NARRATIVEENGINE_VERSION}")
+
 add_commonlibsse_plugin(${PROJECT_NAME} SOURCES ${source_files} plugin.cpp)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23) # <--- use C++23 standard
+# Baked in rather than read at runtime: the startup line that names it is the
+# first thing the log carries, written before the plugin has opened any file it
+# could have read a version out of. Deliberately no fallback definition -- a
+# target that compiles Plugin.cpp without this should fail to build rather than
+# quietly report a version it does not have.
+target_compile_definitions(
+    ${PROJECT_NAME}
+    PRIVATE NARRATIVEENGINE_VERSION="${NARRATIVEENGINE_VERSION}"
+)
 target_precompile_headers(${PROJECT_NAME} PRIVATE PCH.h) # <--- PCH.h is required!
 target_include_directories(
     ${PROJECT_NAME}
@@ -59,7 +233,7 @@ target_include_directories(
 )
 target_link_libraries(
     ${PROJECT_NAME}
-    PRIVATE nlohmann_json::nlohmann_json minhook::minhook
+    PRIVATE nlohmann_json::nlohmann_json minhook::minhook NarrativeEngineCore
 )
 
 # ---------------------------------------------------------------------------
@@ -75,30 +249,45 @@ target_link_libraries(
 # `Data/SKSE/Plugins/` folder, where SkyrimNet must already be installed
 # for our plugin to function.
 #
-# So the only build-time integration is making the header visible to our
-# sources. Point `SKYRIMNET_DIR` at SkyrimNet's mod folder via either:
-#   - `SKYRIMNET_DIR` env var (explicit override), or
-#   - `SKYRIM_MODS_FOLDER` env var (assumes the standard "SkyrimNet" subdir).
-if(DEFINED ENV{SKYRIMNET_DIR} AND IS_DIRECTORY "$ENV{SKYRIMNET_DIR}/CppAPI")
-    set(SKYRIMNET_DIR "$ENV{SKYRIMNET_DIR}")
-elseif(
-    DEFINED ENV{SKYRIM_MODS_FOLDER}
-    AND IS_DIRECTORY "$ENV{SKYRIM_MODS_FOLDER}/SkyrimNet/CppAPI"
+# So the only build-time integration is making the headers visible to our
+# sources. Where they live depends on the SkyrimNet version: Beta 25 dropped
+# `CppAPI/` from the main archive and ships it in a separate "SkyrimNet
+# Devkit" download alongside the modding docs and content tools; Beta 24 and
+# earlier carried it inside the SkyrimNet mod folder. We look for the
+# directory that actually holds `PublicAPI.h`, in this order:
+#   - `SKYRIMNET_CPPAPI` env var — the CppAPI directory itself, explicit.
+#   - `SKYRIMNET_DIR` env var — a root containing `CppAPI/`, explicit.
+#   - `$SKYRIM_MODS_FOLDER/SkyrimNet Devkit/CppAPI` — Beta 25's devkit mod.
+#   - `$SKYRIM_MODS_FOLDER/SkyrimNet/CppAPI` — Beta 24 and earlier.
+# Each candidate is probed for `PublicAPI.h`, so a stale `SKYRIMNET_DIR` left
+# over from a pre-Beta-25 install falls through to the devkit rather than
+# poisoning the include path with a directory that no longer exists.
+foreach(
+    _snetCandidate
+    "$ENV{SKYRIMNET_CPPAPI}"
+    "$ENV{SKYRIMNET_DIR}/CppAPI"
+    "$ENV{SKYRIM_MODS_FOLDER}/SkyrimNet Devkit/CppAPI"
+    "$ENV{SKYRIM_MODS_FOLDER}/SkyrimNet/CppAPI"
 )
-    set(SKYRIMNET_DIR "$ENV{SKYRIM_MODS_FOLDER}/SkyrimNet")
-endif()
+    if(
+        NOT DEFINED SKYRIMNET_CPPAPI_DIR
+        AND EXISTS "${_snetCandidate}/PublicAPI.h"
+    )
+        set(SKYRIMNET_CPPAPI_DIR "${_snetCandidate}")
+    endif()
+endforeach()
 
-if(NOT DEFINED SKYRIMNET_DIR)
+if(NOT DEFINED SKYRIMNET_CPPAPI_DIR)
     message(
         FATAL_ERROR
-        "Could not locate SkyrimNet. Set the SKYRIMNET_DIR environment variable to "
-        "the SkyrimNet mod folder (containing CppAPI/PublicAPI.h), or set "
-        "SKYRIM_MODS_FOLDER so SkyrimNet is found at \${SKYRIM_MODS_FOLDER}/SkyrimNet."
+        "Could not locate SkyrimNet's CppAPI headers. Install the SkyrimNet Devkit "
+        "(Beta 25+) or set the SKYRIMNET_CPPAPI environment variable to the directory "
+        "containing PublicAPI.h. See docs/DEVELOPMENT.md for the full search order."
     )
 endif()
 
-message(STATUS "SkyrimNet found at: ${SKYRIMNET_DIR}")
-target_include_directories(${PROJECT_NAME} PRIVATE "${SKYRIMNET_DIR}/CppAPI")
+message(STATUS "SkyrimNet CppAPI found at: ${SKYRIMNET_CPPAPI_DIR}")
+target_include_directories(${PROJECT_NAME} PRIVATE "${SKYRIMNET_CPPAPI_DIR}")
 # No `target_link_libraries(... SkyrimNet)` — `PublicAPI.h`'s `FindFunctions()`
 # loads `SkyrimNet.dll` at runtime via `LoadLibraryA`. Call it from
 # `kDataLoaded` to populate the function pointers.
@@ -193,7 +382,43 @@ if(DEFINED OUTPUT_FOLDER)
     #
     # `make_directory` is idempotent, so multiple files in the same destination
     # subdir cause no issues. `copy_if_different` skips no-op writes.
-    set(STATICS_SOURCE_DIR "${CMAKE_SOURCE_DIR}/statics")
+    #
+    # SkyrimNet content needs no special handling here any more. Our prompts
+    # and settings schema live in the source tree at the Beta 25 paths SkyrimNet
+    # actually reads -- `SkyrimNet/external/<id>/prompts/` and
+    # `.../settings/NarrativeEngine.yaml` -- so the verbatim mirror above puts
+    # them where they belong. Up to v0.6.1 this block also re-deployed each of
+    # them to the pre-Beta-25 paths (loose `SkyrimNet/prompts/` and
+    # `config/plugins/NarrativeEngine/manifest.yaml`) so one build served either
+    # SkyrimNet; Beta 25 does not read those paths and we no longer support the
+    # versions that did.
+    #
+    # The manifest must name the folder it sits in (SkyrimNet rejects
+    # the whole folder otherwise), and it carries a second copy of the version
+    # the settings schema advertises -- already read above as
+    # NARRATIVEENGINE_VERSION. Fail the configure rather than ship either
+    # mismatch.
+    set_property(
+        DIRECTORY
+        APPEND
+        PROPERTY CMAKE_CONFIGURE_DEPENDS "${SKYRIMNET_JSON_MANIFEST}"
+    )
+    file(READ "${SKYRIMNET_JSON_MANIFEST}" json_manifest)
+    string(JSON json_id GET "${json_manifest}" id)
+    string(JSON json_version GET "${json_manifest}" version)
+    if(NOT json_id STREQUAL SKYRIMNET_PLUGIN_ID)
+        message(
+            FATAL_ERROR
+            "manifest.json id '${json_id}' does not match its folder '${SKYRIMNET_PLUGIN_ID}'"
+        )
+    endif()
+    if(NOT json_version STREQUAL NARRATIVEENGINE_VERSION)
+        message(
+            FATAL_ERROR
+            "manifest.json version ${json_version} does not match settings/NarrativeEngine.yaml version ${NARRATIVEENGINE_VERSION}"
+        )
+    endif()
+
     if(IS_DIRECTORY "${STATICS_SOURCE_DIR}")
         file(
             GLOB_RECURSE STATICS_FILES
@@ -495,4 +720,313 @@ if(DEFINED OUTPUT_FOLDER)
     else()
         message(STATUS "Papyrus compile: no .psc files yet; step dormant")
     endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Unit tests (Catch2 v3 + CTest)
+# ---------------------------------------------------------------------------
+#
+# Tests are co-located: `src/Foo.test.cpp` sits beside `src/Foo.cpp`, and the
+# glob at the top of this file is what routes it here instead of into the
+# plugin DLL. There is no tests/ directory and there should not be one.
+#
+# The test executable links NarrativeEngineCore and NOT CommonLibSSE, so it
+# runs as an ordinary x64 console program with no Skyrim, no SKSE load order,
+# and no relocation database. That boundary is the point: whatever a test can
+# reach is by construction code that works outside the game.
+#
+# Catch2 comes from vcpkg (see vcpkg.json) — the same manifest that already
+# provides CommonLibSSE, nlohmann_json and the rest — rather than FetchContent,
+# so there is one dependency mechanism in this project and not two.
+option(NARRATIVEENGINE_BUILD_TESTS "Build the Catch2 unit tests" ON)
+
+if(NARRATIVEENGINE_BUILD_TESTS)
+    find_package(Catch2 3 CONFIG REQUIRED)
+    enable_testing()
+
+    # Catch.cmake (which defines catch_discover_tests) ships beside the
+    # package config rather than on the module path, so point CMake at it.
+    list(APPEND CMAKE_MODULE_PATH "${Catch2_DIR}")
+    include(Catch)
+
+    if(NOT test_sources)
+        message(
+            FATAL_ERROR
+            "NARRATIVEENGINE_BUILD_TESTS is ON but no src/*.test.cpp files were found."
+        )
+    endif()
+
+    add_executable(NarrativeEngineTests ${test_sources})
+    target_compile_features(NarrativeEngineTests PRIVATE cxx_std_23)
+    target_link_libraries(
+        NarrativeEngineTests
+        PRIVATE NarrativeEngineCore Catch2::Catch2WithMain
+    )
+
+    # Register each TEST_CASE with CTest individually, so `ctest -R` can
+    # select one and a failure names the case rather than "the test binary".
+    catch_discover_tests(NarrativeEngineTests)
+
+    list(LENGTH test_sources NARRATIVEENGINE_TEST_SOURCE_COUNT)
+    message(
+        STATUS
+        "Unit tests: enabled (${NARRATIVEENGINE_TEST_SOURCE_COUNT} co-located *.test.cpp file(s))"
+    )
+
+    # -----------------------------------------------------------------------
+    # Mocked-engine tests
+    # -----------------------------------------------------------------------
+    #
+    # A second executable, for production code that genuinely calls
+    # CommonLibSSE and should not be reshaped to avoid it.
+    #
+    # The trick is that CommonLibSSE is mostly headers. Struct layouts, member
+    # offsets and inline helpers compile straight into our object files; only
+    # some functions are out-of-line, and those live in CommonLibSSE.lib where
+    # each one resolves an address inside a running SkyrimSE.exe. Those are the
+    # functions a test process cannot execute -- and they are exactly the ones
+    # the linker will take from somewhere else if somewhere else defines them.
+    #
+    # So this target compiles the production sources named in
+    # NARRATIVEENGINE_MOCKED_SOURCES against the REAL CommonLibSSE headers,
+    # with the same defines and the same PCH as the DLL, and then simply does
+    # NOT link CommonLibSSE.lib. testsupport/EngineMock.cpp supplies the engine
+    # functions instead. Production code is compiled unmodified and still calls
+    # `RE::Calendar::GetSingleton()`; it just reaches our definition.
+    #
+    # Consequences worth knowing:
+    #
+    #   * Any engine function the code under test touches that nobody has
+    #     mocked is an unresolved external, so the build fails by name. There
+    #     is no silent fallthrough into real engine code.
+    #   * Sources listed here are compiled TWICE -- once into the DLL, once
+    #     here -- because the two need different link closures. That is the
+    #     cost of not rewriting production code, and it is the right trade.
+    #   * spdlog and fmt are linked for real: they are ordinary libraries with
+    #     nothing Skyrim-specific in them, and logging calls in the code under
+    #     test should behave.
+    set(NARRATIVEENGINE_MOCKED_SOURCES
+        "${CMAKE_SOURCE_DIR}/src/DecisionLog.cpp"
+        "${CMAKE_SOURCE_DIR}/src/EngineUtils.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PhaseTracker.cpp"
+        "${CMAKE_SOURCE_DIR}/src/Region.cpp"
+        "${CMAKE_SOURCE_DIR}/src/QuestUtils.cpp"
+        "${CMAKE_SOURCE_DIR}/src/SenderCandidatePool.cpp"
+        "${CMAKE_SOURCE_DIR}/src/SenderDialogue.cpp"
+        "${CMAKE_SOURCE_DIR}/src/DashboardTimers.cpp"
+        "${CMAKE_SOURCE_DIR}/src/Settings.cpp"
+        "${CMAKE_SOURCE_DIR}/src/AliasWalkFilter.cpp"
+        "${CMAKE_SOURCE_DIR}/src/AlphaCanon.cpp"
+        "${CMAKE_SOURCE_DIR}/src/AsyncDispatch.cpp"
+        "${CMAKE_SOURCE_DIR}/src/BeatWorkDispatch.cpp"
+        "${CMAKE_SOURCE_DIR}/src/BeatParamHelpers.cpp"
+        "${CMAKE_SOURCE_DIR}/src/BeatRegistry.cpp"
+        "${CMAKE_SOURCE_DIR}/src/CameraVisibility.cpp"
+        "${CMAKE_SOURCE_DIR}/src/CombatEventLog.cpp"
+        "${CMAKE_SOURCE_DIR}/src/ConsoleCommand.cpp"
+        "${CMAKE_SOURCE_DIR}/src/CourierUtils.cpp"
+        "${CMAKE_SOURCE_DIR}/src/Decorators.cpp"
+        "${CMAKE_SOURCE_DIR}/src/EvalDispatch.cpp"
+        "${CMAKE_SOURCE_DIR}/src/FineRoads.cpp"
+        "${CMAKE_SOURCE_DIR}/src/TravelGraph.cpp"
+        "${CMAKE_SOURCE_DIR}/src/RoadRoute.cpp"
+        "${CMAKE_SOURCE_DIR}/src/ApproachChain.cpp"
+        "${CMAKE_SOURCE_DIR}/src/HoldGrid.cpp"
+        "${CMAKE_SOURCE_DIR}/src/AmbushSpawnPoints.cpp"
+        "${CMAKE_SOURCE_DIR}/src/VisitArrivalPoint.cpp"
+        "${CMAKE_SOURCE_DIR}/src/DebugNotify.cpp"
+        "${CMAKE_SOURCE_DIR}/src/EvaluationPipeline.cpp"
+        "${CMAKE_SOURCE_DIR}/src/EvaluationPipelineText.cpp"
+        "${CMAKE_SOURCE_DIR}/src/GossipContent.cpp"
+        "${CMAKE_SOURCE_DIR}/src/VisitComposer.cpp"
+        "${CMAKE_SOURCE_DIR}/src/VisitConclusionPoll.cpp"
+        "${CMAKE_SOURCE_DIR}/src/LetterComposer.cpp"
+        "${CMAKE_SOURCE_DIR}/src/AmbushAttackerGroups.cpp"
+        "${CMAKE_SOURCE_DIR}/src/GossipGraph.cpp"
+        "${CMAKE_SOURCE_DIR}/src/GossipHarvest.cpp"
+        "${CMAKE_SOURCE_DIR}/src/GossipSim.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PrismaUI.cpp"
+        "${CMAKE_SOURCE_DIR}/src/SkyrimNetAPI.cpp"
+        "${CMAKE_SOURCE_DIR}/src/GossipClaims.cpp"
+        "${CMAKE_SOURCE_DIR}/src/GossipDispatch.cpp"
+        "${CMAKE_SOURCE_DIR}/src/GossipLog.cpp"
+        "${CMAKE_SOURCE_DIR}/src/VisitorTravelLog.cpp"
+        "${CMAKE_SOURCE_DIR}/src/GossipTick.cpp"
+        "${CMAKE_SOURCE_DIR}/src/CharacterBioLibrary.cpp"
+        "${CMAKE_SOURCE_DIR}/src/CharacterBios.cpp"
+        "${CMAKE_SOURCE_DIR}/src/CharacterEmbeddingModel.cpp"
+        "${CMAKE_SOURCE_DIR}/src/CharacterEmbeddingVocab.cpp"
+        "${CMAKE_SOURCE_DIR}/src/CharacterIndex.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotAdapt.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotAdaptParse.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotBirth.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotBirthParse.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotCasting.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotCoSave.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotDispatch.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotFactionParse.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotFactionRoster.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotFactionStanding.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotItemParse.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotItemPool.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotLog.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotLogFormat.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotMenuBuild.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotMenus.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotModel.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotPopulation.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotResolution.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotSchedule.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotSerialize.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotState.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotStepParse.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotTick.cpp"
+        "${CMAKE_SOURCE_DIR}/src/EventHistoryWriter.cpp"
+        "${CMAKE_SOURCE_DIR}/src/EventLogUtil.cpp"
+        "${CMAKE_SOURCE_DIR}/src/FactionDesignationUtils.cpp"
+        "${CMAKE_SOURCE_DIR}/src/LocationKeywords.cpp"
+        "${CMAKE_SOURCE_DIR}/src/MainThread.cpp"
+        "${CMAKE_SOURCE_DIR}/src/MainThreadEngine.cpp"
+        "${CMAKE_SOURCE_DIR}/src/MCMEventSink.cpp"
+        "${CMAKE_SOURCE_DIR}/src/StuckRecovery.cpp"
+        "${CMAKE_SOURCE_DIR}/src/SKSECosaveIO.cpp"
+        "${CMAKE_SOURCE_DIR}/src/TravelEventLog.cpp"
+        "${CMAKE_SOURCE_DIR}/src/Tick.cpp"
+        "${CMAKE_SOURCE_DIR}/src/WeatherEventLog.cpp"
+        "${CMAKE_SOURCE_DIR}/src/VisitState.cpp"
+        "${CMAKE_SOURCE_DIR}/src/NPCLetterBeat.cpp"
+        "${CMAKE_SOURCE_DIR}/src/NPCVisitBeat.cpp"
+        "${CMAKE_SOURCE_DIR}/src/AmbushBeat.cpp"
+        "${CMAKE_SOURCE_DIR}/src/LetterPool.cpp"
+        "${CMAKE_SOURCE_DIR}/src/BeatSystem.cpp"
+        "${CMAKE_SOURCE_DIR}/src/DashboardUIManager.cpp"
+        "${CMAKE_SOURCE_DIR}/src/Plugin.cpp"
+    )
+
+    if(engine_test_sources)
+        find_package(spdlog CONFIG REQUIRED)
+
+        add_executable(
+            NarrativeEngineEngineMockTests
+            ${engine_test_sources}
+            ${NARRATIVEENGINE_MOCKED_SOURCES}
+            testsupport/EngineMock.cpp
+            testsupport/CommonLibSSERuntimeStubs.cpp
+            testsupport/DispatcherContract.cpp
+            testsupport/FakeVTable.cpp
+            testsupport/MinHookMocks.cpp
+            testsupport/GossipWorld.cpp
+            testsupport/GossipSpies.cpp
+            testsupport/RelocationMocks.cpp
+            testsupport/RelocationMocks.test.cpp
+            testsupport/EngineMockHygiene.test.cpp
+        )
+        target_compile_features(
+            NarrativeEngineEngineMockTests
+            PRIVATE cxx_std_23
+        )
+        target_include_directories(
+            NarrativeEngineEngineMockTests
+            # PRISMA_UI_INCLUDE because src/PrismaUI.cpp includes the upstream
+            # header; the wrapper is compiled here exactly as it is in the DLL.
+            # PRISMA_UI_INCLUDE and SKYRIMNET_CPPAPI_DIR because src/PrismaUI.cpp
+            # and src/SkyrimNetAPI.cpp include their upstream headers; both
+            # wrappers are compiled here exactly as they are in the DLL.
+            PRIVATE
+                include
+                testsupport
+                "${PRISMA_UI_INCLUDE}"
+                "${SKYRIMNET_CPPAPI_DIR}"
+        )
+        # CommonLibSSE's include dirs and compile definitions WITHOUT its
+        # library: the headers are what we want, the .lib is what we replace.
+        target_include_directories(
+            NarrativeEngineEngineMockTests
+            SYSTEM
+            PRIVATE
+                $<TARGET_PROPERTY:CommonLibSSE::CommonLibSSE,INTERFACE_INCLUDE_DIRECTORIES>
+        )
+        target_compile_definitions(
+            NarrativeEngineEngineMockTests
+            PRIVATE
+                $<TARGET_PROPERTY:CommonLibSSE::CommonLibSSE,INTERFACE_COMPILE_DEFINITIONS>
+                # Unlocks REL::Module::mock(), CommonLibSSE-NG's own hook for
+                # running its headers with no Skyrim process behind them.
+                ENABLE_COMMONLIBSSE_TESTING
+                # This target compiles Plugin.cpp, whose startup line names it.
+                NARRATIVEENGINE_VERSION="${NARRATIVEENGINE_VERSION}"
+        )
+        # Same forced PCH as the DLL, so these sources compile exactly as they
+        # do in production rather than in some near-miss configuration.
+        target_precompile_headers(NarrativeEngineEngineMockTests PRIVATE PCH.h)
+        # NarrativeEngineCore is engine-free, so linking it here costs nothing
+        # and lets a mocked module use a core one (ThreadRole, JsonUtils, ...)
+        # without listing it as a mocked source and compiling it a third time.
+        target_link_libraries(
+            NarrativeEngineEngineMockTests
+            PRIVATE Catch2::Catch2WithMain spdlog::spdlog NarrativeEngineCore
+        )
+
+        # A stand-in PrismaUI.dll, built under the real name and dropped beside
+        # the test executable. PrismaUI is found through GetModuleHandle and
+        # GetProcAddress with no seam in between, so the only faithful way to
+        # exercise the "PrismaUI is installed" half of the wrapper is to put a
+        # DLL of that name where the loader will find it.
+        add_library(
+            PrismaUIFake
+            SHARED
+            "${CMAKE_SOURCE_DIR}/testsupport/FakePrismaUI.cpp"
+        )
+        target_compile_features(PrismaUIFake PRIVATE cxx_std_23)
+        target_include_directories(
+            PrismaUIFake
+            PRIVATE testsupport "${PRISMA_UI_INCLUDE}"
+        )
+        set_target_properties(
+            PrismaUIFake
+            PROPERTIES
+                OUTPUT_NAME PrismaUI
+                RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+        )
+        add_dependencies(NarrativeEngineEngineMockTests PrismaUIFake)
+
+        # The same trick for SkyrimNet, whose header resolves itself with
+        # LoadLibraryA("SkyrimNet") and a GetProcAddress per export. Building a
+        # DLL of that name also reaches the version gate: the header only
+        # resolves an export when the version the DLL reports is high enough,
+        # so a fake reporting an old version is a genuinely older install.
+        add_library(
+            SkyrimNetFake
+            SHARED
+            "${CMAKE_SOURCE_DIR}/testsupport/FakeSkyrimNet.cpp"
+        )
+        target_compile_features(SkyrimNetFake PRIVATE cxx_std_23)
+        target_include_directories(SkyrimNetFake PRIVATE testsupport)
+        # C4190: an extern "C" function returning std::string. That is what the
+        # real SkyrimNet exports do -- the API is C-linkage for undecorated
+        # GetProcAddress names but C++ by value across the boundary, which works
+        # only because both modules share a dynamically-linked CRT. The fake has
+        # to match the real signatures exactly, so the warning is suppressed
+        # here and nowhere else.
+        target_compile_options(SkyrimNetFake PRIVATE /wd4190)
+        set_target_properties(
+            SkyrimNetFake
+            PROPERTIES
+                OUTPUT_NAME SkyrimNet
+                RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+        )
+        add_dependencies(NarrativeEngineEngineMockTests SkyrimNetFake)
+
+        catch_discover_tests(NarrativeEngineEngineMockTests)
+
+        list(LENGTH engine_test_sources NARRATIVEENGINE_ENGINE_TEST_COUNT)
+        message(
+            STATUS
+            "Mocked-engine tests: enabled (${NARRATIVEENGINE_ENGINE_TEST_COUNT} *.engine.test.cpp file(s))"
+        )
+    else()
+        message(STATUS "Mocked-engine tests: no *.engine.test.cpp files yet")
+    endif()
+else()
+    message(STATUS "Unit tests: SKIPPED (NARRATIVEENGINE_BUILD_TESTS=OFF)")
 endif()

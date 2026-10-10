@@ -9,6 +9,7 @@ interface Props {
 declare global {
     interface Window {
         ne_setDebugMode?: (arg: string) => void;
+        ne_setDebugNotifications?: (arg: string) => void;
         ne_setTickInterval?: (arg: string) => void;
         ne_setMinPhaseDuration?: (arg: string) => void;
         ne_setPhaseIdealDuration?: (arg: string) => void;
@@ -111,6 +112,9 @@ export function SettingsTab({ state }: Props) {
     const onToggleDebug = (e: React.ChangeEvent<HTMLInputElement>) => {
         window.ne_setDebugMode?.(e.target.checked ? 'true' : 'false');
     };
+    const onToggleDebugNotifications = (e: React.ChangeEvent<HTMLInputElement>) => {
+        window.ne_setDebugNotifications?.(e.target.checked ? 'true' : 'false');
+    };
     const onToggleTick = (e: React.ChangeEvent<HTMLInputElement>) => {
         window.ne_setTickEnabled?.(e.target.checked ? 'true' : 'false');
     };
@@ -141,6 +145,14 @@ export function SettingsTab({ state }: Props) {
                 <label className="tick-toggle">
                     <input type="checkbox" checked={s.debug_mode} onChange={onToggleDebug} />
                     <span>Debug Mode</span>
+                </label>
+                <label className="tick-toggle">
+                    <input
+                        type="checkbox"
+                        checked={s.debug_notifications}
+                        onChange={onToggleDebugNotifications}
+                    />
+                    <span>Debug Notifications</span>
                 </label>
                 <div className="settings-row">
                     <span className="settings-row-label">Dashboard Hotkey</span>

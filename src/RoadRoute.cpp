@@ -3,6 +3,7 @@
 #include <FineRoads.h>
 #include <logger.h>
 #include <TravelGraph.h>
+#include <VisitorTravelLog.h>
 
 #include <algorithm>
 #include <cmath>
@@ -17,6 +18,12 @@ namespace NarrativeEngine::RoadRoute
     namespace
     {
         constexpr float kCellUnits = 4096.0f;
+
+        // How much lower one door's landing has to be than another's before
+        // elevation decides instead of distance. One storey, measured: the
+        // Bannered Mare's balcony landing sits 194 units above its front
+        // door's.
+        constexpr float kDoorStoreyUnits = 128.0f;
         constexpr float kInf = std::numeric_limits<float>::max();
 
         // How close the destination must be to a fine node before we
@@ -130,13 +137,80 @@ namespace NarrativeEngine::RoadRoute
         }
     } // namespace
 
+    RE::TESObjectCELL* CellOf(RE::TESObjectREFR* ref)
+    {
+        if (!ref) {
+            return nullptr;
+        }
+        if (auto* attached = ref->GetParentCell()) {
+            return attached;
+        }
+        return ref->GetSaveParentCell();
+    }
+
+    namespace
+    {
+        // Upper bound on parentLoc traversal, matching AlphaCanon's. A
+        // room's Location rarely carries a map marker; the building or
+        // the settlement above it does.
+        constexpr int kMaxParentDepth = 16;
+    } // namespace
+
+    bool MarkerFromLocation(RE::BGSLocation* location, Origin& out, std::string& trail)
+    {
+        for (int depth = 0; location && depth < kMaxParentDepth; ++depth) {
+            const char* edid = location->GetFormEditorID();
+            trail += (depth == 0 ? "" : "->");
+            trail += (edid && *edid) ? edid : "?";
+
+            const auto markerPtr = location->worldLocMarker.get();
+            if (auto* marker = markerPtr.get()) {
+                // A marker away from the player is in an unloaded cell,
+                // which is exactly when this matters -- so CellOf.
+                if (auto* markerCell = CellOf(marker)) {
+                    if (auto* ws = markerCell->GetRuntimeData().worldSpace) {
+                        out.valid = true;
+                        out.worldSpace = ws->GetFormID();
+                        out.position = marker->GetPosition();
+                        out.viaLoadDoor = true;
+                        trail += "[marker]";
+                        return true;
+                    }
+                    trail += "[marker,no-worldspace]";
+                } else {
+                    trail += "[marker,no-cell]";
+                }
+            }
+            location = location->parentLoc;
+        }
+        return false;
+    }
+
+    namespace
+    {
+        // Minimal Use is the engine's own "NPCs should not route through
+        // this door" — Bethesda sets it on back doors, service entrances
+        // and the like. WRDragonDoor01MinUse (0x08648C) carries it and
+        // WRDragonDoor01 (0x0252C7) does not, and those two are exactly
+        // the pair in WhiterunBanneredMare.
+        bool IsMinimalUseDoor(RE::TESObjectREFR* ref)
+        {
+            if (!ref) {
+                return false;
+            }
+            auto* base = ref->GetBaseObject();
+            auto* door = base ? base->As<RE::TESObjectDOOR>() : nullptr;
+            return door && door->flags.any(RE::TESObjectDOOR::Flag::kMinimalUse);
+        }
+    } // namespace
+
     Origin ResolveOrigin(const MainThread::Token&, RE::TESObjectREFR* ref)
     {
         Origin origin;
         if (!ref) {
             return origin;
         }
-        auto* cell = ref->GetParentCell();
+        auto* cell = CellOf(ref);
         if (!cell) {
             return origin;
         }
@@ -152,16 +226,30 @@ namespace NarrativeEngine::RoadRoute
             return origin;
         }
 
-        // Indoors. Walk the cell's references for a load door and take
-        // where it comes out. First exterior-landing door wins — cells
+        // Indoors. Collect every load door that lands outdoors, then
+        // choose between them.
+        //
+        // This used to stop at the first one, on the grounds that "cells
         // with several exits are rare, and any of them is a defensible
-        // answer to "where would they emerge".
-        RE::NiPoint3 arrival{};
-        RE::FormID arrivalWorldSpace = 0;
-        bool found = false;
+        // answer". Both halves are false. 279 of the 544 vanilla
+        // interiors that have a load door have more than one, and which
+        // one `ForEachReference` reaches first is not stable: two
+        // sessions a half-hour apart on the same build resolved
+        // WhiterunBanneredMare to its front door once and to its back
+        // door once. A visitor waiting at the back of an inn the player
+        // walked into the front of is not a defensible answer.
+        struct Doorway
+        {
+            RE::FormID worldSpace = 0;
+            RE::FormID farDoor = 0;
+            RE::NiPoint3 arrival{};
+            float fromRef = 0.0f;
+            bool minimalUse = false;
+        };
+        std::vector<Doorway> doorways;
 
         cell->ForEachReference([&](RE::TESObjectREFR* candidate) {
-            if (found || !candidate) {
+            if (!candidate) {
                 return RE::BSContainer::ForEachResult::kContinue;
             }
             auto* teleport = candidate->extraList.GetByType<RE::ExtraTeleport>();
@@ -172,7 +260,12 @@ namespace NarrativeEngine::RoadRoute
             if (!linked) {
                 return RE::BSContainer::ForEachResult::kContinue;
             }
-            auto* linkedCell = linked->GetParentCell();
+            // The whole reason for this walk is that `ref` is indoors,
+            // and standing indoors is what unloads the exterior. So the
+            // door on the far side is precisely the reference whose
+            // parentCell is null, and reading it directly made every
+            // indoors resolution fail.
+            auto* linkedCell = CellOf(linked.get());
             if (!linkedCell || linkedCell->IsInteriorCell()) {
                 return RE::BSContainer::ForEachResult::kContinue; // interior-to-interior, keep looking
             }
@@ -180,40 +273,120 @@ namespace NarrativeEngine::RoadRoute
             if (!ws) {
                 return RE::BSContainer::ForEachResult::kContinue;
             }
-            arrivalWorldSpace = ws->GetFormID();
+            Doorway way;
+            way.worldSpace = ws->GetFormID();
+            way.farDoor = linked->GetFormID();
             // teleportData->position is the arrival spot just outside the
             // far door, which is closer to "where they emerge" than the
             // door reference itself.
-            arrival = teleport->teleportData->position;
-            found = true;
-            return RE::BSContainer::ForEachResult::kStop;
+            way.arrival = teleport->teleportData->position;
+            // Measured between the near side and the occupant, both of
+            // which are in this interior's own frame. The far side's
+            // coordinates are the exterior's and would mean nothing here.
+            const auto nearSide = candidate->GetPosition();
+            const auto occupant = ref->GetPosition();
+            way.fromRef = Dist2D(nearSide.x, nearSide.y, occupant.x, occupant.y);
+            way.minimalUse = IsMinimalUseDoor(candidate);
+            doorways.push_back(way);
+            return RE::BSContainer::ForEachResult::kContinue;
         });
 
-        if (found) {
+        // A door the engine does not mark Minimal Use first; then the one at
+        // street level; then the one the occupant is standing nearest. In a
+        // one-door cell it is the only door, so the common case is untouched.
+        //
+        // Minimal Use is a last resort rather than a disqualification: a back
+        // door still beats falling through to a map marker.
+        //
+        // Elevation comes before distance because nearest was the right answer
+        // to the wrong question. WhiterunBanneredMare has three ways out, and
+        // with the player standing UPSTAIRS the nearest was a mod-added
+        // balcony door at 942 units, not flagged Minimal Use, whose landing
+        // sits 194 units above the front door's. The balcony genuinely was
+        // nearest. It is also somewhere a visitor cannot be walked to, and
+        // somewhere nobody leaves a building by: a main entrance is at street
+        // level and the upper doors are balconies.
+        //
+        // kDoorStoreyUnits is below the 194 the measurement shows and well
+        // above the jitter between two doors on one floor, so two street-level
+        // doors are still settled by distance.
+        const Doorway* chosen = nullptr;
+        for (const auto& way : doorways) {
+            if (chosen == nullptr) {
+                chosen = &way;
+                continue;
+            }
+            if (chosen->minimalUse != way.minimalUse) {
+                if (!way.minimalUse) {
+                    chosen = &way;
+                }
+                continue;
+            }
+            const float drop = chosen->arrival.z - way.arrival.z;
+            if (drop > kDoorStoreyUnits) {
+                chosen = &way; // a storey lower: street level against a balcony
+                continue;
+            }
+            if (drop < -kDoorStoreyUnits) {
+                continue; // the one already held is the lower
+            }
+            if (way.fromRef < chosen->fromRef) {
+                chosen = &way;
+            }
+        }
+
+        if (VisitorTravelLog::IsActive() && doorways.size() > 1) {
+            for (const auto& way : doorways) {
+                VisitorTravelLog::Write("ENDS",
+                                        "  way out: door 0x{:08X} lands at ({:.0f},{:.0f},{:.0f}), {:.0f}u from "
+                                        "the occupant, minimal_use={}{}",
+                                        way.farDoor,
+                                        way.arrival.x,
+                                        way.arrival.y,
+                                        way.arrival.z,
+                                        way.fromRef,
+                                        way.minimalUse ? 1 : 0,
+                                        (chosen == &way) ? " <- taken" : "");
+            }
+        }
+
+        if (chosen != nullptr) {
+            if (doorways.size() > 1) {
+                logger::debug("RoadRoute: cell 0x{:08X} has {} way(s) out; took door 0x{:08X} {:.0f}u from "
+                              "the occupant (minimal_use={})",
+                              cell->GetFormID(),
+                              doorways.size(),
+                              chosen->farDoor,
+                              chosen->fromRef,
+                              chosen->minimalUse);
+            }
             origin.valid = true;
-            origin.worldSpace = arrivalWorldSpace;
-            origin.position = arrival;
+            origin.worldSpace = chosen->worldSpace;
+            origin.position = chosen->arrival;
             origin.viaLoadDoor = true;
+            origin.exteriorDoor = chosen->farDoor;
             return origin;
         }
 
-        // No load door out. Fall back to the location's map marker, which
-        // is coarser (markers sit some way from the actual entrance) but
-        // beats having no position at all.
-        if (auto* location = ref->GetCurrentLocation()) {
-            const auto markerPtr = location->worldLocMarker.get();
-            if (auto* marker = markerPtr.get()) {
-                if (auto* markerCell = marker->GetParentCell()) {
-                    if (auto* ws = markerCell->GetRuntimeData().worldSpace) {
-                        origin.valid = true;
-                        origin.worldSpace = ws->GetFormID();
-                        origin.position = marker->GetPosition();
-                        origin.viaLoadDoor = true;
-                        return origin;
-                    }
-                }
-            }
+        // No load door out. Fall back to a map marker, which is coarser
+        // -- markers sit some way from the actual entrance -- but beats
+        // having no position at all. The cell's own Location first,
+        // because that is the building; `GetCurrentLocation` can be null
+        // in a cell nobody has registered.
+        std::string trail;
+        if (MarkerFromLocation(cell->GetLocation(), origin, trail)) {
+            logger::debug("RoadRoute: 0x{:08X} placed from its cell's location ({})", ref->GetFormID(), trail);
+            return origin;
         }
+        if (MarkerFromLocation(ref->GetCurrentLocation(), origin, trail)) {
+            logger::debug("RoadRoute: 0x{:08X} placed from its current location ({})", ref->GetFormID(), trail);
+            return origin;
+        }
+
+        logger::debug("RoadRoute: 0x{:08X} is indoors with no way out — no load door to an exterior and no "
+                      "map marker up the location chain ('{}')",
+                      ref->GetFormID(),
+                      trail);
         return origin;
     }
 
