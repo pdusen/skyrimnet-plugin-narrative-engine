@@ -507,7 +507,7 @@ The verb's dashboard sentence is rendered but not yet shown: nothing creates a v
 
 ### Step 4 — Candidate rules
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -518,6 +518,37 @@ Children leave the plot population entirely, which closes the gap for mastermind
 **Verification:** an engine-mock suite over a fabricated province asserts each rule's admits and refusals, that a
 child is never a candidate for anything, that bound slots ask nothing, and that ordering is stable
 run to run.
+
+Done. `include/PlotCandidates.h` with `src/PlotCandidates.cpp` builds the keyed list for any slot; `PlotMenus::Classify`
+is public so candidates are ordered by the same ladder the menus used; population members carry `tradesForLiving`
+and `authority`; `PlotPopulation::IsChild` keeps children out of the population. 448 tests pass, five of them new.
+
+**"Trades for a living" and "senior in a court" are vanilla's Job factions.** Fifteen trade factions (merchant,
+smith, innkeeper, farmer, miner, fence and the rest) and four authorities (jarl, steward, guard captain, orc chief),
+every EditorID looked up in the Spriggit export. Mods put their own NPCs in these factions, so a modded shopkeeper
+qualifies with no list of ours to maintain. A faction that fails to resolve is warned about by name and skipped.
+
+**Order is the menu ladder, then strangers last.** Tie and colleague, tie, colleague, same hold, then everybody else;
+standing and then FormID break ties, so the same request lists the same people in the same order every time. A
+stranger's line says where they live, since the ladder has nothing to say about them.
+
+**A place depends on its mark, so it is asked after the mark.** `ask_around`'s place is the mark's settlement and
+then those of the people close to them; `spread_rumors`' is the mark's and then the mastermind's. Asked before the
+mark is chosen, both lists are empty.
+
+**A witness is somebody an earlier step actually reached**, read from each earlier step's person slots whose
+awareness fired for the outcome it had. A plan is laid out before any of it happens, so at birth nobody has been
+reached yet and `silence` falls back to the people the mastermind knows; the rule earns its keep when adaptation
+re-plans after a failure.
+
+**Children leave the population, not just the lists.** The audit found Lars Battle-Born cast as an agent and Aventus
+Aretino as a target, and a child could equally have been drawn as a mastermind. `IsChild` reads the race's child
+flag, and the population census line now reports how many were left out. Gossip keeps them.
+
+**Open question 1 is settled by elimination rather than comparison.** The embedding model and `CharacterIndex` exist
+to match a free-text description of a person against biographies. Rigid steps have no such description: a slot is
+filled by the model choosing from a list built here. Once Step 6 removes the free-text resolution, nothing calls
+either, and they go with it. Biographies themselves stay; they give each candidate's line its occupation.
 
 ### Step 5 — Planning by decision
 

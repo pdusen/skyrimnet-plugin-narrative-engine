@@ -43,74 +43,71 @@ namespace NarrativeEngine::PlotMenus
         return "";
     }
 
-    namespace
+    // The strongest link between two people, or nothing.
+    //
+    // Deliberately a total order rather than a score. A score would
+    // need weights nobody has measured, and the four rungs already
+    // say everything the prompt needs: whether they know each other,
+    // whether they answer to the same people, or merely whether they
+    // could plausibly have met.
+    bool Classify(const PlotCasting::Member& boss,
+                  const PlotCasting::Member& other,
+                  Relation& relation,
+                  double& standing)
     {
-        // The strongest link between two people, or nothing.
-        //
-        // Deliberately a total order rather than a score. A score would
-        // need weights nobody has measured, and the four rungs already
-        // say everything the prompt needs: whether they know each other,
-        // whether they answer to the same people, or merely whether they
-        // could plausibly have met.
-        bool Classify(const PlotCasting::Member& boss,
-                      const PlotCasting::Member& other,
-                      Relation& relation,
-                      double& standing)
-        {
-            standing = 0.0;
+        standing = 0.0;
 
-            bool close = false;
-            for (const auto& tie : boss.ties) {
-                if (tie.other == other.npc) {
+        bool close = false;
+        for (const auto& tie : boss.ties) {
+            if (tie.other == other.npc) {
+                close = true;
+                break;
+            }
+        }
+        if (!close) {
+            for (const auto& tie : other.ties) {
+                if (tie.other == boss.npc) {
                     close = true;
                     break;
                 }
             }
-            if (!close) {
-                for (const auto& tie : other.ties) {
-                    if (tie.other == boss.npc) {
-                        close = true;
-                        break;
-                    }
-                }
-            }
-
-            // A shared organisation, and how far up it they are. The
-            // standing is theirs rather than the mastermind's: the
-            // prompt wants to know who this person IS, and "the Jarl's
-            // steward" is a fact about the steward.
-            bool colleague = false;
-            for (const auto& mine : boss.factions) {
-                for (const auto& theirs : other.factions) {
-                    if (mine.faction == theirs.faction) {
-                        colleague = true;
-                        standing = std::max(standing, theirs.standing);
-                    }
-                }
-            }
-
-            if (close && colleague) {
-                relation = Relation::CloseAndColleague;
-                return true;
-            }
-            if (close) {
-                relation = Relation::Close;
-                return true;
-            }
-            if (colleague) {
-                relation = Relation::Colleague;
-                return true;
-            }
-            // Hold 0 means "nowhere resolved", which is not a place two
-            // people can share. Without this every unplaced NPC in the
-            // province reads as everyone else's neighbour.
-            if (boss.hold != 0 && boss.hold == other.hold) {
-                relation = Relation::Neighbour;
-                return true;
-            }
-            return false;
         }
-    } // namespace
+
+        // A shared organisation, and how far up it they are. The
+        // standing is theirs rather than the mastermind's: the
+        // prompt wants to know who this person IS, and "the Jarl's
+        // steward" is a fact about the steward.
+        bool colleague = false;
+        for (const auto& mine : boss.factions) {
+            for (const auto& theirs : other.factions) {
+                if (mine.faction == theirs.faction) {
+                    colleague = true;
+                    standing = std::max(standing, theirs.standing);
+                }
+            }
+        }
+
+        if (close && colleague) {
+            relation = Relation::CloseAndColleague;
+            return true;
+        }
+        if (close) {
+            relation = Relation::Close;
+            return true;
+        }
+        if (colleague) {
+            relation = Relation::Colleague;
+            return true;
+        }
+        // Hold 0 means "nowhere resolved", which is not a place two
+        // people can share. Without this every unplaced NPC in the
+        // province reads as everyone else's neighbour.
+        if (boss.hold != 0 && boss.hold == other.hold) {
+            relation = Relation::Neighbour;
+            return true;
+        }
+        return false;
+    }
 
     Menus Build(const PlotCasting::Population& population,
                 RE::FormID mastermind,

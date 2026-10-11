@@ -72,6 +72,14 @@ namespace NarrativeEngine::PlotMenus
     // A short phrase for the prompt, e.g. "a friend and colleague".
     [[nodiscard]] std::string_view RelationPhrase(Relation r) noexcept;
 
+    // How `other` is connected to `boss`, if at all. False when they share
+    // nothing the ladder ranks -- no tie, no organisation, not even a hold.
+    // `standing` is their best standing in an organisation they share.
+    [[nodiscard]] bool Classify(const PlotCasting::Member& boss,
+                                const PlotCasting::Member& other,
+                                Relation& relation,
+                                double& standing);
+
     struct ActorOption
     {
         RE::FormID npc = 0;

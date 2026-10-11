@@ -132,6 +132,17 @@ namespace NarrativeEngine::PlotCasting
         // rather than being excluded by it.
         std::vector<FactionStanding> factions;
         std::vector<Tie> ties;
+
+        // What they do, from vanilla's Job factions, which mods use too.
+        // Read at population build; the candidate rules for verb slots
+        // ask these rather than reading the engine.
+        //
+        // `tradesForLiving`: a merchant, smith, innkeeper, farmer, miner and
+        // the like -- somebody with a livelihood to sell from or sabotage.
+        // `authority`: a jarl, steward, guard captain or orc chief --
+        // somebody a denunciation can be made to.
+        bool tradesForLiving = false;
+        bool authority = false;
     };
 
     struct Population

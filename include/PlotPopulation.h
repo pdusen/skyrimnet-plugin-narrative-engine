@@ -85,6 +85,10 @@ namespace NarrativeEngine::PlotPopulation
     [[nodiscard]] PlotCasting::AlivePredicate AlivePredicate();
     [[nodiscard]] PlotCasting::AlivePredicate ViablePredicate();
 
+    // Whether this NPC's race is a child race. Build leaves every child out
+    // of the population, so none can be cast in any role.
+    [[nodiscard]] bool IsChild(RE::TESNPC* npc);
+
     // --- Tenure: the one part of a member's standing that MOVES --------
     //
     // Everything else here is authored data read once. Who currently

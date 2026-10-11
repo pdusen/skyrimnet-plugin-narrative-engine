@@ -7,6 +7,7 @@
 #include <TravelGraph.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <unordered_map>
@@ -423,6 +424,54 @@ namespace NarrativeEngine::PlotPopulation
             }
             return 0;
         }
+        // Vanilla's Job factions, by EditorID. Mods put their own NPCs in these
+        // too, so a modded merchant counts as a merchant without a list of
+        // ours to keep up. Every one of these EditorIDs is in Skyrim.esm.
+        constexpr std::array<const char*, 15> kTradeJobs{"JobApothecaryFaction",
+                                                         "JobBlacksmithFaction",
+                                                         "JobFarmerFaction",
+                                                         "JobFenceFaction",
+                                                         "JobFletcherFaction",
+                                                         "JobHostlerFaction",
+                                                         "JobInnkeeperFaction",
+                                                         "JobInnServer",
+                                                         "JobJewelerFaction",
+                                                         "JobLumberjackFaction",
+                                                         "JobMerchantFaction",
+                                                         "JobMinerFaction",
+                                                         "JobSpellFaction",
+                                                         "JobStreetVendorFaction",
+                                                         "JobTailorFaction"};
+        constexpr std::array<const char*, 4> kAuthorityJobs{"JobJarlFaction",
+                                                            "JobStewardFaction",
+                                                            "JobGuardCaptainFaction",
+                                                            "JobOrcChiefFaction"};
+
+        template <std::size_t N> std::vector<RE::TESFaction*> ResolveJobs(const std::array<const char*, N>& ids)
+        {
+            std::vector<RE::TESFaction*> out;
+            for (const char* id : ids) {
+                if (auto* form = RE::TESForm::LookupByEditorID<RE::TESFaction>(id)) {
+                    out.push_back(form);
+                } else {
+                    logger::warn("PlotPopulation: job faction {} did not resolve", id);
+                }
+            }
+            return out;
+        }
+
+        bool InAnyOf(RE::TESNPC* npc, const std::vector<RE::TESFaction*>& factions)
+        {
+            for (auto* faction : factions) {
+                bool isMember = false;
+                RankIn(npc, faction, isMember);
+                if (isMember) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         // Authored competence, normalised. Level is the broad signal;
         // the three skills are the ones PlotResolution::Suitability
         // actually consults, and reading only those keeps this a short
@@ -488,10 +537,22 @@ namespace NarrativeEngine::PlotPopulation
         g_population.members.clear();
         g_population.members.reserve(participants.size());
 
+        const auto tradeJobs = ResolveJobs(kTradeJobs);
+        const auto authorityJobs = ResolveJobs(kAuthorityJobs);
+
         std::size_t withFactions = 0;
+        std::size_t children = 0;
         for (const RE::FormID npcId : participants) {
             const auto* participant = GossipGraph::Find(npcId);
             if (participant == nullptr) {
+                continue;
+            }
+
+            // NOT CHILDREN, in any role. Gossip keeps them -- children hear
+            // and repeat things -- but nobody masterminds a scheme at nine,
+            // sends a child to watch a house, or aims one at them.
+            if (IsChild(RE::TESForm::LookupByID<RE::TESNPC>(npcId))) {
+                ++children;
                 continue;
             }
 
@@ -503,6 +564,8 @@ namespace NarrativeEngine::PlotPopulation
 
             if (auto* npcForm = RE::TESForm::LookupByID<RE::TESNPC>(npcId)) {
                 member.skills = ReadSkills(npcForm);
+                member.tradesForLiving = InAnyOf(npcForm, tradeJobs);
+                member.authority = InAnyOf(npcForm, authorityJobs);
 
                 // Gossip's size-filtered set is the FALLBACK: membership
                 // of one of these says "belongs to an organisation" and
@@ -582,10 +645,20 @@ namespace NarrativeEngine::PlotPopulation
         }
 
         g_ready = true;
-        logger::info("PlotPopulation: {} member(s), {} in an admitted faction, {} admitted faction(s)",
+        logger::info("PlotPopulation: {} member(s), {} in an admitted faction, {} admitted faction(s), {} "
+                     "child(ren) left out",
                      g_population.members.size(),
                      withFactions,
-                     factionForms.size());
+                     factionForms.size(),
+                     children);
+    }
+
+    bool IsChild(RE::TESNPC* npc)
+    {
+        // The race's own flag, read off its data rather than through
+        // TESRace::IsChildRace, which is out of line and adds nothing.
+        const auto* race = npc != nullptr ? npc->GetRace() : nullptr;
+        return race != nullptr && race->data.flags.all(RE::RACE_DATA::Flag::kChild);
     }
 
     PlotCasting::SeatedPredicate SeatedPredicate()
