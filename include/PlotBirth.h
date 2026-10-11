@@ -121,6 +121,10 @@ namespace NarrativeEngine::PlotBirth
         // The concrete thing this one scheme exists to achieve: a
         // stepping stone toward the agenda that does not reach it.
         std::string scheme;
+
+        // The id of the verb the scheme ends in: the step that, once done,
+        // means the scheme is done. Always one PlotVerbs::Find knows.
+        std::string goal;
     };
 
     struct TextLimits

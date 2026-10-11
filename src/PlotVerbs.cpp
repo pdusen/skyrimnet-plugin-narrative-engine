@@ -126,6 +126,21 @@ namespace NarrativeEngine::PlotVerbs
         return "someone";
     }
 
+    std::string Generic(const Verb& verb)
+    {
+        auto text = Render(
+            verb.Text(Template::Dashboard),
+            [](std::string_view) { return std::nullopt; },
+            [&verb](std::string_view name) {
+                const auto* slot = FindSlot(verb, name);
+                return std::string{slot != nullptr ? Unfilled(slot->kind) : "someone"};
+            });
+        if (!text.empty()) {
+            text[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(text[0])));
+        }
+        return text;
+    }
+
     const Slot* FindSlot(const Verb& verb, std::string_view name) noexcept
     {
         for (std::size_t i = 0; i < verb.slotCount; ++i) {

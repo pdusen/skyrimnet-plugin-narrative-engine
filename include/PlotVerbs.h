@@ -473,6 +473,11 @@ namespace NarrativeEngine::PlotVerbs
                                      const Lookup& lookup,
                                      const std::function<std::string(std::string_view name)>& missing);
 
+    // A verb's dashboard sentence with every slot unfilled: "Someone steals
+    // something from someone." Says what the verb does without saying to
+    // whom, which is how a verb is offered as a kind of step.
+    [[nodiscard]] std::string Generic(const Verb& verb);
+
     // What an unfilled slot of each kind reads as.
     [[nodiscard]] std::string_view Unfilled(SlotKind kind) noexcept;
 

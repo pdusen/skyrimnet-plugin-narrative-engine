@@ -82,6 +82,11 @@ namespace NarrativeEngine::PlotPlanning
         // The mastermind's biography sections, as PlotBirth renders them.
         nlohmann::json bio = nlohmann::json::object();
 
+        // The verb the scheme ends in, when the call that wrote the scheme
+        // also chose it. Planned last without asking, if it can be filled;
+        // empty, or unfillable, asks the goal question instead.
+        std::string goal;
+
         PlotCasting::AlivePredicate alive;
         std::function<std::string(RE::FormID)> occupation;
 

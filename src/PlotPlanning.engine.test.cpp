@@ -169,11 +169,13 @@ namespace
         PlotCasting::Population population = Province();
         PlotMenus::World world = World();
         std::vector<PlotModel::Step> history;
+        std::string goal;
         Script script;
 
         PlotPlanning::Outcome Run(std::size_t maxSteps = PlotPlanning::kPlanCap)
         {
             PlotPlanning::Input input{population, world};
+            input.goal = goal;
             input.mastermind = kBoss;
             input.mastermindName = "Olfrid";
             input.ambition = "He means to own Whiterun.";
@@ -256,6 +258,35 @@ TEST_CASE("PlotPlanning asks for the goal first", "[PlotPlanning][engine]")
             REQUIRE(out.plan[1].actor == 0);
             REQUIRE(out.plan[1].FindSlot("mastermind")->form == kBoss);
             REQUIRE(out.plan[1].target == kTrader);
+        }
+    }
+
+    SECTION("when the scheme was written to end in a goal")
+    {
+        f.goal = "watch";
+        f.script.answers = {"c1", "p1"};
+        const auto out = f.Run();
+
+        SECTION("should plan it last without asking for it")
+        {
+            REQUIRE(f.script.Templates() == std::vector<std::string>{kSlot, kPrepare});
+            REQUIRE(out.ok);
+            REQUIRE(out.plan.back().verb == "watch");
+        }
+    }
+
+    SECTION("when the goal the scheme ends in cannot be filled")
+    {
+        // Nobody has standing in a rostered faction, so nobody can be bribed.
+        f.goal = "bribe";
+        f.script.answers = {"watch", "c1", "p1"};
+        const auto out = f.Run();
+
+        SECTION("should ask for a goal instead")
+        {
+            REQUIRE(f.script.asked[0].templateName == kGoal);
+            REQUIRE(out.ok);
+            REQUIRE(out.plan.back().verb == "watch");
         }
     }
 
@@ -604,6 +635,46 @@ TEST_CASE("PlotBirth::SchemeOpensWithVerb", "[PlotBirth][engine]")
             REQUIRE_FALSE(SchemeOpensWithVerb("Korir plans to expose the College"));
             REQUIRE_FALSE(SchemeOpensWithVerb("To ruin the Gray-Manes"));
             REQUIRE_FALSE(SchemeOpensWithVerb(""));
+        }
+    }
+}
+
+TEST_CASE("PlotBirth::ParseAmbition reads the goal", "[PlotBirth][engine]")
+{
+    using NarrativeEngine::PlotBirth::ParseAmbition;
+    using NarrativeEngine::PlotBirth::TextLimits;
+
+    const auto parse = [](const std::string& goal) {
+        nlohmann::json j;
+        j["reasoning"] = "x";
+        j["ambition"] = "He means to own Whiterun.";
+        j["scheme"] = "denounce Hulda to the jarl for selling skooma";
+        if (!goal.empty()) {
+            j["goal"] = goal;
+        }
+        return ParseAmbition(j.dump(), TextLimits{});
+    };
+
+    SECTION("when the goal is a verb the manifest has")
+    {
+        const auto out = parse("denounce");
+
+        SECTION("should keep it")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(out.goal == "denounce");
+        }
+    }
+
+    SECTION("when the goal is not a verb the manifest has, or is missing")
+    {
+        SECTION("should refuse the answer, saying why")
+        {
+            const auto unknown = parse("document");
+            REQUIRE_FALSE(unknown.ok);
+            REQUIRE(unknown.rejection.find("document") != std::string::npos);
+            REQUIRE(unknown.scheme.empty());
+            REQUIRE_FALSE(parse("").ok);
         }
     }
 }

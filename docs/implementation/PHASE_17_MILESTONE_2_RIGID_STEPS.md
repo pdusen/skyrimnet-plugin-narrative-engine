@@ -1009,7 +1009,7 @@ preparation in front of the step it serves. What was still wrong traces mostly t
 
 ### Step 13 — The scheme is written in the plan's vocabulary
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1021,6 +1021,24 @@ question; a re-plan after a failure still asks, since the history changes what c
 
 **Verification:** a parser suite asserts a known `goal` is kept and an unknown or missing one is refused, and the
 planning suite asserts a given goal skips the goal question and is planned last.
+
+Done. `narrative_engine_plot_ambition.prompt` gains a "What a scheme can end in" section listing every verb by id
+and generic sentence and every pool item, and asks for `goal`; `ParseAmbition` refuses a goal `PlotVerbs::Find` does
+not know, which `AskTwice` puts back to the model once with the reason. `PlotPlanning::Input::goal` carries it into
+planning. 464 tests pass, one of them new, with two new sections in the planning suite.
+
+**The goal is chosen by the call that can reason.** The ambition call is a full chat model that already decides what
+the scheme is; deciding what it ends in is the same judgement. Choosing the goal there, and writing the scheme as that
+act, removes the one planning question that asked the decision model to judge rather than match.
+
+**A goal that cannot be filled falls back to asking.** If the verb the scheme ends in has nobody to fill a slot --
+nobody bribable, say -- planning asks the goal question as before rather than throwing the birth away.
+
+**The example in the prompt names no one.** "Denounce the thane to the jarl for taking bribes" shows the shape
+without handing every mastermind the same thane and jarl to reach for.
+
+**`PlotVerbs::Generic` is the verb as a kind of step.** It was `VerbLine` inside planning; the ambition context needs
+the same sentence, so it moved beside the other renderers.
 
 ### Step 14 — A denunciation goes to the mark's own court
 

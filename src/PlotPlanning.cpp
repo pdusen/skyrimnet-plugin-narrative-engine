@@ -45,20 +45,6 @@ namespace NarrativeEngine::PlotPlanning
             return text;
         }
 
-        // A verb as an option on the list: its dashboard sentence with
-        // every slot unfilled, which says what the verb does without
-        // saying to whom.
-        std::string VerbLine(const PlotVerbs::Verb& verb)
-        {
-            return Capitalised(PlotVerbs::Render(
-                verb.Text(PlotVerbs::Template::Dashboard),
-                [](std::string_view) { return std::nullopt; },
-                [&verb](std::string_view name) {
-                    const auto* slot = PlotVerbs::FindSlot(verb, name);
-                    return std::string{slot != nullptr ? PlotVerbs::Unfilled(slot->kind) : "someone"};
-                }));
-        }
-
         std::string_view OutcomePhrase(PlotModel::StepOutcome outcome)
         {
             switch (outcome) {
@@ -513,7 +499,8 @@ namespace NarrativeEngine::PlotPlanning
                 return Fill::Done;
             }
 
-            // 1. The step that accomplishes the scheme.
+            // 1. The step that accomplishes the scheme: the one the scheme
+            // was written to end in, or else asked for.
             Fill Goal()
             {
                 std::vector<const PlotVerbs::Verb*> offered;
@@ -524,7 +511,7 @@ namespace NarrativeEngine::PlotPlanning
                     }
                     if (Fillable(verb, {}, {}, 0)) {
                         offered.push_back(&verb);
-                        options.push_back({{"key", verb.id}, {"line", VerbLine(verb)}});
+                        options.push_back({{"key", verb.id}, {"line", PlotVerbs::Generic(verb)}});
                     }
                 }
                 if (offered.empty()) {
@@ -532,23 +519,30 @@ namespace NarrativeEngine::PlotPlanning
                     return Fill::Unfillable;
                 }
 
-                auto ctx = Base();
-                ctx["options"] = std::move(options);
-                const auto result = Decide(kGoalTemplate, ctx);
-                if (!result.ok) {
-                    error_ = result.error;
-                    return Fill::Failed;
-                }
-                const auto key = result.Choice(kGoalQuestion);
                 const PlotVerbs::Verb* verb = nullptr;
                 for (const auto* candidate : offered) {
-                    if (candidate->id == key) {
+                    if (candidate->id == input_.goal) {
                         verb = candidate;
                     }
                 }
                 if (verb == nullptr) {
-                    rejection_ = std::format("the goal was answered '{}', which was not offered", key);
-                    return Fill::Unfillable;
+                    auto ctx = Base();
+                    ctx["options"] = std::move(options);
+                    const auto result = Decide(kGoalTemplate, ctx);
+                    if (!result.ok) {
+                        error_ = result.error;
+                        return Fill::Failed;
+                    }
+                    const auto key = result.Choice(kGoalQuestion);
+                    for (const auto* candidate : offered) {
+                        if (candidate->id == key) {
+                            verb = candidate;
+                        }
+                    }
+                    if (verb == nullptr) {
+                        rejection_ = std::format("the goal was answered '{}', which was not offered", key);
+                        return Fill::Unfillable;
+                    }
                 }
 
                 Step goal;

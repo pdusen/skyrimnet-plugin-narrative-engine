@@ -234,6 +234,21 @@ namespace NarrativeEngine::PlotBirth
             ctx["mastermind"] = std::move(person);
 
             ctx["memories"] = MemoriesOf(RefOf(boss.npc));
+
+            // What a scheme can be made of. The scheme is written to end in
+            // one of these verbs and to name objects only as the pool does,
+            // because planning can build nothing else: a scheme to
+            // "document" something was planned as whichever verb came nearest.
+            nlohmann::json verbs = nlohmann::json::array();
+            for (const auto& verb : PlotVerbs::kVerbs) {
+                verbs.push_back({{"id", verb.id}, {"line", PlotVerbs::Generic(verb)}});
+            }
+            ctx["verbs"] = std::move(verbs);
+            nlohmann::json items = nlohmann::json::array();
+            for (const auto& item : PlotMenus::CurrentWorld().items) {
+                items.push_back(item.displayName);
+            }
+            ctx["items"] = std::move(items);
             return ctx;
         }
 
@@ -460,6 +475,7 @@ namespace NarrativeEngine::PlotBirth
         input.standing = StandingPhrase(BestStanding(*boss));
         input.ambition = ambition.ambition;
         input.scheme = ambition.scheme;
+        input.goal = ambition.goal;
         input.bio = BioSections(boss->npc, boss->name, "steps");
         input.alive = PlotPopulation::AlivePredicate();
         input.occupation = ShortOccupation;

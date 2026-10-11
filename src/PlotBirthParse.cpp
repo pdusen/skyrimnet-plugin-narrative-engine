@@ -3,6 +3,7 @@
 #include <EvaluationPipeline.h>
 #include <LLMTextSanitizer.h>
 #include <PlotStepParse.h>
+#include <PlotVerbs.h>
 
 #include <nlohmann/json.hpp>
 
@@ -191,6 +192,23 @@ namespace NarrativeEngine::PlotBirth
             return out;
         }
         if (!ReadText(json, "scheme", limits.maxScheme, out.scheme, out.rejection)) {
+            return out;
+        }
+
+        // The kind of step the scheme ends in, from the list it was shown.
+        // Planning puts it last and builds back from it, so a goal the
+        // manifest does not have is a plan with nothing to stand on.
+        constexpr std::size_t kMaxGoal = 40;
+        if (!ReadText(json, "goal", kMaxGoal, out.goal, out.rejection)) {
+            out.ambition.clear();
+            out.scheme.clear();
+            return out;
+        }
+        if (PlotVerbs::Find(out.goal) == nullptr) {
+            out.rejection = "the goal '" + out.goal + "' is not one of the kinds of step listed; give one of their ids";
+            out.ambition.clear();
+            out.scheme.clear();
+            out.goal.clear();
             return out;
         }
 

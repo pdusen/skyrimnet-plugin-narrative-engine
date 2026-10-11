@@ -9,6 +9,9 @@
        occupation } — the mastermind's biography, read straight from their
        bio file by CharacterBios. Plain text, already rendered; no
        character-profile decorator is involved.
+     verbs [{ id, line }] — every kind of step a plan is made of, each as
+       its generic sentence. The scheme ends in one of them.
+     items [string] — every object a step can involve, as it is said.
    NOTE: no fenced blocks and no literal braces anywhere in this file; both
    break the render. See docs/CUSTOM_PROMPTS.md. #}
 [ system ]
@@ -47,6 +50,29 @@ holding you back, quietly learning something you are not supposed to
 know — all of these are things a scheme can be for, and for most people
 they fit better than stealing an object does.
 
+## What a scheme can end in
+
+A scheme is carried out as a few steps, and every step is one of the
+kinds below. The scheme's last step -- the one that, once done, means the
+scheme is done -- must be one of them, so choose that kind first and
+write the scheme as that act:
+
+{% for v in verbs %}- {{ v.id }}: {{ v.line }}
+{% endfor %}
+So "document the bribes a thane takes" cannot be a scheme, because
+nothing here documents anything, while "denounce the thane to the jarl
+for taking bribes", with both of them named, can. Name every person that
+last step involves: whom it is done to, and for a delivery or a
+denunciation, to whom. Choose them as this person would: a denunciation
+goes to someone with authority over the person denounced, and a thing is
+delivered to whoever will make use of it, never to the person it is
+meant to be used against.
+
+If the scheme turns on an object, it must be one of these, named as it
+is written here:
+
+{% for i in items %}- {{ i }}
+{% endfor %}
 ## Not a quest that already exists
 
 The scheme must be something this person is doing OF THEIR OWN ACCORD,
@@ -81,6 +107,8 @@ object.
 - `ambition` — one sentence, third person, about twenty words. The
   lifetime thing, written as a complete sentence with a pronoun subject:
   "She means to own everyone in the Rift who matters."
+- `goal` — the id, exactly as listed under "What a scheme can end in",
+  of the kind of step the scheme ends in.
 - `scheme` — **not** a sentence about them. One short line naming the
   concrete thing to be done, in the same voice an instruction is written
   in, and no more than fifteen words. The shape, which is a grammar and
@@ -95,8 +123,9 @@ object.
   remembers, after the words "as part of my plan to", so it has to read
   as the end of that sentence.
 
-  Take the verb from what this person is actually doing, rather than
-  from these instructions.
+  The scheme is its last step said plainly, so its verb is that step's:
+  a scheme whose goal is `win_over` opens with something like "win over"
+  or "turn", and one whose goal is `steal` with "steal" or "take".
 
   Concrete enough that you could tell whether it had worked: name the
   person, the place or the thing it turns on. This is what the scheme
@@ -112,7 +141,9 @@ this person would actually know.
   the JSON object.
 - The scheme MUST NOT restage a quest that already exists in the game.
 - Neither the ambition nor the scheme may involve the player.
-- Return only the keys `reasoning`, `ambition` and `scheme`.
+- Return only the keys `reasoning`, `ambition`, `goal` and `scheme`.
+- `goal` MUST be one of the ids listed under "What a scheme can end in".
+  Any other word is thrown away.
 - `scheme` must not be a restatement of `ambition`. Identical sentences
   are thrown away.
 - `scheme` MUST open with a plain verb. One that opens with a name, a
