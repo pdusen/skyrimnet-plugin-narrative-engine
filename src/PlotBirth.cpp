@@ -5,11 +5,16 @@
 #include <LLMTextSanitizer.h>
 #include <logger.h>
 #include <PlotLog.h>
+#include <PlotMenus.h>
+#include <PlotPlanning.h>
+#include <PlotPopulation.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 
 #include <nlohmann/json.hpp>
 
+#include <atomic>
+#include <cctype>
 #include <cstdio>
 
 // The engine-bound half of plot birth: gathering what each of the three
@@ -22,9 +27,15 @@ namespace NarrativeEngine::PlotBirth
     {
         constexpr const char* kCastPrompt = "narrative_engine_plot_cast";
         constexpr const char* kAmbitionPrompt = "narrative_engine_plot_ambition";
-        constexpr const char* kPlanPrompt = "narrative_engine_plot_steps";
 
-        // All three go to the DIRECTOR variant.
+        // Set the first time SkyrimNet says no decision can be answered this
+        // session -- no decision provider, decisions switched off, or a
+        // SkyrimNet too old to have the API. Planning is made of decisions,
+        // so every birth after that would spend two chat calls and then
+        // fail; this stops them before the first.
+        std::atomic<bool> g_cannotDecide{false};
+
+        // Both chat calls go to the DIRECTOR variant.
         //
         // Composition used to run on the composer, on the argument that
         // inventing a scheme is creative writing. It is not, quite: each
@@ -227,43 +238,28 @@ namespace NarrativeEngine::PlotBirth
         }
 
         // --- Call 3 -------------------------------------------------------
-
-        nlohmann::json PlanContext(const PlotCasting::Member& boss,
-                                   const std::string& ambition,
-                                   const std::string& scheme)
+        //
+        // A candidate's occupation, as one short phrase for their line on a
+        // decision's list: the first sentence of the biography's occupation
+        // section, cut at a word if it runs long.
+        std::string ShortOccupation(RE::FormID npc)
         {
-            nlohmann::json ctx;
-
-            ctx["bio"] = BioSections(boss.npc, boss.name, "steps");
-
-            nlohmann::json person = nlohmann::json::object();
-            person["name"] = boss.name;
-            person["hold"] = HoldNameOf(boss.hold);
-            person["standing"] = StandingPhrase(BestStanding(boss));
-            ctx["mastermind"] = std::move(person);
-
-            ctx["ambition"] = ambition;
-            ctx["scheme"] = scheme;
-
-            // The manifest, VERBATIM from the model rather than restated
-            // in the template. A prompt that lists step types by hand is
-            // a second copy of the enum, and the day one gains a member
-            // the two disagree silently.
-            nlohmann::json stepTypes = nlohmann::json::array();
-            for (const auto& traits : PlotModel::kStepTypes) {
-                nlohmann::json entry = nlohmann::json::object();
-                entry["id"] = traits.id;
-                entry["description"] = traits.description;
-                stepTypes.push_back(std::move(entry));
+            std::string text = CharacterBios::For(npc).occupation;
+            if (const auto stop = text.find_first_of(".\n"); stop != std::string::npos) {
+                text.resize(stop);
             }
-            ctx["step_types"] = std::move(stepTypes);
-
-            // No min_steps / max_steps. Offering the model a range is how
-            // three plots in a row came back at exactly four steps: the
-            // midpoint of any stated range is where it lands. The bound
-            // is enforced in ParsePlan, where a violation costs the
-            // response rather than shaping it.
-            return ctx;
+            constexpr std::size_t kMax = 90;
+            if (text.size() > kMax) {
+                const auto space = text.rfind(' ', kMax);
+                text.resize(space != std::string::npos ? space : kMax);
+            }
+            while (!text.empty() && (text.back() == ' ' || text.back() == ',')) {
+                text.pop_back();
+            }
+            if (!text.empty()) {
+                text[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(text[0])));
+            }
+            return text;
         }
 
         // Every stage reports the same way, so a rejected birth says
@@ -341,6 +337,17 @@ namespace NarrativeEngine::PlotBirth
         }
     } // namespace
 
+    bool CanDecide() noexcept
+    {
+        return !g_cannotDecide;
+    }
+
+    void OnSessionStart() noexcept
+    {
+        // A user who set up a decision provider and reloaded deserves plots.
+        g_cannotDecide = false;
+    }
+
     bool IsCastable(RE::FormID npc)
     {
         return CharacterBios::Has(npc);
@@ -403,15 +410,33 @@ namespace NarrativeEngine::PlotBirth
         }
 
         // --- 3. How --------------------------------------------------------
-        auto steps = AskTwice<PlanOutcome>(
-            pt,
-            kPlanPrompt,
-            [&] { return PlanContext(*boss, ambition.ambition, ambition.scheme); },
-            [](const std::string& response) { return ParsePlan(response, PlanLimits{}); },
-            boss->name,
-            "steps");
+        //
+        // A sequence of decisions rather than one prompt: which verb comes
+        // next, then what fills each of its slots. See PlotPlanning.
+        PlotPlanning::Input input{population, PlotMenus::CurrentWorld()};
+        input.mastermind = boss->npc;
+        input.mastermindName = boss->name;
+        input.standing = StandingPhrase(BestStanding(*boss));
+        input.ambition = ambition.ambition;
+        input.scheme = ambition.scheme;
+        input.bio = BioSections(boss->npc, boss->name, "steps");
+        input.alive = PlotPopulation::AlivePredicate();
+        input.occupation = ShortOccupation;
+
+        const auto steps = PlotPlanning::Plan(input, [&pt](std::string_view name, const nlohmann::json& ctx) {
+            return SkyrimNetAPI::SendCustomDecision(pt, std::string{name}, ctx.dump());
+        });
         if (!steps.ok) {
-            Rejected(boss->name, "steps", steps.rejection);
+            if (PlotPlanning::SessionCannotDecide(steps.error)) {
+                // Said once, here, and then never again this session: the
+                // latch stops every later birth before it spends a call.
+                g_cannotDecide = true;
+                logger::warn("PlotBirth: SkyrimNet answered '{}' to a decision request. Plots are planned by "
+                             "decision and need a decision provider set up in SkyrimNet (Beta 26 or later); "
+                             "no plot will be born this session.",
+                             steps.error);
+            }
+            Rejected(boss->name, "steps", !steps.error.empty() ? "decision failed: " + steps.error : steps.rejection);
             return false;
         }
 
@@ -422,7 +447,7 @@ namespace NarrativeEngine::PlotBirth
         plot.mastermindName = boss->name;
         plot.ambition = ambition.ambition;
         plot.scheme = ambition.scheme;
-        plot.plan = std::move(steps.plan);
+        plot.plan = steps.plan;
         return true;
     }
 } // namespace NarrativeEngine::PlotBirth

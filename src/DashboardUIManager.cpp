@@ -21,6 +21,7 @@
 #include <PlotFactionRoster.h>
 #include <PlotState.h>
 #include <PlotTick.h>
+#include <PlotVerbs.h>
 #include <PrismaUI.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -1525,11 +1526,14 @@ namespace NarrativeEngine::DashboardUIManager
                     // prose is unreadable at a glance, and the glance is
                     // what the chain is for.
                     {"label", PlotModel::Label(step)},
-                    // The model's own caption when it wrote one, and
-                    // the type verb when it did not -- an older plan, or
-                    // an answer that omitted it.
-                    {"type", step.label.empty() ? std::string{PlotModel::Verb(step.type)} : step.label},
-                    {"description", step.description},
+                    // A verb step's own caption; otherwise the model's
+                    // caption when it wrote one, and the type verb when
+                    // it did not -- an older plan, or an answer that
+                    // omitted it.
+                    {"type", PlotVerbs::Caption(step)},
+                    // A verb step's sentence is its label; there is no
+                    // prose behind it to show instead.
+                    {"description", step.verb.empty() ? step.description : PlotModel::Label(step)},
                     {"state", state},
                     {"outcome", PlotModel::StepOutcomeId(step.outcome)},
                     {"actor", step.actorName},

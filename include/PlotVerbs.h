@@ -427,6 +427,10 @@ namespace NarrativeEngine::PlotVerbs
     // of its kind. Empty for a step with no verb.
     [[nodiscard]] std::string RenderStep(const PlotModel::Step& step, Template t, std::string_view scheme = {});
 
+    // The caption under a step's node: its verb's, the model's own for a
+    // prose step that wrote one, or the resolution profile's verb.
+    [[nodiscard]] std::string Caption(const PlotModel::Step& step);
+
     // The concession memory for a plot whose scheme this is.
     [[nodiscard]] std::string RenderConceded(std::string_view scheme);
 } // namespace NarrativeEngine::PlotVerbs

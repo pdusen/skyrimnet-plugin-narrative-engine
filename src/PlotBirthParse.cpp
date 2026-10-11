@@ -203,6 +203,19 @@ namespace NarrativeEngine::PlotBirth
         // Compared literally rather than fuzzily on purpose: a real
         // similarity measure would need a threshold nobody has measured,
         // and this catches the case that actually happens.
+        // The scheme is quoted after "as part of my plan to" in every
+        // dispatch memory the plot writes, so it has to be an instruction.
+        // "He is secretly funding an excavation" reached the co-save in an
+        // audited run; as a memory it would read "my plan to he is ...".
+        if (!SchemeOpensWithVerb(out.scheme)) {
+            out.rejection = "the scheme must open with a plain verb, as an instruction -- not a name, a pronoun or "
+                            "an article: '"
+                            + out.scheme + "'";
+            out.ambition.clear();
+            out.scheme.clear();
+            return out;
+        }
+
         if (out.ambition == out.scheme) {
             out.ambition.clear();
             out.scheme.clear();
@@ -215,86 +228,51 @@ namespace NarrativeEngine::PlotBirth
         return out;
     }
 
-    PlanOutcome ParsePlan(const std::string& response, const PlanLimits& limits)
+    bool SchemeOpensWithVerb(std::string_view scheme)
     {
-        PlanOutcome out;
-
-        nlohmann::json json;
-        if (!ReadObject(response, json)) {
-            out.rejection = "response was not a JSON object";
-            return out;
-        }
-
-        const auto planIt = json.find("plan");
-        if (planIt == json.end() || !planIt->is_array()) {
-            out.rejection = "response carried no 'plan' array";
-            return out;
-        }
-        if (planIt->size() < limits.minSteps) {
-            out.rejection = "plan had " + std::to_string(planIt->size()) + " step(s), fewer than the minimum of "
-                            + std::to_string(limits.minSteps);
-            return out;
-        }
-        if (planIt->size() > limits.maxSteps) {
-            out.rejection = "plan had " + std::to_string(planIt->size()) + " step(s), more than the maximum of "
-                            + std::to_string(limits.maxSteps);
-            return out;
-        }
-
-        std::vector<PlotModel::Step> plan;
-        plan.reserve(planIt->size());
-
-        for (std::size_t i = 0; i < planIt->size(); ++i) {
-            const auto& raw = (*planIt)[i];
-            const auto where = "step " + std::to_string(i);
-            if (!raw.is_object()) {
-                out.rejection = where + " was not an object";
-                return out;
+        // The first two words, lower-cased, letters only.
+        std::vector<std::string> words;
+        std::string current;
+        for (const char c : scheme) {
+            if (std::isspace(static_cast<unsigned char>(c))) {
+                if (!current.empty()) {
+                    words.push_back(std::move(current));
+                    current.clear();
+                    if (words.size() == 2) {
+                        break;
+                    }
+                }
+            } else if (std::isalpha(static_cast<unsigned char>(c))) {
+                current.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
             }
-
-            const auto typeIt = raw.find("type");
-            if (typeIt == raw.end() || !typeIt->is_string()) {
-                out.rejection = where + " carried no 'type' string";
-                return out;
-            }
-            // A membership test against the manifest, not a lookup with
-            // a default. An unrecognised type is the model inventing a
-            // verb, and a plot built on one has a step nothing can run.
-            PlotModel::Step step;
-            if (!PlotModel::ParseStepType(typeIt->get<std::string>(), step.type)) {
-                out.rejection =
-                    where + " named step type '" + typeIt->get<std::string>() + "', which is not in the manifest";
-                return out;
-            }
-
-            if (!ReadText(raw, "description", limits.maxDescription, step.description, out.rejection)) {
-                out.rejection = where + ": " + out.rejection;
-                return out;
-            }
-
-            if (!PlotStepParse::ReadRoles(
-                    raw, {limits.maxRoleQuery, limits.maxRoleLabel}, where, step, out.rejection)) {
-                return out;
-            }
-            plan.push_back(std::move(step));
         }
-
-        // The LAST STEP is the one that accomplishes the scheme, and
-        // covering your tracks accomplishes nothing. A plan ending there
-        // is one that never actually reaches what it was for.
-        //
-        // Rejected rather than quietly dropped: deleting the step would
-        // silently rewrite someone's plan, and a model that ended a
-        // scheme on concealment did not understand what the last step is
-        // for.
-        if (plan.back().type == PlotModel::StepType::Conceal) {
-            out.rejection = "the plan ends in 'conceal'; the last step is the one that accomplishes the scheme, "
-                            "and covering your tracks accomplishes nothing";
-            return out;
+        if (!current.empty() && words.size() < 2) {
+            words.push_back(std::move(current));
         }
+        const auto word = [&words](std::size_t index) { return index < words.size() ? words[index] : std::string{}; };
 
-        out.ok = true;
-        out.plan = std::move(plan);
-        return out;
+        const auto first = word(0);
+        if (first.empty()) {
+            return false;
+        }
+        // Words a scheme cannot open with if it is an instruction.
+        static constexpr std::string_view kNotAVerb[] = {"he",  "she", "they",  "it",   "i",     "we",    "you",
+                                                         "his", "her", "their", "its",  "my",    "our",   "the",
+                                                         "a",   "an",  "this",  "that", "these", "those", "to"};
+        for (const auto bad : kNotAVerb) {
+            if (first == bad) {
+                return false;
+            }
+        }
+        // A name followed by what they mean to do: "Korir plans to ...".
+        static constexpr std::string_view kIntends[] = {
+            "is", "was", "will", "has", "had", "plans", "wants", "means", "intends", "would", "could", "must", "seeks"};
+        const auto second = word(1);
+        for (const auto bad : kIntends) {
+            if (second == bad) {
+                return false;
+            }
+        }
+        return true;
     }
 } // namespace NarrativeEngine::PlotBirth

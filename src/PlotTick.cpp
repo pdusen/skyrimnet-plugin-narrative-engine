@@ -580,6 +580,12 @@ namespace NarrativeEngine::PlotTick
 
         void BirthPlot(const PlotThread::Token& pt, PlotState& state, double gameDay)
         {
+            // Planning is made of decisions. A session that cannot answer one
+            // was told so once, when it first failed; asking again would only
+            // spend chat calls on plots that cannot be planned.
+            if (!PlotBirth::CanDecide()) {
+                return;
+            }
             const auto& population = PlotPopulation::Get();
             if (population.members.empty()) {
                 PlotLog::BirthSkipped("the population is empty", 0, 0);
@@ -911,6 +917,8 @@ namespace NarrativeEngine::PlotTick
         // a property of forcing time forward at all, not something the
         // offset should try to paper over by persisting.
         g_forcedAheadGameHours = 0.0;
+
+        PlotBirth::OnSessionStart();
     }
 
     void Poll(const PluginThread::Token&)

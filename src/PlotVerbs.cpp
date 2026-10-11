@@ -160,6 +160,14 @@ namespace NarrativeEngine::PlotVerbs
         return out;
     }
 
+    std::string Caption(const PlotModel::Step& step)
+    {
+        if (const auto* verb = Find(step.verb)) {
+            return std::string{verb->caption};
+        }
+        return step.label.empty() ? std::string{PlotModel::Verb(step.type)} : step.label;
+    }
+
     std::string RenderConceded(std::string_view scheme)
     {
         const auto phrase = SchemePhrase(scheme);

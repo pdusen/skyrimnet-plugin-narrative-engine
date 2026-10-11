@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <PlotCasting.h>
@@ -136,68 +137,24 @@ namespace NarrativeEngine::PlotBirth
     [[nodiscard]] AmbitionOutcome ParseAmbition(const std::string& response, const TextLimits& limits);
 
     // --- Call 3: how ------------------------------------------------------
+    //
+    // No longer a prompt with a parser. The plan is laid out by decisions,
+    // verb by verb and slot by slot; see PlotPlanning.
 
-    struct PlanOutcome
-    {
-        bool ok = false;
-        std::string rejection;
-        std::vector<PlotModel::Step> plan;
-    };
-
-    struct PlanLimits
-    {
-        // The whole plan. One step is an errand, not a scheme.
-        //
-        // NEITHER BOUND IS STATED IN THE PROMPT, and both have been
-        // stated at some point. A range anchors hardest -- offering "2
-        // to 6" produced 4, 4, 4, the midpoint every time -- but a bare
-        // ceiling anchors too: naming six produced 6, 6, 4 on the run
-        // after it. The prompt now says only "take as many steps as this
-        // scheme needs", and these exist to catch an answer that has
-        // gone wrong rather than to shape one that has not.
-        //
-        // The ceiling is correspondingly generous. Ten is not a target,
-        // it is the point past which a plan has stopped being a scheme
-        // and become a list.
-        std::size_t minSteps = 2;
-        std::size_t maxSteps = 10;
-        // Asked for at about fifteen words. Same reasoning as the two
-        // above: a generous ceiling, not a style rule.
-        //
-        // 200 rather than 160, which is what it was, because 160 was not
-        // generous enough to be that. A whole plan for Korir -- five
-        // steps and the call that wrote them -- was discarded because
-        // one description came to 161 characters. Rejection here throws
-        // away everything, so the ceiling has to sit where only an
-        // answer that has genuinely gone wrong reaches it.
-        //
-        // 200 is also PlotAdapt::Limits::maxDescription, whose comment
-        // already claimed to track this one. A revised step being
-        // allowed to say more than an original was never intended.
-        std::size_t maxDescription = 200;
-
-        // A role's search sentence. Generous, like the others: the
-        // prompt asks for it to be no narrower than the step requires,
-        // and this is here to stop an essay reaching the index rather
-        // than to enforce that.
-        std::size_t maxRoleQuery = 200;
-
-        // A role's fallback label, asked for at one to three words. This
-        // one is TIGHT on purpose, because unlike the fields above the
-        // label is rendered directly into a step's title where a long
-        // string does not fit -- and a model that answers a whole clause
-        // here has misread the field rather than merely overrun it.
-        std::size_t maxRoleLabel = 40;
-    };
-
-    [[nodiscard]] PlanOutcome ParsePlan(const std::string& response, const PlanLimits& limits);
+    // A scheme as the dispatch memories quote it: "as part of my plan to
+    // {scheme}". True when the scheme opens with a verb, as the ambition
+    // prompt asks; false for one that opens with a pronoun, an article, or a
+    // name followed by what they mean to do ("Korir plans to ..."), each of
+    // which would read as broken grammar in every memory the plot writes.
+    [[nodiscard]] bool SchemeOpensWithVerb(std::string_view scheme);
 
     // --- The engine-bound half --------------------------------------------
 
-    // Run all three calls over `shortlist` and fill `plot` in, including
-    // which of the shortlist ended up masterminding it.
+    // Run the two chat calls and the planning decisions over `shortlist`
+    // and fill `plot` in, including which of the shortlist ended up
+    // masterminding it.
     //
-    // BLOCKS on the plot worker, three times, which is the point:
+    // BLOCKS on the plot worker, call after call, which is the point:
     // nothing else runs there, so there is nobody to yield to and no
     // reason to hand the rest of the work to a callback. Same argument
     // GossipContent makes for its own calls.
@@ -209,6 +166,15 @@ namespace NarrativeEngine::PlotBirth
     // retry, having logged why and at which stage. The caller frees the
     // slot and spends no plot id, so a birth that dies at call 3 costs
     // call budget and nothing else.
+    // False once SkyrimNet has said this session cannot answer a decision.
+    // Every birth plans by decision, so the caller skips birth outright
+    // rather than spending two chat calls on a plot that cannot be planned.
+    [[nodiscard]] bool CanDecide() noexcept;
+
+    // Clears the latch above, so a session with a decision provider newly
+    // set up gets its plots.
+    void OnSessionStart() noexcept;
+
     [[nodiscard]] bool Compose(const PlotThread::Token& pt,
                                const PlotCasting::Population& population,
                                const std::vector<RE::FormID>& shortlist,

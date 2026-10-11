@@ -91,7 +91,9 @@ object.
   The test is the opening word: a plain verb, never a name and never
   "She is" or "He is". This line is shown as the plot's title, directly
   beneath the schemer's name, so a subject in front of it is a word
-  repeated and a word wasted.
+  repeated and a word wasted. It is also quoted in what the schemer later
+  remembers, after the words "as part of my plan to", so it has to read
+  as the end of that sentence.
 
   Take the verb from what this person is actually doing, rather than
   from these instructions.
@@ -113,6 +115,8 @@ this person would actually know.
 - Return only the keys `reasoning`, `ambition` and `scheme`.
 - `scheme` must not be a restatement of `ambition`. Identical sentences
   are thrown away.
+- `scheme` MUST open with a plain verb. One that opens with a name, a
+  pronoun or an article is thrown away.
 [ end system ]
 
 [ user ]

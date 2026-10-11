@@ -552,7 +552,7 @@ either, and they go with it. Biographies themselves stay; they give each candida
 
 ### Step 5 — Planning by decision
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -564,6 +564,41 @@ plan to `{scheme}`".
 **Verification:** a suite drives the loop against scripted decision answers and asserts a plan is built only from
 offered keys, preconditions gate `deliver` and `plant`, `done` ends the plan, the position cap holds, and a
 decision error aborts the birth without spending the slot.
+
+Done. `include/PlotPlanning.h` with `src/PlotPlanning.cpp` lays out a plan; `plot_verb.prompt` and `plot_slot.prompt`
+under `prompts/decisions/narrative_engine/` ask the two questions; `PlotBirth::Compose` plans through them after its
+two chat calls; `narrative_engine_plot_steps.prompt` and `ParsePlan` are deleted. 451 tests pass, three of them new.
+
+**One question per request, not one per independent slot as the design says.** A template that generates several
+question blocks from a loop is not something the Step 2 probe checks; a template with one fixed question and a
+loop-generated option list is. So every slot is its own request, which costs a call per slot rather than per step.
+A slot with exactly one candidate asks nothing, and a bound one asks nothing, which keeps the count down: a
+steal-then-deliver plan asks seven questions in all. If the probe shows loop-generated questions render, folding a
+step's independent slots into one request is a change to `FillSlots` and one template.
+
+**The decision call is a parameter.** `Plan` takes the asking function, so the suite scripts the model's answers in
+order and asserts on what was asked; the plot worker binds it to `SendCustomDecision`. The loop needed no fake DLL.
+
+**Each option is the verb's own dashboard sentence with nothing filled in** -- "Someone steals something from
+someone." -- so the list says what each verb does without a second description to keep in step with the first. The
+plan so far is shown numbered, and a step that has already happened says how it went.
+
+**A planned step's target is its first person slot.** The resolution model sizes a step by its target's importance
+and distance, and holds a conspicuous one while that target is near the player; both need the target the old
+free-text resolution used to supply. Setting it from the slot keeps sizing and the presence gate working unchanged.
+
+**A session that cannot decide stops trying.** The first `unavailable`, `no_decisions_route` or `ai_disabled`
+answer logs one warning saying plots need a decision provider, and every birth after that returns before its first
+chat call. A new session clears it, so setting a provider up and reloading is enough.
+
+**The scheme is now checked to open with a verb.** `SchemeOpensWithVerb` refuses a scheme opening with a pronoun, an
+article or "to", or with a name followed by what its owner means to do ("Korir plans to ..."). The audited run's "He
+is secretly funding a small excavation" is in the suite. The ambition prompt says why the form matters -- every
+dispatch memory quotes it -- and states it as a hard constraint.
+
+**The dashboard captions a verb step with its verb** and shows its rendered sentence behind the node, through
+`PlotVerbs::Caption`. Dispatch is unchanged until Step 6: a verb step is cast by the ladder's weighted draw, since it
+carries no agent description for the old scorer to read.
 
 ### Step 6 — Dispatch by decision
 
