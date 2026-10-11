@@ -31,7 +31,7 @@
 // outranked jarls), and faction nesting fires for 65% of the population
 // once household, location and per-vendor factions are counted.
 //
-// See docs/implementation/PHASE_14_FACTION_PLOTS.md step 7, and
+// See docs/implementation/PHASE_17_FACTION_PLOTS.md step 7, and
 // statics/SKSE/Plugins/NarrativeEngine/PlotFactions.ini for the file
 // itself.
 namespace NarrativeEngine::PlotFactionRoster

@@ -31,7 +31,7 @@
 //     jump cannot queue a year of simulation. Skipped boundaries are
 //     reported rather than swallowed.
 //
-// See docs/implementation/PHASE_14_FACTION_PLOTS.md step 4.
+// See docs/implementation/PHASE_17_FACTION_PLOTS.md step 4.
 namespace NarrativeEngine::PlotSchedule
 {
     struct Decision

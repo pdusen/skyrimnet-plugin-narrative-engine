@@ -19,7 +19,7 @@
 // from a worker thread.
 //
 // See docs/design/FACTION_PLOTS.md Part 1 for the model and
-// docs/implementation/PHASE_14_FACTION_PLOTS.md step 2 for this step.
+// docs/implementation/PHASE_17_FACTION_PLOTS.md step 2 for this step.
 namespace NarrativeEngine::PlotModel
 {
     // THE MANIFEST.

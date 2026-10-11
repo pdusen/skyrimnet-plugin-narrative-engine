@@ -1047,7 +1047,7 @@ namespace NarrativeEngine::Settings
         //
         // The faction-plot background simulation. See
         // docs/design/FACTION_PLOTS.md for the model and
-        // docs/implementation/PHASE_14_FACTION_PLOTS.md for the phase.
+        // docs/implementation/PHASE_17_FACTION_PLOTS.md for the phase.
         //
         // On by default, like gossip. The simulation is the feature;
         // a background sim nobody has switched on generates nothing to

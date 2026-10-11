@@ -1,4 +1,4 @@
-# Phase 14 — Faction Plots
+# Phase 17 — Faction Plots
 
 The first tier-3 background simulation: unique NPCs adopt objectives, plan multi-step schemes toward them,
 delegate the steps to people who owe them something, and adapt when a step goes wrong. Steps resolve over
@@ -10,11 +10,12 @@ LLM authoring that replaces its stub content, and the memory and world-effect ou
 playing. **Player delegation (Phase D) is not in this document** — no offer pool, no errand beat, no quest, no
 ESP surface. Everything here is C++ plus prompts, observable from the log and the dashboard.
 
-> **Doc status: planned, not built.** No step is checked off. Numbers in the settings table are proposed
-> starting points, not measurements: **Step 9 replaces them** with figures from an offline harness, and Step 22
-> checks those against real play. Two design-level questions (the conspicuousness split, and how a step gets
-> caught) are still open in the design doc and are deliberately built behind switches here rather than blocked
-> on.
+> **Doc status: Steps 1–17 complete; Steps 18 and 19 superseded.** How a step is chosen, described and
+> remembered is being rebuilt by [Milestone 2](PHASE_17_MILESTONE_2_RIGID_STEPS.md), which replaces Step 18's
+> validation and Step 19's memory calls. Steps 20–22 still apply after it. Step 9 replaced the settings table's
+> proposed numbers with figures from an offline harness, and Step 22 checks those against real play. Two
+> design-level questions (the conspicuousness split, and how a step gets caught) are still open in the design
+> doc and are deliberately built behind switches here rather than blocked on.
 >
 > Every step is owned by either `[CLAUDE]` or `[USER]` and carries its own standalone verification; see
 > **How steps are verified** at the head of the implementation plan.
@@ -2067,6 +2068,9 @@ dead target from being silently replaced by whoever inherited its number.
 
 - [ ] Complete
 
+> **Superseded** by [Milestone 2](PHASE_17_MILESTONE_2_RIGID_STEPS.md) Step 9. The step content it was to judge
+> is being replaced.
+
 **[USER]**
 
 **Goal:** Judge whether the authored content is worth attaching output to.
@@ -2090,6 +2094,9 @@ Record findings under this step.
 #### Step 19 — The memory calls
 
 - [ ] Complete
+
+> **Superseded** by [Milestone 2](PHASE_17_MILESTONE_2_RIGID_STEPS.md) Step 8. Memories are filled from per-verb
+> templates rather than composed by an LLM call.
 
 **[CLAUDE]**
 

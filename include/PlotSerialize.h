@@ -30,7 +30,7 @@ namespace SKSE
 // "mastermind no longer resolves" path becomes testable instead of
 // theoretical.
 //
-// See docs/implementation/PHASE_14_FACTION_PLOTS.md step 3.
+// See docs/implementation/PHASE_17_FACTION_PLOTS.md step 3.
 namespace NarrativeEngine::PlotSerialize
 {
     // SKSE co-save record type. Frozen — changing it orphans every

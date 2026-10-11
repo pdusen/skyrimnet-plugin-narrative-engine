@@ -38,7 +38,7 @@
 // what it processes and lets the queue back up behind a slow LLM call
 // without the simulation drifting.
 //
-// See docs/implementation/PHASE_14_FACTION_PLOTS.md step 4 and
+// See docs/implementation/PHASE_17_FACTION_PLOTS.md step 4 and
 // docs/design/FACTION_PLOTS.md Part 11.
 namespace NarrativeEngine::PlotTick
 {

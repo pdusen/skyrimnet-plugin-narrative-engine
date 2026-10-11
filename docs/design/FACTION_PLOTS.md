@@ -107,6 +107,12 @@ says which phase each part lands in.
 | `threshold`  | Total progress the step requires                                                 |
 | `progress`   | Progress accumulated so far                                                      |
 
+> **Revised by [Phase 17 Milestone 2](../implementation/PHASE_17_MILESTONE_2_RIGID_STEPS.md).** A step is now a
+> **verb** from a closed manifest: a fixed sentence with typed person, place and thing slots, each slot filled
+> by choice from candidates a rule admits or bound to an earlier step. The eight types below survive as the
+> verbs' **resolution profiles**, which is all Part 6 reads. Nothing about a step is written by a model, and the
+> objective is no longer a step type: the scheme stays the LLM-written sentence it became in Milestone 1.
+
 **Step taxonomy — the manifest.** Fixed, small, and closed. It has to be closed because every type needs a
 mechanical resolution, and it is handed to the LLM verbatim as the vocabulary it must plan in:
 
@@ -208,13 +214,16 @@ a year of simulation. Part 11 has the mechanics.
 The discipline gossip established is the right one and this design inherits it: **the LLM authors, dice
 resolve.** An LLM call happens at a small number of narrative junctions and never on a per-tick basis.
 
-| Junction        | Call                                                    | How often                    |
-| --------------- | ------------------------------------------------------- | ---------------------------- |
-| Plot birth      | Read the mastermind's memories, pick objective + plan    | Once per plot                |
-| Step dispatch   | Memory text for the mastermind and the step actor        | Once per step                |
-| Step resolution | Memory text for both, plus the target if they noticed    | Once per step                |
-| Adaptation      | Rewrite the remaining plan after a failure, or concede   | Once per failure             |
-| Player offer    | Compose the ask in the requesting NPC's voice            | Once per offer that fires    |
+| Junction        | Call                                                                 | How often                 |
+| --------------- | -------------------------------------------------------------------- | ------------------------- |
+| Plot birth      | Mastermind, ambition and scheme; then decisions for verbs and slots  | Once per plot             |
+| Step dispatch   | A decision choosing the agent, only when more than one is eligible   | At most once per step     |
+| Adaptation      | A decision: retry, substitute a verb, or concede                     | Once per failure          |
+| Player offer    | Compose the ask in the requesting NPC's voice                        | Once per offer that fires |
+
+Since [Milestone 2](../implementation/PHASE_17_MILESTONE_2_RIGID_STEPS.md), memory text costs no call at all: it
+is filled from per-verb templates. Slot and verb choices go to SkyrimNet's decision API (Beta 26, public API
+v12), which can only answer with a key it was offered.
 
 Everything else — how much progress a tick yields, who gets cast, when a step times out — is mechanical. Nothing is
 per-tick: a step spanning several ticks costs the same two calls as one that resolves immediately.
@@ -251,6 +260,12 @@ must resolve to a real `TESForm` and cannot be allowed to mean anything else.
 
 If the model returns something not on the menu, the plot is rejected at birth rather than repaired. Rejecting is
 cheap; a plot pointing at a target that does not exist poisons every memory it later writes.
+
+Milestone 1 drifted from this rule: steps came back as free prose with free-text targets and agent
+descriptions, resolved afterwards by searching biographies, and the six recorded runs show what that cost.
+[Milestone 2](../implementation/PHASE_17_MILESTONE_2_RIGID_STEPS.md) restores it more strictly than first
+written. Each slot's candidates are admitted by a rule in code and chosen through the decision API, which cannot
+answer off the list, so there is no membership test left to fail.
 
 ### Part 5 — Casting
 
@@ -381,9 +396,10 @@ refusal rule is what makes it safe to defer.
 ### Part 7 — What a plot writes, and what it may actually change
 
 **Memories are the primary output**, via `SkyrimNetAPI::AddMemory`, written at two points in every step's
-life. Each point is **one LLM call that composes every party's memory together**, rather than a call per person
-— the parties' accounts have to be consistent with each other to be worth anything, and composing them in one
-response is what makes that automatic.
+life. Since [Milestone 2](../implementation/PHASE_17_MILESTONE_2_RIGID_STEPS.md) every memory is filled from
+the verb's own first-person templates rather than written by a model. The parties' accounts are consistent
+because they are rendered from the same filled step, which is the property the single composing call was meant
+to buy, at no call cost.
 
 **At dispatch**, for the mastermind and the step actor: the order being given, before either knows how it will
 go. Giving them a memory of the *asking* is what lets an NPC be mid-task rather than only ever pre- or
@@ -722,7 +738,7 @@ The Phase 13 precedent is deliberate here. Gossip built a headless validation ha
 attached content, and that ordering is what caught a propagation model that tuning could not have fixed.
 
 > **Phases A–C are planned in
-> [`../implementation/PHASE_14_FACTION_PLOTS.md`](../implementation/PHASE_14_FACTION_PLOTS.md)**, as seventeen
+> [`../implementation/PHASE_17_FACTION_PLOTS.md`](../implementation/PHASE_17_FACTION_PLOTS.md)**, as seventeen
 > numbered steps. Phase D has no phase doc yet.
 
 ### Phase A — the simulation, headless

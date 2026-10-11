@@ -26,7 +26,7 @@
 // which is the engine-bound half.
 //
 // See docs/design/FACTION_PLOTS.md Part 5 and
-// docs/implementation/PHASE_14_FACTION_PLOTS.md step 5.
+// docs/implementation/PHASE_17_FACTION_PLOTS.md step 5.
 namespace NarrativeEngine::PlotCasting
 {
     // One faction membership, with the NPC's standing inside it.

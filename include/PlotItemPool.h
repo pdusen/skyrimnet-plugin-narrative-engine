@@ -23,7 +23,7 @@
 // plausibly matter to somebody, which is a judgement no filter makes.
 //
 // See statics/SKSE/Plugins/NarrativeEngine/PlotItems.ini for the file,
-// and docs/implementation/PHASE_14_FACTION_PLOTS.md step 15.
+// and docs/implementation/PHASE_17_FACTION_PLOTS.md step 15.
 namespace NarrativeEngine::PlotItemPool
 {
     // What KIND of thing this is, handed to the model as context so a

@@ -14,7 +14,7 @@
 // AsyncDispatch, from the gossip worker, from a SkyrimNet callback, or
 // from the main thread, because none of them can produce one.
 //
-// See docs/implementation/PHASE_14_FACTION_PLOTS.md for the phase this
+// See docs/implementation/PHASE_17_FACTION_PLOTS.md for the phase this
 // belongs to and docs/THREADING_MODEL.md for the roles this sits
 // inside. Note that the plot worker still declares ThreadRole::Plugin:
 // this is a narrower CAPABILITY within the plugin role, not a fifth

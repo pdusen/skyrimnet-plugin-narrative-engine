@@ -34,7 +34,7 @@
 // blocking on something that is itself waiting on that same worker —
 // unrepresentable.
 //
-// Note the consequence for plots specifically: Phase 14's world effects
+// Note the consequence for plots specifically: Phase 17's world effects
 // (an item into an inventory, a relationship-rank change) DO need the
 // main thread, so they cannot be reached from plot code directly. They
 // are marshalled by whatever holds a PluginThread::Token, which is the

@@ -32,7 +32,7 @@
 // supplies whatever it likes.
 //
 // See docs/design/FACTION_PLOTS.md Part 6 and
-// docs/implementation/PHASE_14_FACTION_PLOTS.md step 6.
+// docs/implementation/PHASE_17_FACTION_PLOTS.md step 6.
 namespace NarrativeEngine::PlotResolution
 {
     // How many ticks a step of this type gets before the mastermind's

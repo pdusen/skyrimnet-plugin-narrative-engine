@@ -39,7 +39,7 @@
 // response mean the same person -- and it is why ties are broken by
 // FormID rather than left to hash order.
 //
-// See docs/implementation/PHASE_14_FACTION_PLOTS.md step 15.
+// See docs/implementation/PHASE_17_FACTION_PLOTS.md step 15.
 namespace NarrativeEngine::PlotMenus
 {
     // Why this person is on the menu, most connected first. Also the
