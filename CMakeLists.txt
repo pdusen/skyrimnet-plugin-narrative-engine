@@ -837,6 +837,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/DebugNotify.cpp"
         "${CMAKE_SOURCE_DIR}/src/EvaluationPipeline.cpp"
         "${CMAKE_SOURCE_DIR}/src/EvaluationPipelineText.cpp"
+        "${CMAKE_SOURCE_DIR}/src/DecisionProbe.cpp"
         "${CMAKE_SOURCE_DIR}/src/GossipContent.cpp"
         "${CMAKE_SOURCE_DIR}/src/VisitComposer.cpp"
         "${CMAKE_SOURCE_DIR}/src/VisitConclusionPoll.cpp"

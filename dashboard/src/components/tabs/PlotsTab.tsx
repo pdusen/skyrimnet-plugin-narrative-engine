@@ -18,6 +18,7 @@ declare global {
     interface Window {
         ne_forcePlotTicks?: (count: string) => void;
         ne_seedDebugPlot?: (arg: string) => void;
+        ne_probeDecisions?: (arg: string) => void;
     }
 }
 
@@ -27,6 +28,12 @@ function forceTicks(count: number) {
 
 function seedPlot() {
     window.ne_seedDebugPlot?.('');
+}
+
+// Sends the decision API probe. Its findings go to the plugin log, not the
+// dashboard: it is a one-off measurement, not something to keep watching.
+function probeDecisions() {
+    window.ne_probeDecisions?.('');
 }
 
 export function PlotsTab({ plots }: { plots: PlotsTabState }): ReactNode {
@@ -83,6 +90,9 @@ export function PlotsTab({ plots }: { plots: PlotsTabState }): ReactNode {
                     </button>
                     <button type="button" disabled={busy} onClick={seedPlot}>
                         Seed debug plot
+                    </button>
+                    <button type="button" onClick={probeDecisions}>
+                        Probe decisions
                     </button>
                     {busy && (
                         <span className="plot-busy">

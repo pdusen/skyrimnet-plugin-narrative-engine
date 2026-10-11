@@ -1,0 +1,31 @@
+{# narrative_engine/probe — a decision template whose only job is to find out
+   what SkyrimNet's decision API does with the shapes plot planning needs.
+   Sent by the Plots tab's "Probe decisions" button; DecisionProbe logs what
+   came back. Not part of any feature.
+   Receives: places [{ key, label }] — twenty options, keys c1..c20.
+   NOTE: no fenced blocks and no literal braces anywhere in this file. #}
+[ state task ]
+This is a test of the decision interface. Answer every question as accurately as you can.
+[ end state ]
+
+[ question capital choice ]
+Which of these places is the capital of the Reach?
+[ criteria ]
+{% for p in places %}{{ p.key }}: {{ p.label }}
+{% endfor %}[ end criteria ]
+[ end question ]
+
+[ question fish choice ]
+Which of these is a kind of fish?
+[ criteria ]
+c1: a horse
+c2: a sword
+c3: a salmon
+c4: a cloud
+c5: a mountain
+[ end criteria ]
+[ end question ]
+
+[ question cold noul ]
+Is Winterhold usually cold?
+[ end question ]

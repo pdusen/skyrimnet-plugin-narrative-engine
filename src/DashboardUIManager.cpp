@@ -7,6 +7,7 @@
 #include <CombatEventLog.h>
 #include <DashboardTimers.h>
 #include <DecisionLog.h>
+#include <DecisionProbe.h>
 #include <GossipClaims.h>
 #include <GossipGraph.h>
 #include <GossipHarvest.h>
@@ -687,6 +688,15 @@ namespace NarrativeEngine::DashboardUIManager
             });
         }
 
+        // Sends the decision API probe and logs what came back. See
+        // DecisionProbe.h; it runs on the plot worker because the request
+        // blocks, and nothing else is waiting on that thread.
+        void OnProbeDecisions(const char*)
+        {
+            logger::info("DashboardUIManager: ne_probeDecisions");
+            PlotDispatch::EnqueueWork([](const PlotThread::Token& pt) { (void)DecisionProbe::Run(pt); });
+        }
+
         // Backs the Dispatch tab's Abort button (after confirmation).
         // No-ops backend-side if no beat is in flight.
         void OnAbortRunningBeat(const char* /*argument*/)
@@ -1019,6 +1029,7 @@ namespace NarrativeEngine::DashboardUIManager
         PrismaUI_API::RegisterJSListener(g_view, "ne_abortRunningBeat", &OnAbortRunningBeat);
         PrismaUI_API::RegisterJSListener(g_view, "ne_forcePlotTicks", &OnForcePlotTicks);
         PrismaUI_API::RegisterJSListener(g_view, "ne_seedDebugPlot", &OnSeedDebugPlot);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_probeDecisions", &OnProbeDecisions);
         // Phase 08 Settings tab listeners.
         PrismaUI_API::RegisterJSListener(g_view, "ne_setDebugMode", &OnSetDebugMode);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setDebugNotifications", &OnSetDebugNotifications);
