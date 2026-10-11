@@ -5,10 +5,9 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: Steps 1–8 complete; Step 9's in-game validation outstanding.** Step 2's probe showed the decision
-> model choosing reliably once each choice carries background, which leaves places and items in planning to be given
-> theirs. Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its Steps 20–22 still apply and
-> follow it.
+> **Doc status: Steps 1–8 complete; Steps 10–12 added after Step 9's first attempt found the plans incoherent.**
+> Step 9's validation runs again once they are done. Steps 18 and 19 of the Phase 17 doc are superseded by this
+> milestone; its Steps 20–22 still apply and follow it.
 
 ---
 
@@ -115,6 +114,12 @@ for position 1..cap:
 
 Each request carries the mastermind's biography, the ambition, the scheme, and the steps chosen so far as
 rendered sentences, in `[ state ]` blocks. `{agent}` is left open in the rendered sentences until dispatch.
+
+**Revised by Step 12: planning runs backwards from the goal.** The forward loop above was built and run, and the
+decision model answered "what next?" with the same step until the cap; see Step 9's first attempt. Planning now asks
+for the step that accomplishes the scheme first, puts a theft or purchase in front of any step that needs an item,
+and then offers concrete preparations of the planned steps, from a table in the verb manifest (Step 11), until the
+model answers `ready`.
 
 ### Dispatch
 
@@ -794,6 +799,125 @@ Replaces Phase 17 Step 18. With a decision provider configured, run a session lo
 3. Talk to a mastermind and an agent mid-step and after it. Do they know what they did, for whom, and how it went?
 4. Find a mastermind whose agent failed. Do they know who failed them, and at what?
 5. Record the decision-request rate per in-world day.
+
+**First attempt (2026-10-11): the plans were not coherent, so validation stopped at check 1 and Steps 10–12 were
+added.** Five plots were born. Read from the requests in `SkyrimNet.log`, every request carried the plan so far, and
+the model answered as if it had not:
+
+| Mastermind     | Scheme                                      | Plan                                                                                 |
+| -------------- | ------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Talen-Jei      | steal three flawless amethysts from Maven   | steal a diamond from Hemming Black-Briar, six times, to the cap                      |
+| Eltrys         | steal the internal ledger from the Treasury | steal a set of written orders from Rhiada, six times, to the cap                     |
+| Thaena         | convince Dagur to ban mages from the inn    | denounce Dagur to Korir, twice                                                       |
+| Galdrus Hlervu | forge a ledger framing Othreloth            | watch him, denounce him, steal a letter from him, plant it on him, deliver it to him |
+| Anuriel        | forge the deeds for a Black-Briar orchard   | steal a deed from Maven, then plant it among Maven's belongings                      |
+
+Four causes, each of which Steps 10–12 answer:
+
+1. **The decision model matches; it does not plan.** Asked "what next?", it picks the option whose words best fit
+   the scheme, whatever the plan already holds. Step 2's probe could not see this: every round had one answer that
+   fit its description, which is exactly what this model is good at. Laying out a sequence is not that, and asking
+   it to was the design's mistake, not the model's.
+2. **Nothing refuses a repeat**, so a model that answers `steal` every time fills the plan to its cap.
+3. **Nothing orders the steps.** Denouncing before there is any evidence, and planting a thing back on the person it
+   was taken from, are both orders the verb manifest says nothing against.
+4. **The scheme's own people can miss the list.** Maven was not among the twelve people Talen-Jei was offered for
+   the mark, so the model took Hemming, whose line mentions her. Talen-Jei knows nothing of Maven by the ladder's
+   reckoning, but a scheme that names her shows they know of her.
+
+Run again once Steps 10–12 are done.
+
+### Step 10 — The scheme's own people head every list
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+A person the scheme names is offered first for any person slot whose rule admits them, and is admitted to a slot
+whose rule is about whom the mastermind knows (`AnyPerson`, `KnownToMastermind`, `NotHostileKnown` unless hostile,
+and `AwareOfEarlierStep`'s fallback) even when the ladder calls them a stranger. A rule about what somebody is --
+trades for a living, senior in a court, rostered standing -- still has to be met. Their line says they are named in
+the scheme.
+
+A person is named when one of the words of their name appears in the scheme as a whole word and belongs to at most
+two people's names in the population: "Maven" names Maven Black-Briar; "Black-Briar", shared by her whole family,
+names none of them. This only ever ranks and admits; the model still chooses.
+
+The item list carries the whole pool. It was capped at twenty, and the pool has twenty-one items.
+
+**Verification:** a suite asserts that a named stranger heads a `KnownToMastermind` list, that a named person who
+does not trade is still kept off a `TradesForLiving` list, that a surname shared across a family names nobody, and
+that every pool item is offered.
+
+### Step 11 — Preparations in the verb manifest
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+Each verb lists the verbs that may **prepare** it -- be done just before it, to make it work -- and which of the
+preparation's slots are bound to which of its own. Bound slots are what keep a plan one story: the watch before a
+theft watches the person about to be robbed, and nobody has to choose that.
+
+| Verb            | Prepared by                                                                                                                                                   |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `watch`         | `ask_around` (mark = mark)                                                                                                                                    |
+| `ask_around`    | nothing                                                                                                                                                       |
+| `steal`         | `watch` (mark = mark), `ask_around` (mark = mark), `bribe` (open)                                                                                             |
+| `buy`           | `ask_around` (mark = seller)                                                                                                                                  |
+| `deliver`       | nothing beyond getting the item                                                                                                                               |
+| `plant`         | `watch` (mark = mark), `bribe` (open)                                                                                                                         |
+| `bribe`         | `watch` (mark = mark), `ask_around` (mark = mark)                                                                                                             |
+| `win_over`      | `ask_around` (mark = mark)                                                                                                                                    |
+| `threaten`      | `watch` (mark = mark), `ask_around` (mark = mark)                                                                                                             |
+| `spread_rumors` | `watch` (mark = mark), `ask_around` (mark = mark)                                                                                                             |
+| `denounce`      | `plant` (mark = mark), `steal` (mark = mark), `watch` (mark = mark), `spread_rumors` (mark = mark), `win_over` (mark = authority), `bribe` (mark = authority) |
+| `sabotage`      | `watch` (mark = mark), `ask_around` (mark = mark), `bribe` (open)                                                                                             |
+| `silence`       | `ask_around` (mark = witness)                                                                                                                                 |
+
+**Getting an item is not a preparation the model may skip.** A verb with a bound item -- `deliver`, `plant` -- needs
+an earlier `steal` or `buy` of that very item, and planning puts one in front of it every time (Step 12).
+
+**Verification:** the verb suite asserts every preparation names a real verb, every binding joins two person slots
+that both exist, no verb prepares itself, and no open slot of a preparation is bound.
+
+### Step 12 — Planning backwards from the goal
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+Planning is turned around so that every question is one the model can answer by matching:
+
+1. **The goal.** "Which kind of step, once done, accomplishes the scheme?" -- every offerable verb, as before. Its
+   slots are filled as before. An item slot with nothing already in hand is chosen from the pool.
+2. **Getting the item.** A step with an item that nobody holds gets a `steal` or a `buy` of that item placed just
+   before it; which of the two is a decision when both can be filled. The person it is got from is never one of the
+   people in the step it serves, so nothing is planted back on whoever it was taken from.
+3. **Preparations.** "What must be done first for this plan to work?" Each option is a concrete step -- a
+   preparation of one of the planned steps, its bound slots already filled in, saying which step it comes before --
+   plus `ready`. The chosen one goes immediately before the step it prepares, its open slots are filled without
+   offering anybody already in that step, and an item it needs is got as in 2. Asked again until `ready` or the cap.
+
+**Nothing repeats.** An option that would repeat a step already planned, or already in the plot's history, is not
+offered; and the last slot a step asks never offers the filler that would complete a repeat.
+
+**The cap still bounds the plan.** A preparation is offered only when there is room for it and for the step that
+gets its item. A preparation that cannot be filled, or an answer that was not offered, ends the preparing and keeps
+the plan as it stands, which is already coherent; only the goal's failures reject a plan.
+
+**Re-planning after a failure is the same, given the history:** an item a succeeded step already got is bound
+rather than got again, and nothing that already happened is offered. A bound agent is whoever got that item, matched
+by the item rather than by being the latest theft.
+
+**The trace shows the plan.** A `PLAN` line per step follows `BORN` and a substitute's `ADAPT`, and both carry how
+many decisions the plan took -- most of what Step 9's fifth check asks for.
+
+**Verification:** a suite drives the planner with scripted answers and asserts the goal is asked first and lands
+last; a `deliver` goal gets a theft or purchase before it from somebody other than its recipient; a preparation
+lands immediately before the step it prepares with its bound slot filled; a model that answers the same thing every
+time cannot repeat a step; `ready` and the cap each end the plan; an item already in hand is bound without being got
+again; and a decision error aborts the birth.
 
 ---
 
