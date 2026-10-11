@@ -279,7 +279,7 @@ namespace NarrativeEngine::PlotTick
             if (verb != nullptr && verb->agentBoundToItem) {
                 // WHOEVER HAS THE ITEM. Not a fresh cast: the thing to be
                 // delivered or planted is in one person's hands.
-                const auto holder = PlotPlanning::ItemHolder(plot);
+                const auto holder = PlotPlanning::ItemHolder(plot, step);
                 if (holder == 0 || (alive && !alive(holder))) {
                     return Dispatched::Impossible;
                 }
@@ -412,6 +412,9 @@ namespace NarrativeEngine::PlotTick
                 break;
             }
             PlotLog::Adapt(plot, plot.adaptations, cap, adaptation.newTail);
+            if (adaptation.revision == PlotPlanning::Revision::Substituted) {
+                PlotLog::Plan(plot, plot.cursor, adaptation.decisions);
+            }
             return true;
         }
 
@@ -490,7 +493,8 @@ namespace NarrativeEngine::PlotTick
             // Nothing else runs there, so there is nobody to yield to.
             // Compose fills in the mastermind as well as the scheme,
             // because which of the shortlist it is is its first answer.
-            if (!PlotBirth::Compose(pt, population, shortlist, plot)) {
+            std::size_t decisions = 0;
+            if (!PlotBirth::Compose(pt, population, shortlist, plot, decisions)) {
                 // Rejected at one of the three stages. The slot is never
                 // taken and the id is never spent, so a run of bad
                 // responses costs call budget and nothing else -- no
@@ -515,6 +519,7 @@ namespace NarrativeEngine::PlotTick
             const double weight = pick != cast.considered.end() ? pick->weight : 0.0;
 
             PlotLog::Born(plot, weight, cast.considered.size());
+            PlotLog::Plan(plot, 0, decisions);
             state.plots.push_back(std::move(plot));
         }
 

@@ -108,6 +108,17 @@ namespace NarrativeEngine::PlotLog
                            tail);
     }
 
+    std::vector<std::string> FormatPlan(const PlotModel::Plot& plot, std::size_t from, std::size_t decisions)
+    {
+        std::vector<std::string> out;
+        out.push_back(std::format("PLAN  plot={} decisions={} steps={}", plot.id, decisions, plot.plan.size()));
+        for (std::size_t i = from; i < plot.plan.size(); ++i) {
+            out.push_back(std::format(
+                "PLAN  plot={} step={}/{} \"{}\"", plot.id, i + 1, plot.plan.size(), PlotModel::Label(plot.plan[i])));
+        }
+        return out;
+    }
+
     std::string FormatEnd(const PlotModel::Plot& plot)
     {
         return std::format("END   plot={} \"{}\" status={} outcome={} mastermind=\"{}\" days={:.2f} "

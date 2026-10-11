@@ -70,6 +70,11 @@ namespace NarrativeEngine::PlotCandidates
         // scheme against Maven shows they know of her, whatever the ladder
         // says. Empty names nobody.
         std::string_view scheme{};
+
+        // People no slot may be filled with, on top of the unstated rules:
+        // the people of the step a preparation or a theft serves, so the
+        // bribe before a theft never pays the person being robbed.
+        std::unordered_set<RE::FormID> excluded{};
     };
 
     struct Limits
@@ -88,8 +93,9 @@ namespace NarrativeEngine::PlotCandidates
     // whatever it is bound to.
     [[nodiscard]] bool Asks(const PlotVerbs::Slot& slot) noexcept;
 
-    // A BoundItem slot's value: the item the latest earlier step whose verb
-    // obtains one was given. Nothing when no earlier step obtains an item.
+    // A BoundItem slot's value: the item the latest earlier step that
+    // obtains one actually got, which means it succeeded. Nothing when no
+    // earlier step has, which is always the case for a plan not yet run.
     [[nodiscard]] std::optional<PlotModel::SlotValue> Bind(const PlotVerbs::Slot& slot, const Request& request);
 
     // The list a slot is filled from. Empty when the rule admits nobody,

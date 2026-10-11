@@ -687,9 +687,9 @@ TEST_CASE("SkyrimNetAPI asks the decision model and waits for the answer", "[Sky
     SECTION("when the model answers a choice")
     {
         CopyJson(fake.decisionResultJson,
-                 R"({"model":"m","answers":{"verb":{"type":"choice","choice":"c3","confidence":0.82,)"
+                 R"({"model":"m","answers":{"goal":{"type":"choice","choice":"c3","confidence":0.82,)"
                  R"("probabilities":{"c3":0.82,"c1":0.18}}}})");
-        const auto result = ask("narrative_engine/plot_verb", R"({"position":1})");
+        const auto result = ask("narrative_engine/plot_goal", R"({"position":1})");
 
         SECTION("should succeed")
         {
@@ -699,7 +699,7 @@ TEST_CASE("SkyrimNetAPI asks the decision model and waits for the answer", "[Sky
 
         SECTION("should hand back the chosen key")
         {
-            REQUIRE(result.Choice("verb") == "c3");
+            REQUIRE(result.Choice("goal") == "c3");
         }
 
         SECTION("should keep the confidence and every probability")
@@ -713,7 +713,7 @@ TEST_CASE("SkyrimNetAPI asks the decision model and waits for the answer", "[Sky
 
         SECTION("should pass the template and context through, and ask for every probability")
         {
-            REQUIRE(std::string{fake.lastDecisionTemplate} == "narrative_engine/plot_verb");
+            REQUIRE(std::string{fake.lastDecisionTemplate} == "narrative_engine/plot_goal");
             REQUIRE(std::string{fake.lastDecisionContext} == R"({"position":1})");
             REQUIRE(fake.lastMaxProbabilities == 0);
         }
@@ -801,15 +801,15 @@ TEST_CASE("SkyrimNetAPI asks the decision model and waits for the answer", "[Sky
 
     SECTION("when several requests are answered from a script")
     {
-        REQUIRE(fake.ScriptDecision(R"({"answers":{"verb":{"type":"choice","choice":"c1"}}})"));
+        REQUIRE(fake.ScriptDecision(R"({"answers":{"goal":{"type":"choice","choice":"c1"}}})"));
         REQUIRE(fake.ScriptDecision(R"({"answers":{"mark":{"type":"choice","choice":"c4"}}})"));
 
         SECTION("should answer each in turn, then fall back to the standing answer")
         {
-            REQUIRE(ask("narrative_engine/plot_verb", "{}").Choice("verb") == "c1");
+            REQUIRE(ask("narrative_engine/plot_goal", "{}").Choice("goal") == "c1");
             REQUIRE(ask("narrative_engine/plot_slots", "{}").Choice("mark") == "c4");
-            REQUIRE(ask("narrative_engine/plot_verb", "{}").Choice("pick") == "c1");
-            REQUIRE(std::string{fake.decisionTemplates[0]} == "narrative_engine/plot_verb");
+            REQUIRE(ask("narrative_engine/plot_goal", "{}").Choice("pick") == "c1");
+            REQUIRE(std::string{fake.decisionTemplates[0]} == "narrative_engine/plot_goal");
             REQUIRE(std::string{fake.decisionTemplates[1]} == "narrative_engine/plot_slots");
         }
     }

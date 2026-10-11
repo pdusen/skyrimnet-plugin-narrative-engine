@@ -360,8 +360,9 @@ namespace NarrativeEngine::PlotBirth
         for (const auto& past : plot.history) {
             input.before.push_back(&past);
         }
-        // What is left of the cap, and always room for one more step.
-        const auto spent = std::min(plot.history.size(), PlotPlanning::kPlanCap - 1);
+        // What is left of the cap, and always room for a goal and the step
+        // that gets its item.
+        const auto spent = std::min(plot.history.size(), PlotPlanning::kPlanCap - PlotPlanning::kPlanFloor);
         input.maxSteps = PlotPlanning::kPlanCap - spent;
 
         return PlotPlanning::Plan(input, [&pt](std::string_view name, const nlohmann::json& ctx) {
@@ -393,8 +394,10 @@ namespace NarrativeEngine::PlotBirth
     bool Compose(const PlotThread::Token& pt,
                  const PlotCasting::Population& population,
                  const std::vector<RE::FormID>& shortlist,
-                 PlotModel::Plot& plot)
+                 PlotModel::Plot& plot,
+                 std::size_t& decisions)
     {
+        decisions = 0;
         // Nothing to choose between is not an LLM's problem. This is the
         // one rejection that happens BEFORE any call rather than after
         // one, because it costs nothing to see coming.
@@ -448,8 +451,9 @@ namespace NarrativeEngine::PlotBirth
 
         // --- 3. How --------------------------------------------------------
         //
-        // A sequence of decisions rather than one prompt: which verb comes
-        // next, then what fills each of its slots. See PlotPlanning.
+        // A sequence of decisions rather than one prompt: the step that
+        // accomplishes the scheme, then what must come before it. See
+        // PlotPlanning.
         PlotPlanning::Input input{population, PlotMenus::CurrentWorld()};
         input.mastermind = boss->npc;
         input.mastermindName = boss->name;
@@ -463,6 +467,7 @@ namespace NarrativeEngine::PlotBirth
         const auto steps = PlotPlanning::Plan(input, [&pt](std::string_view name, const nlohmann::json& ctx) {
             return SkyrimNetAPI::SendCustomDecision(pt, std::string{name}, ctx.dump());
         });
+        decisions = steps.decisions;
         if (!steps.ok) {
             if (PlotPlanning::SessionCannotDecide(steps.error)) {
                 // Said once, here, and then never again this session: the

@@ -202,6 +202,13 @@ namespace NarrativeEngine::PlotLog
         Emit(FormatAdapt(plot, adaptations, cap, newTailLength));
     }
 
+    void Plan(const PlotModel::Plot& plot, std::size_t from, std::size_t decisions)
+    {
+        for (const auto& line : FormatPlan(plot, from, decisions)) {
+            Emit(line);
+        }
+    }
+
     void End(const PlotModel::Plot& plot)
     {
         Emit(FormatEnd(plot));

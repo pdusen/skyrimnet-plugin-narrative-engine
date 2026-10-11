@@ -112,6 +112,9 @@ says which phase each part lands in.
 > by choice from candidates a rule admits or bound to an earlier step. The eight types below survive as the
 > verbs' **resolution profiles**, which is all Part 6 reads. Nothing about a step is written by a model, and the
 > objective is no longer a step type: the scheme stays the LLM-written sentence it became in Milestone 1.
+> A plan is laid out backwards: the step that accomplishes the scheme first, then a theft or purchase of any item
+> it needs, then preparations of the planned steps from a fixed table, each bound to the people of the step it
+> prepares. A decision model asked "what comes next?" repeated whichever verb matched the scheme until the cap.
 
 **Step taxonomy — the manifest.** Fixed, small, and closed. It has to be closed because every type needs a
 mechanical resolution, and it is handed to the LLM verbatim as the vocabulary it must plan in:
@@ -214,12 +217,12 @@ a year of simulation. Part 11 has the mechanics.
 The discipline gossip established is the right one and this design inherits it: **the LLM authors, dice
 resolve.** An LLM call happens at a small number of narrative junctions and never on a per-tick basis.
 
-| Junction        | Call                                                                 | How often                 |
-| --------------- | -------------------------------------------------------------------- | ------------------------- |
-| Plot birth      | Mastermind, ambition and scheme; then decisions for verbs and slots  | Once per plot             |
-| Step dispatch   | A decision choosing the agent, only when more than one is eligible   | At most once per step     |
-| Adaptation      | A decision: retry, substitute a verb, or concede                     | Once per failure          |
-| Player offer    | Compose the ask in the requesting NPC's voice                        | Once per offer that fires |
+| Junction      | Call                                                                          | How often                 |
+| ------------- | ----------------------------------------------------------------------------- | ------------------------- |
+| Plot birth    | Mastermind, ambition and scheme; then decisions for goal, slots, preparations | Once per plot             |
+| Step dispatch | A decision choosing the agent, only when more than one is eligible            | At most once per step     |
+| Adaptation    | A decision: retry, substitute a verb, or concede                              | Once per failure          |
+| Player offer  | Compose the ask in the requesting NPC's voice                                 | Once per offer that fires |
 
 Since [Milestone 2](../implementation/PHASE_17_MILESTONE_2_RIGID_STEPS.md), memory text costs no call at all: it
 is filled from per-verb templates. Slot and verb choices go to SkyrimNet's decision API (Beta 26, public API

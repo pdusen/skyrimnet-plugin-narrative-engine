@@ -16,27 +16,41 @@
 
 // PlotPlanning — laying out a scheme as a sequence of verbs, by decision.
 //
-// The scheme is already written. This decides how it gets done: which verb
-// comes next, then what fills each of that verb's slots, one decision at a
-// time, until the model says the steps so far accomplish the scheme or the
-// plan reaches its cap. Every answer is a key from a list built here, so a
-// plan cannot name a person, a place, a thing or a kind of step that does
-// not exist.
+// The scheme is already written. This decides how it gets done, backwards
+// from the end, because every question it asks has to be one the decision
+// model answers by matching rather than by planning:
+//
+//   1. The goal: which kind of step, once done, accomplishes the scheme.
+//   2. Getting an item: a step that needs one nobody holds gets a theft or a
+//      purchase of it placed just before it, from somebody not in that step.
+//   3. Preparations: concrete steps from PlotVerbs::kPreparations, their
+//      bound slots already filled, each just before the step it prepares --
+//      asked until the model answers `ready` or the plan reaches its cap.
+//
+// A forward "what comes next?" loop came first. The model answered it with
+// whichever verb best matched the scheme, every time, to the cap; see
+// Milestone 2's Step 9. So no question here asks what comes next.
+//
+// Every answer is a key from a list built here, so a plan cannot name a
+// person, a place, a thing or a kind of step that does not exist, and no
+// option or filler that would repeat a step is ever on a list.
 //
 // The decision call itself is a parameter. The plot worker binds it to
 // SkyrimNetAPI::SendCustomDecision; a suite binds it to a script.
 namespace NarrativeEngine::PlotPlanning
 {
-    inline constexpr const char* kVerbTemplate = "narrative_engine/plot_verb";
+    // Each template asks exactly one question, under the id beside it.
+    inline constexpr const char* kGoalTemplate = "narrative_engine/plot_goal";
+    inline constexpr const char* kGoalQuestion = "goal";
+    inline constexpr const char* kObtainTemplate = "narrative_engine/plot_obtain";
+    inline constexpr const char* kObtainQuestion = "obtain";
+    inline constexpr const char* kPrepareTemplate = "narrative_engine/plot_prepare";
+    inline constexpr const char* kPrepareQuestion = "prepare";
     inline constexpr const char* kSlotTemplate = "narrative_engine/plot_slot";
-
-    // Both templates ask exactly one question under these ids.
-    inline constexpr const char* kVerbQuestion = "verb";
     inline constexpr const char* kSlotQuestion = "pick";
 
-    // The option that ends a plan. Offered from the second position on: one
-    // step is an errand, not a scheme.
-    inline constexpr const char* kDone = "done";
+    // The preparation answer that ends a plan.
+    inline constexpr const char* kReady = "ready";
 
     // Adaptation's one question, and its three answers.
     inline constexpr const char* kAdaptTemplate = "narrative_engine/plot_adapt";
@@ -47,6 +61,10 @@ namespace NarrativeEngine::PlotPlanning
 
     // How long a plan may run. A substitute plans what is left of it.
     inline constexpr std::size_t kPlanCap = 6;
+
+    // The fewest steps any plan is given room for: a goal that needs an
+    // item, and the step that gets it.
+    inline constexpr std::size_t kPlanFloor = 2;
 
     using Ask = std::function<SkyrimNetAPI::DecisionResult(std::string_view templateName, const nlohmann::json& ctx)>;
 
@@ -67,9 +85,10 @@ namespace NarrativeEngine::PlotPlanning
         PlotCasting::AlivePredicate alive;
         std::function<std::string(RE::FormID)> occupation;
 
-        // Steps the plot already has ahead of the first position planned
-        // here, oldest first. Empty at birth; the plot's history when
-        // adaptation re-plans from a failure.
+        // Steps the plot already has ahead of the plan, oldest first. Empty
+        // at birth; the plot's history when adaptation re-plans from a
+        // failure. Nothing in it is offered again, and an item a step in it
+        // got is bound rather than got a second time.
         std::vector<const PlotModel::Step*> before;
 
         std::size_t maxSteps = kPlanCap;
@@ -86,29 +105,16 @@ namespace NarrativeEngine::PlotPlanning
         // A plan that came back wrong.
         std::string rejection;
         std::vector<PlotModel::Step> plan;
+        // How many decisions were asked, answered or not.
+        std::size_t decisions = 0;
     };
 
-    // Whether `verb` can be offered with these steps behind it: every slot
-    // it would ask has somebody to ask about, and every slot it binds has
-    // something to bind to. A slot whose candidates depend on another slot
-    // of the same step is judged once that one is filled.
-    [[nodiscard]] bool Offerable(const PlotVerbs::Verb& verb,
-                                 const Input& input,
-                                 const std::vector<const PlotModel::Step*>& earlier);
-
-    // Plan from the first open position to the end.
+    // Plan from the goal back, after whatever `input.before` holds.
     [[nodiscard]] Outcome Plan(const Input& input, const Ask& ask);
 
-    // Fill one verb's slots, given the steps ahead of it. On success `step`
-    // carries the verb, its profile, the mastermind and every slot. A slot
-    // with one candidate is filled without asking.
-    [[nodiscard]] bool FillSlots(const PlotVerbs::Verb& verb,
-                                 const Input& input,
-                                 const std::vector<const PlotModel::Step*>& earlier,
-                                 const Ask& ask,
-                                 PlotModel::Step& step,
-                                 std::string& error,
-                                 std::string& rejection);
+    // Whether two steps are the same step: one verb, and every slot either
+    // has filled the same way. Who carried it out does not enter into it.
+    [[nodiscard]] bool SameStep(const PlotModel::Step& a, const PlotModel::Step& b);
 
     // The sentence a planned step reads as before anybody is cast, with
     // each unfilled slot shown as its name in brackets. What the plan so
@@ -117,9 +123,9 @@ namespace NarrativeEngine::PlotPlanning
     // question that casts one.
     [[nodiscard]] std::string Sketch(const PlotModel::Step& step, bool agentOpen = false);
 
-    // Whoever holds the item a step binds: the agent of the plot's latest
-    // step that obtained one and succeeded. 0 when there is none.
-    [[nodiscard]] RE::FormID ItemHolder(const PlotModel::Plot& plot);
+    // Whoever holds the item `step` needs: the agent of the plot's latest
+    // step that got that very item and succeeded. 0 when there is none.
+    [[nodiscard]] RE::FormID ItemHolder(const PlotModel::Plot& plot, const PlotModel::Step& step);
 
     // One agent a step could be given, with the line the model reads.
     struct AgentOption
@@ -157,6 +163,8 @@ namespace NarrativeEngine::PlotPlanning
         std::string reason;
         // How many steps a substitute put in place of the failed one.
         std::size_t newTail = 0;
+        // How many decisions planning the substitute asked.
+        std::size_t decisions = 0;
     };
 
     // Plans what is left of a plot after a failure, from its history. The

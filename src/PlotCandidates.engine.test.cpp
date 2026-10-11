@@ -426,6 +426,7 @@ TEST_CASE("PlotCandidates things and bindings", "[PlotCandidates][engine]")
     {
         PlotModel::Step steal;
         steal.verb = "steal";
+        steal.outcome = PlotModel::StepOutcome::Succeeded;
         steal.slots.push_back({"item", 0x0000D002, "a bottle of skooma"});
         PlotModel::Step watch;
         watch.verb = "watch";
@@ -436,12 +437,40 @@ TEST_CASE("PlotCandidates things and bindings", "[PlotCandidates][engine]")
             REQUIRE_FALSE(PlotCandidates::Asks(SlotOf("deliver", "item")));
         }
 
-        SECTION("should be the item the latest obtaining step was given")
+        SECTION("should be the item the latest obtaining step got")
         {
             const auto bound = PlotCandidates::Bind(SlotOf("deliver", "item"), f.Request());
             REQUIRE(bound.has_value());
             REQUIRE(bound->form == 0x0000D002);
             REQUIRE(bound->name == "item");
+        }
+    }
+
+    SECTION("when the step that would have got the item failed, or has not happened")
+    {
+        PlotModel::Step caught;
+        caught.verb = "steal";
+        caught.outcome = PlotModel::StepOutcome::FailedCaught;
+        caught.slots.push_back({"item", 0x0000D002, "a bottle of skooma"});
+        PlotModel::Step planned;
+        planned.verb = "buy";
+        planned.slots.push_back({"item", 0x0000D001, "a ruby"});
+        f.steps = {caught, planned};
+
+        SECTION("should bind to nothing, since nobody has it")
+        {
+            REQUIRE_FALSE(PlotCandidates::Bind(SlotOf("deliver", "item"), f.Request()).has_value());
+        }
+    }
+
+    SECTION("when a person is excluded")
+    {
+        auto request = f.Request();
+        request.excluded = {kFriend};
+
+        SECTION("should keep them off every list")
+        {
+            REQUIRE_FALSE(Has(PlotCandidates::Build(SlotOf("watch", "mark"), request), kFriend));
         }
     }
 

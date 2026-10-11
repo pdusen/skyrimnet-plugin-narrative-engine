@@ -1,0 +1,30 @@
+{# narrative_engine/plot_goal — the step that accomplishes a scheme.
+   Asked once per plan by PlotPlanning::Plan, first: what leads up to the
+   goal is planned afterwards, backwards from it. The answer is a verb id.
+   Receives: mastermind { name, standing }, bio { summary, occupation, ... },
+     ambition, scheme, history [string] (steps already taken when a failed
+     plan is re-planned, numbered, with how each went; empty at birth),
+     options [{ key, line }].
+   NOTE: no fenced blocks and no literal braces anywhere in this file. #}
+[ state who ]
+{{ mastermind.name }}{% if length(mastermind.standing) > 0 %}, {{ mastermind.standing }}{% endif %}.
+{{ bio.summary }}
+{{ bio.occupation }}
+[ end state ]
+
+[ state aims ]
+What they are ultimately after: {{ ambition }}
+The scheme they mean to carry out: {{ scheme }}
+[ end state ]
+
+{% if length(history) > 0 %}[ state history ]
+What has happened so far in this scheme:
+{% for s in history %}{{ s }}
+{% endfor %}[ end state ]
+
+{% endif %}[ question goal choice ]
+Which kind of step, once done, is the one that accomplishes the scheme in `aims`? This is the scheme's final step; whatever has to happen before it is decided afterwards. Who or what it involves is also decided afterwards.
+[ criteria ]
+{% for o in options %}{{ o.key }}: {{ o.line }}
+{% endfor %}[ end criteria ]
+[ end question ]

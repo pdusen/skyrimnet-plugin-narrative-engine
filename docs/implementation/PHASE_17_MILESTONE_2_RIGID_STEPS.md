@@ -5,9 +5,9 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: Steps 1–8 complete; Steps 10–12 added after Step 9's first attempt found the plans incoherent.**
-> Step 9's validation runs again once they are done. Steps 18 and 19 of the Phase 17 doc are superseded by this
-> milestone; its Steps 20–22 still apply and follow it.
+> **Doc status: Steps 1–8 and 10–12 complete; Step 9's validation outstanding.** Steps 10–12 were added after
+> Step 9's first attempt found the plans incoherent, and plan backwards from the goal; Step 9 runs again on them.
+> Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its Steps 20–22 still apply and follow it.
 
 ---
 
@@ -910,7 +910,7 @@ step to another by a preparation. The item a `plant` needs is got by Step 12's o
 
 ### Step 12 — Planning backwards from the goal
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -945,6 +945,44 @@ last; a `deliver` goal gets a theft or purchase before it from somebody other th
 lands immediately before the step it prepares with its bound slot filled; a model that answers the same thing every
 time cannot repeat a step; `ready` and the cap each end the plan; an item already in hand is bound without being got
 again; and a decision error aborts the birth.
+
+Done. `PlotPlanning::Plan` is a small planner that asks the goal, gets items and offers preparations, through three
+new templates under `prompts/decisions/narrative_engine/`: `plot_goal` (replacing `plot_verb`), `plot_obtain` and
+`plot_prepare`. `plot_slot` now also tells the model what the step is for. The trace gains `PLAN` lines after `BORN`
+and after a substitute's `ADAPT`. 463 tests pass; the planning suite was rewritten as four cases, eighteen sections.
+
+**Every question is now a matching question.** The goal question asks which step accomplishes the scheme, which is
+what the model was already answering when it was asked "what next?" -- now that answer is put last instead of
+repeated. The obtain question is steal or buy for a named item. A preparation option is a whole step, its person
+already filled in and saying which step it comes before: "Before step 2: Someone watches Maven Black-Briar, learning
+their habits." The model never has to hold a sequence in mind; the code builds the sequence from where each answer
+goes.
+
+**Repeats are kept out at two points.** A preparation option whose verb and bound people match a step already in the
+plot is never offered, which is what keeps "watch Hulda" from being offered again once it is planned. And the last
+slot a step asks drops any filler that would make the whole step equal one already there, which covers the goal when
+re-planning: a plot that has already watched Hulda, re-planning a watch, can only watch somebody else.
+
+**The people a step serves are off limits to whatever serves it.** A preparation's open slots, and the step that
+gets an item, exclude every person in the step they serve (`PlotCandidates::Request::excluded`). That is what stops
+a deed being stolen from Maven and planted back among Maven's belongings, the Anuriel plan from Step 9's first
+attempt, and a bribe before a theft paying the person being robbed.
+
+**An item in hand means a step that succeeded.** `PlotCandidates::Bind` now binds only an item a succeeded step got;
+before, it bound the latest step that would get one, which was right for a forward plan and wrong for a history. A
+plan's own steps never bind, because each item it needs is chosen from the pool and got by a step placed in front of
+it. `ItemHolder` takes the step and matches its item, since a plot can now get two different items.
+
+**Where the decision count goes.** The count is on the first `PLAN` line rather than on `BORN`, so a substitute's
+re-plan reports its own count the same way. It covers planning only; the agent decisions at dispatch and the adapt
+question are one each and visible as `DISPATCH` and `ADAPT` lines.
+
+**A bad preparation answer ends the preparing, not the plan.** Everything planned before it already holds together,
+so an unoffered key, or a preparation whose slots cannot be filled, keeps the plan as it stands. Only the goal's
+failures reject a plan, and a decision that is not answered still aborts the birth.
+
+**`PlotBirth.h` had a stray comment.** `Compose`'s documentation had drifted above `Occupation` when Steps 5 and 6
+added declarations between them; it is back on `Compose`, which now also reports the decision count.
 
 ---
 

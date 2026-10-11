@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <PlotModel.h>
 
@@ -85,6 +86,11 @@ namespace NarrativeEngine::PlotLog
 
     void Adapt(const PlotModel::Plot& plot, int adaptations, int cap, std::size_t newTailLength);
 
+    // The plan from step `from` on, one line a step, after a line saying
+    // how many decisions laying it out took. Follows BORN with `from` 0,
+    // and a substitute's ADAPT with the cursor.
+    void Plan(const PlotModel::Plot& plot, std::size_t from, std::size_t decisions);
+
     void End(const PlotModel::Plot& plot);
 
     void Reap(std::size_t plots, std::size_t occupancyRows, double gameDay);
@@ -138,5 +144,8 @@ namespace NarrativeEngine::PlotLog
                                          const PlotModel::TickRecord& record);
     [[nodiscard]] std::string FormatResolve(const PlotModel::Plot& plot, const PlotModel::Step& step);
     [[nodiscard]] std::string FormatAdapt(const PlotModel::Plot& plot, int adaptations, int cap, std::size_t tail);
+    [[nodiscard]] std::vector<std::string> FormatPlan(const PlotModel::Plot& plot,
+                                                      std::size_t from,
+                                                      std::size_t decisions);
     [[nodiscard]] std::string FormatEnd(const PlotModel::Plot& plot);
 } // namespace NarrativeEngine::PlotLog

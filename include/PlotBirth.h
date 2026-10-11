@@ -140,7 +140,7 @@ namespace NarrativeEngine::PlotBirth
     // --- Call 3: how ------------------------------------------------------
     //
     // No longer a prompt with a parser. The plan is laid out by decisions,
-    // verb by verb and slot by slot; see PlotPlanning.
+    // from the goal back; see PlotPlanning.
 
     // A scheme as the dispatch memories quote it: "as part of my plan to
     // {scheme}". True when the scheme opens with a verb, as the ambition
@@ -151,22 +151,6 @@ namespace NarrativeEngine::PlotBirth
 
     // --- The engine-bound half --------------------------------------------
 
-    // Run the two chat calls and the planning decisions over `shortlist`
-    // and fill `plot` in, including which of the shortlist ended up
-    // masterminding it.
-    //
-    // BLOCKS on the plot worker, call after call, which is the point:
-    // nothing else runs there, so there is nobody to yield to and no
-    // reason to hand the rest of the work to a callback. Same argument
-    // GossipContent makes for its own calls.
-    //
-    // Each call is asked TWICE at most: a refused answer is put back to
-    // the model with the reason it was refused, once. See AskTwice.
-    //
-    // Returns false when any call failed or was still wrong on its
-    // retry, having logged why and at which stage. The caller frees the
-    // slot and spends no plot id, so a birth that dies at call 3 costs
-    // call budget and nothing else.
     // What somebody does, as one short phrase for their line on a decision's
     // list: the first sentence of their biography's occupation section.
     [[nodiscard]] std::string Occupation(RE::FormID npc);
@@ -186,8 +170,28 @@ namespace NarrativeEngine::PlotBirth
     // set up gets its plots.
     void OnSessionStart() noexcept;
 
+    // Run the two chat calls and the planning decisions over `shortlist`
+    // and fill `plot` in, including which of the shortlist ended up
+    // masterminding it.
+    //
+    // BLOCKS on the plot worker, call after call, which is the point:
+    // nothing else runs there, so there is nobody to yield to and no
+    // reason to hand the rest of the work to a callback. Same argument
+    // GossipContent makes for its own calls.
+    //
+    // Each call is asked TWICE at most: a refused answer is put back to
+    // the model with the reason it was refused, once. See AskTwice.
+    //
+    // Returns false when any call failed or was still wrong on its
+    // retry, having logged why and at which stage. The caller frees the
+    // slot and spends no plot id, so a birth that dies at call 3 costs
+    // call budget and nothing else.
+    //
+    // `decisions` is how many decisions planning asked, kept or not, for
+    // the trace.
     [[nodiscard]] bool Compose(const PlotThread::Token& pt,
                                const PlotCasting::Population& population,
                                const std::vector<RE::FormID>& shortlist,
-                               PlotModel::Plot& plot);
+                               PlotModel::Plot& plot,
+                               std::size_t& decisions);
 } // namespace NarrativeEngine::PlotBirth

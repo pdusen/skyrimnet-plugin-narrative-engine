@@ -9,13 +9,15 @@
 #include <string>
 #include <vector>
 
-// Tests for planning a scheme by decision.
+// Tests for planning a scheme by decision, backwards from its goal.
 //
 // The decision call is scripted: each test says what the model answers, in
 // order, and the suite asserts what the plan can and cannot become. What
 // matters is that nothing reaches a plan that was not on a list the planner
-// built -- not a verb, not a person, not an item -- and that every way the
-// loop can end, ends it.
+// built -- not a verb, not a person, not an item -- that the plan reads in
+// an order that makes sense whatever the model answers, that a model which
+// answers the same thing every time cannot fill a plan with repeats, and
+// that every way the planning can end, ends it.
 
 namespace
 {
@@ -26,13 +28,18 @@ namespace
     namespace SkyrimNet = NarrativeEngine::SkyrimNetAPI;
 
     constexpr RE::FormID kWhiterun = 0x0000A001;
+    constexpr RE::FormID kRiften = 0x0000A002;
     constexpr RE::FormID kHold = 0x0000B001;
+    constexpr RE::FormID kRift = 0x0000B002;
     constexpr RE::FormID kBoss = 0x00010001;
     constexpr RE::FormID kFriend = 0x00010002;
     constexpr RE::FormID kTrader = 0x00010003;
+    constexpr RE::FormID kJarl = 0x00010004;
     constexpr RE::FormID kRuby = 0x0000D001;
     constexpr RE::FormID kSkooma = 0x0000D002;
 
+    // Olfrid schemes against Hulda, who trades in Whiterun. He knows Idolaf.
+    // Laila is a stranger to him, and the only authority.
     PlotCasting::Population Province()
     {
         PlotCasting::Population p;
@@ -58,13 +65,21 @@ namespace
         trader.settlement = kWhiterun;
         trader.tradesForLiving = true;
         p.members.push_back(trader);
+
+        PlotCasting::Member jarl;
+        jarl.npc = kJarl;
+        jarl.name = "Laila";
+        jarl.hold = kRift;
+        jarl.settlement = kRiften;
+        jarl.authority = true;
+        p.members.push_back(jarl);
         return p;
     }
 
     PlotMenus::World World()
     {
         PlotMenus::World w;
-        w.settlements = {{kWhiterun, "Whiterun"}};
+        w.settlements = {{kWhiterun, "Whiterun"}, {kRiften, "Riften"}};
         w.items = {{kRuby, "a ruby", {}}, {kSkooma, "a bottle of skooma", {}}};
         return w;
     }
@@ -96,13 +111,27 @@ namespace
             a.type = "choice";
             a.choice = answers.front();
             answers.pop_front();
-            // Each template asks its one question under its own id.
-            const char* question = name == PlotPlanning::kVerbTemplate    ? PlotPlanning::kVerbQuestion
-                                   : name == PlotPlanning::kAdaptTemplate ? PlotPlanning::kAdaptQuestion
-                                                                          : PlotPlanning::kSlotQuestion;
-            r.answers.emplace_back(question, a);
+            r.answers.emplace_back(QuestionOf(name), a);
             r.ok = true;
             return r;
+        }
+
+        // Each template asks its one question under its own id.
+        static const char* QuestionOf(std::string_view name)
+        {
+            if (name == PlotPlanning::kGoalTemplate) {
+                return PlotPlanning::kGoalQuestion;
+            }
+            if (name == PlotPlanning::kPrepareTemplate) {
+                return PlotPlanning::kPrepareQuestion;
+            }
+            if (name == PlotPlanning::kObtainTemplate) {
+                return PlotPlanning::kObtainQuestion;
+            }
+            if (name == PlotPlanning::kAdaptTemplate) {
+                return PlotPlanning::kAdaptQuestion;
+            }
+            return PlotPlanning::kSlotQuestion;
         }
 
         // The keys offered by the request made at `index`.
@@ -114,15 +143,35 @@ namespace
             }
             return out;
         }
+
+        // The lines offered by the request made at `index`.
+        std::vector<std::string> Lines(std::size_t index) const
+        {
+            std::vector<std::string> out;
+            for (const auto& o : asked.at(index).ctx["options"]) {
+                out.push_back(o["line"].get<std::string>());
+            }
+            return out;
+        }
+
+        std::vector<std::string> Templates() const
+        {
+            std::vector<std::string> out;
+            for (const auto& a : asked) {
+                out.push_back(a.templateName);
+            }
+            return out;
+        }
     };
 
     struct Fixture
     {
         PlotCasting::Population population = Province();
         PlotMenus::World world = World();
+        std::vector<PlotModel::Step> history;
         Script script;
 
-        PlotPlanning::Outcome Run(std::size_t maxSteps = 6)
+        PlotPlanning::Outcome Run(std::size_t maxSteps = PlotPlanning::kPlanCap)
         {
             PlotPlanning::Input input{population, world};
             input.mastermind = kBoss;
@@ -130,6 +179,9 @@ namespace
             input.ambition = "He means to own Whiterun.";
             input.scheme = "Ruin Hulda's trade.";
             input.maxSteps = maxSteps;
+            for (const auto& step : history) {
+                input.before.push_back(&step);
+            }
             return PlotPlanning::Plan(input,
                                       [this](std::string_view n, const nlohmann::json& c) { return script(n, c); });
         }
@@ -139,74 +191,88 @@ namespace
     {
         return std::find(keys.begin(), keys.end(), key) != keys.end();
     }
+
+    RE::FormID FormOf(const PlotModel::Step& step, std::string_view slot)
+    {
+        const auto* value = step.FindSlot(slot);
+        return value != nullptr ? value->form : 0;
+    }
+
+    const std::string kGoal = PlotPlanning::kGoalTemplate;
+    const std::string kSlot = PlotPlanning::kSlotTemplate;
+    const std::string kPrepare = PlotPlanning::kPrepareTemplate;
+    const std::string kObtain = PlotPlanning::kObtainTemplate;
 } // namespace
 
-TEST_CASE("PlotPlanning lays out a plan from offered keys", "[PlotPlanning][engine]")
+TEST_CASE("PlotPlanning asks for the goal first", "[PlotPlanning][engine]")
 {
     Fixture f;
 
-    SECTION("when the model picks a verb and then ends the plan")
+    SECTION("when the goal is a watch and one preparation is taken")
     {
-        // watch -> its mark has two candidates, so it is asked. The scheme
-        // names Hulda, which puts her first.
-        f.script.answers = {"watch", "c1", "done"};
+        // goal watch -> mark: Hulda (named, first) or Idolaf -> prepare p1:
+        // ask around about Hulda, whose place is Whiterun alone. Then nothing
+        // is left to offer, so planning stops on its own.
+        f.script.answers = {"watch", "c1", "p1"};
         const auto out = f.Run();
 
-        SECTION("should produce one step of that verb, filled from the list")
+        SECTION("should ask the goal, its slot, then what comes first")
         {
-            REQUIRE(out.ok);
-            REQUIRE(out.plan.size() == 1);
-            const auto& step = out.plan.front();
-            REQUIRE(step.verb == "watch");
-            REQUIRE(step.type == PlotModel::StepType::Surveil);
-            REQUIRE(step.FindSlot("mark")->form == kTrader);
-            REQUIRE(step.FindSlot("mastermind")->form == kBoss);
+            REQUIRE(f.script.Templates() == std::vector<std::string>{kGoal, kSlot, kPrepare});
+            REQUIRE(out.decisions == 3);
         }
 
-        SECTION("should make the mark the step's target, for the resolution model")
+        SECTION("should put the goal last and the preparation before it")
         {
-            REQUIRE(out.plan.front().target == kTrader);
-            REQUIRE(out.plan.front().targetName == "Hulda");
+            REQUIRE(out.ok);
+            REQUIRE(out.plan.size() == 2);
+            REQUIRE(out.plan[0].verb == "ask_around");
+            REQUIRE(out.plan[1].verb == "watch");
+        }
+
+        SECTION("should bind the preparation to the person its step is about, without asking")
+        {
+            REQUIRE(FormOf(out.plan[1], "mark") == kTrader);
+            REQUIRE(FormOf(out.plan[0], "mark") == kTrader);
+            REQUIRE(FormOf(out.plan[0], "place") == kWhiterun);
+        }
+
+        SECTION("should offer the preparation as a whole step, saying where it goes")
+        {
+            REQUIRE(f.script.Lines(2)
+                    == std::vector<std::string>{"Before step 1: Someone asks around [place] about Hulda.",
+                                                "Nothing more: the plan is ready to carry out."});
+            REQUIRE(f.script.asked[2].ctx["plan"][0] == "1. Someone watches Hulda, learning their habits.");
+        }
+
+        SECTION("should fill the goal's slot knowing it is the goal")
+        {
+            REQUIRE(f.script.asked[1].ctx["step"] == "Someone watches [mark], learning their habits.");
+            REQUIRE(f.script.asked[1].ctx["purpose"] == "This step accomplishes the scheme.");
         }
 
         SECTION("should leave the agent for dispatch")
         {
-            REQUIRE(out.plan.front().actor == 0);
-            REQUIRE(PlotModel::Label(out.plan.front()) == "Someone watches Hulda, learning their habits.");
-        }
-
-        SECTION("should ask the verb question, then the slot, then the verb question again")
-        {
-            REQUIRE(f.script.asked.size() == 3);
-            REQUIRE(f.script.asked[0].templateName == PlotPlanning::kVerbTemplate);
-            REQUIRE(f.script.asked[1].templateName == PlotPlanning::kSlotTemplate);
-            REQUIRE(f.script.asked[1].ctx["slot"] == "mark");
-            REQUIRE(f.script.asked[1].ctx["step"] == "Someone watches [mark], learning their habits.");
-        }
-
-        SECTION("should show the second verb question the plan so far")
-        {
-            const auto steps = f.script.asked[2].ctx["steps"];
-            REQUIRE(steps.size() == 1);
-            REQUIRE(steps[0] == "1. Someone watches Hulda, learning their habits.");
+            REQUIRE(out.plan[1].actor == 0);
+            REQUIRE(out.plan[1].FindSlot("mastermind")->form == kBoss);
+            REQUIRE(out.plan[1].target == kTrader);
         }
     }
 
-    SECTION("when the model answers a verb that was not offered")
+    SECTION("when the goal is answered with a verb that was not offered")
     {
-        // deliver needs an item obtained earlier; nothing has obtained one.
-        f.script.answers = {"deliver"};
+        f.script.answers = {"conquer"};
         const auto out = f.Run();
 
         SECTION("should reject the plan rather than run it")
         {
             REQUIRE_FALSE(out.ok);
             REQUIRE(out.plan.empty());
-            REQUIRE(out.rejection.find("deliver") != std::string::npos);
+            REQUIRE(out.rejection.find("conquer") != std::string::npos);
         }
     }
 
-    SECTION("when the model answers a slot key that was not offered")
+    SECTION("when a slot of the goal is answered with a key that was not offered")
     {
         f.script.answers = {"watch", "c9"};
         const auto out = f.Run();
@@ -215,82 +281,6 @@ TEST_CASE("PlotPlanning lays out a plan from offered keys", "[PlotPlanning][engi
         {
             REQUIRE_FALSE(out.ok);
             REQUIRE(out.plan.empty());
-        }
-    }
-}
-
-TEST_CASE("PlotPlanning gates and ends the plan", "[PlotPlanning][engine]")
-{
-    Fixture f;
-
-    SECTION("when nothing has obtained an item yet")
-    {
-        f.script.answers = {"steal", "c1", "c2", "deliver", "c1", "done"};
-        const auto out = f.Run();
-
-        SECTION("should not offer deliver or plant at the first position")
-        {
-            const auto first = f.script.Offered(0);
-            REQUIRE_FALSE(Contains(first, "deliver"));
-            REQUIRE_FALSE(Contains(first, "plant"));
-        }
-
-        SECTION("should offer them once a step has obtained something")
-        {
-            REQUIRE(Contains(f.script.Offered(3), "deliver"));
-            REQUIRE(Contains(f.script.Offered(3), "plant"));
-        }
-
-        SECTION("should bind the delivered item to the stolen one without asking")
-        {
-            REQUIRE(out.ok);
-            REQUIRE(out.plan.size() == 2);
-            REQUIRE(out.plan[0].FindSlot("item")->form == kRuby);
-            REQUIRE(out.plan[1].FindSlot("item")->form == kRuby);
-            // steal: item, mark asked; deliver: recipient asked, item bound.
-            const auto slotQuestions = std::count_if(f.script.asked.begin(), f.script.asked.end(), [](const auto& a) {
-                return a.templateName == PlotPlanning::kSlotTemplate;
-            });
-            REQUIRE(slotQuestions == 3);
-        }
-    }
-
-    SECTION("when the plan is at its first position")
-    {
-        f.script.answers = {"watch", "c1", "done"};
-        (void)f.Run();
-
-        SECTION("should not offer done, since one step is not yet a plan")
-        {
-            REQUIRE_FALSE(Contains(f.script.Offered(0), PlotPlanning::kDone));
-            REQUIRE(Contains(f.script.Offered(2), PlotPlanning::kDone));
-        }
-    }
-
-    SECTION("when the model never answers done")
-    {
-        f.script.answers = {"watch", "c1", "watch", "c1", "watch", "c1"};
-        const auto out = f.Run(3);
-
-        SECTION("should stop at the position cap")
-        {
-            REQUIRE(out.ok);
-            REQUIRE(out.plan.size() == 3);
-        }
-    }
-
-    SECTION("when a slot has one candidate")
-    {
-        // buy's seller is somebody who trades: only Hulda.
-        f.script.answers = {"buy", "c2", "done"};
-        const auto out = f.Run();
-
-        SECTION("should fill it without asking")
-        {
-            REQUIRE(out.ok);
-            REQUIRE(out.plan[0].FindSlot("seller")->form == kTrader);
-            REQUIRE(out.plan[0].FindSlot("item")->form == kSkooma);
-            REQUIRE(f.script.asked.size() == 3); // verb, item, verb
         }
     }
 
@@ -306,6 +296,286 @@ TEST_CASE("PlotPlanning gates and ends the plan", "[PlotPlanning][engine]")
             REQUIRE(out.error == "no_decisions_route");
             REQUIRE(PlotPlanning::SessionCannotDecide(out.error));
             REQUIRE(f.script.asked.size() == 1);
+        }
+    }
+}
+
+TEST_CASE("PlotPlanning gets the items a plan needs", "[PlotPlanning][engine]")
+{
+    Fixture f;
+
+    SECTION("when the goal delivers something to the person the scheme names")
+    {
+        // goal deliver -> item: ruby -> recipient: Hulda. Only a theft can
+        // get the ruby from anybody but Hulda, so it is planned unasked,
+        // from Idolaf, the one other person Olfrid knows.
+        f.script.answers = {"deliver", "c1", "c1", "ready"};
+        const auto out = f.Run();
+
+        SECTION("should choose the item from the pool, since nobody has one yet")
+        {
+            REQUIRE(f.script.asked[1].ctx["slot"] == "item");
+            REQUIRE(f.script.Offered(1) == std::vector<std::string>{"c1", "c2"});
+        }
+
+        SECTION("should put the theft of that very item just before the delivery")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(out.plan.size() == 2);
+            REQUIRE(out.plan[0].verb == "steal");
+            REQUIRE(out.plan[1].verb == "deliver");
+            REQUIRE(FormOf(out.plan[0], "item") == kRuby);
+            REQUIRE(FormOf(out.plan[1], "item") == kRuby);
+        }
+
+        SECTION("should never get it from the person it is delivered to")
+        {
+            REQUIRE(FormOf(out.plan[1], "recipient") == kTrader);
+            REQUIRE(FormOf(out.plan[0], "mark") == kFriend);
+        }
+
+        SECTION("should ask nothing about how, when there is only one way")
+        {
+            REQUIRE(f.script.Templates() == std::vector<std::string>{kGoal, kSlot, kSlot, kPrepare});
+        }
+    }
+
+    SECTION("when the item could be stolen or bought")
+    {
+        // recipient: Idolaf this time, which leaves Hulda free to be stolen
+        // from or bought from.
+        f.script.answers = {"deliver", "c1", "c2", "buy", "ready"};
+        const auto out = f.Run();
+
+        SECTION("should ask which, naming the item and the step it is for")
+        {
+            REQUIRE(f.script.asked[3].templateName == kObtain);
+            REQUIRE(f.script.Offered(3) == std::vector<std::string>{"steal", "buy"});
+            REQUIRE(f.script.Lines(3)[1] == "Someone buys a ruby from [seller].");
+            REQUIRE(f.script.asked[3].ctx["need"]["step"] == 1);
+            REQUIRE(f.script.asked[3].ctx["need"]["item"] == "a ruby");
+        }
+
+        SECTION("should plan the way chosen")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(out.plan[0].verb == "buy");
+            REQUIRE(FormOf(out.plan[0], "seller") == kTrader);
+            REQUIRE(FormOf(out.plan[1], "recipient") == kFriend);
+        }
+    }
+
+    SECTION("when an earlier step of the plot already got the item")
+    {
+        PlotModel::Step stolen;
+        stolen.verb = "steal";
+        stolen.slots = {{"item", kRuby, "a ruby"}, {"mark", kFriend, "Idolaf"}};
+        stolen.actor = kBoss;
+        stolen.outcome = PlotModel::StepOutcome::Succeeded;
+        f.history = {stolen};
+        f.script.answers = {"deliver", "c1"};
+        const auto out = f.Run();
+
+        SECTION("should bind it rather than ask for an item or get it again")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(out.plan.size() == 1);
+            REQUIRE(out.plan[0].verb == "deliver");
+            REQUIRE(FormOf(out.plan[0], "item") == kRuby);
+            REQUIRE(f.script.Templates() == std::vector<std::string>{kGoal, kSlot});
+            REQUIRE(f.script.asked[1].ctx["slot"] == "recipient");
+        }
+    }
+
+    SECTION("when the earlier attempt to get it failed")
+    {
+        PlotModel::Step caught;
+        caught.verb = "steal";
+        caught.slots = {{"item", kRuby, "a ruby"}, {"mark", kFriend, "Idolaf"}};
+        caught.actor = kBoss;
+        caught.outcome = PlotModel::StepOutcome::FailedCaught;
+        f.history = {caught};
+        f.script.answers = {"deliver", "c1", "c1", "ready"};
+        const auto out = f.Run();
+
+        SECTION("should choose an item and get it, since nobody has one")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(f.script.asked[1].ctx["slot"] == "item");
+            REQUIRE(out.plan.size() == 2);
+            REQUIRE(out.plan[0].verb == "steal");
+        }
+    }
+
+    SECTION("when a preparation needs an item of its own")
+    {
+        // goal denounce -> mark: Hulda (named) -> authority: Laila, the one
+        // authority. Prepare p1 is planting something on Hulda; its item is
+        // the skooma, and a theft of it from Idolaf goes in front of it.
+        f.script.answers = {"denounce", "c1", "p1", "c2", "ready"};
+        const auto out = f.Run();
+
+        SECTION("should offer the planting first among the denunciation's preparations")
+        {
+            REQUIRE(f.script.Lines(2).front() == "Before step 1: Someone hides [item] among Hulda's belongings.");
+        }
+
+        SECTION("should plan the theft, the planting, then the denunciation")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(out.plan.size() == 3);
+            REQUIRE(out.plan[0].verb == "steal");
+            REQUIRE(out.plan[1].verb == "plant");
+            REQUIRE(out.plan[2].verb == "denounce");
+        }
+
+        SECTION("should plant on the person denounced, and steal from somebody else")
+        {
+            REQUIRE(FormOf(out.plan[1], "mark") == kTrader);
+            REQUIRE(FormOf(out.plan[2], "mark") == kTrader);
+            REQUIRE(FormOf(out.plan[0], "mark") == kFriend);
+            REQUIRE(FormOf(out.plan[0], "item") == kSkooma);
+            REQUIRE(FormOf(out.plan[1], "item") == kSkooma);
+        }
+
+        SECTION("should tell the item's question what the planting is for")
+        {
+            REQUIRE(f.script.asked[3].ctx["purpose"] == "It prepares for step 1: Someone denounces Hulda to Laila.");
+        }
+    }
+
+    SECTION("when the plan has room for only one step")
+    {
+        f.script.answers = {"watch", "c1"};
+        (void)f.Run(1);
+
+        SECTION("should not offer a goal that needs an item, which needs a second step to get")
+        {
+            REQUIRE_FALSE(Contains(f.script.Offered(0), "deliver"));
+            REQUIRE_FALSE(Contains(f.script.Offered(0), "plant"));
+            REQUIRE(Contains(f.script.Offered(0), "steal"));
+        }
+    }
+}
+
+TEST_CASE("PlotPlanning never repeats a step", "[PlotPlanning][engine]")
+{
+    Fixture f;
+
+    SECTION("when the model answers the first option every time")
+    {
+        // goal steal -> ruby -> from Hulda; then p1, p1, ... for as long as
+        // anything is offered.
+        f.script.answers = {"steal", "c1", "c1", "p1", "p1"};
+        const auto out = f.Run();
+
+        SECTION("should stop once there is nothing new left to offer")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(out.plan.size() == 3);
+            REQUIRE(f.script.answers.empty());
+        }
+
+        SECTION("should hold no two steps alike")
+        {
+            for (std::size_t i = 0; i < out.plan.size(); ++i) {
+                for (std::size_t j = i + 1; j < out.plan.size(); ++j) {
+                    REQUIRE_FALSE(PlotPlanning::SameStep(out.plan[i], out.plan[j]));
+                }
+            }
+        }
+
+        SECTION("should read as a sequence: ask around, watch, then steal")
+        {
+            REQUIRE(out.plan[0].verb == "ask_around");
+            REQUIRE(out.plan[1].verb == "watch");
+            REQUIRE(out.plan[2].verb == "steal");
+        }
+
+        SECTION("should stop offering a preparation once it is planned")
+        {
+            const auto second = f.script.Lines(4);
+            REQUIRE(
+                std::count(second.begin(), second.end(), "Before step 2: Someone watches Hulda, learning their habits.")
+                == 0);
+        }
+    }
+
+    SECTION("when re-planning a goal the plot has already carried out")
+    {
+        PlotModel::Step watched;
+        watched.verb = "watch";
+        watched.slots = {{"mastermind", kBoss, "Olfrid"}, {"mark", kTrader, "Hulda"}};
+        watched.actor = kFriend;
+        watched.outcome = PlotModel::StepOutcome::Succeeded;
+        f.history = {watched};
+        f.script.answers = {"watch", "ready"};
+        const auto out = f.Run();
+
+        SECTION("should leave out the filler that would make it the same step again")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(FormOf(out.plan.back(), "mark") == kFriend);
+            // Idolaf was the only one left, so nobody was asked.
+            REQUIRE(f.script.asked[1].templateName == kPrepare);
+        }
+    }
+}
+
+TEST_CASE("PlotPlanning ends the preparing", "[PlotPlanning][engine]")
+{
+    Fixture f;
+
+    SECTION("when the plan reaches its cap")
+    {
+        f.script.answers = {"steal", "c1", "c1", "p1"};
+        const auto out = f.Run(2);
+
+        SECTION("should stop asking")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(out.plan.size() == 2);
+            REQUIRE(f.script.asked.size() == 4);
+        }
+    }
+
+    SECTION("when the model answers ready")
+    {
+        f.script.answers = {"steal", "c1", "c1", "ready"};
+        const auto out = f.Run();
+
+        SECTION("should keep just the goal")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(out.plan.size() == 1);
+        }
+    }
+
+    SECTION("when a preparation is answered with a key that was not offered")
+    {
+        f.script.answers = {"steal", "c1", "c1", "p9"};
+        const auto out = f.Run();
+
+        SECTION("should keep the plan as it stands rather than reject it")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(out.plan.size() == 1);
+            REQUIRE(out.plan[0].verb == "steal");
+        }
+    }
+
+    SECTION("when a slot has one candidate")
+    {
+        // buy's seller is somebody who trades: only Hulda.
+        f.script.answers = {"buy", "c2", "ready"};
+        const auto out = f.Run();
+
+        SECTION("should fill it without asking")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(FormOf(out.plan[0], "seller") == kTrader);
+            REQUIRE(FormOf(out.plan[0], "item") == kSkooma);
+            REQUIRE(f.script.Templates() == std::vector<std::string>{kGoal, kSlot, kPrepare});
         }
     }
 }
@@ -411,33 +681,39 @@ TEST_CASE("PlotPlanning::PickAgent", "[PlotPlanning][engine]")
 TEST_CASE("PlotPlanning::ItemHolder", "[PlotPlanning][engine]")
 {
     PlotModel::Plot plot;
-    PlotModel::Step steal;
-    steal.verb = "steal";
-    steal.actor = kFriend;
-    PlotModel::Step watch;
-    watch.verb = "watch";
-    watch.actor = kTrader;
-    watch.outcome = PlotModel::StepOutcome::Succeeded;
+    PlotModel::Step ruby;
+    ruby.verb = "steal";
+    ruby.slots = {{"item", kRuby, "a ruby"}};
+    ruby.actor = kFriend;
+    PlotModel::Step skooma;
+    skooma.verb = "buy";
+    skooma.slots = {{"item", kSkooma, "a bottle of skooma"}};
+    skooma.actor = kTrader;
+    skooma.outcome = PlotModel::StepOutcome::Succeeded;
 
-    SECTION("when an earlier step stole the item")
+    PlotModel::Step deliverRuby;
+    deliverRuby.verb = "deliver";
+    deliverRuby.slots = {{"item", kRuby, "a ruby"}};
+
+    SECTION("when an earlier step stole the item, and a later one got something else")
     {
-        steal.outcome = PlotModel::StepOutcome::Succeeded;
-        plot.history = {steal, watch};
+        ruby.outcome = PlotModel::StepOutcome::Succeeded;
+        plot.history = {ruby, skooma};
 
-        SECTION("should be whoever stole it, whatever came after")
+        SECTION("should be whoever got that very item, not whoever got something last")
         {
-            REQUIRE(PlotPlanning::ItemHolder(plot) == kFriend);
+            REQUIRE(PlotPlanning::ItemHolder(plot, deliverRuby) == kFriend);
         }
     }
 
     SECTION("when the theft failed")
     {
-        steal.outcome = PlotModel::StepOutcome::FailedCaught;
-        plot.history = {steal, watch};
+        ruby.outcome = PlotModel::StepOutcome::FailedCaught;
+        plot.history = {ruby, skooma};
 
         SECTION("should be nobody, since nobody has it")
         {
-            REQUIRE(PlotPlanning::ItemHolder(plot) == 0);
+            REQUIRE(PlotPlanning::ItemHolder(plot, deliverRuby) == 0);
         }
     }
 }

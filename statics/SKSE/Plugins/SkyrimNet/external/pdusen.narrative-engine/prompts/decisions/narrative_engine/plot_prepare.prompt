@@ -1,0 +1,36 @@
+{# narrative_engine/plot_prepare — what must be done before a planned step.
+   Asked by PlotPlanning::Plan once the goal is planned, again after each
+   preparation is added, until the answer is ready or the plan is full.
+   Each option is a whole step, already about the right people, and says
+   which planned step it comes just before. The answer is p1 onward, or
+   ready.
+   Receives: mastermind { name, standing }, bio, ambition, scheme,
+     history [string] (steps already taken, when re-planning), plan
+     [string] (the steps planned so far, numbered, the last being the one
+     that accomplishes the scheme), options [{ key, line }].
+   NOTE: no fenced blocks and no literal braces anywhere in this file. #}
+[ state who ]
+{{ mastermind.name }}{% if length(mastermind.standing) > 0 %}, {{ mastermind.standing }}{% endif %}.
+{{ bio.summary }}
+[ end state ]
+
+[ state aims ]
+The scheme: {{ scheme }}
+[ end state ]
+
+{% if length(history) > 0 %}[ state history ]
+What has already happened:
+{% for s in history %}{{ s }}
+{% endfor %}[ end state ]
+
+{% endif %}[ state plan ]
+The steps planned so far, in order; the last one accomplishes the scheme:
+{% for s in plan %}{{ s }}
+{% endfor %}[ end state ]
+
+[ question prepare choice ]
+Is there something `who` should have done first, to make a step in `plan` more likely to work? Each choice is done just before the step it names. Choose ready if the plan in `plan` can be carried out as it stands.
+[ criteria ]
+{% for o in options %}{{ o.key }}: {{ o.line }}
+{% endfor %}[ end criteria ]
+[ end question ]

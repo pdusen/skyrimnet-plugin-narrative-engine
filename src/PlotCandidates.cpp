@@ -91,7 +91,7 @@ namespace NarrativeEngine::PlotCandidates
                     return false;
                 }
             }
-            return true;
+            return !request.excluded.contains(member.npc);
         }
 
         bool Hostile(const PlotCasting::Member& boss, const PlotCasting::Member& other)
@@ -349,7 +349,7 @@ namespace NarrativeEngine::PlotCandidates
         for (auto it = request.earlier.rbegin(); it != request.earlier.rend(); ++it) {
             const PlotModel::Step* step = *it;
             const auto* verb = step != nullptr ? PlotVerbs::Find(step->verb) : nullptr;
-            if (verb == nullptr || !verb->obtainsItem) {
+            if (verb == nullptr || !verb->obtainsItem || step->outcome != PlotModel::StepOutcome::Succeeded) {
                 continue;
             }
             if (const auto* item = step->FindSlot("item")) {

@@ -1,0 +1,31 @@
+{# narrative_engine/plot_obtain — how an item a planned step needs is got.
+   Asked by PlotPlanning::Plan when a step needs an item nobody holds and
+   it could be either stolen or bought. Whoever it is got from is decided
+   afterwards. The answer is steal or buy.
+   Receives: mastermind { name, standing }, bio, ambition, scheme,
+     history [string], plan [string] (numbered), need { step (its number
+     in plan), sketch, item }, options [{ key, line }].
+   NOTE: no fenced blocks and no literal braces anywhere in this file. #}
+[ state who ]
+{{ mastermind.name }}{% if length(mastermind.standing) > 0 %}, {{ mastermind.standing }}{% endif %}.
+{{ bio.summary }}
+[ end state ]
+
+[ state aims ]
+The scheme: {{ scheme }}
+[ end state ]
+
+[ state plan ]
+{% for s in plan %}{{ s }}
+{% endfor %}[ end state ]
+
+[ state need ]
+Step {{ need.step }} needs {{ need.item }} in hand first: {{ need.sketch }}
+[ end state ]
+
+[ question obtain choice ]
+How does `who` get {{ need.item }} for the step in `need`, given the kind of person they are and what the scheme in `aims` is?
+[ criteria ]
+{% for o in options %}{{ o.key }}: {{ o.line }}
+{% endfor %}[ end criteria ]
+[ end question ]

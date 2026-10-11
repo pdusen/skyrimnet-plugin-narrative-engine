@@ -1,9 +1,10 @@
 {# narrative_engine/plot_slot — who, where or what fills one slot of a step.
-   Asked by PlotPlanning::FillSlots for each slot with more than one
-   candidate. The answer is a candidate key, c1 onward.
+   Asked by PlotPlanning for each slot with more than one candidate, and
+   by PickAgent for the agent. The answer is a candidate key, c1 onward.
    Receives: mastermind { name }, scheme, step (the step's sentence with
-     each unfilled slot shown as its name in brackets), slot (the name
-     being filled), kind (person, place or thing), options [{ key, line }].
+     each unfilled slot shown as its name in brackets), purpose (what the
+     step is for in the plan), slot (the name being filled), kind (person,
+     place or thing), options [{ key, line }].
    NOTE: no fenced blocks and no literal braces anywhere in this file. #}
 [ state scheme ]
 {{ mastermind.name }} is working toward this: {{ scheme }}
@@ -11,10 +12,11 @@
 
 [ state step ]
 {{ step }}
+{{ purpose }}
 [ end state ]
 
 [ question pick choice ]
-{% if kind == "place" %}Where should [{{ slot }}] be in the step in `step`, to best serve the scheme in `scheme`?{% else if kind == "thing" %}What should [{{ slot }}] be in the step in `step`, to best serve the scheme in `scheme`?{% else %}Who should [{{ slot }}] be in the step in `step`, to best serve the scheme in `scheme`? Prefer the person this scheme is plainly about, if they are on the list.{% endif %}
+{% if kind == "place" %}Where should [{{ slot }}] be in the step in `step`, to best serve the scheme in `scheme`?{% else if kind == "thing" %}What should [{{ slot }}] be in the step in `step`, to best serve the scheme in `scheme`?{% else %}Who should [{{ slot }}] be in the step in `step`, to best serve the scheme in `scheme`? Prefer the person this scheme is plainly about, if they are on the list and the step is about them.{% endif %}
 [ criteria ]
 {% for o in options %}{{ o.key }}: {{ o.line }}
 {% endfor %}[ end criteria ]
