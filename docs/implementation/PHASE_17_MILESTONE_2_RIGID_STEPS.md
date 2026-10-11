@@ -5,8 +5,9 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: Steps 1–8 and 10–12 complete; Step 9's validation outstanding.** Steps 10–12 were added after
-> Step 9's first attempt found the plans incoherent, and plan backwards from the goal; Step 9 runs again on them.
+> **Doc status: Steps 1–8 and 10–12 complete; Steps 13–16 added after Step 9's second attempt.** Steps 10–12 plan
+> backwards from the goal; Steps 13–16 write the scheme in the plan's vocabulary and bound the preparing. Step 9
+> runs again once they are done.
 > Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its Steps 20–22 still apply and follow it.
 
 ---
@@ -825,7 +826,7 @@ Four causes, each of which Steps 10–12 answer:
    the mark, so the model took Hemming, whose line mentions her. Talen-Jei knows nothing of Maven by the ladder's
    reckoning, but a scheme that names her shows they know of her.
 
-Run again once Steps 10–12 are done.
+Run again once Steps 10–12 are done. The second attempt is recorded after Step 12, and led to Steps 13–16.
 
 ### Step 10 — The scheme's own people head every list
 
@@ -983,6 +984,79 @@ failures reject a plan, and a decision that is not answered still aborts the bir
 
 **`PlotBirth.h` had a stray comment.** `Compose`'s documentation had drifted above `Occupation` when Steps 5 and 6
 added declarations between them; it is back on `Compose`, which now also reports the decision count.
+
+**Second attempt at Step 9 (2026-10-11): coherent sequences, wrong ends.** Five plots, no repeats, every
+preparation in front of the step it serves. What was still wrong traces mostly to the scheme rather than the plan:
+
+| Mastermind     | Scheme                                         | Plan                                                                |
+| -------------- | ---------------------------------------------- | ------------------------------------------------------------------- |
+| Falk Firebeard | document the bribes paid by Thane Erikur       | denounce Erikur to Laila Law-Giver -- one step, to Riften's jarl    |
+| Idesa Sadri    | compile a ledger of Torsten Cruel-Sea's lapses | watch Hillevi, steal a dossier from her, hand it to Torsten himself |
+| Nenya          | falsify the tax reports on Siddgeir's spending | watch Helvard, steal a letter from him, hand it to Siddgeir         |
+| Atar           | forge reports of Forsworn attacks on caravans  | ask around and watch Cosnach, steal a sealed letter, deliver it     |
+| Malur Seloth   | steal a spellbook from Nelacar                 | six steps, three of them about Enthir, ending in stolen orders      |
+
+1. **The scheme is written without the vocabulary.** The ambition call is never shown the verbs or the item pool,
+   so it writes schemes about documenting, compiling, forging and falsifying, which no verb does, and about a
+   spellbook the pool does not hold. The goal is then the nearest verb, and Step 10's ranking makes the scheme's
+   named target the likeliest recipient of a delivery -- which is how Torsten and Siddgeir are handed the evidence
+   against themselves.
+2. **The decision model does not weigh how a candidate is related.** Elisif headed the authority list as Falk's own
+   jarl; the model took Laila Law-Giver, whose name matches a scheme about bribes.
+3. **`ready` is offered from the first preparation question,** so a plan can be a single step.
+4. **Preparations prepare preparations.** The bribe of Enthir, a bystander to the theft, got an ask-around and a
+   watch of its own, filling Malur's plan to the cap with steps about the wrong person.
+
+### Step 13 — The scheme is written in the plan's vocabulary
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+The ambition call is shown every verb, as its generic sentence, and every item in the pool. The scheme must be one
+act whose final step is one of those verbs, naming each person that step involves -- whom it is done to, and for a
+delivery or a denunciation, to whom -- and naming an object only as the pool lists it. The call also returns `goal`,
+the id of that final verb, which the parser holds to the manifest. Birth takes the goal as given and asks no goal
+question; a re-plan after a failure still asks, since the history changes what can finish the scheme.
+
+**Verification:** a parser suite asserts a known `goal` is kept and an unknown or missing one is refused, and the
+planning suite asserts a given goal skips the goal question and is planned last.
+
+### Step 14 — A denunciation goes to the mark's own court
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+`SeniorInCourt` admits the authorities of the mark's hold when there are any, then the mastermind's, then everybody
+with authority. Who hears a denunciation is a matter of jurisdiction, which code knows and the model demonstrably
+does not weigh.
+
+**Verification:** the candidate suite asserts the mark's jarl alone is offered when the mark's hold has one, and the
+fallbacks in order.
+
+### Step 15 — A plan is more than one step
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+`ready` is offered only once a plan has two steps, as `done` was in the forward planner: one step is an errand, not a
+scheme. A goal nothing can prepare still makes a one-step plan, because then there is nothing to offer.
+
+**Verification:** the planning suite asserts the first preparation question offers no `ready` and the second does.
+
+### Step 16 — Only the goal and what supplies it are prepared
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+Preparations are offered for the goal and for the steps that get items, never for a preparation. A watch before a
+theft is part of the theft; a watch before the bribe before the theft is a plan about the person bribed.
+
+**Verification:** the planning suite asserts that once a preparation is planned, none of its own preparations is
+offered, while the goal's remaining preparations still are.
 
 ---
 
