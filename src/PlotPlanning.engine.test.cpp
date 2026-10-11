@@ -515,10 +515,11 @@ TEST_CASE("PlotPlanning never repeats a step", "[PlotPlanning][engine]")
             }
         }
 
-        SECTION("should read as a sequence: ask around, watch, then steal")
+        SECTION("should read as a sequence: watch, ask around, then steal")
         {
-            REQUIRE(out.plan[0].verb == "ask_around");
-            REQUIRE(out.plan[1].verb == "watch");
+            // Both prepare the theft, so each goes just before it in turn.
+            REQUIRE(out.plan[0].verb == "watch");
+            REQUIRE(out.plan[1].verb == "ask_around");
             REQUIRE(out.plan[2].verb == "steal");
         }
 
@@ -548,6 +549,45 @@ TEST_CASE("PlotPlanning never repeats a step", "[PlotPlanning][engine]")
             REQUIRE(FormOf(out.plan.back(), "mark") == kFriend);
             // Idolaf was the only one left, so nobody was asked.
             REQUIRE(f.script.asked[1].templateName == kPrepare);
+        }
+    }
+}
+
+TEST_CASE("PlotPlanning prepares only the goal and what supplies it", "[PlotPlanning][engine]")
+{
+    Fixture f;
+
+    SECTION("when a preparation has been planned")
+    {
+        // goal steal -> ruby -> from Hulda; p1 is the watch of Hulda.
+        f.script.answers = {"steal", "c1", "c1", "p1", "ready"};
+        (void)f.Run();
+
+        SECTION("should offer nothing that prepares the preparation")
+        {
+            const auto second = f.script.Lines(4);
+            REQUIRE(std::count(second.begin(), second.end(), "Before step 1: Someone asks around [place] about Hulda.")
+                    == 0);
+        }
+
+        SECTION("should still offer what prepares the goal")
+        {
+            const auto second = f.script.Lines(4);
+            REQUIRE(std::count(second.begin(), second.end(), "Before step 2: Someone asks around [place] about Hulda.")
+                    == 1);
+        }
+    }
+
+    SECTION("when a step that gets an item has been planned")
+    {
+        // goal deliver -> ruby -> to Hulda; the theft from Idolaf is planned
+        // unasked, and may be prepared like the goal.
+        f.script.answers = {"deliver", "c1", "c1", "ready"};
+        (void)f.Run();
+
+        SECTION("should offer what prepares it")
+        {
+            REQUIRE(Contains(f.script.Lines(3), "Before step 1: Someone watches Idolaf, learning their habits."));
         }
     }
 }

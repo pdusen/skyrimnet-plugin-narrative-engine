@@ -25,7 +25,9 @@
 //      purchase of it placed just before it, from somebody not in that step.
 //   3. Preparations: concrete steps from PlotVerbs::kPreparations, their
 //      bound slots already filled, each just before the step it prepares --
-//      asked until the model answers `ready` or the plan reaches its cap.
+//      asked until the model answers `ready` (offered from the second step)
+//      or the plan reaches its cap. Only the goal and the steps that get
+//      items are prepared; a preparation never gets one of its own.
 //
 // A forward "what comes next?" loop came first. The model answered it with
 // whichever verb best matched the scheme, every time, to the cap; see

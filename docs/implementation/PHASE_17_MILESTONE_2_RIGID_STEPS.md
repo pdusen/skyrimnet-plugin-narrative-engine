@@ -5,9 +5,9 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: Steps 1–8 and 10–12 complete; Steps 13–16 added after Step 9's second attempt.** Steps 10–12 plan
-> backwards from the goal; Steps 13–16 write the scheme in the plan's vocabulary and bound the preparing. Step 9
-> runs again once they are done.
+> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan backwards from
+> the goal and Steps 13–16 write the scheme in the plan's vocabulary and bound the preparing, each added after an
+> attempt at Step 9. Step 9 runs again on them.
 > Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its Steps 20–22 still apply and follow it.
 
 ---
@@ -1089,7 +1089,7 @@ step that gets its item, so in practice that leaves an `ask_around` goal, which 
 
 ### Step 16 — Only the goal and what supplies it are prepared
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1098,6 +1098,21 @@ theft is part of the theft; a watch before the bribe before the theft is a plan 
 
 **Verification:** the planning suite asserts that once a preparation is planned, none of its own preparations is
 offered, while the goal's remaining preparations still are.
+
+Done. The planner keeps, beside each planned step, whether it may be prepared: the goal and every step placed to get
+an item may, a preparation may not. 465 tests pass, one of them new.
+
+**A step that gets an item is prepared like the goal.** It is part of the line the scheme runs along -- the theft of
+the deed is how the deed is planted -- so watching the person it is stolen from is as fair a preparation as watching
+the goal's mark. That includes the theft placed in front of a `plant` that is itself a preparation, since that theft
+is still how the evidence comes to exist.
+
+**Two preparations of one step now land in the order they were chosen.** Each goes just before the step it serves,
+so a watch chosen first and an ask-around chosen second read "watch, ask around, steal"; when the ask-around could
+prepare the watch, it read the other way round. The planning suite's sequence section was changed to match.
+
+**Malur's plan, re-run by hand against the new rules,** keeps the ask-around and watch of Nelacar and the bribe of
+Enthir, and loses the ask-around and watch of Enthir: four steps, all about the theft.
 
 ---
 

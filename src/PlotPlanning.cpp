@@ -169,6 +169,11 @@ namespace NarrativeEngine::PlotPlanning
             const Input& input_;
             const Ask& ask_;
             std::vector<Step> plan_;
+            // Beside each planned step: whether it may be prepared. The goal
+            // and the steps that get items may; a preparation may not, or a
+            // bribe of a bystander grows a watch of its own and the plan
+            // turns into one about the person bribed.
+            std::vector<bool> preparable_;
             std::size_t decisions_ = 0;
             std::string error_;
             std::string rejection_;
@@ -480,6 +485,7 @@ namespace NarrativeEngine::PlotPlanning
                     return filled;
                 }
                 plan_.insert(plan_.begin() + static_cast<std::ptrdiff_t>(index), std::move(step));
+                preparable_.insert(preparable_.begin() + static_cast<std::ptrdiff_t>(index), true);
                 return Fill::Done;
             }
 
@@ -551,6 +557,7 @@ namespace NarrativeEngine::PlotPlanning
                     return filled;
                 }
                 plan_.push_back(std::move(goal));
+                preparable_.push_back(true);
                 return GetItems();
             }
 
@@ -569,6 +576,9 @@ namespace NarrativeEngine::PlotPlanning
                     std::vector<Option> offered;
                     nlohmann::json options = nlohmann::json::array();
                     for (std::size_t k = 0; k < plan_.size(); ++k) {
+                        if (!preparable_[k]) {
+                            continue;
+                        }
                         for (const auto* prep : PlotVerbs::PreparationsOf(plan_[k].verb)) {
                             const auto* verb = PlotVerbs::Find(prep->verb);
                             if (verb == nullptr) {
@@ -644,6 +654,7 @@ namespace NarrativeEngine::PlotPlanning
                     }
                     const auto at = static_cast<std::ptrdiff_t>(chosen->before);
                     plan_.insert(plan_.begin() + at, std::move(step));
+                    preparable_.insert(preparable_.begin() + at, false);
 
                     const auto got = GetItems();
                     if (got == Fill::Failed) {
@@ -651,6 +662,7 @@ namespace NarrativeEngine::PlotPlanning
                     }
                     if (got == Fill::Unfillable) {
                         plan_.erase(plan_.begin() + at);
+                        preparable_.erase(preparable_.begin() + at);
                         rejection_.clear();
                         break;
                     }
