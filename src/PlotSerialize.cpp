@@ -1,5 +1,7 @@
 #include <PlotSerialize.h>
 
+#include <PlotVerbs.h>
+
 #include <cstring>
 #include <type_traits>
 
@@ -90,6 +92,48 @@ namespace NarrativeEngine::PlotSerialize
             return true;
         }
 
+        // A verb has at most three slots of its own plus the implicit
+        // mastermind; anything far beyond that is corruption.
+        constexpr std::uint32_t kMaxSlotValues = 16;
+
+        bool WriteSlots(ByteSink& sink, const std::vector<PlotModel::SlotValue>& slots)
+        {
+            if (!WritePod(sink, static_cast<std::uint32_t>(slots.size()))) {
+                return false;
+            }
+            for (const auto& value : slots) {
+                if (!WriteString(sink, value.name) || !WritePod(sink, value.form) || !WriteString(sink, value.text)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // A slot whose form no longer resolves keeps its text, as a target
+        // does, and marks the plot unresolved.
+        bool ReadSlots(ByteSource& source, std::vector<PlotModel::SlotValue>& slots, bool& resolved)
+        {
+            std::uint32_t count{};
+            if (!ReadPod(source, count) || count > kMaxSlotValues) {
+                return false;
+            }
+            slots.clear();
+            slots.reserve(count);
+            for (std::uint32_t i = 0; i < count; ++i) {
+                PlotModel::SlotValue value;
+                RE::FormID saved{};
+                if (!ReadString(source, value.name) || !ReadPod(source, saved) || !ReadString(source, value.text)) {
+                    return false;
+                }
+                if (saved != 0 && !source.ResolveFormID(saved, value.form)) {
+                    value.form = 0;
+                    resolved = false;
+                }
+                slots.push_back(std::move(value));
+            }
+            return true;
+        }
+
         bool WriteStep(ByteSink& sink, const PlotModel::Step& step)
         {
             // The step TYPE goes out as its manifest id, not as the
@@ -105,7 +149,8 @@ namespace NarrativeEngine::PlotSerialize
                    && WritePod(sink, step.elapsed) && WritePod(sink, step.threshold) && WritePod(sink, step.progress)
                    && WritePod(sink, step.heldTicks) && WritePod(sink, step.sizingTravel)
                    && WritePod(sink, step.sizingImportance) && WritePod(sink, step.sizingCompetence)
-                   && WritePod(sink, step.sizingSuitability) && WriteRolls(sink, step.rolls);
+                   && WritePod(sink, step.sizingSuitability) && WriteRolls(sink, step.rolls)
+                   && WriteString(sink, step.verb) && WriteSlots(sink, step.slots);
         }
 
         // `ok` is set false when a FormID in this step no longer
@@ -180,6 +225,17 @@ namespace NarrativeEngine::PlotSerialize
             }
             step.state = static_cast<PlotModel::StepState>(state);
             step.outcome = static_cast<PlotModel::StepOutcome>(outcome);
+
+            if (!ReadString(source, step.verb) || !ReadSlots(source, step.slots, resolved)) {
+                return false;
+            }
+            // A verb this build does not know -- renamed or removed since the
+            // save -- leaves a step nobody can render or resolve. The bytes
+            // are read either way, so the stream stays in step; the plot it
+            // belongs to is dropped.
+            if (!step.verb.empty() && PlotVerbs::Find(step.verb) == nullptr) {
+                resolved = false;
+            }
             return true;
         }
 

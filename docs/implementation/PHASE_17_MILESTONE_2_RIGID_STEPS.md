@@ -468,7 +468,7 @@ not depend on the API at all.
 
 ### Step 3 — The verb manifest
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -481,6 +481,29 @@ its verb declares; the three agent outcome templates never name `{mastermind}`; 
 `mastermind_conceded` name `{scheme}`, and `mastermind_conceded` names nothing else; every bound slot points at a
 verb that can supply it; every person slot has an awareness; and a rendered sentence round-trips through the
 co-save.
+
+Done. `include/PlotVerbs.h` holds the thirteen verbs as a `constexpr` table, with `src/PlotVerbs.cpp` rendering
+them; `PlotModel::Step` gains `verb` and `slots`, and `Label(step)` renders a verb step from its dashboard
+template; the co-save record goes to version 8.
+
+**The table is generated from this document's template blocks**, so the wording here and in the code cannot have
+drifted when this step was committed. From now on the code is the source; a wording change goes into both.
+
+**`agent_dispatched` does not name `{scheme}` either.** The rule above lists the dispatch templates, and the agent's
+is one of them, but none of the drafted agent templates names the scheme, and that is right: the agent is told
+what to do, not why. The suite pins it as written.
+
+**Two more properties are pinned than the step asked for**, because each is a sentence that would otherwise read
+wrong in somebody's memory: each voice names who it should (the agent the mastermind who sent them, the
+mastermind the agent they sent, a self-agent neither), and only `ask_around` and `spread_rumors` have a place.
+
+**A sentence opening with an uncast agent reads "Someone …".** Rendering capitalises the first letter, since a
+template can open with a slot and an unfilled slot reads as `someone`, `somewhere` or `something`.
+
+**A verb the build no longer knows drops the plot on load**, like a target whose form has gone: the step can be
+neither rendered nor resolved. The same goes for a slot whose form no longer resolves.
+
+The verb's dashboard sentence is rendered but not yet shown: nothing creates a verb step until Step 5.
 
 ### Step 4 — Candidate rules
 

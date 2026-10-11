@@ -198,9 +198,34 @@ namespace NarrativeEngine::PlotModel
     // trace and the dashboard both render steps from the plot worker,
     // where touching a TESForm is not available. This is the
     // GossipGraph::Participant precedent.
+    // One filled slot of a verb: a person, a place or a thing.
+    //
+    // `form` is the TESForm it names -- an NPC base form, a location, an
+    // item -- and `text` is what it renders as. The same invariant as a
+    // step's target: anything with a side effect gates on `form != 0`, and
+    // display reads `text` whatever `form` is, so a slot whose form has gone
+    // with an uninstalled mod still reads correctly.
+    struct SlotValue
+    {
+        std::string name;
+        RE::FormID form = 0;
+        std::string text;
+    };
+
     struct Step
     {
         StepType type = StepType::Locate;
+
+        // THE VERB, by its PlotVerbs id, and what fills its slots. Empty for
+        // a step written as prose by the Milestone 1 planner, which still
+        // reads its `description`.
+        //
+        // `slots` also carries `mastermind`, which every verb names
+        // implicitly; the agent is `actor` and `actorName` below.
+        std::string verb;
+        std::vector<SlotValue> slots;
+
+        [[nodiscard]] const SlotValue* FindSlot(std::string_view name) const noexcept;
 
         // What this step IS, in the model's own words: "wait for the
         // steward to leave the counting room". One line, free text,
@@ -450,16 +475,9 @@ namespace NarrativeEngine::PlotModel
     // Verb plus target, or the bare verb when there is no target name.
     [[nodiscard]] std::string Label(StepType type, std::string_view targetName);
 
-    // The step's own sentence when it has one, and the verb-plus-target
-    // form when it does not. Both shapes exist: composition writes the
-    // sentence, and the seeded debug plot still writes targets.
-    [[nodiscard]] inline std::string Label(const Step& step)
-    {
-        if (!step.description.empty()) {
-            return step.description;
-        }
-        return Label(step.type, step.targetName);
-    }
+    // A verb step's dashboard sentence; otherwise the step's own prose when
+    // it has some, and the verb-plus-target form when it does not.
+    [[nodiscard]] std::string Label(const Step& step);
 
     // The plot's title, as the dashboard card's heading. Same
     // construction at plot scale: "Acquire Amulet of Kings".

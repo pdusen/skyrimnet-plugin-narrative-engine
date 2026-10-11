@@ -1,5 +1,7 @@
 #include <PlotModel.h>
 
+#include <PlotVerbs.h>
+
 #include <algorithm>
 
 namespace NarrativeEngine::PlotModel
@@ -115,6 +117,27 @@ namespace NarrativeEngine::PlotModel
         out.push_back(' ');
         out.append(targetName);
         return out;
+    }
+
+    std::string Label(const Step& step)
+    {
+        if (!step.verb.empty()) {
+            return PlotVerbs::RenderStep(step, PlotVerbs::Template::Dashboard);
+        }
+        if (!step.description.empty()) {
+            return step.description;
+        }
+        return Label(step.type, step.targetName);
+    }
+
+    const SlotValue* Step::FindSlot(std::string_view name) const noexcept
+    {
+        for (const auto& value : slots) {
+            if (value.name == name) {
+                return &value;
+            }
+        }
+        return nullptr;
     }
 
     std::string Title(const Plot& plot)
