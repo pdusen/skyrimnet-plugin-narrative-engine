@@ -1,24 +1,30 @@
 #include <PlotTick.h>
 
-#include <CharacterBios.h>
 #include <DashboardUIManager.h>
 #include <EngineUtils.h>
 #include <logger.h>
 #include <PlotAdapt.h>
 #include <PlotBirth.h>
+#include <PlotCandidates.h>
 #include <PlotCasting.h>
 #include <PlotDispatch.h>
 #include <PlotLog.h>
+#include <PlotMenus.h>
+#include <PlotPlanning.h>
 #include <PlotPopulation.h>
 #include <PlotResolution.h>
 #include <PlotSchedule.h>
 #include <PlotState.h>
+#include <PlotVerbs.h>
 #include <Settings.h>
+#include <SkyrimNetAPI.h>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <format>
 #include <limits>
+#include <unordered_set>
 
 namespace NarrativeEngine::PlotTick
 {
@@ -179,316 +185,144 @@ namespace NarrativeEngine::PlotTick
             }
         }
 
-        // How well a biography has to match a TARGET's description
-        // before the person it belongs to is used at all.
-        //
-        // Targets only. Agents are chosen from the people the casting
-        // ladder already permits, which is a handful rather than a
-        // thousand, so the best fit among them is usually poor in
-        // absolute terms and a threshold there would just hand the work
-        // back to the mastermind. A target is drawn from the whole
-        // population, so it needs one.
-        //
-        // Measured as COVERAGE -- the share of the query's terms that
-        // person's bio carries -- because it is the only figure
-        // comparable between two different queries. A raw BM25 score
-        // scales with how many words the query had, and a relative score
-        // is normalised against the result set, so its top entry is 1.0
-        // even when every candidate is wrong.
-        //
-        // 0.45 IS MEASURED, not guessed. Swept over the real corpus (851
-        // population bios) with eighteen role queries whose correct
-        // answers are checkable from the bios themselves, plus five
-        // roles nobody in Skyrim could fill:
-        //
-        //   worst genuine match accepted   0.50  (a scholar, at rank 3)
-        //   best impostor offered          0.40  (a general-goods
-        //                                         merchant answering a
-        //                                         stockbroker query)
-        //
-        // So anything in (0.40, 0.50] fills every real role correctly
-        // and refuses every invented one; 0.45 is the middle of that
-        // window. Below 0.42 impostors start being accepted; at 0.52 the
-        // first genuine role starts falling back. The window is narrow,
-        // so if role queries change character it is worth re-running the
-        // sweep rather than assuming this still holds.
-        constexpr float kMinRoleCoverage = 0.45f;
-
-        // How far down the ranked list to look before giving up.
-        constexpr std::size_t kRoleCandidates = 24;
-
-        // Is this match good enough to be somebody rather than nobody?
-        //
-        // Two tests, because one ratio cannot serve both a nine-word
-        // description and a two-word one:
-        //
-        //   coverage      the share of the query that is true of them,
-        //                 which is what the sweep in kMinRoleCoverage
-        //                 was measured against;
-        //   matched >= 2  at least two of the query's words, which a
-        //                 ratio silently stops demanding as the query
-        //                 gets short. At 0.45, a two-term query passes
-        //                 on ONE term and a six-term query on three.
-        //
-        // A single word in common is not evidence about a person. The
-        // exception is a query with only one word in it, where one match
-        // is everything there was to ask for.
-        [[nodiscard]] bool AcceptableMatch(const CharacterBios::Ranked& match)
+        // What dispatching a step came to.
+        enum class Dispatched
         {
-            const std::uint32_t needed = match.asked < 2 ? match.asked : 2;
-            return match.coverage >= kMinRoleCoverage && match.matched >= needed;
+            Yes,
+            // Not this tick: the one person who can carry it out is busy
+            // elsewhere. Tried again on the next.
+            Wait,
+            // Never: nobody at all can carry it out, and the plot ends.
+            Impossible
+        };
+
+        // The plot's own earlier agents. Exempt from the actor cooldown for
+        // this plot, so the person sent on one step can be sent on the next.
+        std::unordered_set<RE::FormID> EarlierAgents(const PlotModel::Plot& plot)
+        {
+            std::unordered_set<RE::FormID> out;
+            for (const auto& past : plot.history) {
+                if (past.actor != 0 && past.actor != plot.mastermind) {
+                    out.insert(past.actor);
+                }
+            }
+            return out;
         }
 
-        // Fill a step's TARGET from whatever the step asked for.
-        //
-        // The request is one string and may be either a name or a
-        // description of a kind of person; both are handled the same
-        // way, because both are just text to search the biographies for.
-        // Somebody matching well enough becomes the target; if nobody
-        // does, the string itself is what gets rendered.
-        //
-        // See PlotModel::Step for the invariant that makes the fallback
-        // safe -- everything with a side effect gates on `target != 0`,
-        // so a placeholder is inert rather than pointing at somebody
-        // arbitrary.
-        void ResolveTarget(const PlotCasting::Population& population,
-                           const PlotModel::Plot& plot,
-                           PlotModel::Step& step)
+        // Choose among the eligible agents: their lines for the model, and
+        // the decision bound to SkyrimNet. See PlotPlanning::PickAgent.
+        RE::FormID ChooseAgent(const PlotThread::Token& pt,
+                               const PlotCasting::Population& population,
+                               const PlotModel::Plot& plot,
+                               const PlotModel::Step& step,
+                               const std::vector<RE::FormID>& eligible)
         {
-            step.target = 0;
-            step.targetName.clear();
-            if (step.targetWanted.empty()) {
-                return; // The step acts on no person at all.
+            const std::vector<PlotModel::SlotValue> none;
+            const std::vector<const PlotModel::Step*> earlier;
+            const PlotCandidates::Request request{population,
+                                                  plot.mastermind,
+                                                  PlotMenus::CurrentWorld(),
+                                                  none,
+                                                  earlier,
+                                                  PlotPopulation::AlivePredicate(),
+                                                  PlotBirth::Occupation};
+
+            std::vector<PlotPlanning::AgentOption> options;
+            for (const auto npc : eligible) {
+                const auto* member = population.Find(npc);
+                std::string line;
+                if (npc == plot.mastermind) {
+                    line = std::format("{} themselves", plot.mastermindName);
+                } else if (member != nullptr) {
+                    line = PlotCandidates::Describe(request, *member);
+                }
+                options.push_back({npc, std::move(line)});
             }
 
-            const auto alive = PlotPopulation::AlivePredicate();
-
-            // A NAME first, if the string carries one. Exact identity
-            // beats a prose search that cannot tell whose biography it
-            // is reading -- see CharacterBios::FindByName for what that
-            // costs when it is left to BM25.
-            const auto named = CharacterBios::FindByName(step.targetWanted);
-            if (named != 0) {
-                const auto* member = named != plot.mastermind ? population.Find(named) : nullptr;
-                if (member != nullptr && (!alive || alive(named))) {
-                    step.target = named;
-                    step.targetName = member->name;
-                    return;
-                }
-                // NAMED, BUT UNUSABLE -- not in the population, dead, or
-                // the schemer themselves. The step still meant that one
-                // person, so it gets the placeholder rather than falling
-                // through to the description search.
-                //
-                // Falling through is what it used to do, and the search
-                // answered confidently with somebody else: a step naming
-                // Rulindil was aimed at Gissur, another Thalmor, because
-                // the prose fit and nothing had recorded that a specific
-                // person was asked for. A placeholder reads correctly
-                // and points at nobody; a substitute reads correctly and
-                // points at the wrong person.
-                logger::debug("PlotTick: plot={} step={} named somebody unusable; using the text as written.",
-                              plot.id,
-                              plot.cursor);
-                step.targetName = step.targetWanted;
-                return;
+            std::string error;
+            const auto chosen = PlotPlanning::PickAgent(
+                plot,
+                step,
+                options,
+                [&pt](std::string_view name, const nlohmann::json& ctx) {
+                    return SkyrimNetAPI::SendCustomDecision(pt, std::string{name}, ctx.dump());
+                },
+                error);
+            if (!error.empty()) {
+                logger::warn("PlotTick: plot={} step={}: choosing the agent failed ({}); took the ladder's first.",
+                             plot.id,
+                             plot.cursor,
+                             error);
             }
-
-            // Otherwise it is a description, and description is what
-            // the index is for.
-            //
-            // BEST MATCH, not first acceptable. The list arrives ordered
-            // by BM25 score and this used to take the first entry
-            // clearing the coverage floor, which made coverage a floor
-            // and never a preference -- so a biography that matched one
-            // word of the query loudly beat one that matched every word
-            // quietly. "the thane of Whiterun" duly resolved to a thane
-            // of Solitude, whose bio says "thane" a great many times,
-            // over a Whiterun housecarl whose bio said both words.
-            //
-            // Coverage decides, score breaks ties.
-            RE::FormID best = 0;
-            std::string bestName;
-            float bestScore = -1.0f;
-            CharacterBios::Ranked bestParts;
-
-            // A step asking for somebody's ENEMY must not be answered
-            // with that somebody. See CharacterBios::Referents for why
-            // the search does this on its own: a query defined against a
-            // person retrieves that person, because their biography is
-            // where the words of the query live.
-            //
-            // Empty for the ordinary query that names nobody to be
-            // against, which is nearly all of them.
-            const auto referents = CharacterBios::Referents(step.targetWanted);
-            if (!referents.empty()) {
-                // The phrase, not just the count: when this misfires the
-                // question is always WHICH marker caught WHAT, and a
-                // number cannot answer it.
-                logger::debug("PlotTick: plot={} step={} is defined against \"{}\"; {} people cannot fill it.",
-                              plot.id,
-                              plot.cursor,
-                              CharacterBios::RelationOf(step.targetWanted).referent,
-                              referents.size());
-            }
-
-            for (const auto& match : CharacterBios::Rank(step.targetWanted, kRoleCandidates)) {
-                if (!AcceptableMatch(match)) {
-                    continue;
-                }
-                if (referents.contains(match.character)) {
-                    continue;
-                }
-                // A scheme is not aimed at its own schemer.
-                if (match.character == plot.mastermind) {
-                    continue;
-                }
-                const auto* member = population.Find(match.character);
-                if (member == nullptr || (alive && !alive(match.character))) {
-                    continue;
-                }
-                // Coverage still ADMITS -- it is the only figure
-                // comparable between queries, and the thing that says
-                // whether the corpus can confirm what was asked. Among
-                // those admitted the FUSED score orders, because that
-                // is what the sweep measured and coverage cannot tell
-                // two acceptable candidates apart.
-                if (match.fused > bestScore) {
-                    best = match.character;
-                    bestName = member->name;
-                    bestScore = match.fused;
-                    bestParts = match;
-                }
-            }
-            if (best != 0) {
-                // The three signals separately, because when a match
-                // looks wrong the first question is which of them put
-                // that person there -- the words of their biography, its
-                // meaning, or what everybody else says their job is.
-                logger::debug("PlotTick: plot={} step={} target fit={:.2f} (lexical {:.2f}, semantic {:.2f}, "
-                              "attributed {:.2f}, coverage {:.2f})",
-                              plot.id,
-                              plot.cursor,
-                              bestParts.fused,
-                              bestParts.lexical,
-                              bestParts.semantic,
-                              bestParts.attributed,
-                              bestParts.coverage);
-                step.target = best;
-                step.targetName = std::move(bestName);
-                return;
-            }
-
-            // Nobody good enough. What the step asked for stands in for
-            // them, whether that was a description or a name -- a named
-            // person the search cannot place still reads correctly.
-            step.targetName = step.targetWanted;
+            return chosen;
         }
 
-        // What the target resolution actually did. Without this the
-        // placeholder path is unobservable: a step reads the same
-        // whether it found a person or fell back to a phrase.
-        void LogTarget(const PlotModel::Plot& plot, const PlotModel::Step& step)
-        {
-            if (step.targetWanted.empty()) {
-                return;
-            }
-            logger::debug("PlotTick: plot={} step={} wanted=\"{}\" -> {} \"{}\" (named={})",
-                          plot.id,
-                          plot.cursor,
-                          step.targetWanted,
-                          step.target != 0 ? "resolved" : "PLACEHOLDER",
-                          step.targetName,
-                          // Whether the NAME path produced this target,
-                          // not merely whether a name was recognised.
-                          // Those differ when a name resolves to
-                          // somebody unusable, and reporting the second
-                          // made a fallthrough look like a lookup
-                          // failure.
-                          step.target != 0 && CharacterBios::FindByName(step.targetWanted) == step.target);
-        }
-
-        // Cast an actor and size the step. Returns false when nobody can
-        // be found at all, which ends the plot rather than leaving it
-        // stuck.
-        bool DispatchStep(PlotState& state, PlotModel::Plot& plot, double gameDay)
+        // Cast an agent and size the step.
+        Dispatched DispatchStep(const PlotThread::Token& pt, PlotState& state, PlotModel::Plot& plot, double gameDay)
         {
             const auto& population = PlotPopulation::Get();
             PlotModel::Step& step = plot.plan[plot.cursor];
+            const auto* verb = PlotVerbs::Find(step.verb);
+            const auto alive = PlotPopulation::AlivePredicate();
 
-            ResolveTarget(population, plot, step);
-            LogTarget(plot, step);
+            RE::FormID chosen = 0;
+            int rung = 4;
+            std::size_t considered = 1;
+            std::size_t rejected = 0;
 
-            // WHO CARRIES IT OUT.
-            //
-            // Eligibility first, description second. The ladder decides
-            // who may be asked; the step's description of the person it
-            // needs then chooses among them. See PlotCasting::SelectActor
-            // for why this way round, and why there is no minimum match
-            // quality on this side.
-            // Embeds the query once; the ladder then asks it about
-            // every eligible candidate.
-            const CharacterBios::Scorer fit{step.agentRole.query};
-
-            // An agent query is defined against somebody as readily as a
-            // target one -- more so, in practice. A single twenty-tick
-            // run produced no relational TARGET and three relational
-            // agent queries, one of them "a servant or guard loyal to
-            // Erikur in Solitude who can observe discreetly".
-            //
-            // LAST RESORT, not forbidden, which is where this parts
-            // company with ResolveTarget. A target that resolves to
-            // nobody becomes a placeholder and the step still runs; an
-            // agent has to be a real person, and the ladder often offers
-            // exactly one eligible candidate. Striking them would fail
-            // the step and end the plot. Scoring them below every real
-            // candidate gets the same answer whenever there is any other
-            // answer to get.
-            const auto agentReferents = CharacterBios::Referents(step.agentRole.query);
-            if (!agentReferents.empty()) {
-                logger::debug("PlotTick: plot={} step={} wants an agent defined against \"{}\"; {} demoted.",
-                              plot.id,
-                              plot.cursor,
-                              CharacterBios::RelationOf(step.agentRole.query).referent,
-                              agentReferents.size());
+            if (verb != nullptr && verb->agentBoundToItem) {
+                // WHOEVER HAS THE ITEM. Not a fresh cast: the thing to be
+                // delivered or planted is in one person's hands.
+                const auto holder = PlotPlanning::ItemHolder(plot);
+                if (holder == 0 || (alive && !alive(holder))) {
+                    return Dispatched::Impossible;
+                }
+                if (holder != plot.mastermind) {
+                    const auto row = state.occupancy.find(holder);
+                    if (row != state.occupancy.end() && row->second.IsEngaged()) {
+                        return Dispatched::Wait;
+                    }
+                }
+                chosen = holder;
+                if (holder != plot.mastermind) {
+                    // Rung 1 is the strongest tie; a bound agent was cast for
+                    // this plot already and reports as such.
+                    rung = 1;
+                }
+            } else {
+                // WHO MAY BE ASKED, by the ladder; WHICH of them, by decision.
+                // Anyone the step's own sentence names is excluded, so the
+                // mark and the recipient are never also the agent.
+                const auto cast = PlotCasting::EligibleAgents(population,
+                                                              plot.mastermind,
+                                                              PlotModel::Label(step),
+                                                              state.occupancy,
+                                                              gameDay,
+                                                              alive,
+                                                              step.target,
+                                                              PlotPopulation::SeatedPredicate(),
+                                                              EarlierAgents(plot));
+                if (cast.shortlist.empty()) {
+                    return Dispatched::Impossible;
+                }
+                chosen = ChooseAgent(pt, population, plot, step, cast.shortlist);
+                considered = cast.considered.size();
+                rejected = static_cast<std::size_t>(
+                    std::count_if(cast.considered.begin(), cast.considered.end(), [](const PlotCasting::Candidate& c) {
+                        return c.reject != PlotCasting::Reject::None;
+                    }));
+                rung = 4;
+                for (const auto& c : cast.considered) {
+                    if (c.npc == chosen) {
+                        rung = c.rung;
+                    }
+                }
             }
 
-            PlotCasting::AgentScorer scorer;
-            if (!step.agentRole.query.empty()) {
-                scorer = [&fit, &agentReferents](RE::FormID npc) {
-                    return agentReferents.contains(npc) ? std::numeric_limits<float>::lowest() : fit(npc);
-                };
-            }
-
-            const auto cast = PlotCasting::SelectActor(population,
-                                                       plot.mastermind,
-                                                       step.description,
-                                                       state.occupancy,
-                                                       gameDay,
-                                                       PlotPopulation::AlivePredicate(),
-                                                       // Resolved just above, so the person this step is
-                                                       // done to cannot also be the one doing it.
-                                                       step.target,
-                                                       PlotPopulation::SeatedPredicate(),
-                                                       state.rngState,
-                                                       scorer);
-            if (cast.chosen == 0) {
-                return false;
-            }
-            logger::debug("PlotTick: plot={} step={} agent=\"{}\" fit={:.2f} {} eligible={} rung={} query=\"{}\"",
-                          plot.id,
-                          plot.cursor,
-                          step.agentRole.label,
-                          scorer ? scorer(cast.chosen) : 0.0f,
-                          fit.Semantic() ? "(fused)" : "(lexical only)",
-                          cast.considered.size(),
-                          cast.chosenRung,
-                          step.agentRole.query);
-
-            const PlotCasting::Member* actor = population.Find(cast.chosen);
+            const PlotCasting::Member* actor = population.Find(chosen);
             const PlotCasting::Member* target = population.Find(step.target);
 
-            step.actor = cast.chosen;
+            step.actor = chosen;
             step.actorName = actor != nullptr ? actor->name : std::string{};
             step.state = PlotModel::StepState::InProgress;
 
@@ -515,17 +349,13 @@ namespace NarrativeEngine::PlotTick
             // this plot; engaging them again would overwrite the role on
             // their occupancy row and make releasing it start the wrong
             // cooldown.
-            if (cast.chosen != plot.mastermind) {
-                PlotCasting::Engage(state.occupancy, cast.chosen, PlotModel::Role::Actor, plot.id);
+            if (chosen != plot.mastermind) {
+                PlotCasting::Engage(state.occupancy, chosen, PlotModel::Role::Actor, plot.id);
             }
 
             ++state.counters.stepsDispatched;
-            const auto rejected = static_cast<std::size_t>(
-                std::count_if(cast.considered.begin(), cast.considered.end(), [](const PlotCasting::Candidate& c) {
-                    return c.reject != PlotCasting::Reject::None;
-                }));
-            PlotLog::Dispatch(plot, step, cast.chosenRung, cast.considered.size(), rejected);
-            return true;
+            PlotLog::Dispatch(plot, step, rung, considered, rejected);
+            return Dispatched::Yes;
         }
 
         // A failed step re-plans instead of ending the plot, and cannot
@@ -700,7 +530,7 @@ namespace NarrativeEngine::PlotTick
 
             PlotModel::Step& step = plot.plan[plot.cursor];
             if (step.state == PlotModel::StepState::Planned) {
-                if (!DispatchStep(state, plot, gameDay)) {
+                if (DispatchStep(pt, state, plot, gameDay) == Dispatched::Impossible) {
                     EndPlot(state, plot, PlotModel::PlotStatus::Failed, PlotModel::PlotOutcome::Conceded, gameDay);
                 }
                 // A step dispatched this tick starts working next tick.

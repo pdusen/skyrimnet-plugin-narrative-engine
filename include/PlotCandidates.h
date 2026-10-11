@@ -90,6 +90,10 @@ namespace NarrativeEngine::PlotCandidates
                                                const Request& request,
                                                const Limits& limits = {});
 
+    // A person's line on a list: name, what they do, and how the
+    // mastermind knows them or where they live.
+    [[nodiscard]] std::string Describe(const Request& request, const PlotCasting::Member& member);
+
     // The step whose people a later step treats as aware of this one, and
     // how: whether each person slot's awareness fired for the outcome the
     // step actually had. A timeout reaches nobody.

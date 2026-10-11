@@ -8,7 +8,6 @@
     "directxtk",
     "simpleini",
     "nlohmann-json",
-    "minhook",
-    "onnxruntime-c-api"
+    "minhook"
   ]
 }

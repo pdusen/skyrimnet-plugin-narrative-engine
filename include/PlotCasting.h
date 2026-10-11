@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <PlotState.h>
@@ -290,7 +291,7 @@ namespace NarrativeEngine::PlotCasting
                                           const SeatedPredicate& seated,
                                           std::uint64_t& rng);
 
-    // Pick an actor for one of `mastermind`'s steps, down the ladder:
+    // Who may act for `mastermind` on a step, down the ladder:
     //
     //   rung 1  a subordinate with a personal tie to the mastermind
     //   rung 2  any subordinate (lower rank in a shared admitted faction)
@@ -304,8 +305,8 @@ namespace NarrativeEngine::PlotCasting
     // The last rung is not a failure case — it is how independents
     // operate by default, and it is why a Riverwood farmer's schemes
     // look different from Maven's without any rule saying so. It is also
-    // a live option at rung 3 rather than only a fallback beneath it;
-    // see kSelfWeightShare.
+    // a live option at rung 3 rather than only a fallback beneath it:
+    // EligibleAgents offers the mastermind alongside a rung-3 list.
     //
     // ---------------------------------------------------------------------
     // WHY RUNG 3 IS GUARDED, AND WHY RUNG 4 COMPETES WITH IT
@@ -331,18 +332,15 @@ namespace NarrativeEngine::PlotCasting
     // would sooner see the scheme fail: rung 3 wants ties that are not
     // collegial, and enemies rarely share an admitted faction, so
     // without it hostile pairs were routed there preferentially. Rung 4
-    // then takes half of what remains, because by the time a scheme is
+    // then competes with what remains, because by the time a scheme is
     // down to distant acquaintances, doing it yourself is genuinely the
     // competitive option — and a scullion with nobody to command running
     // her own errand is the CORRECT story, not a degraded one.
     // May this specific person act for this mastermind on this step?
     //
-    // The eligibility half of the ladder, pulled out so that a caller
-    // with its OWN preference order -- a retrieval index ranking people
-    // by how well they match the step's description of who it needs --
-    // can apply the same rules without also inheriting the ladder's
-    // ordering. SelectActor is written in terms of this, so the two
-    // cannot drift into disagreeing about who is allowed.
+    // The eligibility half of the ladder. EligibleAgents is written in
+    // terms of this, so nothing that asks "may this person act" can drift
+    // from what the ladder offers.
     //
     // `rung` is the BEST rung the candidate reaches: 1 for a tied
     // subordinate, 2 for any subordinate, 3 for a non-collegial,
@@ -368,14 +366,6 @@ namespace NarrativeEngine::PlotCasting
         }
     };
 
-    // How well one candidate fits the step's description of who it
-    // needs. Higher is better; 0 means no shared vocabulary at all.
-    //
-    // Comparable only WITHIN one selection, which is all this is used
-    // for: the same query scored against different people. There is no
-    // threshold and there deliberately is not one -- see SelectActor.
-    using AgentScorer = std::function<float(RE::FormID)>;
-
     // `subject` is the person the step is done TO, once resolved, or 0.
     // Excluded outright: a step is never carried out by the person it is
     // aimed at. The prose test on `stepText` covers the same ground but
@@ -392,37 +382,24 @@ namespace NarrativeEngine::PlotCasting
                                              const AlivePredicate& alive,
                                              const SeatedPredicate& seated);
 
-    // WHY `score` NARROWS RATHER THAN ORDERS
+    // The agents a step may be given, for a decision to choose among.
     //
-    // The step says what kind of person it needs, and it is tempting to
-    // search the whole population for the best match and then check
-    // whether that person is allowed to act. That was tried and it does
-    // not work: across a measured run, 47% of steps found candidates
-    // matching the description well -- one at a perfect 1.00, another
-    // with 24 acceptable matches -- and the ladder refused every single
-    // one, because a stranger who happens to be the right KIND of person
-    // is still a stranger. 40% of steps ended with the mastermind doing
-    // the work themselves, which is the failure this whole mechanism
-    // exists to avoid.
+    // Everybody AVAILABLE on the best rung that has anybody, in population
+    // order, comes back in `shortlist`; the mastermind joins them on rung 3,
+    // and stands alone when no rung has anyone. `considered` records every
+    // candidate weighed and why each was passed over. `chosen` is left
+    // unset: choosing is the caller's, by decision.
     //
-    // So eligibility comes first and the description only ever chooses
-    // among people who were already going to be asked. That also means
-    // there is no minimum match quality here: the pool is a handful of
-    // subordinates and acquaintances rather than a thousand strangers,
-    // the best fit among them is usually a poor one in absolute terms,
-    // and refusing it would just put the work back on the mastermind.
-    // A weak match to the right kind of person still beats a coin toss.
-    //
-    // With no scorer the rung is drawn from at random, weighted, which
-    // is what happens when a step carries no description of its agent.
-    [[nodiscard]] Result SelectActor(const Population& population,
-                                     RE::FormID mastermind,
-                                     std::string_view stepText,
-                                     const OccupancyTable& occupancy,
-                                     double gameDay,
-                                     const AlivePredicate& alive,
-                                     RE::FormID subject,
-                                     const SeatedPredicate& seated,
-                                     std::uint64_t& rng,
-                                     const AgentScorer& score = {});
+    // `stepText` is the step's own sentence, and anyone it NAMES is
+    // excluded, as is `subject`. `cooldownExempt` lifts the actor cooldown
+    // -- never occupancy -- for the plot's own earlier agents.
+    [[nodiscard]] Result EligibleAgents(const Population& population,
+                                        RE::FormID mastermind,
+                                        std::string_view stepText,
+                                        const OccupancyTable& occupancy,
+                                        double gameDay,
+                                        const AlivePredicate& alive,
+                                        RE::FormID subject,
+                                        const SeatedPredicate& seated,
+                                        const std::unordered_set<RE::FormID>& cooldownExempt);
 } // namespace NarrativeEngine::PlotCasting

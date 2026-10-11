@@ -337,6 +337,11 @@ namespace NarrativeEngine::PlotBirth
         }
     } // namespace
 
+    std::string Occupation(RE::FormID npc)
+    {
+        return ShortOccupation(npc);
+    }
+
     bool CanDecide() noexcept
     {
         return !g_cannotDecide;

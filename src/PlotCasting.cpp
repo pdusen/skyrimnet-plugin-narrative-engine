@@ -1,5 +1,7 @@
 #include <PlotCasting.h>
 
+#include <unordered_set>
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -104,7 +106,7 @@ namespace NarrativeEngine::PlotCasting
         // sum: someone's weight should reflect the most authority they
         // hold anywhere, and summing would let a well-connected nobody
         // outrank a guild master. Note the deliberate asymmetry with
-        // SelectActor, which takes the UNION across factions — "how much
+        // QualifyAgent, which takes the UNION across factions — "how much
         // can this person command" and "who can they command" are
         // different questions and must not be collapsed into one rule.
         double MastermindWeight(const Member& member, const SeatedPredicate& seated)
@@ -181,12 +183,6 @@ namespace NarrativeEngine::PlotCasting
         // not zero -- "never ask anyone above you" would forbid a
         // steward leaning on a jarl, which is a thing that happens.
         constexpr double kOutrankMargin = 0.25;
-
-        // What share of the rung-3 draw the mastermind takes for
-        // themselves. Half: by the time a scheme is down to distant
-        // acquaintances, doing it yourself is the competitive option
-        // rather than the last resort.
-        constexpr double kSelfWeightShare = 1.0;
 
         // An ABSOLUTE ceiling, on top of the relative kOutrankMargin.
         //
@@ -623,128 +619,68 @@ namespace NarrativeEngine::PlotCasting
         return out;
     }
 
-    Result SelectActor(const Population& population,
-                       RE::FormID mastermind,
-                       std::string_view stepText,
-                       const OccupancyTable& occupancy,
-                       double gameDay,
-                       const AlivePredicate& alive,
-                       RE::FormID subject,
-                       const SeatedPredicate& seated,
-                       std::uint64_t& rng,
-                       const AgentScorer& score)
+    Result EligibleAgents(const Population& population,
+                          RE::FormID mastermind,
+                          std::string_view stepText,
+                          const OccupancyTable& occupancy,
+                          double gameDay,
+                          const AlivePredicate& alive,
+                          RE::FormID subject,
+                          const SeatedPredicate& seated,
+                          const std::unordered_set<RE::FormID>& cooldownExempt)
     {
         Result result;
-
-        const Member* boss = population.Find(mastermind);
-        if (boss == nullptr) {
+        if (population.Find(mastermind) == nullptr) {
             return result;
         }
-        // Walk the ladder rung by rung and stop at the first rung with
-        // anyone on it. Drawing across all rungs at once would let a
-        // large pool of distant acquaintances drown out the one
-        // subordinate who is the obvious choice.
-        for (int rung = 1; rung <= 3 && result.chosen == 0; ++rung) {
-            std::vector<Candidate> rungCandidates;
+        const bool selfAvailable = !alive || alive(mastermind);
 
+        // Walk the ladder rung by rung and stop at the first rung with
+        // anyone available on it. Offering every rung at once would let a
+        // crowd of distant acquaintances drown out the one subordinate who
+        // is the obvious choice -- and it is the rung order, not the
+        // choice within a rung, that makes the powerful delegate.
+        for (int rung = 1; rung <= 3; ++rung) {
+            std::vector<RE::FormID> available;
             for (const auto& member : population.members) {
-                // One definition of who may act, shared with the
-                // description-ranked path. The name exclusion inside it
-                // applies to every rung, and NOT to the mastermind's own
-                // self-candidacy below -- a scheme naming its own
-                // schemer is ordinary, and excluding them there would
-                // leave some steps with nobody at all.
                 const auto qualified = QualifyAgent(
                     population, mastermind, member.npc, stepText, subject, occupancy, gameDay, alive, seated);
                 if (qualified.rung != rung) {
                     continue;
                 }
-
                 Candidate candidate;
                 candidate.npc = member.npc;
                 candidate.rung = rung;
                 candidate.reject = qualified.reject;
+                // A plot's own earlier agents may be sent again straight
+                // away: the hunter who found the mark is the one to send
+                // after them. Busy elsewhere still rules them out.
+                if (candidate.reject == Reject::OnCooldown && cooldownExempt.contains(member.npc)) {
+                    candidate.reject = Reject::None;
+                }
                 candidate.weight = candidate.reject == Reject::None ? 1.0 : 0.0;
-                rungCandidates.push_back(candidate);
-            }
-
-            // At rung 3 the mastermind enters the draw rather than
-            // waiting below it. Their weight is the whole rest of the
-            // rung, so it is a coin flip between "ask one of these
-            // acquaintances" and "do it yourself" however many
-            // acquaintances there are -- an NPC with twelve neighbours
-            // should not thereby become twelve times less likely to act
-            // for themselves.
-            //
-            // Not screened for occupancy, for the reason rung 4 gives
-            // below: they are already engaged in this very plot as its
-            // mastermind, and that must not read as unavailable.
-            if (rung == 3 && (!alive || alive(mastermind))) {
-                double othersWeight = 0.0;
-                for (const auto& c : rungCandidates) {
-                    othersWeight += c.weight;
+                result.considered.push_back(candidate);
+                if (candidate.reject == Reject::None) {
+                    available.push_back(member.npc);
                 }
-                Candidate self;
-                self.npc = mastermind;
-                self.rung = 4;
-                // Floored at one so they remain drawable when every
-                // acquaintance was screened out, which is the case the
-                // fallback beneath used to be the only answer to.
-                self.weight = std::max(1.0, kSelfWeightShare * othersWeight);
-                rungCandidates.push_back(self);
-                // Under a scorer the coin flip does not apply: the
-                // mastermind is scored against the step's description
-                // like everybody else, so they do the work themselves
-                // only when they genuinely fit it better than any
-                // acquaintance does. The weight above still governs the
-                // undescribed case.
             }
-
-            // Best fit among the eligible, or a weighted draw when the
-            // step described nobody. Either way the POOL is whatever
-            // this rung admitted -- the description never widens it.
-            RE::FormID picked = 0;
-            if (score) {
-                float best = -1.0f;
-                for (const auto& c : rungCandidates) {
-                    if (c.reject != Reject::None) {
-                        continue;
-                    }
-                    const auto fit = score(c.npc);
-                    if (fit > best) {
-                        best = fit;
-                        picked = c.npc;
-                    }
+            if (!available.empty()) {
+                result.shortlist = std::move(available);
+                // By the time a scheme is down to acquaintances, doing it
+                // yourself is a live option rather than a last resort.
+                if (rung == 3 && selfAvailable) {
+                    result.shortlist.push_back(mastermind);
                 }
-            } else {
-                picked = WeightedDraw(rungCandidates, rng);
-            }
-            result.considered.insert(result.considered.end(), rungCandidates.begin(), rungCandidates.end());
-            if (picked != 0) {
-                result.chosen = picked;
-                // The mastermind is rung 4 wherever they were drawn
-                // from. The log line says who acted and why, and "rung
-                // 3" against their own name would be a lie about which.
-                result.chosenRung = picked == mastermind ? 4 : rung;
+                return result;
             }
         }
 
-        if (result.chosen == 0) {
-            // Rung 4: the mastermind does it themselves. Note this
-            // ignores their own occupancy — they are already engaged in
-            // this very plot as its mastermind, and that must not read
-            // as "unavailable".
-            if (!alive || alive(mastermind)) {
-                result.chosen = mastermind;
-                result.chosenRung = 4;
-                Candidate self;
-                self.npc = mastermind;
-                self.rung = 4;
-                self.weight = 1.0;
-                result.considered.push_back(self);
-            }
+        // Nobody on any rung: the mastermind does it themselves, which is
+        // how independents operate. Their own occupancy is ignored -- they
+        // are engaged in this very plot as its mastermind.
+        if (selfAvailable) {
+            result.shortlist.push_back(mastermind);
         }
-
         return result;
     }
 } // namespace NarrativeEngine::PlotCasting

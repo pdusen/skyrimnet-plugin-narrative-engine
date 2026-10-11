@@ -224,6 +224,11 @@ namespace NarrativeEngine::PlotCandidates
         }
     } // namespace
 
+    std::string Describe(const Request& request, const PlotCasting::Member& member)
+    {
+        return PersonLine(request, Rank(request, member));
+    }
+
     bool AwarenessFired(PlotVerbs::Awareness awareness, PlotModel::StepOutcome outcome) noexcept
     {
         switch (awareness) {

@@ -102,7 +102,32 @@ namespace NarrativeEngine::PlotPlanning
     // The sentence a planned step reads as before anybody is cast, with
     // each unfilled slot shown as its name in brackets. What the plan so
     // far, and the slot being asked about, look like to the model.
-    [[nodiscard]] std::string Sketch(const PlotModel::Step& step);
+    // With `agentOpen`, an uncast agent shows as [agent] too, for the
+    // question that casts one.
+    [[nodiscard]] std::string Sketch(const PlotModel::Step& step, bool agentOpen = false);
+
+    // Whoever holds the item a step binds: the agent of the plot's latest
+    // step that obtained one and succeeded. 0 when there is none.
+    [[nodiscard]] RE::FormID ItemHolder(const PlotModel::Plot& plot);
+
+    // One agent a step could be given, with the line the model reads.
+    struct AgentOption
+    {
+        RE::FormID npc = 0;
+        std::string line;
+    };
+
+    // Choose the agent from the ladder's eligible list, best rung first.
+    // One option is taken without asking. Several are decided, with the
+    // step's sentence showing [agent] where they go. A decision that fails,
+    // or names an option that was not offered, takes the first -- the
+    // ladder's own order -- rather than stalling a plot already under way;
+    // `error` then says why. 0 only for an empty list.
+    [[nodiscard]] RE::FormID PickAgent(const PlotModel::Plot& plot,
+                                       const PlotModel::Step& step,
+                                       const std::vector<AgentOption>& options,
+                                       const Ask& ask,
+                                       std::string& error);
 
     // Whether an error code means no decision will be answered this
     // session, however many more are asked.

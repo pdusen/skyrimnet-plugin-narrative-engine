@@ -166,6 +166,10 @@ namespace NarrativeEngine::PlotBirth
     // retry, having logged why and at which stage. The caller frees the
     // slot and spends no plot id, so a birth that dies at call 3 costs
     // call budget and nothing else.
+    // What somebody does, as one short phrase for their line on a decision's
+    // list: the first sentence of their biography's occupation section.
+    [[nodiscard]] std::string Occupation(RE::FormID npc);
+
     // False once SkyrimNet has said this session cannot answer a decision.
     // Every birth plans by decision, so the caller skips birth outright
     // rather than spending two chat calls on a plot that cannot be planned.

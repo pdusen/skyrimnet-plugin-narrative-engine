@@ -333,3 +333,107 @@ TEST_CASE("PlotBirth::SchemeOpensWithVerb", "[PlotBirth][engine]")
         }
     }
 }
+
+TEST_CASE("PlotPlanning::PickAgent", "[PlotPlanning][engine]")
+{
+    Script script;
+    const auto ask = [&script](std::string_view n, const nlohmann::json& c) { return script(n, c); };
+
+    PlotModel::Plot plot;
+    plot.mastermindName = "Olfrid";
+    plot.scheme = "Ruin Hulda's trade.";
+    PlotModel::Step step;
+    step.verb = "watch";
+    step.slots.push_back({"mark", kTrader, "Hulda"});
+
+    const std::vector<PlotPlanning::AgentOption> two{{kFriend, "Idolaf (someone they know)"},
+                                                     {kBoss, "Olfrid themselves"}};
+
+    SECTION("when only one person may be asked")
+    {
+        std::string error;
+        const auto agent = PlotPlanning::PickAgent(plot, step, {two.front()}, ask, error);
+
+        SECTION("should take them without asking")
+        {
+            REQUIRE(agent == kFriend);
+            REQUIRE(script.asked.empty());
+            REQUIRE(error.empty());
+        }
+    }
+
+    SECTION("when several may be asked")
+    {
+        script.answers = {"c2"};
+        std::string error;
+        const auto agent = PlotPlanning::PickAgent(plot, step, two, ask, error);
+
+        SECTION("should ask, with the agent shown open in the step")
+        {
+            REQUIRE(agent == kBoss);
+            REQUIRE(script.asked.size() == 1);
+            REQUIRE(script.asked[0].ctx["slot"] == "agent");
+            REQUIRE(script.asked[0].ctx["step"] == "[agent] watches Hulda, learning their habits.");
+        }
+    }
+
+    SECTION("when the decision fails")
+    {
+        script.failWith = "request_failed";
+        std::string error;
+        const auto agent = PlotPlanning::PickAgent(plot, step, two, ask, error);
+
+        SECTION("should take the ladder's first rather than stall, and say why")
+        {
+            REQUIRE(agent == kFriend);
+            REQUIRE(error == "request_failed");
+        }
+    }
+
+    SECTION("when the answer was not offered")
+    {
+        script.answers = {"c7"};
+        std::string error;
+        const auto agent = PlotPlanning::PickAgent(plot, step, two, ask, error);
+
+        SECTION("should take the ladder's first")
+        {
+            REQUIRE(agent == kFriend);
+            REQUIRE_FALSE(error.empty());
+        }
+    }
+}
+
+TEST_CASE("PlotPlanning::ItemHolder", "[PlotPlanning][engine]")
+{
+    PlotModel::Plot plot;
+    PlotModel::Step steal;
+    steal.verb = "steal";
+    steal.actor = kFriend;
+    PlotModel::Step watch;
+    watch.verb = "watch";
+    watch.actor = kTrader;
+    watch.outcome = PlotModel::StepOutcome::Succeeded;
+
+    SECTION("when an earlier step stole the item")
+    {
+        steal.outcome = PlotModel::StepOutcome::Succeeded;
+        plot.history = {steal, watch};
+
+        SECTION("should be whoever stole it, whatever came after")
+        {
+            REQUIRE(PlotPlanning::ItemHolder(plot) == kFriend);
+        }
+    }
+
+    SECTION("when the theft failed")
+    {
+        steal.outcome = PlotModel::StepOutcome::FailedCaught;
+        plot.history = {steal, watch};
+
+        SECTION("should be nobody, since nobody has it")
+        {
+            REQUIRE(PlotPlanning::ItemHolder(plot) == 0);
+        }
+    }
+}

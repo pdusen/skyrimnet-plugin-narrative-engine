@@ -602,7 +602,7 @@ carries no agent description for the old scorer to read.
 
 ### Step 6 — Dispatch by decision
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -612,6 +612,37 @@ free-text target and agent resolution.
 **Verification:** a suite asserts a single eligible candidate asks nothing, a bound agent is taken as bound, a
 plot's previous agent is eligible again on its next step, and a decision error falls back to the ladder's own
 order rather than stalling the plot.
+
+Done. `PlotCasting::EligibleAgents` replaces `SelectActor`; `PlotPlanning::PickAgent` and `ItemHolder` hold the choice
+and the binding; `PlotTick::DispatchStep` casts through them. The free-text resolution is gone, and with it
+everything that existed to serve it: `CharacterIndex`, the ONNX embedding model and its vocabulary, the per-save
+vector cache, the name and attribution indexes in `CharacterBioLibrary`, and the headers-only ONNX Runtime vcpkg port.
+Biographies stay -- the chat prompts render them and each candidate's line takes its occupation from them -- so
+`CharacterBios` keeps the catalogue, the layered loading and the parsed sections. 454 tests pass after a clean build,
+three of them new.
+
+**The ladder still decides who may be asked; the decision only chooses among them.** `EligibleAgents` offers everybody
+available on the best rung that has anybody, and the mastermind alongside a rung-3 list or alone when no rung has
+anyone -- the same places the weighted draw used to let the mastermind in. Offering every rung at once would let
+acquaintances crowd out the subordinate who is the obvious choice, and it is the rung order that made senior
+masterminds delegate 83% of the time in the audited runs. What the decision fixes is which subordinate: the
+audit's Jorleif sending the court wizard to canvass the kitchens was a uniform draw within a rung.
+
+**A bound agent is whoever holds the item.** `deliver` and `plant` go to the agent of the latest `steal` or `buy`
+in the plot's history that succeeded, without asking. If that person is busy in another plot the step waits a tick
+rather than ending the plot; if they are dead, or nothing was ever obtained, the step cannot run and the plot ends.
+Dispatch therefore has three results now -- dispatched, wait, impossible -- where it had two.
+
+**The cooldown exemption is from rest, not from work.** A plot's earlier agents may be offered again despite their
+actor cooldown, which is what lets the hunter sent on step one be sent on step two. Somebody engaged in another plot
+is still unavailable.
+
+**Anyone the step's sentence names is excluded as its agent**, by passing the rendered sentence to the ladder's
+existing name test. That covers every person slot -- a denunciation's authority, a delivery's recipient -- and not
+only the mark the target field carries.
+
+**A step written as prose still dispatches**, cast by the same ladder and decision, but with no target unless one
+was set. Only adaptation still writes such steps, until Step 7.
 
 ### Step 7 — Adaptation by decision
 
@@ -662,9 +693,8 @@ Replaces Phase 17 Step 18. With a decision provider configured, run a session lo
 
 ## Open questions
 
-1. **Does the embedding model stay?** Candidate lists are cut by relevance order today, and the decision model
-   reads them. If ordering by relevance alone gives good lists, `CharacterIndex` and the ONNX runtime have no
-   remaining caller and should go. Settle at Step 4 by comparing the lists it produces with and without them.
+1. ~~**Does the embedding model stay?**~~ Settled in Step 4 and done in Step 6: it had no caller once slots were
+   filled by choice, and is removed.
 2. **Does a rumor need content?** `spread_rumors` says ugly talk is being spread without saying what. A fourth
    slot kind, a closed list of accusations, would let memories say what was claimed. It is not a person, place
    or thing, so it is deliberately left out of this draft.

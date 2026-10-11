@@ -106,7 +106,7 @@ namespace NarrativeEngine::PlotPlanning
                || error == "ai_disabled";
     }
 
-    std::string Sketch(const PlotModel::Step& step)
+    std::string Sketch(const PlotModel::Step& step, bool agentOpen)
     {
         const auto* verb = PlotVerbs::Find(step.verb);
         if (verb == nullptr) {
@@ -114,14 +114,68 @@ namespace NarrativeEngine::PlotPlanning
         }
         return Capitalised(PlotVerbs::Render(
             verb->Text(PlotVerbs::Template::Dashboard),
-            [&step](std::string_view name) -> std::optional<std::string> {
+            [&step, agentOpen](std::string_view name) -> std::optional<std::string> {
                 if (name == "agent") {
-                    return step.actorName.empty() ? std::string{"someone"} : step.actorName;
+                    if (!step.actorName.empty()) {
+                        return step.actorName;
+                    }
+                    return agentOpen ? std::nullopt : std::optional<std::string>{"someone"};
                 }
                 const auto* value = step.FindSlot(name);
                 return value != nullptr ? std::optional<std::string>{value->text} : std::nullopt;
             },
             [](std::string_view name) { return std::format("[{}]", name); }));
+    }
+
+    RE::FormID ItemHolder(const PlotModel::Plot& plot)
+    {
+        for (auto it = plot.history.rbegin(); it != plot.history.rend(); ++it) {
+            const auto* verb = PlotVerbs::Find(it->verb);
+            if (verb != nullptr && verb->obtainsItem && it->outcome == PlotModel::StepOutcome::Succeeded) {
+                return it->actor;
+            }
+        }
+        return 0;
+    }
+
+    RE::FormID PickAgent(const PlotModel::Plot& plot,
+                         const PlotModel::Step& step,
+                         const std::vector<AgentOption>& options,
+                         const Ask& ask,
+                         std::string& error)
+    {
+        if (options.empty()) {
+            return 0;
+        }
+        if (options.size() == 1) {
+            return options.front().npc;
+        }
+
+        nlohmann::json list = nlohmann::json::array();
+        for (std::size_t i = 0; i < options.size(); ++i) {
+            list.push_back({{"key", std::format("c{}", i + 1)}, {"line", options[i].line}});
+        }
+        nlohmann::json ctx;
+        ctx["mastermind"] = {{"name", plot.mastermindName}};
+        ctx["scheme"] = plot.scheme;
+        ctx["step"] = Sketch(step, true);
+        ctx["slot"] = "agent";
+        ctx["kind"] = "person";
+        ctx["options"] = std::move(list);
+
+        const auto result = ask(kSlotTemplate, ctx);
+        if (!result.ok) {
+            error = result.error;
+            return options.front().npc;
+        }
+        const auto key = result.Choice(kSlotQuestion);
+        for (std::size_t i = 0; i < options.size(); ++i) {
+            if (key == std::format("c{}", i + 1)) {
+                return options[i].npc;
+            }
+        }
+        error = std::format("answered '{}', which was not offered", key);
+        return options.front().npc;
     }
 
     bool Offerable(const PlotVerbs::Verb& verb, const Input& input, const std::vector<const PlotModel::Step*>& earlier)
