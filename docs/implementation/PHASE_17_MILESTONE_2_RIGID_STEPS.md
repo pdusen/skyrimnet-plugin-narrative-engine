@@ -646,7 +646,7 @@ was set. Only adaptation still writes such steps, until Step 7.
 
 ### Step 7 — Adaptation by decision
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -654,6 +654,31 @@ was set. Only adaptation still writes such steps, until Step 7.
 
 **Verification:** a suite asserts `retry` excludes the failed agent, `substitute` replaces only the failed
 position onward, `concede` ends the plot, a decision error concedes, and the cap ends a plot that never concedes.
+
+Done. `PlotPlanning::Adapt` asks `plot_adapt.prompt`'s one question and applies the answer; `PlotBirth::Replan` plans a
+substitute from the plot's history with the same decisions birth uses; `PlotTick::AdaptPlot` only ends, logs and
+counts. `PlotAdapt`, its parser and `narrative_engine_plot_adapt.prompt` are deleted, `PlotStepParse` is down to the
+player check the ambition parser still needs, and a step's agent query and free-text target go with them -- nothing
+writes either once every step is a verb -- taking the co-save record to version 9. 455 tests pass after a clean
+build, one of them new with eight sections.
+
+**Adaptation is pure, as planning is.** `Adapt` takes the plot, the cap, the decision call and a re-planner, so the
+suite drives every path without the plot worker: a retry resets the step at the cursor and touches nothing else, a
+substitute replaces the plan from the cursor on, a failed substitute concedes rather than stalling, and a plot fed
+nothing but retries stops at exactly the cap.
+
+**Retry is offered only when somebody else could take the step.** A `deliver` or `plant` belongs to whoever holds the
+item, so retrying it with "somebody else" is not a thing the world allows; for those the choice is a different way or
+giving up. And a retry is never handed back to anybody who already failed that very step in this plot -- if they were
+the only one eligible, the mastermind does it, and if the mastermind was the one who failed, the plot ends.
+
+**Substitute re-plans the rest of the plot, not one position.** The design said "a different verb at this position,
+then the normal slot fill"; a different first step usually needs different steps after it, and the planner already
+plans from history, showing the model how each earlier step went. The new tail is capped at what is left of six.
+
+**A conceded plot's concession is the mastermind's memory of it** -- "I gave up on my plan to ..." -- rather than the
+model's sentence that used to be asked for. The dashboard shows it beside the plot; the trace still records why, as a
+reason of its own.
 
 ### Step 8 — Memories
 

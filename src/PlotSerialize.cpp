@@ -141,9 +141,7 @@ namespace NarrativeEngine::PlotSerialize
             // silently reinterpret every saved step.
             const std::string typeId(PlotModel::TypeId(step.type));
             return WriteString(sink, typeId) && WritePod(sink, step.target) && WriteString(sink, step.targetName)
-                   && WriteString(sink, step.description) && WriteString(sink, step.label)
-                   && WriteString(sink, step.agentRole.query) && WriteString(sink, step.agentRole.label)
-                   && WriteString(sink, step.targetWanted) && WritePod(sink, step.actor)
+                   && WriteString(sink, step.description) && WriteString(sink, step.label) && WritePod(sink, step.actor)
                    && WriteString(sink, step.actorName) && WritePod(sink, static_cast<std::uint8_t>(step.state))
                    && WritePod(sink, static_cast<std::uint8_t>(step.outcome)) && WritePod(sink, step.budget)
                    && WritePod(sink, step.elapsed) && WritePod(sink, step.threshold) && WritePod(sink, step.progress)
@@ -191,16 +189,6 @@ namespace NarrativeEngine::PlotSerialize
 
             if (!ReadString(source, step.targetName) || !ReadString(source, step.description)
                 || !ReadString(source, step.label)) {
-                return false;
-            }
-
-            // The role DESCRIPTIONS, not just what they resolved to.
-            // A step re-dispatched after a load has to search again --
-            // whoever it found last session may be dead, busy, or gone
-            // with the mod they came from -- and the query is the only
-            // record of what it was looking for.
-            if (!ReadString(source, step.agentRole.query) || !ReadString(source, step.agentRole.label)
-                || !ReadString(source, step.targetWanted)) {
                 return false;
             }
 

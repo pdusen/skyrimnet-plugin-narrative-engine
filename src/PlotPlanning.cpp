@@ -127,6 +127,111 @@ namespace NarrativeEngine::PlotPlanning
             [](std::string_view name) { return std::format("[{}]", name); }));
     }
 
+    bool CanRetry(const PlotModel::Step& failed)
+    {
+        const auto* verb = PlotVerbs::Find(failed.verb);
+        return verb != nullptr && !verb->agentBoundToItem;
+    }
+
+    PlotModel::Step Retried(const PlotModel::Step& failed)
+    {
+        PlotModel::Step step;
+        step.type = failed.type;
+        step.verb = failed.verb;
+        step.slots = failed.slots;
+        step.target = failed.target;
+        step.targetName = failed.targetName;
+        return step;
+    }
+
+    std::unordered_set<RE::FormID> FailedAgents(const PlotModel::Plot& plot, const PlotModel::Step& step)
+    {
+        const auto same = [&step](const PlotModel::Step& other) {
+            if (other.verb != step.verb || other.slots.size() != step.slots.size()) {
+                return false;
+            }
+            for (std::size_t i = 0; i < step.slots.size(); ++i) {
+                if (other.slots[i].name != step.slots[i].name || other.slots[i].form != step.slots[i].form) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        std::unordered_set<RE::FormID> out;
+        for (const auto& past : plot.history) {
+            if (past.actor != 0 && past.outcome != PlotModel::StepOutcome::Succeeded && same(past)) {
+                out.insert(past.actor);
+            }
+        }
+        return out;
+    }
+
+    Adaptation Adapt(PlotModel::Plot& plot, int cap, const Ask& ask, const Replanner& replan)
+    {
+        // Checked before asking. Whatever the model would say, a plot that
+        // has spent its attempts stops, which is what makes "it would not
+        // concede; the cap did" an outcome of its own.
+        if (plot.adaptations >= cap || plot.history.empty()) {
+            return {Revision::CapHit, "the adaptation cap was reached", 0};
+        }
+        ++plot.adaptations;
+        const PlotModel::Step failed = plot.history.back();
+
+        nlohmann::json options = nlohmann::json::array();
+        const bool retryable = CanRetry(failed) && plot.cursor < plot.plan.size();
+        if (retryable) {
+            options.push_back(
+                {{"key", kRetry}, {"line", "Try the same step again, with somebody else carrying it out."}});
+        }
+        options.push_back(
+            {{"key", kSubstitute}, {"line", "Try a different way, and plan the rest of the scheme again from here."}});
+        options.push_back({{"key", kConcede}, {"line", "Give the scheme up."}});
+
+        std::vector<const PlotModel::Step*> history;
+        for (const auto& past : plot.history) {
+            history.push_back(&past);
+        }
+        nlohmann::json ctx;
+        ctx["mastermind"] = {{"name", plot.mastermindName}};
+        ctx["ambition"] = plot.ambition;
+        ctx["scheme"] = plot.scheme;
+        ctx["steps"] = StepsSoFar(history);
+        ctx["failed"] = std::format("{} ({})", PlotModel::Label(failed), OutcomePhrase(failed.outcome));
+        ctx["attempt"] = plot.adaptations;
+        ctx["max_attempts"] = cap;
+        ctx["options"] = std::move(options);
+
+        const auto result = ask(kAdaptTemplate, ctx);
+        if (!result.ok) {
+            return {Revision::Conceded, std::format("the decision failed ({})", result.error), 0};
+        }
+        const auto key = result.Choice(kAdaptQuestion);
+
+        if (key == kRetry && retryable) {
+            plot.plan[plot.cursor] = Retried(failed);
+            return {Revision::Retried, {}, 1};
+        }
+        if (key == kSubstitute) {
+            auto tail = replan(plot);
+            if (!tail.ok) {
+                return {Revision::Conceded,
+                        std::format("no other way could be planned ({})",
+                                    !tail.error.empty() ? tail.error : tail.rejection),
+                        0};
+            }
+            plot.plan.erase(plot.plan.begin() + static_cast<std::ptrdiff_t>(plot.cursor), plot.plan.end());
+            const auto added = tail.plan.size();
+            for (auto& step : tail.plan) {
+                plot.plan.push_back(std::move(step));
+            }
+            return {Revision::Substituted, {}, added};
+        }
+        if (key == kConcede) {
+            return {Revision::Conceded, "they chose to give it up", 0};
+        }
+        return {Revision::Conceded, std::format("answered '{}', which was not offered", key), 0};
+    }
+
     RE::FormID ItemHolder(const PlotModel::Plot& plot)
     {
         for (auto it = plot.history.rbegin(); it != plot.history.rend(); ++it) {

@@ -855,8 +855,6 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/GossipTick.cpp"
         "${CMAKE_SOURCE_DIR}/src/CharacterBioLibrary.cpp"
         "${CMAKE_SOURCE_DIR}/src/CharacterBios.cpp"
-        "${CMAKE_SOURCE_DIR}/src/PlotAdapt.cpp"
-        "${CMAKE_SOURCE_DIR}/src/PlotAdaptParse.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotBirth.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotBirthParse.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotCasting.cpp"

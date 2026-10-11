@@ -6,6 +6,7 @@
 
 #include <PlotCasting.h>
 #include <PlotModel.h>
+#include <PlotPlanning.h>
 #include <PlotThread.h>
 
 // PlotBirth — inventing one scheme, in three questions instead of one.
@@ -169,6 +170,12 @@ namespace NarrativeEngine::PlotBirth
     // What somebody does, as one short phrase for their line on a decision's
     // list: the first sentence of their biography's occupation section.
     [[nodiscard]] std::string Occupation(RE::FormID npc);
+
+    // Plan what is left of `plot` after a failure, from its history, by the
+    // same decisions birth uses. What adaptation's substitute runs.
+    [[nodiscard]] PlotPlanning::Outcome Replan(const PlotThread::Token& pt,
+                                               const PlotCasting::Population& population,
+                                               const PlotModel::Plot& plot);
 
     // False once SkyrimNet has said this session cannot answer a decision.
     // Every birth plans by decision, so the caller skips birth outright

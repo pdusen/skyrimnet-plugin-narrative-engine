@@ -337,6 +337,38 @@ namespace NarrativeEngine::PlotBirth
         }
     } // namespace
 
+    PlotPlanning::Outcome Replan(const PlotThread::Token& pt,
+                                 const PlotCasting::Population& population,
+                                 const PlotModel::Plot& plot)
+    {
+        PlotPlanning::Outcome refused;
+        const auto* boss = population.Find(plot.mastermind);
+        if (boss == nullptr) {
+            refused.rejection = "the mastermind is no longer in the population";
+            return refused;
+        }
+
+        PlotPlanning::Input input{population, PlotMenus::CurrentWorld()};
+        input.mastermind = boss->npc;
+        input.mastermindName = boss->name;
+        input.standing = StandingPhrase(BestStanding(*boss));
+        input.ambition = plot.ambition;
+        input.scheme = plot.scheme;
+        input.bio = BioSections(boss->npc, boss->name, "replan");
+        input.alive = PlotPopulation::AlivePredicate();
+        input.occupation = ShortOccupation;
+        for (const auto& past : plot.history) {
+            input.before.push_back(&past);
+        }
+        // What is left of the cap, and always room for one more step.
+        const auto spent = std::min(plot.history.size(), PlotPlanning::kPlanCap - 1);
+        input.maxSteps = PlotPlanning::kPlanCap - spent;
+
+        return PlotPlanning::Plan(input, [&pt](std::string_view name, const nlohmann::json& ctx) {
+            return SkyrimNetAPI::SendCustomDecision(pt, std::string{name}, ctx.dump());
+        });
+    }
+
     std::string Occupation(RE::FormID npc)
     {
         return ShortOccupation(npc);

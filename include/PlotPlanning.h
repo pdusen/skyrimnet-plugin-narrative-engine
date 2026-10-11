@@ -9,6 +9,7 @@
 #include <functional>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -37,6 +38,16 @@ namespace NarrativeEngine::PlotPlanning
     // step is an errand, not a scheme.
     inline constexpr const char* kDone = "done";
 
+    // Adaptation's one question, and its three answers.
+    inline constexpr const char* kAdaptTemplate = "narrative_engine/plot_adapt";
+    inline constexpr const char* kAdaptQuestion = "next";
+    inline constexpr const char* kRetry = "retry";
+    inline constexpr const char* kSubstitute = "substitute";
+    inline constexpr const char* kConcede = "concede";
+
+    // How long a plan may run. A substitute plans what is left of it.
+    inline constexpr std::size_t kPlanCap = 6;
+
     using Ask = std::function<SkyrimNetAPI::DecisionResult(std::string_view templateName, const nlohmann::json& ctx)>;
 
     struct Input
@@ -61,7 +72,7 @@ namespace NarrativeEngine::PlotPlanning
         // adaptation re-plans from a failure.
         std::vector<const PlotModel::Step*> before;
 
-        std::size_t maxSteps = 6;
+        std::size_t maxSteps = kPlanCap;
     };
 
     struct Outcome
@@ -128,6 +139,50 @@ namespace NarrativeEngine::PlotPlanning
                                        const std::vector<AgentOption>& options,
                                        const Ask& ask,
                                        std::string& error);
+
+    // --- Adaptation ------------------------------------------------------
+
+    enum class Revision : std::uint8_t
+    {
+        Retried,     // the same step again, by somebody else
+        Substituted, // a different way from the failed position on
+        Conceded,    // given up
+        CapHit       // out of attempts before anything was asked
+    };
+
+    struct Adaptation
+    {
+        Revision revision = Revision::Conceded;
+        // Why a plot was conceded, for the trace.
+        std::string reason;
+        // How many steps a substitute put in place of the failed one.
+        std::size_t newTail = 0;
+    };
+
+    // Plans what is left of a plot after a failure, from its history. The
+    // plot worker binds this to PlotBirth::Replan.
+    using Replanner = std::function<Outcome(const PlotModel::Plot&)>;
+
+    // Whether a failed step can be retried by somebody else. Not when its
+    // agent is bound to an item: only whoever holds it can try again.
+    [[nodiscard]] bool CanRetry(const PlotModel::Step& failed);
+
+    // A failed step made ready to run again: the same verb and slots, no
+    // agent, nothing spent.
+    [[nodiscard]] PlotModel::Step Retried(const PlotModel::Step& failed);
+
+    // Everybody who has already failed this very step in this plot. A retry
+    // is never handed back to them.
+    [[nodiscard]] std::unordered_set<RE::FormID> FailedAgents(const PlotModel::Plot& plot, const PlotModel::Step& step);
+
+    // Adapt after the step at the plot's cursor failed, which is already the
+    // last entry in its history. Asks one decision -- retry, substitute or
+    // concede -- unless the cap is spent, and applies the answer to `plot`:
+    // a retry resets the step at the cursor, a substitute replaces the plan
+    // from the cursor on, and nothing behind the cursor ever changes. A
+    // failed decision, an answer that was not offered, or a substitute that
+    // cannot be planned all concede.
+    [[nodiscard]] Adaptation Adapt(PlotModel::Plot& plot, int cap, const Ask& ask, const Replanner& replan);
 
     // Whether an error code means no decision will be answered this
     // session, however many more are asked.

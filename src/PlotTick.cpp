@@ -3,7 +3,6 @@
 #include <DashboardUIManager.h>
 #include <EngineUtils.h>
 #include <logger.h>
-#include <PlotAdapt.h>
 #include <PlotBirth.h>
 #include <PlotCandidates.h>
 #include <PlotCasting.h>
@@ -302,10 +301,18 @@ namespace NarrativeEngine::PlotTick
                                                               step.target,
                                                               PlotPopulation::SeatedPredicate(),
                                                               EarlierAgents(plot));
-                if (cast.shortlist.empty()) {
+                // A retried step is never handed back to whoever already
+                // failed it.
+                auto eligible = cast.shortlist;
+                const auto failedBefore = PlotPlanning::FailedAgents(plot, step);
+                std::erase_if(eligible, [&failedBefore](RE::FormID npc) { return failedBefore.contains(npc); });
+                if (eligible.empty() && !failedBefore.contains(plot.mastermind) && (!alive || alive(plot.mastermind))) {
+                    eligible.push_back(plot.mastermind);
+                }
+                if (eligible.empty()) {
                     return Dispatched::Impossible;
                 }
-                chosen = ChooseAgent(pt, population, plot, step, cast.shortlist);
+                chosen = ChooseAgent(pt, population, plot, step, eligible);
                 considered = cast.considered.size();
                 rejected = static_cast<std::size_t>(
                     std::count_if(cast.considered.begin(), cast.considered.end(), [](const PlotCasting::Candidate& c) {
@@ -368,43 +375,35 @@ namespace NarrativeEngine::PlotTick
         bool AdaptPlot(const PlotThread::Token& pt, PlotState& state, PlotModel::Plot& plot, double gameDay)
         {
             const auto cap = std::max(0, Settings::Get().plotMaxAdaptations);
+            const auto before = plot.adaptations;
 
-            // The backstop, and it is checked BEFORE asking rather than
-            // after. Whatever the model returns, a plot that has used
-            // its attempts stops -- which is what makes "it would not
-            // concede; iPlotMaxAdaptations did" a distinct outcome worth
-            // recording rather than a bug.
-            if (plot.adaptations >= cap) {
+            const auto adaptation = PlotPlanning::Adapt(
+                plot,
+                cap,
+                [&pt](std::string_view name, const nlohmann::json& ctx) {
+                    return SkyrimNetAPI::SendCustomDecision(pt, std::string{name}, ctx.dump());
+                },
+                [&pt](const PlotModel::Plot& p) { return PlotBirth::Replan(pt, PlotPopulation::Get(), p); });
+            if (plot.adaptations > before) {
+                ++state.counters.adaptations;
+            }
+
+            switch (adaptation.revision) {
+            case PlotPlanning::Revision::CapHit:
                 EndPlot(state, plot, PlotModel::PlotStatus::Failed, PlotModel::PlotOutcome::AdaptationCapHit, gameDay);
                 return false;
-            }
-            ++plot.adaptations;
-            ++state.counters.adaptations;
-
-            // The step that just failed is the last one moved to
-            // history, which is where AdvancePlot puts it before calling
-            // here.
-            const PlotModel::Step& failed = plot.history.back();
-
-            const auto outcome = PlotAdapt::Compose(pt, plot, failed, plot.adaptations, cap);
-
-            if (outcome.decision == PlotAdapt::Decision::Concede) {
-                PlotLog::Concede(plot, outcome.reason);
-                plot.concession = outcome.reason;
+            case PlotPlanning::Revision::Conceded:
+                PlotLog::Concede(plot, adaptation.reason);
+                // The mastermind's own words for it, which is what the
+                // dashboard shows beside a conceded plot.
+                plot.concession = PlotVerbs::RenderConceded(plot.scheme);
                 EndPlot(state, plot, PlotModel::PlotStatus::Failed, PlotModel::PlotOutcome::Conceded, gameDay);
                 return false;
+            case PlotPlanning::Revision::Retried:
+            case PlotPlanning::Revision::Substituted:
+                break;
             }
-
-            PlotLog::Adapt(plot, plot.adaptations, cap, outcome.plan.size());
-
-            // Replace from the cursor onward. Everything before it has
-            // already moved to history, and the scheme is NOT in the
-            // rewritable set -- it is a sentence on the plot, which a
-            // revision has no way to reach.
-            plot.plan.erase(plot.plan.begin() + static_cast<std::ptrdiff_t>(plot.cursor), plot.plan.end());
-            for (const auto& step : outcome.plan) {
-                plot.plan.push_back(step);
-            }
+            PlotLog::Adapt(plot, plot.adaptations, cap, adaptation.newTail);
             return true;
         }
 

@@ -251,43 +251,6 @@ namespace NarrativeEngine::PlotModel
         // without one, fall back to the type verb.
         std::string label;
 
-        // WHO a step needs, as the model described them.
-        //
-        // `query` is a sentence matched against character biographies;
-        // `label` is a one-to-three-word noun phrase naming that kind of
-        // person, carrying no proper noun. Both come back from the plan
-        // call, both are sanitized at extraction, and NEITHER is ever
-        // resolved as a name -- the query is searched for, and the label
-        // is only ever displayed.
-        struct Role
-        {
-            std::string query;
-            std::string label;
-
-            [[nodiscard]] bool Empty() const noexcept
-            {
-                return query.empty() && label.empty();
-            }
-        };
-
-        // Every step has an agent.
-        Role agentRole;
-
-        // WHO the step acts on, as the model wrote it: either a specific
-        // person's name or a description of a kind of person, with the
-        // prompt asking for the description unless the step genuinely
-        // turns on one individual. Empty when the step acts on nobody,
-        // which most steps do.
-        //
-        // One string rather than a search query and a display label,
-        // because the two were the same thing wearing different hats.
-        // Whatever it says is searched for; if somebody matches well
-        // enough they become the target, and if nobody does the string
-        // itself is what gets rendered. A name that resolves and a
-        // description that resolves are the same operation, and a name
-        // that does NOT resolve still reads correctly as a placeholder.
-        std::string targetWanted;
-
         // THE RESOLVED TARGET, and the invariant the rest of the plugin
         // depends on:
         //

@@ -96,8 +96,11 @@ namespace
             a.type = "choice";
             a.choice = answers.front();
             answers.pop_front();
-            const bool verb = name == PlotPlanning::kVerbTemplate;
-            r.answers.emplace_back(verb ? PlotPlanning::kVerbQuestion : PlotPlanning::kSlotQuestion, a);
+            // Each template asks its one question under its own id.
+            const char* question = name == PlotPlanning::kVerbTemplate    ? PlotPlanning::kVerbQuestion
+                                   : name == PlotPlanning::kAdaptTemplate ? PlotPlanning::kAdaptQuestion
+                                                                          : PlotPlanning::kSlotQuestion;
+            r.answers.emplace_back(question, a);
             r.ok = true;
             return r;
         }
@@ -434,6 +437,198 @@ TEST_CASE("PlotPlanning::ItemHolder", "[PlotPlanning][engine]")
         SECTION("should be nobody, since nobody has it")
         {
             REQUIRE(PlotPlanning::ItemHolder(plot) == 0);
+        }
+    }
+}
+
+namespace
+{
+    // A plot whose second step just failed: one step done, the failed one
+    // moved to history and still sitting at the cursor, one more planned.
+    PlotModel::Plot AfterAFailure(std::string_view failedVerb, PlotModel::StepOutcome how)
+    {
+        PlotModel::Plot plot;
+        plot.mastermind = kBoss;
+        plot.mastermindName = "Olfrid";
+        plot.scheme = "Ruin Hulda's trade.";
+
+        PlotModel::Step done;
+        done.verb = "steal";
+        done.slots = {{"item", kRuby, "a ruby"}, {"mark", kTrader, "Hulda"}};
+        done.actor = kFriend;
+        done.outcome = PlotModel::StepOutcome::Succeeded;
+        done.state = PlotModel::StepState::Succeeded;
+
+        PlotModel::Step failed;
+        failed.verb = std::string{failedVerb};
+        failed.slots = {{"mark", kTrader, "Hulda"}};
+        failed.actor = kFriend;
+        failed.outcome = how;
+        failed.state = PlotModel::StepState::Failed;
+        failed.progress = 3.0f;
+        failed.elapsed = 4;
+
+        PlotModel::Step next;
+        next.verb = "threaten";
+        next.slots = {{"mark", kTrader, "Hulda"}};
+
+        plot.plan = {done, failed, next};
+        plot.cursor = 1;
+        plot.history = {done, failed};
+        return plot;
+    }
+
+    PlotPlanning::Outcome OneStep(std::string_view verb)
+    {
+        PlotPlanning::Outcome out;
+        PlotModel::Step step;
+        step.verb = std::string{verb};
+        step.slots = {{"mark", kTrader, "Hulda"}};
+        out.plan.push_back(step);
+        out.ok = true;
+        return out;
+    }
+} // namespace
+
+TEST_CASE("PlotPlanning::Adapt", "[PlotPlanning][engine]")
+{
+    Script script;
+    const auto ask = [&script](std::string_view n, const nlohmann::json& c) { return script(n, c); };
+    int replans = 0;
+    const auto replan = [&replans](const PlotModel::Plot&) {
+        ++replans;
+        return OneStep("ask_around");
+    };
+
+    SECTION("when the schemer retries")
+    {
+        auto plot = AfterAFailure("watch", PlotModel::StepOutcome::FailedCaught);
+        script.answers = {"retry"};
+        const auto a = PlotPlanning::Adapt(plot, 3, ask, replan);
+
+        SECTION("should reset the step at the cursor and keep everything else")
+        {
+            REQUIRE(a.revision == PlotPlanning::Revision::Retried);
+            REQUIRE(plot.plan.size() == 3);
+            const auto& retried = plot.plan[1];
+            REQUIRE(retried.verb == "watch");
+            REQUIRE(retried.state == PlotModel::StepState::Planned);
+            REQUIRE(retried.actor == 0);
+            REQUIRE(retried.progress == 0.0f);
+            REQUIRE(retried.elapsed == 0);
+            REQUIRE(plot.plan[2].verb == "threaten");
+            REQUIRE(plot.history.size() == 2);
+            REQUIRE(plot.adaptations == 1);
+        }
+
+        SECTION("should keep the retry from whoever failed it")
+        {
+            const auto failed = PlotPlanning::FailedAgents(plot, plot.plan[1]);
+            REQUIRE(failed.size() == 1);
+            REQUIRE(failed.contains(kFriend));
+        }
+    }
+
+    SECTION("when the failed step's agent is bound to the item it carries")
+    {
+        auto plot = AfterAFailure("deliver", PlotModel::StepOutcome::FailedTimeout);
+        script.answers = {"concede"};
+        (void)PlotPlanning::Adapt(plot, 3, ask, replan);
+
+        SECTION("should not offer a retry, since nobody else holds the item")
+        {
+            const auto offered = script.Offered(0);
+            REQUIRE_FALSE(Contains(offered, PlotPlanning::kRetry));
+            REQUIRE(Contains(offered, PlotPlanning::kSubstitute));
+            REQUIRE(Contains(offered, PlotPlanning::kConcede));
+        }
+    }
+
+    SECTION("when the schemer tries another way")
+    {
+        auto plot = AfterAFailure("watch", PlotModel::StepOutcome::FailedCaught);
+        script.answers = {"substitute"};
+        const auto a = PlotPlanning::Adapt(plot, 3, ask, replan);
+
+        SECTION("should replace the plan from the failed position on, and nothing behind it")
+        {
+            REQUIRE(a.revision == PlotPlanning::Revision::Substituted);
+            REQUIRE(a.newTail == 1);
+            REQUIRE(replans == 1);
+            REQUIRE(plot.plan.size() == 2);
+            REQUIRE(plot.plan[0].verb == "steal");
+            REQUIRE(plot.plan[1].verb == "ask_around");
+            REQUIRE(plot.history.size() == 2);
+        }
+    }
+
+    SECTION("when another way cannot be planned")
+    {
+        auto plot = AfterAFailure("watch", PlotModel::StepOutcome::FailedCaught);
+        script.answers = {"substitute"};
+        const auto a = PlotPlanning::Adapt(plot, 3, ask, [](const PlotModel::Plot&) {
+            PlotPlanning::Outcome nothing;
+            nothing.error = "request_failed";
+            return nothing;
+        });
+
+        SECTION("should concede rather than leave the plot stalled")
+        {
+            REQUIRE(a.revision == PlotPlanning::Revision::Conceded);
+            REQUIRE(a.reason.find("request_failed") != std::string::npos);
+        }
+    }
+
+    SECTION("when the schemer gives up")
+    {
+        auto plot = AfterAFailure("watch", PlotModel::StepOutcome::FailedCaught);
+        script.answers = {"concede"};
+
+        SECTION("should concede")
+        {
+            REQUIRE(PlotPlanning::Adapt(plot, 3, ask, replan).revision == PlotPlanning::Revision::Conceded);
+        }
+    }
+
+    SECTION("when the decision fails")
+    {
+        auto plot = AfterAFailure("watch", PlotModel::StepOutcome::FailedCaught);
+        script.failWith = "request_failed";
+
+        SECTION("should concede")
+        {
+            REQUIRE(PlotPlanning::Adapt(plot, 3, ask, replan).revision == PlotPlanning::Revision::Conceded);
+        }
+    }
+
+    SECTION("when the plot has spent its attempts")
+    {
+        auto plot = AfterAFailure("watch", PlotModel::StepOutcome::FailedCaught);
+        plot.adaptations = 3;
+        const auto a = PlotPlanning::Adapt(plot, 3, ask, replan);
+
+        SECTION("should end it without asking")
+        {
+            REQUIRE(a.revision == PlotPlanning::Revision::CapHit);
+            REQUIRE(script.asked.empty());
+            REQUIRE(plot.adaptations == 3);
+        }
+    }
+
+    SECTION("when a plot is fed nothing but retries")
+    {
+        auto plot = AfterAFailure("watch", PlotModel::StepOutcome::FailedCaught);
+        script.answers = {"retry", "retry", "retry", "retry"};
+        int rounds = 0;
+        while (PlotPlanning::Adapt(plot, 3, ask, replan).revision == PlotPlanning::Revision::Retried) {
+            ++rounds;
+            REQUIRE(rounds <= 3);
+        }
+
+        SECTION("should stop at the cap, having retried once per attempt")
+        {
+            REQUIRE(rounds == 3);
+            REQUIRE(plot.adaptations == 3);
         }
     }
 }

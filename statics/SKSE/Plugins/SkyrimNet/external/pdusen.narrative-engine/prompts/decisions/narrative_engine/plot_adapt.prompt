@@ -1,0 +1,30 @@
+{# narrative_engine/plot_adapt — what a schemer does after a step fails.
+   Asked once per failure by PlotPlanning::Adapt, until the plot succeeds,
+   is given up, or spends its attempts. The answer is retry, substitute
+   or concede; retry is offered only when somebody else could take the
+   same step.
+   Receives: mastermind { name }, ambition, scheme, steps [string] (what
+     has happened so far, numbered, with how each went), failed (the step
+     that just failed and how), attempt, max_attempts, options [{ key, line }].
+   NOTE: no fenced blocks and no literal braces anywhere in this file. #}
+[ state aims ]
+{{ mastermind.name }} is ultimately after this: {{ ambition }}
+The scheme they are working on: {{ scheme }}
+[ end state ]
+
+[ state history ]
+{% for s in steps %}{{ s }}
+{% endfor %}
+[ end state ]
+
+[ state setback ]
+The step that just failed: {{ failed }}
+This is attempt {{ attempt }} of {{ max_attempts }} to recover the scheme.
+[ end state ]
+
+[ question next choice ]
+Given the scheme in `aims`, what has happened in `history`, and the setback in `setback`, what does `aims`' schemer do now? Retrying suits a step that failed through the person sent rather than the plan; trying a different way suits a plan that met an obstacle; giving up suits a scheme that has cost more than it is worth or can no longer work.
+[ criteria ]
+{% for o in options %}{{ o.key }}: {{ o.line }}
+{% endfor %}[ end criteria ]
+[ end question ]
