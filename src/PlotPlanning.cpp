@@ -600,7 +600,11 @@ namespace NarrativeEngine::PlotPlanning
                     if (offered.empty()) {
                         break;
                     }
-                    options.push_back({{"key", kReady}, {"line", "Nothing more: the plan is ready to carry out."}});
+                    // One step is an errand, not a scheme: with only the goal
+                    // planned, something has to come before it.
+                    if (plan_.size() >= kPlanFloor) {
+                        options.push_back({{"key", kReady}, {"line", "Nothing more: the plan is ready to carry out."}});
+                    }
 
                     auto ctx = Base();
                     ctx["plan"] = PlanText();

@@ -1067,7 +1067,7 @@ missing for some.
 
 ### Step 15 — A plan is more than one step
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1075,6 +1075,17 @@ missing for some.
 scheme. A goal nothing can prepare still makes a one-step plan, because then there is nothing to offer.
 
 **Verification:** the planning suite asserts the first preparation question offers no `ready` and the second does.
+
+Done. The preparation question adds `ready` once the plan holds `kPlanFloor` steps. 464 tests pass; the planning
+suite's "ready" section now asserts both questions, and three sections that had answered `ready` at the first
+question answer a preparation instead.
+
+**The floor is the same constant as the item floor.** Two steps is both the least room a goal needing an item is
+given and the least a plan may be; one name keeps them from drifting apart, and either reading of it is right.
+
+**A one-step plan is still possible, and only when nothing can prepare the goal.** Then the question is never asked
+at all. Every verb but `ask_around` and `deliver` has a preparation in the table, and a `deliver` always brings the
+step that gets its item, so in practice that leaves an `ask_around` goal, which is itself a preparation verb.
 
 ### Step 16 — Only the goal and what supplies it are prepared
 

@@ -242,8 +242,7 @@ TEST_CASE("PlotPlanning asks for the goal first", "[PlotPlanning][engine]")
         SECTION("should offer the preparation as a whole step, saying where it goes")
         {
             REQUIRE(f.script.Lines(2)
-                    == std::vector<std::string>{"Before step 1: Someone asks around [place] about Hulda.",
-                                                "Nothing more: the plan is ready to carry out."});
+                    == std::vector<std::string>{"Before step 1: Someone asks around [place] about Hulda."});
             REQUIRE(f.script.asked[2].ctx["plan"][0] == "1. Someone watches Hulda, learning their habits.");
         }
 
@@ -540,7 +539,7 @@ TEST_CASE("PlotPlanning never repeats a step", "[PlotPlanning][engine]")
         watched.actor = kFriend;
         watched.outcome = PlotModel::StepOutcome::Succeeded;
         f.history = {watched};
-        f.script.answers = {"watch", "ready"};
+        f.script.answers = {"watch", "p1"};
         const auto out = f.Run();
 
         SECTION("should leave out the filler that would make it the same step again")
@@ -570,15 +569,22 @@ TEST_CASE("PlotPlanning ends the preparing", "[PlotPlanning][engine]")
         }
     }
 
-    SECTION("when the model answers ready")
+    SECTION("when the model answers ready once it may")
     {
-        f.script.answers = {"steal", "c1", "c1", "ready"};
+        f.script.answers = {"steal", "c1", "c1", "p1", "ready"};
         const auto out = f.Run();
 
-        SECTION("should keep just the goal")
+        SECTION("should not offer ready while the plan is the goal alone")
+        {
+            REQUIRE_FALSE(Contains(f.script.Offered(3), PlotPlanning::kReady));
+            REQUIRE(Contains(f.script.Offered(4), PlotPlanning::kReady));
+        }
+
+        SECTION("should end the plan there")
         {
             REQUIRE(out.ok);
-            REQUIRE(out.plan.size() == 1);
+            REQUIRE(out.plan.size() == 2);
+            REQUIRE(f.script.answers.empty());
         }
     }
 
@@ -598,14 +604,14 @@ TEST_CASE("PlotPlanning ends the preparing", "[PlotPlanning][engine]")
     SECTION("when a slot has one candidate")
     {
         // buy's seller is somebody who trades: only Hulda.
-        f.script.answers = {"buy", "c2", "ready"};
+        f.script.answers = {"buy", "c2", "p1"};
         const auto out = f.Run();
 
         SECTION("should fill it without asking")
         {
             REQUIRE(out.ok);
-            REQUIRE(FormOf(out.plan[0], "seller") == kTrader);
-            REQUIRE(FormOf(out.plan[0], "item") == kSkooma);
+            REQUIRE(FormOf(out.plan.back(), "seller") == kTrader);
+            REQUIRE(FormOf(out.plan.back(), "item") == kSkooma);
             REQUIRE(f.script.Templates() == std::vector<std::string>{kGoal, kSlot, kPrepare});
         }
     }
