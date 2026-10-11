@@ -1,31 +1,23 @@
-{# narrative_engine/probe — a decision template whose only job is to find out
-   what SkyrimNet's decision API does with the shapes plot planning needs.
-   Sent by the Plots tab's "Probe decisions" button; DecisionProbe logs what
-   came back. Not part of any feature.
-   Receives: places [{ key, label }] — twenty options, keys c1..c20.
+{# narrative_engine/probe — one round of the decision API probe.
+   Sent once per round and order by the Plots tab's "Probe decisions"
+   button; DecisionProbe logs what came back. Not part of any feature.
+   Receives: situation, question, background_in_state (bool),
+     options [{ key, name, background }] — keys c1 onward.
+   With background_in_state, each option's background goes in the
+   choices block and its criteria line carries only its name; otherwise
+   the background rides on the criteria line itself.
    NOTE: no fenced blocks and no literal braces anywhere in this file. #}
-[ state task ]
-This is a test of the decision interface. Answer every question as accurately as you can.
+[ state situation ]
+{{ situation }}
 [ end state ]
 
-[ question capital choice ]
-Which of these places is the capital of the Reach?
+{% if background_in_state %}[ state choices ]
+{% for o in options %}{{ o.key }}, {{ o.name }}: {{ o.background }}
+{% endfor %}[ end state ]
+
+{% endif %}[ question pick choice ]
+{{ question }} Judge each choice by what is said about it here, not by what you might already believe about it.
 [ criteria ]
-{% for p in places %}{{ p.key }}: {{ p.label }}
+{% for o in options %}{% if background_in_state %}{{ o.key }}: {{ o.name }}{% else %}{{ o.key }}: {{ o.name }}, {{ o.background }}{% endif %}
 {% endfor %}[ end criteria ]
-[ end question ]
-
-[ question fish choice ]
-Which of these is a kind of fish?
-[ criteria ]
-c1: a horse
-c2: a sword
-c3: a salmon
-c4: a cloud
-c5: a mountain
-[ end criteria ]
-[ end question ]
-
-[ question cold noul ]
-Is Winterhold usually cold?
 [ end question ]

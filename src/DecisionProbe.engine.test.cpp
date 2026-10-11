@@ -5,99 +5,148 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <set>
 #include <string>
 
 // Tests for the decision API probe.
 //
-// What matters is that a result is read the way the Milestone 2 doc's Step 2
-// needs it read: each of its open questions gets its own yes or no, and a
-// result that answers one but not another says which. A probe that reported
-// "it worked" on any successful response would settle nothing.
+// The probe's worth is in reading each answer correctly: a round marked right
+// when the model chose wrong, or a position recorded wrongly, would make the
+// report say the opposite of what happened. So the suite pins the rounds' own
+// consistency, the keys each order produces, and the reading of a result.
 
 namespace
 {
     namespace DecisionProbe = NarrativeEngine::DecisionProbe;
     namespace SkyrimNet = NarrativeEngine::SkyrimNetAPI;
 
-    SkyrimNet::DecisionAnswer Choice(std::string key)
-    {
-        SkyrimNet::DecisionAnswer a;
-        a.type = "choice";
-        a.choice = std::move(key);
-        return a;
-    }
-
-    SkyrimNet::DecisionAnswer YesNo(double p)
-    {
-        SkyrimNet::DecisionAnswer a;
-        a.type = "noul";
-        a.noul = p;
-        return a;
-    }
-
-    SkyrimNet::DecisionResult Answered(std::string capital, std::string fish, bool withCold = true)
+    SkyrimNet::DecisionResult Chose(const std::string& key, double p = 0.0, const std::string& pKey = {})
     {
         SkyrimNet::DecisionResult r;
         r.ok = true;
-        r.answers.emplace_back("capital", Choice(std::move(capital)));
-        r.answers.emplace_back("fish", Choice(std::move(fish)));
-        if (withCold) {
-            r.answers.emplace_back("cold", YesNo(0.95));
+        SkyrimNet::DecisionAnswer a;
+        a.type = "choice";
+        a.choice = key;
+        if (!pKey.empty()) {
+            a.probabilities.emplace_back(pKey, p);
         }
+        r.answers.emplace_back(DecisionProbe::kQuestion, a);
         return r;
     }
 
-    constexpr std::chrono::milliseconds kLatency{1234};
+    const DecisionProbe::Round& RoundNamed(const std::string& id)
+    {
+        for (const auto& r : DecisionProbe::Rounds()) {
+            if (r.id == id) {
+                return r;
+            }
+        }
+        FAIL("no round " << id);
+        return DecisionProbe::Rounds().front();
+    }
+
+    constexpr std::chrono::milliseconds kLatency{200};
 } // namespace
 
-TEST_CASE("DecisionProbe::Context", "[DecisionProbe][engine]")
+TEST_CASE("DecisionProbe rounds", "[DecisionProbe][engine]")
 {
-    const auto ctx = nlohmann::json::parse(DecisionProbe::Context());
-
-    SECTION("when built")
+    SECTION("when every round is read")
     {
-        SECTION("should offer twenty places keyed c1 to c20")
+        SECTION("should carry a background for every option and a right answer among them")
         {
-            REQUIRE(ctx["places"].size() == 20);
-            REQUIRE(ctx["places"][0]["key"] == "c1");
-            REQUIRE(ctx["places"][19]["key"] == "c20");
+            for (const auto& round : DecisionProbe::Rounds()) {
+                INFO(round.id);
+                std::set<std::string> names;
+                for (const auto& option : round.options) {
+                    REQUIRE_FALSE(option.background.empty());
+                    REQUIRE(names.insert(option.name).second);
+                }
+                REQUIRE(names.contains(round.correct));
+            }
         }
 
-        SECTION("should put the right answer under the key the probe checks for")
+        SECTION("should put the right answer at a different position in each order")
         {
-            // The two are written separately -- a list and a constant -- so a
-            // reordered list would quietly make every right answer read wrong.
-            bool found = false;
-            for (const auto& row : ctx["places"]) {
-                if (row["label"] == "Markarth") {
-                    REQUIRE(row["key"] == DecisionProbe::kCapitalKey);
-                    found = true;
-                }
+            for (const auto& round : DecisionProbe::Rounds()) {
+                INFO(round.id);
+                REQUIRE(DecisionProbe::CorrectKey(round, false) != DecisionProbe::CorrectKey(round, true));
             }
-            REQUIRE(found);
+        }
+
+        SECTION("should place background both ways, so the two can be compared")
+        {
+            bool onLine = false;
+            bool inState = false;
+            for (const auto& round : DecisionProbe::Rounds()) {
+                (round.backgroundInState ? inState : onLine) = true;
+            }
+            REQUIRE(onLine);
+            REQUIRE(inState);
+        }
+    }
+
+    SECTION("when a round's context is built")
+    {
+        const auto& capital = RoundNamed("capital");
+        const auto asWritten = nlohmann::json::parse(DecisionProbe::Context(capital, false));
+        const auto reversed = nlohmann::json::parse(DecisionProbe::Context(capital, true));
+
+        SECTION("should key the options c1 onward and carry each one's background")
+        {
+            REQUIRE(asWritten["options"].size() == 20);
+            REQUIRE(asWritten["options"][0]["key"] == "c1");
+            REQUIRE(asWritten["options"][12]["name"] == "Markarth");
+            REQUIRE_FALSE(asWritten["options"][12]["background"].get<std::string>().empty());
+        }
+
+        SECTION("should reverse the options, not the keys")
+        {
+            REQUIRE(reversed["options"][0]["key"] == "c1");
+            REQUIRE(reversed["options"][0]["name"] == "Darkwater Crossing");
+            REQUIRE(DecisionProbe::CorrectKey(capital, false) == "c13");
+            REQUIRE(DecisionProbe::CorrectKey(capital, true) == "c8");
         }
     }
 }
 
 TEST_CASE("DecisionProbe::Judge", "[DecisionProbe][engine]")
 {
-    SECTION("when every question is answered correctly")
+    const auto& capital = RoundNamed("capital");
+
+    SECTION("when the right key comes back")
     {
-        const auto v = DecisionProbe::Judge(Answered("c13", "c3"), kLatency);
+        const auto f = DecisionProbe::Judge(capital, false, Chose("c13", 0.8, "c13"), kLatency);
 
-        SECTION("should report every finding as settled")
+        SECTION("should mark it right, by name, with its position and probability")
         {
-            REQUIRE(v.answered);
-            REQUIRE(v.loopRendered);
-            REQUIRE(v.keysVerbatim);
-            REQUIRE(v.twentyCorrect);
-            REQUIRE(v.fiveCorrect);
-            REQUIRE(v.allQuestionsAnswered);
+            REQUIRE(f.answered);
+            REQUIRE(f.right);
+            REQUIRE(f.chosen == "Markarth");
+            REQUIRE(f.rightAt == 13);
+            REQUIRE(f.rightChance == 0.8);
         }
+    }
 
-        SECTION("should record the latency")
+    SECTION("when the same key comes back for the reversed order")
+    {
+        const auto f = DecisionProbe::Judge(capital, true, Chose("c13"), kLatency);
+
+        SECTION("should mark it wrong, because c13 is somebody else there")
         {
-            REQUIRE(v.latencyMs == 1234);
+            REQUIRE_FALSE(f.right);
+            REQUIRE(f.chosen == "Winterhold");
+            REQUIRE(f.rightAt == 8);
+        }
+    }
+
+    SECTION("when a key that was never offered comes back")
+    {
+        const auto f = DecisionProbe::Judge(capital, false, Chose("Markarth"), kLatency);
+
+        SECTION("should mark it wrong and keep what came back")
+        {
+            REQUIRE_FALSE(f.right);
+            REQUIRE(f.chosen == "Markarth");
         }
     }
 
@@ -105,51 +154,41 @@ TEST_CASE("DecisionProbe::Judge", "[DecisionProbe][engine]")
     {
         SkyrimNet::DecisionResult failed;
         failed.error = "no_decisions_route";
-        failed.message = "no decision provider";
-        const auto v = DecisionProbe::Judge(failed, kLatency);
+        const auto f = DecisionProbe::Judge(capital, false, failed, kLatency);
 
-        SECTION("should say it was not answered, and why")
+        SECTION("should record it as unanswered, with the reason")
         {
-            REQUIRE_FALSE(v.answered);
-            REQUIRE(v.lines.size() == 1);
-            REQUIRE(v.lines.front().find("no_decisions_route") != std::string::npos);
+            REQUIRE_FALSE(f.answered);
+            REQUIRE(f.error == "no_decisions_route");
         }
     }
+}
 
-    SECTION("when the capital comes back as a key that was never offered")
+TEST_CASE("DecisionProbe::Report", "[DecisionProbe][engine]")
+{
+    const auto& capital = RoundNamed("capital");
+    const auto& state = RoundNamed("capital_state");
+    const std::vector<DecisionProbe::Finding> findings{
+        DecisionProbe::Judge(capital, false, Chose("c13"), kLatency),
+        DecisionProbe::Judge(capital, true, Chose("c1"), kLatency),
+        DecisionProbe::Judge(state, false, Chose("c13"), kLatency),
+    };
+    const auto lines = DecisionProbe::Report(findings);
+
+    SECTION("when findings are reported")
     {
-        // What a template whose loop rendered nothing would produce: the model
-        // has no keys to choose from and answers with whatever it likes.
-        const auto v = DecisionProbe::Judge(Answered("Markarth", "c3"), kLatency);
-
-        SECTION("should say the generated options were not chosen from")
+        SECTION("should give one line per finding and a total")
         {
-            REQUIRE_FALSE(v.loopRendered);
-            REQUIRE_FALSE(v.keysVerbatim);
-            REQUIRE_FALSE(v.twentyCorrect);
+            REQUIRE(lines.size() == 4);
+            REQUIRE(lines[0].find("capital (as written): right") != std::string::npos);
+            REQUIRE(lines[1].find("WRONG") != std::string::npos);
         }
-    }
 
-    SECTION("when twenty options go wrong and five go right")
-    {
-        const auto v = DecisionProbe::Judge(Answered("c1", "c3"), kLatency);
-
-        SECTION("should tell the two apart")
+        SECTION("should total right answers by where the background went")
         {
-            REQUIRE(v.loopRendered);
-            REQUIRE_FALSE(v.twentyCorrect);
-            REQUIRE(v.fiveCorrect);
-        }
-    }
-
-    SECTION("when one question is missing from the answer")
-    {
-        const auto v = DecisionProbe::Judge(Answered("c13", "c3", false), kLatency);
-
-        SECTION("should say not every question was answered")
-        {
-            REQUIRE_FALSE(v.allQuestionsAnswered);
-            REQUIRE(v.twentyCorrect);
+            REQUIRE(lines.back().find("2 of 3 right") != std::string::npos);
+            REQUIRE(lines.back().find("background on each option's line 1 of 2") != std::string::npos);
+            REQUIRE(lines.back().find("in a state block 1 of 1") != std::string::npos);
         }
     }
 }
