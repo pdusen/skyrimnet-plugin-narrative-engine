@@ -4,6 +4,17 @@
 
 namespace NarrativeEngine::PlotVerbs
 {
+    std::vector<const Preparation*> PreparationsOf(std::string_view verb)
+    {
+        std::vector<const Preparation*> out;
+        for (const auto& p : kPreparations) {
+            if (p.prepares == verb) {
+                out.push_back(&p);
+            }
+        }
+        return out;
+    }
+
     const Verb* Find(std::string_view id) noexcept
     {
         for (const auto& verb : kVerbs) {

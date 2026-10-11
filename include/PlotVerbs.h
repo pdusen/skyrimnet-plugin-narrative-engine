@@ -391,6 +391,65 @@ namespace NarrativeEngine::PlotVerbs
         },
     }};
 
+    // One verb that may be done just before another, to make it work: the
+    // watch before a theft, the planted evidence before a denunciation.
+    //
+    // `slot` of the preparation is bound to `from` of the step it prepares,
+    // so the watch watches the very person about to be robbed and nobody has
+    // to choose them. Both empty means nothing is bound: the bribe before a
+    // theft pays whoever planning finds, never one of the theft's own people.
+    //
+    // Getting an item is not here. A verb with a bound item always has a
+    // steal or buy of it planned in front of it; that is not a preparation
+    // the model may leave out.
+    struct Preparation
+    {
+        std::string_view prepares;
+        std::string_view verb;
+        std::string_view slot;
+        std::string_view from;
+    };
+
+    inline constexpr std::array<Preparation, 24> kPreparations{{
+        {"watch", "ask_around", "mark", "mark"},
+
+        {"steal", "watch", "mark", "mark"},
+        {"steal", "ask_around", "mark", "mark"},
+        {"steal", "bribe", {}, {}},
+
+        {"buy", "ask_around", "mark", "seller"},
+
+        {"plant", "watch", "mark", "mark"},
+        {"plant", "bribe", {}, {}},
+
+        {"bribe", "watch", "mark", "mark"},
+        {"bribe", "ask_around", "mark", "mark"},
+
+        {"win_over", "ask_around", "mark", "mark"},
+
+        {"threaten", "watch", "mark", "mark"},
+        {"threaten", "ask_around", "mark", "mark"},
+
+        {"spread_rumors", "watch", "mark", "mark"},
+        {"spread_rumors", "ask_around", "mark", "mark"},
+
+        {"denounce", "plant", "mark", "mark"},
+        {"denounce", "steal", "mark", "mark"},
+        {"denounce", "watch", "mark", "mark"},
+        {"denounce", "spread_rumors", "mark", "mark"},
+        {"denounce", "win_over", "mark", "authority"},
+        {"denounce", "bribe", "mark", "authority"},
+
+        {"sabotage", "watch", "mark", "mark"},
+        {"sabotage", "ask_around", "mark", "mark"},
+        {"sabotage", "bribe", {}, {}},
+
+        {"silence", "ask_around", "mark", "witness"},
+    }};
+
+    // Every preparation of a verb, in table order.
+    [[nodiscard]] std::vector<const Preparation*> PreparationsOf(std::string_view verb);
+
     // The verb with this id, or nullptr.
     [[nodiscard]] const Verb* Find(std::string_view id) noexcept;
 

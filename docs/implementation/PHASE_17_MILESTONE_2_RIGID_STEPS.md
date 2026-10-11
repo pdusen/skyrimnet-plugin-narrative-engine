@@ -867,7 +867,7 @@ first rather than second on the watch list, and the scripted answer moved from `
 
 ### Step 11 — Preparations in the verb manifest
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -896,6 +896,17 @@ an earlier `steal` or `buy` of that very item, and planning puts one in front of
 
 **Verification:** the verb suite asserts every preparation names a real verb, every binding joins two person slots
 that both exist, no verb prepares itself, and no open slot of a preparation is bound.
+
+Done. `PlotVerbs::kPreparations` holds the table above, twenty-four rows, and `PlotVerbs::PreparationsOf` lists one
+verb's. 461 tests pass, one of them new.
+
+**A flat table beside the verbs, not a field on each.** Every verb is a positional aggregate whose last member is its
+nine templates; a preparations array added to it would sit after them in every entry, far from the slots it binds.
+A table of rows reading "steal is prepared by watch, mark = mark" reads the way this step's table does.
+
+**A binding is a pair or nothing.** The suite asserts a row binds both ends or neither, so an unbound `bribe` can
+never half-bind, and that both ends of a binding are person slots: places and items are never carried from one
+step to another by a preparation. The item a `plant` needs is got by Step 12's obtain, not bound here.
 
 ### Step 12 — Planning backwards from the goal
 

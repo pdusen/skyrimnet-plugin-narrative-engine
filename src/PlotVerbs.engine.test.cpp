@@ -235,6 +235,62 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
     }
 }
 
+TEST_CASE("PlotVerbs preparations", "[PlotVerbs][engine]")
+{
+    SECTION("when every preparation is read")
+    {
+        SECTION("should join two real verbs, never a verb to itself")
+        {
+            for (const auto& p : PlotVerbs::kPreparations) {
+                INFO(p.prepares << " <- " << p.verb);
+                REQUIRE(PlotVerbs::Find(p.prepares) != nullptr);
+                REQUIRE(PlotVerbs::Find(p.verb) != nullptr);
+                REQUIRE(p.prepares != p.verb);
+            }
+        }
+
+        SECTION("should bind a person slot of the preparation to a person slot of the step, or bind nothing")
+        {
+            for (const auto& p : PlotVerbs::kPreparations) {
+                INFO(p.prepares << " <- " << p.verb << " (" << p.slot << " = " << p.from << ")");
+                REQUIRE(p.slot.empty() == p.from.empty());
+                if (p.slot.empty()) {
+                    continue;
+                }
+                const auto* own = PlotVerbs::FindSlot(*PlotVerbs::Find(p.verb), p.slot);
+                const auto* theirs = PlotVerbs::FindSlot(*PlotVerbs::Find(p.prepares), p.from);
+                REQUIRE(own != nullptr);
+                REQUIRE(theirs != nullptr);
+                REQUIRE(own->kind == PlotVerbs::SlotKind::Person);
+                REQUIRE(theirs->kind == PlotVerbs::SlotKind::Person);
+            }
+        }
+
+        SECTION("should list each preparation of a verb once")
+        {
+            std::set<std::string> seen;
+            for (const auto& p : PlotVerbs::kPreparations) {
+                const auto key = std::string{p.prepares} + "<-" + std::string{p.verb} + ":" + std::string{p.from};
+                INFO(key);
+                REQUIRE(seen.insert(key).second);
+            }
+        }
+    }
+
+    SECTION("when a verb's preparations are asked for")
+    {
+        SECTION("should give them in table order, and none for a verb nothing prepares")
+        {
+            const auto steal = PlotVerbs::PreparationsOf("steal");
+            REQUIRE(steal.size() == 3);
+            REQUIRE(steal[0]->verb == "watch");
+            REQUIRE(steal[2]->verb == "bribe");
+            REQUIRE(PlotVerbs::PreparationsOf("ask_around").empty());
+            REQUIRE(PlotVerbs::PreparationsOf("deliver").empty());
+        }
+    }
+}
+
 TEST_CASE("PlotVerbs rendering", "[PlotVerbs][engine]")
 {
     SECTION("when a scheme is made a verb phrase")
