@@ -5,10 +5,10 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: Steps 1 and 3–8 complete; Step 2's in-game probe and Step 9's validation outstanding.** Both are
-> `[USER]`. Steps 3–8 were built before the probe ran, at the user's direction; Step 2 says what changes if it shows
-> the decision API behaving differently. Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its
-> Steps 20–22 still apply and follow it.
+> **Doc status: Steps 1–8 complete; Step 9's in-game validation outstanding.** Step 2's probe showed the decision
+> model choosing reliably once each choice carries background, which leaves places and items in planning to be given
+> theirs. Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its Steps 20–22 still apply and
+> follow it.
 
 ---
 
@@ -438,7 +438,7 @@ as for a missing question, so a caller matching keys can never match an empty st
 
 ### Step 2 — What the decision API will actually do
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]** builds a dashboard debug button that sends one fixed probe template and logs the raw result.
 **[USER]** presses it with a decision provider configured and records the results here.
@@ -453,7 +453,7 @@ The probe settles what the design above assumes and has not verified:
 
 If any of these fails, the plan is revised here before Step 3.
 
-**The `[CLAUDE]` half is done; the `[USER]` run is outstanding.** The Plots tab has a **Probe decisions** button.
+**Both halves are done; the results are below.** The Plots tab has a **Probe decisions** button.
 It sends `narrative_engine/probe` (under `prompts/decisions/` in the plugin folder) on the plot worker and writes
 its findings to `NarrativeEngine.log` as `DecisionProbe:` lines, one per question above:
 
@@ -497,9 +497,34 @@ what planning needs next -- whether background on a line is enough, whether a bi
 and whether the top of a list is favoured. The people are invented so that no background claims anything about a
 real record.
 
-**What this already says about planning, pending the second run:** a person's line carries their occupation and how
-the mastermind knows them, but a place is offered as its name alone and an item as its spoken name alone. Under the
-rule above both need background, and so may the verbs. That change waits for the second run's numbers.
+**Second run (2026-10-11), twelve requests: twelve right.** Every round was answered correctly in both orders,
+with the right answer given 100% probability everywhere except `next_step` (97% as written, 96% reversed).
+
+| Split                                      | Right  |
+| ------------------------------------------ | ------ |
+| Background on each option's line           | 8 of 8 |
+| Background in a `[ state choices ]` block  | 4 of 4 |
+| Right answer in the first half of the list | 6 of 6 |
+| Right answer in the second half            | 6 of 6 |
+
+The requests averaged 210 ms. So:
+
+- **The first run's failure was missing knowledge, not position.** The same twenty-place capital question, with a
+  line of background per place, was answered right with Markarth 13th and 8th. Nothing favours the top of a list.
+- **Item 3 holds once choices carry background:** twenty options did as well as eight.
+- **Both placements work.** A multi-sentence biography in a state block is read as reliably as a line on the option,
+  so a candidate's full biography can go in a state block when one line is not enough.
+- **The verbs need nothing more.** Chosen from all thirteen by their dashboard sentences alone, the right one came
+  back at 96–97%.
+- **Planning a plot by decisions is cheap:** twelve requests took about two and a half seconds in all.
+
+Every round had one clearly right answer, so this shows the model uses the background it is given, not how well it
+judges a scheme; Step 9 is where that shows.
+
+**What this says about planning:** a person's line carries their occupation and how the mastermind knows them, but
+a place is offered as its name alone and an item as its spoken name alone. Under the rule above both need a line of
+background -- what kind of place and whose, what the item is -- which is a follow-up to Step 5. The verbs stay as
+they are.
 
 ### Step 3 — The verb manifest
 
