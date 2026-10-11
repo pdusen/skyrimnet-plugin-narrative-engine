@@ -216,6 +216,46 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
         }
     }
 
+    SECTION("when a denunciation's authority is asked for, with authorities in two holds")
+    {
+        constexpr RE::FormID kBalgruuf = 0x00010009;
+        constexpr RE::FormID kFalkreathHold = 0x0000B003;
+        constexpr RE::FormID kOutsider = 0x0001000A;
+        auto balgruuf = Person(kBalgruuf, "Balgruuf", kWhiterunHold, kWhiterun);
+        balgruuf.authority = true;
+        f.population.members.push_back(balgruuf);
+        f.population.members.push_back(Person(kOutsider, "Dengeir", kFalkreathHold, 0));
+        const auto authority = SlotOf("denounce", "authority");
+
+        SECTION("should offer only the mark's own hold's")
+        {
+            f.filled.push_back({"mark", kStranger, "Brand-Shei"});
+            REQUIRE(Forms(PlotCandidates::Build(authority, f.Request())) == std::vector<RE::FormID>{kJarl});
+            f.filled.back() = {"mark", kNeighbour, "Hulda"};
+            REQUIRE(Forms(PlotCandidates::Build(authority, f.Request())) == std::vector<RE::FormID>{kBalgruuf});
+        }
+
+        SECTION("should fall back to the mastermind's hold when the mark's has none")
+        {
+            f.filled.push_back({"mark", kOutsider, "Dengeir"});
+            REQUIRE(Forms(PlotCandidates::Build(authority, f.Request())) == std::vector<RE::FormID>{kBalgruuf});
+        }
+    }
+
+    SECTION("when a denunciation's authority is asked for and neither hold has one")
+    {
+        constexpr RE::FormID kFalkreathHold = 0x0000B003;
+        constexpr RE::FormID kOutsider = 0x0001000A;
+        f.population.members.push_back(Person(kOutsider, "Dengeir", kFalkreathHold, 0));
+        f.filled.push_back({"mark", kOutsider, "Dengeir"});
+
+        SECTION("should offer every authority there is")
+        {
+            REQUIRE(Forms(PlotCandidates::Build(SlotOf("denounce", "authority"), f.Request()))
+                    == std::vector<RE::FormID>{kJarl});
+        }
+    }
+
     SECTION("when somebody with standing is asked for")
     {
         SECTION("should admit only those with standing in a rostered faction")

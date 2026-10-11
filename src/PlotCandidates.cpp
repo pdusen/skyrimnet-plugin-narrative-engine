@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <format>
+#include <iterator>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -399,11 +400,27 @@ namespace NarrativeEngine::PlotCandidates
         }
 
         case Rule::SeniorInCourt: {
+            // Who hears a denunciation is a matter of jurisdiction: the
+            // court of the mark's hold, else of the mastermind's, else any.
+            // The decision model was offered Falk Firebeard's own jarl first
+            // and sent his denunciation of a Solitude thane to Riften.
             const auto ctx = people();
-            return People(slot,
-                          ctx,
-                          Gather(ctx, [](const PlotCasting::Member& m, const auto&) { return m.authority; }),
-                          limits.people);
+            const auto all = Gather(ctx, [](const PlotCasting::Member& m, const auto&) { return m.authority; });
+            const auto* mark = Mark(request);
+            const auto* boss = request.population.Find(request.mastermind);
+            for (const auto* anchor : {mark, boss}) {
+                if (anchor == nullptr) {
+                    continue;
+                }
+                std::vector<Ranked> local;
+                std::copy_if(all.begin(), all.end(), std::back_inserter(local), [anchor](const Ranked& r) {
+                    return r.member->hold == anchor->hold;
+                });
+                if (!local.empty()) {
+                    return People(slot, ctx, local, limits.people);
+                }
+            }
+            return People(slot, ctx, all, limits.people);
         }
 
         case Rule::AwareOfEarlierStep: {

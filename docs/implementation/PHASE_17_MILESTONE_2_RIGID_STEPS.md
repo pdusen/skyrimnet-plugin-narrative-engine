@@ -1042,7 +1042,7 @@ the same sentence, so it moved beside the other renderers.
 
 ### Step 14 — A denunciation goes to the mark's own court
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1052,6 +1052,18 @@ does not weigh.
 
 **Verification:** the candidate suite asserts the mark's jarl alone is offered when the mark's hold has one, and the
 fallbacks in order.
+
+Done. The `SeniorInCourt` case of `PlotCandidates::Build` narrows the authorities to the mark's hold, then the
+mastermind's, then leaves them all. 464 tests pass, with three new sections in the candidate suite.
+
+**Narrowed, not reordered.** Elisif was already first on Falk Firebeard's list, and the model took the eighth name.
+Putting the right court first does nothing for a model that does not weigh order or relation, so the other holds'
+authorities are left off the list whenever the right hold has one. The usual result is a list of the hold's jarl,
+steward and guard captain, which the model can choose among on what each one's line says they do.
+
+**Hold, not settlement.** A jarl's court sits in one city but rules the hold, so a thane in a farmhouse outside
+Solitude is still Elisif's to hear about. Hold is also the field every population member carries; a settlement is
+missing for some.
 
 ### Step 15 — A plan is more than one step
 
