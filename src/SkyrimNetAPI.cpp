@@ -8,9 +8,12 @@
 #include <AsyncDispatch.h>
 #include <logger.h>
 
+#include <format>
 #include <future>
 #include <memory>
 #include <utility>
+
+#include <nlohmann/json.hpp>
 
 namespace NarrativeEngine::SkyrimNetAPI
 {
@@ -151,6 +154,126 @@ namespace NarrativeEngine::SkyrimNetAPI
 
         return ::PublicSendCustomPromptToLLM(
             promptName.c_str(), variant.c_str(), contextJson.c_str(), std::move(adapted));
+    }
+
+    std::string DecisionResult::Choice(std::string_view questionId) const
+    {
+        for (const auto& [id, answer] : answers) {
+            if (id == questionId) {
+                return answer.type == "choice" ? answer.choice : std::string{};
+            }
+        }
+        return {};
+    }
+
+    DecisionResult ParseDecisionResult(std::string_view resultJson, bool success)
+    {
+        DecisionResult out;
+        const auto json = nlohmann::json::parse(resultJson, nullptr, false);
+        if (json.is_discarded() || !json.is_object()) {
+            out.error = kDecisionMalformed;
+            out.message = "the decision result was not a JSON object";
+            return out;
+        }
+
+        if (!success) {
+            // A failure always carries SkyrimNet's code; one that does not is
+            // still a failure, and saying so beats reporting an empty code.
+            const auto error = json.find("error");
+            out.error =
+                error != json.end() && error->is_string() ? error->get<std::string>() : std::string{kDecisionMalformed};
+            const auto message = json.find("message");
+            if (message != json.end() && message->is_string()) {
+                out.message = message->get<std::string>();
+            }
+            return out;
+        }
+
+        const auto answers = json.find("answers");
+        if (answers == json.end() || !answers->is_object()) {
+            out.error = kDecisionMalformed;
+            out.message = "a successful decision carried no 'answers' object";
+            return out;
+        }
+
+        for (const auto& [id, value] : answers->items()) {
+            if (!value.is_object()) {
+                continue;
+            }
+            DecisionAnswer answer;
+            answer.type = value.value("type", std::string{});
+            answer.choice = value.value("choice", std::string{});
+            answer.score = value.value("score", 0.0);
+            answer.noul = value.value("noul", 0.0);
+            if (const auto confidence = value.find("confidence");
+                confidence != value.end() && confidence->is_number()) {
+                answer.confidence = confidence->get<double>();
+                answer.hasConfidence = true;
+            }
+            if (const auto probabilities = value.find("probabilities");
+                probabilities != value.end() && probabilities->is_object()) {
+                for (const auto& [key, p] : probabilities->items()) {
+                    if (p.is_number()) {
+                        answer.probabilities.emplace_back(key, p.get<double>());
+                    }
+                }
+            }
+            out.answers.emplace_back(id, std::move(answer));
+        }
+        out.ok = true;
+        return out;
+    }
+
+    DecisionResult SendCustomDecisionImpl(const std::string& templateName,
+                                          const std::string& contextJson,
+                                          std::chrono::milliseconds timeout)
+    {
+        if (!::PublicSendCustomDecisionToLLM) {
+            DecisionResult unavailable;
+            unavailable.error = kDecisionUnavailable;
+            unavailable.message = "SkyrimNet is missing or older than public API v12 (Beta 26)";
+            return unavailable;
+        }
+
+        // Shared for the same reason as the LLM call: the callback may fire
+        // after this function has given up and returned.
+        auto promise = std::make_shared<std::promise<DecisionResult>>();
+        auto future = promise->get_future();
+
+        // Runs on SkyrimNet's thread pool. Copies and parses, then pokes the
+        // promise; nothing here touches the engine or any plugin state.
+        auto callback = [promise](const char* /*answer*/, const char* resultJson, int success) {
+            auto result = ParseDecisionResult(resultJson != nullptr ? resultJson : "", success != 0);
+            try {
+                promise->set_value(std::move(result));
+            } catch (const std::future_error&) {
+                // Delivered twice. Keep the first.
+            }
+        };
+
+        bool queued = false;
+        try {
+            // 0 keeps every option's probability. The lists asked about are
+            // short, and dropping the tail would hide how close a call was.
+            queued = ::PublicSendCustomDecisionToLLM(templateName.c_str(), contextJson.c_str(), 0, std::move(callback));
+        } catch (...) {
+            logger::warn("SkyrimNetAPI::SendCustomDecision: exception across DLL boundary");
+            queued = false;
+        }
+        if (!queued) {
+            DecisionResult failed;
+            failed.error = kDecisionNotQueued;
+            failed.message = "SkyrimNet refused to queue the decision request";
+            return failed;
+        }
+
+        if (future.wait_for(timeout) != std::future_status::ready) {
+            DecisionResult late;
+            late.error = kDecisionTimeout;
+            late.message = std::format("no answer within {} ms", timeout.count());
+            return late;
+        }
+        return future.get();
     }
 
     std::string GetRecentEvents(std::uint32_t formId, int maxCount, const std::string& eventTypeFilter)

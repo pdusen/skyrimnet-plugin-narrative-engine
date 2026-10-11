@@ -9,9 +9,13 @@
 // units pull in. PublicAPI.h includes it too; both are `#pragma once`.
 #include <PublicAPIMemoryQuery.h>
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace RE
 {
@@ -151,6 +155,89 @@ namespace NarrativeEngine::SkyrimNetAPI
                                       const std::string& variant,
                                       const std::string& contextJson,
                                       std::function<void(std::string response, bool success)> foreignCallback);
+
+    // --- Decision requests (public API v12, SkyrimNet Beta 26) ---------------
+    //
+    // A decision is a typed question asked of SkyrimNet's `decisions` model
+    // variant. The template is a decision template under our plugin's
+    // `prompts/decisions/`, built from `[ state ]` and `[ question <id> ... ]`
+    // blocks rather than chat sections, and a `choice` question can only ever
+    // be answered with one of the keys its criteria offered. That is the whole
+    // reason to use it: an answer needs no parsing beyond reading the key, and
+    // cannot name anything that was not on the list.
+    //
+    // There is no chat fallback on SkyrimNet's side. A user with no decision
+    // provider configured gets error `no_decisions_route` on every request.
+
+    // One question's answer. Which fields are meaningful follows `type`:
+    // `choice` fills `choice`, `score` fills `score`, `noul` (yes/no) fills
+    // `noul` as the probability of yes. `confidence` and `probabilities` are
+    // present only when the model sent them.
+    struct DecisionAnswer
+    {
+        std::string type;
+        std::string choice;
+        double score = 0.0;
+        double noul = 0.0;
+        double confidence = 0.0;
+        bool hasConfidence = false;
+        std::vector<std::pair<std::string, double>> probabilities;
+    };
+
+    struct DecisionResult
+    {
+        bool ok = false;
+
+        // On failure: SkyrimNet's own code (ai_disabled, no_decisions_route,
+        // template_failed, interface_failed, request_failed, cancelled,
+        // exception), or one of the wrapper's — `unavailable` (no SkyrimNet,
+        // or one older than API v12), `not_queued`, `timeout`, `malformed`.
+        std::string error;
+        std::string message;
+
+        // On success, every question's answer keyed by its id.
+        std::vector<std::pair<std::string, DecisionAnswer>> answers;
+
+        // The `choice` key a question was answered with, or empty when the
+        // question is absent or was not a choice.
+        [[nodiscard]] std::string Choice(std::string_view questionId) const;
+    };
+
+    // The wrapper's own error codes, so callers compare against names rather
+    // than repeating string literals.
+    inline constexpr std::string_view kDecisionUnavailable = "unavailable";
+    inline constexpr std::string_view kDecisionNotQueued = "not_queued";
+    inline constexpr std::string_view kDecisionTimeout = "timeout";
+    inline constexpr std::string_view kDecisionMalformed = "malformed";
+    inline constexpr std::string_view kDecisionNoRoute = "no_decisions_route";
+
+    // Reads the JSON SkyrimNet hands the decision callback. Pure: exposed so
+    // the shape it accepts can be pinned without a round trip.
+    [[nodiscard]] DecisionResult ParseDecisionResult(std::string_view resultJson, bool success);
+
+    // How long a synchronous decision waits before giving up. A decision is a
+    // short classification, not a generation, so a request still unanswered
+    // after this long is stuck rather than slow.
+    inline constexpr std::chrono::milliseconds kDecisionTimeoutDefault{60000};
+
+    // Synchronous decision request for a worker thread, mirroring
+    // SendCustomPromptToLLM: blocks until SkyrimNet's callback fires on its
+    // own thread pool, which pokes a promise and does nothing else.
+    //
+    // Unlike the LLM call it gives up after `timeout`. A late callback is
+    // harmless -- the promise is shared, and setting it after nobody is
+    // waiting simply goes unread.
+    DecisionResult SendCustomDecisionImpl(const std::string& templateName,
+                                          const std::string& contextJson,
+                                          std::chrono::milliseconds timeout);
+
+    DecisionResult SendCustomDecision(const WorkerToken auto&,
+                                      const std::string& templateName,
+                                      const std::string& contextJson,
+                                      std::chrono::milliseconds timeout = kDecisionTimeoutDefault)
+    {
+        return SendCustomDecisionImpl(templateName, contextJson, timeout);
+    }
 
     // Returns SkyrimNet's recent-events JSON (an array of event objects with
     // fields: type, text, gameTime, originatingActorName, targetActorName).

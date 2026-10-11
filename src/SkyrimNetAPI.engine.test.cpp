@@ -151,6 +151,19 @@ TEST_CASE("SkyrimNetAPI before it has resolved anything", "[SkyrimNetAPI][engine
             REQUIRE_FALSE(SkyrimNet::SendCustomPromptToLLMForeign("p", "v", "{}", [](std::string, bool) {}));
         }
 
+        SECTION("should fail a decision rather than block on it")
+        {
+            // Same hazard as the LLM call below, plus a timeout that would at
+            // least end it -- after a minute of a stalled worker, which is not
+            // a degradation anybody would recognise as one.
+            SkyrimNet::DecisionResult result;
+            OnPluginThread([&](const PluginThread::Token& pt) {
+                result = SkyrimNet::SendCustomDecision(pt, "narrative_engine/probe", "{}");
+            });
+            REQUIRE_FALSE(result.ok);
+            REQUIRE(result.error == SkyrimNet::kDecisionUnavailable);
+        }
+
         SECTION("should fail a synchronous LLM call rather than block on it")
         {
             // The sharp one. The synchronous overload waits on a promise the
@@ -623,6 +636,213 @@ TEST_CASE("SkyrimNetAPI's synchronous LLM call", "[SkyrimNetAPI][engine]")
             const auto result = done.get();
             REQUIRE_FALSE(result.ok);
             REQUIRE_FALSE(result.response.empty());
+        }
+    }
+}
+
+TEST_CASE("SkyrimNetAPI against a SkyrimNet older than the decision API", "[SkyrimNetAPI][engine]")
+{
+    // The header resolves the decision export only for version 12 and up, so
+    // an older install leaves it null. That has to read as "unavailable", the
+    // error the plot subsystem keys its one-time warning on, and not as a
+    // request that went out and failed.
+    if (SkyrimNet::IsAvailable()) {
+        SKIP("SkyrimNet was already initialised in this process; run under ctest, which isolates each case");
+    }
+    auto& fake = FakeState();
+    fake.version = 11;
+    REQUIRE(SkyrimNet::Initialize());
+
+    SECTION("when a decision is requested")
+    {
+        SECTION("should say the API is unavailable without asking SkyrimNet")
+        {
+            const int before = fake.decisionCalls;
+            SkyrimNet::DecisionResult result;
+            OnPluginThread([&](const PluginThread::Token& pt) {
+                result = SkyrimNet::SendCustomDecision(pt, "narrative_engine/probe", "{}");
+            });
+            REQUIRE(result.error == SkyrimNet::kDecisionUnavailable);
+            REQUIRE(fake.decisionCalls == before);
+        }
+    }
+    fake.version = 12;
+}
+
+TEST_CASE("SkyrimNetAPI asks the decision model and waits for the answer", "[SkyrimNetAPI][engine]")
+{
+    auto& fake = FakeState();
+    REQUIRE(SkyrimNet::Initialize());
+    fake.Reset();
+
+    const auto ask = [](const std::string& name,
+                        const std::string& context,
+                        std::chrono::milliseconds timeout = SkyrimNet::kDecisionTimeoutDefault) {
+        SkyrimNet::DecisionResult result;
+        OnPluginThread(
+            [&](const PluginThread::Token& pt) { result = SkyrimNet::SendCustomDecision(pt, name, context, timeout); });
+        return result;
+    };
+
+    SECTION("when the model answers a choice")
+    {
+        CopyJson(fake.decisionResultJson,
+                 R"({"model":"m","answers":{"verb":{"type":"choice","choice":"c3","confidence":0.82,)"
+                 R"("probabilities":{"c3":0.82,"c1":0.18}}}})");
+        const auto result = ask("narrative_engine/plot_verb", R"({"position":1})");
+
+        SECTION("should succeed")
+        {
+            REQUIRE(result.ok);
+            REQUIRE(result.error.empty());
+        }
+
+        SECTION("should hand back the chosen key")
+        {
+            REQUIRE(result.Choice("verb") == "c3");
+        }
+
+        SECTION("should keep the confidence and every probability")
+        {
+            REQUIRE(result.answers.size() == 1);
+            const auto& answer = result.answers.front().second;
+            REQUIRE(answer.hasConfidence);
+            REQUIRE(answer.confidence == 0.82);
+            REQUIRE(answer.probabilities.size() == 2);
+        }
+
+        SECTION("should pass the template and context through, and ask for every probability")
+        {
+            REQUIRE(std::string{fake.lastDecisionTemplate} == "narrative_engine/plot_verb");
+            REQUIRE(std::string{fake.lastDecisionContext} == R"({"position":1})");
+            REQUIRE(fake.lastMaxProbabilities == 0);
+        }
+
+        SECTION("should answer nothing for a question that was not asked")
+        {
+            REQUIRE(result.Choice("place").empty());
+        }
+    }
+
+    SECTION("when one request carries several questions")
+    {
+        CopyJson(fake.decisionResultJson,
+                 R"({"answers":{"mark":{"type":"choice","choice":"c2"},)"
+                 R"("item":{"type":"choice","choice":"c5"},)"
+                 R"("worth":{"type":"score","score":3},)"
+                 R"("risky":{"type":"noul","noul":0.7}}})");
+        const auto result = ask("narrative_engine/plot_slots", "{}");
+
+        SECTION("should answer every one of them by its own id")
+        {
+            REQUIRE(result.ok);
+            REQUIRE(result.answers.size() == 4);
+            REQUIRE(result.Choice("mark") == "c2");
+            REQUIRE(result.Choice("item") == "c5");
+        }
+
+        SECTION("should not read a score or a yes-no as a choice")
+        {
+            // A caller asking for a key from a question that was not a choice
+            // gets nothing, rather than an empty-string key it might match.
+            REQUIRE(result.Choice("worth").empty());
+            REQUIRE(result.Choice("risky").empty());
+        }
+    }
+
+    SECTION("when SkyrimNet reports a failure")
+    {
+        // Every code the header documents, because a caller that treats one
+        // of them specially -- no_decisions_route above all -- must see it
+        // exactly as SkyrimNet spelled it.
+        for (const char* code : {"ai_disabled",
+                                 "no_decisions_route",
+                                 "template_failed",
+                                 "interface_failed",
+                                 "request_failed",
+                                 "cancelled",
+                                 "exception"}) {
+            fake.Reset();
+            fake.decisionSucceeds = false;
+            const std::string json = std::string{R"({"error":")"} + code + R"(","message":"why it failed"})";
+            CopyJson(fake.decisionResultJson, json.c_str());
+
+            const auto result = ask("narrative_engine/probe", "{}");
+            INFO(code);
+            REQUIRE_FALSE(result.ok);
+            REQUIRE(result.error == code);
+            REQUIRE(result.message == "why it failed");
+            REQUIRE(result.answers.empty());
+        }
+    }
+
+    SECTION("when SkyrimNet refuses to queue the request")
+    {
+        fake.decisionAccepts = false;
+
+        SECTION("should say it was never queued")
+        {
+            REQUIRE(ask("narrative_engine/probe", "{}").error == SkyrimNet::kDecisionNotQueued);
+        }
+    }
+
+    SECTION("when the model never answers")
+    {
+        fake.decisionNeverAnswers = true;
+
+        SECTION("should give up at the timeout rather than hold the worker")
+        {
+            const auto started = std::chrono::steady_clock::now();
+            const auto result = ask("narrative_engine/probe", "{}", std::chrono::milliseconds{50});
+            REQUIRE(result.error == SkyrimNet::kDecisionTimeout);
+            REQUIRE(std::chrono::steady_clock::now() - started < kTimeout);
+        }
+    }
+
+    SECTION("when several requests are answered from a script")
+    {
+        REQUIRE(fake.ScriptDecision(R"({"answers":{"verb":{"type":"choice","choice":"c1"}}})"));
+        REQUIRE(fake.ScriptDecision(R"({"answers":{"mark":{"type":"choice","choice":"c4"}}})"));
+
+        SECTION("should answer each in turn, then fall back to the standing answer")
+        {
+            REQUIRE(ask("narrative_engine/plot_verb", "{}").Choice("verb") == "c1");
+            REQUIRE(ask("narrative_engine/plot_slots", "{}").Choice("mark") == "c4");
+            REQUIRE(ask("narrative_engine/plot_verb", "{}").Choice("pick") == "c1");
+            REQUIRE(std::string{fake.decisionTemplates[0]} == "narrative_engine/plot_verb");
+            REQUIRE(std::string{fake.decisionTemplates[1]} == "narrative_engine/plot_slots");
+        }
+    }
+}
+
+TEST_CASE("SkyrimNetAPI::ParseDecisionResult refuses what it cannot read", "[SkyrimNetAPI][engine]")
+{
+    SECTION("when the result is not JSON")
+    {
+        SECTION("should report it as malformed")
+        {
+            REQUIRE(SkyrimNet::ParseDecisionResult("not json", true).error == SkyrimNet::kDecisionMalformed);
+            REQUIRE(SkyrimNet::ParseDecisionResult("", false).error == SkyrimNet::kDecisionMalformed);
+        }
+    }
+
+    SECTION("when a success carries no answers")
+    {
+        SECTION("should not report success")
+        {
+            const auto result = SkyrimNet::ParseDecisionResult(R"({"model":"m"})", true);
+            REQUIRE_FALSE(result.ok);
+            REQUIRE(result.error == SkyrimNet::kDecisionMalformed);
+        }
+    }
+
+    SECTION("when a failure carries no error code")
+    {
+        SECTION("should still report a failure, as malformed")
+        {
+            const auto result = SkyrimNet::ParseDecisionResult(R"({"message":"m"})", false);
+            REQUIRE_FALSE(result.ok);
+            REQUIRE(result.error == SkyrimNet::kDecisionMalformed);
         }
     }
 }

@@ -56,13 +56,16 @@ you tune the pacing and the individual beats to your taste.
 
 ## Requirements
 
-**SkyrimNet, Beta 25 (0.25.0) or higher — and nothing older.** NarrativeEngine is a plugin for SkyrimNet and cannot
-run without it. Beta 25 is a hard floor in both directions: it reorganised how SkyrimNet discovers plugin content, and
-NarrativeEngine now ships only the new layout. **On Beta 24 or earlier, SkyrimNet will not find any of
-NarrativeEngine's prompts or settings** — the mod loads, the dashboard opens, and then every LLM-driven beat fails
-because the prompt it asked for does not exist. There is no partial-compatibility mode and no configuration that
-restores it; if you are on an older SkyrimNet, update it. NarrativeEngine v0.6.1 was the last release that ran on
-both.
+**SkyrimNet, Beta 26 (0.26.0) or higher — and nothing older.** NarrativeEngine is a plugin for SkyrimNet and cannot
+run without it. Beta 25 reorganised how SkyrimNet discovers plugin content, and NarrativeEngine ships only the new
+layout: **on Beta 24 or earlier, SkyrimNet will not find any of NarrativeEngine's prompts or settings** — the mod
+loads, the dashboard opens, and then every LLM-driven beat fails because the prompt it asked for does not exist.
+NarrativeEngine v0.6.1 was the last release that ran on both. Beta 26 then added the decision API that NPC plots are
+built on, which makes it the floor. There is no partial-compatibility mode; if you are on an older SkyrimNet, update
+it.
+
+NPC plots also need a **decision provider** set up in SkyrimNet. Without one, every other feature works and plots
+stay idle, saying so once in the log.
 
 Install SkyrimNet first and confirm it works on its own — if characters
 aren't speaking and NPCs aren't remembering conversations, NarrativeEngine won't run either. SkyrimNet has its own set
@@ -96,7 +99,7 @@ That EditorID dependency also covers optional configuration: the `[AlphaCanon]` 
 
 1. **Install SkyrimNet and its prerequisites, and confirm SkyrimNet works standalone.** Follow the SkyrimNet install
    guide end to end — SKSE, Address Library, PapyrusUtil, an LLM provider (OpenRouter is the path of least
-   resistance), and SkyrimNet itself. **Check the version: Beta 25 (0.25.0) or newer.** Load a save and verify NPCs
+   resistance), and SkyrimNet itself. **Check the version: Beta 26 (0.26.0) or newer.** Load a save and verify NPCs
    are speaking generated dialogue and remembering past conversations. Do **not** install NarrativeEngine until this
    works — trying to debug both at once is miserable.
 2. **Install MCM Helper.** Not one of SkyrimNet's prerequisites, but NarrativeEngine needs it — the mod's MCM

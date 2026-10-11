@@ -399,7 +399,7 @@ except that verification now includes the co-located Catch2 suites: `pwsh -File 
 
 ### Step 1 — Beta 26 floor, and the decision API wrapper
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -411,6 +411,28 @@ except that verification now includes the co-located Catch2 suites: `pwsh -File 
 
 **Verification:** build and tests pass. The wrapper's suite covers a choice answer, several questions in one
 response, each documented error code, and a callback that never fires within the timeout.
+
+Done. `SkyrimNetAPI::SendCustomDecision` with `ParseDecisionResult` and `DecisionResult::Choice`; the fake DLL's
+`PublicSendCustomDecisionToLLM`, reporting API v12 by default, with a scripted queue of answers and a never-answers
+mode; `min_skyrimnet_version` 0.26.0; the floor raised in the README, `CUSTOM_PROMPTS.md`, `DEVELOPMENT.md` and the
+configure error. 438 tests pass, four of them new.
+
+**The build needed no repointing.** The search already resolves `SkyrimNet Devkit/CppAPI`, and the devkit installed
+there is Beta 26 rc4, so the v12 export was already declared. What changed is that an older devkit now fails to
+compile `SkyrimNetAPI.cpp` instead of compiling fine, and `DEVELOPMENT.md` says so.
+
+**The wrapper's own failures are named, not just SkyrimNet's.** `unavailable` (no SkyrimNet, or one below v12, where
+the header leaves the export null), `not_queued`, `timeout` and `malformed` sit beside SkyrimNet's seven codes, so a
+caller can tell "this install cannot ask" from "this request was refused" from "the model never answered". The plot
+subsystem's one-time idle warning keys on the first of those and on `no_decisions_route`.
+
+**Unlike the LLM call, a decision gives up.** `SendCustomPromptToLLM` waits forever; a decision waits 60 s by
+default. A decision is a short classification, so a request still unanswered after a minute is stuck rather than
+slow, and the plot worker should not be held by it. The promise is shared, so a callback arriving after the timeout
+is harmless.
+
+**A result that is not a choice reads as no choice.** `Choice()` returns empty for a `score` or `noul` answer as well
+as for a missing question, so a caller matching keys can never match an empty string by accident.
 
 ### Step 2 — What the decision API will actually do
 

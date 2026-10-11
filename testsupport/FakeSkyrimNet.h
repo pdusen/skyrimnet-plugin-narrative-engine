@@ -30,7 +30,7 @@ namespace NarrativeEngine::Testing
         // What FindFunctions sees. The header gates each export behind the
         // version, so lowering this reproduces an older SkyrimNet: the newer
         // pointers stay null and the wrapper has to degrade rather than crash.
-        int version = 10;
+        int version = 12;
         int versionQueries = 0;
 
         bool memorySystemReady = true;
@@ -113,6 +113,48 @@ namespace NarrativeEngine::Testing
         char engagementJson[kAnswerCapacity] = "[]";
         char promptResponse[1024] = "the response";
 
+        // --- Decision requests (v12) ---------------------------------------
+        //
+        // A request is answered with the next scripted result if one is
+        // queued, and with `decisionResultJson` otherwise. The script is what
+        // lets a test walk a caller through several questions in a row --
+        // which verb, then which slots -- and see each one answered in turn.
+        bool decisionAccepts = true;
+        bool decisionSucceeds = true;
+        // Accepted and then never answered: the wrapper's timeout path.
+        bool decisionNeverAnswers = false;
+        int decisionCalls = 0;
+        int lastMaxProbabilities = 0;
+        char lastDecisionTemplate[128]{};
+        // Sized for a request carrying a biography and a candidate list.
+        static constexpr std::size_t kDecisionContextCapacity = 32768;
+        char lastDecisionContext[kDecisionContextCapacity]{};
+        char decisionResultJson[kAnswerCapacity] =
+            R"({"model":"fake","answers":{"pick":{"type":"choice","choice":"c1","confidence":0.9}}})";
+
+        static constexpr int kMaxScriptedDecisions = 16;
+        static constexpr std::size_t kScriptedDecisionCapacity = 2048;
+        int scriptedDecisions = 0;
+        int scriptedCursor = 0;
+        char scriptedJson[kMaxScriptedDecisions][kScriptedDecisionCapacity]{};
+        bool scriptedSucceeds[kMaxScriptedDecisions]{};
+        // The template each request named, in order, so a test can assert the
+        // sequence of questions as well as their answers.
+        static constexpr int kMaxRecordedDecisionTemplates = 32;
+        char decisionTemplates[kMaxRecordedDecisionTemplates][128]{};
+
+        // Queue one answer. Returns false once the script is full, which a
+        // test should treat as its own mistake.
+        bool ScriptDecision(const char* json, bool succeeds = true)
+        {
+            if (scriptedDecisions >= kMaxScriptedDecisions)
+                return false;
+            CopyText(scriptedJson[scriptedDecisions], json);
+            scriptedSucceeds[scriptedDecisions] = succeeds;
+            ++scriptedDecisions;
+            return true;
+        }
+
         // Clears the per-call record. Leaves `version` and `versionQueries`
         // alone: FindFunctions runs once per process and its record is evidence
         // no later case can recreate.
@@ -173,9 +215,26 @@ namespace NarrativeEngine::Testing
             CopyLiteral(dialogueJson, "[]");
             CopyLiteral(engagementJson, "[]");
             CopyLiteral(promptResponse, "the response");
+            decisionAccepts = fresh.decisionAccepts;
+            decisionSucceeds = fresh.decisionSucceeds;
+            decisionNeverAnswers = fresh.decisionNeverAnswers;
+            decisionCalls = 0;
+            lastMaxProbabilities = 0;
+            lastDecisionTemplate[0] = '\0';
+            lastDecisionContext[0] = '\0';
+            CopyText(decisionResultJson, fresh.decisionResultJson);
+            scriptedDecisions = 0;
+            scriptedCursor = 0;
+            for (auto& name : decisionTemplates)
+                name[0] = '\0';
         }
 
     private:
+        template <std::size_t N> static void CopyText(char (&dest)[N], const char* text)
+        {
+            CopyLiteral(dest, text);
+        }
+
         template <std::size_t N> static void CopyLiteral(char (&dest)[N], const char* text)
         {
             std::size_t i = 0;

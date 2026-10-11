@@ -281,7 +281,7 @@ if(NOT DEFINED SKYRIMNET_CPPAPI_DIR)
     message(
         FATAL_ERROR
         "Could not locate SkyrimNet's CppAPI headers. Install the SkyrimNet Devkit "
-        "(Beta 25+) or set the SKYRIMNET_CPPAPI environment variable to the directory "
+        "(Beta 26+) or set the SKYRIMNET_CPPAPI environment variable to the directory "
         "containing PublicAPI.h. See docs/DEVELOPMENT.md for the full search order."
     )
 endif()
