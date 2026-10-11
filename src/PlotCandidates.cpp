@@ -1,7 +1,9 @@
 #include <PlotCandidates.h>
 
 #include <algorithm>
+#include <cctype>
 #include <format>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace NarrativeEngine::PlotCandidates
@@ -19,7 +21,51 @@ namespace NarrativeEngine::PlotCandidates
             const PlotCasting::Member* member = nullptr;
             int rank = kStranger;
             double standing = 0.0;
+            // Named in the scheme: offered first, whatever the ladder says.
+            bool named = false;
         };
+
+        // What every list of one Build call is ranked against. The scheme's
+        // names are read once per call rather than once per person.
+        struct Ctx
+        {
+            const Request& request;
+            std::unordered_set<RE::FormID> named;
+        };
+
+        // The words of a text, each a run of letters, digits, hyphens and
+        // apostrophes, with a trailing possessive dropped: "Hulda's" is
+        // "Hulda", and "Ri'saad" stays whole.
+        std::vector<std::string> Words(std::string_view text)
+        {
+            std::vector<std::string> out;
+            std::string word;
+            const auto flush = [&] {
+                if (word.ends_with("'s")) {
+                    word.resize(word.size() - 2);
+                }
+                while (!word.empty() && (word.back() == '\'' || word.back() == '-')) {
+                    word.pop_back();
+                }
+                while (!word.empty() && (word.front() == '\'' || word.front() == '-')) {
+                    word.erase(word.begin());
+                }
+                if (!word.empty()) {
+                    out.push_back(std::move(word));
+                }
+                word.clear();
+            };
+            for (const char ch : text) {
+                const auto u = static_cast<unsigned char>(ch);
+                if (std::isalnum(u) != 0 || ch == '-' || ch == '\'') {
+                    word.push_back(ch);
+                } else {
+                    flush();
+                }
+            }
+            flush();
+            return out;
+        }
 
         const PlotModel::SlotValue* Filled(const Request& request, std::string_view name)
         {
@@ -80,10 +126,10 @@ namespace NarrativeEngine::PlotCandidates
             return {};
         }
 
-        Ranked Rank(const Request& request, const PlotCasting::Member& member)
+        Ranked Rank(const Ctx& ctx, const PlotCasting::Member& member)
         {
-            Ranked r{&member, kStranger, 0.0};
-            if (const auto* boss = request.population.Find(request.mastermind)) {
+            Ranked r{&member, kStranger, 0.0, ctx.named.contains(member.npc)};
+            if (const auto* boss = ctx.request.population.Find(ctx.request.mastermind)) {
                 PlotMenus::Relation relation{};
                 double standing = 0.0;
                 if (PlotMenus::Classify(*boss, member, relation, standing)) {
@@ -97,6 +143,9 @@ namespace NarrativeEngine::PlotCandidates
         void Sort(std::vector<Ranked>& people)
         {
             std::sort(people.begin(), people.end(), [](const Ranked& a, const Ranked& b) {
+                if (a.named != b.named) {
+                    return a.named;
+                }
                 if (a.rank != b.rank) {
                     return a.rank < b.rank;
                 }
@@ -116,10 +165,17 @@ namespace NarrativeEngine::PlotCandidates
                     line += ", " + what;
                 }
             }
+            std::string why;
             if (r.rank < kStranger) {
-                line += std::format(" ({})", PlotMenus::RelationPhrase(static_cast<PlotMenus::Relation>(r.rank)));
+                why = PlotMenus::RelationPhrase(static_cast<PlotMenus::Relation>(r.rank));
             } else if (const auto where = SettlementName(request, r.member->settlement); !where.empty()) {
-                line += std::format(" (lives in {})", where);
+                why = std::format("lives in {}", where);
+            }
+            if (r.named) {
+                why = why.empty() ? std::string{"named in the scheme"} : why + "; named in the scheme";
+            }
+            if (!why.empty()) {
+                line += std::format(" ({})", why);
             }
             return line;
         }
@@ -136,27 +192,28 @@ namespace NarrativeEngine::PlotCandidates
         }
 
         std::vector<Candidate> People(const PlotVerbs::Slot& slot,
-                                      const Request& request,
+                                      const Ctx& ctx,
                                       const std::vector<Ranked>& ranked,
                                       std::size_t cap)
         {
             std::vector<Candidate> out;
             for (const auto& r : ranked) {
-                out.push_back({{}, {std::string{slot.name}, r.member->npc, r.member->name}, PersonLine(request, r)});
+                out.push_back(
+                    {{}, {std::string{slot.name}, r.member->npc, r.member->name}, PersonLine(ctx.request, r)});
             }
             return Keyed(std::move(out), cap);
         }
 
-        // Everybody eligible who passes `admit`, ordered by how connected
-        // they are to the mastermind.
-        template <typename Admit> std::vector<Ranked> Gather(const Request& request, Admit admit)
+        // Everybody eligible who passes `admit`, the scheme's own people
+        // first and then by how connected they are to the mastermind.
+        template <typename Admit> std::vector<Ranked> Gather(const Ctx& ctx, Admit admit)
         {
             std::vector<Ranked> out;
-            for (const auto& member : request.population.members) {
-                if (!Eligible(request, member)) {
+            for (const auto& member : ctx.request.population.members) {
+                if (!Eligible(ctx.request, member)) {
                     continue;
                 }
-                const auto r = Rank(request, member);
+                const auto r = Rank(ctx, member);
                 if (admit(member, r)) {
                     out.push_back(r);
                 }
@@ -165,14 +222,18 @@ namespace NarrativeEngine::PlotCandidates
             return out;
         }
 
-        std::vector<Ranked> Known(const Request& request)
+        // Whom the mastermind knows: by the ladder, or by naming them in the
+        // scheme.
+        std::vector<Ranked> Known(const Ctx& ctx)
         {
-            return Gather(request, [](const PlotCasting::Member&, const Ranked& r) { return r.rank < kStranger; });
+            return Gather(ctx,
+                          [](const PlotCasting::Member&, const Ranked& r) { return r.rank < kStranger || r.named; });
         }
 
         // People an earlier step reached, newest step first.
-        std::vector<Ranked> Aware(const Request& request)
+        std::vector<Ranked> Aware(const Ctx& ctx)
         {
+            const auto& request = ctx.request;
             std::vector<Ranked> out;
             std::unordered_set<RE::FormID> seen;
             for (auto it = request.earlier.rbegin(); it != request.earlier.rend(); ++it) {
@@ -191,7 +252,7 @@ namespace NarrativeEngine::PlotCandidates
                     if (member == nullptr || !Eligible(request, *member) || !seen.insert(member->npc).second) {
                         continue;
                     }
-                    out.push_back(Rank(request, *member));
+                    out.push_back(Rank(ctx, *member));
                 }
             }
             return out;
@@ -226,7 +287,39 @@ namespace NarrativeEngine::PlotCandidates
 
     std::string Describe(const Request& request, const PlotCasting::Member& member)
     {
-        return PersonLine(request, Rank(request, member));
+        const Ctx ctx{request, NamedIn(request.population, request.scheme)};
+        return PersonLine(request, Rank(ctx, member));
+    }
+
+    std::unordered_set<RE::FormID> NamedIn(const PlotCasting::Population& population, std::string_view text)
+    {
+        std::unordered_set<RE::FormID> out;
+        const auto words = Words(text);
+        if (words.empty()) {
+            return out;
+        }
+        const std::unordered_set<std::string> said(words.begin(), words.end());
+
+        // Who carries each word the text says, among the words of anybody's
+        // name. Short words ("of", "the") never name anybody.
+        std::unordered_map<std::string, std::vector<RE::FormID>> carriers;
+        for (const auto& member : population.members) {
+            std::unordered_set<std::string> own;
+            for (auto& word : Words(member.name)) {
+                if (word.size() >= 3 && said.contains(word) && own.insert(word).second) {
+                    carriers[word].push_back(member.npc);
+                }
+            }
+        }
+        // Two, not one: a parent and child can share a first name, and a
+        // scheme naming either should find both rather than neither.
+        constexpr std::size_t kMostSharing = 2;
+        for (const auto& [word, people] : carriers) {
+            if (people.size() <= kMostSharing) {
+                out.insert(people.begin(), people.end());
+            }
+        }
+        return out;
     }
 
     bool AwarenessFired(PlotVerbs::Awareness awareness, PlotModel::StepOutcome outcome) noexcept
@@ -268,45 +361,58 @@ namespace NarrativeEngine::PlotCandidates
 
     std::vector<Candidate> Build(const PlotVerbs::Slot& slot, const Request& request, const Limits& limits)
     {
+        // Only a person list reads the scheme's names.
+        const auto people = [&] { return Ctx{request, NamedIn(request.population, request.scheme)}; };
         switch (slot.rule) {
-        case Rule::AnyPerson:
-            return People(slot, request, Gather(request, [](const auto&, const auto&) { return true; }), limits.people);
-
-        case Rule::KnownToMastermind:
-            return People(slot, request, Known(request), limits.people);
-
-        case Rule::NotHostileKnown: {
-            const auto* boss = request.population.Find(request.mastermind);
-            auto known = Known(request);
-            std::erase_if(known, [boss](const Ranked& r) { return boss != nullptr && Hostile(*boss, *r.member); });
-            return People(slot, request, known, limits.people);
+        case Rule::AnyPerson: {
+            const auto ctx = people();
+            return People(slot, ctx, Gather(ctx, [](const auto&, const auto&) { return true; }), limits.people);
         }
 
-        case Rule::TradesForLiving:
-            return People(slot,
-                          request,
-                          Gather(request, [](const PlotCasting::Member& m, const auto&) { return m.tradesForLiving; }),
-                          limits.people);
+        case Rule::KnownToMastermind: {
+            const auto ctx = people();
+            return People(slot, ctx, Known(ctx), limits.people);
+        }
 
-        case Rule::RosteredStanding:
-            return People(
-                slot,
-                request,
-                Gather(request, [](const PlotCasting::Member& m, const auto&) { return HasRosteredStanding(m); }),
-                limits.people);
+        case Rule::NotHostileKnown: {
+            const auto ctx = people();
+            const auto* boss = request.population.Find(request.mastermind);
+            auto known = Known(ctx);
+            std::erase_if(known, [boss](const Ranked& r) { return boss != nullptr && Hostile(*boss, *r.member); });
+            return People(slot, ctx, known, limits.people);
+        }
 
-        case Rule::SeniorInCourt:
+        case Rule::TradesForLiving: {
+            const auto ctx = people();
             return People(slot,
-                          request,
-                          Gather(request, [](const PlotCasting::Member& m, const auto&) { return m.authority; }),
+                          ctx,
+                          Gather(ctx, [](const PlotCasting::Member& m, const auto&) { return m.tradesForLiving; }),
                           limits.people);
+        }
+
+        case Rule::RosteredStanding: {
+            const auto ctx = people();
+            return People(slot,
+                          ctx,
+                          Gather(ctx, [](const PlotCasting::Member& m, const auto&) { return HasRosteredStanding(m); }),
+                          limits.people);
+        }
+
+        case Rule::SeniorInCourt: {
+            const auto ctx = people();
+            return People(slot,
+                          ctx,
+                          Gather(ctx, [](const PlotCasting::Member& m, const auto&) { return m.authority; }),
+                          limits.people);
+        }
 
         case Rule::AwareOfEarlierStep: {
             // Nobody an earlier step reached -- the usual case, since a plan
             // is laid out before any of it has happened -- falls back to the
             // people the mastermind knows.
-            auto aware = Aware(request);
-            return People(slot, request, aware.empty() ? Known(request) : aware, limits.people);
+            const auto ctx = people();
+            auto aware = Aware(ctx);
+            return People(slot, ctx, aware.empty() ? Known(ctx) : aware, limits.people);
         }
 
         case Rule::MarkCommunity: {

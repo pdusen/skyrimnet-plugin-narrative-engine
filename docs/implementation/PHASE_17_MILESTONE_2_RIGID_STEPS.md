@@ -829,7 +829,7 @@ Run again once Steps 10–12 are done.
 
 ### Step 10 — The scheme's own people head every list
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -848,6 +848,22 @@ The item list carries the whole pool. It was capped at twenty, and the pool has 
 **Verification:** a suite asserts that a named stranger heads a `KnownToMastermind` list, that a named person who
 does not trade is still kept off a `TradesForLiving` list, that a surname shared across a family names nobody, and
 that every pool item is offered.
+
+Done. `PlotCandidates::NamedIn` reads the names, `Request::scheme` carries the scheme to every slot planning asks
+about, and a named person's line reads "Brand-Shei (lives in Riften; named in the scheme)". 460 tests pass, one of
+them new, with five new sections in the candidate suite.
+
+**A word, not a full name.** Schemes say "Othreloth" for Elder Othreloth and "Maven" for Maven Black-Briar, so
+matching whole names would miss the people schemes name most. A word of a name counts when it is three letters or
+more, stands whole in the scheme with a trailing `'s` dropped, matches case, and is carried by at most two people's
+names. "Black-Briar" is carried by five, so a scheme against the family names none of them, and the model chooses
+from the ladder as before.
+
+**Ranking only, never resolving.** The prior-art failure modes of fuzzy name resolution do not apply: a false match
+puts one extra person at the top of a list the model still chooses from, and a missed one leaves the list as it was.
+
+**The planning suite's first fixture changed answer.** Its scheme, "Ruin Hulda's trade", names Hulda, so she is now
+first rather than second on the watch list, and the scripted answer moved from `c2` to `c1`.
 
 ### Step 11 — Preparations in the verb manifest
 

@@ -147,8 +147,9 @@ TEST_CASE("PlotPlanning lays out a plan from offered keys", "[PlotPlanning][engi
 
     SECTION("when the model picks a verb and then ends the plan")
     {
-        // watch -> its mark has two candidates (friend, trader), so it is asked.
-        f.script.answers = {"watch", "c2", "done"};
+        // watch -> its mark has two candidates, so it is asked. The scheme
+        // names Hulda, which puts her first.
+        f.script.answers = {"watch", "c1", "done"};
         const auto out = f.Run();
 
         SECTION("should produce one step of that verb, filled from the list")

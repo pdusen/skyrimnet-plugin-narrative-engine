@@ -17,8 +17,14 @@ namespace NarrativeEngine::PlotPlanning
                                            const std::vector<PlotModel::SlotValue>& filled,
                                            const std::vector<const PlotModel::Step*>& earlier)
         {
-            return PlotCandidates::Request{
-                input.population, input.mastermind, input.world, filled, earlier, input.alive, input.occupation};
+            return PlotCandidates::Request{input.population,
+                                           input.mastermind,
+                                           input.world,
+                                           filled,
+                                           earlier,
+                                           input.alive,
+                                           input.occupation,
+                                           input.scheme};
         }
 
         std::string Capitalised(std::string text)

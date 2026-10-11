@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 // Tests for the candidate rules: what each verb slot may be filled with.
@@ -249,6 +250,43 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
         }
     }
 
+    SECTION("when the scheme names a stranger")
+    {
+        auto request = f.Request();
+        request.scheme = "steal Brand-Shei's ledger";
+        const auto list = PlotCandidates::Build(SlotOf("watch", "mark"), request);
+
+        SECTION("should admit them to a slot about whom the mastermind knows, first, saying why")
+        {
+            REQUIRE(list.front().value.form == kStranger);
+            REQUIRE(list.front().line == "Brand-Shei (lives in Riften; named in the scheme)");
+            REQUIRE(list.size() == 5);
+        }
+    }
+
+    SECTION("when the scheme names somebody the rule cannot admit")
+    {
+        auto request = f.Request();
+        request.scheme = "ruin Vilkas";
+
+        SECTION("should still keep a non-trader off a trader's list")
+        {
+            REQUIRE_FALSE(Has(PlotCandidates::Build(SlotOf("buy", "seller"), request), kColleague));
+        }
+    }
+
+    SECTION("when the scheme names somebody a property rule admits")
+    {
+        auto request = f.Request();
+        request.scheme = "buy out Brand-Shei";
+
+        SECTION("should put them first even though somebody known also qualifies")
+        {
+            REQUIRE(Forms(PlotCandidates::Build(SlotOf("buy", "seller"), request))
+                    == std::vector<RE::FormID>{kStranger, kNeighbour});
+        }
+    }
+
     SECTION("when the same request is made twice")
     {
         SECTION("should answer in the same order both times")
@@ -267,6 +305,51 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
         {
             REQUIRE(Forms(PlotCandidates::Build(SlotOf("watch", "mark"), f.Request(), limits))
                     == std::vector<RE::FormID>{kFriend, kEnemy});
+        }
+    }
+}
+
+TEST_CASE("PlotCandidates::NamedIn", "[PlotCandidates][engine]")
+{
+    PlotCasting::Population p;
+    p.members.push_back(Person(0x00020001, "Maven Black-Briar", kRiftHold, kRiften));
+    p.members.push_back(Person(0x00020002, "Hemming Black-Briar", kRiftHold, kRiften));
+    p.members.push_back(Person(0x00020003, "Ingun Black-Briar", kRiftHold, kRiften));
+    p.members.push_back(Person(0x00020004, "Elder Othreloth", kRiftHold, kRiften));
+    p.members.push_back(Person(0x00020005, "Ri'saad", kRiftHold, kRiften));
+
+    SECTION("when the scheme gives a first name")
+    {
+        SECTION("should name that person and nobody else in the family")
+        {
+            REQUIRE(PlotCandidates::NamedIn(p, "steal three flawless amethysts from Maven Black-Briar")
+                    == std::unordered_set<RE::FormID>{0x00020001});
+        }
+    }
+
+    SECTION("when the scheme gives only a surname three people share")
+    {
+        SECTION("should name nobody")
+        {
+            REQUIRE(PlotCandidates::NamedIn(p, "ruin the Black-Briar family").empty());
+        }
+    }
+
+    SECTION("when the scheme gives part of a name, possessive, or with an apostrophe inside")
+    {
+        SECTION("should find them")
+        {
+            REQUIRE(PlotCandidates::NamedIn(p, "forge a ledger showing Othreloth's theft").contains(0x00020004));
+            REQUIRE(PlotCandidates::NamedIn(p, "rob Ri'saad's caravan").contains(0x00020005));
+        }
+    }
+
+    SECTION("when a name appears only inside another word, or in lowercase")
+    {
+        SECTION("should name nobody")
+        {
+            REQUIRE(PlotCandidates::NamedIn(p, "steal Mavenhold's charter").empty());
+            REQUIRE(PlotCandidates::NamedIn(p, "find maven's ledger").empty());
         }
     }
 }
@@ -324,6 +407,18 @@ TEST_CASE("PlotCandidates things and bindings", "[PlotCandidates][engine]")
         SECTION("should be asked")
         {
             REQUIRE(PlotCandidates::Asks(SlotOf("steal", "item")));
+        }
+    }
+
+    SECTION("when the pool holds more items than a person list would")
+    {
+        for (RE::FormID i = 0; i < 30; ++i) {
+            f.world.items.push_back({0x0000E000 + i, "a trinket", {}});
+        }
+
+        SECTION("should offer every one of them")
+        {
+            REQUIRE(PlotCandidates::Build(SlotOf("steal", "item"), f.Request()).size() == 32);
         }
     }
 
