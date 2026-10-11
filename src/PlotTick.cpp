@@ -8,6 +8,7 @@
 #include <PlotCasting.h>
 #include <PlotDispatch.h>
 #include <PlotLog.h>
+#include <PlotMemories.h>
 #include <PlotMenus.h>
 #include <PlotPlanning.h>
 #include <PlotPopulation.h>
@@ -159,6 +160,12 @@ namespace NarrativeEngine::PlotTick
             plot.endedOnGameDay = gameDay;
 
             PlotCasting::Release(state.occupancy, plot.mastermind, gameDay, CooldownsFromSettings());
+
+            // Given up, by choice or by the cap, with the mastermind alive to
+            // remember it. A dead mastermind keeps nothing.
+            if (outcome == PlotModel::PlotOutcome::Conceded || outcome == PlotModel::PlotOutcome::AdaptationCapHit) {
+                PlotMemories::Write(PlotMemories::OnConceded(plot));
+            }
 
             if (status == PlotModel::PlotStatus::Succeeded) {
                 ++state.counters.plotsSucceeded;
@@ -362,6 +369,7 @@ namespace NarrativeEngine::PlotTick
 
             ++state.counters.stepsDispatched;
             PlotLog::Dispatch(plot, step, rung, considered, rejected);
+            PlotMemories::Write(PlotMemories::OnDispatch(plot, step));
             return Dispatched::Yes;
         }
 
@@ -563,6 +571,7 @@ namespace NarrativeEngine::PlotTick
                 return;
             }
             PlotLog::Resolve(plot, step);
+            PlotMemories::Write(PlotMemories::OnResolve(plot, step));
 
             const bool succeeded = step.state == PlotModel::StepState::Succeeded;
             if (succeeded) {

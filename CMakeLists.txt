@@ -880,6 +880,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/PlotVerbs.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotCandidates.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotPlanning.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotMemories.cpp"
         "${CMAKE_SOURCE_DIR}/src/EventHistoryWriter.cpp"
         "${CMAKE_SOURCE_DIR}/src/EventLogUtil.cpp"
         "${CMAKE_SOURCE_DIR}/src/FactionDesignationUtils.cpp"

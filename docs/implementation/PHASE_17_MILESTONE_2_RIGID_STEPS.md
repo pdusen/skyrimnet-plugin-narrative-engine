@@ -5,8 +5,10 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: planned, not built.** No step is checked off. Steps 18 and 19 of the Phase 17 doc are superseded
-> by this milestone; its Steps 20–22 still apply and follow it.
+> **Doc status: Steps 1 and 3–8 complete; Step 2's in-game probe and Step 9's validation outstanding.** Both are
+> `[USER]`. Steps 3–8 were built before the probe ran, at the user's direction; Step 2 says what changes if it shows
+> the decision API behaving differently. Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its
+> Steps 20–22 still apply and follow it.
 
 ---
 
@@ -682,7 +684,7 @@ reason of its own.
 
 ### Step 8 — Memories
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -699,6 +701,27 @@ location, importance and type rules above, and `{scheme}` rendered as a verb phr
 - `mastermind_conceded` to the mastermind when the plot is given up by decision, by the adaptation cap, or for
   want of an agent, and to nobody when it ends because the mastermind died;
 - and nothing to anybody else in the step.
+
+Done. `include/PlotMemories.h` with `src/PlotMemories.cpp`: three pure functions decide who keeps which memory at
+dispatch, resolution and giving up, and `Write` sends them through `SkyrimNetAPI::AddMemory` to each keeper's actor
+reference. `PlotTick` calls it after a step is dispatched, after one resolves, and from `EndPlot` for a plot conceded
+or out of attempts. 458 tests pass, three of them new, each run across all thirteen verbs.
+
+**The importance and type of each template are fixed here.** Sending, being sent and deciding to do it yourself are
+0.45; succeeding 0.55; running out of time 0.55 for the agent and 0.5 for the mastermind hearing of it; failing 0.75
+and 0.7; giving up 0.6. Hearing about a step is `KNOWLEDGE`; everything else is `EXPERIENCE`. The suite pins the
+property the numbers exist for, that a failure outweighs a timeout in both voices.
+
+**A memory relates everybody else in the step** -- mastermind, agent and every person slot, never the keeper -- and
+its location is the step's place where the verb has one and nothing otherwise, as the design says.
+
+**Every memory carries the tag `narrative_engine_plot`.** Nothing reads it yet. Two consequences are Phase 17 Step
+21's to settle rather than this step's: gossip's harvest does not exclude the tag, so a plot memory can already become
+a rumor, which is the loop the feature was justified by; and plot birth's memory query does not exclude it either, so
+a mastermind's next scheme can be shaped by how the last one went, which answers the audit's finding that every
+scheme started from nothing.
+
+**A mastermind who dies keeps nothing**, and neither does anybody when a plot ends because its mastermind died.
 
 ### Step 9 — In-game validation
 
