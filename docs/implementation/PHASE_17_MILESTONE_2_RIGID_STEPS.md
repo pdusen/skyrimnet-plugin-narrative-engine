@@ -5,11 +5,11 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
-> backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
-> player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
-> another way, Steps 21–25 mend what the fifth attempt found, and Steps 26–28 add five verbs and the records they
-> act on -- each added after an attempt at Step 9.
+> **Doc status: Steps 1–8 and 10–28 complete; Steps 29–31 add crafting after Step 9's sixth attempt.** Steps 10–12
+> plan backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep
+> the player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
+> another way, Steps 21–25 mend what the fifth attempt found, Steps 26–28 add five verbs and the records they act on,
+> and Steps 29–31 add five crafting verbs -- each added after an attempt at Step 9.
 > Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its Steps 20–22 still apply and follow it.
 
 ---
@@ -99,6 +99,11 @@ Wording is a first draft for review; the shape is the proposal. Profiles are the
 | `blackmail`     | `{agent}` blackmails `{mark}` into serving `{mastermind}` (Step 28)    | mark: person, known to mastermind                                                                  | mark: contact      | recruit   |
 | `destroy`       | `{agent}` destroys `{item}` belonging to `{mark}` (Step 28)            | item: thing, item pool; mark: person, known to mastermind                                          | mark: failure      | sabotage  |
 | `petition`      | `{agent}` petitions `{authority}` on `{mastermind}`'s behalf (Step 28) | authority: whoever the mastermind answers to (Step 28)                                             | authority: contact | recruit   |
+| `smith`         | `{agent}` smiths `{item}` (Step 30)                                    | item: thing, a smithing recipe somebody the mastermind can send is able to make (Step 30)          | none               | craft     |
+| `concoct`       | `{agent}` concocts `{item}` (Step 30)                                  | item: thing, a potion or poison as for `smith`                                                     | none               | craft     |
+| `enchant`       | `{agent}` makes `{item}` at an arcane enchanter (Step 30)              | item: thing, an enchanted variant of an item, as for `smith`                                       | none               | craft     |
+| `set`           | `{agent}` makes `{item}` at a jeweler's bench (Step 30)                | item: thing, a ring, necklace or circlet recipe, as for `smith`                                    | none               | craft     |
+| `fletch`        | `{agent}` fletches `{item}` (Step 30)                                  | item: thing, a bow, crossbow, arrow or bolt recipe, as for `smith`                                 | none               | craft     |
 
 **Rules every person slot carries without saying so:** alive, adult, not the player, not a ghost, in the plot
 population, not the mastermind (except `{mastermind}` itself), and not the same person as any other slot of the
@@ -459,6 +464,76 @@ agent_failed                I petitioned {authority}, but they turned me away.
 agent_timed_out             I ran out of time before I could get an audience with {authority}.
 mastermind_told_failed      {agent} reported back that {authority} had turned them away.
 mastermind_told_timed_out   {agent} reported back that they had run out of time before getting an audience with {authority}.
+```
+
+#### `smith` (Step 30)
+
+```text
+dashboard                   {agent} smiths {item}.
+agent_dispatched            {mastermind} asked me to smith {item} for them, so I set to work at the forge.
+mastermind_dispatched       I asked {agent} to smith {item} for me, as part of my plan to {scheme}.
+self_dispatched             I decided to smith {item} myself, as part of my plan to {scheme}.
+agent_succeeded             I smithed {item}, and it came out well.
+agent_failed                I ruined the work on {item} at the forge.
+agent_timed_out             I ran out of time before I could finish smithing {item}.
+mastermind_told_failed      {agent} reported back that they had ruined the work on {item}.
+mastermind_told_timed_out   {agent} reported back that they had run out of time before finishing {item}.
+```
+
+#### `concoct` (Step 30)
+
+```text
+dashboard                   {agent} concocts {item}.
+agent_dispatched            {mastermind} asked me to concoct {item} for them, so I set to work.
+mastermind_dispatched       I asked {agent} to concoct {item} for me, as part of my plan to {scheme}.
+self_dispatched             I decided to concoct {item} myself, as part of my plan to {scheme}.
+agent_succeeded             I concocted {item}.
+agent_failed                I spoiled the mixture while concocting {item}.
+agent_timed_out             I ran out of time before I could finish concocting {item}.
+mastermind_told_failed      {agent} reported back that they had spoiled the mixture for {item}.
+mastermind_told_timed_out   {agent} reported back that they had run out of time before finishing {item}.
+```
+
+#### `enchant` (Step 30)
+
+```text
+dashboard                   {agent} makes {item} at an arcane enchanter.
+agent_dispatched            {mastermind} asked me to make {item} for them at an arcane enchanter, so I set to work.
+mastermind_dispatched       I asked {agent} to make {item} for me at an arcane enchanter, as part of my plan to {scheme}.
+self_dispatched             I decided to make {item} at an arcane enchanter myself, as part of my plan to {scheme}.
+agent_succeeded             I bound the enchantment and made {item}.
+agent_failed                The enchantment slipped while I was making {item}, and the work was ruined.
+agent_timed_out             I ran out of time before I could finish enchanting {item}.
+mastermind_told_failed      {agent} reported back that the enchantment had slipped and ruined {item}.
+mastermind_told_timed_out   {agent} reported back that they had run out of time before finishing {item}.
+```
+
+#### `set` (Step 30)
+
+```text
+dashboard                   {agent} makes {item} at a jeweler's bench.
+agent_dispatched            {mastermind} asked me to make {item} for them, so I set to work at my bench.
+mastermind_dispatched       I asked {agent} to make {item} for me, as part of my plan to {scheme}.
+self_dispatched             I decided to make {item} myself, as part of my plan to {scheme}.
+agent_succeeded             I made {item}, and it is fine work.
+agent_failed                My hand slipped, and I spoiled the work on {item}.
+agent_timed_out             I ran out of time before I could finish {item}.
+mastermind_told_failed      {agent} reported back that they had spoiled the work on {item}.
+mastermind_told_timed_out   {agent} reported back that they had run out of time before finishing {item}.
+```
+
+#### `fletch` (Step 30)
+
+```text
+dashboard                   {agent} fletches {item}.
+agent_dispatched            {mastermind} asked me to fletch {item} for them, so I set to work.
+mastermind_dispatched       I asked {agent} to fletch {item} for me, as part of my plan to {scheme}.
+self_dispatched             I decided to fletch {item} myself, as part of my plan to {scheme}.
+agent_succeeded             I fletched {item}, true and straight.
+agent_failed                I spoiled the work on {item}.
+agent_timed_out             I ran out of time before I could finish fletching {item}.
+mastermind_told_failed      {agent} reported back that they had spoiled the work on {item}.
+mastermind_told_timed_out   {agent} reported back that they had run out of time before finishing {item}.
 ```
 
 ### SkyrimNet Beta 26 becomes the floor
@@ -1622,6 +1697,139 @@ would leave the sabotage of things to `sabotage`, which only reaches a trader's 
 **What the scheme call sees changes with no prompt edit.** The ambition prompt lists every verb from the manifest,
 so all five new verbs are offered as finishes as soon as they exist; Step 21's plain words cover `dig_up` the same
 way they cover `spread_rumors`.
+
+### Step 29 — Recipes, and the people who make them
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+Steps 30 and 31 add five crafting verbs, one per craftsman the game data can identify: `smith`, `concoct`,
+`enchant`, `set` and `fletch`. This step gives them what they need to stand on: the recipes, who can follow them, and
+a resolution profile for making things. Tailoring, brewing and cooking are left out. Vanilla has no clothing or
+alcohol recipe at all, and nothing in it marks anybody as a cook.
+
+A new module, `PlotRecipes`, is loaded at `kDataLoaded` beside the item pool. It is built from the loaded forms, so
+modded recipes and modded craftsmen count the same as vanilla ones. Each recipe has a craft, the item it makes as it
+is said, the skill it asks for, and the number and worth of its ingredients:
+
+- **`smith`, `set`, `fletch`:** constructible objects made at the forge (`CraftingSmithingForge`), the Skyforge or
+  Dawnguard's workbench.
+  - An armor piece covering nothing but a ring, amulet or circlet slot is `set`.
+  - A bow, a crossbow, an arrow or a bolt is `fletch`.
+  - Any other weapon or armor is `smith`.
+  - Anything else made there is skipped.
+- **`concoct`:** every potion and poison that is not food and has a name, so long as two different ingredients carry
+  its costliest effect. Vanilla has no recipe records for potions; this shared effect is what makes one in the game.
+  Its ingredients are the cheapest such pair.
+- **`enchant`:** every playable weapon or armor piece that has an enchantment and a template whose name it begins
+  with ("Iron Sword of Burning" from "Iron Sword"). These are the enchanted variants of base items. Its ingredients
+  are the base item and a soul, and the soul is worth what the enchantment adds to the item's value.
+- **Skill stands in for perks.** A forge recipe's `HasPerk` conditions name perks, and each perk's own
+  `GetBaseActorValue Smithing` condition gives the skill that perk needs. The highest of these is the recipe's
+  skill; Daedric work, for example, asks for 90. Other conditions are ignored. Potions and enchantments have no perk
+  gates in vanilla, so they ask for no skill.
+- **One recipe per name within a craft:** the duplicate kept is the one asking the least skill.
+
+A member of the plot population practises a craft when vanilla's job factions or vendor classes say so:
+
+| Craft     | Profession                                                                                |
+| --------- | ----------------------------------------------------------------------------------------- |
+| `smith`   | `JobBlacksmithFaction`, class `VendorBlacksmith`                                          |
+| `concoct` | `JobApothecaryFaction`, class `VendorApothecary`                                          |
+| `enchant` | `JobCourtWizardFaction`, `JobTrainerEnchantingFaction` -- vanilla has no enchanter's job  |
+| `set`     | `JobJewelerFaction`                                                                       |
+| `fletch`  | `JobFletcherFaction`, class `VendorFletcher`                                              |
+
+The skill profile cached on each member gains Smithing, Alchemy and Enchanting. `set` and `fletch` are smithing work.
+
+A ninth resolution profile, `craft`, sizes the making of a thing. It is never conspicuous: work at your own bench is
+not something to hide from the player.
+
+**Verification:** a new suite covers the pure half of `PlotRecipes`:
+
+- which craft a made thing belongs to;
+- how a recipe's item is said: with its article, and arrows and bolts as a sheaf;
+- that duplicates collapse to the least demanding recipe;
+- that more and costlier ingredients never make a step easier.
+
+The load logs how many recipes each craft has.
+
+### Step 30 — Five crafting verbs
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+`smith`, `concoct`, `enchant`, `set` and `fletch` join the manifest. Each has one slot, the thing made, and the
+`craft` profile. Each obtains its item, so a later `deliver` or `plant` can use what was made, the way `steal`,
+`buy` and `falsify` already supply them. The templates are above; every person a step names other than the agent and
+the mastermind is in a slot, and these verbs have no person slot.
+
+**Who makes it.** The agent must practise the craft and have the recipe's skill, on top of everything the casting
+ladder already asks.
+
+- The ladder is walked as usual, rung by rung, but a candidate who cannot make the thing is not on it.
+- The mastermind does it themselves only if they can make it.
+- If somebody who can make it exists but is busy, the step waits.
+- If nobody can make it at all, the plot cannot go on.
+
+**What may be made.** A craft verb's item slot lists that craft's recipes that somebody the mastermind could send
+(or the mastermind) is able to make. That is the ladder without regard to who is busy right now, filtered by craft
+and skill. Recipes named in the scheme or its finish come first; the rest are spread across the range of worth, so
+the list is not every Daedric piece in the game.
+
+**How hard it is.** The ingredients are not part of the plot; they are part of the difficulty. A crafting step's
+importance comes from its recipe's ingredients, from how many there are and what they are worth, in place of a
+target's standing. Travel is nothing, since the work is done at the crafter's own bench. How well the agent suits the
+step is their skill in that craft.
+
+**Never a finish on their own.** Making a thing and keeping it is an errand, and these verbs have nothing that
+prepares them, because gathering ingredients is not part of the plot. So `Goal` never offers them, and the scheme
+call does not list them as finishes. A gift is a `deliver` of something made (Step 31).
+
+**A failed craft is abandoned by its item.** A verb with no person slot is abandoned against its thing, so a re-plan
+does not try to make the same item again.
+
+**Verification:**
+
+- the verb suite's rules hold for all five;
+- the candidate suite asserts a craft verb lists only what a craftsman the mastermind can reach is skilled enough to
+  make;
+- the casting suite asserts a crafting step's agents all practise the craft, and that the mastermind stands alone
+  only if they can make the thing;
+- the resolution suite asserts the `craft` profile sizes like any other.
+
+### Step 31 — What is made, in a plan
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+A delivery or a planting whose item nobody has got chooses from the pool **and** from what the mastermind's
+craftsmen can make. A thing named in the scheme or its finish comes first, then the pool, then a spread of the rest,
+up to the usual cap. When the chosen thing is something a reachable craftsman can make, the craft verb is offered
+beside `steal` and `buy` as a way to get it. The crafter then holds it, and the bound agent of the delivery or the
+planting is them:
+
+```text
+1. Endon makes a Gold Diamond Necklace at a jeweler's bench.
+2. Endon brings a Gold Diamond Necklace to Elisif the Fair.
+```
+
+That pair is the gift a craft can finish a scheme with. A concocted poison can be planted the same way.
+
+The scheme call is shown a few things the mastermind's people can make, up to four per craft spread across the range
+of worth, and is told that a delivery or a planting may use them. A finish that names one of them is accepted as one
+naming a pool item.
+
+**Verification:** the planning suite asserts:
+
+- a delivery of a crafted necklace plans the jeweler's step first and the delivery after it, served by it;
+- a planted poison is concocted first;
+- a crafted thing is not offered as something to make when nobody reachable can make it.
+
+The ambition parse accepts a finish naming a crafted thing it was shown.
 
 ---
 
