@@ -466,7 +466,223 @@ namespace NarrativeEngine::PlotCandidates
             }
             return Keyed(std::move(out), cap);
         }
+        // Every list a rule could give, uncut: a role is judged against the
+        // whole of it.
+        constexpr Limits kWhole{static_cast<std::size_t>(-1),
+                                static_cast<std::size_t>(-1),
+                                static_cast<std::size_t>(-1)};
+
+        bool Capitalised(const std::string& word)
+        {
+            return !word.empty() && std::isupper(static_cast<unsigned char>(word.front())) != 0;
+        }
+
+        // The living people `text` names most surely. Each word a person's
+        // name shares with the text counts one over the number of people
+        // whose names carry it, so "Grelod" says Grelod the Kind and a word
+        // in many names says almost nothing.
+        std::vector<const PlotCasting::Member*> PeopleCalled(const Request& request, std::string_view text)
+        {
+            const auto said = Words(text);
+            const std::unordered_set<std::string> words(said.begin(), said.end());
+            const auto shared = [&words](const PlotCasting::Member& member) {
+                std::unordered_set<std::string> out;
+                for (auto& word : Words(member.name)) {
+                    if (Capitalised(word) && words.contains(word)) {
+                        out.insert(std::move(word));
+                    }
+                }
+                return out;
+            };
+
+            std::unordered_map<std::string, std::size_t> carriers;
+            for (const auto& member : request.population.members) {
+                for (const auto& word : shared(member)) {
+                    ++carriers[word];
+                }
+            }
+
+            double best = 0.0;
+            std::vector<const PlotCasting::Member*> out;
+            for (const auto& member : request.population.members) {
+                if (member.npc == request.mastermind || (request.alive && !request.alive(member.npc))) {
+                    continue;
+                }
+                double score = 0.0;
+                for (const auto& word : shared(member)) {
+                    score += 1.0 / static_cast<double>(carriers[word]);
+                }
+                if (score <= 0.0) {
+                    continue;
+                }
+                if (score > best + 1e-9) {
+                    best = score;
+                    out = {&member};
+                } else if (score > best - 1e-9) {
+                    out.push_back(&member);
+                }
+            }
+            return out;
+        }
+
+        // The settlement whose name `text` holds as whole words, the longest
+        // name where several do: "the Markarth marketplace" is Markarth.
+        const PlotMenus::LocationOption* PlaceCalled(const Request& request, std::string_view text)
+        {
+            std::string said;
+            for (const auto& word : Words(text)) {
+                said += " " + Lowered(word);
+            }
+            said += " ";
+            const PlotMenus::LocationOption* out = nullptr;
+            for (const auto& place : request.world.settlements) {
+                const auto name = std::format(" {} ", Lowered(place.name));
+                if (said.find(name) != std::string::npos && (out == nullptr || place.name.size() > out->name.size())) {
+                    out = &place;
+                }
+            }
+            return out;
+        }
+
+        // What a slot depends on the mark for, so is not judged when the mark
+        // could not be resolved.
+        bool NeedsMark(PlotVerbs::Rule rule)
+        {
+            return rule == Rule::AuthorityOverMark || rule == Rule::MarkCommunity
+                   || rule == Rule::MarkOrMastermindSettlement;
+        }
+
+        bool Lists(const std::vector<Candidate>& list, RE::FormID form)
+        {
+            return std::any_of(list.begin(), list.end(), [form](const Candidate& c) { return c.value.form == form; });
+        }
+
+        // Who or what a rule admits, as the retry is told it: the whole list
+        // when it is short enough to read.
+        std::string Admitted(const std::vector<Candidate>& list)
+        {
+            if (list.empty()) {
+                return "; nobody this plot can reach can be";
+            }
+            constexpr std::size_t kReadable = 8;
+            if (list.size() > kReadable) {
+                return {};
+            }
+            std::string out = "; it can be ";
+            for (std::size_t i = 0; i < list.size(); ++i) {
+                out += (i == 0 ? "" : i + 1 == list.size() ? " or " : ", ") + list[i].value.text;
+            }
+            return out;
+        }
     } // namespace
+
+    Resolution ResolveRoles(const PlotVerbs::Verb& goal,
+                            const std::vector<PlotModel::SlotValue>& named,
+                            const Request& request)
+    {
+        Resolution out;
+        std::vector<std::string> problems;
+        bool markLost = false;
+
+        for (std::size_t i = 0; i < goal.slotCount; ++i) {
+            const auto& slot = goal.slots[i];
+            const auto role = std::format("the {} ({})", slot.name, slot.says);
+            const auto given =
+                std::find_if(named.begin(), named.end(), [&slot](const auto& v) { return v.name == slot.name; });
+            if (given == named.end() || given->text.empty()) {
+                problems.push_back(std::format("nothing was named as {}", role));
+                markLost = markLost || slot.name == "mark";
+                continue;
+            }
+            if (markLost && NeedsMark(slot.rule)) {
+                continue;
+            }
+            const auto& text = given->text;
+
+            // Judged as planning would fill it, against what is resolved so
+            // far. An item an earlier step will get is chosen from the pool
+            // and from what can be made, as planning chooses one.
+            const Request here{request.population,
+                               request.mastermind,
+                               request.world,
+                               out.values,
+                               request.earlier,
+                               request.alive,
+                               request.occupation};
+            auto judged = slot;
+            if (judged.rule == Rule::BoundItem) {
+                judged.rule = Rule::PoolOrMade;
+            }
+            const auto list = Build(judged, here, kWhole);
+
+            switch (slot.kind) {
+            case PlotVerbs::SlotKind::Person: {
+                const auto called = PeopleCalled(here, text);
+                if (called.empty()) {
+                    problems.push_back(
+                        std::format("'{}' names nobody alive whom a plot can reach, for {}", text, role));
+                    markLost = markLost || slot.name == "mark";
+                    continue;
+                }
+                if (called.size() > 1) {
+                    std::string who;
+                    for (std::size_t k = 0; k < called.size(); ++k) {
+                        who += (k == 0 ? "" : k + 1 == called.size() ? " or " : ", ") + called[k]->name;
+                    }
+                    problems.push_back(std::format("'{}' could be {}; give the whole name, for {}", text, who, role));
+                    markLost = markLost || slot.name == "mark";
+                    continue;
+                }
+                const auto& who = *called.front();
+                if (!Lists(list, who.npc)) {
+                    problems.push_back(std::format("{} cannot be {}{}", who.name, role, Admitted(list)));
+                    markLost = markLost || slot.name == "mark";
+                    continue;
+                }
+                out.values.push_back({std::string{slot.name}, who.npc, who.name});
+                break;
+            }
+            case PlotVerbs::SlotKind::Place: {
+                const auto* place = PlaceCalled(here, text);
+                if (place == nullptr) {
+                    problems.push_back(std::format("'{}' names no settlement, for {}{}", text, role, Admitted(list)));
+                    continue;
+                }
+                if (!Lists(list, place->location)) {
+                    problems.push_back(std::format("{} cannot be {}{}", place->name, role, Admitted(list)));
+                    continue;
+                }
+                out.values.push_back({std::string{slot.name}, place->location, place->name});
+                break;
+            }
+            case PlotVerbs::SlotKind::Thing: {
+                const Candidate* match = nullptr;
+                for (const auto& c : list) {
+                    if (Says(text, c.value.text)
+                        && (match == nullptr || c.value.text.size() > match->value.text.size())) {
+                        match = &c;
+                    }
+                }
+                if (match == nullptr) {
+                    std::string pool;
+                    for (const auto& item : request.world.items) {
+                        pool += (pool.empty() ? "" : "; ") + item.displayName;
+                    }
+                    problems.push_back(
+                        std::format("'{}' names nothing that can be {}; it must be one of: {}", text, role, pool));
+                    continue;
+                }
+                out.values.push_back({std::string{slot.name}, match->value.form, match->value.text});
+                break;
+            }
+            }
+        }
+
+        for (const auto& p : problems) {
+            out.problem += (out.problem.empty() ? "" : "; ") + p;
+        }
+        return out;
+    }
 
     bool CanBeMade(const Request& request, PlotRecipes::Craft craft, RE::FormID form)
     {

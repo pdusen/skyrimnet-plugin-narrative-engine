@@ -210,6 +210,22 @@ namespace
         return value != nullptr ? value->form : 0;
     }
 
+    // A `roles` object naming every slot of `goal`, as a scheme call would.
+    nlohmann::json RolesFor(std::string_view goal)
+    {
+        nlohmann::json roles = nlohmann::json::object();
+        if (const auto* verb = NarrativeEngine::PlotVerbs::Find(goal)) {
+            for (std::size_t i = 0; i < verb->slotCount; ++i) {
+                const auto kind = verb->slots[i].kind;
+                roles[std::string{verb->slots[i].name}] = kind == NarrativeEngine::PlotVerbs::SlotKind::Person ? "Hulda"
+                                                          : kind == NarrativeEngine::PlotVerbs::SlotKind::Place
+                                                              ? "Whiterun"
+                                                              : "a ruby";
+            }
+        }
+        return roles;
+    }
+
     const std::string kGoal = PlotPlanning::kGoalTemplate;
     const std::string kSlot = PlotPlanning::kSlotTemplate;
     const std::string kPrepare = PlotPlanning::kPrepareTemplate;
@@ -1087,6 +1103,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the goal", "[PlotBirth][engine]")
         j["finish"] = "denounce Hulda to Balgruuf for selling skooma";
         if (!goal.empty()) {
             j["goal"] = goal;
+            j["roles"] = RolesFor(goal);
         }
         return ParseAmbition(j.dump(), TextLimits{});
     };
@@ -1162,6 +1179,7 @@ TEST_CASE("PlotBirth::ParseAmbition refuses the player by name", "[PlotBirth][en
     j["ambition"] = "She means to run the College.";
     j["scheme"] = "bring Faralda down for abusing her authority";
     j["goal"] = "denounce";
+    j["roles"] = RolesFor("denounce");
     j["finish"] = "denounce Faralda to Varian for abusing her authority";
 
     SECTION("when the finish names the player")
@@ -1194,6 +1212,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
     j["ambition"] = "He means to own Whiterun.";
     j["scheme"] = "expose Hulda's skooma trade";
     j["goal"] = "denounce";
+    j["roles"] = RolesFor("denounce");
 
     SECTION("when the finish is missing")
     {
@@ -1206,6 +1225,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
     SECTION("when the finish writes its verb as the id from the list")
     {
         j["goal"] = "spread_rumors";
+        j["roles"] = RolesFor("spread_rumors");
         j["finish"] = "spread_rumors about Hulda around Whiterun";
 
         SECTION("should write the id as words rather than refuse it")
@@ -1220,6 +1240,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
     SECTION("when the finish takes an item and names one from the pool")
     {
         j["goal"] = "steal";
+        j["roles"] = RolesFor("steal");
         j["finish"] = "steal the deed to a property from Hulda";
 
         SECTION("should accept it, article or not")
@@ -1231,6 +1252,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
     SECTION("when the finish takes an item the pool does not hold")
     {
         j["goal"] = "steal";
+        j["roles"] = RolesFor("steal");
         j["finish"] = "steal a spellbook from Nelacar";
         const auto out = ParseAmbition(j.dump(), TextLimits{}, {}, {"a ruby", "a deed to a property"});
 
@@ -1244,6 +1266,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
     SECTION("when the finish is done to somebody")
     {
         j["goal"] = "steal";
+        j["roles"] = RolesFor("steal");
         const auto namesSomebody = [](std::string_view text) { return text.find("Hulda") != std::string_view::npos; };
 
         SECTION("should refuse a finish naming nobody who exists, saying why")
@@ -1264,6 +1287,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
     SECTION("when the goal only prepares for a later step")
     {
         j["goal"] = "plant";
+        j["roles"] = RolesFor("plant");
         j["finish"] = "hide a ruby among Hulda's belongings";
         const auto out = ParseAmbition(j.dump(), TextLimits{});
 
@@ -1277,6 +1301,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
     SECTION("when the finish delivers a thing it was shown the mastermind's people can make")
     {
         j["goal"] = "deliver";
+        j["roles"] = RolesFor("deliver");
         j["finish"] = "bring a gold diamond necklace to Elisif";
 
         SECTION("should accept it as it would a pool item")
@@ -1304,6 +1329,79 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
             const auto out = ParseAmbition(j.dump(), TextLimits{});
             REQUIRE_FALSE(out.ok);
             REQUIRE(out.rejection.find("finish") != std::string::npos);
+        }
+    }
+}
+
+TEST_CASE("PlotBirth::ParseAmbition reads the roles", "[PlotBirth][engine]")
+{
+    using NarrativeEngine::PlotBirth::ParseAmbition;
+    using NarrativeEngine::PlotBirth::TextLimits;
+
+    nlohmann::json j;
+    j["reasoning"] = "x";
+    j["ambition"] = "He means to own Whiterun.";
+    j["scheme"] = "expose Hulda's skooma trade";
+    j["goal"] = "denounce";
+    j["finish"] = "denounce Hulda to Balgruuf for selling skooma";
+
+    SECTION("when a role of the goal is not named")
+    {
+        j["roles"] = {{"mark", "Hulda"}};
+        const auto out = ParseAmbition(j.dump(), TextLimits{});
+
+        SECTION("should refuse the answer, saying which role and what it is for")
+        {
+            REQUIRE_FALSE(out.ok);
+            REQUIRE(out.rejection.find("authority (whom they are denounced to)") != std::string::npos);
+        }
+    }
+
+    SECTION("when a role names the player")
+    {
+        j["roles"] = {{"mark", "Varian"}, {"authority", "Balgruuf"}};
+
+        SECTION("should refuse the answer")
+        {
+            REQUIRE_FALSE(ParseAmbition(j.dump(), TextLimits{}, "Varian").ok);
+        }
+    }
+
+    SECTION("when every role is named and resolves")
+    {
+        j["roles"] = {{"authority", "Balgruuf the Greater"}, {"mark", "Hulda"}};
+        std::vector<NarrativeEngine::PlotModel::SlotValue> asked;
+        const auto out =
+            ParseAmbition(j.dump(), TextLimits{}, {}, {}, {}, [&asked](const auto&, const auto& named, auto& resolved) {
+                asked = named;
+                resolved = {{"mark", kTrader, "Hulda"}, {"authority", kJarl, "Laila"}};
+                return std::string{};
+            });
+
+        SECTION("should hand the resolver each role in the goal's slot order, and keep what it resolved")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(asked.size() == 2);
+            REQUIRE(asked[0].name == "mark");
+            REQUIRE(asked[0].text == "Hulda");
+            REQUIRE(asked[1].text == "Balgruuf the Greater");
+            REQUIRE(out.roles.size() == 2);
+            REQUIRE(out.roles[1].form == kJarl);
+        }
+    }
+
+    SECTION("when the roles do not fit")
+    {
+        j["roles"] = {{"mark", "Hulda"}, {"authority", "Balgruuf"}};
+        const auto out = ParseAmbition(j.dump(), TextLimits{}, {}, {}, {}, [](const auto&, const auto&, auto&) {
+            return std::string{"Balgruuf cannot be the authority"};
+        });
+
+        SECTION("should refuse the answer with the resolver's reason")
+        {
+            REQUIRE_FALSE(out.ok);
+            REQUIRE(out.rejection == "the roles do not fit: Balgruuf cannot be the authority");
+            REQUIRE(out.roles.empty());
         }
     }
 }

@@ -278,7 +278,11 @@ namespace NarrativeEngine::PlotBirth
                 if (!verb.finishes) {
                     continue;
                 }
-                verbs.push_back({{"id", verb.id}, {"line", PlotVerbs::Generic(verb)}});
+                nlohmann::json roles = nlohmann::json::array();
+                for (std::size_t i = 0; i < verb.slotCount; ++i) {
+                    roles.push_back({{"name", verb.slots[i].name}, {"says", verb.slots[i].says}});
+                }
+                verbs.push_back({{"id", verb.id}, {"line", PlotVerbs::Generic(verb)}, {"roles", std::move(roles)}});
             }
             ctx["verbs"] = std::move(verbs);
             ctx["items"] = PoolItemNames();
@@ -522,7 +526,23 @@ namespace NarrativeEngine::PlotBirth
                     named.erase(boss->npc);
                     return !named.empty();
                 };
-                return ParseAmbition(response, TextLimits{}, player, items, namesSomebody);
+                const auto resolveRoles = [&population, boss](const PlotVerbs::Verb& goal,
+                                                              const std::vector<PlotModel::SlotValue>& named,
+                                                              std::vector<PlotModel::SlotValue>& resolved) {
+                    const std::vector<PlotModel::SlotValue> none;
+                    const std::vector<const PlotModel::Step*> earlier;
+                    const PlotCandidates::Request request{population,
+                                                          boss->npc,
+                                                          PlotMenus::CurrentWorld(),
+                                                          none,
+                                                          earlier,
+                                                          PlotPopulation::AlivePredicate(),
+                                                          {}};
+                    auto resolution = PlotCandidates::ResolveRoles(goal, named, request);
+                    resolved = std::move(resolution.values);
+                    return resolution.problem;
+                };
+                return ParseAmbition(response, TextLimits{}, player, items, namesSomebody, resolveRoles);
             },
             boss->name,
             "ambition");

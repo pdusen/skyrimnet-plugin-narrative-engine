@@ -793,3 +793,123 @@ TEST_CASE("PlotCandidates craft rules", "[PlotCandidates][engine]")
         }
     }
 }
+
+TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
+{
+    Fixture f;
+    const auto resolve = [&f](std::string_view verb, std::vector<PlotModel::SlotValue> named) {
+        const auto* goal = PlotVerbs::Find(verb);
+        REQUIRE(goal != nullptr);
+        return PlotCandidates::ResolveRoles(*goal, named, f.Request());
+    };
+
+    SECTION("when every role names somebody or something the plot can reach")
+    {
+        const auto out = resolve("steal", {{"item", 0, "the ruby"}, {"mark", 0, "Hulda"}});
+
+        SECTION("should resolve each, in slot order, as it is said")
+        {
+            REQUIRE(out.problem.empty());
+            REQUIRE(out.values.size() == 2);
+            REQUIRE(out.values[0].form == 0x0000D001);
+            REQUIRE(out.values[0].text == "a ruby");
+            REQUIRE(out.values[1].form == kNeighbour);
+        }
+    }
+
+    SECTION("when a role names somebody the mastermind does not know")
+    {
+        const auto out = resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Brand-Shei"}});
+
+        SECTION("should refuse them, naming the role, though naming them made them known to a list")
+        {
+            REQUIRE(out.problem.find("Brand-Shei cannot be the mark (whom it is stolen from)") != std::string::npos);
+        }
+    }
+
+    SECTION("when a role names nobody, or somebody dead")
+    {
+        SECTION("should say nobody alive is called that")
+        {
+            REQUIRE(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Mogrul"}}).problem.find("names nobody alive")
+                    != std::string::npos);
+            REQUIRE(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Ghost of Somebody"}})
+                        .problem.find("names nobody alive")
+                    != std::string::npos);
+        }
+    }
+
+    SECTION("when two people carry the name a role gives")
+    {
+        constexpr RE::FormID kElder = 0x00010101;
+        constexpr RE::FormID kYounger = 0x00010102;
+        f.population.members.push_back(Person(kElder, "Idgrod Ravencrone", kWhiterunHold, kWhiterun));
+        f.population.members.push_back(Person(kYounger, "Idgrod the Younger", kWhiterunHold, kWhiterun));
+
+        SECTION("should ask for the whole name when only the shared word is given")
+        {
+            const auto out = resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Jarl Idgrod"}});
+            REQUIRE(out.problem.find("could be Idgrod Ravencrone or Idgrod the Younger") != std::string::npos);
+        }
+
+        SECTION("should resolve the whole name")
+        {
+            const auto out = resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Idgrod Ravencrone"}});
+            REQUIRE(out.problem.empty());
+            REQUIRE(out.values[1].form == kElder);
+        }
+    }
+
+    SECTION("when a denunciation names an authority")
+    {
+        SECTION("should take one the rule admits")
+        {
+            const auto out = resolve("denounce", {{"mark", 0, "Hulda"}, {"authority", 0, "Laila"}});
+            REQUIRE(out.problem.empty());
+            REQUIRE(out.values[1].form == kJarl);
+        }
+
+        SECTION("should refuse one the rule passes over, saying whom the mark answers to")
+        {
+            auto balgruuf = Person(0x00010009, "Balgruuf the Greater", kWhiterunHold, kWhiterun);
+            balgruuf.authority = true;
+            f.population.members.push_back(balgruuf);
+            const auto out = resolve("denounce", {{"mark", 0, "Hulda"}, {"authority", 0, "Laila Law-Giver"}});
+            REQUIRE(out.problem.find("Laila Law-Giver cannot be the authority (whom they are denounced to); it can be "
+                                     "Balgruuf the Greater")
+                    != std::string::npos);
+        }
+    }
+
+    SECTION("when the mark is not named")
+    {
+        const auto out = resolve("denounce", {{"authority", 0, "Laila"}});
+
+        SECTION("should say so, and not judge the authority against nobody")
+        {
+            REQUIRE(out.problem == "nothing was named as the mark (who is denounced)");
+        }
+    }
+
+    SECTION("when a thing is named that nothing can be")
+    {
+        const auto out = resolve("steal", {{"item", 0, "a spellbook"}, {"mark", 0, "Hulda"}});
+
+        SECTION("should say so, listing what can be")
+        {
+            REQUIRE(out.problem.find("'a spellbook' names nothing that can be the item") != std::string::npos);
+            REQUIRE(out.problem.find("a ruby; a bottle of skooma") != std::string::npos);
+        }
+    }
+
+    SECTION("when a place is named")
+    {
+        const auto out = resolve("spread_rumors", {{"mark", 0, "Hulda"}, {"place", 0, "the Whiterun market"}});
+
+        SECTION("should resolve the settlement it holds")
+        {
+            REQUIRE(out.problem.empty());
+            REQUIRE(out.values[1].form == kWhiterun);
+        }
+    }
+}

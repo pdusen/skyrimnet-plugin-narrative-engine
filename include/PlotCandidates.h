@@ -105,6 +105,33 @@ namespace NarrativeEngine::PlotCandidates
                                                const Request& request,
                                                const Limits& limits = {});
 
+    // A goal's roles, as the scheme call named them, resolved to who and what
+    // fills each slot.
+    struct Resolution
+    {
+        // In the goal's slot order, each naming its form and how it is said.
+        std::vector<PlotModel::SlotValue> values;
+        // Empty when every role resolved; otherwise a sentence for each that
+        // did not, joined, for the scheme call's retry to act on.
+        std::string problem;
+    };
+
+    // Resolve the roles `named` gives a goal -- each a slot's name and the
+    // words the scheme call wrote for it, with no form -- and check each
+    // against its slot's rule, in slot order, so a denunciation's authority
+    // is judged against the mark already resolved.
+    //
+    // A person is whoever the words name among the living: by the words of
+    // their name, a word fewer people carry counting for more, so a whole
+    // name or a rare one settles it and "Jarl Idgrod" is two people. A place
+    // is the settlement whose name the words hold; a thing, whatever the slot
+    // could be filled with whose name they hold, the pool's and what the
+    // mastermind's people can make alike. Being named does not make somebody
+    // known to the mastermind, as it does for a list planning offers.
+    [[nodiscard]] Resolution ResolveRoles(const PlotVerbs::Verb& goal,
+                                          const std::vector<PlotModel::SlotValue>& named,
+                                          const Request& request);
+
     // Whether somebody the mastermind could send, or the mastermind, is able
     // to make this thing by this craft. Who is busy today does not matter:
     // a plan is laid before its steps are cast.

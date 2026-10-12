@@ -241,7 +241,8 @@ namespace NarrativeEngine::PlotBirth
                                   const TextLimits& limits,
                                   std::string_view playerName,
                                   const std::vector<std::string>& items,
-                                  const std::function<bool(std::string_view)>& namesSomebody)
+                                  const std::function<bool(std::string_view)>& namesSomebody,
+                                  const RoleResolver& resolveRoles)
     {
         AmbitionOutcome out;
 
@@ -336,6 +337,56 @@ namespace NarrativeEngine::PlotBirth
             out.goal.clear();
             out.finish.clear();
             return out;
+        }
+
+        // Who and what fills each role of the goal, named by the slot it
+        // fills. The finish says it in prose, and prose does not say which
+        // name is which: "expose a merchant's ledger to Jarl Elisif" was
+        // planned against Elisif.
+        std::vector<PlotModel::SlotValue> named;
+        {
+            const auto roles = json.find("roles");
+            std::string missing;
+            for (std::size_t i = 0; i < goal->slotCount; ++i) {
+                const auto& slot = goal->slots[i];
+                std::string text;
+                if (roles != json.end() && roles->is_object()) {
+                    const auto it = roles->find(std::string{slot.name});
+                    if (it != roles->end() && it->is_string()) {
+                        text = LLMTextSanitizer::Sanitize(it->get<std::string>());
+                    }
+                }
+                if (text.empty()) {
+                    missing += std::format("{}{} ({})", missing.empty() ? "" : ", ", slot.name, slot.says);
+                    continue;
+                }
+                if (PlotStepParse::NamesThePlayer(text, playerName)) {
+                    missing.clear();
+                    out.rejection = "the role '" + std::string{slot.name}
+                                    + "' named the player; these plots run among the people of Skyrim and cannot "
+                                      "involve the player";
+                    break;
+                }
+                named.push_back({std::string{slot.name}, 0, std::move(text)});
+            }
+            if (out.rejection.empty() && !missing.empty()) {
+                out.rejection = "'roles' must name every role of '" + out.goal + "'; it did not name: " + missing;
+            }
+            if (out.rejection.empty() && resolveRoles) {
+                if (const auto problem = resolveRoles(*goal, named, out.roles); !problem.empty()) {
+                    out.rejection = "the roles do not fit: " + problem;
+                }
+            } else if (out.rejection.empty()) {
+                out.roles = named;
+            }
+            if (!out.rejection.empty()) {
+                out.ambition.clear();
+                out.scheme.clear();
+                out.goal.clear();
+                out.finish.clear();
+                out.roles.clear();
+                return out;
+            }
         }
 
         // The two must not be the same sentence. When they are, the

@@ -2132,7 +2132,7 @@ out of a sentence stays available for reading text a model wrote freely.
 
 ### Step 36 — The scheme call names each role of its finish
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2174,6 +2174,29 @@ The roles are sanitized at extraction, as every string from a model is.
 
 **Verification:** the parse suite asserts each failure above and a clean answer resolving every role, and that the
 verb list shows each slot's description.
+
+Done. 488 tests pass, with new cases in the candidate and parse suites and a new rule in the verb suite; the plugin
+builds with no warnings.
+
+- **The manifest.** `PlotVerbs::Slot` gains `says`, and every slot of every verb carries one.
+- **The scheme call.** It is shown each verb's roles, and its prompt asks for `roles` as a hard constraint.
+- **The parse.** `ParseAmbition` reads `roles`, sanitized, and refuses one naming the player as it refuses any field
+  that does. It hands them to a `RoleResolver` and keeps what comes back as `AmbitionOutcome::roles`.
+- **The resolver.** `PlotBirth::Compose` passes one that calls the new `PlotCandidates::ResolveRoles`.
+
+The verification's examples are the suite's own: an unknown mark, a name nobody has, a dead one, a name two people
+share, an authority the rule passes over, a missing mark, a thing that cannot be, and a place inside a longer phrase.
+
+**A name word counts for less the more people carry it.** A person is whoever's name the role's words match best,
+each matched word worth one over the number of names carrying it. "Grelod" alone settles Grelod the Kind, a word in a
+dozen names barely counts, "Idgrod Ravencrone" beats Idgrod the Younger on the word only she carries, and "Jarl
+Idgrod" ties them and is refused. Only capitalised words are read, so "the" in "Elisif the Fair" matches nothing.
+
+**Each role is judged against what came before it.** Roles resolve in slot order, so an authority is checked against
+the mark just resolved, as planning would fill them. When the mark could not be resolved, a slot that depends on it
+is not judged at all, rather than being refused for reasons that only follow from the missing mark.
+
+**The roles are resolved and not yet used.** Planning still fills the goal as Step 34 left it until Step 37.
 
 ### Step 37 — The goal is filled from the roles
 

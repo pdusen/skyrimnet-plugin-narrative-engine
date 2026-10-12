@@ -9,8 +9,9 @@
        occupation } — the mastermind's biography, read straight from their
        bio file by CharacterBios. Plain text, already rendered; no
        character-profile decorator is involved.
-     verbs [{ id, line }] — every kind of step a plan is made of, each as
-       its generic sentence. The scheme's finishing step is one of them.
+     verbs [{ id, line, roles [{ name, says }] }] — every kind of step a
+       scheme can end in, each as its generic sentence, with the roles its
+       step has and what each is for. The finishing step is one of them.
      items [string] — every object a step can involve, as it is said.
      made [string] — a few things the mastermind's own craftsmen can make,
        as they are said; empty when nobody they can send makes anything.
@@ -65,7 +66,7 @@ they fit better than stealing an object does.
 and every step is one of the kinds below. Its last step -- the one that,
 once done, means the scheme is done -- must be one of them:
 
-{% for v in verbs %}- {{ v.id }}: {{ v.line }}
+{% for v in verbs %}- {{ v.id }}: {{ v.line }} Roles:{% for r in v.roles %} {{ r.name }} = {{ r.says }};{% endfor %}
 {% endfor %}
 The scheme itself is written however suits it. "Expose the bribes a thane
 takes" is a fine scheme; nothing here exposes anything, so it would end
@@ -158,6 +159,16 @@ object.
   no more than fifteen words, naming its people and any object from the
   list: "steal the logbook from the bookkeeper", with the bookkeeper
   named. It opens with a verb that says the same thing as `goal`.
+- `roles` — an object with one key for every role listed for `goal`,
+  each holding who or what fills that role, named as they are known: a
+  person by their name, a place by its settlement, an object as it is
+  written in the list. For `expose`, the keys are item, mark and
+  authority, holding say "a merchant's ledger", "Erikur" and "Elisif the
+  Fair". The finish says it as a sentence; `roles` says which name is
+  which, and nothing in the finish may be left out of it. A person in a
+  role is somebody this person could reach -- someone they know, work
+  with or live near -- and a denunciation, an exposure or a petition goes
+  to whoever has authority over the person it is about.
 
 Write plainly. No markdown, no headings, no bullet points inside either
 line. Name only people and places that exist in Skyrim, and prefer ones
@@ -169,8 +180,11 @@ this person would actually know.
 - The scheme MUST NOT restage a quest that already exists in the game.
 - Neither the ambition nor the scheme may involve the player{% if length(player) > 0 %}, {{ player }}{% endif %}.
   One that names them is thrown away.
-- Return only the keys `reasoning`, `ambition`, `scheme`, `goal` and
-  `finish`.
+- Return only the keys `reasoning`, `ambition`, `scheme`, `goal`,
+  `finish` and `roles`.
+- `roles` MUST name every role listed for `goal`, each a name that
+  exists in Skyrim. A role left out, or a name nobody has, is thrown
+  away.
 - `goal` MUST be one of the ids listed under "how the scheme ends". Any
   other word is thrown away.
 - `finish` MUST open with a plain verb, and must name the people its step

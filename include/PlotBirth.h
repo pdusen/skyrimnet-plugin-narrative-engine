@@ -9,6 +9,7 @@
 #include <PlotModel.h>
 #include <PlotPlanning.h>
 #include <PlotThread.h>
+#include <PlotVerbs.h>
 
 // PlotBirth — inventing one scheme, in three questions instead of one.
 //
@@ -131,7 +132,18 @@ namespace NarrativeEngine::PlotBirth
         // item: "steal the Shatter-Shield logbook from Suvaris Atheron".
         // The scheme says what it is all for; this says how it ends.
         std::string finish;
+
+        // Who and what fills each slot of the goal, in its slot order: the
+        // scheme call's `roles`, resolved. Planning fills the goal from them.
+        std::vector<PlotModel::SlotValue> roles;
     };
+
+    // Resolves the roles a scheme call named for its goal: `named` holds each
+    // slot's name and the words written for it. Fills `resolved` and returns
+    // nothing when every role fits, else why not, for the retry.
+    using RoleResolver = std::function<std::string(const PlotVerbs::Verb& goal,
+                                                   const std::vector<PlotModel::SlotValue>& named,
+                                                   std::vector<PlotModel::SlotValue>& resolved)>;
 
     struct TextLimits
     {
@@ -157,11 +169,17 @@ namespace NarrativeEngine::PlotBirth
     // population other than the mastermind. When the goal is done to a
     // person, a finish naming nobody is refused: planning would otherwise
     // fill the goal with whoever the list put first. Empty checks nothing.
+    //
+    // `roles` must name every slot of the goal, each as a string. With a
+    // resolver they are resolved into `AmbitionOutcome::roles`, and an answer
+    // whose roles do not fit is refused with the resolver's reason; without
+    // one, only their presence is checked.
     [[nodiscard]] AmbitionOutcome ParseAmbition(const std::string& response,
                                                 const TextLimits& limits,
                                                 std::string_view playerName = {},
                                                 const std::vector<std::string>& items = {},
-                                                const std::function<bool(std::string_view)>& namesSomebody = {});
+                                                const std::function<bool(std::string_view)>& namesSomebody = {},
+                                                const RoleResolver& resolveRoles = {});
 
     // --- Call 3: how ------------------------------------------------------
     //
