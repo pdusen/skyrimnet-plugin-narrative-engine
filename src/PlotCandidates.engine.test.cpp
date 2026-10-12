@@ -242,6 +242,35 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
         }
     }
 
+    SECTION("when the mark belongs to an organisation with people above them in it")
+    {
+        constexpr RE::FormID kKodlak = 0x0001000B;
+        constexpr RE::FormID kAela = 0x0001000C;
+        constexpr RE::FormID kTorvar = 0x0001000D;
+        auto kodlak = Person(kKodlak, "Kodlak", kWhiterunHold, kWhiterun);
+        kodlak.factions.push_back({kCompanions, 1.0, true});
+        f.population.members.push_back(kodlak);
+        auto aela = Person(kAela, "Aela", kWhiterunHold, kWhiterun);
+        aela.factions.push_back({kCompanions, 0.6, true}); // level with the mark
+        f.population.members.push_back(aela);
+        auto torvar = Person(kTorvar, "Torvar", kWhiterunHold, kWhiterun);
+        torvar.factions.push_back({kCompanions, 0.3, true}); // below the mark
+        f.population.members.push_back(torvar);
+        const auto authority = SlotOf("denounce", "authority");
+
+        SECTION("should offer only those who outrank them there, ahead of any jarl")
+        {
+            f.filled.push_back({"mark", kColleague, "Vilkas"});
+            REQUIRE(Forms(PlotCandidates::Build(authority, f.Request())) == std::vector<RE::FormID>{kKodlak});
+        }
+
+        SECTION("should fall through to the hold courts for the one nobody outranks")
+        {
+            f.filled.push_back({"mark", kKodlak, "Kodlak"});
+            REQUIRE(Forms(PlotCandidates::Build(authority, f.Request())) == std::vector<RE::FormID>{kJarl});
+        }
+    }
+
     SECTION("when a denunciation's authority is asked for and neither hold has one")
     {
         constexpr RE::FormID kFalkreathHold = 0x0000B003;

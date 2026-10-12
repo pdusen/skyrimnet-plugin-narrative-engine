@@ -90,7 +90,7 @@ Wording is a first draft for review; the shape is the proposal. Profiles are the
 | `win_over`      | `{agent}` wins `{mark}` over to `{mastermind}`'s side             | mark: person, known to mastermind, not hostile to them                                               | mark: contact       | recruit   |
 | `threaten`      | `{agent}` warns `{mark}` to stay out of `{mastermind}`'s affairs  | mark: person, known to mastermind                                                                   | mark: contact       | recruit   |
 | `spread_rumors` | `{agent}` spreads ugly talk about `{mark}` around `{place}`       | mark: person; place: settlement, mark's or mastermind's                                             | mark: failure       | discredit |
-| `denounce`      | `{agent}` denounces `{mark}` to `{authority}`                     | mark: person; authority: person who leads or is senior in a court                                   | authority: contact  | discredit |
+| `denounce`      | `{agent}` denounces `{mark}` to `{authority}`                     | mark: person; authority: whoever the mark answers to (Step 18)                                      | authority: contact  | discredit |
 | `sabotage`      | `{agent}` sabotages `{mark}`'s livelihood                         | mark: person who trades or works for a living                                                       | mark: failure       | sabotage  |
 | `silence`       | `{agent}` pays `{witness}` to keep quiet                          | witness: person aware of an earlier step of this plot, else known to mastermind                     | witness: contact    | conceal   |
 
@@ -1162,7 +1162,7 @@ under three letters are ignored for the same reason.
 
 ### Step 18 — A denunciation goes to whoever has authority over the mark
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1173,6 +1173,21 @@ to their jarl by the first rule.
 
 **Verification:** the candidate suite asserts a member of an organisation is denounced to its senior members ahead
 of any jarl, never to a junior or to themselves, and that a mark in no organisation falls through to Step 14's order.
+
+Done. `Rule::AuthorityOverMark` replaces `SeniorInCourt`, and its case in `PlotCandidates::Build` offers the mark's
+superiors before falling to Step 14's hold courts. 467 tests pass, with two new sections in the candidate suite.
+
+**A superior is senior and above the mark, in the same rostered organisation.** Senior is standing 0.6, the line
+PlotBirth already draws for "who is senior in it", so the junior members of an organisation are never who a
+complaint is taken to. Above the mark is strict, so two Masters of the College are not one another's authority.
+
+**The organisation's head is often the player, and then the next senior stands in.** Nirya's College had Varian as
+Arch-Mage. The player is not in the population, so the College's other senior mages are the list -- the same
+substitution Step 17's prompt asks the scheme call to make.
+
+**The rule covers courts without a case for them.** Courts are rostered organisations of their own, with the jarl
+leading, so a steward's superior is their jarl by the first rule. The hold courts are only reached for a mark who
+belongs to nothing with a hierarchy, or who heads what they belong to.
 
 ### Step 19 — The scheme says what it is for; the finishing step says how it ends
 

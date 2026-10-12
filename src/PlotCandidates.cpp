@@ -117,6 +117,28 @@ namespace NarrativeEngine::PlotCandidates
             });
         }
 
+        // Standing at which a member counts as senior in an organisation:
+        // the threshold PlotBirth's "who is senior in it" uses.
+        constexpr double kSenior = 0.6;
+
+        // Whether `superior` is senior in a rostered organisation `mark`
+        // belongs to, and stands above the mark in it.
+        bool OutranksIn(const PlotCasting::Member& superior, const PlotCasting::Member& mark)
+        {
+            for (const auto& theirs : mark.factions) {
+                if (!theirs.rostered) {
+                    continue;
+                }
+                for (const auto& own : superior.factions) {
+                    if (own.faction == theirs.faction && own.rostered && own.standing >= kSenior
+                        && own.standing > theirs.standing) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
         std::string SettlementName(const Request& request, RE::FormID settlement)
         {
             for (const auto& option : request.world.settlements) {
@@ -399,14 +421,27 @@ namespace NarrativeEngine::PlotCandidates
                           limits.people);
         }
 
-        case Rule::SeniorInCourt: {
-            // Who hears a denunciation is a matter of jurisdiction: the
-            // court of the mark's hold, else of the mastermind's, else any.
-            // The decision model was offered Falk Firebeard's own jarl first
-            // and sent his denunciation of a Solitude thane to Riften.
+        case Rule::AuthorityOverMark: {
+            // Who hears a denunciation is whoever the mark answers to. First
+            // their superiors in an organisation they belong to: a College
+            // mage answers to the College's senior mages, a Black-Briar to
+            // the family's head, a steward to the jarl, courts being rostered
+            // organisations too. Only for a mark nobody stands above does it
+            // fall to jurisdiction: the court of the mark's hold, else of the
+            // mastermind's, else any. Each list is narrowed rather than
+            // reordered, because the decision model does not weigh order:
+            // offered Falk Firebeard's own jarl first, it sent his
+            // denunciation of a Solitude thane to Riften.
             const auto ctx = people();
-            const auto all = Gather(ctx, [](const PlotCasting::Member& m, const auto&) { return m.authority; });
             const auto* mark = Mark(request);
+            if (mark != nullptr) {
+                const auto superiors =
+                    Gather(ctx, [mark](const PlotCasting::Member& m, const auto&) { return OutranksIn(m, *mark); });
+                if (!superiors.empty()) {
+                    return People(slot, ctx, superiors, limits.people);
+                }
+            }
+            const auto all = Gather(ctx, [](const PlotCasting::Member& m, const auto&) { return m.authority; });
             const auto* boss = request.population.Find(request.mastermind);
             for (const auto* anchor : {mark, boss}) {
                 if (anchor == nullptr) {

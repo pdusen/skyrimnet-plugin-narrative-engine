@@ -53,7 +53,7 @@ namespace NarrativeEngine::PlotVerbs
         NotHostileKnown,            // known to the mastermind, and not their enemy
         TradesForLiving,            // somebody who trades or works for a living
         RosteredStanding,           // standing in a rostered faction
-        SeniorInCourt,              // leads, or is senior in, a court
+        AuthorityOverMark,          // the mark's superiors in their organisation, else their hold's court
         AwareOfEarlierStep,         // somebody an earlier step reached, else known to the mastermind
         MarkCommunity,              // a settlement where the mark, or someone close to them, lives
         MarkOrMastermindSettlement, // the mark's settlement or the mastermind's
@@ -333,7 +333,7 @@ namespace NarrativeEngine::PlotVerbs
             "Denounce",
             PlotModel::StepType::Discredit,
             {{Slot{"mark", SlotKind::Person, Rule::AnyPerson, Awareness::Never},
-              Slot{"authority", SlotKind::Person, Rule::SeniorInCourt, Awareness::Contact}}},
+              Slot{"authority", SlotKind::Person, Rule::AuthorityOverMark, Awareness::Contact}}},
             2,
             false,
             false,
