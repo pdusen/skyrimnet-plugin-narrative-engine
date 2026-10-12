@@ -497,6 +497,8 @@ namespace NarrativeEngine::Settings
                 "Beats", "iVisitConclusionPollRecentLinesRenderCap", dst.visitConclusionPollRecentLinesRenderCap));
             dst.visitSenderCooldownGameHours = static_cast<int>(
                 ini.GetLongValue("Beats", "iVisitSenderCooldownGameHours", dst.visitSenderCooldownGameHours));
+            dst.visitBeatCooldownGameHours = static_cast<int>(
+                ini.GetLongValue("Beats", "iVisitBeatCooldownGameHours", dst.visitBeatCooldownGameHours));
 
             dst.visitApproachTimeoutSeconds = static_cast<int>(
                 ini.GetLongValue("Beats", "iVisitApproachTimeoutSeconds", dst.visitApproachTimeoutSeconds));
@@ -610,6 +612,8 @@ namespace NarrativeEngine::Settings
                 dst.ambushMaxDurationSeconds = 1;
             if (dst.ambushPerBeatCooldownGameHours < 0)
                 dst.ambushPerBeatCooldownGameHours = 0;
+            if (dst.visitBeatCooldownGameHours < 0)
+                dst.visitBeatCooldownGameHours = 0;
 
             // Approach-chain clamps.
             //

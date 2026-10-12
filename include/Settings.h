@@ -622,6 +622,14 @@ namespace NarrativeEngine::Settings
         // in the action's own co-save record.
         int visitSenderCooldownGameHours = 72;
 
+        // Per-beat cooldown in *in-game hours*, stamped at the same
+        // Salutation → Discuss transition as the per-sender one. Unlike
+        // that one it holds back every visit, not just a repeat from the
+        // same NPC. Independent of the global iBeatCooldownSeconds
+        // real-time cooldown, which still applies on top. 0 disables.
+        // Persists via the beat's own co-save record.
+        int visitBeatCooldownGameHours = 24;
+
         // [Actions] — state machine timing
         // Salutation timeout: seconds after Start before rollback if the sender
         // hasn't closed distance to speak the opening line.

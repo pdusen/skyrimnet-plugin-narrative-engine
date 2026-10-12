@@ -79,6 +79,7 @@ namespace
                                       "[BeatSystem]\niBeatSystemPollIntervalMs=1000\n"
                                       "[Director]\niVisitMinSenderCandidates=1\n"
                                       "[Beats]\niVisitSenderCooldownGameHours=72\n"
+                                      "iVisitBeatCooldownGameHours=24\n"
                                       "iVisitApproachTimeoutSeconds=1\n"
                                       "iVisitSalutationApproachDistanceUnits=1000\n"
                                       "iVisitReEngageApproachDistanceUnits=1000\n"
@@ -102,6 +103,9 @@ namespace
 
     constexpr std::uint32_t kSender = 0x0001A6A0u;
     constexpr std::uint32_t kSenderBase = 0x0001A6A2u;
+    // Somebody who is not in the engagement list, for stamping the beat's own
+    // cooldown without also taking the only candidate off the list.
+    constexpr std::uint32_t kOtherSender = 0x0001A6A4u;
     constexpr std::uint32_t kVisitQuest = 0x0E010000u;
     constexpr std::uint32_t kReturnAnchor = 0x0E010A02u;
     constexpr std::uint32_t kXMarkerHeading = 0x00000034u;
@@ -116,7 +120,7 @@ namespace
     constexpr std::uint32_t kStageRollback = 60;
     constexpr std::uint32_t kStageShutdown = 200;
 
-    constexpr std::uint32_t kRecordVersion = 2;
+    constexpr std::uint32_t kRecordVersion = 3;
 
     FakeSkyrimNetState& FakeLLM()
     {
@@ -562,6 +566,33 @@ TEST_CASE("NPCVisitBeat says when it can be offered", "[NPCVisitBeat][engine]")
         SECTION("should stay out of it")
         {
             REQUIRE_FALSE(beat.IsAvailable(ctx));
+        }
+    }
+
+    SECTION("when a visit arrived within the cooldown")
+    {
+        // The per-sender cooldown only stops the same NPC calling twice. With
+        // a wide enough engagement list that leaves visits free to fire back
+        // to back, one new face after another.
+        engine.calendar.hoursPassed = 100.0f;
+        Cooldowns::OnVisitCompleted(kOtherSender);
+        engine.calendar.hoursPassed = 110.0f;
+
+        SECTION("should stay out of it")
+        {
+            REQUIRE_FALSE(beat.IsAvailable(ctx));
+        }
+    }
+
+    SECTION("when the cooldown has run out")
+    {
+        engine.calendar.hoursPassed = 100.0f;
+        Cooldowns::OnVisitCompleted(kOtherSender);
+        engine.calendar.hoursPassed = 130.0f;
+
+        SECTION("should offer itself again")
+        {
+            REQUIRE(beat.IsAvailable(ctx));
         }
     }
 
@@ -1040,6 +1071,11 @@ TEST_CASE("NPCVisitBeat waits for the sender to walk over", "[NPCVisitBeat][engi
             REQUIRE(Cooldowns::IsSenderOnCooldown(kSender));
         }
 
+        SECTION("should start the beat's own cooldown")
+        {
+            REQUIRE(beat.RemainingCooldownGameHours() == 24.0);
+        }
+
         SECTION("should not speak the line twice while the stage change lands")
         {
             // The Papyrus stage change is asynchronous, so the stage stays at
@@ -1141,6 +1177,13 @@ TEST_CASE("NPCVisitBeat waits for the sender to walk over", "[NPCVisitBeat][engi
             // Nothing happened as far as the player is concerned, so the
             // sender stays eligible.
             REQUIRE_FALSE(Cooldowns::IsSenderOnCooldown(kSender));
+        }
+
+        SECTION("should not start the beat's own cooldown")
+        {
+            // Same reasoning: a visit that never arrived should not hold the
+            // next one back for a day.
+            REQUIRE(beat.RemainingCooldownGameHours() == 0.0);
         }
     }
 }
@@ -1615,6 +1658,67 @@ TEST_CASE("NPCVisitBeat tears the visit down", "[NPCVisitBeat][engine]")
     }
 }
 
+TEST_CASE("NPCVisitBeat says how long until the next visit", "[NPCVisitBeat][engine]")
+{
+    // What the dashboard's visit-beat timer reads, and what IsAvailable gates
+    // on.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    const NPCVisitBeat beat;
+
+    SECTION("when no visit has ever arrived")
+    {
+        engine.calendar.hoursPassed = 100.0f;
+
+        SECTION("should report nothing left to wait for")
+        {
+            // A fresh save, where the stamp is zero rather than long ago.
+            REQUIRE(beat.RemainingCooldownGameHours() == 0.0);
+        }
+    }
+
+    SECTION("when one has just arrived")
+    {
+        engine.calendar.hoursPassed = 100.0f;
+        Cooldowns::OnVisitCompleted(kSender);
+
+        SECTION("should report the whole window")
+        {
+            REQUIRE(beat.RemainingCooldownGameHours() == 24.0);
+        }
+
+        SECTION("should count it down as the hours pass")
+        {
+            engine.calendar.hoursPassed = 110.0f;
+            REQUIRE(beat.RemainingCooldownGameHours() == 14.0);
+        }
+
+        SECTION("should report nothing once the window is out")
+        {
+            engine.calendar.hoursPassed = 130.0f;
+            REQUIRE(beat.RemainingCooldownGameHours() == 0.0);
+        }
+
+        SECTION("should report nothing when the cooldown is switched off")
+        {
+            const ConfiguredSettings uncapped{"[Beats]\niVisitBeatCooldownGameHours=0\n"};
+            REQUIRE(beat.RemainingCooldownGameHours() == 0.0);
+        }
+    }
+
+    SECTION("when the arrival named nobody")
+    {
+        engine.calendar.hoursPassed = 100.0f;
+        Cooldowns::OnVisitCompleted(0);
+
+        SECTION("should start no cooldown")
+        {
+            REQUIRE(beat.RemainingCooldownGameHours() == 0.0);
+        }
+    }
+}
+
 TEST_CASE("NPCVisitBeat remembers who has called", "[NPCVisitBeat][engine]")
 {
     // Two ledgers with different jobs. The cooldown decays and stops the same
@@ -1715,9 +1819,35 @@ TEST_CASE("NPCVisitBeat carries its ledgers across a save", "[NPCVisitBeat][engi
             REQUIRE(Cooldowns::GetSenderMemoryWatermarkGameHours(migrated) == 100.0);
         }
 
+        SECTION("should bring the beat's own cooldown back")
+        {
+            REQUIRE(NPCVisitBeat{}.RemainingCooldownGameHours() == 24.0);
+        }
+
         SECTION("should put the ids it read through the incoming load order")
         {
             REQUIRE_FALSE(Cooldowns::IsSenderOnCooldown(kSender));
+        }
+    }
+
+    SECTION("when the save predates the beat's own cooldown")
+    {
+        // A v2 record carries both tables and stops.
+        Persistence::OnSave(FakeInterface());
+        engine.cosave.readable = engine.cosave.written;
+        engine.cosave.readCursor = 0;
+        Persistence::OnRevert();
+        Persistence::OnLoad(FakeInterface(), 2, 0);
+
+        SECTION("should restore both tables")
+        {
+            REQUIRE(Cooldowns::IsSenderOnCooldown(engine.cosave.resolvedFormID));
+            REQUIRE(Cooldowns::GetSenderMemoryWatermarkGameHours(engine.cosave.resolvedFormID) == 100.0);
+        }
+
+        SECTION("should start the beat's own cooldown clear")
+        {
+            REQUIRE(NPCVisitBeat{}.RemainingCooldownGameHours() == 0.0);
         }
     }
 
@@ -1755,6 +1885,7 @@ TEST_CASE("NPCVisitBeat carries its ledgers across a save", "[NPCVisitBeat][engi
             // belongs to the save being left, not the one being entered.
             REQUIRE_FALSE(Cooldowns::IsSenderOnCooldown(kSender));
             REQUIRE_FALSE(Cooldowns::IsSenderOnCooldown(engine.cosave.resolvedFormID));
+            REQUIRE(NPCVisitBeat{}.RemainingCooldownGameHours() == 0.0);
         }
     }
 
@@ -1768,6 +1899,7 @@ TEST_CASE("NPCVisitBeat carries its ledgers across a save", "[NPCVisitBeat][engi
             Persistence::OnLoad(FakeInterface(), kRecordVersion, 0);
             REQUIRE_FALSE(Cooldowns::IsSenderOnCooldown(kSender));
             REQUIRE_FALSE(Cooldowns::GetSenderMemoryWatermarkGameHours(kSender).has_value());
+            REQUIRE(NPCVisitBeat{}.RemainingCooldownGameHours() == 0.0);
         }
     }
 

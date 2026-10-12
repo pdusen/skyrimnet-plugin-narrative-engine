@@ -169,6 +169,10 @@ namespace NarrativeEngine
                 quest, "_ne_VisitQuest"sv, "RunSenderSilentSceneEvent"sv, RE::BSFixedString(content.c_str()));
         }
 
+        // Per-beat cooldown stamp — persisted via NPCVisitBeat_Persistence 'NBVS'.
+        std::mutex g_cooldownMutex;
+        double g_lastVisitGameHours = 0.0;
+
         // Per-sender cooldowns — persisted via NPCVisitBeat_Persistence 'NBVS'.
         SenderCooldownTable g_senderCooldowns;
 
@@ -2024,6 +2028,14 @@ namespace NarrativeEngine
         if (g_pointersCriticallyMissing.load()) {
             return blocked("critical forms missing at kDataLoaded");
         }
+        if (const auto remaining = RemainingCooldownGameHours(); remaining > 0.0) {
+            if (debug) {
+                logger::debug("NPCVisitBeat::IsAvailable: blocked (per-beat cooldown: {:.2f}h remaining of {}h)",
+                              remaining,
+                              Settings::Get().visitBeatCooldownGameHours);
+            }
+            return false;
+        }
         if (ctx.player) {
             if (LocationKeywords::IsVisitHostile(ctx.player->GetCurrentLocation())) {
                 return blocked("LocationKeywords::IsVisitHostile");
@@ -2046,6 +2058,25 @@ namespace NarrativeEngine
             return false;
         }
         return true;
+    }
+
+    double NPCVisitBeat::RemainingCooldownGameHours() const
+    {
+        const int cooldownHours = Settings::Get().visitBeatCooldownGameHours;
+        if (cooldownHours <= 0) {
+            return 0.0;
+        }
+        double last = 0.0;
+        {
+            std::scoped_lock lock(g_cooldownMutex);
+            last = g_lastVisitGameHours;
+        }
+        if (last <= 0.0) {
+            return 0.0;
+        }
+        const double elapsed = EngineUtils::GetCurrentGameHours() - last;
+        const double remaining = static_cast<double>(cooldownHours) - elapsed;
+        return remaining > 0.0 ? remaining : 0.0;
     }
 
     void NPCVisitBeat::OnStart(const BeatContext& /*ctx*/, const nlohmann::json& parameters)
@@ -2268,8 +2299,16 @@ namespace NarrativeEngine
         {
             if (senderNpcFormID == 0)
                 return;
-            g_senderCooldowns.Stamp(senderNpcFormID, EngineUtils::GetCurrentGameHours());
-            logger::info("NPCVisitBeat: per-sender cooldown stamp set for 0x{:08X}", senderNpcFormID);
+            const double now = EngineUtils::GetCurrentGameHours();
+            g_senderCooldowns.Stamp(senderNpcFormID, now);
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                g_lastVisitGameHours = now;
+            }
+            logger::info("NPCVisitBeat: per-sender cooldown stamp set for 0x{:08X}, per-beat cooldown stamped at "
+                         "gameHours={:.2f}",
+                         senderNpcFormID,
+                         now);
         }
 
         void OnVisitReachedValediction(RE::FormID senderNpcFormID)
@@ -2325,21 +2364,25 @@ namespace NarrativeEngine
 
     // ---------------------------------------------------------------
     // Cosave — 'NBVS' record.
-    // Layout (v2, current):
+    // Layout (v3, current):
     //   u32    senderCooldownCount
     //   [FormID(u32) + stamp(double)] * senderCooldownCount
     //   u32    senderMemoryWatermarkCount
     //   [FormID(u32) + stamp(double)] * senderMemoryWatermarkCount
-    // Layout (v1, legacy — accepted on load):
-    //   u32    senderCooldownCount
-    //   [FormID(u32) + stamp(double)] * senderCooldownCount
+    //   double lastVisitGameHours
+    // Layout (v2, legacy — accepted on load): v3 without the trailing
+    //   lastVisitGameHours.
+    // Layout (v1, legacy — accepted on load): v2 without the watermark
+    //   table.
     // v1 loads leave the watermark table empty; the first Valediction
-    // reached on the loaded save re-arms the filter from there.
+    // reached on the loaded save re-arms the filter from there. v1 and
+    // v2 loads leave the per-beat cooldown clear, so the first visit on
+    // the loaded save is not held back.
     // ---------------------------------------------------------------
 
     namespace NPCVisitBeat_Persistence
     {
-        constexpr std::uint32_t kRecordVersion = 2;
+        constexpr std::uint32_t kRecordVersion = 3;
 
         void OnSave(SKSE::SerializationInterface* intfc)
         {
@@ -2352,13 +2395,19 @@ namespace NarrativeEngine
             SKSECosaveIO io{intfc};
             g_senderCooldowns.Serialize(io);
             g_senderMemoryWatermarks.Serialize(io);
+            double lastVisit = 0.0;
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                lastVisit = g_lastVisitGameHours;
+            }
+            intfc->WriteRecordData(lastVisit);
         }
 
         void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length)
         {
             if (!intfc)
                 return;
-            if (version != 1 && version != kRecordVersion) {
+            if (version < 1 || version > kRecordVersion) {
                 logger::warn("NPCVisitBeat::OnLoad: unknown version {} (length={}); "
                              "clearing cooldown state",
                              version,
@@ -2371,6 +2420,10 @@ namespace NarrativeEngine
                 logger::error("NPCVisitBeat::OnLoad: sender-cooldown deserialize failed; "
                               "cleared");
                 g_senderMemoryWatermarks.Clear();
+                {
+                    std::scoped_lock lock(g_cooldownMutex);
+                    g_lastVisitGameHours = 0.0;
+                }
                 return;
             }
             // Watermark table was added in v2; older saves have no
@@ -2384,11 +2437,27 @@ namespace NarrativeEngine
             } else {
                 g_senderMemoryWatermarks.Clear();
             }
-            logger::info("NPCVisitBeat::OnLoad: restored per-sender cooldowns (record v{})", version);
+            // Per-beat cooldown stamp was added in v3; same treatment.
+            double lastVisit = 0.0;
+            if (version >= 3 && intfc->ReadRecordData(lastVisit) != sizeof(lastVisit)) {
+                logger::error("NPCVisitBeat::OnLoad: short read on lastVisitGameHours; cleared");
+                lastVisit = 0.0;
+            }
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                g_lastVisitGameHours = lastVisit;
+            }
+            logger::info("NPCVisitBeat::OnLoad: restored per-sender cooldowns, lastVisitGameHours={:.2f} (record v{})",
+                         lastVisit,
+                         version);
         }
 
         void OnRevert()
         {
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                g_lastVisitGameHours = 0.0;
+            }
             g_senderCooldowns.Clear();
             g_senderMemoryWatermarks.Clear();
         }
