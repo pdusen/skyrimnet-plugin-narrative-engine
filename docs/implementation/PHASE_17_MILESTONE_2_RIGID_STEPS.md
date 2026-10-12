@@ -7,8 +7,8 @@ ladder, the progress race and the co-save all stay.
 
 > **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
-> player out, route denunciations by authority and give the scheme back its purpose, and Step 20 makes adapting find
-> another way -- each added after an attempt at Step 9.
+> player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
+> another way, and Steps 21–25 mend what the fifth attempt found -- each added after an attempt at Step 9.
 > Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its Steps 20–22 still apply and follow it.
 
 ---
