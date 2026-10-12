@@ -5,12 +5,12 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
+> **Doc status: Steps 1–8 and 10–34 complete; Steps 35–37 follow up Step 9's eighth attempt.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
 > another way, Steps 21–25 mend what the fifth attempt found, Steps 26–28 add five verbs and the records they act on,
-> Steps 29–31 add five crafting verbs, and Steps 32–34 make a scheme finish what it starts on the person it names --
-> each added after an attempt at Step 9.
+> Steps 29–31 add five crafting verbs, Steps 32–34 make a scheme finish what it starts on the person it names, and
+> Steps 35–37 probe and then replace how a finish's people are read -- each added after an attempt at Step 9.
 > Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its Steps 20–22 still apply and follow it.
 
 ---
@@ -2049,6 +2049,103 @@ reason to concede.
 **What stays open.** A scheme that names two people sharing a name word still offers both: "Jarl Idgrod" names Idgrod
 Ravencrone and Idgrod the Younger alike. The re-plan that went astray on her is closed, since the goal and the
 forgery's subject are both held now; a fresh plot naming her by the shared word alone still asks.
+
+### Step 35 — Probe: picking a sentence's nouns out of its own words
+
+- [ ] Complete
+
+**[CLAUDE]** rebuilds the **Probe decisions** button around the question below.
+**[USER]** presses it and records the results here.
+
+The eighth attempt at Step 9 showed that a finish's prose does not say which person fills which role. "Expose a
+merchant's ledger to Jarl Elisif" names whom the proof is shown to, and Step 34 put Elisif in the slot for whom it is
+against. Steps 36–37 have the scheme call name each role outright. This probe measures the alternative: leave the
+finish as prose, and have the decision model pick each role's words out of it.
+
+The method under test:
+
+1. Take a sentence of 120 characters or less naming several things: "Bob ran to Whiterun to purchase 9 red claws from
+   Alan Grimes".
+2. Split it into words, and build every run of consecutive words: "Bob", "Bob ran", ..., "Alan Grimes", "Grimes". A
+   sentence of twelve words gives seventy-eight. A run that repeats an earlier one's words is offered once.
+3. Ask one decision question per role -- "What was purchased?", "Who was the seller?" -- with every run as a choice.
+
+Each question is right when the chosen run is one of its accepted answers. A sentence can name a thing with or without
+its article, so "9 red claws" and "red claws" are both right. A choice that contains the answer or lies inside it is
+counted as **near**, because trimming a run is cheap and choosing the wrong one is not.
+
+Every question also offers "(not named in the sentence)". One sentence is the finish that went wrong, and is asked for
+whom the proof is against: the right answer there is that the sentence does not say. That is the case a reader of
+finishes has to get right, so it is measured beside the others.
+
+Each question is asked twice, the runs in the order they were built and reversed, as the second probe did. The report
+gives each answer, where the right one sat among how many, and the probability the model gave it. The totals are right,
+near and wrong: overall, by order, and for the question with no answer in its sentence.
+
+**Verification:** the probe's suite asserts the runs a sentence gives, that every sentence is within 120 characters
+and every accepted answer is one of its runs, and how an answer is judged.
+
+### Step 36 — The scheme call names each role of its finish
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+The scheme call answers with a `roles` object beside `finish`, naming whatever fills each slot of the goal verb, keyed
+by the slot's name:
+
+```text
+"goal": "expose",
+"finish": "show a merchant's ledger to Jarl Elisif as proof against Erikur",
+"roles": { "item": "a merchant's ledger", "mark": "Erikur", "authority": "Jarl Elisif" }
+```
+
+- **Each slot says what it is for.** The verb list the call is shown gives each verb's slots with a few words on each:
+  `expose` has item, the proof; mark, whom it is against; authority, whom it is shown to. A slot's description is a
+  new field in the verb manifest, so the list and the parse read the same table.
+- **Every role is resolved, and checked against its slot's rule.**
+  - A person resolves by their whole name, or by a word of it that nobody else's name carries.
+  - A place resolves to a settlement by name.
+  - A thing resolves to an item from the pool, or a thing the mastermind's people can make.
+  - A resolved person must also be admitted by the slot's rule, without the scheme naming them counting as knowing
+    them.
+- **What fails comes back to the retry with what would not.** Each failure gets a sentence, and where the rule's
+  list is short, the list:
+  - a name that resolves to nobody alive;
+  - a name two people share;
+  - a person the rule does not admit;
+  - a missing role.
+
+  The eighth attempt's failures each meet one of these:
+  - "Guard Grelod" is Grelod the Kind, whom a Markarth guard's enemy does not know.
+  - Mogrul is in no plot.
+  - Mirabelle Ervine was dead.
+  - "Jarl Idgrod" is two people.
+- **Jarl Balgruuf is refused for Vignar, with the reason.** The denunciation rule sends Vignar's to his superiors
+  first, and the rule decides; the retry is told whom he answers to. A rule a finish could override would be
+  no rule, and Step 18 made that one after the decision model sent Falk Firebeard's denunciation to Riften.
+
+The roles are sanitized at extraction, as every string from a model is.
+
+**Verification:** the parse suite asserts each failure above and a clean answer resolving every role, and that the
+verb list shows each slot's description.
+
+### Step 37 — The goal is filled from the roles
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+Planning takes the resolved roles as the goal step's slots, asking nothing about them: the goal is done to whom the
+scheme call said, as it said. Step 34's narrowing of the goal's lists to whomever the finish names, and its check that
+the finish names somebody, are removed: both read roles out of prose, and this step stops doing so. A re-plan still
+keeps the goal it had, and a forgery for a step with a mark is still in that mark's name.
+
+A goal whose roles can no longer be filled is asked for as before. That happens when a person has died since the
+scheme call.
+
+**Verification:** the planning suite asserts a goal planned from roles asks no slot question and fills each slot as
+given, and that the Elisif case -- proof shown to Elisif against Erikur -- plans Erikur as the mark.
 
 ---
 
