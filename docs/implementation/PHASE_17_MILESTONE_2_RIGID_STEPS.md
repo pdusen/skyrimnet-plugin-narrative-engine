@@ -2205,8 +2205,13 @@ is not judged at all, rather than being refused for reasons that only follow fro
 **[CLAUDE]**
 
 Planning takes the resolved roles as the goal step's slots, asking nothing about them: the goal is done to whom the
-scheme call said, as it said. Step 34's narrowing of the goal's lists to whomever the finish names, and its check that
-the finish names somebody, are removed: both read roles out of prose, and this step stops doing so. A re-plan still
+scheme call said, as it said. Three checks that read roles out of the finish's prose are removed, because this step
+stops doing so:
+
+- Step 34's narrowing of the goal's lists to whomever the finish names.
+- Step 34's check that the finish names somebody.
+- Step 25's check that the finish names a pool item. Its role does that now, and the prose check would refuse a
+  finish that says "steal the ledger" when the item role names "a merchant's ledger". A re-plan still
 keeps the goal it had, and a forgery for a step with a mark is still in that mark's name.
 
 A goal whose roles can no longer be filled is asked for as before. That happens when a person has died since the
