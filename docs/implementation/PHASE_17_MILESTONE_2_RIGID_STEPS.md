@@ -5,7 +5,7 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
+> **Doc status: Steps 1–8 and 10–25 complete; Steps 26–28 add verbs after Step 9's sixth attempt.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
 > another way, and Steps 21–25 mend what the fifth attempt found -- each added after an attempt at Step 9.
@@ -78,21 +78,26 @@ often are not, and every memory written from it would say so.
 
 Wording is a first draft for review; the shape is the proposal. Profiles are the existing `StepType` ids.
 
-| Verb            | Sentence                                                          | Slots and rules                                                                                     | Awareness           | Profile   |
-| --------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------- | --------- |
-| `watch`         | `{agent}` watches `{mark}`, learning their habits                 | mark: person, known to mastermind                                                                   | mark: failure       | surveil   |
-| `ask_around`    | `{agent}` asks around `{place}` about `{mark}`                    | mark: person, known to mastermind; place: settlement where the mark or someone close to them lives  | mark: failure       | locate    |
-| `steal`         | `{agent}` steals `{item}` from `{mark}`                            | item: thing, item pool; mark: person, known to mastermind                                            | mark: failure       | acquire   |
-| `buy`           | `{agent}` buys `{item}` from `{seller}`                            | item: thing, item pool; seller: person, trades for a living                                          | seller: contact     | acquire   |
-| `deliver`       | `{agent}` brings `{item}` to `{recipient}`                         | item: bound to an earlier steal/buy; agent: bound to whoever got it; recipient: person              | recipient: contact  | deliver   |
-| `plant`         | `{agent}` hides `{item}` among `{mark}`'s belongings              | item and agent: bound as for deliver; mark: person                                                  | mark: failure       | conceal   |
-| `bribe`         | `{agent}` pays `{mark}` to look the other way                     | mark: person with standing in a rostered faction                                                    | mark: contact       | recruit   |
-| `win_over`      | `{agent}` wins `{mark}` over to `{mastermind}`'s side             | mark: person, known to mastermind, not hostile to them                                               | mark: contact       | recruit   |
-| `threaten`      | `{agent}` warns `{mark}` to stay out of `{mastermind}`'s affairs  | mark: person, known to mastermind                                                                   | mark: contact       | recruit   |
-| `spread_rumors` | `{agent}` spreads ugly talk about `{mark}` around `{place}`       | mark: person; place: settlement, mark's or mastermind's                                             | mark: failure       | discredit |
-| `denounce`      | `{agent}` denounces `{mark}` to `{authority}`                     | mark: person; authority: whoever the mark answers to (Step 18)                                      | authority: contact  | discredit |
-| `sabotage`      | `{agent}` sabotages `{mark}`'s livelihood                         | mark: person who trades or works for a living                                                       | mark: failure       | sabotage  |
-| `silence`       | `{agent}` pays `{witness}` to keep quiet                          | witness: person aware of an earlier step of this plot, else known to mastermind                     | witness: contact    | conceal   |
+| Verb            | Sentence                                                               | Slots and rules                                                                                    | Awareness          | Profile   |
+| --------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------ | --------- |
+| `watch`         | `{agent}` watches `{mark}`, learning their habits                      | mark: person, known to mastermind                                                                  | mark: failure      | surveil   |
+| `ask_around`    | `{agent}` asks around `{place}` about `{mark}`                         | mark: person, known to mastermind; place: settlement where the mark or someone close to them lives | mark: failure      | locate    |
+| `steal`         | `{agent}` steals `{item}` from `{mark}`                                | item: thing, item pool; mark: person, known to mastermind                                          | mark: failure      | acquire   |
+| `buy`           | `{agent}` buys `{item}` from `{seller}`                                | item: thing, item pool; seller: person, trades for a living                                        | seller: contact    | acquire   |
+| `deliver`       | `{agent}` brings `{item}` to `{recipient}`                             | item: bound to an earlier steal/buy; agent: bound to whoever got it; recipient: person             | recipient: contact | deliver   |
+| `plant`         | `{agent}` hides `{item}` among `{mark}`'s belongings                   | item and agent: bound as for deliver; mark: person                                                 | mark: failure      | conceal   |
+| `bribe`         | `{agent}` pays `{mark}` to look the other way                          | mark: person with standing in a rostered faction                                                   | mark: contact      | recruit   |
+| `win_over`      | `{agent}` wins `{mark}` over to `{mastermind}`'s side                  | mark: person, known to mastermind, not hostile to them                                             | mark: contact      | recruit   |
+| `threaten`      | `{agent}` warns `{mark}` to stay out of `{mastermind}`'s affairs       | mark: person, known to mastermind                                                                  | mark: contact      | recruit   |
+| `spread_rumors` | `{agent}` spreads ugly talk about `{mark}` around `{place}`            | mark: person; place: settlement, mark's or mastermind's                                            | mark: failure      | discredit |
+| `denounce`      | `{agent}` denounces `{mark}` to `{authority}`                          | mark: person; authority: whoever the mark answers to (Step 18)                                     | authority: contact | discredit |
+| `sabotage`      | `{agent}` sabotages `{mark}`'s livelihood                              | mark: person who trades or works for a living                                                      | mark: failure      | sabotage  |
+| `silence`       | `{agent}` pays `{witness}` to keep quiet                               | witness: person aware of an earlier step of this plot, else known to mastermind                    | witness: contact   | conceal   |
+| `falsify`       | `{agent}` falsifies `{item}` in `{subject}`'s name (Step 27)           | item: thing, a document from the pool; subject: person                                             | subject: failure   | acquire   |
+| `dig_up`        | `{agent}` digs up `{item}` proving `{mark}`'s wrongdoing (Step 27)     | item: thing, a document from the pool; mark: person, known to mastermind                           | mark: failure      | locate    |
+| `blackmail`     | `{agent}` blackmails `{mark}` into serving `{mastermind}` (Step 28)    | mark: person, known to mastermind                                                                  | mark: contact      | recruit   |
+| `destroy`       | `{agent}` destroys `{item}` belonging to `{mark}` (Step 28)            | item: thing, item pool; mark: person, known to mastermind                                          | mark: failure      | sabotage  |
+| `petition`      | `{agent}` petitions `{authority}` on `{mastermind}`'s behalf (Step 28) | authority: whoever the mastermind answers to (Step 28)                                             | authority: contact | recruit   |
 
 **Rules every person slot carries without saying so:** alive, adult, not the player, not a ghost, in the plot
 population, not the mastermind (except `{mastermind}` itself), and not the same person as any other slot of the
@@ -383,6 +388,76 @@ agent_failed                I offered {witness} coin to keep quiet, but they wou
 agent_timed_out             I ran out of time before I could pay {witness} to keep quiet.
 mastermind_told_failed      {agent} reported back that {witness} would not be paid to keep quiet.
 mastermind_told_timed_out   {agent} reported back that they had run out of time before paying {witness} to keep quiet.
+```
+
+#### `falsify` (Step 27)
+
+```text
+dashboard                   {agent} falsifies {item} in {subject}'s name.
+agent_dispatched            {mastermind} asked me to falsify {item} in {subject}'s name, so I set off to do it.
+mastermind_dispatched       I sent {agent} to falsify {item} in {subject}'s name, as part of my plan to {scheme}.
+self_dispatched             I decided to falsify {item} in {subject}'s name myself, as part of my plan to {scheme}.
+agent_succeeded             I falsified {item} in {subject}'s name, good enough to pass.
+agent_failed                My attempt to falsify {item} in {subject}'s name was found out.
+agent_timed_out             I ran out of time before I could falsify {item} in {subject}'s name.
+mastermind_told_failed      {agent} reported back that their attempt to falsify {item} in {subject}'s name had been found out.
+mastermind_told_timed_out   {agent} reported back that they had run out of time before falsifying {item} in {subject}'s name.
+```
+
+#### `dig_up` (Step 27)
+
+```text
+dashboard                   {agent} digs up {item} proving {mark}'s wrongdoing.
+agent_dispatched            {mastermind} asked me to dig up {item} proving {mark}'s wrongdoing, so I set off to do it.
+mastermind_dispatched       I sent {agent} to dig up {item} proving {mark}'s wrongdoing, as part of my plan to {scheme}.
+self_dispatched             I decided to dig up {item} proving {mark}'s wrongdoing myself, as part of my plan to {scheme}.
+agent_succeeded             I dug up {item} proving {mark}'s wrongdoing.
+agent_failed                {mark} found out I was digging into their affairs, and I had to stop.
+agent_timed_out             I dug into {mark}'s affairs, but ran out of time before I found anything I could prove.
+mastermind_told_failed      {agent} reported back that {mark} had found out they were digging into their affairs.
+mastermind_told_timed_out   {agent} reported back that they had run out of time before finding proof against {mark}.
+```
+
+#### `blackmail` (Step 28)
+
+```text
+dashboard                   {agent} blackmails {mark} into serving {mastermind}.
+agent_dispatched            {mastermind} asked me to blackmail {mark} into serving them, so I set off to do it.
+mastermind_dispatched       I sent {agent} to blackmail {mark} into serving me, as part of my plan to {scheme}.
+self_dispatched             I decided to blackmail {mark} into serving me myself, as part of my plan to {scheme}.
+agent_succeeded             I blackmailed {mark}, and they gave in.
+agent_failed                I tried to blackmail {mark}, but they called my bluff.
+agent_timed_out             I ran out of time before I could put the squeeze on {mark}.
+mastermind_told_failed      {agent} reported back that {mark} had called their bluff.
+mastermind_told_timed_out   {agent} reported back that they had run out of time before blackmailing {mark}.
+```
+
+#### `destroy` (Step 28)
+
+```text
+dashboard                   {agent} destroys {item} belonging to {mark}.
+agent_dispatched            {mastermind} asked me to destroy {item} belonging to {mark}, so I set off to do it.
+mastermind_dispatched       I sent {agent} to destroy {item} belonging to {mark}, as part of my plan to {scheme}.
+self_dispatched             I decided to destroy {item} belonging to {mark} myself, as part of my plan to {scheme}.
+agent_succeeded             I destroyed {item} belonging to {mark}.
+agent_failed                {mark} caught me trying to destroy {item} of theirs.
+agent_timed_out             I ran out of time before I could get at {item} belonging to {mark}.
+mastermind_told_failed      {agent} reported back that {mark} had caught them trying to destroy {item}.
+mastermind_told_timed_out   {agent} reported back that they had run out of time before destroying {item} belonging to {mark}.
+```
+
+#### `petition` (Step 28)
+
+```text
+dashboard                   {agent} petitions {authority} on {mastermind}'s behalf.
+agent_dispatched            {mastermind} asked me to petition {authority} on their behalf, so I set off to do it.
+mastermind_dispatched       I sent {agent} to petition {authority} on my behalf, as part of my plan to {scheme}.
+self_dispatched             I decided to petition {authority} myself, as part of my plan to {scheme}.
+agent_succeeded             I petitioned {authority}, and they granted what was asked.
+agent_failed                I petitioned {authority}, but they turned me away.
+agent_timed_out             I ran out of time before I could get an audience with {authority}.
+mastermind_told_failed      {agent} reported back that {authority} had turned them away.
+mastermind_told_timed_out   {agent} reported back that they had run out of time before getting an audience with {authority}.
 ```
 
 ### SkyrimNet Beta 26 becomes the floor
@@ -1443,6 +1518,66 @@ passing while meaning another object would slip through, which costs no more tha
 from the list as it does today.
 
 **The refusal carries the list,** so the one retry `AskTwice` allows is asked with exactly the names it may use.
+
+**Sixth attempt at Step 9 (2026-10-11): too few verbs.** Fourteen plots, sound plans, and a clear pattern across this
+run and the five rotations behind it: schemes keep asking for acts the manifest does not have, and planning answers
+with the nearest one. Eight schemes wanted a forgery -- the orchard deeds, the tax reports twice, the reports of
+Forsworn attacks, the fake debt in three runs, the prophetic warning, the contract naming Hemming heir -- and got a
+stolen "incriminating letter" from somebody uninvolved. Five wanted proof dug up and got a theft. Two wanted
+blackmail and got a theft that stopped short of using it. Two wanted records destroyed, one of which sabotaged an
+innocent trader's livelihood because `sabotage` needs a trader. Four wanted something granted -- a transfer, funding,
+a ship, a leadership bid -- and one of them bought a purse of septims. Seven named a kind of record the pool lacks.
+
+### Step 26 — Records in the item pool
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+The pool gains a merchant's ledger, a set of research notes and a private journal as documents, and a spellbook as a
+valuable, each a vanilla record checked against the Spriggit export. A new candidate rule, `DocumentPool`, admits
+only the pool's documents, for the verbs of Step 27 whose item has to be paper.
+
+**Verification:** the candidate suite asserts `DocumentPool` lists the documents and nothing else.
+
+### Step 27 — `falsify` and `dig_up`: verbs that make documents
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+Two verbs that obtain an item, so either can supply a `deliver` or a `plant` as `steal` and `buy` do:
+
+- `falsify` -- `{agent}` falsifies `{item}` in `{subject}`'s name. Item: a document. Subject: anybody, the person whose
+  name or hand the forgery bears, aware on failure. Profile `acquire`. Prepared by `ask_around` (mark = subject).
+  The word is `falsify`, not `forge`, so a model never reads it as smithing.
+- `dig_up` -- `{agent}` digs up `{item}` proving `{mark}`'s wrongdoing. Item: a document. Mark: known to the
+  mastermind, aware on failure. Profile `locate`. Prepared by `watch` and `ask_around` of the mark; and it prepares
+  `denounce` (mark = mark).
+
+A step that needs a document nobody holds may get it by falsifying it as well as by stealing or buying it; the
+person a forgery is in the name of is not kept out the way the person robbed is, because framing somebody with a
+paper in their own name is the point.
+
+**Verification:** the verb suite's rules hold for both; the planning suite asserts a needed document offers
+`falsify` beside `steal` and `buy`, a needed valuable does not, and a falsified document supplies a `plant`.
+
+### Step 28 — `blackmail`, `destroy` and `petition`
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+- `blackmail` -- `{agent}` blackmails `{mark}` into serving `{mastermind}`. Mark: known to the mastermind, aware on
+  contact. Profile `recruit`. Prepared by `dig_up`, `steal` and `watch` of the mark: the leverage, got first.
+- `destroy` -- `{agent}` destroys `{item}` belonging to `{mark}`. Item: anything in the pool. Mark: known to the
+  mastermind, aware on failure. Profile `sabotage`. Prepared by `watch` of the mark and an open `bribe`.
+- `petition` -- `{agent}` petitions `{authority}` on `{mastermind}`'s behalf. Authority: by `AuthorityOverMark`,
+  which with no mark in the step answers for the mastermind -- their own superiors first, then their hold's court.
+  Aware on contact. Profile `recruit`. Prepared by `win_over` and `bribe` of the authority.
+
+**Verification:** the verb suite's rules hold for all three; the candidate suite asserts a petition's authority is the
+mastermind's superior where they have one and their hold's court where they do not.
 
 ---
 
