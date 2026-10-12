@@ -321,6 +321,7 @@ namespace NarrativeEngine::Settings
                 ini.GetDoubleValue("Plots", "fPlotProgressMaxFraction", dst.plotProgressMaxFraction));
             dst.plotPreparationEase =
                 static_cast<float>(ini.GetDoubleValue("Plots", "fPlotPreparationEase", dst.plotPreparationEase));
+            dst.plotPlanOdds = static_cast<float>(ini.GetDoubleValue("Plots", "fPlotPlanOdds", dst.plotPlanOdds));
             dst.plotBirthMemoryCount =
                 static_cast<int>(ini.GetLongValue("Plots", "iPlotBirthMemoryCount", dst.plotBirthMemoryCount));
             dst.plotBirthMinMemoryImportance = static_cast<float>(

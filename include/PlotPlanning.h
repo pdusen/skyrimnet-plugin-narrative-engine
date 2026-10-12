@@ -2,6 +2,7 @@
 
 #include <PlotCandidates.h>
 #include <PlotModel.h>
+#include <PlotResolution.h>
 #include <PlotVerbs.h>
 #include <SkyrimNetAPI.h>
 
@@ -50,9 +51,6 @@ namespace NarrativeEngine::PlotPlanning
     inline constexpr const char* kPrepareQuestion = "prepare";
     inline constexpr const char* kSlotTemplate = "narrative_engine/plot_slot";
     inline constexpr const char* kSlotQuestion = "pick";
-
-    // The preparation answer that ends a plan.
-    inline constexpr const char* kReady = "ready";
 
     // Adaptation's one question, and its three answers.
     inline constexpr const char* kAdaptTemplate = "narrative_engine/plot_adapt";
@@ -118,6 +116,12 @@ namespace NarrativeEngine::PlotPlanning
         // planned from them without a question; empty, or no longer
         // fillable, asks as before.
         std::vector<PlotModel::SlotValue> goalRoles;
+
+        // How a step's race is run, for estimating its odds, and the odds a
+        // step planning may prepare must reach before planning stops. Below
+        // it, the step is prepared further while anything can prepare it.
+        PlotResolution::Tuning tuning;
+        double targetOdds = 0.75;
     };
 
     struct Outcome

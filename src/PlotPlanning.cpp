@@ -149,8 +149,7 @@ namespace NarrativeEngine::PlotPlanning
         {
         public:
             Planner(const Input& input, const Ask& ask)
-                : input_(input), ask_(ask), naming_(input.scheme + "\n" + input.finish),
-                  named_(PlotCandidates::NamedIn(input.population, naming_))
+                : input_(input), ask_(ask), naming_(input.scheme + "\n" + input.finish)
             {}
 
             Outcome Run()
@@ -159,6 +158,13 @@ namespace NarrativeEngine::PlotPlanning
                 auto result = Goal();
                 if (result == Fill::Done) {
                     result = Prepare();
+                }
+                if (result == Fill::Done) {
+                    for (std::size_t k = 0; k < plan_.size(); ++k) {
+                        if (preparable_[k]) {
+                            plan_[k].plannedOdds = static_cast<float>(Odds(k));
+                        }
+                    }
                 }
                 out.decisions = decisions_;
                 if (result == Fill::Failed) {
@@ -195,9 +201,6 @@ namespace NarrativeEngine::PlotPlanning
             std::string rejection_;
             // The scheme and its finish, whose people head every list.
             std::string naming_;
-            // Whoever they name. Kept off any slot a preparation leaves
-            // open: they are what the plot is about, not its helpers.
-            std::unordered_set<RE::FormID> named_;
 
             SkyrimNetAPI::DecisionResult Decide(std::string_view name, const nlohmann::json& ctx)
             {
@@ -259,6 +262,40 @@ namespace NarrativeEngine::PlotPlanning
                     out.push_back(std::format("{}. {}", i + 1, Sketch(plan_[i])));
                 }
                 return out;
+            }
+
+            // The estimated chance the step at `index` succeeds, with the
+            // preparations of it planned so far and those that succeeded
+            // before a re-plan.
+            double Odds(std::size_t index) const
+            {
+                const auto& step = plan_[index];
+                PlotResolution::Estimate estimate;
+                estimate.type = step.type;
+                estimate.importance = PlotCasting::Importance(input_.population.Find(step.target));
+                if (const auto* verb = PlotVerbs::Find(step.verb)) {
+                    if (const auto craft = PlotVerbs::CraftOf(*verb)) {
+                        const auto* item = step.FindSlot("item");
+                        for (const auto& recipe : input_.world.recipes) {
+                            if (item != nullptr && recipe.craft == *craft && recipe.form == item->form) {
+                                estimate.importance =
+                                    PlotRecipes::Importance(recipe.ingredientValue, recipe.ingredientCount);
+                                estimate.travel = 0.0;
+                            }
+                        }
+                    }
+                }
+                for (std::size_t j = 0; j < plan_.size(); ++j) {
+                    if (j != index && PlotPlanning::Prepares(plan_[j], step)) {
+                        ++estimate.preparations;
+                    }
+                }
+                for (const auto* past : input_.before) {
+                    if (past->outcome == PlotModel::StepOutcome::Succeeded && PlotPlanning::Prepares(*past, step)) {
+                        ++estimate.preparations;
+                    }
+                }
+                return PlotResolution::EstimateSuccess(estimate, input_.tuning);
             }
 
             // Whether the pool lists this item as a document.
@@ -738,13 +775,27 @@ namespace NarrativeEngine::PlotPlanning
                 };
 
                 while (plan_.size() < input_.maxSteps) {
+                    // Which steps still want preparing: those below the
+                    // odds, and -- one step being an errand -- the goal
+                    // whatever its odds, while it stands alone.
+                    std::vector<bool> wanting(plan_.size(), false);
+                    for (std::size_t k = 0; k < plan_.size(); ++k) {
+                        wanting[k] = preparable_[k] && (plan_.size() < kPlanFloor || Odds(k) < input_.targetOdds);
+                    }
+
                     std::vector<Option> offered;
                     nlohmann::json options = nlohmann::json::array();
                     for (std::size_t k = 0; k < plan_.size(); ++k) {
-                        if (!preparable_[k]) {
+                        if (!wanting[k]) {
                             continue;
                         }
                         for (const auto* prep : PlotVerbs::PreparationsOf(plan_[k].verb)) {
+                            // An open preparation -- the bribe of nobody in
+                            // particular -- eases nothing (see Prepares),
+                            // so it cannot raise a step's odds.
+                            if (prep->slot.empty()) {
+                                continue;
+                            }
                             const auto* verb = PlotVerbs::Find(prep->verb);
                             if (verb == nullptr) {
                                 continue;
@@ -755,19 +806,13 @@ namespace NarrativeEngine::PlotPlanning
                                 continue;
                             }
                             Option option{k, verb, {}, PeopleOf(plan_[k])};
-                            if (prep->slot.empty()) {
-                                // An open slot -- the bribe before a theft --
-                                // never hires somebody the plot is about.
-                                option.excluded.insert(named_.begin(), named_.end());
-                            } else {
-                                const auto* value = plan_[k].FindSlot(prep->from);
-                                // An audience is nobody to watch or bribe:
-                                // a jarl's court is not won over one by one.
-                                if (value == nullptr || value->form == 0) {
-                                    continue;
-                                }
-                                option.preset.push_back({std::string{prep->slot}, value->form, value->text});
+                            const auto* value = plan_[k].FindSlot(prep->from);
+                            // An audience is nobody to watch or bribe: a
+                            // jarl's court is not won over one by one.
+                            if (value == nullptr || value->form == 0) {
+                                continue;
                             }
+                            option.preset.push_back({std::string{prep->slot}, value->form, value->text});
                             if (Repeats(*verb, option.preset) || !Fillable(*verb, option.preset, option.excluded, k)) {
                                 continue;
                             }
@@ -781,19 +826,13 @@ namespace NarrativeEngine::PlotPlanning
                     if (offered.empty()) {
                         break;
                     }
-                    // One step is an errand, not a scheme: with only the goal
-                    // planned, something has to come before it.
-                    if (plan_.size() >= kPlanFloor) {
-                        options.push_back({{"key", kReady}, {"line", "Nothing more: the plan is ready to carry out."}});
-                    }
 
                     const Option* chosen = nullptr;
                     if (options.size() == 1) {
-                        // One preparation and no `ready` yet: the plan needs a
-                        // second step and this is the only one there is. Taken
-                        // without asking, as SkyrimNet refuses a choice
-                        // question with one option -- Quintus Navale's
-                        // re-plan conceded on exactly that.
+                        // One preparation on offer is taken without asking,
+                        // as SkyrimNet refuses a choice question with one
+                        // option -- Quintus Navale's re-plan conceded on
+                        // exactly that.
                         chosen = &offered.front();
                     } else {
                         auto ctx = Base();
@@ -805,9 +844,6 @@ namespace NarrativeEngine::PlotPlanning
                             return Fill::Failed;
                         }
                         const auto key = result.Choice(kPrepareQuestion);
-                        if (key == kReady) {
-                            break;
-                        }
                         for (std::size_t i = 0; i < offered.size(); ++i) {
                             if (key == std::format("p{}", i + 1)) {
                                 chosen = &offered[i];

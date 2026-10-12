@@ -5,7 +5,7 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: Steps 1–40 complete; Steps 41–43 follow up Step 9's ninth attempt.** Steps 10–12 plan
+> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
 > another way, Steps 21–25 mend what the fifth attempt found, Steps 26–28 add five verbs and the records they act on,
@@ -2444,7 +2444,7 @@ falls with the step when the step is abandoned; it only does not ease it.
 
 ### Step 43 — A plan prepares until its odds are good
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2461,6 +2461,8 @@ more can be prepared, or at the cap, is it done.
   than one against a farmhand, and the plan says why.
 - **One step is still an errand.** With only the goal planned, a preparation is still added if one exists, whatever
   the odds.
+- **Open preparations are no longer offered.** The bribe of nobody in particular before a theft eases nothing (Step
+  42), so it can never raise a step's odds; a plan prepared toward odds has no reason to take one.
 
 The plan line in the plots log gives each prepared step's estimated odds.
 
@@ -2470,6 +2472,35 @@ importance. The planning suite asserts:
 - a plan whose goal is already likely stops after its floor;
 - one against a hard target is prepared until its odds are met, or until nothing more can be prepared;
 - no `ready` is offered.
+
+Done. 490 tests pass; the plugin builds with no warnings.
+
+- **The estimate.** `PlotResolution::EstimateSuccess` runs the race 300 times from one fixed seed. `Tuning` and
+  `Estimate` carry what it needs.
+- **The planner.** `PlotPlanning::Input` gains `tuning` and `targetOdds`, which `PlotBirth` fills from the new
+  `fPlotPlanOdds` and the existing race settings. `Prepare` loses `ready` and offers only what prepares a step still
+  below the odds; `kReady` is gone, and with it the open-slot exclusion that only open preparations used.
+- **Importance.** `PlotCasting::Importance`, moved out of `PlotTick`, sizes a target for both the estimate and dispatch.
+- **The log.** `Step::plannedOdds`, not saved, carries each prepared step's odds to the PLAN line.
+- **The suites.** The resolution suite asserts the estimate repeats, rises with preparation and falls with importance.
+  The planning suite's fixture asks for no odds, so its cases plan as before, and a case that answered `ready` now asks
+  odds of 1.0 or ends when the goal is no longer alone.
+
+**At the default 75%, almost nothing is prepared past the floor.** Measured with the same race outside the game, an
+ordinary agent's odds at default settings, with no, one and two preparations:
+
+| Kind of step | Farmhand (0.25) | Middling (0.6)  | Jarl (1.0)      |
+| ------------ | --------------- | --------------- | --------------- |
+| Watch        | 86 / 89 / 91%   | 82 / 85 / 88%   | 79 / 82 / 85%   |
+| Theft        | 82 / 85 / 87%   | 78 / 81 / 84%   | 73 / 77 / 80%   |
+| Win over     | 81 / 83 / 86%   | 75 / 79 / 82%   | 69 / 74 / 78%   |
+| Denounce     | 79 / 82 / 85%   | 73 / 77 / 81%   | 67 / 72 / 76%   |
+| Ask around   | 95 / 96 / 97%   | 94 / 95 / 96%   | 92 / 93 / 94%   |
+| Deliver      | 96 / 97 / 97%   | 95 / 96 / 97%   | 94 / 95 / 96%   |
+
+Most steps start above 75%, and a preparation adds three or four points. A step rarely runs out of time; most that
+fail are caught, and easing the threshold only shortens how long the agent is exposed. The mechanism works as the doc
+says, and at these defaults it is nearly idle: how far to tune it is put to the user.
 
 ---
 

@@ -192,6 +192,12 @@ namespace NarrativeEngine::PlotCasting
         [[nodiscard]] const Member* Find(RE::FormID npc) const;
     };
 
+    // How big a mark somebody is, 0 to 1: how far up an organisation they
+    // sit, from the same normalised standing casting reads, so a faction
+    // with a declared hierarchy makes its leaders harder targets. Nobody, or
+    // somebody in no faction, is a soft mark at 0.25.
+    [[nodiscard]] double Importance(const Member* target) noexcept;
+
     // How practised a member is at a craft, 0 to 1: their skill in what the
     // craft is worked with. Whether they practise it at all is Practises.
     [[nodiscard]] double CraftSkill(const Member& member, PlotRecipes::Craft craft) noexcept;

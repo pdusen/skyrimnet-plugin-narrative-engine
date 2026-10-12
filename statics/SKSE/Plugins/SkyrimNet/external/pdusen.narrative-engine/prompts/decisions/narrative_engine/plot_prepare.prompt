@@ -1,9 +1,9 @@
 {# narrative_engine/plot_prepare — what must be done before a planned step.
-   Asked by PlotPlanning::Plan once the goal is planned, again after each
-   preparation is added, until the answer is ready or the plan is full.
-   Each option is a whole step, already about the right people, and says
-   which planned step it comes just before. The answer is p1 onward, or
-   ready.
+   Asked by PlotPlanning::Plan once the goal is planned, and again after
+   each preparation is added, while a step it may prepare is below the odds
+   planning wants and the plan is not full. Each option is a whole step,
+   already about the right people, and says which planned step it comes
+   just before. The answer is p1 onward.
    Receives: mastermind { name, standing }, bio, ambition, scheme, finish,
      history [string] (steps already taken, when re-planning), plan
      [string] (the steps planned so far, numbered, the last being the one
@@ -30,7 +30,7 @@ The steps planned so far, in order; the last one accomplishes the scheme:
 {% endfor %}[ end state ]
 
 [ question prepare choice ]
-Is there something `who` should have done first, to make a step in `plan` more likely to work? Each choice is done just before the step it names. Choose ready if the plan in `plan` can be carried out as it stands.
+Which of these should `who` have done first, to make a step in `plan` more likely to work? Each choice is done just before the step it names.
 [ criteria ]
 {% for o in options %}{{ o.key }}: {{ o.line }}
 {% endfor %}[ end criteria ]

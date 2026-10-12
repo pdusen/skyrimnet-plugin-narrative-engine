@@ -48,6 +48,42 @@ TEST_CASE("PlotResolution craft profile", "[PlotResolution][engine]")
         }
     }
 
+    SECTION("when a step's odds are estimated")
+    {
+        const PlotResolution::Tuning tuning;
+        PlotResolution::Estimate theft;
+        theft.type = StepType::Acquire;
+        theft.importance = 0.6;
+
+        SECTION("should give the same answer every time")
+        {
+            REQUIRE(PlotResolution::EstimateSuccess(theft, tuning) == PlotResolution::EstimateSuccess(theft, tuning));
+        }
+
+        SECTION("should rise with each preparation")
+        {
+            auto prepared = theft;
+            prepared.preparations = 2;
+            REQUIRE(PlotResolution::EstimateSuccess(prepared, tuning) > PlotResolution::EstimateSuccess(theft, tuning));
+        }
+
+        SECTION("should fall as the target matters more")
+        {
+            auto jarl = theft;
+            jarl.importance = 1.0;
+            auto farmhand = theft;
+            farmhand.importance = 0.25;
+            REQUIRE(PlotResolution::EstimateSuccess(jarl, tuning) < PlotResolution::EstimateSuccess(farmhand, tuning));
+        }
+
+        SECTION("should stay between 0 and 1")
+        {
+            const double odds = PlotResolution::EstimateSuccess(theft, tuning);
+            REQUIRE(odds >= 0.0);
+            REQUIRE(odds <= 1.0);
+        }
+    }
+
     SECTION("when its type is written and read back")
     {
         SECTION("should come back as itself")

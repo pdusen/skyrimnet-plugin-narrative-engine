@@ -93,6 +93,36 @@ namespace NarrativeEngine::PlotResolution
     // than a quarter of it. However well prepared, a step is still work.
     [[nodiscard]] float EaseThreshold(float threshold, int preparations, double ease);
 
+    // The settings a step's race is run with, gathered so a planner can run
+    // it without reading Settings.
+    struct Tuning
+    {
+        float rateMin = 1.5f;
+        float rateMax = 5.0f;
+        float maxFractionPerTick = 0.45f;
+        bool mishapEnabled = true;
+        double mishapChance = 0.012;
+        double preparationEase = 0.8;
+    };
+
+    // A step as planning knows it: no agent yet and no trip, so an ordinary
+    // agent and a middling trip stand in for them.
+    struct Estimate
+    {
+        PlotModel::StepType type = PlotModel::StepType::Locate;
+        double importance = 0.25;
+        double travel = 0.5;
+        int preparations = 0;
+        double competence = 0.5;
+        double suitability = 0.5;
+    };
+
+    // The chance a step succeeds, 0 to 1: its race played `trials` times
+    // from a fixed seed, sized and eased exactly as dispatch sizes it and
+    // rolled exactly as a tick rolls it. The same inputs always give the
+    // same answer.
+    [[nodiscard]] double EstimateSuccess(const Estimate& step, const Tuning& tuning, int trials = 300);
+
     // How well an actor suits a KIND of step.
     //
     // A thief sent to steal, a courtier sent to discredit. Derived from

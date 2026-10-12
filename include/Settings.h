@@ -1140,6 +1140,11 @@ namespace NarrativeEngine::Settings
         // not touched, so preparing raises the odds.
         float plotPreparationEase = 0.8f;
 
+        // The odds, 0 to 1, a plan prepares each preparable step to -- the
+        // goal and what gets its items -- before it is done. Higher makes
+        // longer plans; 0 prepares only what a lone goal needs.
+        float plotPlanOdds = 0.75f;
+
         // The caught-in-the-act roll. Typed failure is load-bearing --
         // it decides whether the target gets a memory and whether the
         // plot leaks into gossip -- but progress alone cannot express

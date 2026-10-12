@@ -163,6 +163,45 @@ namespace NarrativeEngine::PlotResolution
         return static_cast<float>(static_cast<double>(threshold) * std::max(kLeastWork, factor));
     }
 
+    double EstimateSuccess(const Estimate& step, const Tuning& tuning, int trials)
+    {
+        const float whole = SizeThreshold(step.type, step.importance, step.travel);
+        const int budget =
+            std::max(SizeBudget(step.type, step.importance),
+                     MinimumViableBudget(whole, tuning.rateMin, tuning.rateMax, tuning.maxFractionPerTick));
+        const float threshold = EaseThreshold(whole, step.preparations, tuning.preparationEase);
+
+        TickInputs inputs;
+        inputs.roll.competence = step.competence;
+        inputs.roll.suitability = step.suitability;
+        inputs.roll.threshold = threshold;
+        inputs.roll.rateMin = tuning.rateMin;
+        inputs.roll.rateMax = tuning.rateMax;
+        inputs.roll.maxFractionPerTick = tuning.maxFractionPerTick;
+        inputs.mishap.enabled = tuning.mishapEnabled;
+        inputs.mishap.chanceBase = tuning.mishapChance;
+        inputs.mishap.conspicuous = PlotModel::IsConspicuous(step.type);
+        inputs.mishap.competence = step.competence;
+
+        // One fixed stream for every estimate, so planning the same plan
+        // twice plans it the same way.
+        std::uint64_t rng = 0x5EED5EED5EED5EEDULL;
+        int succeeded = 0;
+        const int runs = std::max(1, trials);
+        for (int i = 0; i < runs; ++i) {
+            PlotModel::Step race;
+            race.type = step.type;
+            race.threshold = threshold;
+            race.budget = budget;
+            race.state = PlotModel::StepState::InProgress;
+            while (!race.IsTerminal()) {
+                (void)AdvanceStep(race, inputs, rng);
+            }
+            succeeded += race.outcome == PlotModel::StepOutcome::Succeeded ? 1 : 0;
+        }
+        return static_cast<double>(succeeded) / static_cast<double>(runs);
+    }
+
     double Suitability(PlotModel::StepType type, double speech, double sneak, double pickpocket)
     {
         const double sp = std::clamp(speech, 0.0, 1.0);

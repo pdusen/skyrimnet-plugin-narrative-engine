@@ -390,6 +390,23 @@ namespace NarrativeEngine::PlotBirth
         }
     } // namespace
 
+    namespace
+    {
+        // How a step's race runs, as Settings has it, for planning's
+        // estimates.
+        void TuneFromSettings(PlotPlanning::Input& input)
+        {
+            const auto& cfg = Settings::Get();
+            input.tuning.rateMin = cfg.plotProgressRateMin;
+            input.tuning.rateMax = cfg.plotProgressRateMax;
+            input.tuning.maxFractionPerTick = cfg.plotProgressMaxFraction;
+            input.tuning.mishapEnabled = cfg.plotMishapEnabled;
+            input.tuning.mishapChance = cfg.plotMishapChanceBase;
+            input.tuning.preparationEase = cfg.plotPreparationEase;
+            input.targetOdds = cfg.plotPlanOdds;
+        }
+    } // namespace
+
     PlotPlanning::Outcome Replan(const PlotThread::Token& pt,
                                  const PlotCasting::Population& population,
                                  const PlotModel::Plot& plot)
@@ -416,6 +433,7 @@ namespace NarrativeEngine::PlotBirth
             input.goal = plot.plan.back().verb;
         }
         input.bio = BioSections(boss->npc, boss->name, "replan");
+        TuneFromSettings(input);
         input.alive = PlotPopulation::AlivePredicate();
         input.occupation = ShortOccupation;
         for (const auto& past : plot.history) {
@@ -559,6 +577,7 @@ namespace NarrativeEngine::PlotBirth
         input.goalRoles = ambition.roles;
         input.finish = ambition.finish;
         input.bio = BioSections(boss->npc, boss->name, "steps");
+        TuneFromSettings(input);
         input.alive = PlotPopulation::AlivePredicate();
         input.occupation = ShortOccupation;
 

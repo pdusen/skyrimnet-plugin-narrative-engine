@@ -319,6 +319,11 @@ namespace NarrativeEngine::PlotModel
         float sizingCompetence = 0.0f;
         float sizingSuitability = 0.0f;
 
+        // The odds planning estimated for this step, 0 to 1, when it was one
+        // planning prepares; -1 otherwise. For the plan's log line only, and
+        // not saved: a loaded plan has been planned already.
+        float plannedOdds = -1.0f;
+
         [[nodiscard]] bool IsTerminal() const noexcept
         {
             return state == StepState::Succeeded || state == StepState::Failed;

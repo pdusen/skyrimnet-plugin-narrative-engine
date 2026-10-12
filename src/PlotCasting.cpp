@@ -619,6 +619,18 @@ namespace NarrativeEngine::PlotCasting
         return out;
     }
 
+    double Importance(const Member* target) noexcept
+    {
+        if (target == nullptr || target->factions.empty()) {
+            return 0.25;
+        }
+        double best = 0.0;
+        for (const auto& f : target->factions) {
+            best = std::max(best, f.standing);
+        }
+        return std::clamp(0.3 + 0.7 * best, 0.0, 1.0);
+    }
+
     double CraftSkill(const Member& member, PlotRecipes::Craft craft) noexcept
     {
         switch (PlotRecipes::SkillOf(craft)) {

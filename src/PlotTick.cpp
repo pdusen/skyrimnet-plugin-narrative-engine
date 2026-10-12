@@ -123,25 +123,6 @@ namespace NarrativeEngine::PlotTick
             return actor->hold == target->hold ? 0.2 : 0.8;
         }
 
-        // Target importance: how far up an organisation the target
-        // sits. A jarl is a harder mark than a farmhand.
-        //
-        // This reads the same normalised standing the roster gives
-        // casting, which means a faction with a declared hierarchy makes
-        // its leaders harder targets automatically. Someone in no
-        // faction, or on the bottom rung of one, is a soft mark.
-        double TargetImportance(const PlotCasting::Member* target)
-        {
-            if (target == nullptr || target->factions.empty()) {
-                return 0.25;
-            }
-            double best = 0.0;
-            for (const auto& f : target->factions) {
-                best = std::max(best, f.standing);
-            }
-            return std::clamp(0.3 + 0.7 * best, 0.0, 1.0);
-        }
-
         PlotCasting::Cooldowns CooldownsFromSettings()
         {
             const auto& cfg = Settings::Get();
@@ -380,7 +361,7 @@ namespace NarrativeEngine::PlotTick
             const double travel = recipe != nullptr ? 0.0 : TravelDistanceNorm(actor, target);
             const double importance = recipe != nullptr
                                           ? PlotRecipes::Importance(recipe->ingredientValue, recipe->ingredientCount)
-                                          : TargetImportance(target);
+                                          : PlotCasting::Importance(target);
 
             // Threshold first: the floor under the budget is a function of
             // it, so the deadline cannot be settled until the work is.

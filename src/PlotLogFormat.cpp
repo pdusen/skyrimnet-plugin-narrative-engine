@@ -117,8 +117,14 @@ namespace NarrativeEngine::PlotLog
         out.push_back(std::format(
             "PLAN  plot={} decisions={} steps={} finish=\"{}\"", plot.id, decisions, plot.plan.size(), plot.finish));
         for (std::size_t i = from; i < plot.plan.size(); ++i) {
-            out.push_back(std::format(
-                "PLAN  plot={} step={}/{} \"{}\"", plot.id, i + 1, plot.plan.size(), PlotModel::Label(plot.plan[i])));
+            const auto& step = plot.plan[i];
+            out.push_back(std::format("PLAN  plot={} step={}/{} \"{}\"{}",
+                                      plot.id,
+                                      i + 1,
+                                      plot.plan.size(),
+                                      PlotModel::Label(step),
+                                      step.plannedOdds >= 0.0f ? std::format(" odds={:.0f}%", 100.0f * step.plannedOdds)
+                                                               : std::string{}));
         }
         return out;
     }
