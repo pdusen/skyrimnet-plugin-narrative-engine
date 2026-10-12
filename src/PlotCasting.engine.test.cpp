@@ -19,6 +19,7 @@ namespace
 {
     namespace PlotCasting = NarrativeEngine::PlotCasting;
     namespace PlotModel = NarrativeEngine::PlotModel;
+    namespace PlotRecipes = NarrativeEngine::PlotRecipes;
 
     constexpr RE::FormID kFaction = 0x0000C001;
     constexpr RE::FormID kBoss = 0x00010001;
@@ -66,10 +67,36 @@ namespace
         std::unordered_set<RE::FormID> exempt;
         std::string stepText = "Someone watches someone, learning their habits.";
 
+        PlotCasting::Admit admit;
+
+        PlotCasting::Result Cast()
+        {
+            return PlotCasting::EligibleAgents(
+                population, kBoss, stepText, occupancy, kToday, {}, 0, {}, exempt, admit);
+        }
+
         std::vector<RE::FormID> Offered()
         {
-            return PlotCasting::EligibleAgents(population, kBoss, stepText, occupancy, kToday, {}, 0, {}, exempt)
-                .shortlist;
+            return Cast().shortlist;
+        }
+
+        // `npc` practises the craft, at this skill out of 100.
+        void Crafts(RE::FormID npc, PlotRecipes::Craft craft, double skill)
+        {
+            for (auto& m : population.members) {
+                if (m.npc == npc) {
+                    m.crafts |= static_cast<std::uint8_t>(1U << static_cast<unsigned>(craft));
+                    m.skills.smithing = skill / 100.0;
+                    m.skills.alchemy = skill / 100.0;
+                    m.skills.enchanting = skill / 100.0;
+                }
+            }
+        }
+
+        // Only those able to make this.
+        void Making(const PlotRecipes::Recipe& recipe)
+        {
+            admit = [recipe](const PlotCasting::Member& m) { return PlotCasting::CanMake(m, recipe); };
         }
 
         void Busy(RE::FormID npc)
@@ -176,6 +203,75 @@ TEST_CASE("PlotCasting::EligibleAgents", "[PlotCasting][engine]")
             f.Busy(kSubordinate);
             const auto offered = f.Offered();
             REQUIRE(std::find(offered.begin(), offered.end(), kStranger) == offered.end());
+        }
+    }
+}
+
+TEST_CASE("PlotCasting crafting agents", "[PlotCasting][engine]")
+{
+    Fixture f;
+    PlotRecipes::Recipe sword;
+    sword.form = 0x0000D001;
+    sword.displayName = "a Steel Sword";
+    sword.craft = PlotRecipes::Craft::Smith;
+    sword.skill = 30;
+    f.Making(sword);
+
+    SECTION("when a subordinate further down the ladder is the only smith")
+    {
+        f.Crafts(kSubordinate, PlotRecipes::Craft::Smith, 40);
+
+        SECTION("should pass over the rung above, which has nobody who can make it")
+        {
+            REQUIRE(f.Offered() == std::vector<RE::FormID>{kSubordinate});
+        }
+    }
+
+    SECTION("when a smith on the ladder lacks the skill the recipe asks")
+    {
+        f.Crafts(kTiedSubordinate, PlotRecipes::Craft::Smith, 20);
+        f.Crafts(kSubordinate, PlotRecipes::Craft::Smith, 30);
+
+        SECTION("should offer only the one skilled enough")
+        {
+            REQUIRE(f.Offered() == std::vector<RE::FormID>{kSubordinate});
+        }
+    }
+
+    SECTION("when somebody practises another craft")
+    {
+        f.Crafts(kTiedSubordinate, PlotRecipes::Craft::Concoct, 100);
+
+        SECTION("should not send them to the forge")
+        {
+            REQUIRE(f.Offered().empty());
+        }
+    }
+
+    SECTION("when nobody on the ladder can make it")
+    {
+        f.Crafts(kStranger, PlotRecipes::Craft::Smith, 100);
+
+        SECTION("should leave the mastermind out unless they can make it themselves")
+        {
+            REQUIRE(f.Offered().empty());
+            f.Crafts(kBoss, PlotRecipes::Craft::Smith, 50);
+            REQUIRE(f.Offered() == std::vector<RE::FormID>{kBoss});
+        }
+    }
+
+    SECTION("when the only smith is busy")
+    {
+        f.Crafts(kSubordinate, PlotRecipes::Craft::Smith, 40);
+        f.Busy(kSubordinate);
+        const auto cast = f.Cast();
+
+        SECTION("should offer nobody, and say the smith was busy rather than absent")
+        {
+            REQUIRE(cast.shortlist.empty());
+            REQUIRE(cast.considered.size() == 1);
+            REQUIRE(cast.considered[0].npc == kSubordinate);
+            REQUIRE(cast.considered[0].reject == PlotCasting::Reject::Occupied);
         }
     }
 }

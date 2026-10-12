@@ -1,6 +1,7 @@
 #pragma once
 
 #include <PlotModel.h>
+#include <PlotRecipes.h>
 
 #include <array>
 #include <cstddef>
@@ -59,8 +60,18 @@ namespace NarrativeEngine::PlotVerbs
         MarkOrMastermindSettlement, // the mark's settlement or the mastermind's
         ItemPool,                   // the curated Acquire pool
         DocumentPool,               // the pool's documents alone
-        BoundItem                   // whatever an earlier step of this plot obtained
+        BoundItem,                  // whatever an earlier step of this plot obtained
+        // What a craftsman the mastermind can send is able to make, one rule
+        // per craft. See PlotRecipes.
+        SmithRecipe,
+        ConcoctRecipe,
+        EnchantRecipe,
+        SetRecipe,
+        FletchRecipe
     };
+
+    // The craft a rule lists the recipes of, or none.
+    [[nodiscard]] std::optional<PlotRecipes::Craft> CraftOf(Rule rule) noexcept;
 
     struct Slot
     {
@@ -122,7 +133,7 @@ namespace NarrativeEngine::PlotVerbs
     // says what went wrong.
     inline constexpr std::string_view kConcededTemplate = "I gave up on my plan to {scheme}.";
 
-    inline constexpr std::array<Verb, 18> kVerbs{{
+    inline constexpr std::array<Verb, 23> kVerbs{{
         Verb{
             "watch",
             "Watch",
@@ -495,6 +506,106 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that they had run out of time before getting an audience with {authority}.",
             }},
         },
+        Verb{
+            "smith",
+            "Smith",
+            PlotModel::StepType::Craft,
+            {{Slot{"item", SlotKind::Thing, Rule::SmithRecipe, Awareness::Unset}}},
+            1,
+            false,
+            true,
+            {{
+                "{agent} smiths {item}.",
+                "{mastermind} asked me to smith {item} for them, so I set to work at the forge.",
+                "I asked {agent} to smith {item} for me, as part of my plan to {scheme}.",
+                "I decided to smith {item} myself, as part of my plan to {scheme}.",
+                "I smithed {item}, and it came out well.",
+                "I ruined the work on {item} at the forge.",
+                "I ran out of time before I could finish smithing {item}.",
+                "{agent} reported back that they had ruined the work on {item}.",
+                "{agent} reported back that they had run out of time before finishing {item}.",
+            }},
+        },
+        Verb{
+            "concoct",
+            "Concoct",
+            PlotModel::StepType::Craft,
+            {{Slot{"item", SlotKind::Thing, Rule::ConcoctRecipe, Awareness::Unset}}},
+            1,
+            false,
+            true,
+            {{
+                "{agent} concocts {item}.",
+                "{mastermind} asked me to concoct {item} for them, so I set to work.",
+                "I asked {agent} to concoct {item} for me, as part of my plan to {scheme}.",
+                "I decided to concoct {item} myself, as part of my plan to {scheme}.",
+                "I concocted {item}.",
+                "I spoiled the mixture while concocting {item}.",
+                "I ran out of time before I could finish concocting {item}.",
+                "{agent} reported back that they had spoiled the mixture for {item}.",
+                "{agent} reported back that they had run out of time before finishing {item}.",
+            }},
+        },
+        Verb{
+            "enchant",
+            "Enchant",
+            PlotModel::StepType::Craft,
+            {{Slot{"item", SlotKind::Thing, Rule::EnchantRecipe, Awareness::Unset}}},
+            1,
+            false,
+            true,
+            {{
+                "{agent} makes {item} at an arcane enchanter.",
+                "{mastermind} asked me to make {item} for them at an arcane enchanter, so I set to work.",
+                "I asked {agent} to make {item} for me at an arcane enchanter, as part of my plan to {scheme}.",
+                "I decided to make {item} at an arcane enchanter myself, as part of my plan to {scheme}.",
+                "I bound the enchantment and made {item}.",
+                "The enchantment slipped while I was making {item}, and the work was ruined.",
+                "I ran out of time before I could finish enchanting {item}.",
+                "{agent} reported back that the enchantment had slipped and ruined {item}.",
+                "{agent} reported back that they had run out of time before finishing {item}.",
+            }},
+        },
+        Verb{
+            "set",
+            "Set",
+            PlotModel::StepType::Craft,
+            {{Slot{"item", SlotKind::Thing, Rule::SetRecipe, Awareness::Unset}}},
+            1,
+            false,
+            true,
+            {{
+                "{agent} makes {item} at a jeweler's bench.",
+                "{mastermind} asked me to make {item} for them, so I set to work at my bench.",
+                "I asked {agent} to make {item} for me, as part of my plan to {scheme}.",
+                "I decided to make {item} myself, as part of my plan to {scheme}.",
+                "I made {item}, and it is fine work.",
+                "My hand slipped, and I spoiled the work on {item}.",
+                "I ran out of time before I could finish {item}.",
+                "{agent} reported back that they had spoiled the work on {item}.",
+                "{agent} reported back that they had run out of time before finishing {item}.",
+            }},
+        },
+        Verb{
+            "fletch",
+            "Fletch",
+            PlotModel::StepType::Craft,
+            {{Slot{"item", SlotKind::Thing, Rule::FletchRecipe, Awareness::Unset}}},
+            1,
+            false,
+            true,
+            {{
+                "{agent} fletches {item}.",
+                "{mastermind} asked me to fletch {item} for them, so I set to work.",
+                "I asked {agent} to fletch {item} for me, as part of my plan to {scheme}.",
+                "I decided to fletch {item} myself, as part of my plan to {scheme}.",
+                "I fletched {item}, true and straight.",
+                "I spoiled the work on {item}.",
+                "I ran out of time before I could finish fletching {item}.",
+                "{agent} reported back that they had spoiled the work on {item}.",
+                "{agent} reported back that they had run out of time before finishing {item}.",
+            }},
+        },
     }};
 
     // One verb that may be done just before another, to make it work: the
@@ -574,6 +685,11 @@ namespace NarrativeEngine::PlotVerbs
 
     // The verb with this id, or nullptr.
     [[nodiscard]] const Verb* Find(std::string_view id) noexcept;
+
+    // The craft a verb makes things by, or none: the craft of its recipe
+    // slot. A crafting verb is never a plot's finish, and its agent must be
+    // able to make the thing.
+    [[nodiscard]] std::optional<PlotRecipes::Craft> CraftOf(const Verb& verb) noexcept;
 
     // The snake_case name of a template, for the log and the suite.
     [[nodiscard]] std::string_view TemplateId(Template t) noexcept;

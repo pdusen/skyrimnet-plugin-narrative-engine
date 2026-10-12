@@ -264,6 +264,23 @@ namespace NarrativeEngine::PlotTick
             return chosen;
         }
 
+        // The recipe a crafting step follows: the one its craft has for the
+        // thing in its item slot. Null when the thing is no longer made by
+        // anything, which an uninstalled mod can do to a saved plan.
+        const PlotRecipes::Recipe* RecipeOf(const PlotModel::Step& step, PlotRecipes::Craft craft)
+        {
+            const auto* item = step.FindSlot("item");
+            if (item == nullptr) {
+                return nullptr;
+            }
+            for (const auto& recipe : PlotMenus::CurrentWorld().recipes) {
+                if (recipe.craft == craft && recipe.form == item->form) {
+                    return &recipe;
+                }
+            }
+            return nullptr;
+        }
+
         // Cast an agent and size the step.
         Dispatched DispatchStep(const PlotThread::Token& pt, PlotState& state, PlotModel::Plot& plot, double gameDay)
         {
@@ -271,6 +288,14 @@ namespace NarrativeEngine::PlotTick
             PlotModel::Step& step = plot.plan[plot.cursor];
             const auto* verb = PlotVerbs::Find(step.verb);
             const auto alive = PlotPopulation::AlivePredicate();
+
+            // A crafting step is made by somebody able to make it, and sized
+            // by what it is made of.
+            const auto craft = verb != nullptr ? PlotVerbs::CraftOf(*verb) : std::nullopt;
+            const PlotRecipes::Recipe* recipe = craft ? RecipeOf(step, *craft) : nullptr;
+            if (craft && recipe == nullptr) {
+                return Dispatched::Impossible;
+            }
 
             RE::FormID chosen = 0;
             int rung = 4;
@@ -300,6 +325,10 @@ namespace NarrativeEngine::PlotTick
                 // WHO MAY BE ASKED, by the ladder; WHICH of them, by decision.
                 // Anyone the step's own sentence names is excluded, so the
                 // mark and the recipient are never also the agent.
+                PlotCasting::Admit admit;
+                if (recipe != nullptr) {
+                    admit = [recipe](const PlotCasting::Member& m) { return PlotCasting::CanMake(m, *recipe); };
+                }
                 const auto cast = PlotCasting::EligibleAgents(population,
                                                               plot.mastermind,
                                                               PlotModel::Label(step),
@@ -308,13 +337,21 @@ namespace NarrativeEngine::PlotTick
                                                               alive,
                                                               step.target,
                                                               PlotPopulation::SeatedPredicate(),
-                                                              EarlierAgents(plot));
+                                                              EarlierAgents(plot),
+                                                              admit);
                 auto eligible = cast.shortlist;
-                if (eligible.empty() && (!alive || alive(plot.mastermind))) {
+                if (eligible.empty() && recipe == nullptr && (!alive || alive(plot.mastermind))) {
                     eligible.push_back(plot.mastermind);
                 }
                 if (eligible.empty()) {
-                    return Dispatched::Impossible;
+                    // Nobody free can make it. Somebody who can, busy today,
+                    // is worth waiting for; nobody at all is not.
+                    const bool busy = std::any_of(
+                        cast.considered.begin(), cast.considered.end(), [](const PlotCasting::Candidate& c) {
+                            return c.reject == PlotCasting::Reject::Occupied
+                                   || c.reject == PlotCasting::Reject::OnCooldown;
+                        });
+                    return recipe != nullptr && busy ? Dispatched::Wait : Dispatched::Impossible;
                 }
                 chosen = ChooseAgent(pt, population, plot, step, eligible);
                 considered = cast.considered.size();
@@ -338,8 +375,12 @@ namespace NarrativeEngine::PlotTick
             step.state = PlotModel::StepState::InProgress;
 
             const auto& cfg = Settings::Get();
-            const double travel = TravelDistanceNorm(actor, target);
-            const double importance = TargetImportance(target);
+            // Made at the crafter's own bench, so no trip; and as big a job as
+            // its ingredients make it, there being nobody it is done to.
+            const double travel = recipe != nullptr ? 0.0 : TravelDistanceNorm(actor, target);
+            const double importance = recipe != nullptr
+                                          ? PlotRecipes::Importance(recipe->ingredientValue, recipe->ingredientCount)
+                                          : TargetImportance(target);
 
             // Threshold first: the floor under the budget is a function of
             // it, so the deadline cannot be settled until the work is.
@@ -352,9 +393,11 @@ namespace NarrativeEngine::PlotTick
             step.sizingImportance = static_cast<float>(importance);
             step.sizingCompetence = actor != nullptr ? static_cast<float>(actor->skills.competence) : 0.5f;
             step.sizingSuitability =
-                actor != nullptr ? static_cast<float>(PlotResolution::Suitability(
-                                       step.type, actor->skills.speech, actor->skills.sneak, actor->skills.pickpocket))
-                                 : 0.5f;
+                actor == nullptr ? 0.5f
+                : recipe != nullptr
+                    ? static_cast<float>(PlotCasting::CraftSkill(*actor, recipe->craft))
+                    : static_cast<float>(PlotResolution::Suitability(
+                          step.type, actor->skills.speech, actor->skills.sneak, actor->skills.pickpocket));
 
             // The mastermind acting for themselves is already engaged in
             // this plot; engaging them again would overwrite the role on

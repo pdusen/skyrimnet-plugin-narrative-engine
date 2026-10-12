@@ -168,6 +168,19 @@ namespace NarrativeEngine::PlotCasting
         [[nodiscard]] const Member* Find(RE::FormID npc) const;
     };
 
+    // How practised a member is at a craft, 0 to 1: their skill in what the
+    // craft is worked with. Whether they practise it at all is Practises.
+    [[nodiscard]] double CraftSkill(const Member& member, PlotRecipes::Craft craft) noexcept;
+
+    // Whether a member could make this: they practise its craft, and their
+    // skill reaches what the recipe asks. The skill stands in for the perks
+    // a player would need, which no NPC has.
+    [[nodiscard]] bool CanMake(const Member& member, const PlotRecipes::Recipe& recipe) noexcept;
+
+    // Who a step may go to at all, on top of the ladder: a crafting step's
+    // agent must be able to make the thing. Empty admits everybody.
+    using Admit = std::function<bool(const Member&)>;
+
     // Why a candidate was passed over. Recorded for every rejected
     // candidate, because casting is where a simulation like this
     // silently degrades into "the same six NPCs do everything" and the
@@ -408,6 +421,12 @@ namespace NarrativeEngine::PlotCasting
     // `stepText` is the step's own sentence, and anyone it NAMES is
     // excluded, as is `subject`. `cooldownExempt` lifts the actor cooldown
     // -- never occupancy -- for the plot's own earlier agents.
+    //
+    // `admit` narrows every rung, and the mastermind with them: somebody it
+    // refuses is not on the ladder for this step, so a rung of people who
+    // cannot make the thing is passed over rather than stopped at, and the
+    // mastermind stands alone only if they could do it themselves. A
+    // shortlist can then come back empty.
     [[nodiscard]] Result EligibleAgents(const Population& population,
                                         RE::FormID mastermind,
                                         std::string_view stepText,
@@ -416,5 +435,6 @@ namespace NarrativeEngine::PlotCasting
                                         const AlivePredicate& alive,
                                         RE::FormID subject,
                                         const SeatedPredicate& seated,
-                                        const std::unordered_set<RE::FormID>& cooldownExempt);
+                                        const std::unordered_set<RE::FormID>& cooldownExempt,
+                                        const Admit& admit = {});
 } // namespace NarrativeEngine::PlotCasting

@@ -1775,7 +1775,7 @@ agent's own skill.
 
 ### Step 30 — Five crafting verbs
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1817,6 +1817,23 @@ does not try to make the same item again.
 - the casting suite asserts a crafting step's agents all practise the craft, and that the mastermind stands alone
   only if they can make the thing;
 - the resolution suite asserts the `craft` profile sizes like any other.
+
+Done. The five verbs join `PlotVerbs::kVerbs`, twenty-three in all, with the templates above. Each item slot carries
+one of five new rules, `SmithRecipe` to `FletchRecipe`, which `PlotVerbs::CraftOf` maps back to a craft.
+`PlotCasting::EligibleAgents` takes an `admit` filter, and dispatch passes `CanMake` for the step's recipe. 481 tests
+pass: new sections in the casting and candidate suites, and a new resolution suite; the verb suite's rules passed for
+all five unchanged.
+
+**There was no resolution suite.** Step sizing had never been tested on its own. The new suite is small, and covers
+only what the `craft` row adds: its sizing grows with the job, it round-trips through its id, and it is not held near
+the player.
+
+**Who the mastermind can reach ignores who is busy.** The candidate rule asks `QualifyAgent` with an empty occupancy
+table, so a smith off on another plot's errand still counts when the plan is laid. Dispatch is where busy matters,
+and there the step waits for them, as a delivery waits for whoever holds its item.
+
+**Only the item slot names what is made.** None of the five has a person slot, so the step has no target. A failed
+craft is abandoned against its item, by `TargetSlot` falling back to the verb's first slot.
 
 ### Step 31 — What is made, in a plan
 

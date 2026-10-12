@@ -619,6 +619,24 @@ namespace NarrativeEngine::PlotCasting
         return out;
     }
 
+    double CraftSkill(const Member& member, PlotRecipes::Craft craft) noexcept
+    {
+        switch (PlotRecipes::SkillOf(craft)) {
+        case RE::ActorValue::kAlchemy:
+            return member.skills.alchemy;
+        case RE::ActorValue::kEnchanting:
+            return member.skills.enchanting;
+        default:
+            return member.skills.smithing;
+        }
+    }
+
+    bool CanMake(const Member& member, const PlotRecipes::Recipe& recipe) noexcept
+    {
+        // Skills are cached 0 to 1 and recipes ask 0 to 100.
+        return member.Practises(recipe.craft) && CraftSkill(member, recipe.craft) * 100.0 + 1e-9 >= recipe.skill;
+    }
+
     Result EligibleAgents(const Population& population,
                           RE::FormID mastermind,
                           std::string_view stepText,
@@ -627,13 +645,15 @@ namespace NarrativeEngine::PlotCasting
                           const AlivePredicate& alive,
                           RE::FormID subject,
                           const SeatedPredicate& seated,
-                          const std::unordered_set<RE::FormID>& cooldownExempt)
+                          const std::unordered_set<RE::FormID>& cooldownExempt,
+                          const Admit& admit)
     {
         Result result;
-        if (population.Find(mastermind) == nullptr) {
+        const Member* boss = population.Find(mastermind);
+        if (boss == nullptr) {
             return result;
         }
-        const bool selfAvailable = !alive || alive(mastermind);
+        const bool selfAvailable = (!alive || alive(mastermind)) && (!admit || admit(*boss));
 
         // Walk the ladder rung by rung and stop at the first rung with
         // anyone available on it. Offering every rung at once would let a
@@ -643,6 +663,9 @@ namespace NarrativeEngine::PlotCasting
         for (int rung = 1; rung <= 3; ++rung) {
             std::vector<RE::FormID> available;
             for (const auto& member : population.members) {
+                if (admit && !admit(member)) {
+                    continue;
+                }
                 const auto qualified = QualifyAgent(
                     population, mastermind, member.npc, stepText, subject, occupancy, gameDay, alive, seated);
                 if (qualified.rung != rung) {

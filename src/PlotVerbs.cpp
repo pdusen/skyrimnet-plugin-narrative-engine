@@ -25,6 +25,34 @@ namespace NarrativeEngine::PlotVerbs
         return nullptr;
     }
 
+    std::optional<PlotRecipes::Craft> CraftOf(Rule rule) noexcept
+    {
+        switch (rule) {
+        case Rule::SmithRecipe:
+            return PlotRecipes::Craft::Smith;
+        case Rule::ConcoctRecipe:
+            return PlotRecipes::Craft::Concoct;
+        case Rule::EnchantRecipe:
+            return PlotRecipes::Craft::Enchant;
+        case Rule::SetRecipe:
+            return PlotRecipes::Craft::Set;
+        case Rule::FletchRecipe:
+            return PlotRecipes::Craft::Fletch;
+        default:
+            return std::nullopt;
+        }
+    }
+
+    std::optional<PlotRecipes::Craft> CraftOf(const Verb& verb) noexcept
+    {
+        for (std::size_t i = 0; i < verb.slotCount; ++i) {
+            if (const auto craft = CraftOf(verb.slots[i].rule)) {
+                return craft;
+            }
+        }
+        return std::nullopt;
+    }
+
     std::string_view TemplateId(Template t) noexcept
     {
         switch (t) {

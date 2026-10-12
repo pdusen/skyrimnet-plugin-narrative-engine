@@ -306,6 +306,118 @@ namespace NarrativeEngine::PlotCandidates
             const auto* mark = Filled(request, "mark");
             return mark != nullptr ? request.population.Find(mark->form) : nullptr;
         }
+
+        // Whether the mastermind could send this member on a step, or is
+        // them: the agent ladder, without regard to who is busy today. What
+        // somebody could be sent to make is a question about the plan, and a
+        // plan outlives today's errands.
+        bool Reaches(const Request& request, const PlotCasting::Member& member)
+        {
+            if (request.alive && !request.alive(member.npc)) {
+                return false;
+            }
+            if (member.npc == request.mastermind) {
+                return true;
+            }
+            static const PlotCasting::OccupancyTable kNobodyBusy;
+            const auto qualified = PlotCasting::QualifyAgent(
+                request.population, request.mastermind, member.npc, {}, 0, kNobodyBusy, 0.0, request.alive, {});
+            return qualified.Eligible();
+        }
+
+        // Every recipe of `craft` somebody the mastermind can reach is
+        // skilled enough to make, in the world's order.
+        std::vector<const PlotRecipes::Recipe*> Makeable(const Request& request, PlotRecipes::Craft craft)
+        {
+            double best = -1.0;
+            for (const auto& member : request.population.members) {
+                if (member.Practises(craft) && Reaches(request, member)) {
+                    best = std::max(best, PlotCasting::CraftSkill(member, craft) * 100.0);
+                }
+            }
+            std::vector<const PlotRecipes::Recipe*> out;
+            if (best < 0.0) {
+                return out;
+            }
+            for (const auto& recipe : request.world.recipes) {
+                if (recipe.craft == craft && recipe.skill <= best + 1e-9) {
+                    out.push_back(&recipe);
+                }
+            }
+            return out;
+        }
+
+        std::string Lowered(std::string_view text)
+        {
+            std::string out(text);
+            std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            });
+            return out;
+        }
+
+        // Whether `text` says this thing, its article aside and in any case:
+        // a finish that brings "a gold diamond necklace" names "a Gold
+        // Diamond Necklace".
+        bool Says(std::string_view text, std::string_view displayName)
+        {
+            for (const std::string_view article : {"a sheaf of ", "an ", "a "}) {
+                if (displayName.starts_with(article)) {
+                    displayName.remove_prefix(article.size());
+                    break;
+                }
+            }
+            return !displayName.empty() && Lowered(text).find(Lowered(displayName)) != std::string::npos;
+        }
+
+        // Up to `count` of `recipes`, evenly spaced from the cheapest to the
+        // dearest, so a cut list still runs from an iron dagger to Daedric
+        // armor rather than stopping wherever the game's order does.
+        std::vector<const PlotRecipes::Recipe*> Spread(std::vector<const PlotRecipes::Recipe*> recipes,
+                                                       std::size_t count)
+        {
+            std::stable_sort(recipes.begin(), recipes.end(), [](const auto* a, const auto* b) {
+                return a->ingredientValue < b->ingredientValue;
+            });
+            if (recipes.size() <= count) {
+                return recipes;
+            }
+            std::vector<const PlotRecipes::Recipe*> out;
+            if (count == 0) {
+                return out;
+            }
+            if (count == 1) {
+                out.push_back(recipes[recipes.size() / 2]);
+                return out;
+            }
+            for (std::size_t i = 0; i < count; ++i) {
+                out.push_back(recipes[i * (recipes.size() - 1) / (count - 1)]);
+            }
+            return out;
+        }
+
+        // A list of made things: the ones `naming` says first, then a spread
+        // of the rest.
+        std::vector<Candidate> MadeThings(const PlotVerbs::Slot& slot,
+                                          const Request& request,
+                                          const std::vector<const PlotRecipes::Recipe*>& recipes,
+                                          std::size_t cap)
+        {
+            std::vector<const PlotRecipes::Recipe*> named;
+            std::vector<const PlotRecipes::Recipe*> rest;
+            for (const auto* recipe : recipes) {
+                (Says(request.naming, recipe->displayName) ? named : rest).push_back(recipe);
+            }
+            std::vector<Candidate> out;
+            for (const auto* recipe : named) {
+                out.push_back({{}, {std::string{slot.name}, recipe->form, recipe->displayName}, recipe->displayName});
+            }
+            const auto room = cap > out.size() ? cap - out.size() : 0;
+            for (const auto* recipe : Spread(std::move(rest), room)) {
+                out.push_back({{}, {std::string{slot.name}, recipe->form, recipe->displayName}, recipe->displayName});
+            }
+            return Keyed(std::move(out), cap);
+        }
     } // namespace
 
     std::string Describe(const Request& request, const PlotCasting::Member& member)
@@ -522,6 +634,13 @@ namespace NarrativeEngine::PlotCandidates
             }
             return out;
         }
+
+        case Rule::SmithRecipe:
+        case Rule::ConcoctRecipe:
+        case Rule::EnchantRecipe:
+        case Rule::SetRecipe:
+        case Rule::FletchRecipe:
+            return MadeThings(slot, request, Makeable(request, *PlotVerbs::CraftOf(slot.rule)), limits.things);
         }
         return {};
     }

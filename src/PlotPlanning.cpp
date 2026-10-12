@@ -109,7 +109,9 @@ namespace NarrativeEngine::PlotPlanning
                     return verb.slots[i].name;
                 }
             }
-            return {};
+            // Nobody it is done to: a crafting step is about the thing it
+            // makes, and giving up on one is giving up on making that.
+            return verb.slotCount > 0 ? verb.slots[0].name : std::string_view{};
         }
 
         // Everybody a step names in a person slot, other than its
@@ -584,6 +586,11 @@ namespace NarrativeEngine::PlotPlanning
                 nlohmann::json options = nlohmann::json::array();
                 for (const auto& verb : PlotVerbs::kVerbs) {
                     if (HasItemSlot(verb) && input_.maxSteps < kPlanFloor) {
+                        continue;
+                    }
+                    // Making a thing and keeping it is an errand, and nothing
+                    // prepares one: what is made is for a later step.
+                    if (PlotVerbs::CraftOf(verb)) {
                         continue;
                     }
                     if (Fillable(verb, {}, {}, 0)) {

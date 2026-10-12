@@ -660,3 +660,103 @@ TEST_CASE("PlotPopulation leaves children out", "[PlotPopulation][engine]")
         }
     }
 }
+
+TEST_CASE("PlotCandidates craft rules", "[PlotCandidates][engine]")
+{
+    namespace PlotRecipes = NarrativeEngine::PlotRecipes;
+    Fixture f;
+
+    constexpr RE::FormID kDagger = 0x0000E001;
+    constexpr RE::FormID kSword = 0x0000E002;
+    constexpr RE::FormID kDaedric = 0x0000E003;
+    constexpr RE::FormID kPotion = 0x0000E004;
+    const auto recipe = [](RE::FormID form, std::string name, PlotRecipes::Craft craft, int skill, float value) {
+        PlotRecipes::Recipe r;
+        r.form = form;
+        r.displayName = std::move(name);
+        r.craft = craft;
+        r.skill = skill;
+        r.ingredientValue = value;
+        r.ingredientCount = 2;
+        return r;
+    };
+    f.world.recipes = {recipe(kDagger, "an Iron Dagger", PlotRecipes::Craft::Smith, 0, 10.0f),
+                       recipe(kSword, "a Steel Sword", PlotRecipes::Craft::Smith, 30, 30.0f),
+                       recipe(kDaedric, "a Daedric Sword", PlotRecipes::Craft::Smith, 90, 900.0f),
+                       recipe(kPotion, "a Potion of Healing", PlotRecipes::Craft::Concoct, 0, 5.0f)};
+
+    const auto crafts = [&f](RE::FormID npc, PlotRecipes::Craft craft, double skill) {
+        for (auto& m : f.population.members) {
+            if (m.npc == npc) {
+                m.crafts |= static_cast<std::uint8_t>(1U << static_cast<unsigned>(craft));
+                m.skills.smithing = skill / 100.0;
+                m.skills.alchemy = skill / 100.0;
+            }
+        }
+    };
+
+    SECTION("when the mastermind's friend is a smith, and a better one lives where they cannot reach")
+    {
+        crafts(kFriend, PlotRecipes::Craft::Smith, 40);
+        crafts(kNeighbour, PlotRecipes::Craft::Smith, 100);
+        const auto list = PlotCandidates::Build(SlotOf("smith", "item"), f.Request());
+
+        SECTION("should list what the friend is skilled enough to make, and nothing beyond it")
+        {
+            REQUIRE(Forms(list) == std::vector<RE::FormID>{kDagger, kSword});
+            REQUIRE(list[1].line == "a Steel Sword");
+        }
+
+        SECTION("should list nothing of another craft")
+        {
+            REQUIRE_FALSE(Has(list, kPotion));
+        }
+    }
+
+    SECTION("when the scheme names something that can be made")
+    {
+        crafts(kFriend, PlotRecipes::Craft::Smith, 40);
+        const std::string scheme = "Bring a steel sword to the Jarl";
+        auto request = f.Request();
+        request.naming = scheme;
+
+        SECTION("should offer it first")
+        {
+            REQUIRE(Forms(PlotCandidates::Build(SlotOf("smith", "item"), request)).front() == kSword);
+        }
+    }
+
+    SECTION("when the mastermind practises the craft themselves")
+    {
+        crafts(kBoss, PlotRecipes::Craft::Concoct, 15);
+
+        SECTION("should list what they can make")
+        {
+            REQUIRE(Forms(PlotCandidates::Build(SlotOf("concoct", "item"), f.Request()))
+                    == std::vector<RE::FormID>{kPotion});
+        }
+    }
+
+    SECTION("when nobody the mastermind can reach practises the craft")
+    {
+        crafts(kStranger, PlotRecipes::Craft::Smith, 100);
+
+        SECTION("should list nothing, which keeps the verb from being offered")
+        {
+            REQUIRE(PlotCandidates::Build(SlotOf("smith", "item"), f.Request()).empty());
+        }
+    }
+
+    SECTION("when there are more things than the list holds")
+    {
+        crafts(kFriend, PlotRecipes::Craft::Smith, 100);
+        PlotCandidates::Limits limits;
+        limits.things = 2;
+        const auto list = PlotCandidates::Build(SlotOf("smith", "item"), f.Request(), limits);
+
+        SECTION("should spread what it keeps from the cheapest to the dearest")
+        {
+            REQUIRE(Forms(list) == std::vector<RE::FormID>{kDagger, kDaedric});
+        }
+    }
+}
