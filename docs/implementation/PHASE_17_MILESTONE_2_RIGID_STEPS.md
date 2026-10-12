@@ -2052,7 +2052,7 @@ forgery's subject are both held now; a fresh plot naming her by the shared word 
 
 ### Step 35 — Probe: picking a sentence's nouns out of its own words
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]** rebuilds the **Probe decisions** button around the question below.
 **[USER]** presses it and records the results here.
@@ -2102,6 +2102,33 @@ requests in all. The second probe's rounds are replaced; their results are recor
 Choices count the runs and "(not named in the sentence)". `follow` is the longest a round may be, so its 188 choices
 also test how long a list the decision API takes. The template asks for all of the words that name the answer and no
 others, and to choose not named when the sentence does not say.
+
+**First run (2026-10-12), 46 requests: 44 right, 1 near, 1 wrong.**
+
+| Split                                         | Right | Near | Wrong |
+| --------------------------------------------- | ----- | ---- | ----- |
+| Questions the sentence answers (44)           | 43    | 1    | 0     |
+| The question it does not answer (2)           | 1     | 0    | 1     |
+| Runs as built (23)                            | 23    | 0    | 0     |
+| Runs reversed (23)                            | 21    | 1    | 1     |
+
+The requests averaged 268 ms. So:
+
+- **The model picks out what a sentence names.** Every question whose answer was written there came back right or
+  near: buyers, sellers, things, places, recipients, accusers, hyphenated and three-word names, and no more words than
+  named them -- "Alan Grimes", not "from Alan Grimes".
+- **A list's length and order do not matter.** All six questions on the 188-choice sentence were right, and right
+  answers were chosen from first place, last place, #169 and #151 alike. The decision API takes at least 188 choices,
+  at the same cost as eight.
+- **It cannot tell that a sentence leaves a role out.** Asked whom "Expose a merchant's ledger to Jarl Elisif" is
+  against, it chose "not named" at 51% one way and Jarl Elisif the other, giving "not named" 31%: the same mistake
+  Step 34 made, pulling the one person named into the empty role.
+- **The near was a possessive:** "Hulda's belongings" for "Hulda's", which matching against names would read as Hulda.
+
+Reading a finish's roles out of its prose would be reliable for what it names and would not notice what it leaves
+out, which is the case it was for, at the cost of a decision per role. Steps 36–37 go ahead as written: the scheme
+call names each role itself, a missing one is a missing key the parse refuses, and no decision is spent. Picking runs
+out of a sentence stays available for reading text a model wrote freely.
 
 ### Step 36 — The scheme call names each role of its finish
 
