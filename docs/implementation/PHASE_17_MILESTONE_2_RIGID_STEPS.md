@@ -5,9 +5,10 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan backwards from
-> the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, and Steps 17–19 keep the player out,
-> route denunciations by authority and give the scheme back its purpose -- each added after an attempt at Step 9.
+> **Doc status: Steps 1–8 and 10–19 complete; Step 20 added after Step 9's fourth attempt.** Steps 10–12 plan
+> backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
+> player out, route denunciations by authority and give the scheme back its purpose, and Step 20 makes adapting find
+> another way -- each added after an attempt at Step 9.
 > Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its Steps 20–22 still apply and follow it.
 
 ---
@@ -137,6 +138,10 @@ A failed step asks one decision question: `retry` (the same step, a different ag
 `substitute` (a different verb at this position, then the normal slot fill), or `concede`. The cap of
 `iPlotMaxAdaptations` stays. There is no concession sentence: conceding is a choice, and the mastermind's
 memory of it is the shared `mastermind_conceded` template.
+
+**Revised by Step 20: adapting means another way.** A failure says the route it was on no longer works, so `retry`
+is gone. The failed step, and the planned steps it was there to serve, are abandoned for the rest of the plot, and
+the re-plan has to reach the same finish without them.
 
 ### Memories: templates, written at dispatch and resolution
 
@@ -1232,6 +1237,36 @@ purpose again; Step 13's "as part of my plan to denounce Erikur to Elisif" said 
 
 **A finish naming the player is refused like everything else.** Nirya's "denounce Faralda to Varian" would now be
 a finish, and Step 17 refuses it there.
+
+**Fourth attempt at Step 9 (2026-10-11): schemes with purposes, plans that end where they say.** Five plots, each
+scheme a purpose ("create a fake debt for Thongvor Silver-Blood", "discredit Viola Giordano's amateur investigation
+into the Butcher"), each plan ending in its finish, two to four steps. One thing was wrong: Thonar Silver-Blood's watch
+of Reburrus Quintilius was caught, and the adaptation answered `retry`, sending Betrid Silver-Blood to watch Reburrus
+again. A failure means the route it was on does not work; trying the same step with somebody else is not adapting.
+
+### Step 20 — Adapting finds another way
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+A failure abandons a route, and the re-plan must find another one to the same finish:
+
+1. **What is abandoned.** The failed step, and every later planned step it served -- the theft a failed watch was
+   preparing, and what that theft supplied, short of the finish itself. A step serves another when it is one of its
+   preparations with the bound person the same (Step 11's table), or when it gets the item the other uses. Each is
+   recorded on the plot as its verb and the person it acts on, and stays abandoned for the rest of the plot, across
+   every later adaptation. The plot's co-save record goes to version 11.
+2. **What the re-plan may not do.** No step of an abandoned verb against its abandoned person, anywhere in the plan
+   -- not as the goal, a preparation, or the step that gets an item. A failed theft from Reburrus leaves the letter to
+   be got from somebody else, or bought. When the finish itself failed, its own verb against its own person is
+   abandoned, so the plot has to end some other way.
+3. **What the adaptation question offers.** Another way, or giving up. `retry`, `CanRetry`, `Retried` and
+   `FailedAgents` go: no step can recur, so there is nobody to keep a retry away from.
+
+**Verification:** a suite asserts a failed preparation abandons itself and the step it prepared but not the finish
+or anything unrelated; a failed finish abandons itself; a re-plan never offers an abandoned step as goal, preparation
+or supplier; the adaptation question offers no retry; and the abandoned routes survive the co-save.
 
 ---
 
