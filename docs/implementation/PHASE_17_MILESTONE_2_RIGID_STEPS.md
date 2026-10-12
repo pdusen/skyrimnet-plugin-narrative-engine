@@ -2540,6 +2540,22 @@ Done. 490 tests pass, with new sections in the resolution and co-save suites; th
 and once with mishaps switched off so that only the eased work counts. The rise with preparations must be larger in
 the first. That pins down what this step is for: before it, the two rises were the same.
 
+**Retuned after Step 9's tenth attempt: harder steps, a lower target.** That run's plots succeeded eight times to one,
+and 37 of 40 steps did. Preparing to 85% stops only once a step is nearly certain, and at a mishap chance of 0.012 an
+unprepared step started near 80%, leaving preparation little to do. The defaults are now
+`fPlotMishapChanceBase=0.02` and `fPlotPlanOdds=0.75`. Measured with an ordinary agent against somebody of middling
+standing, with no, one, two and three preparations:
+
+| Kind of step | Before (0.012) | Now (0.02)       |
+| ------------ | -------------- | ---------------- |
+| Theft        | 76 / 83 / 89 / 93% | 64 / 74 / 82 / 88% |
+| Win over     | 74 / 82 / 88 / 92% | 60 / 71 / 81 / 87% |
+| Denounce     | 72 / 80 / 87 / 91% | 56 / 69 / 78 / 85% |
+| Watch        | 82 / 88 / 92 / 95% | 72 / 81 / 87 / 91% |
+
+A finish now succeeds about three times in four. The steps that prepare it, which are not themselves prepared, fail
+more often too, so adaptation does more of the work.
+
 ---
 
 ## Open questions

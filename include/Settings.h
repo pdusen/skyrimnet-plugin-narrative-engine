@@ -1144,7 +1144,7 @@ namespace NarrativeEngine::Settings
         // The odds, 0 to 1, a plan prepares each preparable step to -- the
         // goal and what gets its items -- before it is done. Higher makes
         // longer plans; 0 prepares only what a lone goal needs.
-        float plotPlanOdds = 0.85f;
+        float plotPlanOdds = 0.75f;
 
         // The caught-in-the-act roll. Typed failure is load-bearing --
         // it decides whether the target gets a memory and whether the
@@ -1175,7 +1175,12 @@ namespace NarrativeEngine::Settings
         // describing the model the moment those budgets changed: catches
         // went from 12% of resolutions to 23% with no change to this
         // number at all.
-        float plotMishapChanceBase = 0.012f;
+        //
+        // Raised to 0.02 after Step 44, when preparations began easing it:
+        // at 0.012 an unprepared step already succeeded about four times in
+        // five, preparing to 85% made nearly every plot succeed, and
+        // preparation had little ground to make up.
+        float plotMishapChanceBase = 0.02f;
 
         // Seeds the plot RNG stream. 0 means nondeterministic; any other
         // value makes a run reproducible, which is what the offline

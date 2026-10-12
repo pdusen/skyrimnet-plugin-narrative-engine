@@ -121,7 +121,7 @@ namespace NarrativeEngine::PlotPlanning
         // step planning may prepare must reach before planning stops. Below
         // it, the step is prepared further while anything can prepare it.
         PlotResolution::Tuning tuning;
-        double targetOdds = 0.85;
+        double targetOdds = 0.75;
     };
 
     struct Outcome
