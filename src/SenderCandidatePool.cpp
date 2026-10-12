@@ -4,11 +4,14 @@
 #include <EngineUtils.h>
 #include <LLMTextSanitizer.h>
 #include <logger.h>
+#include <SenderEditorID.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
 
 #include <nlohmann/json.hpp>
+
+#include <Windows.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -263,13 +266,24 @@ namespace NarrativeEngine::SenderCandidatePool
                 // CountViable path that IsAvailable uses to decide
                 // whether the beat has candidates at all.
                 {
-                    std::string_view editorID;
+                    SenderEditorID editorID;
                     if (auto* base = actor->GetActorBase()) {
-                        if (const char* edid = base->GetFormEditorID(); edid && *edid) {
-                            editorID = edid;
+                        const char* nativeID = base->GetFormEditorID();
+                        EditorIDLookup lookup = nullptr;
+                        if (!nativeID || !*nativeID) {
+                            // The engine discards NPC EditorIDs; powerofthree's
+                            // Tweaks keeps them in its own cache. The export is
+                            // resolved on every check rather than once, so a
+                            // check that ran before Tweaks loaded cannot switch
+                            // the fallback off for the rest of the session.
+                            if (const auto tweaks = ::GetModuleHandleW(L"po3_Tweaks.dll")) {
+                                lookup = reinterpret_cast<EditorIDLookup>(
+                                    reinterpret_cast<void*>(::GetProcAddress(tweaks, "GetFormEditorID")));
+                            }
                         }
+                        editorID = ResolveSenderEditorID(nativeID, base->GetFormID(), lookup);
                     }
-                    const auto match = Settings::IsSenderBlacklisted(editorID, name);
+                    const auto match = Settings::IsSenderBlacklisted(editorID.value, name);
                     if (match != Settings::SenderBlacklistMatch::None) {
                         const char* arm =
                             (match == Settings::SenderBlacklistMatch::EditorID) ? "editor-id" : "display-name";
@@ -279,10 +293,11 @@ namespace NarrativeEngine::SenderCandidatePool
                         }
                         if (debug) {
                             logger::debug("SenderCandidatePool: skipping '{}' (0x{:X}) — "
-                                          "blacklisted via {}",
+                                          "blacklisted via {} (EditorID source: {})",
                                           name,
                                           formId,
-                                          arm);
+                                          arm,
+                                          editorID.source);
                         }
                         continue;
                     }

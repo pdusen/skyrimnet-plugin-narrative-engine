@@ -2,7 +2,9 @@
 
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
+#include <FakePo3Tweaks.h>
 #include <FakeSkyrimNet.h>
+#include <SenderEditorID.h>
 #include <SkyrimNetAPI.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -104,6 +106,64 @@ namespace
     bool Contains(const std::vector<Pool::Candidate>& pool, std::uint32_t formId)
     {
         return std::any_of(pool.begin(), pool.end(), [&](const Pool::Candidate& c) { return c.formId == formId; });
+    }
+
+    using NarrativeEngine::Testing::FakePo3TweaksState;
+    using NarrativeEngine::Testing::FakePo3TweaksStateFunc;
+    using NarrativeEngine::Testing::kFakePo3TweaksStateExport;
+
+    // Loads the stand-in po3_Tweaks.dll for one section and unloads it after.
+    // The pool finds Tweaks by module name, so a copy left loaded would answer
+    // every later case, and the "Tweaks is not installed" case could not exist.
+    class LoadedPo3Tweaks
+    {
+    public:
+        LoadedPo3Tweaks() : module_(::LoadLibraryW(L"po3_Tweaks.dll"))
+        {
+            REQUIRE(module_ != nullptr);
+            auto* accessor = reinterpret_cast<FakePo3TweaksStateFunc>(
+                reinterpret_cast<void*>(::GetProcAddress(module_, kFakePo3TweaksStateExport)));
+            REQUIRE(accessor != nullptr);
+            state_ = accessor();
+            REQUIRE(state_ != nullptr);
+            state_->Reset();
+        }
+
+        ~LoadedPo3Tweaks()
+        {
+            ::FreeLibrary(module_);
+        }
+
+        LoadedPo3Tweaks(const LoadedPo3Tweaks&) = delete;
+        LoadedPo3Tweaks& operator=(const LoadedPo3Tweaks&) = delete;
+
+        FakePo3TweaksState& State() const
+        {
+            return *state_;
+        }
+
+    private:
+        HMODULE module_;
+        FakePo3TweaksState* state_ = nullptr;
+    };
+
+    // Lookup stand-ins for the resolution-order cases, which need no DLL: the
+    // resolver takes the export as a plain function pointer.
+    int g_cacheLookups = 0;
+    std::uint32_t g_lastCacheLookup = 0;
+
+    const char* CacheHoldingTheCourier(std::uint32_t formID)
+    {
+        ++g_cacheLookups;
+        g_lastCacheLookup = formID;
+        return formID == kCourierBase ? "WICourierNPC" : nullptr;
+    }
+
+    const char* CacheAnsweringEmpty(std::uint32_t formID)
+    {
+        ++g_cacheLookups;
+        g_lastCacheLookup = formID;
+        return "";
     }
 } // namespace
 
@@ -236,6 +296,88 @@ TEST_CASE("SenderCandidatePool::Build walks for viability", "[SenderCandidatePoo
         SECTION("should keep them")
         {
             REQUIRE(Pool::Build(opts).size() == 1);
+        }
+    }
+}
+
+TEST_CASE("SenderCandidatePool::ResolveSenderEditorID", "[SenderCandidatePool][SenderEditorID][engine]")
+{
+    // The order the blacklist's EditorID is looked for in. The engine's own
+    // answer is preferred whenever it has one; powerofthree's Tweaks is asked
+    // only when the engine discarded it, and only for the base form.
+    g_cacheLookups = 0;
+    g_lastCacheLookup = 0;
+
+    SECTION("when the engine still has the EditorID")
+    {
+        const auto resolved = Pool::ResolveSenderEditorID("WICourierNPC", kCourierBase, CacheHoldingTheCourier);
+
+        SECTION("should use it")
+        {
+            REQUIRE(resolved.value == "WICourierNPC");
+            REQUIRE(std::string_view{resolved.source} == "native");
+        }
+
+        SECTION("should never ask the cache")
+        {
+            REQUIRE(g_cacheLookups == 0);
+        }
+    }
+
+    SECTION("when the engine's EditorID is empty")
+    {
+        const auto resolved = Pool::ResolveSenderEditorID("", kCourierBase, CacheHoldingTheCourier);
+
+        SECTION("should take the one the cache holds")
+        {
+            REQUIRE(resolved.value == "WICourierNPC");
+            REQUIRE(std::string_view{resolved.source} == "po3-cache");
+        }
+
+        SECTION("should ask the cache for the base form it was given")
+        {
+            REQUIRE(g_cacheLookups == 1);
+            REQUIRE(g_lastCacheLookup == kCourierBase);
+        }
+    }
+
+    SECTION("when the engine's EditorID is null")
+    {
+        SECTION("should take the one the cache holds")
+        {
+            const auto resolved = Pool::ResolveSenderEditorID(nullptr, kCourierBase, CacheHoldingTheCourier);
+            REQUIRE(resolved.value == "WICourierNPC");
+            REQUIRE(std::string_view{resolved.source} == "po3-cache");
+        }
+    }
+
+    SECTION("when the cache never stored the form")
+    {
+        SECTION("should leave the EditorID unresolved")
+        {
+            const auto resolved = Pool::ResolveSenderEditorID("", kYsolda, CacheHoldingTheCourier);
+            REQUIRE(resolved.value.empty());
+            REQUIRE(std::string_view{resolved.source} == "unresolved");
+        }
+    }
+
+    SECTION("when the cache answers with an empty string")
+    {
+        SECTION("should leave the EditorID unresolved")
+        {
+            const auto resolved = Pool::ResolveSenderEditorID("", kCourierBase, CacheAnsweringEmpty);
+            REQUIRE(resolved.value.empty());
+            REQUIRE(std::string_view{resolved.source} == "unresolved");
+        }
+    }
+
+    SECTION("when there is no cache to ask")
+    {
+        SECTION("should leave the EditorID unresolved")
+        {
+            const auto resolved = Pool::ResolveSenderEditorID("", kCourierBase, nullptr);
+            REQUIRE(resolved.value.empty());
+            REQUIRE(std::string_view{resolved.source} == "unresolved");
         }
     }
 }
@@ -819,6 +961,99 @@ TEST_CASE("SenderCandidatePool::Build honours the sender blacklist", "[SenderCan
             // candidate it may not use reports itself available, spends a
             // compose LLM call, and then has nobody to send.
             REQUIRE(Pool::CountViable(nullptr, 2) == 1);
+        }
+    }
+}
+
+TEST_CASE("SenderCandidatePool::Build reads EditorIDs powerofthree's Tweaks retained",
+          "[SenderCandidatePool][SenderEditorID][engine]")
+{
+    // The install the EditorID arm is documented for: powerofthree's Tweaks is
+    // present, and the engine's own getter is still empty for every NPC,
+    // because Tweaks keeps NPC EditorIDs in its own cache rather than giving
+    // them back to the engine. The courier's base form is deliberately left
+    // without an engine-side EditorID here, so a match can only come from the
+    // cache, through the same GetModuleHandle lookup the game takes.
+    EngineMock engine;
+    auto& fake = FakeState();
+    REQUIRE(SkyrimNet::Initialize());
+    fake.Reset();
+
+    auto* courier = engine.AddActor(kCourierRef);
+    auto* courierBase = engine.AddNPC(kCourierBase, "Courier");
+    engine.SetActorBase(courier, courierBase);
+    (void)engine.AddActor(kYsolda);
+
+    SetJson(fake.engagementJson,
+            "[" + EngagementRow(kYsolda, "Ysolda", 12.5, 100.0) + "," + EngagementRow(kCourierRef, "Courier", 9.0, 90.0)
+                + "]");
+    SetJson(fake.memoriesJson, "[" + MemoryRow("She spoke of the mammoth tusk.", 0.8, 50.0) + "]");
+
+    const ConfiguredSettings settings{"[General]\nbDebugMode=0\n[Beats]\nsBlacklistedSenders=WICourierNPC\n"};
+
+    SECTION("when Tweaks holds the courier's EditorID")
+    {
+        const LoadedPo3Tweaks tweaks;
+        tweaks.State().Add(kCourierBase, "WICourierNPC");
+
+        SECTION("should drop the courier and keep the rest")
+        {
+            // The row calls the courier "Courier", so this cannot be the name
+            // arm firing; before the cache was read, the courier stayed in.
+            const auto pool = Pool::Build(DefaultOptions());
+            REQUIRE(pool.size() == 1);
+            REQUIRE(Contains(pool, kYsolda));
+        }
+
+        SECTION("should ask Tweaks for the base form, not the placed reference")
+        {
+            // The cache is keyed by the record that carries the EditorID. The
+            // reference has none, so asking with its FormID finds nothing.
+            (void)Pool::Build(DefaultOptions());
+            REQUIRE(tweaks.State().AskedFor(kCourierBase));
+            REQUIRE_FALSE(tweaks.State().AskedFor(kCourierRef));
+        }
+
+        SECTION("should not count the courier for availability either")
+        {
+            REQUIRE(Pool::CountViable(nullptr, 2) == 1);
+        }
+    }
+
+    SECTION("when Tweaks never stored the courier's EditorID")
+    {
+        const LoadedPo3Tweaks tweaks;
+
+        SECTION("should keep the courier")
+        {
+            REQUIRE(Pool::Build(DefaultOptions()).size() == 2);
+        }
+    }
+
+    SECTION("when Tweaks is not loaded")
+    {
+        SECTION("should keep the courier, as there is nowhere left to find the EditorID")
+        {
+            // Without Tweaks the documented remedy is the display name; the
+            // EditorID entry degrades to matching nobody rather than failing.
+            REQUIRE(::GetModuleHandleW(L"po3_Tweaks.dll") == nullptr);
+            REQUIRE(Pool::Build(DefaultOptions()).size() == 2);
+        }
+    }
+
+    SECTION("when the engine still has the courier's EditorID")
+    {
+        const LoadedPo3Tweaks tweaks;
+        engine.SetEditorIDOf(courierBase, "WICourierNPC");
+
+        SECTION("should match it without asking Tweaks")
+        {
+            const auto pool = Pool::Build(DefaultOptions());
+            REQUIRE(pool.size() == 1);
+            REQUIRE(Contains(pool, kYsolda));
+            // Only the courier is pinned here: whether another candidate's
+            // base needed the cache depends on fixtures this case does not own.
+            REQUIRE_FALSE(tweaks.State().AskedFor(kCourierBase));
         }
     }
 }

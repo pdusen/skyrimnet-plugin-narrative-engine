@@ -360,11 +360,13 @@ namespace NarrativeEngine::Settings
         // form's EditorID or the candidate's display name, so the same
         // list works with and without an EditorID-recovery mod
         // installed — TESNPC::GetFormEditorID() is empty at runtime
-        // without one, and on such an install every match comes from
-        // the name arm. EditorID is the precise identifier and the one
-        // to prefer where it resolves; names are ambiguous across
-        // duplicates, but a collision here fails safe by excluding one
-        // NPC too many rather than letting a blacklisted one through.
+        // either way, so the EditorID comes from powerofthree's
+        // Tweaks' own cache (see SenderEditorID.h), and without
+        // Tweaks every match comes from the name arm. EditorID is the
+        // precise identifier and the one to prefer where it resolves;
+        // names are ambiguous across duplicates, but a collision here
+        // fails safe by excluding one NPC too many rather than letting
+        // a blacklisted one through.
         //
         // The parsed set lives in Settings.cpp; membership is queried
         // via Settings::IsSenderBlacklisted. Enforced in
