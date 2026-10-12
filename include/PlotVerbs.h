@@ -53,7 +53,7 @@ namespace NarrativeEngine::PlotVerbs
         NotHostileKnown,            // known to the mastermind, and not their enemy
         TradesForLiving,            // somebody who trades or works for a living
         RosteredStanding,           // standing in a rostered faction
-        AuthorityOverMark,          // the mark's superiors in their organisation, else their hold's court
+        AuthorityOverMark,          // the mark's (else the mastermind's) superiors, else the hold's court
         AwareOfEarlierStep,         // somebody an earlier step reached, else known to the mastermind
         MarkCommunity,              // a settlement where the mark, or someone close to them, lives
         MarkOrMastermindSettlement, // the mark's settlement or the mastermind's
@@ -122,7 +122,7 @@ namespace NarrativeEngine::PlotVerbs
     // says what went wrong.
     inline constexpr std::string_view kConcededTemplate = "I gave up on my plan to {scheme}.";
 
-    inline constexpr std::array<Verb, 15> kVerbs{{
+    inline constexpr std::array<Verb, 18> kVerbs{{
         Verb{
             "watch",
             "Watch",
@@ -434,6 +434,67 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that they had run out of time before finding proof against {mark}.",
             }},
         },
+        Verb{
+            "blackmail",
+            "Blackmail",
+            PlotModel::StepType::Recruit,
+            {{Slot{"mark", SlotKind::Person, Rule::KnownToMastermind, Awareness::Contact}}},
+            1,
+            false,
+            false,
+            {{
+                "{agent} blackmails {mark} into serving {mastermind}.",
+                "{mastermind} asked me to blackmail {mark} into serving them, so I set off to do it.",
+                "I sent {agent} to blackmail {mark} into serving me, as part of my plan to {scheme}.",
+                "I decided to blackmail {mark} into serving me myself, as part of my plan to {scheme}.",
+                "I blackmailed {mark}, and they gave in.",
+                "I tried to blackmail {mark}, but they called my bluff.",
+                "I ran out of time before I could put the squeeze on {mark}.",
+                "{agent} reported back that {mark} had called their bluff.",
+                "{agent} reported back that they had run out of time before blackmailing {mark}.",
+            }},
+        },
+        Verb{
+            "destroy",
+            "Destroy",
+            PlotModel::StepType::Sabotage,
+            {{Slot{"item", SlotKind::Thing, Rule::ItemPool, Awareness::Unset},
+              Slot{"mark", SlotKind::Person, Rule::KnownToMastermind, Awareness::Failure}}},
+            2,
+            false,
+            false,
+            {{
+                "{agent} destroys {item} belonging to {mark}.",
+                "{mastermind} asked me to destroy {item} belonging to {mark}, so I set off to do it.",
+                "I sent {agent} to destroy {item} belonging to {mark}, as part of my plan to {scheme}.",
+                "I decided to destroy {item} belonging to {mark} myself, as part of my plan to {scheme}.",
+                "I destroyed {item} belonging to {mark}.",
+                "{mark} caught me trying to destroy {item} of theirs.",
+                "I ran out of time before I could get at {item} belonging to {mark}.",
+                "{agent} reported back that {mark} had caught them trying to destroy {item}.",
+                "{agent} reported back that they had run out of time before destroying {item} belonging to {mark}.",
+            }},
+        },
+        Verb{
+            "petition",
+            "Petition",
+            PlotModel::StepType::Recruit,
+            {{Slot{"authority", SlotKind::Person, Rule::AuthorityOverMark, Awareness::Contact}}},
+            1,
+            false,
+            false,
+            {{
+                "{agent} petitions {authority} on {mastermind}'s behalf.",
+                "{mastermind} asked me to petition {authority} on their behalf, so I set off to do it.",
+                "I sent {agent} to petition {authority} on my behalf, as part of my plan to {scheme}.",
+                "I decided to petition {authority} myself, as part of my plan to {scheme}.",
+                "I petitioned {authority}, and they granted what was asked.",
+                "I petitioned {authority}, but they turned me away.",
+                "I ran out of time before I could get an audience with {authority}.",
+                "{agent} reported back that {authority} had turned them away.",
+                "{agent} reported back that they had run out of time before getting an audience with {authority}.",
+            }},
+        },
     }};
 
     // One verb that may be done just before another, to make it work: the
@@ -455,7 +516,7 @@ namespace NarrativeEngine::PlotVerbs
         std::string_view from;
     };
 
-    inline constexpr std::array<Preparation, 28> kPreparations{{
+    inline constexpr std::array<Preparation, 35> kPreparations{{
         {"watch", "ask_around", "mark", "mark"},
 
         {"steal", "watch", "mark", "mark"},
@@ -496,6 +557,16 @@ namespace NarrativeEngine::PlotVerbs
 
         {"dig_up", "watch", "mark", "mark"},
         {"dig_up", "ask_around", "mark", "mark"},
+
+        {"blackmail", "dig_up", "mark", "mark"},
+        {"blackmail", "steal", "mark", "mark"},
+        {"blackmail", "watch", "mark", "mark"},
+
+        {"destroy", "watch", "mark", "mark"},
+        {"destroy", "bribe", {}, {}},
+
+        {"petition", "win_over", "mark", "authority"},
+        {"petition", "bribe", "mark", "authority"},
     }};
 
     // Every preparation of a verb, in table order.

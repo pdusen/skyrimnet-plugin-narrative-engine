@@ -271,6 +271,30 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
         }
     }
 
+    SECTION("when a petition's authority is asked for")
+    {
+        constexpr RE::FormID kKodlak = 0x0001000B;
+        constexpr RE::FormID kBalgruuf = 0x00010009;
+        auto balgruuf = Person(kBalgruuf, "Balgruuf", kWhiterunHold, kWhiterun);
+        balgruuf.authority = true;
+        f.population.members.push_back(balgruuf);
+        const auto authority = SlotOf("petition", "authority");
+
+        SECTION("should go to the mastermind's superior where they have one")
+        {
+            f.population.members[0].factions[0].standing = 0.6;
+            auto kodlak = Person(kKodlak, "Kodlak", kWhiterunHold, kWhiterun);
+            kodlak.factions.push_back({kCompanions, 1.0, true});
+            f.population.members.push_back(kodlak);
+            REQUIRE(Forms(PlotCandidates::Build(authority, f.Request())) == std::vector<RE::FormID>{kKodlak});
+        }
+
+        SECTION("should go to the mastermind's hold court where nobody outranks them")
+        {
+            REQUIRE(Forms(PlotCandidates::Build(authority, f.Request())) == std::vector<RE::FormID>{kBalgruuf});
+        }
+    }
+
     SECTION("when a denunciation's authority is asked for and neither hold has one")
     {
         constexpr RE::FormID kFalkreathHold = 0x0000B003;

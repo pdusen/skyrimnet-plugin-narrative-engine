@@ -432,17 +432,20 @@ namespace NarrativeEngine::PlotCandidates
             // reordered, because the decision model does not weigh order:
             // offered Falk Firebeard's own jarl first, it sent his
             // denunciation of a Solitude thane to Riften.
+            //
+            // A step with no mark -- a petition -- asks on the mastermind's
+            // behalf, so it goes to whoever the mastermind answers to.
             const auto ctx = people();
             const auto* mark = Mark(request);
-            if (mark != nullptr) {
-                const auto superiors =
-                    Gather(ctx, [mark](const PlotCasting::Member& m, const auto&) { return OutranksIn(m, *mark); });
+            const auto* boss = request.population.Find(request.mastermind);
+            if (const auto* subject = mark != nullptr ? mark : boss; subject != nullptr) {
+                const auto superiors = Gather(
+                    ctx, [subject](const PlotCasting::Member& m, const auto&) { return OutranksIn(m, *subject); });
                 if (!superiors.empty()) {
                     return People(slot, ctx, superiors, limits.people);
                 }
             }
             const auto all = Gather(ctx, [](const PlotCasting::Member& m, const auto&) { return m.authority; });
-            const auto* boss = request.population.Find(request.mastermind);
             for (const auto* anchor : {mark, boss}) {
                 if (anchor == nullptr) {
                     continue;

@@ -5,10 +5,11 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: Steps 1–8 and 10–25 complete; Steps 26–28 add verbs after Step 9's sixth attempt.** Steps 10–12 plan
+> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
-> another way, and Steps 21–25 mend what the fifth attempt found -- each added after an attempt at Step 9.
+> another way, Steps 21–25 mend what the fifth attempt found, and Steps 26–28 add five verbs and the records they
+> act on -- each added after an attempt at Step 9.
 > Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its Steps 20–22 still apply and follow it.
 
 ---
@@ -1591,7 +1592,7 @@ blackmail it is also for arrives in Step 28 with the verb that uses it.
 
 ### Step 28 — `blackmail`, `destroy` and `petition`
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1605,6 +1606,22 @@ blackmail it is also for arrives in Step 28 with the verb that uses it.
 
 **Verification:** the verb suite's rules hold for all three; the candidate suite asserts a petition's authority is the
 mastermind's superior where they have one and their hold's court where they do not.
+
+Done. The three verbs join `PlotVerbs::kVerbs`, eighteen in all, with the templates above; `kPreparations` gains
+seven rows, thirty-five in all; `AuthorityOverMark` takes the mastermind as its subject when the step has no mark.
+473 tests pass, with two new sections in the candidate suite; the verb suite's rules passed for all three unchanged.
+
+**One rule serves denunciation and petition.** Both ask whoever has authority over somebody: the person denounced, or
+the person asking. Splitting it would have meant two copies of the superiors-then-courts order to keep in step; the
+mark's absence already says which person a step is about.
+
+**`destroy` takes anything in the pool, not only paper.** Records are what the run's schemes wanted destroyed, and
+they are in the pool now; but ruining a rival's mead or a spellbook is the same act, and limiting it to documents
+would leave the sabotage of things to `sabotage`, which only reaches a trader's livelihood.
+
+**What the scheme call sees changes with no prompt edit.** The ambition prompt lists every verb from the manifest,
+so all five new verbs are offered as finishes as soon as they exist; Step 21's plain words cover `dig_up` the same
+way they cover `spread_rumors`.
 
 ---
 
