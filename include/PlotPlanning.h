@@ -57,7 +57,6 @@ namespace NarrativeEngine::PlotPlanning
     // Adaptation's one question, and its three answers.
     inline constexpr const char* kAdaptTemplate = "narrative_engine/plot_adapt";
     inline constexpr const char* kAdaptQuestion = "next";
-    inline constexpr const char* kRetry = "retry";
     inline constexpr const char* kSubstitute = "substitute";
     inline constexpr const char* kConcede = "concede";
 
@@ -102,6 +101,10 @@ namespace NarrativeEngine::PlotPlanning
         std::vector<const PlotModel::Step*> before;
 
         std::size_t maxSteps = kPlanCap;
+
+        // Ways the plot has given up on. No step of an abandoned verb
+        // against its abandoned person is planned, in any position.
+        std::vector<PlotModel::Abandoned> abandoned;
     };
 
     struct Outcome
@@ -160,8 +163,7 @@ namespace NarrativeEngine::PlotPlanning
 
     enum class Revision : std::uint8_t
     {
-        Retried,     // the same step again, by somebody else
-        Substituted, // a different way from the failed position on
+        Substituted, // another way from the failed position on
         Conceded,    // given up
         CapHit       // out of attempts before anything was asked
     };
@@ -175,31 +177,39 @@ namespace NarrativeEngine::PlotPlanning
         std::size_t newTail = 0;
         // How many decisions planning the substitute asked.
         std::size_t decisions = 0;
+        // What the failure abandoned, newly; already on the plot.
+        std::vector<PlotModel::Abandoned> abandoned;
     };
 
     // Plans what is left of a plot after a failure, from its history. The
     // plot worker binds this to PlotBirth::Replan.
     using Replanner = std::function<Outcome(const PlotModel::Plot&)>;
 
-    // Whether a failed step can be retried by somebody else. Not when its
-    // agent is bound to an item: only whoever holds it can try again.
-    [[nodiscard]] bool CanRetry(const PlotModel::Step& failed);
+    // The person a step acts on: its verb's first person slot. 0 for a step
+    // with no verb or no such slot filled.
+    [[nodiscard]] RE::FormID TargetOf(const PlotModel::Step& step);
 
-    // A failed step made ready to run again: the same verb and slots, no
-    // agent, nothing spent.
-    [[nodiscard]] PlotModel::Step Retried(const PlotModel::Step& failed);
+    // Whether `step` is there to serve `later`: one of its preparations,
+    // with the bound person the same, or the step that gets the item it
+    // uses.
+    [[nodiscard]] bool Serves(const PlotModel::Step& step, const PlotModel::Step& later);
 
-    // Everybody who has already failed this very step in this plot. A retry
-    // is never handed back to them.
-    [[nodiscard]] std::unordered_set<RE::FormID> FailedAgents(const PlotModel::Plot& plot, const PlotModel::Step& step);
+    // The route a failure abandons: the failed step -- the last entry in the
+    // plot's history, still at its cursor -- and every later planned step it
+    // served, directly or through another, short of the finish. When the
+    // finish itself failed, that is the whole route.
+    [[nodiscard]] std::vector<PlotModel::Abandoned> RouteOf(const PlotModel::Plot& plot);
 
     // Adapt after the step at the plot's cursor failed, which is already the
-    // last entry in its history. Asks one decision -- retry, substitute or
-    // concede -- unless the cap is spent, and applies the answer to `plot`:
-    // a retry resets the step at the cursor, a substitute replaces the plan
-    // from the cursor on, and nothing behind the cursor ever changes. A
-    // failed decision, an answer that was not offered, or a substitute that
-    // cannot be planned all concede.
+    // last entry in its history. Asks one decision -- another way, or give
+    // up -- unless the cap is spent. Another way abandons the failed route
+    // for good (RouteOf, onto `plot.abandoned`) and replaces the plan from
+    // the cursor on; nothing behind the cursor ever changes. A failed
+    // decision, an answer that was not offered, or another way that cannot
+    // be planned all concede.
+    //
+    // There is no retry. A failure says the route it was on does not work,
+    // and the same step with somebody else carrying it is the same route.
     [[nodiscard]] Adaptation Adapt(PlotModel::Plot& plot, int cap, const Ask& ask, const Replanner& replan);
 
     // Whether an error code means no decision will be answered this

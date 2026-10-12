@@ -309,12 +309,8 @@ namespace NarrativeEngine::PlotTick
                                                               step.target,
                                                               PlotPopulation::SeatedPredicate(),
                                                               EarlierAgents(plot));
-                // A retried step is never handed back to whoever already
-                // failed it.
                 auto eligible = cast.shortlist;
-                const auto failedBefore = PlotPlanning::FailedAgents(plot, step);
-                std::erase_if(eligible, [&failedBefore](RE::FormID npc) { return failedBefore.contains(npc); });
-                if (eligible.empty() && !failedBefore.contains(plot.mastermind) && (!alive || alive(plot.mastermind))) {
+                if (eligible.empty() && (!alive || alive(plot.mastermind))) {
                     eligible.push_back(plot.mastermind);
                 }
                 if (eligible.empty()) {
@@ -408,14 +404,14 @@ namespace NarrativeEngine::PlotTick
                 plot.concession = PlotVerbs::RenderConceded(plot.scheme);
                 EndPlot(state, plot, PlotModel::PlotStatus::Failed, PlotModel::PlotOutcome::Conceded, gameDay);
                 return false;
-            case PlotPlanning::Revision::Retried:
             case PlotPlanning::Revision::Substituted:
                 break;
             }
             PlotLog::Adapt(plot, plot.adaptations, cap, adaptation.newTail);
-            if (adaptation.revision == PlotPlanning::Revision::Substituted) {
-                PlotLog::Plan(plot, plot.cursor, adaptation.decisions);
+            for (const auto& way : adaptation.abandoned) {
+                PlotLog::Note(std::format("plot={} abandons {} against {}", plot.id, way.verb, way.targetName));
             }
+            PlotLog::Plan(plot, plot.cursor, adaptation.decisions);
             return true;
         }
 

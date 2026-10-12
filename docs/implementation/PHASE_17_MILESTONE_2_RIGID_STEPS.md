@@ -5,7 +5,7 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: Steps 1–8 and 10–19 complete; Step 20 added after Step 9's fourth attempt.** Steps 10–12 plan
+> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, and Step 20 makes adapting find
 > another way -- each added after an attempt at Step 9.
@@ -1246,7 +1246,7 @@ again. A failure means the route it was on does not work; trying the same step w
 
 ### Step 20 — Adapting finds another way
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1267,6 +1267,33 @@ A failure abandons a route, and the re-plan must find another one to the same fi
 **Verification:** a suite asserts a failed preparation abandons itself and the step it prepared but not the finish
 or anything unrelated; a failed finish abandons itself; a re-plan never offers an abandoned step as goal, preparation
 or supplier; the adaptation question offers no retry; and the abandoned routes survive the co-save.
+
+Done. `PlotModel::Plot::abandoned` holds the ways given up on; `PlotPlanning::RouteOf` and `Serves` work out what a
+failure abandons; `Adapt` offers another way or giving up and records the route before re-planning; the planner drops
+abandoned ways from every target list; the co-save writes them at record version 11; the trace notes each one after
+`ADAPT` and then lists the new plan. 470 tests pass; the adaptation suite was rewritten around Thonar's plot as three
+cases, and the co-save suite gained a section.
+
+**A way is a verb against a person, not a whole step.** A failed theft of the letter from Reburrus abandons stealing
+from Reburrus, not only stealing that letter: he caught somebody at it, and robbing him of anything else is the same
+road. The person is the verb's first person slot -- the one it acts on -- so a failed denunciation of Faralda to Korir
+abandons denouncing Faralda, to anybody.
+
+**What the failure served is worked out from the plan, not recorded at planning.** A step serves a later one when it
+is one of that step's preparations with the bound person the same, or when it gets the item the later step uses --
+the same two links planning made. Working it out from the steps themselves means nothing new is saved per step, and
+a plan restored from an older co-save is read the same way.
+
+**The finish survives a failure on the way to it.** Thonar's failed watch of Reburrus abandons the watch and the theft
+it prepared, and keeps the planting on Thongvor and the watch of Thongvor, which the failure did not touch; the
+re-plan still ends in the planting, and gets the letter some other way. Only a failure of the finish itself closes it.
+
+**Abandoned for the whole plot.** Each adaptation adds to the list and none removes from it, so a second failure
+cannot route back through the first.
+
+**Retry is gone, with what kept it honest.** `CanRetry`, `Retried` and `FailedAgents` existed so a retried step went
+to somebody new. No step can now recur, so dispatch no longer filters for them. An answer of `retry` from a model that
+remembers the old option concedes, as any unoffered answer does.
 
 ---
 

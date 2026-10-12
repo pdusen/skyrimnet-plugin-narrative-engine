@@ -348,6 +348,16 @@ namespace NarrativeEngine::PlotModel
 
     [[nodiscard]] std::string_view PlotOutcomeId(PlotOutcome o) noexcept;
 
+    // A verb against a person, which a plot has given up on: the way a
+    // failed step went about things, and anything it was there to serve.
+    struct Abandoned
+    {
+        std::string verb;
+        RE::FormID target = 0;
+        // For the trace; the plan never reads it.
+        std::string targetName;
+    };
+
     // One scheme, one mastermind.
     struct Plot
     {
@@ -406,6 +416,12 @@ namespace NarrativeEngine::PlotModel
         // writes memories from terminal plots and this is the sentence
         // they will want.
         std::string concession;
+
+        // Ways this plot tried and found do not work: each a verb against
+        // the person it acts on. Every step a failure abandons lands here,
+        // and no later plan may use any of them again; see
+        // PlotPlanning::RouteOf.
+        std::vector<Abandoned> abandoned;
 
         int adaptations = 0;
 

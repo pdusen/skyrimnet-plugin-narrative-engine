@@ -101,6 +101,17 @@ namespace NarrativeEngine::PlotPlanning
             return "person";
         }
 
+        // The name of a verb's first person slot: the person it acts on.
+        std::string_view TargetSlot(const PlotVerbs::Verb& verb)
+        {
+            for (std::size_t i = 0; i < verb.slotCount; ++i) {
+                if (verb.slots[i].kind == PlotVerbs::SlotKind::Person) {
+                    return verb.slots[i].name;
+                }
+            }
+            return {};
+        }
+
         // Everybody a step names in a person slot, other than its
         // mastermind: who a preparation or a theft serving it must leave be.
         std::unordered_set<RE::FormID> PeopleOf(const Step& step)
@@ -244,6 +255,28 @@ namespace NarrativeEngine::PlotPlanning
                 return out;
             }
 
+            // Whether the plot has given up on `verb` against `target`.
+            bool IsAbandoned(const PlotVerbs::Verb& verb, RE::FormID target) const
+            {
+                return std::any_of(
+                    input_.abandoned.begin(), input_.abandoned.end(), [&](const PlotModel::Abandoned& a) {
+                        return a.verb == verb.id && a.target == target;
+                    });
+            }
+
+            // A target slot's list, less whoever the plot has given up on
+            // acting on with this verb.
+            void DropAbandoned(const PlotVerbs::Verb& verb,
+                               const PlotVerbs::Slot& slot,
+                               std::vector<PlotCandidates::Candidate>& list) const
+            {
+                if (slot.name != TargetSlot(verb)) {
+                    return;
+                }
+                std::erase_if(list,
+                              [&](const PlotCandidates::Candidate& c) { return IsAbandoned(verb, c.value.form); });
+            }
+
             // Whether some step of the plot already does `verb` with the
             // values in `preset`: the same watch of the same person, or --
             // with nothing preset -- the same verb at all.
@@ -275,7 +308,10 @@ namespace NarrativeEngine::PlotPlanning
                 const auto earlier = Earlier(index);
                 for (std::size_t i = 0; i < verb.slotCount; ++i) {
                     const auto& slot = verb.slots[i];
-                    if (FindIn(preset, slot.name) != nullptr) {
+                    if (const auto* given = FindIn(preset, slot.name); given != nullptr) {
+                        if (slot.name == TargetSlot(verb) && IsAbandoned(verb, given->form)) {
+                            return false;
+                        }
                         continue;
                     }
                     if (slot.rule == PlotVerbs::Rule::BoundItem) {
@@ -288,7 +324,9 @@ namespace NarrativeEngine::PlotPlanning
                     if (DependsOnAnotherSlot(slot) && FindIn(preset, "mark") == nullptr) {
                         continue;
                     }
-                    if (PlotCandidates::Build(slot, RequestOf(preset, earlier, excluded)).empty()) {
+                    auto list = PlotCandidates::Build(slot, RequestOf(preset, earlier, excluded));
+                    DropAbandoned(verb, slot, list);
+                    if (list.empty()) {
                         return false;
                     }
                 }
@@ -343,6 +381,7 @@ namespace NarrativeEngine::PlotPlanning
                     } else {
                         list = PlotCandidates::Build(slot, request);
                     }
+                    DropAbandoned(verb, slot, list);
 
                     if (i == lastAsked) {
                         std::erase_if(list, [&](const PlotCandidates::Candidate& c) {
@@ -716,30 +755,70 @@ namespace NarrativeEngine::PlotPlanning
             [](std::string_view name) { return std::format("[{}]", name); }));
     }
 
-    bool CanRetry(const Step& failed)
+    RE::FormID TargetOf(const Step& step)
     {
-        const auto* verb = PlotVerbs::Find(failed.verb);
-        return verb != nullptr && !verb->agentBoundToItem;
+        const auto* verb = PlotVerbs::Find(step.verb);
+        if (verb == nullptr) {
+            return 0;
+        }
+        const auto* value = step.FindSlot(TargetSlot(*verb));
+        return value != nullptr ? value->form : 0;
     }
 
-    Step Retried(const Step& failed)
+    bool Serves(const Step& step, const Step& later)
     {
-        Step step;
-        step.type = failed.type;
-        step.verb = failed.verb;
-        step.slots = failed.slots;
-        step.target = failed.target;
-        step.targetName = failed.targetName;
-        return step;
-    }
-
-    std::unordered_set<RE::FormID> FailedAgents(const PlotModel::Plot& plot, const Step& step)
-    {
-        std::unordered_set<RE::FormID> out;
-        for (const auto& past : plot.history) {
-            if (past.actor != 0 && past.outcome != PlotModel::StepOutcome::Succeeded && SameStep(past, step)) {
-                out.insert(past.actor);
+        const auto* verb = PlotVerbs::Find(step.verb);
+        const auto* laterVerb = PlotVerbs::Find(later.verb);
+        if (verb == nullptr || laterVerb == nullptr) {
+            return false;
+        }
+        if (verb->obtainsItem && HasItemSlot(*laterVerb)) {
+            const auto* got = step.FindSlot("item");
+            const auto* used = later.FindSlot("item");
+            if (got != nullptr && used != nullptr && got->form == used->form) {
+                return true;
             }
+        }
+        for (const auto* prep : PlotVerbs::PreparationsOf(later.verb)) {
+            if (prep->verb != step.verb) {
+                continue;
+            }
+            if (prep->slot.empty()) {
+                return true;
+            }
+            const auto* own = step.FindSlot(prep->slot);
+            const auto* theirs = later.FindSlot(prep->from);
+            if (own != nullptr && theirs != nullptr && own->form == theirs->form) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::vector<PlotModel::Abandoned> RouteOf(const PlotModel::Plot& plot)
+    {
+        if (plot.history.empty()) {
+            return {};
+        }
+        std::vector<const Step*> route{&plot.history.back()};
+        // Later steps it served, through one another, but never the finish:
+        // the finish is the end being re-planned toward.
+        const auto finish = plot.plan.empty() ? 0 : plot.plan.size() - 1;
+        for (std::size_t i = plot.cursor + 1; i < finish; ++i) {
+            const auto& later = plot.plan[i];
+            if (std::any_of(route.begin(), route.end(), [&later](const Step* s) { return Serves(*s, later); })) {
+                route.push_back(&later);
+            }
+        }
+        std::vector<PlotModel::Abandoned> out;
+        for (const auto* step : route) {
+            const auto target = TargetOf(*step);
+            if (target == 0) {
+                continue;
+            }
+            const auto* verb = PlotVerbs::Find(step->verb);
+            const auto* who = verb != nullptr ? step->FindSlot(TargetSlot(*verb)) : nullptr;
+            out.push_back({step->verb, target, who != nullptr ? who->text : std::string{}});
         }
         return out;
     }
@@ -750,19 +829,16 @@ namespace NarrativeEngine::PlotPlanning
         // has spent its attempts stops, which is what makes "it would not
         // concede; the cap did" an outcome of its own.
         if (plot.adaptations >= cap || plot.history.empty()) {
-            return {Revision::CapHit, "the adaptation cap was reached", 0, 0};
+            return {Revision::CapHit, "the adaptation cap was reached", 0, 0, {}};
         }
         ++plot.adaptations;
         const Step failed = plot.history.back();
 
         nlohmann::json options = nlohmann::json::array();
-        const bool retryable = CanRetry(failed) && plot.cursor < plot.plan.size();
-        if (retryable) {
-            options.push_back(
-                {{"key", kRetry}, {"line", "Try the same step again, with somebody else carrying it out."}});
-        }
-        options.push_back(
-            {{"key", kSubstitute}, {"line", "Try a different way, and plan the rest of the scheme again from here."}});
+        options.push_back({{"key", kSubstitute},
+                           {"line",
+                            "Find another way to the same end, leaving behind what failed and everything it was "
+                            "there to make possible."}});
         options.push_back({{"key", kConcede}, {"line", "Give the scheme up."}});
 
         std::vector<const Step*> history;
@@ -781,34 +857,43 @@ namespace NarrativeEngine::PlotPlanning
 
         const auto result = ask(kAdaptTemplate, ctx);
         if (!result.ok) {
-            return {Revision::Conceded, std::format("the decision failed ({})", result.error), 0, 0};
+            return {Revision::Conceded, std::format("the decision failed ({})", result.error), 0, 0, {}};
         }
         const auto key = result.Choice(kAdaptQuestion);
 
-        if (key == kRetry && retryable) {
-            plot.plan[plot.cursor] = Retried(failed);
-            return {Revision::Retried, {}, 1, 0};
-        }
         if (key == kSubstitute) {
+            // Abandoned before planning, so the plan cannot reach for it.
+            std::vector<PlotModel::Abandoned> abandoned;
+            for (auto& way : RouteOf(plot)) {
+                const bool known =
+                    std::any_of(plot.abandoned.begin(), plot.abandoned.end(), [&way](const PlotModel::Abandoned& a) {
+                        return a.verb == way.verb && a.target == way.target;
+                    });
+                if (!known) {
+                    plot.abandoned.push_back(way);
+                    abandoned.push_back(std::move(way));
+                }
+            }
             auto tail = replan(plot);
             if (!tail.ok) {
                 return {Revision::Conceded,
                         std::format("no other way could be planned ({})",
                                     !tail.error.empty() ? tail.error : tail.rejection),
                         0,
-                        tail.decisions};
+                        tail.decisions,
+                        std::move(abandoned)};
             }
             plot.plan.erase(plot.plan.begin() + static_cast<std::ptrdiff_t>(plot.cursor), plot.plan.end());
             const auto added = tail.plan.size();
             for (auto& step : tail.plan) {
                 plot.plan.push_back(std::move(step));
             }
-            return {Revision::Substituted, {}, added, tail.decisions};
+            return {Revision::Substituted, {}, added, tail.decisions, std::move(abandoned)};
         }
         if (key == kConcede) {
-            return {Revision::Conceded, "they chose to give it up", 0, 0};
+            return {Revision::Conceded, "they chose to give it up", 0, 0, {}};
         }
-        return {Revision::Conceded, std::format("answered '{}', which was not offered", key), 0, 0};
+        return {Revision::Conceded, std::format("answered '{}', which was not offered", key), 0, 0, {}};
     }
 
     RE::FormID ItemHolder(const PlotModel::Plot& plot, const Step& step)

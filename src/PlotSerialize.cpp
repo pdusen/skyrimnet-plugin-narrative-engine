@@ -275,8 +275,14 @@ namespace NarrativeEngine::PlotSerialize
                 || !WritePod(sink, static_cast<std::uint32_t>(plot.cursor)) || !WriteStepVector(sink, plot.history)
                 || !WritePod(sink, plot.adaptations) || !WritePod(sink, static_cast<std::uint8_t>(plot.status))
                 || !WritePod(sink, static_cast<std::uint8_t>(plot.outcome)) || !WritePod(sink, plot.bornOnGameDay)
-                || !WritePod(sink, plot.endedOnGameDay) || !WriteString(sink, plot.concession)) {
+                || !WritePod(sink, plot.endedOnGameDay) || !WriteString(sink, plot.concession)
+                || !WritePod(sink, static_cast<std::uint32_t>(plot.abandoned.size()))) {
                 return false;
+            }
+            for (const auto& way : plot.abandoned) {
+                if (!WriteString(sink, way.verb) || !WritePod(sink, way.target) || !WriteString(sink, way.targetName)) {
+                    return false;
+                }
             }
         }
 
@@ -356,6 +362,24 @@ namespace NarrativeEngine::PlotSerialize
                 || !ReadPod(source, plotStatus) || !ReadPod(source, plotOutcome) || !ReadPod(source, plot.bornOnGameDay)
                 || !ReadPod(source, plot.endedOnGameDay) || !ReadString(source, plot.concession)) {
                 return fail();
+            }
+
+            // A way given up on whose person no longer resolves is dropped:
+            // nobody can be planned against them anyway.
+            std::uint32_t abandonedCount{};
+            if (!ReadPod(source, abandonedCount)) {
+                return fail();
+            }
+            for (std::uint32_t n = 0; n < abandonedCount; ++n) {
+                PlotModel::Abandoned way;
+                RE::FormID savedTarget{};
+                if (!ReadString(source, way.verb) || !ReadPod(source, savedTarget)
+                    || !ReadString(source, way.targetName)) {
+                    return fail();
+                }
+                if (savedTarget != 0 && source.ResolveFormID(savedTarget, way.target)) {
+                    plot.abandoned.push_back(std::move(way));
+                }
             }
             plot.cursor = cursor;
             plot.status = static_cast<PlotModel::PlotStatus>(plotStatus);

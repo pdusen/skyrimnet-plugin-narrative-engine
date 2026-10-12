@@ -378,6 +378,7 @@ TEST_CASE("PlotVerbs steps survive the co-save", "[PlotVerbs][engine]")
     plot.mastermindName = "Fanari Strong-Voice";
     plot.scheme = "Win the Skaal's trust.";
     plot.finish = "win Storn Crag-Strider over";
+    plot.abandoned.push_back({"steal", 0x0001B000, "Frea"});
     plot.plan.push_back(Filled("deliver"));
     plot.history.push_back(Filled("steal"));
     state.plots.push_back(plot);
@@ -398,6 +399,14 @@ TEST_CASE("PlotVerbs steps survive the co-save", "[PlotVerbs][engine]")
         {
             REQUIRE(loaded.plots[0].finish == "win Storn Crag-Strider over");
             REQUIRE(loaded.plots[0].scheme == plot.scheme);
+        }
+
+        SECTION("should keep every way the plot gave up on")
+        {
+            REQUIRE(loaded.plots[0].abandoned.size() == 1);
+            REQUIRE(loaded.plots[0].abandoned[0].verb == "steal");
+            REQUIRE(loaded.plots[0].abandoned[0].target == 0x0001B000);
+            REQUIRE(loaded.plots[0].abandoned[0].targetName == "Frea");
         }
 
         SECTION("should keep each step's verb and every slot")

@@ -376,6 +376,7 @@ namespace NarrativeEngine::PlotBirth
         input.ambition = plot.ambition;
         input.scheme = plot.scheme;
         input.finish = plot.finish;
+        input.abandoned = plot.abandoned;
         input.bio = BioSections(boss->npc, boss->name, "replan");
         input.alive = PlotPopulation::AlivePredicate();
         input.occupation = ShortOccupation;

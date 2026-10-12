@@ -172,6 +172,7 @@ namespace
         std::vector<PlotModel::Step> history;
         std::string goal;
         std::string finish;
+        std::vector<PlotModel::Abandoned> abandoned;
         Script script;
 
         PlotPlanning::Outcome Run(std::size_t maxSteps = PlotPlanning::kPlanCap)
@@ -179,6 +180,7 @@ namespace
             PlotPlanning::Input input{population, world};
             input.goal = goal;
             input.finish = finish;
+            input.abandoned = abandoned;
             input.mastermind = kBoss;
             input.mastermindName = "Olfrid";
             input.ambition = "He means to own Whiterun.";
@@ -961,128 +963,174 @@ TEST_CASE("PlotPlanning::ItemHolder", "[PlotPlanning][engine]")
 
 namespace
 {
-    // A plot whose second step just failed: one step done, the failed one
-    // moved to history and still sitting at the cursor, one more planned.
-    PlotModel::Plot AfterAFailure(std::string_view failedVerb, PlotModel::StepOutcome how)
+    PlotModel::Step Planned(std::string_view verb, std::vector<PlotModel::SlotValue> slots)
+    {
+        PlotModel::Step step;
+        step.verb = std::string{verb};
+        step.slots = {{"mastermind", kBoss, "Olfrid"}};
+        for (auto& value : slots) {
+            step.slots.push_back(std::move(value));
+        }
+        return step;
+    }
+
+    // Thonar's plot from Step 9's fourth attempt, in Olfrid's province:
+    // watch Idolaf, steal the ruby from him, watch Hulda, plant the ruby on
+    // Hulda. `failedAt` says which step was caught; it sits at the cursor and
+    // is the last entry in the history.
+    PlotModel::Plot Thonar(std::size_t failedAt)
     {
         PlotModel::Plot plot;
         plot.mastermind = kBoss;
         plot.mastermindName = "Olfrid";
         plot.scheme = "Ruin Hulda's trade.";
-
-        PlotModel::Step done;
-        done.verb = "steal";
-        done.slots = {{"item", kRuby, "a ruby"}, {"mark", kTrader, "Hulda"}};
-        done.actor = kFriend;
-        done.outcome = PlotModel::StepOutcome::Succeeded;
-        done.state = PlotModel::StepState::Succeeded;
-
-        PlotModel::Step failed;
-        failed.verb = std::string{failedVerb};
-        failed.slots = {{"mark", kTrader, "Hulda"}};
+        plot.finish = "plant a ruby among Hulda's belongings";
+        plot.plan = {Planned("watch", {{"mark", kFriend, "Idolaf"}}),
+                     Planned("steal", {{"item", kRuby, "a ruby"}, {"mark", kFriend, "Idolaf"}}),
+                     Planned("watch", {{"mark", kTrader, "Hulda"}}),
+                     Planned("plant", {{"item", kRuby, "a ruby"}, {"mark", kTrader, "Hulda"}})};
+        for (std::size_t i = 0; i < failedAt; ++i) {
+            plot.plan[i].outcome = PlotModel::StepOutcome::Succeeded;
+            plot.history.push_back(plot.plan[i]);
+        }
+        auto failed = plot.plan[failedAt];
         failed.actor = kFriend;
-        failed.outcome = how;
+        failed.outcome = PlotModel::StepOutcome::FailedCaught;
         failed.state = PlotModel::StepState::Failed;
-        failed.progress = 3.0f;
-        failed.elapsed = 4;
-
-        PlotModel::Step next;
-        next.verb = "threaten";
-        next.slots = {{"mark", kTrader, "Hulda"}};
-
-        plot.plan = {done, failed, next};
-        plot.cursor = 1;
-        plot.history = {done, failed};
+        plot.history.push_back(failed);
+        plot.cursor = failedAt;
         return plot;
     }
 
     PlotPlanning::Outcome OneStep(std::string_view verb)
     {
         PlotPlanning::Outcome out;
-        PlotModel::Step step;
-        step.verb = std::string{verb};
-        step.slots = {{"mark", kTrader, "Hulda"}};
-        out.plan.push_back(step);
+        out.plan.push_back(Planned(verb, {{"mark", kTrader, "Hulda"}}));
         out.ok = true;
         return out;
     }
+
+    bool HasWay(const std::vector<PlotModel::Abandoned>& ways, std::string_view verb, RE::FormID target)
+    {
+        return std::any_of(ways.begin(), ways.end(), [&](const PlotModel::Abandoned& a) {
+            return a.verb == verb && a.target == target;
+        });
+    }
 } // namespace
+
+TEST_CASE("PlotPlanning::RouteOf", "[PlotPlanning][engine]")
+{
+    SECTION("when a preparation fails")
+    {
+        const auto route = PlotPlanning::RouteOf(Thonar(0));
+
+        SECTION("should abandon it and the theft it was preparing")
+        {
+            REQUIRE(route.size() == 2);
+            REQUIRE(HasWay(route, "watch", kFriend));
+            REQUIRE(HasWay(route, "steal", kFriend));
+            REQUIRE(route.front().targetName == "Idolaf");
+        }
+
+        SECTION("should keep the finish, and a preparation of it that the failure did not touch")
+        {
+            REQUIRE_FALSE(HasWay(route, "plant", kTrader));
+            REQUIRE_FALSE(HasWay(route, "watch", kTrader));
+        }
+    }
+
+    SECTION("when the finish itself fails")
+    {
+        const auto route = PlotPlanning::RouteOf(Thonar(3));
+
+        SECTION("should abandon the finish, and only it")
+        {
+            REQUIRE(route.size() == 1);
+            REQUIRE(HasWay(route, "plant", kTrader));
+        }
+    }
+
+    SECTION("when asking what serves what")
+    {
+        const auto plot = Thonar(0);
+
+        SECTION("should follow bound preparations and items, and nothing else")
+        {
+            REQUIRE(PlotPlanning::Serves(plot.plan[0], plot.plan[1]));       // watch Idolaf -> steal from Idolaf
+            REQUIRE(PlotPlanning::Serves(plot.plan[1], plot.plan[3]));       // the ruby -> planting it
+            REQUIRE(PlotPlanning::Serves(plot.plan[2], plot.plan[3]));       // watch Hulda -> plant on Hulda
+            REQUIRE_FALSE(PlotPlanning::Serves(plot.plan[0], plot.plan[3])); // watch Idolaf, plant on Hulda
+        }
+    }
+}
 
 TEST_CASE("PlotPlanning::Adapt", "[PlotPlanning][engine]")
 {
     Script script;
     const auto ask = [&script](std::string_view n, const nlohmann::json& c) { return script(n, c); };
     int replans = 0;
-    const auto replan = [&replans](const PlotModel::Plot&) {
+    std::vector<PlotModel::Abandoned> seenByReplan;
+    const auto replan = [&](const PlotModel::Plot& p) {
         ++replans;
+        seenByReplan = p.abandoned;
         return OneStep("ask_around");
     };
 
-    SECTION("when the schemer retries")
+    SECTION("when a step fails")
     {
-        auto plot = AfterAFailure("watch", PlotModel::StepOutcome::FailedCaught);
-        script.answers = {"retry"};
-        const auto a = PlotPlanning::Adapt(plot, 3, ask, replan);
-
-        SECTION("should reset the step at the cursor and keep everything else")
-        {
-            REQUIRE(a.revision == PlotPlanning::Revision::Retried);
-            REQUIRE(plot.plan.size() == 3);
-            const auto& retried = plot.plan[1];
-            REQUIRE(retried.verb == "watch");
-            REQUIRE(retried.state == PlotModel::StepState::Planned);
-            REQUIRE(retried.actor == 0);
-            REQUIRE(retried.progress == 0.0f);
-            REQUIRE(retried.elapsed == 0);
-            REQUIRE(plot.plan[2].verb == "threaten");
-            REQUIRE(plot.history.size() == 2);
-            REQUIRE(plot.adaptations == 1);
-        }
-
-        SECTION("should keep the retry from whoever failed it")
-        {
-            const auto failed = PlotPlanning::FailedAgents(plot, plot.plan[1]);
-            REQUIRE(failed.size() == 1);
-            REQUIRE(failed.contains(kFriend));
-        }
-    }
-
-    SECTION("when the failed step's agent is bound to the item it carries")
-    {
-        auto plot = AfterAFailure("deliver", PlotModel::StepOutcome::FailedTimeout);
+        auto plot = Thonar(0);
         script.answers = {"concede"};
         (void)PlotPlanning::Adapt(plot, 3, ask, replan);
 
-        SECTION("should not offer a retry, since nobody else holds the item")
+        SECTION("should offer another way or giving up, and never the same step again")
         {
-            const auto offered = script.Offered(0);
-            REQUIRE_FALSE(Contains(offered, PlotPlanning::kRetry));
-            REQUIRE(Contains(offered, PlotPlanning::kSubstitute));
-            REQUIRE(Contains(offered, PlotPlanning::kConcede));
+            REQUIRE(script.Offered(0) == std::vector<std::string>{PlotPlanning::kSubstitute, PlotPlanning::kConcede});
         }
     }
 
-    SECTION("when the schemer tries another way")
+    SECTION("when the schemer finds another way")
     {
-        auto plot = AfterAFailure("watch", PlotModel::StepOutcome::FailedCaught);
+        auto plot = Thonar(0);
         script.answers = {"substitute"};
         const auto a = PlotPlanning::Adapt(plot, 3, ask, replan);
+
+        SECTION("should abandon the failed route before planning, so the plan cannot reach for it")
+        {
+            REQUIRE(replans == 1);
+            REQUIRE(HasWay(seenByReplan, "watch", kFriend));
+            REQUIRE(HasWay(seenByReplan, "steal", kFriend));
+            REQUIRE(HasWay(plot.abandoned, "steal", kFriend));
+            REQUIRE(a.abandoned.size() == 2);
+        }
 
         SECTION("should replace the plan from the failed position on, and nothing behind it")
         {
             REQUIRE(a.revision == PlotPlanning::Revision::Substituted);
             REQUIRE(a.newTail == 1);
-            REQUIRE(replans == 1);
-            REQUIRE(plot.plan.size() == 2);
-            REQUIRE(plot.plan[0].verb == "steal");
-            REQUIRE(plot.plan[1].verb == "ask_around");
-            REQUIRE(plot.history.size() == 2);
+            REQUIRE(plot.plan.size() == 1);
+            REQUIRE(plot.plan[0].verb == "ask_around");
+            REQUIRE(plot.history.size() == 1);
+            REQUIRE(plot.adaptations == 1);
+        }
+    }
+
+    SECTION("when a way already abandoned fails to be needed again")
+    {
+        auto plot = Thonar(0);
+        plot.abandoned.push_back({"watch", kFriend, "Idolaf"});
+        script.answers = {"substitute"};
+        const auto a = PlotPlanning::Adapt(plot, 3, ask, replan);
+
+        SECTION("should record each way once")
+        {
+            REQUIRE(plot.abandoned.size() == 2);
+            REQUIRE(a.abandoned.size() == 1);
         }
     }
 
     SECTION("when another way cannot be planned")
     {
-        auto plot = AfterAFailure("watch", PlotModel::StepOutcome::FailedCaught);
+        auto plot = Thonar(0);
         script.answers = {"substitute"};
         const auto a = PlotPlanning::Adapt(plot, 3, ask, [](const PlotModel::Plot&) {
             PlotPlanning::Outcome nothing;
@@ -1099,10 +1147,24 @@ TEST_CASE("PlotPlanning::Adapt", "[PlotPlanning][engine]")
 
     SECTION("when the schemer gives up")
     {
-        auto plot = AfterAFailure("watch", PlotModel::StepOutcome::FailedCaught);
+        auto plot = Thonar(0);
         script.answers = {"concede"};
+        const auto a = PlotPlanning::Adapt(plot, 3, ask, replan);
 
-        SECTION("should concede")
+        SECTION("should concede, abandoning nothing")
+        {
+            REQUIRE(a.revision == PlotPlanning::Revision::Conceded);
+            REQUIRE(plot.abandoned.empty());
+            REQUIRE(replans == 0);
+        }
+    }
+
+    SECTION("when the answer was the old retry")
+    {
+        auto plot = Thonar(0);
+        script.answers = {"retry"};
+
+        SECTION("should concede, since it was not offered")
         {
             REQUIRE(PlotPlanning::Adapt(plot, 3, ask, replan).revision == PlotPlanning::Revision::Conceded);
         }
@@ -1110,7 +1172,7 @@ TEST_CASE("PlotPlanning::Adapt", "[PlotPlanning][engine]")
 
     SECTION("when the decision fails")
     {
-        auto plot = AfterAFailure("watch", PlotModel::StepOutcome::FailedCaught);
+        auto plot = Thonar(0);
         script.failWith = "request_failed";
 
         SECTION("should concede")
@@ -1121,7 +1183,7 @@ TEST_CASE("PlotPlanning::Adapt", "[PlotPlanning][engine]")
 
     SECTION("when the plot has spent its attempts")
     {
-        auto plot = AfterAFailure("watch", PlotModel::StepOutcome::FailedCaught);
+        auto plot = Thonar(0);
         plot.adaptations = 3;
         const auto a = PlotPlanning::Adapt(plot, 3, ask, replan);
 
@@ -1132,21 +1194,53 @@ TEST_CASE("PlotPlanning::Adapt", "[PlotPlanning][engine]")
             REQUIRE(plot.adaptations == 3);
         }
     }
+}
 
-    SECTION("when a plot is fed nothing but retries")
+TEST_CASE("PlotPlanning plans around abandoned ways", "[PlotPlanning][engine]")
+{
+    Fixture f;
+
+    SECTION("when stealing the item from the only person who has it was abandoned")
     {
-        auto plot = AfterAFailure("watch", PlotModel::StepOutcome::FailedCaught);
-        script.answers = {"retry", "retry", "retry", "retry"};
-        int rounds = 0;
-        while (PlotPlanning::Adapt(plot, 3, ask, replan).revision == PlotPlanning::Revision::Retried) {
-            ++rounds;
-            REQUIRE(rounds <= 3);
-        }
+        // deliver the ruby to Idolaf: Hulda could be robbed of it or sell it,
+        // and robbing her has been given up on.
+        f.abandoned = {{"steal", kTrader, "Hulda"}};
+        f.script.answers = {"deliver", "c1", "c2", "ready"};
+        const auto out = f.Run();
 
-        SECTION("should stop at the cap, having retried once per attempt")
+        SECTION("should get it the other way, without asking which")
         {
-            REQUIRE(rounds == 3);
-            REQUIRE(plot.adaptations == 3);
+            REQUIRE(out.ok);
+            REQUIRE(out.plan[0].verb == "buy");
+            REQUIRE(FormOf(out.plan[0], "seller") == kTrader);
+            REQUIRE(f.script.Templates() == std::vector<std::string>{kGoal, kSlot, kSlot, kPrepare});
+        }
+    }
+
+    SECTION("when the goal's verb against the person the scheme names was abandoned")
+    {
+        f.abandoned = {{"watch", kTrader, "Hulda"}};
+        f.script.answers = {"watch", "p1"};
+        const auto out = f.Run();
+
+        SECTION("should leave that person off the goal's list")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(FormOf(out.plan.back(), "mark") == kFriend);
+            REQUIRE(f.script.asked[1].templateName == kPrepare);
+        }
+    }
+
+    SECTION("when a preparation was abandoned")
+    {
+        f.abandoned = {{"watch", kTrader, "Hulda"}};
+        f.script.answers = {"steal", "c1", "c1", "p1"};
+        (void)f.Run();
+
+        SECTION("should not offer it")
+        {
+            REQUIRE(f.script.Lines(3)
+                    == std::vector<std::string>{"Before step 1: Someone asks around [place] about Hulda."});
         }
     }
 }
