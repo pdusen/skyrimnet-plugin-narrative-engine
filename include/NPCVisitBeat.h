@@ -58,6 +58,7 @@ namespace NarrativeEngine
         bool IsAvailable(const BeatContext& ctx) const override;
         void OnStart(const BeatContext& ctx, const nlohmann::json& parameters) override;
         TickResult Tick(const PluginThread::Token& pt, TickMode mode, BeatState state) override;
+        double RemainingCooldownGameHours() const override;
         void Abort(const MainThread::Token& mt) override;
     };
 
@@ -105,11 +106,11 @@ namespace NarrativeEngine
 
     namespace NPCVisitBeat_Cooldowns
     {
-        // Stamp the per-sender cooldown for `senderNpcFormID`. Called
-        // when the Salutation → Discuss transition fires — the moment
-        // we know the sender actually arrived and delivered their
-        // opening line. Rolled-back / hard-aborted visits deliberately
-        // do NOT stamp.
+        // Stamp the per-sender cooldown for `senderNpcFormID`, and the
+        // per-beat cooldown with it. Called when the Salutation →
+        // Discuss transition fires — the moment we know the sender
+        // actually arrived and delivered their opening line.
+        // Rolled-back / hard-aborted visits deliberately do NOT stamp.
         void OnVisitCompleted(RE::FormID senderNpcFormID);
 
         // Stamp the per-sender memory watermark at Valediction entry

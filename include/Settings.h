@@ -150,7 +150,7 @@ namespace NarrativeEngine::Settings
         // returns Paused / Combat / Dialogue ahead of it, so this clock
         // is frozen in combat and in dialogue as well as while paused.
         int beatCooldownSeconds = 120;
-        int beatRepetitionWindowSeconds = 300; // window during which the same beat name is excluded from picks
+        int beatRepetitionWindowSeconds = 900; // window during which the same beat name is excluded from picks
 
         // NPCLetterBeat precondition: minimum number of recently-engaged
         // NPCs SkyrimNet must report before the beat becomes available.
@@ -629,6 +629,14 @@ namespace NarrativeEngine::Settings
         // pathology. 0 disables the filter. Persists per-sender-FormID
         // in the action's own co-save record.
         int visitSenderCooldownGameHours = 72;
+
+        // Per-beat cooldown in *in-game hours*, stamped at the same
+        // Salutation → Discuss transition as the per-sender one. Unlike
+        // that one it holds back every visit, not just a repeat from the
+        // same NPC. Independent of the global iBeatCooldownSeconds
+        // real-time cooldown, which still applies on top. 0 disables.
+        // Persists via the beat's own co-save record.
+        int visitBeatCooldownGameHours = 24;
 
         // [Actions] — state machine timing
         // Salutation timeout: seconds after Start before rollback if the sender
