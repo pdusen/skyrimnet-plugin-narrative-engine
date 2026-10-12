@@ -592,6 +592,10 @@ namespace NarrativeEngine::PlotPopulation
 
         const auto& participants = GossipGraph::Participants();
         g_population.members.clear();
+        g_population.absent.clear();
+        for (const auto& left : GossipGraph::LeftOutNpcs()) {
+            g_population.absent.push_back({left.name, left.reason});
+        }
         g_population.members.reserve(participants.size());
 
         const auto tradeJobs = ResolveJobs(kTradeJobs);
@@ -611,6 +615,7 @@ namespace NarrativeEngine::PlotPopulation
             // sends a child to watch a house, or aims one at them.
             if (IsChild(RE::TESForm::LookupByID<RE::TESNPC>(npcId))) {
                 ++children;
+                g_population.absent.push_back({GossipGraph::NpcName(npcId), "a child"});
                 continue;
             }
 

@@ -477,17 +477,22 @@ namespace NarrativeEngine::PlotCandidates
             return !word.empty() && std::isupper(static_cast<unsigned char>(word.front())) != 0;
         }
 
-        // The living people `text` names most surely. Each word a person's
-        // name shares with the text counts one over the number of people
-        // whose names carry it, so "Grelod" says Grelod the Kind and a word
-        // in many names says almost nothing.
-        std::vector<const PlotCasting::Member*> PeopleCalled(const Request& request, std::string_view text)
+        // Which of `names` `text` names most surely, among those `eligible`
+        // admits. Each word a name shares with the text counts one over the
+        // number of names carrying it, so "Grelod" says Grelod the Kind and
+        // a word in many names says almost nothing. Returns the indices of
+        // every name scoring best: one is a match, several a shared name,
+        // none nobody.
+        template <typename Eligible>
+        std::vector<std::size_t> Closest(const std::vector<std::string_view>& names,
+                                         std::string_view text,
+                                         Eligible eligible)
         {
             const auto said = Words(text);
             const std::unordered_set<std::string> words(said.begin(), said.end());
-            const auto shared = [&words](const PlotCasting::Member& member) {
+            const auto shared = [&words](std::string_view name) {
                 std::unordered_set<std::string> out;
-                for (auto& word : Words(member.name)) {
+                for (auto& word : Words(name)) {
                     if (Capitalised(word) && words.contains(word)) {
                         out.insert(std::move(word));
                     }
@@ -496,20 +501,20 @@ namespace NarrativeEngine::PlotCandidates
             };
 
             std::unordered_map<std::string, std::size_t> carriers;
-            for (const auto& member : request.population.members) {
-                for (const auto& word : shared(member)) {
+            for (const auto name : names) {
+                for (const auto& word : shared(name)) {
                     ++carriers[word];
                 }
             }
 
             double best = 0.0;
-            std::vector<const PlotCasting::Member*> out;
-            for (const auto& member : request.population.members) {
-                if (member.npc == request.mastermind || (request.alive && !request.alive(member.npc))) {
+            std::vector<std::size_t> out;
+            for (std::size_t i = 0; i < names.size(); ++i) {
+                if (!eligible(i)) {
                     continue;
                 }
                 double score = 0.0;
-                for (const auto& word : shared(member)) {
+                for (const auto& word : shared(names[i])) {
                     score += 1.0 / static_cast<double>(carriers[word]);
                 }
                 if (score <= 0.0) {
@@ -517,11 +522,62 @@ namespace NarrativeEngine::PlotCandidates
                 }
                 if (score > best + 1e-9) {
                     best = score;
-                    out = {&member};
+                    out = {i};
                 } else if (score > best - 1e-9) {
-                    out.push_back(&member);
+                    out.push_back(i);
                 }
             }
+            return out;
+        }
+
+        // Who a person role's words name: the living people they name most
+        // surely, and when there are none, why -- for the refusal.
+        struct Called
+        {
+            std::vector<const PlotCasting::Member*> living;
+            std::string why;
+        };
+
+        Called PeopleCalled(const Request& request, std::string_view text)
+        {
+            const auto& members = request.population.members;
+            std::vector<std::string_view> names;
+            for (const auto& member : members) {
+                names.emplace_back(member.name);
+            }
+            const auto lives = [&request](RE::FormID npc) { return !request.alive || request.alive(npc); };
+
+            Called out;
+            for (const auto i : Closest(names, text, [&](std::size_t k) {
+                     return members[k].npc != request.mastermind && lives(members[k].npc);
+                 })) {
+                out.living.push_back(&members[i]);
+            }
+            if (!out.living.empty()) {
+                return out;
+            }
+
+            // Not among the living. The dead and the disabled are in the
+            // population still; the left out never were.
+            if (const auto gone = Closest(
+                    names,
+                    text,
+                    [&](std::size_t k) { return members[k].npc != request.mastermind && !lives(members[k].npc); });
+                !gone.empty()) {
+                out.why = std::format("{} is dead or not in the world", members[gone.front()].name);
+                return out;
+            }
+            const auto& absent = request.population.absent;
+            std::vector<std::string_view> absentNames;
+            for (const auto& a : absent) {
+                absentNames.emplace_back(a.name);
+            }
+            if (const auto left = Closest(absentNames, text, [](std::size_t) { return true; }); !left.empty()) {
+                const auto& a = absent[left.front()];
+                out.why = std::format("{} cannot take part in these plots ({})", a.name, a.reason);
+                return out;
+            }
+            out.why = std::format("'{}' names nobody in Skyrim", text);
             return out;
         }
 
@@ -618,22 +674,21 @@ namespace NarrativeEngine::PlotCandidates
             switch (slot.kind) {
             case PlotVerbs::SlotKind::Person: {
                 const auto called = PeopleCalled(here, text);
-                if (called.empty()) {
-                    problems.push_back(
-                        std::format("'{}' names nobody alive whom a plot can reach, for {}", text, role));
+                if (called.living.empty()) {
+                    problems.push_back(std::format("{}, for {}", called.why, role));
                     markLost = markLost || slot.name == "mark";
                     continue;
                 }
-                if (called.size() > 1) {
+                if (called.living.size() > 1) {
                     std::string who;
-                    for (std::size_t k = 0; k < called.size(); ++k) {
-                        who += (k == 0 ? "" : k + 1 == called.size() ? " or " : ", ") + called[k]->name;
+                    for (std::size_t k = 0; k < called.living.size(); ++k) {
+                        who += (k == 0 ? "" : k + 1 == called.living.size() ? " or " : ", ") + called.living[k]->name;
                     }
                     problems.push_back(std::format("'{}' could be {}; give the whole name, for {}", text, who, role));
                     markLost = markLost || slot.name == "mark";
                     continue;
                 }
-                const auto& who = *called.front();
+                const auto& who = *called.living.front();
                 if (!Lists(list, who.npc)) {
                     problems.push_back(std::format("{} cannot be {}{}", who.name, role, Admitted(list)));
                     markLost = markLost || slot.name == "mark";

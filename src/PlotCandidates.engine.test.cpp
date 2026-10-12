@@ -827,15 +827,36 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
         }
     }
 
-    SECTION("when a role names nobody, or somebody dead")
+    SECTION("when a role names nobody living")
     {
-        SECTION("should say nobody alive is called that")
+        f.population.absent = {{"Mogrul", "no home location"}, {"Hulda", "a ghost"}};
+
+        SECTION("should say when they are dead or not in the world")
         {
-            REQUIRE(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Mogrul"}}).problem.find("names nobody alive")
-                    != std::string::npos);
             REQUIRE(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Ghost of Somebody"}})
-                        .problem.find("names nobody alive")
+                        .problem.find("Ghost of Somebody is dead or not in the world, for the mark")
                     != std::string::npos);
+        }
+
+        SECTION("should say when the plots leave them out, and why")
+        {
+            REQUIRE(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Mogrul"}})
+                        .problem.find("Mogrul cannot take part in these plots (no home location), for the mark")
+                    != std::string::npos);
+        }
+
+        SECTION("should say when nobody in Skyrim has the name")
+        {
+            REQUIRE(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Jarl Vigilia Rulcanella"}})
+                        .problem.find("'Jarl Vigilia Rulcanella' names nobody in Skyrim, for the mark")
+                    != std::string::npos);
+        }
+
+        SECTION("should still find the living person when a left-out record shares their name")
+        {
+            const auto out = resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Hulda"}});
+            REQUIRE(out.problem.empty());
+            REQUIRE(out.values[1].form == kNeighbour);
         }
     }
 

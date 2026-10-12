@@ -131,6 +131,18 @@ namespace NarrativeEngine::GossipGraph
     // Every participant's NPC FormID, in a stable order.
     const std::vector<RE::FormID>& Participants();
 
+    // A unique, named NPC the graph passed over, and why in a few words: "no
+    // home location", "a ghost", "not a person". Recorded at Initialize and
+    // unchanged after, like the participants, so a plot naming somebody who
+    // is not in the simulation can be told why rather than only that.
+    struct LeftOut
+    {
+        std::string name;
+        std::string reason;
+    };
+
+    const std::vector<LeftOut>& LeftOutNpcs();
+
     // Returns nullptr when `npc` is not a participant.
     //
     // KEYED ON THE TESNPC BASE FORM, not on a placed reference. This is

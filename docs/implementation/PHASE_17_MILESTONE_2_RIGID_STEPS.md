@@ -2243,7 +2243,7 @@ call chose, and the case says so rather than expecting the goal question.
 
 ### Step 38 — A name that finds nobody says why
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2278,6 +2278,19 @@ The refusal goes to the plots log and to the retry alike, so the log now answers
 
 **Verification:** the candidate suite asserts each of the three refusals, and that a living person who shares a name
 with a left-out record still resolves to the living one.
+
+Done. `GossipGraph::LeftOutNpcs` lists each unique, named NPC the graph passed over, with "no home location", "no home
+in any hold", "a ghost" or "not a person". `PlotCasting::Population` gains `absent`, which `PlotPopulation::Build` fills
+from that list and with the children it leaves out. Person roles in `ResolveRoles` go through a shared scorer: the
+living first, then the dead and disabled, then the absent. 488 tests pass, with the candidate suite's refusal cases
+rewritten for the three reasons; the plugin builds with no warnings.
+
+**Rorlund and Lleril are in the population; Mogrul is not.** The export puts both of the first two in their town's
+list of unique residents, which every participant comes from, and it lists Mogrul nowhere. The next run's refusals
+will say whether the first two are dead or disabled in that save, which is the one thing the export cannot.
+
+**The living win a shared name.** A ghost record named like a living person is in the absent list. The living are
+scored first and the absent only when no living person matches, so the living person is never refused for it.
 
 ### Step 39 — A refused role is offered who would do
 

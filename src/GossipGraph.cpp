@@ -126,6 +126,7 @@ namespace NarrativeEngine::GossipGraph
 
         std::unordered_map<RE::FormID, Participant> g_participants;
         std::vector<RE::FormID> g_participantIds;
+        std::vector<LeftOut> g_leftOut;
 
         std::unordered_map<RE::FormID, std::vector<RE::FormID>> g_household;
         std::unordered_map<RE::FormID, std::vector<RE::FormID>> g_settlement;
@@ -614,11 +615,18 @@ namespace NarrativeEngine::GossipGraph
                     continue;
                 }
                 ++g_census.uniqueNpcsScanned;
+                const auto leaveOut = [npc](const char* reason) {
+                    if (const char* name = npc->GetName(); name != nullptr && *name != '\0') {
+                        g_leftOut.push_back({name, reason});
+                    }
+                };
                 if (!IsGossipEligiblePerson(npc, actorTypeNpc)) {
                     if (npc->IsGhost()) {
                         ++g_census.rejectedGhost;
+                        leaveOut("a ghost");
                     } else {
                         ++g_census.rejectedNotPerson;
+                        leaveOut("not a person");
                     }
                     continue;
                 }
@@ -626,6 +634,7 @@ namespace NarrativeEngine::GossipGraph
                 const auto it = residence.find(id);
                 if (it == residence.end()) {
                     ++g_census.rejectedNoLocation;
+                    leaveOut("no home location");
                     continue;
                 }
 
@@ -640,6 +649,7 @@ namespace NarrativeEngine::GossipGraph
                     // Daedric princes, and quest actors staged in
                     // holding cells.
                     ++g_census.rejectedNoLocation;
+                    leaveOut("no home in any hold");
                     continue;
                 }
 
@@ -950,6 +960,11 @@ namespace NarrativeEngine::GossipGraph
         logger::info("GossipGraph: relationships refreshed ({} edges, {} participants with a personal edge)",
                      g_census.relationshipEdges,
                      g_census.participantsWithPersonalEdge);
+    }
+
+    const std::vector<LeftOut>& LeftOutNpcs()
+    {
+        return g_leftOut;
     }
 
     std::size_t ParticipantCount()

@@ -161,9 +161,20 @@ namespace NarrativeEngine::PlotCasting
         }
     };
 
+    // Somebody named in the game who is in no plot, and why: "no home
+    // location", "a child". What a scheme naming them is told.
+    struct Absent
+    {
+        std::string name;
+        std::string reason;
+    };
+
     struct Population
     {
         std::vector<Member> members;
+        // Everybody left out of `members` who has a name, so a role naming
+        // one of them is refused with the reason rather than as nobody.
+        std::vector<Absent> absent;
 
         [[nodiscard]] const Member* Find(RE::FormID npc) const;
     };
