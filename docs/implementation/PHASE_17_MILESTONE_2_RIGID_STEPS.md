@@ -2343,7 +2343,7 @@ resolves by "Vignar".
 
 ### Step 41 — An authority judges only those below it
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2372,6 +2372,31 @@ steward, the guard captain and every orc chief in it, as equals.
 - a steward's authority is the jarl, and not the guard captain;
 - a jarl's is their organisation, with no person in the slot, and a jarl has nobody to petition;
 - an orc in a stronghold answers to its chief, and a Markarth smith never to one.
+
+Done. 489 tests pass, with a new case in the candidate suite; the plugin builds with no warnings.
+
+- **The office.** `PlotCasting::Member` trades its `authority` flag for an `Office`: none, guard captain, steward, jarl
+  or orc chief. `PlotPopulation` reads it from the job factions, highest first.
+- **The order `AuthorityOverMark` tries:**
+  1. the subject's superiors in an organisation;
+  2. a stronghold's chief;
+  3. the court of the subject's own hold, above them;
+  4. an official's audience;
+  5. the court of the mastermind's hold;
+  6. any court, above them.
+- **The audience.** It is a candidate with no form, its text the mark's highest rostered organisation -- "the court of
+  Whiterun" -- or the people of their settlement. `ResolveRoles` resolves an authority role to it whatever the role
+  named, and `Fillable` lets a given slot with no form through without asking whether it lives.
+- **The prompt.** The scheme prompt says authority runs only upward, and how a jarl or a chief is exposed.
+
+**A slot with no person is safe everywhere it goes.** The model's placeholder rule already covers it: memories, the
+agent ladder's exclusions and awareness all gate on the form being set, and the co-save keeps a zero as a zero. The
+audience is written into the step's sentences as its text, so a denunciation reads "denounces Balgruuf the Greater to
+the court of Whiterun".
+
+**An official's audience comes only after their own hold's court.** A steward whose jarl is alive answers to the
+jarl; only a steward with nobody above in the hold -- the jarl dead or gone -- is exposed to the court as a whole. The
+fallbacks past the audience still serve whoever holds no office, as before.
 
 ### Step 42 — A preparation makes its step easier
 

@@ -73,7 +73,7 @@ namespace
         jarl.name = "Laila";
         jarl.hold = kRift;
         jarl.settlement = kRiften;
-        jarl.authority = true;
+        jarl.office = PlotCasting::Office::Jarl;
         p.members.push_back(jarl);
         return p;
     }

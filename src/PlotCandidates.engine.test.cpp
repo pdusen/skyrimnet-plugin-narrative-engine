@@ -84,7 +84,7 @@ namespace
         p.members.push_back(stranger);
 
         auto jarl = Person(kJarl, "Laila Law-Giver", kRiftHold, kRiften);
-        jarl.authority = true;
+        jarl.office = PlotCasting::Office::Jarl;
         p.members.push_back(jarl);
 
         p.members.push_back(Person(kDead, "Ghost of Somebody", kWhiterunHold, kWhiterun));
@@ -222,7 +222,7 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
         constexpr RE::FormID kFalkreathHold = 0x0000B003;
         constexpr RE::FormID kOutsider = 0x0001000A;
         auto balgruuf = Person(kBalgruuf, "Balgruuf", kWhiterunHold, kWhiterun);
-        balgruuf.authority = true;
+        balgruuf.office = PlotCasting::Office::Jarl;
         f.population.members.push_back(balgruuf);
         f.population.members.push_back(Person(kOutsider, "Dengeir", kFalkreathHold, 0));
         const auto authority = SlotOf("denounce", "authority");
@@ -276,7 +276,7 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
         constexpr RE::FormID kKodlak = 0x0001000B;
         constexpr RE::FormID kBalgruuf = 0x00010009;
         auto balgruuf = Person(kBalgruuf, "Balgruuf", kWhiterunHold, kWhiterun);
-        balgruuf.authority = true;
+        balgruuf.office = PlotCasting::Office::Jarl;
         f.population.members.push_back(balgruuf);
         const auto authority = SlotOf("petition", "authority");
 
@@ -939,7 +939,7 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
         SECTION("should refuse one the rule passes over, saying whom the mark answers to")
         {
             auto balgruuf = Person(0x00010009, "Balgruuf the Greater", kWhiterunHold, kWhiterun);
-            balgruuf.authority = true;
+            balgruuf.office = PlotCasting::Office::Jarl;
             f.population.members.push_back(balgruuf);
             const auto out = resolve("denounce", {{"mark", 0, "Hulda"}, {"authority", 0, "Laila Law-Giver"}});
             REQUIRE(out.problem.find("Laila Law-Giver cannot be the authority (whom they are denounced to); it can be "
@@ -977,6 +977,119 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
         {
             REQUIRE(out.problem.empty());
             REQUIRE(out.values[1].form == kWhiterun);
+        }
+    }
+}
+
+TEST_CASE("PlotCandidates ranks authority", "[PlotCandidates][engine]")
+{
+    using PlotCasting::Office;
+    Fixture f;
+    const auto authority = SlotOf("denounce", "authority");
+
+    constexpr RE::FormID kBalgruuf = 0x00010401;
+    constexpr RE::FormID kProventus = 0x00010402;
+    constexpr RE::FormID kCaius = 0x00010403;
+    constexpr RE::FormID kWhiterunCourt = 0x0000C101;
+    const auto official = [&f](RE::FormID npc, const char* name, Office office) {
+        auto m = Person(npc, name, kWhiterunHold, kWhiterun);
+        m.office = office;
+        f.population.members.push_back(m);
+    };
+    official(kBalgruuf, "Balgruuf the Greater", Office::Jarl);
+    official(kProventus, "Proventus Avenicci", Office::Steward);
+    official(kCaius, "Caius", Office::GuardCaptain);
+    const auto against = [&f, &authority](RE::FormID mark, std::string name) {
+        f.filled = {{"mark", mark, std::move(name)}};
+        return PlotCandidates::Build(authority, f.Request());
+    };
+
+    SECTION("when a steward is accused")
+    {
+        SECTION("should go to the jarl, and never to the guard captain beneath them")
+        {
+            REQUIRE(Forms(against(kProventus, "Proventus Avenicci")) == std::vector<RE::FormID>{kBalgruuf});
+        }
+    }
+
+    SECTION("when a guard captain is accused")
+    {
+        SECTION("should go to those above them in the court")
+        {
+            const auto list = against(kCaius, "Caius");
+            REQUIRE(Has(list, kBalgruuf));
+            REQUIRE(Has(list, kProventus));
+            REQUIRE_FALSE(Has(list, kCaius));
+        }
+    }
+
+    SECTION("when a jarl is accused")
+    {
+        SECTION("should be made to the court they lead, with no person in the slot")
+        {
+            f.population.members.back().factions.clear();
+            for (auto& m : f.population.members) {
+                if (m.npc == kBalgruuf) {
+                    m.factions.push_back({kWhiterunCourt, 1.0, true});
+                }
+            }
+            f.world.factions = {{kWhiterunCourt, "the court of Whiterun"}};
+            const auto list = against(kBalgruuf, "Balgruuf the Greater");
+            REQUIRE(list.size() == 1);
+            REQUIRE(list[0].value.form == 0);
+            REQUIRE(list[0].value.text == "the court of Whiterun");
+        }
+
+        SECTION("should be made to the people of their town when they lead no listed organisation")
+        {
+            const auto list = against(kBalgruuf, "Balgruuf the Greater");
+            REQUIRE(list.size() == 1);
+            REQUIRE(list[0].value.text == "the people of Whiterun");
+        }
+
+        SECTION("should resolve a role naming a person as their authority to the court instead")
+        {
+            const auto* goal = PlotVerbs::Find("denounce");
+            const auto out = PlotCandidates::ResolveRoles(
+                *goal, {{"mark", 0, "Balgruuf the Greater"}, {"authority", 0, "Proventus Avenicci"}}, f.Request());
+            REQUIRE(out.problem.empty());
+            REQUIRE(out.values[1].form == 0);
+            REQUIRE(out.values[1].text == "the people of Whiterun");
+        }
+    }
+
+    SECTION("when a jarl would petition")
+    {
+        for (auto& m : f.population.members) {
+            if (m.npc == kBoss) {
+                m.office = Office::Jarl;
+            }
+        }
+
+        SECTION("should have nobody to petition")
+        {
+            REQUIRE(PlotCandidates::Build(SlotOf("petition", "authority"), f.Request()).empty());
+        }
+    }
+
+    SECTION("when somebody of an orc stronghold is accused")
+    {
+        constexpr RE::FormID kStronghold = 0x0000A0F1;
+        constexpr RE::FormID kBurguk = 0x00010411;
+        constexpr RE::FormID kLob = 0x00010412;
+        auto chief = Person(kBurguk, "Chief Burguk", kWhiterunHold, kStronghold);
+        chief.office = Office::OrcChief;
+        f.population.members.push_back(chief);
+        f.population.members.push_back(Person(kLob, "Lob", kWhiterunHold, kStronghold));
+
+        SECTION("should go to its chief, not to the hold's court")
+        {
+            REQUIRE(Forms(against(kLob, "Lob")) == std::vector<RE::FormID>{kBurguk});
+        }
+
+        SECTION("should never go to a chief for somebody outside the stronghold")
+        {
+            REQUIRE_FALSE(Has(against(kNeighbour, "Hulda"), kBurguk));
         }
     }
 }

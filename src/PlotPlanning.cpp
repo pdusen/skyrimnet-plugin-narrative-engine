@@ -328,7 +328,7 @@ namespace NarrativeEngine::PlotPlanning
                         }
                         // A person given from before -- a kept goal, a named
                         // role -- may have died or gone since.
-                        if (slot.kind == PlotVerbs::SlotKind::Person
+                        if (slot.kind == PlotVerbs::SlotKind::Person && given->form != 0
                             && (input_.population.Find(given->form) == nullptr
                                 || (input_.alive && !input_.alive(given->form)))) {
                             return false;

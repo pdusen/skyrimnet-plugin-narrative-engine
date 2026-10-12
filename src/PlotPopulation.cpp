@@ -442,10 +442,33 @@ namespace NarrativeEngine::PlotPopulation
                                                          "JobSpellFaction",
                                                          "JobStreetVendorFaction",
                                                          "JobTailorFaction"};
-        constexpr std::array<const char*, 4> kAuthorityJobs{"JobJarlFaction",
-                                                            "JobStewardFaction",
-                                                            "JobGuardCaptainFaction",
-                                                            "JobOrcChiefFaction"};
+        // The offices that make somebody an authority, highest first, so a
+        // member in two takes the higher.
+        struct OfficeJob
+        {
+            const char* faction;
+            PlotCasting::Office office;
+        };
+
+        constexpr std::array<OfficeJob, 4> kOfficeJobs{{
+            {"JobJarlFaction", PlotCasting::Office::Jarl},
+            {"JobStewardFaction", PlotCasting::Office::Steward},
+            {"JobGuardCaptainFaction", PlotCasting::Office::GuardCaptain},
+            {"JobOrcChiefFaction", PlotCasting::Office::OrcChief},
+        }};
+
+        std::vector<std::pair<RE::TESFaction*, PlotCasting::Office>> ResolveOffices()
+        {
+            std::vector<std::pair<RE::TESFaction*, PlotCasting::Office>> out;
+            for (const auto& job : kOfficeJobs) {
+                if (auto* form = RE::TESForm::LookupByEditorID<RE::TESFaction>(job.faction)) {
+                    out.emplace_back(form, job.office);
+                } else {
+                    logger::warn("PlotPopulation: job faction {} did not resolve", job.faction);
+                }
+            }
+            return out;
+        }
 
         // Who practises each craft: their Job factions, then vanilla's vendor
         // classes, which put Fihada the fletcher where no Job faction does.
@@ -599,7 +622,7 @@ namespace NarrativeEngine::PlotPopulation
         g_population.members.reserve(participants.size());
 
         const auto tradeJobs = ResolveJobs(kTradeJobs);
-        const auto authorityJobs = ResolveJobs(kAuthorityJobs);
+        const auto officeJobs = ResolveOffices();
         const auto craftForms = ResolveCrafts();
 
         std::size_t withFactions = 0;
@@ -628,7 +651,12 @@ namespace NarrativeEngine::PlotPopulation
             if (auto* npcForm = RE::TESForm::LookupByID<RE::TESNPC>(npcId)) {
                 member.skills = ReadSkills(npcForm);
                 member.tradesForLiving = InAnyOf(npcForm, tradeJobs);
-                member.authority = InAnyOf(npcForm, authorityJobs);
+                for (const auto& [faction, office] : officeJobs) {
+                    if (InAnyOf(npcForm, {faction})) {
+                        member.office = office;
+                        break;
+                    }
+                }
                 for (const auto& forms : craftForms) {
                     const bool byClass = forms.vendorClass != nullptr && npcForm->npcClass == forms.vendorClass;
                     if (byClass || InAnyOf(npcForm, forms.factions)) {

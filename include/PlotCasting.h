@@ -117,6 +117,19 @@ namespace NarrativeEngine::PlotCasting
     // the graph is switched off entirely.
     inline constexpr std::size_t kNoRoadNode = static_cast<std::size_t>(-1);
 
+    // The office that makes somebody an authority, from vanilla's Job
+    // factions. The court's three rank in this order, lowest first: an
+    // accusation goes only to somebody above the accused. An orc chief is
+    // apart from them -- the authority over their own stronghold alone.
+    enum class Office : std::uint8_t
+    {
+        None,
+        GuardCaptain,
+        Steward,
+        Jarl,
+        OrcChief
+    };
+
     struct Member
     {
         RE::FormID npc = 0;
@@ -145,10 +158,10 @@ namespace NarrativeEngine::PlotCasting
         //
         // `tradesForLiving`: a merchant, smith, innkeeper, farmer, miner and
         // the like -- somebody with a livelihood to sell from or sabotage.
-        // `authority`: a jarl, steward, guard captain or orc chief --
-        // somebody a denunciation can be made to.
+        // `office`: a jarl, steward, guard captain or orc chief -- somebody
+        // a denunciation can be made to -- or none.
         bool tradesForLiving = false;
-        bool authority = false;
+        Office office = Office::None;
 
         // The crafts they practise, one bit per PlotRecipes::Craft, from the
         // same Job factions and from vanilla's vendor classes. Only these

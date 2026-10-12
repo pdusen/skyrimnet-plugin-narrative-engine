@@ -301,6 +301,48 @@ namespace NarrativeEngine::PlotCandidates
             return Keyed(std::move(out), cap);
         }
 
+        using PlotCasting::Office;
+
+        // Where an office stands in a hold's court, 0 for none. An orc chief
+        // has no place in it.
+        int CourtRank(Office office)
+        {
+            switch (office) {
+            case Office::GuardCaptain:
+                return 1;
+            case Office::Steward:
+                return 2;
+            case Office::Jarl:
+                return 3;
+            case Office::None:
+            case Office::OrcChief:
+                break;
+            }
+            return 0;
+        }
+
+        // Whether an orc chief other than `subject` lives where they do: a
+        // stronghold, whose people answer to its chief and not to a court.
+        bool InStronghold(const Request& request, const PlotCasting::Member& subject)
+        {
+            return std::any_of(request.population.members.begin(),
+                               request.population.members.end(),
+                               [&subject](const PlotCasting::Member& m) {
+                                   return m.office == Office::OrcChief && m.npc != subject.npc
+                                          && m.settlement == subject.settlement;
+                               });
+        }
+
+        // Whether a court can judge `subject` at all, and whether `judge`
+        // sits on it above them: an official only above one of lower rank,
+        // and nobody over a stronghold's people or its chief.
+        bool CourtJudges(const Request& request, const PlotCasting::Member& judge, const PlotCasting::Member& subject)
+        {
+            const auto rank = CourtRank(judge.office);
+            return rank > 0 && rank > CourtRank(subject.office) && subject.office != Office::OrcChief
+                   && !InStronghold(request, subject);
+        }
+
         const PlotCasting::Member* Mark(const Request& request)
         {
             const auto* mark = Filled(request, "mark");
@@ -677,6 +719,12 @@ namespace NarrativeEngine::PlotCandidates
 
             switch (slot.kind) {
             case PlotVerbs::SlotKind::Person: {
+                // An audience rather than a person: whoever was named, a top
+                // official is exposed to the organisation they lead.
+                if (list.size() == 1 && list.front().value.form == 0) {
+                    out.values.push_back({std::string{slot.name}, 0, list.front().value.text});
+                    break;
+                }
                 const auto called = PeopleCalled(here, text);
                 if (called.living.empty()) {
                     problems.push_back(std::format("{}, for {}{}", called.why, role, Admitted(list)));
@@ -890,23 +938,70 @@ namespace NarrativeEngine::PlotCandidates
             const auto ctx = people();
             const auto* mark = Mark(request);
             const auto* boss = request.population.Find(request.mastermind);
-            if (const auto* subject = mark != nullptr ? mark : boss; subject != nullptr) {
+            const auto* subject = mark != nullptr ? mark : boss;
+            if (subject != nullptr) {
                 const auto superiors = Gather(
                     ctx, [subject](const PlotCasting::Member& m, const auto&) { return OutranksIn(m, *subject); });
                 if (!superiors.empty()) {
                     return People(slot, ctx, superiors, limits.people);
                 }
             }
-            const auto all = Gather(ctx, [](const PlotCasting::Member& m, const auto&) { return m.authority; });
-            for (const auto* anchor : {mark, boss}) {
-                if (anchor == nullptr) {
-                    continue;
-                }
+            if (subject == nullptr) {
+                return {};
+            }
+
+            // A stronghold's people answer to its chief, wherever it stands.
+            const auto chiefs = Gather(ctx, [subject](const PlotCasting::Member& m, const auto&) {
+                return m.office == Office::OrcChief && m.settlement == subject->settlement;
+            });
+            if (!chiefs.empty()) {
+                return People(slot, ctx, chiefs, limits.people);
+            }
+
+            // Then the court, and only those on it above the subject: a
+            // steward is answerable to the jarl, never to the guard captain.
+            const auto all = Gather(ctx, [&request, subject](const PlotCasting::Member& m, const auto&) {
+                return CourtJudges(request, m, *subject);
+            });
+            const auto inHold = [&all](const PlotCasting::Member& anchor) {
                 std::vector<Ranked> local;
-                std::copy_if(all.begin(), all.end(), std::back_inserter(local), [anchor](const Ranked& r) {
-                    return r.member->hold == anchor->hold;
+                std::copy_if(all.begin(), all.end(), std::back_inserter(local), [&anchor](const Ranked& r) {
+                    return r.member->hold == anchor.hold;
                 });
-                if (!local.empty()) {
+                return local;
+            };
+            if (const auto local = inHold(*subject); !local.empty()) {
+                return People(slot, ctx, local, limits.people);
+            }
+
+            // An official nobody in their own hold stands above -- a jarl, a
+            // chief -- answers to no person. They are exposed to the
+            // organisation they lead as a whole, as rumors would expose them,
+            // and the slot holds how it is said rather than anybody. A
+            // petition has no such audience: the mastermind would be
+            // petitioning their own following.
+            if (mark != nullptr && mark->office != Office::None) {
+                const PlotCasting::FactionStanding* top = nullptr;
+                for (const auto& f : mark->factions) {
+                    if (f.rostered && (top == nullptr || f.standing > top->standing)) {
+                        top = &f;
+                    }
+                }
+                std::string audience;
+                for (const auto& option : request.world.factions) {
+                    if (top != nullptr && option.faction == top->faction) {
+                        audience = option.name;
+                    }
+                }
+                if (audience.empty()) {
+                    const auto where = SettlementName(request, mark->settlement);
+                    audience = where.empty() ? std::string{"the people they lead"} : "the people of " + where;
+                }
+                return Keyed({{{}, {std::string{slot.name}, 0, audience}, audience}}, limits.people);
+            }
+
+            if (boss != nullptr && boss != subject) {
+                if (const auto local = inHold(*boss); !local.empty()) {
                     return People(slot, ctx, local, limits.people);
                 }
             }
