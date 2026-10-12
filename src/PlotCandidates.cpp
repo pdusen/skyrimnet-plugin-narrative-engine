@@ -500,6 +500,18 @@ namespace NarrativeEngine::PlotCandidates
             return Keyed(std::move(out), limits.things);
         }
 
+        case Rule::DocumentPool: {
+            // Paper only: what can be falsified or dug up. A forged ruby is
+            // not a thing a scheme does.
+            std::vector<Candidate> out;
+            for (const auto& item : request.world.items) {
+                if (item.category == PlotItemPool::Category::Document) {
+                    out.push_back({{}, {std::string{slot.name}, item.form, item.displayName}, item.displayName});
+                }
+            }
+            return Keyed(std::move(out), limits.things);
+        }
+
         case Rule::BoundItem: {
             std::vector<Candidate> out;
             if (auto bound = Bind(slot, request)) {

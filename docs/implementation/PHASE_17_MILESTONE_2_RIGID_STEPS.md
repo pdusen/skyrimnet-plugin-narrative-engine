@@ -1530,7 +1530,7 @@ a ship, a leadership bid -- and one of them bought a purse of septims. Seven nam
 
 ### Step 26 — Records in the item pool
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1539,6 +1539,19 @@ valuable, each a vanilla record checked against the Spriggit export. A new candi
 only the pool's documents, for the verbs of Step 27 whose item has to be paper.
 
 **Verification:** the candidate suite asserts `DocumentPool` lists the documents and nothing else.
+
+Done. `PlotItems.ini` gains `dunPOIChillwindJournal2` as "a merchant's ledger", `dunAlftandDwemerStudy01` as "a set
+of research notes" and `dunHarmugstahlJournal01` as "a private journal" among the documents, and
+`SpellTomeCandlelight` as "a spellbook" among the valuables; `Rule::DocumentPool` and its case in
+`PlotCandidates::Build` admit the documents alone. 472 tests pass, with a new section in the candidate suite.
+
+**Vanilla has no ledger.** Every book in the Spriggit export was searched by its English name; nothing is called a
+ledger or a book of accounts, so "a merchant's ledger" is the Chillwind Depths "Merchant's Journal", the nearest
+anonymous book of trade. The research notes and the journal are likewise the anonymous ones, not Calcelmo's or
+Kodlak's, so no plot about one person's papers carries another person's quest item.
+
+**The spellbook is a real spell tome.** Candlelight is the cheapest and most common; a plot that delivers it puts a
+tome in somebody's hands that teaches the spell, which is what a stolen spellbook should do.
 
 ### Step 27 — `falsify` and `dig_up`: verbs that make documents
 

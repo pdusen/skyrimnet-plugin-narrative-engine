@@ -58,6 +58,7 @@ namespace NarrativeEngine::PlotVerbs
         MarkCommunity,              // a settlement where the mark, or someone close to them, lives
         MarkOrMastermindSettlement, // the mark's settlement or the mastermind's
         ItemPool,                   // the curated Acquire pool
+        DocumentPool,               // the pool's documents alone
         BoundItem                   // whatever an earlier step of this plot obtained
     };
 

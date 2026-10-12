@@ -479,6 +479,20 @@ TEST_CASE("PlotCandidates things and bindings", "[PlotCandidates][engine]")
         }
     }
 
+    SECTION("when only a document will do")
+    {
+        f.world.items = {{0x0000D001, "a ruby", NarrativeEngine::PlotItemPool::Category::Valuable},
+                         {0x0000D003, "a merchant's ledger", NarrativeEngine::PlotItemPool::Category::Document},
+                         {0x0000D004, "a deed to a property", NarrativeEngine::PlotItemPool::Category::Document}};
+        PlotVerbs::Slot paper{"item", PlotVerbs::SlotKind::Thing, PlotVerbs::Rule::DocumentPool};
+
+        SECTION("should offer the pool's documents and nothing else, in pool order")
+        {
+            REQUIRE(Forms(PlotCandidates::Build(paper, f.Request()))
+                    == std::vector<RE::FormID>{0x0000D003, 0x0000D004});
+        }
+    }
+
     SECTION("when the pool holds more items than a person list would")
     {
         for (RE::FormID i = 0; i < 30; ++i) {
