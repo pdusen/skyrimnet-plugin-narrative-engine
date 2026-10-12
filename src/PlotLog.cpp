@@ -11,7 +11,6 @@
 #include <format>
 #include <fstream>
 #include <mutex>
-#include <system_error>
 
 // The file half of the plot trace. The line formatting lives in
 // PlotLogFormat.cpp so it can be probed without a filesystem.
@@ -39,31 +38,18 @@ namespace NarrativeEngine::PlotLog
             return *dir / (std::string(kFileStem) + "." + std::to_string(slot) + ".log");
         }
 
-        // Delete .5, shift .4 -> .5 ... current -> .1. Failures are
-        // logged and swallowed: a rotation that cannot happen degrades to
-        // "this session's file only", which is still useful.
+        // Delete .5, shift .4 -> .5 ... current -> .1, through the helper
+        // every other log rotates with. It COPIES the current file into
+        // slot 1 rather than renaming it, and the reopen below truncates in
+        // place, so the current file keeps its identity and an editor
+        // watching it follows the new session. See EventLogUtil.h.
         void RotateFilesLocked()
         {
-            std::error_code ec;
-            const auto oldest = FilePathForSlot(kRotationSlots);
-            if (std::filesystem::exists(oldest, ec)) {
-                std::filesystem::remove(oldest, ec);
-                ec.clear();
+            auto dir = SKSE::log::log_directory();
+            if (!dir) {
+                return;
             }
-            for (int slot = kRotationSlots - 1; slot >= 1; --slot) {
-                const auto src = FilePathForSlot(slot);
-                if (std::filesystem::exists(src, ec)) {
-                    std::filesystem::rename(src, FilePathForSlot(slot + 1), ec);
-                    ec.clear();
-                }
-            }
-            const auto current = FilePathForSlot(0);
-            if (std::filesystem::exists(current, ec)) {
-                std::filesystem::rename(current, FilePathForSlot(1), ec);
-                if (ec) {
-                    logger::warn("PlotLog: rotate of '{}' failed: {}", current.string(), ec.message());
-                }
-            }
+            EventLogUtil::RotateLogFiles(*dir, kFileStem, kRotationSlots, "PlotLog");
         }
 
         // Flushed as it is written. From Step 16 a plot tick blocks on
