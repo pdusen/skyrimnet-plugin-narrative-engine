@@ -5,7 +5,7 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
+> **Doc status: Steps 1–8 and 10–20 complete; Step 21 added before the fifth attempt at Step 9.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, and Step 20 makes adapting find
 > another way -- each added after an attempt at Step 9.
@@ -1294,6 +1294,22 @@ cannot route back through the first.
 **Retry is gone, with what kept it honest.** `CanRetry`, `Retried` and `FailedAgents` existed so a retried step went
 to somebody new. No step can now recur, so dispatch no longer filters for them. An answer of `retry` from a model that
 remembers the old option concedes, as any unoffered answer does.
+
+### Step 21 — A verb's id in prose is written as words
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+The fourth attempt's Viarmo wrote his finish as "spread_rumors about the court historian around Solitude": the id
+from the list, not the act in words. Such an answer is not refused. Every verb keeps its id's plain words -- its
+dashboard caption, lowercased: `spread_rumors` is "spread rumors", `win_over` "win over", `ask_around` "ask
+around" -- and the parser writes every id that stands as a whole word in the scheme or the finish as those words.
+`goal` stays an id, since that is what it is for.
+
+**Verification:** the verb suite asserts every verb's words carry no underscore and say its id with spaces; the
+parser suite asserts an id in the finish or scheme is written as words, and that an id inside a longer word is left
+alone.
 
 ---
 
