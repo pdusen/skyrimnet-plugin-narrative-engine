@@ -150,7 +150,8 @@ namespace NarrativeEngine::PlotPlanning
         public:
             Planner(const Input& input, const Ask& ask)
                 : input_(input), ask_(ask), naming_(input.scheme + "\n" + input.finish),
-                  named_(PlotCandidates::NamedIn(input.population, naming_))
+                  named_(PlotCandidates::NamedIn(input.population, naming_)),
+                  finishNamed_(PlotCandidates::NamedIn(input.population, input.finish))
             {}
 
             Outcome Run()
@@ -198,6 +199,8 @@ namespace NarrativeEngine::PlotPlanning
             // Whoever they name. Kept off any slot a preparation leaves
             // open: they are what the plot is about, not its helpers.
             std::unordered_set<RE::FormID> named_;
+            // Whoever the finish alone names: who the goal is done to.
+            std::unordered_set<RE::FormID> finishNamed_;
 
             SkyrimNetAPI::DecisionResult Decide(std::string_view name, const nlohmann::json& ctx)
             {
@@ -352,12 +355,18 @@ namespace NarrativeEngine::PlotPlanning
             // one candidate. An item slot takes an item a succeeded step
             // already got, or else is chosen from the pool -- and the plan
             // then gets it (GetItems).
+            //
+            // `asFinish` fills the goal: a person slot whose list holds
+            // anybody the finish names offers only them. Ranking them first
+            // was not enough; the decision model chose past Svidi to frame
+            // Hemming.
             Fill FillSlots(const PlotVerbs::Verb& verb,
                            const std::vector<SlotValue>& preset,
                            const std::unordered_set<RE::FormID>& excluded,
                            std::size_t index,
                            const std::string& purpose,
-                           Step& step)
+                           Step& step,
+                           bool asFinish = false)
             {
                 step = Partial(verb, preset);
                 step.slots.insert(step.slots.begin(),
@@ -405,6 +414,14 @@ namespace NarrativeEngine::PlotPlanning
                                 return SameStep(trial, *other);
                             });
                         });
+                    }
+                    if (asFinish && slot.kind == PlotVerbs::SlotKind::Person) {
+                        const auto named = [this](const PlotCandidates::Candidate& c) {
+                            return finishNamed_.contains(c.value.form);
+                        };
+                        if (std::any_of(list.begin(), list.end(), named)) {
+                            std::erase_if(list, [&named](const PlotCandidates::Candidate& c) { return !named(c); });
+                        }
                     }
                     if (list.empty()) {
                         rejection_ = std::format("{}: nobody or nothing can fill {{{}}}", verb.id, slot.name);
@@ -525,10 +542,16 @@ namespace NarrativeEngine::PlotPlanning
                     offer(PlotVerbs::Find(id), preset, excluded);
                 }
                 if (IsDocument(item->form)) {
-                    // A document can also be falsified. Whose name it is in is
-                    // not kept from the step it serves: a paper in a person's
-                    // own name, planted on them, is what framing them is.
-                    offer(PlotVerbs::Find("falsify"), preset, {});
+                    // A document can also be falsified: in the name of the
+                    // person the step it serves is about, when it is about
+                    // somebody, since a paper in a person's own name, planted
+                    // on them, is what framing them is. Asked again, Jarl
+                    // Idgrod's forgery went into her daughter's name.
+                    auto forged = preset;
+                    if (mark != nullptr) {
+                        forged.push_back({"subject", mark->form, mark->text});
+                    }
+                    offer(PlotVerbs::Find("falsify"), std::move(forged), {});
                     // Or dug up: against the person the step it serves is
                     // about, when it is about somebody.
                     auto dug = preset;
@@ -614,6 +637,28 @@ namespace NarrativeEngine::PlotPlanning
             // was written to end in, or else asked for.
             Fill Goal()
             {
+                // A re-plan keeps the goal it had, every slot as it was.
+                if (input_.goalStep != nullptr) {
+                    const auto* kept = PlotVerbs::Find(input_.goalStep->verb);
+                    std::vector<SlotValue> preset;
+                    for (const auto& value : input_.goalStep->slots) {
+                        if (value.name != "mastermind") {
+                            preset.push_back(value);
+                        }
+                    }
+                    if (kept != nullptr && kept->finishes && Fillable(*kept, preset, {}, 0)) {
+                        Step goal;
+                        const auto filled =
+                            FillSlots(*kept, preset, {}, 0, "This step accomplishes the scheme.", goal, true);
+                        if (filled != Fill::Done) {
+                            return filled;
+                        }
+                        plan_.push_back(std::move(goal));
+                        preparable_.push_back(true);
+                        return GetItems();
+                    }
+                }
+
                 std::vector<const PlotVerbs::Verb*> offered;
                 nlohmann::json options = nlohmann::json::array();
                 for (const auto& verb : PlotVerbs::kVerbs) {
@@ -666,7 +711,7 @@ namespace NarrativeEngine::PlotPlanning
                 }
 
                 Step goal;
-                const auto filled = FillSlots(*verb, {}, {}, 0, "This step accomplishes the scheme.", goal);
+                const auto filled = FillSlots(*verb, {}, {}, 0, "This step accomplishes the scheme.", goal, true);
                 if (filled != Fill::Done) {
                     return filled;
                 }

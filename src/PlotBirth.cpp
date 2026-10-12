@@ -405,6 +405,12 @@ namespace NarrativeEngine::PlotBirth
         input.scheme = plot.scheme;
         input.finish = plot.finish;
         input.abandoned = plot.abandoned;
+        // The finish is the plan's last step, and still to come: a failed
+        // finish ends the plot rather than re-planning it.
+        if (!plot.plan.empty() && plot.cursor < plot.plan.size()) {
+            input.goalStep = &plot.plan.back();
+            input.goal = plot.plan.back().verb;
+        }
         input.bio = BioSections(boss->npc, boss->name, "replan");
         input.alive = PlotPopulation::AlivePredicate();
         input.occupation = ShortOccupation;
@@ -510,8 +516,13 @@ namespace NarrativeEngine::PlotBirth
             pt,
             kAmbitionPrompt,
             [&] { return AmbitionContext(*boss, made); },
-            [player = PlayerName(), &items](const std::string& response) {
-                return ParseAmbition(response, TextLimits{}, player, items);
+            [player = PlayerName(), &items, &population, boss](const std::string& response) {
+                const auto namesSomebody = [&population, boss](std::string_view text) {
+                    auto named = PlotCandidates::NamedIn(population, text);
+                    named.erase(boss->npc);
+                    return !named.empty();
+                };
+                return ParseAmbition(response, TextLimits{}, player, items, namesSomebody);
             },
             boss->name,
             "ambition");

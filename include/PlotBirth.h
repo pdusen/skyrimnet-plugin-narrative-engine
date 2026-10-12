@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -151,10 +152,16 @@ namespace NarrativeEngine::PlotBirth
     // is a verb with an item, the finish must name one of them -- its name
     // without the leading article, in any case -- or the answer is refused
     // with the list, for the one retry to choose from. Empty checks nothing.
+    //
+    // `namesSomebody` says whether a text names anybody in the plot
+    // population other than the mastermind. When the goal is done to a
+    // person, a finish naming nobody is refused: planning would otherwise
+    // fill the goal with whoever the list put first. Empty checks nothing.
     [[nodiscard]] AmbitionOutcome ParseAmbition(const std::string& response,
                                                 const TextLimits& limits,
                                                 std::string_view playerName = {},
-                                                const std::vector<std::string>& items = {});
+                                                const std::vector<std::string>& items = {},
+                                                const std::function<bool(std::string_view)>& namesSomebody = {});
 
     // --- Call 3: how ------------------------------------------------------
     //

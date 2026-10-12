@@ -176,6 +176,7 @@ namespace
         std::string goal;
         std::string finish;
         std::vector<PlotModel::Abandoned> abandoned;
+        const PlotModel::Step* goalStep = nullptr;
         Script script;
 
         PlotPlanning::Outcome Run(std::size_t maxSteps = PlotPlanning::kPlanCap)
@@ -184,6 +185,7 @@ namespace
             input.goal = goal;
             input.finish = finish;
             input.abandoned = abandoned;
+            input.goalStep = goalStep;
             input.mastermind = kBoss;
             input.mastermindName = "Olfrid";
             input.ambition = "He means to own Whiterun.";
@@ -301,20 +303,18 @@ TEST_CASE("PlotPlanning asks for the goal first", "[PlotPlanning][engine]")
 
     SECTION("when how the scheme finishes names somebody the scheme does not")
     {
-        // The scheme names Hulda; the finish names Idolaf, so both head the
-        // mark list ahead of anybody named by neither.
+        // The scheme names Hulda; the finish names Idolaf, so the watch is of
+        // Idolaf. Its one preparation, asking around about him in Whiterun,
+        // is taken without asking either.
         f.goal = "watch";
         f.finish = "watch Idolaf";
-        f.script.answers = {"c2", "p1"};
         const auto out = f.Run();
 
-        SECTION("should put the people it names on the list first, and tell the question how it ends")
+        SECTION("should do it to the person the finish names, without asking")
         {
-            const auto lines = f.script.Lines(0);
-            REQUIRE(lines.size() == 2);
-            REQUIRE(lines[0].find("named in the scheme") != std::string::npos);
-            REQUIRE(lines[1].find("named in the scheme") != std::string::npos);
-            REQUIRE(f.script.asked[0].ctx["finish"] == "watch Idolaf");
+            REQUIRE(f.script.asked.empty());
+            REQUIRE(out.ok);
+            REQUIRE(FormOf(out.plan.back(), "mark") == kFriend);
         }
     }
 
@@ -532,6 +532,82 @@ TEST_CASE("PlotPlanning gets the items a plan needs", "[PlotPlanning][engine]")
     }
 }
 
+TEST_CASE("PlotPlanning acts on the people the finish names", "[PlotPlanning][engine]")
+{
+    Fixture f;
+
+    SECTION("when the finish names one of the people the goal could be done to")
+    {
+        // goal steal, as the scheme call chose -> the ruby (c1). Hulda, whom
+        // the scheme names, would head the list of marks; the finish names
+        // Idolaf. Prepare p1, the watch; then ready.
+        f.goal = "steal";
+        f.finish = "Steal a ruby from Idolaf";
+        f.script.answers = {"c1", "p1", "ready"};
+        const auto out = f.Run();
+
+        SECTION("should take them without asking whom")
+        {
+            REQUIRE(f.script.Templates() == std::vector<std::string>{kSlot, kPrepare, kPrepare});
+            REQUIRE(f.script.asked[0].ctx["slot"] == "item");
+            REQUIRE(out.ok);
+            REQUIRE(FormOf(out.plan.back(), "mark") == kFriend);
+        }
+    }
+
+    SECTION("when the finish names nobody the goal could be done to")
+    {
+        f.goal = "steal";
+        f.finish = "Steal a ruby from the Jarl";
+        f.script.answers = {"c1", "c2", "p1", "ready"};
+        (void)f.Run();
+
+        SECTION("should ask whom, from the list as it stands")
+        {
+            REQUIRE(f.script.asked[1].ctx["slot"] == "mark");
+            REQUIRE(f.script.Offered(1).size() > 1);
+        }
+    }
+
+    SECTION("when a plan is made again after a failure")
+    {
+        // The goal was a theft of the ruby from Idolaf. A re-plan keeps it,
+        // and only prepares it again.
+        PlotModel::Step kept;
+        kept.verb = "steal";
+        kept.slots = {{"mastermind", kBoss, "Olfrid"}, {"item", kRuby, "a ruby"}, {"mark", kFriend, "Idolaf"}};
+        f.goalStep = &kept;
+        f.script.answers = {"p1", "ready"};
+        const auto out = f.Run();
+
+        SECTION("should keep every slot of the goal, and ask neither the goal nor whom")
+        {
+            REQUIRE(f.script.Templates() == std::vector<std::string>{kPrepare, kPrepare});
+            REQUIRE(out.ok);
+            REQUIRE(out.plan.back().verb == "steal");
+            REQUIRE(FormOf(out.plan.back(), "item") == kRuby);
+            REQUIRE(FormOf(out.plan.back(), "mark") == kFriend);
+        }
+    }
+
+    SECTION("when a planting before a denunciation needs a document")
+    {
+        // goal denounce -> Hulda (c1). Prepare p1, the planting; its item is
+        // the deed (c3), falsified.
+        f.script.answers = {"denounce", "c1", "p1", "c3", "falsify", "ready"};
+        const auto out = f.Run();
+
+        SECTION("should forge it in the name of the person it is planted on, without asking")
+        {
+            REQUIRE(f.script.asked.size() == 6);
+            REQUIRE(f.script.Lines(4)[1] == "Someone falsifies a deed to a property in Hulda's name.");
+            REQUIRE(out.ok);
+            REQUIRE(out.plan[0].verb == "falsify");
+            REQUIRE(FormOf(out.plan[0], "subject") == kTrader);
+        }
+    }
+}
+
 TEST_CASE("PlotPlanning exposes somebody with proof", "[PlotPlanning][engine]")
 {
     Fixture f;
@@ -705,11 +781,11 @@ TEST_CASE("PlotPlanning may have a thing made", "[PlotPlanning][engine]")
 
     SECTION("when the scheme ends in a gift of something a jeweler can make")
     {
-        // goal deliver -> the necklace, named in the finish (c1) -> to Hulda,
-        // whom the scheme names (c1). It could be stolen, or made; not bought,
-        // since the only trader is the one it is for.
+        // goal deliver -> the necklace, named in the finish (c1) -> to Laila,
+        // whom the finish names, without asking. It could be stolen, bought
+        // from Hulda, or made.
         f.finish = "Bring a gold diamond necklace to Laila";
-        f.script.answers = {"deliver", "c1", "c1", "set"};
+        f.script.answers = {"deliver", "c1", "set"};
         const auto out = f.Run();
 
         SECTION("should offer the made thing first among what may be delivered")
@@ -717,11 +793,11 @@ TEST_CASE("PlotPlanning may have a thing made", "[PlotPlanning][engine]")
             REQUIRE(f.script.Lines(1).front() == "a Gold Diamond Necklace");
         }
 
-        SECTION("should offer making it beside stealing it")
+        SECTION("should offer making it beside stealing and buying it")
         {
-            REQUIRE(f.script.asked[3].templateName == kObtain);
-            REQUIRE(f.script.Offered(3) == std::vector<std::string>{"steal", "set"});
-            REQUIRE(f.script.Lines(3)[1] == "Someone makes a Gold Diamond Necklace at a jeweler's bench.");
+            REQUIRE(f.script.asked[2].templateName == kObtain);
+            REQUIRE(f.script.Offered(2) == std::vector<std::string>{"steal", "buy", "set"});
+            REQUIRE(f.script.Lines(2)[2] == "Someone makes a Gold Diamond Necklace at a jeweler's bench.");
         }
 
         SECTION("should plan the making to supply the delivery")
@@ -1162,6 +1238,26 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
         {
             REQUIRE_FALSE(out.ok);
             REQUIRE(out.rejection.find("a ruby; a deed to a property") != std::string::npos);
+        }
+    }
+
+    SECTION("when the finish is done to somebody")
+    {
+        j["goal"] = "steal";
+        const auto namesSomebody = [](std::string_view text) { return text.find("Hulda") != std::string_view::npos; };
+
+        SECTION("should refuse a finish naming nobody who exists, saying why")
+        {
+            j["finish"] = "steal a ruby from Lentilus Batiatus";
+            const auto out = ParseAmbition(j.dump(), TextLimits{}, {}, {}, namesSomebody);
+            REQUIRE_FALSE(out.ok);
+            REQUIRE(out.rejection.find("names nobody who lives in Skyrim") != std::string::npos);
+        }
+
+        SECTION("should accept one naming somebody who does")
+        {
+            j["finish"] = "steal a ruby from Hulda";
+            REQUIRE(ParseAmbition(j.dump(), TextLimits{}, {}, {}, namesSomebody).ok);
         }
     }
 

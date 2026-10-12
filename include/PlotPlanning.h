@@ -105,6 +105,13 @@ namespace NarrativeEngine::PlotPlanning
         // Ways the plot has given up on. No step of an abandoned verb
         // against its abandoned person is planned, in any position.
         std::vector<PlotModel::Abandoned> abandoned;
+
+        // The goal step as it was planned, when adaptation re-plans. It is
+        // planned last again with every slot kept, rather than asked for: a
+        // failure never abandons the finish, so the people it is done to
+        // stand. Null at birth, or a goal that can no longer be filled asks
+        // the goal question as before.
+        const PlotModel::Step* goalStep = nullptr;
     };
 
     struct Outcome

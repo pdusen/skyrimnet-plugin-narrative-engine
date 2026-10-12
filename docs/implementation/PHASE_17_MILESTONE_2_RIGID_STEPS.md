@@ -5,7 +5,7 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: Steps 1–8 and 10–31 complete; Steps 32–34 follow up Step 9's seventh attempt.** Steps 10–12 plan
+> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
 > another way, Steps 21–25 mend what the fifth attempt found, Steps 26–28 add five verbs and the records they act on,
@@ -1988,7 +1988,7 @@ than as a property every verb would have to declare.
 
 ### Step 34 — A plan acts on the people its scheme names
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2023,6 +2023,32 @@ The plugin knows who exists, so four rules close the gaps:
   - a goal slot offers only the person the finish names when it lists them;
   - a re-plan keeps every slot of the goal and asks no goal question;
   - a forgery for a planting is in the mark's name.
+
+Done. 485 tests pass, with a new planning case and a new parse section; the plugin builds with no warnings.
+
+- **The parse check.** `ParseAmbition` takes a `namesSomebody` test, which `PlotBirth::Compose` builds from
+  `PlotCandidates::NamedIn` with the mastermind left out.
+- **Narrowing the goal.** The planner keeps whom the finish alone names. `FillSlots` narrows a goal's person slots to
+  them, when any are on the list.
+- **Keeping the goal.** `PlotPlanning::Input` gains `goalStep`, which `PlotBirth::Replan` sets to the plan's last step.
+- **The forgery's subject.** `Obtain` gives a forgery serving a step with a mark that mark as its subject, as Step 33
+  gives a dug-up proof its mark.
+
+**Every person slot of the goal is narrowed, not only its target.** A finish that says "bring the necklace to Laila"
+names a recipient; one that says "denounce Hulda to Balgruuf" names an authority. Narrowing only the first person slot
+would have left the second to the old ranking, which is what chose past Svidi.
+
+**Two planning cases changed with the rule.** Step 13's case asserted that the finish's person was offered first beside
+the scheme's. It now asserts the goal is done to the finish's person without a question. Step 31's crafted gift no
+longer asks for its recipient, and so may be bought from Hulda, whom it is no longer delivered to.
+
+**A kept goal that can no longer be filled asks the goal question as before.** That happens when its verb has stopped
+finishing or a slot's person has been given up on. A re-plan can still find a way; a goal it cannot keep is not a
+reason to concede.
+
+**What stays open.** A scheme that names two people sharing a name word still offers both: "Jarl Idgrod" names Idgrod
+Ravencrone and Idgrod the Younger alike. The re-plan that went astray on her is closed, since the goal and the
+forgery's subject are both held now; a fresh plot naming her by the shared word alone still asks.
 
 ---
 
