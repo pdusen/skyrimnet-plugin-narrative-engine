@@ -5,7 +5,7 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
+> **Doc status: Steps 1–8 and 10–21 complete; Steps 22–25 added after Step 9's fifth attempt.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, and Step 20 makes adapting find
 > another way -- each added after an attempt at Step 9.
@@ -1323,6 +1323,79 @@ something else.
 **An id is mended only where it stands as a word.** A word is a run of letters, digits and underscores, so
 "watchtower" is not `watch` and "my_spread_rumors_plan" is not `spread_rumors`. Ids without an underscore come out
 the same as they went in.
+
+**Fifth attempt at Step 9 (2026-10-11): adaptation takes other roads.** Eleven plots; seven adaptations, each
+abandoning the failed way and planning around it -- Hogni Red-Arm's caught watch of Banning became an ask-around and
+a bribe before the theft, and Thonar's caught theft from Thongvor got the letter from Betrid instead. Four things
+were wrong:
+
+1. **Two plots conceded on a template error.** `plot_prepare` was sent with one option: Quintus Navale's re-plan was
+   one step long with one preparation to offer, and Step 15 withholds `ready` until a plan has two steps. SkyrimNet
+   refuses a choice question with fewer than two options, so the re-plan failed and the plot conceded.
+2. **A failed finish was adapted around.** Hogni's theft from Banning was the finish; the re-plan stole from Betrid
+   Silver-Blood instead, under a finish still naming Banning. The user's ruling: a failed finish fails the scheme.
+3. **The scheme's target was hired as a helper.** Raerek's re-plan paid Thongvor Silver-Blood -- the man his scheme
+   is against -- to look the other way, because Step 10 puts named people first on every list, an unbound bribe's
+   included.
+4. **A finish named an object the pool does not hold.** Malur's "steal a spellbook from Nelacar" was planned as a
+   theft of written orders.
+
+Brelyna's watch of Tolfdir, held for its whole budget while the player stood nearby and then timed out, was
+abandoned like any failure; the user ruled that correct.
+
+### Step 22 — A question with one option is not asked
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+The preparation question with a single option and no `ready` takes that option without asking, as a slot with one
+candidate already does, and so does the goal question when only one verb can be filled. A choice question is only
+ever sent with two options or more.
+
+**Verification:** the planning suite asserts a one-step plan with one possible preparation plans it without a
+question, and a goal question with one fillable verb is not asked.
+
+### Step 23 — A failed finish fails the scheme
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+When the step that fails is the plan's last -- the finish -- the plot ends there, failed, with a new outcome,
+`finish_failed`, and no adaptation question is asked. The finish is the end the scheme was for; a different act
+against somebody else is a different scheme. The agent's and the mastermind's failure memories are written as for
+any failure, and no concession memory is: the mastermind did not give it up, it was lost.
+
+**Verification:** a suite asserts a failed finish ends the plot with `finish_failed` and asks nothing, and a failed
+step before the finish still adapts.
+
+### Step 24 — The scheme's people are not hired as helpers
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+A preparation with no bound person -- the bribe before a theft, the bribe before a sabotage -- never offers anybody
+the scheme or its finish names. Those people are what the plot is about; paying one of them to look the other way
+is a different plot.
+
+**Verification:** the planning suite asserts an unbound preparation's list leaves out the people the scheme names,
+while a bound one still takes them.
+
+### Step 25 — A finish names its object from the pool
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+When the goal is a verb with an item -- `steal`, `buy`, `deliver`, `plant` -- the parser refuses a finish that names
+none of the pool's items, and says which items there are, so the one retry can choose among them. An item counts as
+named when its name, without its leading article, appears in the finish: "a deed to a property" is named by "steal
+the deed to a property from Hemming".
+
+**Verification:** the parser suite asserts a finish naming a pool item passes, one naming an object the pool lacks is
+refused with the list, and a goal with no item is never checked.
 
 ---
 
