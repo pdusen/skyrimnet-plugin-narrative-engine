@@ -5,7 +5,7 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: Steps 1–43 complete; Step 44 tunes Step 43.** Steps 10–12 plan
+> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
 > another way, Steps 21–25 mend what the fifth attempt found, Steps 26–28 add five verbs and the records they act on,
@@ -2504,7 +2504,7 @@ says, and at these defaults it is nearly idle: how far to tune it is put to the 
 
 ### Step 44 — Preparing also makes getting caught less likely
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2526,6 +2526,19 @@ three times. Asking around, deliveries and crafting stay above 85% unprepared an
 **Verification:** the resolution suite asserts the eased share lowers the mishap chance, never below a quarter, and
 that an estimate rises by more with each preparation than easing the threshold alone gives. The co-save suite asserts
 a step's eased share survives a save.
+
+Done. 490 tests pass, with new sections in the resolution and co-save suites; the plugin builds with no warnings.
+
+- **The share.** `PlotResolution::EaseFactor` gives the share a step's preparations leave, and `EaseThreshold` now uses
+  it.
+- **The mishap roll.** `MishapInputs` gains `easing`, by which `RollMishap` multiplies the chance.
+- **Saving it.** `Step::sizingEase` holds the share from dispatch on, saved in the co-save at record version 12.
+- **The defaults.** The estimate eases both as dispatch does, and `fPlotPlanOdds` and the planner's own default are
+  0.85.
+
+**The suite measures the difference the mishap easing makes.** It estimates a prepared theft twice: once as it runs,
+and once with mishaps switched off so that only the eased work counts. The rise with preparations must be larger in
+the first. That pins down what this step is for: before it, the two rises were the same.
 
 ---
 

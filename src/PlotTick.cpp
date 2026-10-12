@@ -381,6 +381,8 @@ namespace NarrativeEngine::PlotTick
             }
             const float unprepared = step.threshold;
             step.threshold = PlotResolution::EaseThreshold(step.threshold, prepared, cfg.plotPreparationEase);
+            // And the agent is less likely to be seen, on every tick.
+            step.sizingEase = static_cast<float>(PlotResolution::EaseFactor(prepared, cfg.plotPreparationEase));
             step.sizingTravel = static_cast<float>(travel);
             step.sizingImportance = static_cast<float>(importance);
             step.sizingCompetence = actor != nullptr ? static_cast<float>(actor->skills.competence) : 0.5f;
@@ -606,6 +608,7 @@ namespace NarrativeEngine::PlotTick
             inputs.mishap.chanceBase = cfg.plotMishapChanceBase;
             inputs.mishap.conspicuous = PlotModel::IsConspicuous(step.type);
             inputs.mishap.competence = step.sizingCompetence;
+            inputs.mishap.easing = step.sizingEase;
 
             const auto record = PlotResolution::AdvanceStep(step, inputs, state.rngState);
             PlotLog::Roll(plot, step, record);

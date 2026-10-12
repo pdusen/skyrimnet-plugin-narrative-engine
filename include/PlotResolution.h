@@ -88,9 +88,13 @@ namespace NarrativeEngine::PlotResolution
     // function has no opinion about map units.
     [[nodiscard]] float SizeThreshold(PlotModel::StepType type, double targetImportance, double travelDistanceNorm);
 
-    // A threshold after `preparations` preparations that succeeded, each
-    // leaving `ease` of the work: threshold * ease^preparations, never less
-    // than a quarter of it. However well prepared, a step is still work.
+    // The share of a step's work, and of its chance of a mishap, that
+    // `preparations` preparations that succeeded leave, each leaving `ease`:
+    // ease^preparations, never less than a quarter. However well prepared,
+    // a step is still work, and an agent can still be seen.
+    [[nodiscard]] double EaseFactor(int preparations, double ease) noexcept;
+
+    // A threshold eased by its preparations: threshold * EaseFactor.
     [[nodiscard]] float EaseThreshold(float threshold, int preparations, double ease);
 
     // The settings a step's race is run with, gathered so a planner can run
@@ -183,6 +187,9 @@ namespace NarrativeEngine::PlotResolution
         // happens to.
         bool conspicuous = false;
         double competence = 0.5;
+        // The share of the chance a step's preparations leave, 0 to 1. An
+        // agent who watched the mark first is less likely to be seen.
+        double easing = 1.0;
     };
 
     // Did the actor get caught this tick?

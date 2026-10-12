@@ -1135,15 +1135,16 @@ namespace NarrativeEngine::Settings
         float plotProgressMaxFraction = 0.45f;
 
         // What each preparation that succeeded leaves of the step it
-        // prepared: its threshold is multiplied by this once per
-        // preparation, so two at 0.8 leave 64% of the work. The budget is
-        // not touched, so preparing raises the odds.
+        // prepared: its threshold and its per-tick chance of a mishap are
+        // both multiplied by this once per preparation, so two at 0.8
+        // leave 64% of each. The budget is not touched, so preparing
+        // raises the odds.
         float plotPreparationEase = 0.8f;
 
         // The odds, 0 to 1, a plan prepares each preparable step to -- the
         // goal and what gets its items -- before it is done. Higher makes
         // longer plans; 0 prepares only what a lone goal needs.
-        float plotPlanOdds = 0.75f;
+        float plotPlanOdds = 0.85f;
 
         // The caught-in-the-act roll. Typed failure is load-bearing --
         // it decides whether the target gets a memory and whether the

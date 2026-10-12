@@ -435,6 +435,7 @@ TEST_CASE("PlotVerbs steps survive the co-save", "[PlotVerbs][engine]")
     plot.abandoned.push_back({"steal", 0x0001B000, "Frea"});
     plot.plan.push_back(Filled("deliver"));
     plot.history.push_back(Filled("steal"));
+    plot.history.back().sizingEase = 0.64f;
     state.plots.push_back(plot);
 
     PlotSerialize::VectorSink sink;
@@ -473,6 +474,12 @@ TEST_CASE("PlotVerbs steps survive the co-save", "[PlotVerbs][engine]")
                 REQUIRE(step.slots[i].form == plot.plan[0].slots[i].form);
                 REQUIRE(step.slots[i].text == plot.plan[0].slots[i].text);
             }
+        }
+
+        SECTION("should keep what a step's preparations eased it by")
+        {
+            REQUIRE(loaded.plots[0].history[0].sizingEase == 0.64f);
+            REQUIRE(loaded.plots[0].plan[0].sizingEase == 1.0f);
         }
 
         SECTION("should render the same sentence it rendered before")

@@ -147,8 +147,8 @@ namespace NarrativeEngine::PlotSerialize
                    && WritePod(sink, step.elapsed) && WritePod(sink, step.threshold) && WritePod(sink, step.progress)
                    && WritePod(sink, step.heldTicks) && WritePod(sink, step.sizingTravel)
                    && WritePod(sink, step.sizingImportance) && WritePod(sink, step.sizingCompetence)
-                   && WritePod(sink, step.sizingSuitability) && WriteRolls(sink, step.rolls)
-                   && WriteString(sink, step.verb) && WriteSlots(sink, step.slots);
+                   && WritePod(sink, step.sizingSuitability) && WritePod(sink, step.sizingEase)
+                   && WriteRolls(sink, step.rolls) && WriteString(sink, step.verb) && WriteSlots(sink, step.slots);
         }
 
         // `ok` is set false when a FormID in this step no longer
@@ -208,7 +208,7 @@ namespace NarrativeEngine::PlotSerialize
                 || !ReadPod(source, step.progress) || !ReadPod(source, step.heldTicks)
                 || !ReadPod(source, step.sizingTravel) || !ReadPod(source, step.sizingImportance)
                 || !ReadPod(source, step.sizingCompetence) || !ReadPod(source, step.sizingSuitability)
-                || !ReadRolls(source, step.rolls)) {
+                || !ReadPod(source, step.sizingEase) || !ReadRolls(source, step.rolls)) {
                 return false;
             }
             step.state = static_cast<PlotModel::StepState>(state);

@@ -318,6 +318,10 @@ namespace NarrativeEngine::PlotModel
         float sizingImportance = 0.0f;
         float sizingCompetence = 0.0f;
         float sizingSuitability = 0.0f;
+        // The share of the work and of the chance of a mishap the step's
+        // preparations left it, 1 for none. Every tick's mishap roll reads
+        // it, so it is fixed at dispatch and saved.
+        float sizingEase = 1.0f;
 
         // The odds planning estimated for this step, 0 to 1, when it was one
         // planning prepares; -1 otherwise. For the plan's log line only, and

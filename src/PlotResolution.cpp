@@ -156,11 +156,15 @@ namespace NarrativeEngine::PlotResolution
         return static_cast<float>(static_cast<double>(BaseThreshold(type)) * byImportance * byTravel);
     }
 
+    double EaseFactor(int preparations, double ease) noexcept
+    {
+        constexpr double kLeast = 0.25;
+        return std::max(kLeast, std::pow(std::clamp(ease, 0.0, 1.0), std::max(0, preparations)));
+    }
+
     float EaseThreshold(float threshold, int preparations, double ease)
     {
-        constexpr double kLeastWork = 0.25;
-        const double factor = std::pow(std::clamp(ease, 0.0, 1.0), std::max(0, preparations));
-        return static_cast<float>(static_cast<double>(threshold) * std::max(kLeastWork, factor));
+        return static_cast<float>(static_cast<double>(threshold) * EaseFactor(preparations, ease));
     }
 
     double EstimateSuccess(const Estimate& step, const Tuning& tuning, int trials)
@@ -182,6 +186,7 @@ namespace NarrativeEngine::PlotResolution
         inputs.mishap.chanceBase = tuning.mishapChance;
         inputs.mishap.conspicuous = PlotModel::IsConspicuous(step.type);
         inputs.mishap.competence = step.competence;
+        inputs.mishap.easing = EaseFactor(step.preparations, tuning.preparationEase);
 
         // One fixed stream for every estimate, so planning the same plan
         // twice plans it the same way.
@@ -296,6 +301,7 @@ namespace NarrativeEngine::PlotResolution
             chance *= 2.5;
         }
         chance *= 1.0 - 0.5 * competence;
+        chance *= std::clamp(inputs.easing, 0.0, 1.0);
 
         return NextUniform(rng) < std::clamp(chance, 0.0, 1.0);
     }

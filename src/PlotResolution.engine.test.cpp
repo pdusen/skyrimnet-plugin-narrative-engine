@@ -48,6 +48,28 @@ TEST_CASE("PlotResolution craft profile", "[PlotResolution][engine]")
         }
     }
 
+    SECTION("when a step's preparations ease its chance of a mishap")
+    {
+        SECTION("should leave their share of it, never under a quarter")
+        {
+            REQUIRE(PlotResolution::EaseFactor(0, 0.8) == 1.0);
+            REQUIRE(PlotResolution::EaseFactor(1, 0.8) == 0.8);
+            REQUIRE(PlotResolution::EaseFactor(50, 0.0) == 0.25);
+        }
+
+        SECTION("should never catch an agent whose chance they took away")
+        {
+            PlotResolution::MishapInputs certain;
+            certain.chanceBase = 1.0;
+            std::uint64_t rng = 1;
+            REQUIRE(PlotResolution::RollMishap(certain, rng));
+            certain.easing = 0.0;
+            for (int i = 0; i < 100; ++i) {
+                REQUIRE_FALSE(PlotResolution::RollMishap(certain, rng));
+            }
+        }
+    }
+
     SECTION("when a step's odds are estimated")
     {
         const PlotResolution::Tuning tuning;
@@ -60,11 +82,20 @@ TEST_CASE("PlotResolution craft profile", "[PlotResolution][engine]")
             REQUIRE(PlotResolution::EstimateSuccess(theft, tuning) == PlotResolution::EstimateSuccess(theft, tuning));
         }
 
-        SECTION("should rise with each preparation")
+        SECTION("should rise with each preparation, by more than the eased work alone gives")
         {
             auto prepared = theft;
             prepared.preparations = 2;
-            REQUIRE(PlotResolution::EstimateSuccess(prepared, tuning) > PlotResolution::EstimateSuccess(theft, tuning));
+            const double before = PlotResolution::EstimateSuccess(theft, tuning);
+            const double after = PlotResolution::EstimateSuccess(prepared, tuning);
+            REQUIRE(after > before);
+
+            // With no mishaps at all, only the eased work counts.
+            auto workOnly = tuning;
+            workOnly.mishapEnabled = false;
+            const double workBefore = PlotResolution::EstimateSuccess(theft, workOnly);
+            const double workAfter = PlotResolution::EstimateSuccess(prepared, workOnly);
+            REQUIRE(after - before > workAfter - workBefore);
         }
 
         SECTION("should fall as the target matters more")
