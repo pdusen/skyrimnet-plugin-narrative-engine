@@ -4,16 +4,16 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
-#include <set>
 #include <string>
 
 // Tests for the decision API probe.
 //
-// The probe's worth is in reading each answer correctly: a round marked right
-// when the model chose wrong, or a position recorded wrongly, would make the
-// report say the opposite of what happened. So the suite pins the rounds' own
-// consistency, the keys each order produces, and the reading of a result.
+// The probe's worth is in reading each answer correctly: a question marked
+// right when the model chose wrong, or a position recorded wrongly, would make
+// the report say the opposite of what happened. So the suite pins the runs a
+// sentence gives, the rounds' own consistency, and the reading of a result.
 
 namespace
 {
@@ -45,150 +45,255 @@ namespace
         return DecisionProbe::Rounds().front();
     }
 
+    const DecisionProbe::Question& QuestionOf(const DecisionProbe::Round& round, const std::string& id)
+    {
+        for (const auto& q : round.questions) {
+            if (q.id == id) {
+                return q;
+            }
+        }
+        FAIL("no question " << id);
+        return round.questions.front();
+    }
+
+    // The key a choice carries in this order.
+    std::string KeyOf(const DecisionProbe::Round& round, bool reversed, std::string_view text)
+    {
+        const auto choices = DecisionProbe::Choices(round, reversed);
+        const auto it = std::find(choices.begin(), choices.end(), text);
+        REQUIRE(it != choices.end());
+        return "c" + std::to_string(it - choices.begin() + 1);
+    }
+
     constexpr std::chrono::milliseconds kLatency{200};
 } // namespace
+
+TEST_CASE("DecisionProbe runs", "[DecisionProbe][engine]")
+{
+    SECTION("when a sentence is split into runs of words")
+    {
+        const auto runs = DecisionProbe::Runs("Bob ran to Whiterun.");
+
+        SECTION("should give every run of consecutive words, shortest first from each word in turn")
+        {
+            REQUIRE(runs
+                    == std::vector<std::string>{"Bob",
+                                                "Bob ran",
+                                                "Bob ran to",
+                                                "Bob ran to Whiterun",
+                                                "ran",
+                                                "ran to",
+                                                "ran to Whiterun",
+                                                "to",
+                                                "to Whiterun",
+                                                "Whiterun"});
+        }
+    }
+
+    SECTION("when a word comes twice")
+    {
+        const auto runs = DecisionProbe::Runs("to Bob to");
+
+        SECTION("should offer the same words once")
+        {
+            REQUIRE(runs == std::vector<std::string>{"to", "to Bob", "to Bob to", "Bob", "Bob to"});
+        }
+    }
+
+    SECTION("when the example sentence is split")
+    {
+        SECTION("should give its twelve words' seventy-eight runs, less the second \"to\"")
+        {
+            REQUIRE(DecisionProbe::Runs("Bob ran to Whiterun to purchase 9 red claws from Alan Grimes").size() == 77);
+        }
+    }
+}
 
 TEST_CASE("DecisionProbe rounds", "[DecisionProbe][engine]")
 {
     SECTION("when every round is read")
     {
-        SECTION("should carry a background for every option and a right answer among them")
+        SECTION("should keep its sentence within the limit, and every answer one of its runs")
         {
             for (const auto& round : DecisionProbe::Rounds()) {
                 INFO(round.id);
-                std::set<std::string> names;
-                for (const auto& option : round.options) {
-                    REQUIRE_FALSE(option.background.empty());
-                    REQUIRE(names.insert(option.name).second);
+                REQUIRE(round.sentence.size() <= DecisionProbe::kMaxSentence);
+                REQUIRE_FALSE(round.questions.empty());
+                const auto runs = DecisionProbe::Runs(round.sentence);
+                for (const auto& question : round.questions) {
+                    for (const auto& answer : question.answers) {
+                        INFO(question.id << ": " << answer);
+                        REQUIRE(std::find(runs.begin(), runs.end(), answer) != runs.end());
+                    }
                 }
-                REQUIRE(names.contains(round.correct));
             }
         }
 
-        SECTION("should put the right answer at a different position in each order")
+        SECTION("should ask at least one question its sentence does not answer")
         {
-            for (const auto& round : DecisionProbe::Rounds()) {
-                INFO(round.id);
-                REQUIRE(DecisionProbe::CorrectKey(round, false) != DecisionProbe::CorrectKey(round, true));
-            }
-        }
-
-        SECTION("should place background both ways, so the two can be compared")
-        {
-            bool onLine = false;
-            bool inState = false;
-            for (const auto& round : DecisionProbe::Rounds()) {
-                (round.backgroundInState ? inState : onLine) = true;
-            }
-            REQUIRE(onLine);
-            REQUIRE(inState);
+            const bool some = std::any_of(DecisionProbe::Rounds().begin(), DecisionProbe::Rounds().end(), [](auto& r) {
+                return std::any_of(r.questions.begin(), r.questions.end(), [](auto& q) { return q.answers.empty(); });
+            });
+            REQUIRE(some);
         }
     }
 
-    SECTION("when a round's context is built")
+    SECTION("when a question's choices are built")
     {
-        const auto& capital = RoundNamed("capital");
-        const auto asWritten = nlohmann::json::parse(DecisionProbe::Context(capital, false));
-        const auto reversed = nlohmann::json::parse(DecisionProbe::Context(capital, true));
+        const auto& round = RoundNamed("purchase");
 
-        SECTION("should key the options c1 onward and carry each one's background")
+        SECTION("should offer every run, then that it is not named")
         {
-            REQUIRE(asWritten["options"].size() == 20);
-            REQUIRE(asWritten["options"][0]["key"] == "c1");
-            REQUIRE(asWritten["options"][12]["name"] == "Markarth");
-            REQUIRE_FALSE(asWritten["options"][12]["background"].get<std::string>().empty());
+            const auto choices = DecisionProbe::Choices(round, false);
+            REQUIRE(choices.size() == DecisionProbe::Runs(round.sentence).size() + 1);
+            REQUIRE(choices.front() == "Bob");
+            REQUIRE(choices.back() == DecisionProbe::kNotNamed);
         }
 
-        SECTION("should reverse the options, not the keys")
+        SECTION("should reverse them for the second asking")
         {
-            REQUIRE(reversed["options"][0]["key"] == "c1");
-            REQUIRE(reversed["options"][0]["name"] == "Darkwater Crossing");
-            REQUIRE(DecisionProbe::CorrectKey(capital, false) == "c13");
-            REQUIRE(DecisionProbe::CorrectKey(capital, true) == "c8");
+            const auto choices = DecisionProbe::Choices(round, true);
+            REQUIRE(choices.front() == DecisionProbe::kNotNamed);
+            REQUIRE(choices.back() == "Bob");
+        }
+
+        SECTION("should key them c1 onward and carry the sentence and the question")
+        {
+            const auto ctx = nlohmann::json::parse(DecisionProbe::Context(round, QuestionOf(round, "seller"), false));
+            REQUIRE(ctx["sentence"] == round.sentence);
+            REQUIRE(ctx["question"] == "Who was the seller?");
+            REQUIRE(ctx["options"][0]["key"] == "c1");
+            REQUIRE(ctx["options"][0]["text"] == "Bob");
         }
     }
 }
 
 TEST_CASE("DecisionProbe::Judge", "[DecisionProbe][engine]")
 {
-    const auto& capital = RoundNamed("capital");
+    const auto& round = RoundNamed("purchase");
+    const auto& seller = QuestionOf(round, "seller");
 
-    SECTION("when the right key comes back")
+    SECTION("when the answer's own words come back")
     {
-        const auto f = DecisionProbe::Judge(capital, false, Chose("c13", 0.8, "c13"), kLatency);
+        const auto key = KeyOf(round, false, "Alan Grimes");
+        const auto f = DecisionProbe::Judge(round, seller, false, Chose(key, 0.9, key), kLatency);
 
-        SECTION("should mark it right, by name, with its position and probability")
+        SECTION("should mark it right, with where it sat and the probability given it")
         {
-            REQUIRE(f.answered);
-            REQUIRE(f.right);
-            REQUIRE(f.chosen == "Markarth");
-            REQUIRE(f.rightAt == 13);
-            REQUIRE(f.rightChance == 0.8);
+            REQUIRE(f.verdict == DecisionProbe::Verdict::Right);
+            REQUIRE(f.chosen == "Alan Grimes");
+            REQUIRE(f.rightAt == std::stoul(key.substr(1)));
+            REQUIRE(f.rightChance == 0.9);
         }
     }
 
-    SECTION("when the same key comes back for the reversed order")
+    SECTION("when either accepted answer comes back")
     {
-        const auto f = DecisionProbe::Judge(capital, true, Chose("c13"), kLatency);
+        const auto& what = QuestionOf(round, "what");
+        const auto f = DecisionProbe::Judge(round, what, true, Chose(KeyOf(round, true, "red claws")), kLatency);
 
-        SECTION("should mark it wrong, because c13 is somebody else there")
+        SECTION("should mark it right")
         {
-            REQUIRE_FALSE(f.right);
-            REQUIRE(f.chosen == "Winterhold");
-            REQUIRE(f.rightAt == 8);
+            REQUIRE(f.verdict == DecisionProbe::Verdict::Right);
+        }
+    }
+
+    SECTION("when a run holding the answer comes back")
+    {
+        const auto f =
+            DecisionProbe::Judge(round, seller, false, Chose(KeyOf(round, false, "from Alan Grimes")), kLatency);
+
+        SECTION("should mark it near")
+        {
+            REQUIRE(f.verdict == DecisionProbe::Verdict::Near);
+        }
+    }
+
+    SECTION("when part of the answer comes back")
+    {
+        const auto f = DecisionProbe::Judge(round, seller, false, Chose(KeyOf(round, false, "Grimes")), kLatency);
+
+        SECTION("should mark it near")
+        {
+            REQUIRE(f.verdict == DecisionProbe::Verdict::Near);
+        }
+    }
+
+    SECTION("when somebody else comes back, or that the seller is not named")
+    {
+        SECTION("should mark it wrong")
+        {
+            REQUIRE(DecisionProbe::Judge(round, seller, false, Chose(KeyOf(round, false, "Bob")), kLatency).verdict
+                    == DecisionProbe::Verdict::Wrong);
+            REQUIRE(DecisionProbe::Judge(
+                        round, seller, false, Chose(KeyOf(round, false, DecisionProbe::kNotNamed)), kLatency)
+                        .verdict
+                    == DecisionProbe::Verdict::Wrong);
+        }
+    }
+
+    SECTION("when the sentence does not answer the question")
+    {
+        const auto& unnamed = RoundNamed("expose_unnamed");
+        const auto& against = QuestionOf(unnamed, "against");
+
+        SECTION("should mark not named right, and a person wrong")
+        {
+            REQUIRE(DecisionProbe::Judge(
+                        unnamed, against, false, Chose(KeyOf(unnamed, false, DecisionProbe::kNotNamed)), kLatency)
+                        .verdict
+                    == DecisionProbe::Verdict::Right);
+            REQUIRE(
+                DecisionProbe::Judge(unnamed, against, false, Chose(KeyOf(unnamed, false, "Elisif")), kLatency).verdict
+                == DecisionProbe::Verdict::Wrong);
         }
     }
 
     SECTION("when a key that was never offered comes back")
     {
-        const auto f = DecisionProbe::Judge(capital, false, Chose("Markarth"), kLatency);
+        const auto f = DecisionProbe::Judge(round, seller, false, Chose("c999"), kLatency);
 
         SECTION("should mark it wrong and keep what came back")
         {
-            REQUIRE_FALSE(f.right);
-            REQUIRE(f.chosen == "Markarth");
+            REQUIRE(f.verdict == DecisionProbe::Verdict::Wrong);
+            REQUIRE(f.chosen == "c999");
         }
     }
 
     SECTION("when the request fails")
     {
         SkyrimNet::DecisionResult failed;
-        failed.error = "no_decisions_route";
-        const auto f = DecisionProbe::Judge(capital, false, failed, kLatency);
+        failed.error = "template_failed";
+        const auto f = DecisionProbe::Judge(round, seller, false, failed, kLatency);
 
         SECTION("should record it as unanswered, with the reason")
         {
-            REQUIRE_FALSE(f.answered);
-            REQUIRE(f.error == "no_decisions_route");
+            REQUIRE(f.verdict == DecisionProbe::Verdict::NoAnswer);
+            REQUIRE(f.error == "template_failed");
         }
     }
 }
 
 TEST_CASE("DecisionProbe::Report", "[DecisionProbe][engine]")
 {
-    const auto& capital = RoundNamed("capital");
-    const auto& state = RoundNamed("capital_state");
+    const auto& round = RoundNamed("purchase");
+    const auto& seller = QuestionOf(round, "seller");
     const std::vector<DecisionProbe::Finding> findings{
-        DecisionProbe::Judge(capital, false, Chose("c13"), kLatency),
-        DecisionProbe::Judge(capital, true, Chose("c1"), kLatency),
-        DecisionProbe::Judge(state, false, Chose("c13"), kLatency),
+        DecisionProbe::Judge(round, seller, false, Chose(KeyOf(round, false, "Alan Grimes")), kLatency),
+        DecisionProbe::Judge(round, seller, true, Chose(KeyOf(round, true, "Grimes")), kLatency),
     };
-    const auto lines = DecisionProbe::Report(findings);
 
     SECTION("when findings are reported")
     {
-        SECTION("should give one line per finding and a total")
-        {
-            REQUIRE(lines.size() == 4);
-            REQUIRE(lines[0].find("capital (as written): right") != std::string::npos);
-            REQUIRE(lines[1].find("WRONG") != std::string::npos);
-        }
+        const auto lines = DecisionProbe::Report(findings);
 
-        SECTION("should total right answers by where the background went")
+        SECTION("should give one line per finding and a total by verdict and order")
         {
-            REQUIRE(lines.back().find("2 of 3 right") != std::string::npos);
-            REQUIRE(lines.back().find("background on each option's line 1 of 2") != std::string::npos);
-            REQUIRE(lines.back().find("in a state block 1 of 1") != std::string::npos);
+            REQUIRE(lines.size() == 3);
+            REQUIRE(lines[0].find("right") != std::string::npos);
+            REQUIRE(lines[1].find("NEAR") != std::string::npos);
+            REQUIRE(lines[2].find("1 right, 1 near, 0 wrong of 2") != std::string::npos);
+            REQUIRE(lines[2].find("as built 1 right, 0 near, 0 wrong of 1") != std::string::npos);
         }
     }
 }

@@ -1,23 +1,17 @@
-{# narrative_engine/probe — one round of the decision API probe.
-   Sent once per round and order by the Plots tab's "Probe decisions"
+{# narrative_engine/probe — one question of the decision API probe.
+   Sent once per question and order by the Plots tab's "Probe decisions"
    button; DecisionProbe logs what came back. Not part of any feature.
-   Receives: situation, question, background_in_state (bool),
-     options [{ key, name, background }] — keys c1 onward.
-   With background_in_state, each option's background goes in the
-   choices block and its criteria line carries only its name; otherwise
-   the background rides on the criteria line itself.
+   Receives: sentence, question,
+     options [{ key, text }] — keys c1 onward: every run of consecutive
+     words in the sentence, and one saying the sentence does not name it.
    NOTE: no fenced blocks and no literal braces anywhere in this file. #}
-[ state situation ]
-{{ situation }}
+[ state sentence ]
+{{ sentence }}
 [ end state ]
 
-{% if background_in_state %}[ state choices ]
-{% for o in options %}{{ o.key }}, {{ o.name }}: {{ o.background }}
-{% endfor %}[ end state ]
-
-{% endif %}[ question pick choice ]
-{{ question }} Judge each choice by what is said about it here, not by what you might already believe about it.
+[ question pick choice ]
+{{ question }} Choose the words of the sentence that answer it: all of the words that name the answer, and no others. If the sentence does not say, choose that it is not named.
 [ criteria ]
-{% for o in options %}{% if background_in_state %}{{ o.key }}: {{ o.name }}{% else %}{{ o.key }}: {{ o.name }}, {{ o.background }}{% endif %}
+{% for o in options %}{{ o.key }}: {{ o.text }}
 {% endfor %}[ end criteria ]
 [ end question ]

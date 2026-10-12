@@ -2085,6 +2085,24 @@ near and wrong: overall, by order, and for the question with no answer in its se
 **Verification:** the probe's suite asserts the runs a sentence gives, that every sentence is within 120 characters
 and every accepted answer is one of its runs, and how an answer is judged.
 
+**The `[CLAUDE]` half is done; the run is the user's.** The button now asks the questions below, each twice, 46
+requests in all. The second probe's rounds are replaced; their results are recorded under Step 2.
+
+| Round            | Sentence                                                                         | Chars | Choices | Questions                                       |
+| ---------------- | -------------------------------------------------------------------------------- | ----- | ------- | ----------------------------------------------- |
+| `purchase`       | Bob ran to Whiterun to purchase 9 red claws from Alan Grimes                     | 60    | 78      | what was bought, the seller, the buyer, where   |
+| `expose`         | Show a merchant's ledger to Jarl Elisif as proof against Erikur                  | 63    | 67      | what is shown, to whom, against whom            |
+| `expose_unnamed` | Expose a merchant's ledger to Jarl Elisif                                        | 41    | 29      | against whom (not named), to whom               |
+| `denounce`       | Denounce Vignar Gray-Mane to Jarl Balgruuf for hiding stolen gold in Whiterun    | 77    | 79      | who is denounced, to whom, where the gold is    |
+| `plant`          | Hide a bottle of skooma among Hulda's belongings at the Bannered Mare            | 69    | 79      | what is hidden, whose belongings, where         |
+| `steal`          | Steal a deed to a property from Maven Black-Briar in Riften                      | 59    | 66      | what is stolen, from whom, where                |
+| `gift`           | Bring a gold diamond necklace to Elisif the Fair in Solitude                     | 60    | 67      | what is brought, who receives it                |
+| `follow`         | Hrolfdir asked Sorli to follow the merchant Fenja from the Riften docks to ...   | 108   | 188     | who is followed, who follows, where it ends     |
+
+Choices count the runs and "(not named in the sentence)". `follow` is the longest a round may be, so its 188 choices
+also test how long a list the decision API takes. The template asks for all of the words that name the answer and no
+others, and to choose not named when the sentence does not say.
+
 ### Step 36 — The scheme call names each role of its finish
 
 - [ ] Complete

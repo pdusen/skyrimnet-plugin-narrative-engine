@@ -1,11 +1,10 @@
 #include <DecisionProbe.h>
 
 #include <logger.h>
-#include <PlotVerbs.h>
 
 #include <algorithm>
-#include <cctype>
 #include <format>
+#include <unordered_set>
 
 #include <nlohmann/json.hpp>
 
@@ -18,266 +17,250 @@ namespace NarrativeEngine::DecisionProbe
             return std::format("c{}", index + 1);
         }
 
-        // The options in the order a round is asked.
-        std::vector<const Option*> Ordered(const Round& round, bool reversed)
+        std::vector<std::string> Words(std::string_view sentence)
         {
-            std::vector<const Option*> out;
-            for (const auto& option : round.options) {
-                out.push_back(&option);
-            }
-            if (reversed) {
-                std::reverse(out.begin(), out.end());
-            }
-            return out;
-        }
-
-        // The twenty places, each with what somebody would need to know to
-        // tell which one is the capital of the Reach. Markarth is thirteenth.
-        std::vector<Option> Places()
-        {
-            return {
-                {"Whiterun",
-                 "a city on the plains at the heart of Skyrim; the Jarl of Whiterun Hold rules from "
-                 "Dragonsreach"},
-                {"Solitude",
-                 "a city built on a stone arch over the sea; capital of Haafingar, where the High King or "
-                 "Queen rules from the Blue Palace"},
-                {"Windhelm", "the oldest city in Skyrim; capital of Eastmarch, ruled from the Palace of the Kings"},
-                {"Riften", "a city of canals and boardwalks; capital of the Rift, ruled from Mistveil Keep"},
-                {"Falkreath", "a town among the pine forests of the south; seat of Falkreath Hold"},
-                {"Morthal", "a town in the marshes; seat of Hjaalmarch, ruled from Highmoon Hall"},
-                {"Dawnstar", "a mining and fishing port on the northern coast; seat of the Pale"},
-                {"Winterhold",
-                 "a town half fallen into the sea beside the College of Winterhold; seat of the hold of "
-                 "the same name"},
-                {"Riverwood", "a lumber village in Whiterun Hold"},
-                {"Rorikstead", "a farming village in the west of Whiterun Hold"},
-                {"Ivarstead", "a village at the foot of the Throat of the World, in the Rift"},
-                {"Dragon Bridge", "a lumber village in Haafingar, beside an ancient bridge"},
-                {"Markarth",
-                 "a city carved into Dwemer stone in the western mountains; the Jarl of the Reach holds "
-                 "court there in Understone Keep"},
-                {"Shor's Stone", "a mining village in the Rift"},
-                {"Karthwasten", "a small mining hamlet in the Reach"},
-                {"Kynesgrove", "a mining village in Eastmarch"},
-                {"Helgen", "a walled town in Falkreath Hold, left in ruins"},
-                {"Raven Rock", "a Dunmer port town on the island of Solstheim"},
-                {"Skaal Village", "a Nord village on the island of Solstheim"},
-                {"Darkwater Crossing", "a mining settlement in Eastmarch"},
-            };
-        }
-
-        // Twelve invented people, so that no background makes a claim about
-        // a real record. One is plainly the person to send; the rest each have
-        // a reason not to be. `longer` gives each the several sentences a
-        // plot candidate's biography would run to.
-        std::vector<Option> People(bool longer)
-        {
-            const auto person = [longer](const char* name, const char* line, const char* more) {
-                return Option{name, longer ? std::format("{} {}", line, more) : std::string{line}};
-            };
-            return {
-                person("Agna",
-                       "the court's cook, loud and friendly, known by name to every stallholder.",
-                       "She has worked in the same kitchen for twenty years. She cannot keep a secret and does not "
-                       "try to; the whole market knows her laugh."),
-                person("Bersi",
-                       "a blacksmith who rarely leaves his forge.",
-                       "He works from dawn to dusk and is gruff with anybody who interrupts him. He has not set foot "
-                       "in the market in months."),
-                person("Dagny",
-                       "a bard who performs in the market square every evening and loves an audience.",
-                       "Everybody in town knows her songs and her face. She is happiest at the centre of a crowd's "
-                       "attention."),
-                person("Eirik",
-                       "an elderly priest of Arkay who walks slowly with a cane.",
-                       "He tends the hall of the dead and is respected for it. He tires quickly and cannot keep pace "
-                       "with anybody on a busy street."),
-                person("Fjola",
-                       "a farmer who comes to town twice a month to sell cabbages.",
-                       "She knows little of the town beyond her stall and leaves before dark. She has never been asked "
-                       "to do anything quietly."),
-                person("Gunnar",
-                       "a guard in the court's colours, recognised by everyone.",
-                       "He patrols the market in full armour. Wherever he walks, people notice him and lower their "
-                       "voices."),
-                person("Hilde",
-                       "the steward's own housecarl, a towering armoured warrior.",
-                       "She is sworn to guard the steward's life and never leaves his side. She is the most "
-                       "conspicuous person in any room."),
-                person("Sorli",
-                       "a former Legion scout who tracked deserters for years and can follow anyone through a crowd "
-                       "unseen.",
-                       "He is quiet and forgettable to look at. He has spent his life watching people without their "
-                       "knowing and is patient enough to do it for weeks."),
-                person(
-                    "Torvar",
-                    "a drunk who is thrown out of the inn most nights.",
-                    "He makes a scene wherever he goes and remembers little of it. Nobody trusts him with anything."),
-                person("Ulla",
-                       "a scholar who never looks up from her books.",
-                       "She notices nothing that is not written down. She would lose the merchant within a minute."),
-                person("Vilmar",
-                       "the merchant's own brother, whom she sees every day.",
-                       "He is close to his sister and talks to her constantly. She would know him at a glance from any "
-                       "distance."),
-                person("Yrsa",
-                       "a healer who is called away at all hours.",
-                       "She is devoted to her patients and could not promise anybody a week of her time."),
-            };
-        }
-
-        // The real verbs, each described by its own dashboard sentence with
-        // nothing filled in -- exactly what plot planning offers.
-        std::vector<Option> Verbs()
-        {
-            std::vector<Option> out;
-            for (const auto& verb : PlotVerbs::kVerbs) {
-                auto line = PlotVerbs::Render(
-                    verb.Text(PlotVerbs::Template::Dashboard),
-                    [](std::string_view) { return std::nullopt; },
-                    [&verb](std::string_view name) {
-                        const auto* slot = PlotVerbs::FindSlot(verb, name);
-                        return std::string{slot != nullptr ? PlotVerbs::Unfilled(slot->kind) : "someone"};
-                    });
-                if (!line.empty()) {
-                    line[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(line[0])));
+            std::vector<std::string> out;
+            std::string word;
+            const auto flush = [&] {
+                while (!word.empty() && std::string_view{".,;:!?"}.find(word.back()) != std::string_view::npos) {
+                    word.pop_back();
                 }
-                out.push_back({std::string{verb.id}, std::move(line)});
+                if (!word.empty()) {
+                    out.push_back(std::move(word));
+                }
+                word.clear();
+            };
+            for (const char ch : sentence) {
+                if (ch == ' ') {
+                    flush();
+                } else {
+                    word.push_back(ch);
+                }
             }
+            flush();
             return out;
         }
 
-        // Eight things from the plot item pool, described. The deed is
-        // seventh.
-        std::vector<Option> Items()
+        // Whether `inner` stands in `outer` as whole words.
+        bool Within(std::string_view inner, std::string_view outer)
         {
-            return {
-                {"a ruby", "a red gem, valuable and easy to carry"},
-                {"a bottle of skooma", "an illegal drug"},
-                {"a set of lockpicks", "tools for opening locks"},
-                {"a bottle of Black-Briar mead", "a famous mead brewed in Riften"},
-                {"a purse of septims", "a small bag of gold coins"},
-                {"a sealed letter", "a letter closed with a wax seal, its contents unknown"},
-                {"a deed to a property", "a legal document naming who owns a house or a piece of land"},
-                {"a set of written orders", "instructions written by a commander to his men"},
-            };
+            return std::format(" {} ", outer).find(std::format(" {} ", inner)) != std::string::npos;
+        }
+
+        bool Accepted(const Question& question, std::string_view choice)
+        {
+            if (question.answers.empty()) {
+                return choice == kNotNamed;
+            }
+            return std::find(question.answers.begin(), question.answers.end(), choice) != question.answers.end();
         }
 
         std::string Percent(double p)
         {
             return std::format("{:.0f}%", 100.0 * p);
         }
+
+        std::string_view VerdictWord(Verdict v)
+        {
+            switch (v) {
+            case Verdict::Right:
+                return "right";
+            case Verdict::Near:
+                return "NEAR";
+            case Verdict::Wrong:
+                return "WRONG";
+            case Verdict::NoAnswer:
+                break;
+            }
+            return "NO ANSWER";
+        }
+
+        // A tally of verdicts.
+        struct Tally
+        {
+            std::size_t right = 0;
+            std::size_t close = 0;
+            std::size_t wrong = 0;
+
+            void Add(Verdict v)
+            {
+                right += v == Verdict::Right ? 1 : 0;
+                close += v == Verdict::Near ? 1 : 0;
+                wrong += v == Verdict::Wrong ? 1 : 0;
+            }
+
+            [[nodiscard]] std::string Say() const
+            {
+                return std::format("{} right, {} near, {} wrong of {}", right, close, wrong, right + close + wrong);
+            }
+        };
     } // namespace
 
     const std::vector<Round>& Rounds()
     {
+        // Sentences shaped like the finishes plots write, each naming several
+        // things, and one that is a finish that went wrong in play: it says
+        // whom the proof is shown to and not whom it is against.
         static const std::vector<Round> rounds{
-            {"capital",
-             "A traveller asks which city rules the Reach.",
-             "Which of these places is the capital of the Reach?",
-             Places(),
-             "Markarth",
-             false},
-            {"capital_state",
-             "A traveller asks which city rules the Reach. Every place is described in `choices`.",
-             "Which of these places is the capital of the Reach?",
-             Places(),
-             "Markarth",
-             true},
-            {"watcher",
-             "Hrolfdir, steward of a jarl's court, needs somebody to follow a merchant through the market for a week "
-             "and learn where she goes, without her ever noticing she is being followed.",
-             "Who should Hrolfdir send?",
-             People(false),
-             "Sorli",
-             false},
-            {"watcher_bios",
-             "Hrolfdir, steward of a jarl's court, needs somebody to follow a merchant through the market for a week "
-             "and learn where she goes, without her ever noticing she is being followed. Everybody he could send is "
-             "described in `choices`.",
-             "Who should Hrolfdir send?",
-             People(true),
-             "Sorli",
-             true},
-            {"next_step",
-             "Bjarni means to win the favour of a jarl's steward by giving him a ruby. The steps he has taken so "
-             "far: 1. Somebody he sent stole a ruby from a merchant, and it worked.",
-             "What kind of step should Bjarni take next to bring the scheme about?",
-             Verbs(),
-             "deliver",
-             false},
-            {"proof",
-             "Ingrid wants to prove that a rival still owns the farm he claims to have given up.",
-             "Which of these things would prove it?",
-             Items(),
-             "a deed to a property",
-             false},
+            {"purchase",
+             "Bob ran to Whiterun to purchase 9 red claws from Alan Grimes",
+             {
+                 {"what", "What was purchased?", {"9 red claws", "red claws"}},
+                 {"seller", "Who was the seller?", {"Alan Grimes"}},
+                 {"buyer", "Who was the buyer?", {"Bob"}},
+                 {"where", "Where did the purchase happen?", {"Whiterun"}},
+             }},
+            {"expose",
+             "Show a merchant's ledger to Jarl Elisif as proof against Erikur",
+             {
+                 {"what", "What is shown as proof?", {"a merchant's ledger", "merchant's ledger"}},
+                 {"shown_to", "Who is the proof shown to?", {"Jarl Elisif", "Elisif"}},
+                 {"against", "Who is the proof against?", {"Erikur"}},
+             }},
+            {"expose_unnamed",
+             "Expose a merchant's ledger to Jarl Elisif",
+             {
+                 {"against", "Who is the proof against?", {}},
+                 {"shown_to", "Who is the proof shown to?", {"Jarl Elisif", "Elisif"}},
+             }},
+            {"denounce",
+             "Denounce Vignar Gray-Mane to Jarl Balgruuf for hiding stolen gold in Whiterun",
+             {
+                 {"who", "Who is denounced?", {"Vignar Gray-Mane"}},
+                 {"to", "Who are they denounced to?", {"Jarl Balgruuf", "Balgruuf"}},
+                 {"where", "Where is the gold hidden?", {"Whiterun"}},
+             }},
+            {"plant",
+             "Hide a bottle of skooma among Hulda's belongings at the Bannered Mare",
+             {
+                 {"what", "What is hidden?", {"a bottle of skooma", "bottle of skooma"}},
+                 {"whose", "Whose belongings is it hidden among?", {"Hulda's"}},
+                 {"where", "Where are those belongings?", {"the Bannered Mare", "Bannered Mare"}},
+             }},
+            {"steal",
+             "Steal a deed to a property from Maven Black-Briar in Riften",
+             {
+                 {"what", "What is stolen?", {"a deed to a property", "deed to a property"}},
+                 {"from", "Who is it stolen from?", {"Maven Black-Briar"}},
+                 {"where", "Where does the theft happen?", {"Riften"}},
+             }},
+            {"gift",
+             "Bring a gold diamond necklace to Elisif the Fair in Solitude",
+             {
+                 {"what", "What is brought?", {"a gold diamond necklace", "gold diamond necklace"}},
+                 {"to", "Who receives it?", {"Elisif the Fair"}},
+             }},
+            // As long as a round may be, for the longest list of choices.
+            {"follow",
+             "Hrolfdir asked Sorli to follow the merchant Fenja from the Riften docks to the Ragged Flagon and report back",
+             {
+                 {"followed", "Who is followed?", {"Fenja", "the merchant Fenja", "merchant Fenja"}},
+                 {"follower", "Who does the following?", {"Sorli"}},
+                 {"end", "Where does the following end?", {"the Ragged Flagon", "Ragged Flagon"}},
+             }},
         };
         return rounds;
     }
 
-    std::string Context(const Round& round, bool reversed)
+    std::vector<std::string> Runs(std::string_view sentence)
+    {
+        const auto words = Words(sentence);
+        std::vector<std::string> out;
+        std::unordered_set<std::string> seen;
+        for (std::size_t start = 0; start < words.size(); ++start) {
+            std::string run;
+            for (std::size_t end = start; end < words.size(); ++end) {
+                run += (end == start ? "" : " ") + words[end];
+                if (seen.insert(run).second) {
+                    out.push_back(run);
+                }
+            }
+        }
+        return out;
+    }
+
+    std::vector<std::string> Choices(const Round& round, bool reversed)
+    {
+        auto out = Runs(round.sentence);
+        out.emplace_back(kNotNamed);
+        if (reversed) {
+            std::reverse(out.begin(), out.end());
+        }
+        return out;
+    }
+
+    std::string Context(const Round& round, const Question& question, bool reversed)
     {
         nlohmann::json options = nlohmann::json::array();
-        const auto ordered = Ordered(round, reversed);
-        for (std::size_t i = 0; i < ordered.size(); ++i) {
-            options.push_back({{"key", KeyAt(i)}, {"name", ordered[i]->name}, {"background", ordered[i]->background}});
+        const auto choices = Choices(round, reversed);
+        for (std::size_t i = 0; i < choices.size(); ++i) {
+            options.push_back({{"key", KeyAt(i)}, {"text", choices[i]}});
         }
         nlohmann::json ctx;
-        ctx["situation"] = round.situation;
-        ctx["question"] = round.question;
-        ctx["background_in_state"] = round.backgroundInState;
+        ctx["sentence"] = round.sentence;
+        ctx["question"] = question.text;
         ctx["options"] = std::move(options);
         return ctx.dump();
     }
 
-    std::string CorrectKey(const Round& round, bool reversed)
-    {
-        const auto ordered = Ordered(round, reversed);
-        for (std::size_t i = 0; i < ordered.size(); ++i) {
-            if (ordered[i]->name == round.correct) {
-                return KeyAt(i);
-            }
-        }
-        return {};
-    }
-
     Finding Judge(const Round& round,
+                  const Question& question,
                   bool reversed,
                   const SkyrimNetAPI::DecisionResult& result,
                   std::chrono::milliseconds latency)
     {
         Finding f;
         f.round = round.id;
+        f.question = question.id;
         f.reversed = reversed;
         f.latencyMs = latency.count();
-        const auto correctKey = CorrectKey(round, reversed);
-        f.rightAt = correctKey.empty() ? 0 : static_cast<std::size_t>(std::stoul(correctKey.substr(1)));
+        f.expected = question.answers.empty() ? std::string{kNotNamed} : question.answers.front();
+
+        const auto choices = Choices(round, reversed);
+        f.choices = choices.size();
+        std::unordered_set<std::string> acceptedKeys;
+        for (std::size_t i = 0; i < choices.size(); ++i) {
+            if (Accepted(question, choices[i])) {
+                acceptedKeys.insert(KeyAt(i));
+                if (f.rightAt == 0 || choices[i] == f.expected) {
+                    f.rightAt = i + 1;
+                }
+            }
+        }
 
         if (!result.ok) {
             f.error = result.error.empty() ? std::string{"no answer"} : result.error;
             return f;
         }
-        f.answered = true;
 
         const auto key = result.Choice(kQuestion);
-        const auto ordered = Ordered(round, reversed);
         f.chosen = key;
-        for (std::size_t i = 0; i < ordered.size(); ++i) {
+        bool offered = false;
+        for (std::size_t i = 0; i < choices.size(); ++i) {
             if (KeyAt(i) == key) {
-                f.chosen = ordered[i]->name;
+                f.chosen = choices[i];
+                offered = true;
             }
         }
-        f.right = !correctKey.empty() && key == correctKey;
 
-        for (const auto& [question, answer] : result.answers) {
-            if (question != kQuestion) {
+        if (offered && Accepted(question, f.chosen)) {
+            f.verdict = Verdict::Right;
+        } else if (offered && f.chosen != kNotNamed
+                   && std::any_of(question.answers.begin(), question.answers.end(), [&f](const std::string& a) {
+                          return Within(a, f.chosen) || Within(f.chosen, a);
+                      })) {
+            f.verdict = Verdict::Near;
+        } else {
+            f.verdict = Verdict::Wrong;
+        }
+
+        for (const auto& [asked, answer] : result.answers) {
+            if (asked != kQuestion) {
                 continue;
             }
             for (const auto& [option, p] : answer.probabilities) {
-                if (option == correctKey) {
-                    f.rightChance = p;
+                if (acceptedKeys.contains(option)) {
+                    f.rightChance += p;
                 }
             }
         }
@@ -287,64 +270,55 @@ namespace NarrativeEngine::DecisionProbe
     std::vector<std::string> Report(const std::vector<Finding>& findings)
     {
         std::vector<std::string> lines;
-        std::size_t right = 0;
-        std::size_t onLine = 0, onLineRight = 0, inState = 0, inStateRight = 0;
-        std::size_t early = 0, earlyRight = 0, late = 0, lateRight = 0;
+        Tally all, asBuilt, reversed, unnamed;
         long long totalMs = 0;
+        std::size_t answered = 0;
+        std::size_t mostChoices = 0;
 
         for (const auto& f : findings) {
-            const auto* round = [&]() -> const Round* {
-                for (const auto& r : Rounds()) {
-                    if (r.id == f.round) {
-                        return &r;
-                    }
-                }
-                return nullptr;
-            }();
-            const auto count = round != nullptr ? round->options.size() : 0;
-            const auto order = f.reversed ? "reversed" : "as written";
-
-            if (!f.answered) {
-                lines.push_back(std::format(
-                    "DecisionProbe: {} ({}): NO ANSWER after {} ms -- {}", f.round, order, f.latencyMs, f.error));
+            const auto order = f.reversed ? "reversed" : "as built";
+            if (f.verdict == Verdict::NoAnswer) {
+                lines.push_back(std::format("DecisionProbe: {}/{} ({}): NO ANSWER after {} ms of {} choices -- {}",
+                                            f.round,
+                                            f.question,
+                                            order,
+                                            f.latencyMs,
+                                            f.choices,
+                                            f.error));
                 continue;
             }
-            lines.push_back(
-                std::format("DecisionProbe: {} ({}): {} -- chose {}; the right answer was #{} of {}{}, {} ms",
-                            f.round,
-                            order,
-                            f.right ? "right" : "WRONG",
-                            f.chosen,
-                            f.rightAt,
-                            count,
-                            f.rightChance > 0.0 ? std::format(", given {}", Percent(f.rightChance)) : std::string{},
-                            f.latencyMs));
+            lines.push_back(std::format("DecisionProbe: {}/{} ({}): {} -- chose \"{}\"; \"{}\" was #{} of {}{}, {} ms",
+                                        f.round,
+                                        f.question,
+                                        order,
+                                        VerdictWord(f.verdict),
+                                        f.chosen,
+                                        f.expected,
+                                        f.rightAt,
+                                        f.choices,
+                                        f.rightChance > 0.0
+                                            ? std::format(", the right answers given {}", Percent(f.rightChance))
+                                            : std::string{},
+                                        f.latencyMs));
 
-            right += f.right ? 1 : 0;
+            all.Add(f.verdict);
+            (f.reversed ? reversed : asBuilt).Add(f.verdict);
+            if (f.expected == kNotNamed) {
+                unnamed.Add(f.verdict);
+            }
             totalMs += f.latencyMs;
-            const bool state = round != nullptr && round->backgroundInState;
-            (state ? inState : onLine) += 1;
-            (state ? inStateRight : onLineRight) += f.right ? 1 : 0;
-            const bool firstHalf = count > 0 && f.rightAt * 2 <= count;
-            (firstHalf ? early : late) += 1;
-            (firstHalf ? earlyRight : lateRight) += f.right ? 1 : 0;
+            ++answered;
+            mostChoices = std::max(mostChoices, f.choices);
         }
 
-        const auto answered = onLine + inState;
-        lines.push_back(std::format("DecisionProbe: {} of {} right ({} asked); background on each option's line {} of "
-                                    "{}, in a state block {} of {}; right answer in the first half of the list {} of "
-                                    "{}, in the second half {} of {}; {} ms a request on average",
-                                    right,
-                                    answered,
+        lines.push_back(std::format("DecisionProbe: {} ({} asked); as built {}; reversed {}; not named in the sentence "
+                                    "{}; up to {} choices; {} ms a request on average",
+                                    all.Say(),
                                     findings.size(),
-                                    onLineRight,
-                                    onLine,
-                                    inStateRight,
-                                    inState,
-                                    earlyRight,
-                                    early,
-                                    lateRight,
-                                    late,
+                                    asBuilt.Say(),
+                                    reversed.Say(),
+                                    unnamed.Say(),
+                                    mostChoices,
                                     answered > 0 ? totalMs / static_cast<long long>(answered) : 0));
         return lines;
     }
@@ -353,12 +327,15 @@ namespace NarrativeEngine::DecisionProbe
     {
         std::vector<Finding> findings;
         for (const auto& round : Rounds()) {
-            for (const bool reversed : {false, true}) {
-                const auto started = std::chrono::steady_clock::now();
-                const auto result = SkyrimNetAPI::SendCustomDecision(pt, kTemplate, Context(round, reversed));
-                const auto latency =
-                    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started);
-                findings.push_back(Judge(round, reversed, result, latency));
+            for (const auto& question : round.questions) {
+                for (const bool reversed : {false, true}) {
+                    const auto started = std::chrono::steady_clock::now();
+                    const auto result =
+                        SkyrimNetAPI::SendCustomDecision(pt, kTemplate, Context(round, question, reversed));
+                    const auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - started);
+                    findings.push_back(Judge(round, question, reversed, result, latency));
+                }
             }
         }
         for (const auto& line : Report(findings)) {
