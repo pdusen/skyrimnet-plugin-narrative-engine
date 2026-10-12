@@ -16,6 +16,7 @@
 #include <PlotSchedule.h>
 #include <PlotState.h>
 #include <PlotVerbs.h>
+#include <SenderCandidatePool.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 
@@ -770,6 +771,11 @@ namespace NarrativeEngine::PlotTick
         if (!cfg.plotsEnabled) {
             return;
         }
+
+        // Read here, on the plugin thread, for a birth on the plot worker:
+        // the name changes at character creation and with showracemenu,
+        // so it is read every poll rather than once a session.
+        PlotBirth::SetPlayerName(SenderCandidatePool::GetPlayerDisplayName());
 
         const double nowGameHours = EngineUtils::GetCurrentGameHours();
 

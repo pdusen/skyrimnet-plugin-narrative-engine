@@ -12,6 +12,7 @@
      verbs [{ id, line }] — every kind of step a plan is made of, each as
        its generic sentence. The scheme ends in one of them.
      items [string] — every object a step can involve, as it is said.
+     player — the player character's name; empty before it is known.
    NOTE: no fenced blocks and no literal braces anywhere in this file; both
    break the render. See docs/CUSTOM_PROMPTS.md. #}
 [ system ]
@@ -97,6 +98,12 @@ The player is not part of this. Whoever they are in this game -- the
 Dragonborn, the Listener, the Guild Master -- they are not somebody
 these people scheme against, for, or around. A scheme that turns on them
 cannot run, because the simulation has nobody to point it at.
+{% if length(player) > 0 %}
+The player is called **{{ player }}**. Memories and biographies name
+{{ player }} like anybody else, whatever post they hold -- if a memory says
+{{ player }} leads something, somebody else will have to be the one a
+scheme turns to. Never name {{ player }} in the ambition or the scheme.
+{% endif %}
 
 ## Output Format
 Return a JSON object. No markdown fences. No prose before or after the
@@ -140,7 +147,8 @@ this person would actually know.
 - Output strict JSON. No markdown code fences. No prose before or after
   the JSON object.
 - The scheme MUST NOT restage a quest that already exists in the game.
-- Neither the ambition nor the scheme may involve the player.
+- Neither the ambition nor the scheme may involve the player{% if length(player) > 0 %}, {{ player }}{% endif %}.
+  One that names them is thrown away.
 - Return only the keys `reasoning`, `ambition`, `goal` and `scheme`.
 - `goal` MUST be one of the ids listed under "What a scheme can end in".
   Any other word is thrown away.

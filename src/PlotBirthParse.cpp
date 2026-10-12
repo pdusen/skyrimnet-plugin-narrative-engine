@@ -87,7 +87,8 @@ namespace NarrativeEngine::PlotBirth
                       const char* key,
                       std::size_t limit,
                       std::string& out,
-                      std::string& rejection)
+                      std::string& rejection,
+                      std::string_view playerName = {})
         {
             const auto it = json.find(key);
             if (it == json.end() || !it->is_string()) {
@@ -99,9 +100,9 @@ namespace NarrativeEngine::PlotBirth
                 rejection = std::string("'") + key + "' was empty after sanitizing";
                 return false;
             }
-            if (PlotStepParse::NamesThePlayer(out)) {
+            if (PlotStepParse::NamesThePlayer(out, playerName)) {
                 rejection = "the '" + std::string{key}
-                            + "' named the Dragonborn; these plots run among the people of Skyrim and cannot "
+                            + "' named the player; these plots run among the people of Skyrim and cannot "
                               "involve the player";
                 return false;
             }
@@ -178,7 +179,7 @@ namespace NarrativeEngine::PlotBirth
         return out;
     }
 
-    AmbitionOutcome ParseAmbition(const std::string& response, const TextLimits& limits)
+    AmbitionOutcome ParseAmbition(const std::string& response, const TextLimits& limits, std::string_view playerName)
     {
         AmbitionOutcome out;
 
@@ -188,10 +189,11 @@ namespace NarrativeEngine::PlotBirth
             return out;
         }
 
-        if (!ReadText(json, "ambition", limits.maxAmbition, out.ambition, out.rejection)) {
+        if (!ReadText(json, "ambition", limits.maxAmbition, out.ambition, out.rejection, playerName)) {
             return out;
         }
-        if (!ReadText(json, "scheme", limits.maxScheme, out.scheme, out.rejection)) {
+        if (!ReadText(json, "scheme", limits.maxScheme, out.scheme, out.rejection, playerName)) {
+            out.ambition.clear();
             return out;
         }
 

@@ -1,6 +1,7 @@
 #include <PlotPlanning.h>
 
 #include <PlotBirth.h>
+#include <PlotStepParse.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -721,6 +722,72 @@ TEST_CASE("PlotBirth::ParseAmbition reads the goal", "[PlotBirth][engine]")
             REQUIRE(unknown.rejection.find("document") != std::string::npos);
             REQUIRE(unknown.scheme.empty());
             REQUIRE_FALSE(parse("").ok);
+        }
+    }
+}
+
+TEST_CASE("PlotStepParse::NamesThePlayer", "[PlotBirth][engine]")
+{
+    using NarrativeEngine::PlotStepParse::NamesThePlayer;
+
+    SECTION("when the text names the player's character")
+    {
+        SECTION("should say so, whole word and possessive alike")
+        {
+            REQUIRE(NamesThePlayer("denounce Faralda to Varian", "Varian"));
+            REQUIRE(NamesThePlayer("steal Varian's journal", "Varian"));
+            REQUIRE(NamesThePlayer("win over Brand-Shei for Lydia Stormblade", "Lydia Stormblade"));
+        }
+    }
+
+    SECTION("when the text uses the title")
+    {
+        SECTION("should say so whatever the player is called")
+        {
+            REQUIRE(NamesThePlayer("rob the Dragonborn's house", "Varian"));
+            REQUIRE(NamesThePlayer("ruin the dragonborn"));
+        }
+    }
+
+    SECTION("when the name is only part of a word, in lowercase, or too short to be a name")
+    {
+        SECTION("should not count it")
+        {
+            REQUIRE_FALSE(NamesThePlayer("settle the variance in the ledgers", "Varian"));
+            REQUIRE_FALSE(NamesThePlayer("denounce Faralda to Savos Aren", "Varian"));
+            REQUIRE_FALSE(NamesThePlayer("a varian plot", "Varian"));
+            REQUIRE_FALSE(NamesThePlayer("steal Al's ledger", "Al"));
+        }
+    }
+}
+
+TEST_CASE("PlotBirth::ParseAmbition refuses the player by name", "[PlotBirth][engine]")
+{
+    using NarrativeEngine::PlotBirth::ParseAmbition;
+    using NarrativeEngine::PlotBirth::TextLimits;
+
+    nlohmann::json j;
+    j["reasoning"] = "x";
+    j["ambition"] = "She means to run the College.";
+    j["scheme"] = "denounce Faralda to Varian for abusing her authority";
+    j["goal"] = "denounce";
+
+    SECTION("when the scheme names the player")
+    {
+        const auto out = ParseAmbition(j.dump(), TextLimits{}, "Varian");
+
+        SECTION("should refuse it, saying why")
+        {
+            REQUIRE_FALSE(out.ok);
+            REQUIRE(out.rejection.find("player") != std::string::npos);
+        }
+    }
+
+    SECTION("when the player is somebody else")
+    {
+        SECTION("should accept it")
+        {
+            REQUIRE(ParseAmbition(j.dump(), TextLimits{}, "Lydia").ok);
         }
     }
 }

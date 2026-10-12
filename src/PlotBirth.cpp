@@ -16,6 +16,7 @@
 #include <atomic>
 #include <cctype>
 #include <cstdio>
+#include <mutex>
 
 // The engine-bound half of plot birth: gathering what each of the three
 // calls needs to know, and making them in order. The response handling
@@ -34,6 +35,10 @@ namespace NarrativeEngine::PlotBirth
         // so every birth after that would spend two chat calls and then
         // fail; this stops them before the first.
         std::atomic<bool> g_cannotDecide{false};
+
+        // Written by the plugin thread every poll, read by birth.
+        std::mutex g_playerNameMutex;
+        std::string g_playerName;
 
         // Both chat calls go to the DIRECTOR variant.
         //
@@ -234,6 +239,7 @@ namespace NarrativeEngine::PlotBirth
             ctx["mastermind"] = std::move(person);
 
             ctx["memories"] = MemoriesOf(RefOf(boss.npc));
+            ctx["player"] = PlayerName();
 
             // What a scheme can be made of. The scheme is written to end in
             // one of these verbs and to name objects only as the pool does,
@@ -390,6 +396,18 @@ namespace NarrativeEngine::PlotBirth
         return ShortOccupation(npc);
     }
 
+    void SetPlayerName(std::string name)
+    {
+        const std::scoped_lock lock(g_playerNameMutex);
+        g_playerName = std::move(name);
+    }
+
+    std::string PlayerName()
+    {
+        const std::scoped_lock lock(g_playerNameMutex);
+        return g_playerName;
+    }
+
     bool CanDecide() noexcept
     {
         return !g_cannotDecide;
@@ -456,7 +474,9 @@ namespace NarrativeEngine::PlotBirth
             pt,
             kAmbitionPrompt,
             [&] { return AmbitionContext(*boss); },
-            [](const std::string& response) { return ParseAmbition(response, TextLimits{}); },
+            [player = PlayerName()](const std::string& response) {
+                return ParseAmbition(response, TextLimits{}, player);
+            },
             boss->name,
             "ambition");
         if (!ambition.ok) {

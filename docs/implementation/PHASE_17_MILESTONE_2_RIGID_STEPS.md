@@ -1132,7 +1132,7 @@ Helvard takes a dossier from Dengeir for Siddgeir. Two plots were wrong:
 
 ### Step 17 — The player is named, and refused
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1143,6 +1143,22 @@ touches the player itself.
 
 **Verification:** the parser suite asserts an answer naming the player by name is refused, one naming nobody passes,
 and a word of the name inside another word, or in lowercase, does not count.
+
+Done. `PlotStepParse::NamesThePlayer` takes the player's name beside the title it always checked; `ParseAmbition`
+passes it to every field it reads; `PlotTick::Poll` stores the name each poll for `PlotBirth::PlayerName` to read; the
+ambition prompt names the player under "Not about the player". 467 tests pass, two of them new.
+
+**Read every poll, not once a session.** The name is "Prisoner" until character creation and can change with
+`showracemenu`, so a copy taken at load would be wrong for a new game's first hours. Reading it costs one string per
+poll; the plot worker reads only the copy, under a lock, and never the player.
+
+**The prompt says what to do about the player holding a post.** Nirya's memories made Varian Arch-Mage, so the
+College's authority, in her eyes, is the player. Told only "not the player", a model has nowhere to turn; told that
+somebody else will have to be the one a scheme turns to, it has.
+
+**Case matters for the name and not for the title.** "Dragonborn" is never anybody's name, so any case of it counts;
+a character's name can be an ordinary word -- Hunter, Wolf, Brand -- and only its capitalised form is the name. Words
+under three letters are ignored for the same reason.
 
 ### Step 18 — A denunciation goes to whoever has authority over the mark
 

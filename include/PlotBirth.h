@@ -139,7 +139,11 @@ namespace NarrativeEngine::PlotBirth
         std::size_t maxScheme = 300;
     };
 
-    [[nodiscard]] AmbitionOutcome ParseAmbition(const std::string& response, const TextLimits& limits);
+    // `playerName` is the player character's name; an answer that names them
+    // is refused, as one saying "Dragonborn" always was.
+    [[nodiscard]] AmbitionOutcome ParseAmbition(const std::string& response,
+                                                const TextLimits& limits,
+                                                std::string_view playerName = {});
 
     // --- Call 3: how ------------------------------------------------------
     //
@@ -173,6 +177,13 @@ namespace NarrativeEngine::PlotBirth
     // Clears the latch above, so a session with a decision provider newly
     // set up gets its plots.
     void OnSessionStart() noexcept;
+
+    // The player character's name, as the plugin thread last read it. The
+    // plot worker never touches the player; birth reads this instead, to
+    // tell the ambition call who the player is and to refuse an answer
+    // that names them.
+    void SetPlayerName(std::string name);
+    [[nodiscard]] std::string PlayerName();
 
     // Run the two chat calls and the planning decisions over `shortlist`
     // and fill `plot` in, including which of the shortlist ended up
