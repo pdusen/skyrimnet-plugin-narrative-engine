@@ -5,12 +5,13 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
+> **Doc status: Steps 1–37 complete; Steps 38–40 follow up Step 9's ninth attempt.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
 > another way, Steps 21–25 mend what the fifth attempt found, Steps 26–28 add five verbs and the records they act on,
 > Steps 29–31 add five crafting verbs, Steps 32–34 make a scheme finish what it starts on the person it names, and
-> Steps 35–37 probe and then replace how a finish's people are read -- each added after an attempt at Step 9.
+> Steps 35–37 probe and then replace how a finish's people are read, and Steps 38–40 make a refused role say why
+> and what would do -- each added after an attempt at Step 9.
 > Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its Steps 20–22 still apply and follow it.
 
 ---
@@ -2239,6 +2240,74 @@ which covers a re-plan's kept goal as well.
 **A goal whose roles fail keeps its verb.** It is the slots that are asked again, not the goal: the scheme call chose
 the verb and it is still fillable, only not against the people named. That is the existing path for a goal the scheme
 call chose, and the case says so rather than expecting the goal question.
+
+### Step 38 — A name that finds nobody says why
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+The ninth attempt at Step 9 planned every scheme against the people its roles named. It also refused four schemes
+outright, against one before, each after its retry. Three of those named people who exist in the game, and every
+refusal said only that the name "names nobody alive whom a plot can reach":
+
+- **Rorlund**, the priest in Solitude's temple.
+- **Mogrul**, the Raven Rock moneylender.
+- **Lleril Morvayn**, Raven Rock's councilor.
+
+The retries named the same people again, as a model that knows they exist would. There are three different reasons
+somebody resolves to nobody, and the export shows two of them here:
+
+- **Dead, or not in the world.** Rorlund and Lleril are both in their town's list of unique residents, which is what
+  makes somebody a gossip participant, so both should be in the plot population. That leaves the liveness test, which
+  refuses the dead and the disabled.
+- **In no plot at all.** No location lists Mogrul as a resident, so the gossip graph never made him a participant. It
+  leaves out 786 unique NPCs for that reason, beside 172 that are ghosts or not people, and the plot population leaves
+  out children.
+- **Nobody of that name.** An invented name, which the scheme call should replace.
+
+The plot population now carries who it left out and why: each unique, named NPC the gossip graph passed over, with its
+reason, and each child. A role that finds nobody among the living is matched against the dead, the disabled and the
+left out, and its refusal says which:
+
+- "Rorlund is dead or not in the world";
+- "Mogrul cannot take part in these plots (no home location)";
+- "'Jarl Vigilia Rulcanella' names nobody in Skyrim".
+
+The refusal goes to the plots log and to the retry alike, so the log now answers what this run's could not.
+
+**Verification:** the candidate suite asserts each of the three refusals, and that a living person who shares a name
+with a left-out record still resolves to the living one.
+
+### Step 39 — A refused role is offered who would do
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+A refusal for a rule now names who the rule admits, when the list is short. Every other refusal names nobody, so the
+retry has nothing to choose from instead and names the same person again. Every refusal of a role now ends with whom
+it could be: the whole list when there are eight or fewer, and otherwise the first eight, which are the people the
+mastermind is closest to, as the rule ranks them. A thing still lists the pool.
+
+**Verification:** the candidate suite asserts a nobody refusal, a dead one and a rule refusal over a long list each end
+with candidates.
+
+### Step 40 — A word many names share names nobody
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+"Captain Veiled Lotus", an invented name, was refused as "could be Captain Valmir, Captain Aldis, Captain Metilius,
+Captain Lonely-Gale, Captain Wayfinder or Captain Veleth". It should have been refused as nobody. A word of a name
+counted for one over the number of names carrying it, so a title six people carry still counted, and tied all six.
+
+A word carried by more than two names now counts for nothing, as the older finish check counted it. "Captain", "Jarl"
+and "Guard" name nobody; "Idgrod", which two people carry, still asks which of them.
+
+**Verification:** the candidate suite asserts an invented name behind a common title is refused as nobody, and that a
+real name behind one still resolves.
 
 ---
 
