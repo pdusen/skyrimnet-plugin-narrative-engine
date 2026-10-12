@@ -214,6 +214,24 @@ namespace NarrativeEngine::PlotBirth
             return out;
         }
 
+        // How the scheme ends: the goal written out as an act, with its
+        // people and any item. Planning ranks whoever it names first, so it
+        // is held to the same instruction form as the scheme.
+        if (!ReadText(json, "finish", limits.maxScheme, out.finish, out.rejection, playerName)) {
+            out.ambition.clear();
+            out.scheme.clear();
+            out.goal.clear();
+            return out;
+        }
+        if (!SchemeOpensWithVerb(out.finish)) {
+            out.rejection = "the finish must open with a plain verb, as an instruction: '" + out.finish + "'";
+            out.ambition.clear();
+            out.scheme.clear();
+            out.goal.clear();
+            out.finish.clear();
+            return out;
+        }
+
         // The two must not be the same sentence. When they are, the
         // model has restated the agenda as the scheme -- the failure
         // that produced a whole run of plots whose objective was a

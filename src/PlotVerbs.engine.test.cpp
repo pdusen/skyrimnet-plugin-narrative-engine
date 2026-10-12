@@ -377,6 +377,7 @@ TEST_CASE("PlotVerbs steps survive the co-save", "[PlotVerbs][engine]")
     plot.mastermind = 0x0001A000;
     plot.mastermindName = "Fanari Strong-Voice";
     plot.scheme = "Win the Skaal's trust.";
+    plot.finish = "win Storn Crag-Strider over";
     plot.plan.push_back(Filled("deliver"));
     plot.history.push_back(Filled("steal"));
     state.plots.push_back(plot);
@@ -392,6 +393,12 @@ TEST_CASE("PlotVerbs steps survive the co-save", "[PlotVerbs][engine]")
         REQUIRE(PlotSerialize::ReadState(loaded, source, PlotSerialize::kRecordVersion, dropped));
         REQUIRE(dropped == 0);
         REQUIRE(loaded.plots.size() == 1);
+
+        SECTION("should keep how the scheme finishes")
+        {
+            REQUIRE(loaded.plots[0].finish == "win Storn Crag-Strider over");
+            REQUIRE(loaded.plots[0].scheme == plot.scheme);
+        }
 
         SECTION("should keep each step's verb and every slot")
         {

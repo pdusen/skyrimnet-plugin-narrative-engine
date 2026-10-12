@@ -2,7 +2,8 @@
    Asked once per plan by PlotPlanning::Plan, first: what leads up to the
    goal is planned afterwards, backwards from it. The answer is a verb id.
    Receives: mastermind { name, standing }, bio { summary, occupation, ... },
-     ambition, scheme, history [string] (steps already taken when a failed
+     ambition, scheme, finish (how the scheme is meant to end; may be
+     empty), history [string] (steps already taken when a failed
      plan is re-planned, numbered, with how each went; empty at birth),
      options [{ key, line }].
    NOTE: no fenced blocks and no literal braces anywhere in this file. #}
@@ -14,7 +15,8 @@
 
 [ state aims ]
 What they are ultimately after: {{ ambition }}
-The scheme they mean to carry out: {{ scheme }}
+The scheme they mean to carry out: {{ scheme }}{% if length(finish) > 0 %}
+It is meant to end with this: {{ finish }}{% endif %}
 [ end state ]
 
 {% if length(history) > 0 %}[ state history ]

@@ -125,6 +125,11 @@ namespace NarrativeEngine::PlotBirth
         // The id of the verb the scheme ends in: the step that, once done,
         // means the scheme is done. Always one PlotVerbs::Find knows.
         std::string goal;
+
+        // That last step written out as an act, naming its people and any
+        // item: "steal the Shatter-Shield logbook from Suvaris Atheron".
+        // The scheme says what it is all for; this says how it ends.
+        std::string finish;
     };
 
     struct TextLimits

@@ -4,7 +4,7 @@
    Each option is a whole step, already about the right people, and says
    which planned step it comes just before. The answer is p1 onward, or
    ready.
-   Receives: mastermind { name, standing }, bio, ambition, scheme,
+   Receives: mastermind { name, standing }, bio, ambition, scheme, finish,
      history [string] (steps already taken, when re-planning), plan
      [string] (the steps planned so far, numbered, the last being the one
      that accomplishes the scheme), options [{ key, line }].
@@ -15,7 +15,8 @@
 [ end state ]
 
 [ state aims ]
-The scheme: {{ scheme }}
+The scheme: {{ scheme }}{% if length(finish) > 0 %}
+It is meant to end with this: {{ finish }}{% endif %}
 [ end state ]
 
 {% if length(history) > 0 %}[ state history ]

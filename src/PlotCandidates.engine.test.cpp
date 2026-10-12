@@ -322,7 +322,7 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
     SECTION("when the scheme names a stranger")
     {
         auto request = f.Request();
-        request.scheme = "steal Brand-Shei's ledger";
+        request.naming = "steal Brand-Shei's ledger";
         const auto list = PlotCandidates::Build(SlotOf("watch", "mark"), request);
 
         SECTION("should admit them to a slot about whom the mastermind knows, first, saying why")
@@ -336,7 +336,7 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
     SECTION("when the scheme names somebody the rule cannot admit")
     {
         auto request = f.Request();
-        request.scheme = "ruin Vilkas";
+        request.naming = "ruin Vilkas";
 
         SECTION("should still keep a non-trader off a trader's list")
         {
@@ -347,7 +347,7 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
     SECTION("when the scheme names somebody a property rule admits")
     {
         auto request = f.Request();
-        request.scheme = "buy out Brand-Shei";
+        request.naming = "buy out Brand-Shei";
 
         SECTION("should put them first even though somebody known also qualifies")
         {

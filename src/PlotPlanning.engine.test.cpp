@@ -171,12 +171,14 @@ namespace
         PlotMenus::World world = World();
         std::vector<PlotModel::Step> history;
         std::string goal;
+        std::string finish;
         Script script;
 
         PlotPlanning::Outcome Run(std::size_t maxSteps = PlotPlanning::kPlanCap)
         {
             PlotPlanning::Input input{population, world};
             input.goal = goal;
+            input.finish = finish;
             input.mastermind = kBoss;
             input.mastermindName = "Olfrid";
             input.ambition = "He means to own Whiterun.";
@@ -272,6 +274,25 @@ TEST_CASE("PlotPlanning asks for the goal first", "[PlotPlanning][engine]")
             REQUIRE(f.script.Templates() == std::vector<std::string>{kSlot, kPrepare});
             REQUIRE(out.ok);
             REQUIRE(out.plan.back().verb == "watch");
+        }
+    }
+
+    SECTION("when how the scheme finishes names somebody the scheme does not")
+    {
+        // The scheme names Hulda; the finish names Idolaf, so both head the
+        // mark list ahead of anybody named by neither.
+        f.goal = "watch";
+        f.finish = "watch Idolaf";
+        f.script.answers = {"c2", "p1"};
+        const auto out = f.Run();
+
+        SECTION("should put the people it names on the list first, and tell the question how it ends")
+        {
+            const auto lines = f.script.Lines(0);
+            REQUIRE(lines.size() == 2);
+            REQUIRE(lines[0].find("named in the scheme") != std::string::npos);
+            REQUIRE(lines[1].find("named in the scheme") != std::string::npos);
+            REQUIRE(f.script.asked[0].ctx["finish"] == "watch Idolaf");
         }
     }
 
@@ -695,7 +716,8 @@ TEST_CASE("PlotBirth::ParseAmbition reads the goal", "[PlotBirth][engine]")
         nlohmann::json j;
         j["reasoning"] = "x";
         j["ambition"] = "He means to own Whiterun.";
-        j["scheme"] = "denounce Hulda to the jarl for selling skooma";
+        j["scheme"] = "expose Hulda's skooma trade";
+        j["finish"] = "denounce Hulda to Balgruuf for selling skooma";
         if (!goal.empty()) {
             j["goal"] = goal;
         }
@@ -706,10 +728,12 @@ TEST_CASE("PlotBirth::ParseAmbition reads the goal", "[PlotBirth][engine]")
     {
         const auto out = parse("denounce");
 
-        SECTION("should keep it")
+        SECTION("should keep it, and the scheme and finish apart")
         {
             REQUIRE(out.ok);
             REQUIRE(out.goal == "denounce");
+            REQUIRE(out.scheme == "expose Hulda's skooma trade");
+            REQUIRE(out.finish == "denounce Hulda to Balgruuf for selling skooma");
         }
     }
 
@@ -769,10 +793,11 @@ TEST_CASE("PlotBirth::ParseAmbition refuses the player by name", "[PlotBirth][en
     nlohmann::json j;
     j["reasoning"] = "x";
     j["ambition"] = "She means to run the College.";
-    j["scheme"] = "denounce Faralda to Varian for abusing her authority";
+    j["scheme"] = "bring Faralda down for abusing her authority";
     j["goal"] = "denounce";
+    j["finish"] = "denounce Faralda to Varian for abusing her authority";
 
-    SECTION("when the scheme names the player")
+    SECTION("when the finish names the player")
     {
         const auto out = ParseAmbition(j.dump(), TextLimits{}, "Varian");
 
@@ -788,6 +813,38 @@ TEST_CASE("PlotBirth::ParseAmbition refuses the player by name", "[PlotBirth][en
         SECTION("should accept it")
         {
             REQUIRE(ParseAmbition(j.dump(), TextLimits{}, "Lydia").ok);
+        }
+    }
+}
+
+TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
+{
+    using NarrativeEngine::PlotBirth::ParseAmbition;
+    using NarrativeEngine::PlotBirth::TextLimits;
+
+    nlohmann::json j;
+    j["reasoning"] = "x";
+    j["ambition"] = "He means to own Whiterun.";
+    j["scheme"] = "expose Hulda's skooma trade";
+    j["goal"] = "denounce";
+
+    SECTION("when the finish is missing")
+    {
+        SECTION("should refuse the answer")
+        {
+            REQUIRE_FALSE(ParseAmbition(j.dump(), TextLimits{}).ok);
+        }
+    }
+
+    SECTION("when the finish opens with a name rather than a verb")
+    {
+        j["finish"] = "Hulda is denounced to Balgruuf";
+
+        SECTION("should refuse the answer, saying why")
+        {
+            const auto out = ParseAmbition(j.dump(), TextLimits{});
+            REQUIRE_FALSE(out.ok);
+            REQUIRE(out.rejection.find("finish") != std::string::npos);
         }
     }
 }

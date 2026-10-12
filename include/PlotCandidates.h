@@ -65,11 +65,11 @@ namespace NarrativeEngine::PlotCandidates
         // Empty, or an empty answer, leaves it off the line.
         std::function<std::string(RE::FormID)> occupation;
 
-        // The plot's scheme. Whoever it names is offered first, and is
-        // offered at all for a slot that asks whom the mastermind knows: a
-        // scheme against Maven shows they know of her, whatever the ladder
-        // says. Empty names nobody.
-        std::string_view scheme{};
+        // The text whose people are offered first, and offered at all for a
+        // slot that asks whom the mastermind knows: the scheme and how it
+        // finishes. A plot against Maven shows its mastermind knows of her,
+        // whatever the ladder says. Empty names nobody.
+        std::string_view naming{};
 
         // People no slot may be filled with, on top of the unstated rules:
         // the people of the step a preparation or a theft serves, so the

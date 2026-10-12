@@ -135,7 +135,9 @@ namespace NarrativeEngine::PlotPlanning
         class Planner
         {
         public:
-            Planner(const Input& input, const Ask& ask) : input_(input), ask_(ask) {}
+            Planner(const Input& input, const Ask& ask)
+                : input_(input), ask_(ask), naming_(input.scheme + "\n" + input.finish)
+            {}
 
             Outcome Run()
             {
@@ -177,6 +179,8 @@ namespace NarrativeEngine::PlotPlanning
             std::size_t decisions_ = 0;
             std::string error_;
             std::string rejection_;
+            // The scheme and its finish, whose people head every list.
+            std::string naming_;
 
             SkyrimNetAPI::DecisionResult Decide(std::string_view name, const nlohmann::json& ctx)
             {
@@ -213,7 +217,7 @@ namespace NarrativeEngine::PlotPlanning
                                                 earlier,
                                                 input_.alive,
                                                 input_.occupation,
-                                                input_.scheme};
+                                                naming_};
                 request.excluded = excluded;
                 return request;
             }
@@ -226,6 +230,7 @@ namespace NarrativeEngine::PlotPlanning
                 ctx["bio"] = input_.bio;
                 ctx["ambition"] = input_.ambition;
                 ctx["scheme"] = input_.scheme;
+                ctx["finish"] = input_.finish;
                 ctx["history"] = StepsSoFar(input_.before);
                 return ctx;
             }
@@ -358,6 +363,7 @@ namespace NarrativeEngine::PlotPlanning
                         nlohmann::json ctx;
                         ctx["mastermind"] = {{"name", input_.mastermindName}};
                         ctx["scheme"] = input_.scheme;
+                        ctx["finish"] = input_.finish;
                         ctx["step"] = Sketch(step);
                         ctx["purpose"] = purpose;
                         ctx["slot"] = slot.name;
@@ -841,6 +847,7 @@ namespace NarrativeEngine::PlotPlanning
         nlohmann::json ctx;
         ctx["mastermind"] = {{"name", plot.mastermindName}};
         ctx["scheme"] = plot.scheme;
+        ctx["finish"] = plot.finish;
         ctx["step"] = Sketch(step, true);
         ctx["purpose"] = "Whoever is chosen carries this step out.";
         ctx["slot"] = "agent";

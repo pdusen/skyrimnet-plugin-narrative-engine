@@ -1,6 +1,6 @@
 {# narrative_engine_plot_ambition.prompt — call 2 of 3. The mastermind is
-   already chosen; this call decides what they are ultimately after and
-   what one concrete scheme they are starting now.
+   already chosen; this call decides what they are ultimately after, what
+   one concrete scheme they are starting now, and the step it ends in.
    Receives the JSON object produced by PlotBirth::AmbitionContext:
      mastermind { name, hold, standing }, memories [string],
      retry — empty on the first attempt; on the second it is why the
@@ -10,7 +10,7 @@
        bio file by CharacterBios. Plain text, already rendered; no
        character-profile decorator is involved.
      verbs [{ id, line }] — every kind of step a plan is made of, each as
-       its generic sentence. The scheme ends in one of them.
+       its generic sentence. The scheme's finishing step is one of them.
      items [string] — every object a step can involve, as it is said.
      player — the player character's name; empty before it is known.
    NOTE: no fenced blocks and no literal braces anywhere in this file; both
@@ -18,14 +18,15 @@
 [ system ]
 ## Task
 One person in Skyrim is working toward something they cannot pursue
-openly. You write down two things: what they are ultimately after, and
-the concrete move they are making toward it now.
+openly. You write down three things: what they are ultimately after, the
+concrete move they are making toward it now, and the act that move ends
+in.
 
 The decision that this person is scheming has ALREADY BEEN MADE. Do not
 second-guess it, do not refuse, and do not decide they are too decent or
 too minor for it. Ordinary people scheme, and most schemes are small.
 
-## The two things you decide
+## The three things you decide
 
 **First, the ambition.** The larger thing this person is ultimately
 after. It is nebulous, it is the work of a lifetime, and nothing they do
@@ -45,32 +46,36 @@ The test that separates them: **if finishing the scheme would finish the
 ambition, one of the two is wrong.** The ambition should still be out of
 reach the morning after the scheme succeeds.
 
+**The scheme serves THIS ambition.** A biography holds several threads --
+an old grudge, a post somebody wants, a thing somebody covets. Take the
+ambition from one of them and the scheme must move that same ambition
+along; a scheme drawn from a different thread, however true to the
+person, is two unrelated stories. Your reasoning must say how finishing
+the scheme brings the ambition nearer.
+
 A scheme does not have to be a theft. Putting someone in your debt,
 ruining what people think of a rival, wrecking an arrangement that is
 holding you back, quietly learning something you are not supposed to
 know — all of these are things a scheme can be for, and for most people
 they fit better than stealing an object does.
 
-## What a scheme can end in
-
-A scheme is carried out as a few steps, and every step is one of the
-kinds below. The scheme's last step -- the one that, once done, means the
-scheme is done -- must be one of them, so choose that kind first and
-write the scheme as that act:
+**Third, how the scheme ends.** A scheme is carried out as a few steps,
+and every step is one of the kinds below. Its last step -- the one that,
+once done, means the scheme is done -- must be one of them:
 
 {% for v in verbs %}- {{ v.id }}: {{ v.line }}
 {% endfor %}
-So "document the bribes a thane takes" cannot be a scheme, because
-nothing here documents anything, while "denounce the thane to the jarl
-for taking bribes", with both of them named, can. Name every person that
-last step involves: whom it is done to, and for a delivery or a
-denunciation, to whom. Choose them as this person would: a denunciation
-goes to someone with authority over the person denounced, and a thing is
-delivered to whoever will make use of it, never to the person it is
-meant to be used against.
+The scheme itself is written however suits it. "Expose the bribes a thane
+takes" is a fine scheme; nothing here exposes anything, so it would end
+in a denunciation of the thane to the jarl, and that denunciation is its
+finish. Write the finish as that act, naming every person it involves:
+whom it is done to, and for a delivery or a denunciation, to whom. Choose
+them as this person would: a denunciation goes to someone with authority
+over the person denounced, and a thing is delivered to whoever will make
+use of it, never to the person it is meant to be used against.
 
-If the scheme turns on an object, it must be one of these, named as it
-is written here:
+If the finish turns on an object, it must be one of these, named as it is
+written here:
 
 {% for i in items %}- {{ i }}
 {% endfor %}
@@ -102,20 +107,20 @@ cannot run, because the simulation has nobody to point it at.
 The player is called **{{ player }}**. Memories and biographies name
 {{ player }} like anybody else, whatever post they hold -- if a memory says
 {{ player }} leads something, somebody else will have to be the one a
-scheme turns to. Never name {{ player }} in the ambition or the scheme.
+scheme turns to. Never name {{ player }} in the ambition, the scheme or
+its finish.
 {% endif %}
 
 ## Output Format
 Return a JSON object. No markdown fences. No prose before or after the
 object.
 
-- `reasoning` — a short explanation of how this scheme fits the ambition,
-  in one or two sentences. This is to explain your own reasoning.
+- `reasoning` — a short explanation of how finishing this scheme brings
+  the ambition nearer, in one or two sentences. Write it FIRST: it is
+  where you check that the scheme and the ambition are one story.
 - `ambition` — one sentence, third person, about twenty words. The
   lifetime thing, written as a complete sentence with a pronoun subject:
   "She means to own everyone in the Rift who matters."
-- `goal` — the id, exactly as listed under "What a scheme can end in",
-  of the kind of step the scheme ends in.
 - `scheme` — **not** a sentence about them. One short line naming the
   concrete thing to be done, in the same voice an instruction is written
   in, and no more than fifteen words. The shape, which is a grammar and
@@ -130,14 +135,18 @@ object.
   remembers, after the words "as part of my plan to", so it has to read
   as the end of that sentence.
 
-  The scheme is its last step said plainly, so its verb is that step's:
-  a scheme whose goal is `win_over` opens with something like "win over"
-  or "turn", and one whose goal is `steal` with "steal" or "take".
+  Take the verb from what this person is actually doing, rather than
+  from these instructions: the scheme says what the plot is FOR.
 
   Concrete enough that you could tell whether it had worked: name the
   person, the place or the thing it turns on. This is what the scheme
-  IS, not how it is done; the steps are decided separately and are not
-  your problem here.
+  IS, not how it is done.
+- `goal` — the id, exactly as listed under "how the scheme ends", of the
+  kind of step it ends in.
+- `finish` — that last step as an act, in the same instruction voice and
+  no more than fifteen words, naming its people and any object from the
+  list: "steal the logbook from the bookkeeper", with the bookkeeper
+  named. It opens with a verb that says the same thing as `goal`.
 
 Write plainly. No markdown, no headings, no bullet points inside either
 line. Name only people and places that exist in Skyrim, and prefer ones
@@ -149,9 +158,12 @@ this person would actually know.
 - The scheme MUST NOT restage a quest that already exists in the game.
 - Neither the ambition nor the scheme may involve the player{% if length(player) > 0 %}, {{ player }}{% endif %}.
   One that names them is thrown away.
-- Return only the keys `reasoning`, `ambition`, `goal` and `scheme`.
-- `goal` MUST be one of the ids listed under "What a scheme can end in".
-  Any other word is thrown away.
+- Return only the keys `reasoning`, `ambition`, `scheme`, `goal` and
+  `finish`.
+- `goal` MUST be one of the ids listed under "how the scheme ends". Any
+  other word is thrown away.
+- `finish` MUST open with a plain verb, and must name the people its step
+  involves rather than describe them.
 - `scheme` must not be a restatement of `ambition`. Identical sentences
   are thrown away.
 - `scheme` MUST open with a plain verb. One that opens with a name, a

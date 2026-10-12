@@ -377,6 +377,12 @@ namespace NarrativeEngine::PlotModel
         // people actually have.
         std::string scheme;
 
+        // How the scheme ends, as the ambition call wrote it: its last
+        // step as an act, naming people and any item. The scheme is what
+        // the plot is for; this is what planning builds back from, and
+        // what a re-plan after a failure still has to arrive at.
+        std::string finish;
+
         // The ladder of steps beneath the objective. Rewritten from
         // `cursor` onward on adaptation; everything before it has already
         // moved to `history`.

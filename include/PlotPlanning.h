@@ -88,6 +88,9 @@ namespace NarrativeEngine::PlotPlanning
         // also chose it. Planned last without asking, if it can be filled;
         // empty, or unfillable, asks the goal question instead.
         std::string goal;
+        // That last step written out, naming its people and any item. Told
+        // to every question, and whoever it names heads every list.
+        std::string finish;
 
         PlotCasting::AlivePredicate alive;
         std::function<std::string(RE::FormID)> occupation;

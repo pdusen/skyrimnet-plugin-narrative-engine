@@ -375,6 +375,7 @@ namespace NarrativeEngine::PlotBirth
         input.standing = StandingPhrase(BestStanding(*boss));
         input.ambition = plot.ambition;
         input.scheme = plot.scheme;
+        input.finish = plot.finish;
         input.bio = BioSections(boss->npc, boss->name, "replan");
         input.alive = PlotPopulation::AlivePredicate();
         input.occupation = ShortOccupation;
@@ -496,6 +497,7 @@ namespace NarrativeEngine::PlotBirth
         input.ambition = ambition.ambition;
         input.scheme = ambition.scheme;
         input.goal = ambition.goal;
+        input.finish = ambition.finish;
         input.bio = BioSections(boss->npc, boss->name, "steps");
         input.alive = PlotPopulation::AlivePredicate();
         input.occupation = ShortOccupation;
@@ -525,6 +527,7 @@ namespace NarrativeEngine::PlotBirth
         plot.mastermindName = boss->name;
         plot.ambition = ambition.ambition;
         plot.scheme = ambition.scheme;
+        plot.finish = ambition.finish;
         plot.plan = steps.plan;
         return true;
     }

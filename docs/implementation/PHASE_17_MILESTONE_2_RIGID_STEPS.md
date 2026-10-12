@@ -5,10 +5,9 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: Steps 1–8 and 10–16 complete; Steps 17–19 added after Step 9's third attempt.** Steps 10–12 plan
-> backwards from the goal, Steps 13–16 write the scheme in the plan's vocabulary and bound the preparing, and Steps
-> 17–19 keep the player out, route denunciations by authority and give the scheme back its purpose. Step 9 runs
-> again once they are done.
+> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan backwards from
+> the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, and Steps 17–19 keep the player out,
+> route denunciations by authority and give the scheme back its purpose -- each added after an attempt at Step 9.
 > Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its Steps 20–22 still apply and follow it.
 
 ---
@@ -1191,7 +1190,7 @@ belongs to nothing with a hierarchy, or who heads what they belong to.
 
 ### Step 19 — The scheme says what it is for; the finishing step says how it ends
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1209,6 +1208,30 @@ The plot keeps `finish` in the co-save, so a re-plan after a failure reads it to
 **Verification:** the parser suite asserts `finish` is read and must open with a verb; the planning suite asserts
 people named in `finish` head the goal's lists and that the slot question is told how the scheme ends; the co-save
 suite round-trips `finish`.
+
+Done. `AmbitionOutcome::finish`, `PlotModel::Plot::finish` and `PlotPlanning::Input::finish` carry it; the co-save
+writes it after the scheme at record version 10; `PlotCandidates::Request::naming` replaces `scheme`, and planning
+passes the scheme and the finish together; every decision template shows "It is meant to end with this" under the
+scheme; the `PLAN` header line prints it. 468 tests pass, one of them new, with new sections in the parser, planning
+and co-save suites.
+
+**The scheme prompt is back to purposes, with one new rule.** The scheme is again written in whatever verb suits
+it, and a new paragraph requires it to move along the same ambition rather than another thread of the biography,
+with the reasoning written first and required to say how. Orthus's biography offered the transfer and the logbook
+as two threads, and nothing asked the model to join them.
+
+**The finish carries the people.** It is held to the scheme's instruction form, names the people its step involves,
+and is what makes Step 10's ranking useful: a scheme to "expose the bribes" names nobody to rank, while its finish
+names the thane and the jarl.
+
+**A re-plan reads the finish too.** It is the end a plot is still trying to reach after a failure, so it is saved
+rather than rebuilt; the goal question a re-plan asks sees it in its "aims" block.
+
+**Memories quote the scheme, unchanged in code.** "As part of my plan to expose Thane Erikur's bribe-taking" is the
+purpose again; Step 13's "as part of my plan to denounce Erikur to Elisif" said only what the plan's last step was.
+
+**A finish naming the player is refused like everything else.** Nirya's "denounce Faralda to Varian" would now be
+a finish, and Step 17 refuses it there.
 
 ---
 

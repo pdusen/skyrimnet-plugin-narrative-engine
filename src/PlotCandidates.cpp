@@ -310,7 +310,7 @@ namespace NarrativeEngine::PlotCandidates
 
     std::string Describe(const Request& request, const PlotCasting::Member& member)
     {
-        const Ctx ctx{request, NamedIn(request.population, request.scheme)};
+        const Ctx ctx{request, NamedIn(request.population, request.naming)};
         return PersonLine(request, Rank(ctx, member));
     }
 
@@ -385,7 +385,7 @@ namespace NarrativeEngine::PlotCandidates
     std::vector<Candidate> Build(const PlotVerbs::Slot& slot, const Request& request, const Limits& limits)
     {
         // Only a person list reads the scheme's names.
-        const auto people = [&] { return Ctx{request, NamedIn(request.population, request.scheme)}; };
+        const auto people = [&] { return Ctx{request, NamedIn(request.population, request.naming)}; };
         switch (slot.rule) {
         case Rule::AnyPerson: {
             const auto ctx = people();

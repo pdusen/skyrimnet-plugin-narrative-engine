@@ -271,9 +271,9 @@ namespace NarrativeEngine::PlotSerialize
         for (const auto& plot : state.plots) {
             if (!WritePod(sink, plot.id) || !WritePod(sink, plot.mastermind) || !WriteString(sink, plot.mastermindName)
                 || !WriteString(sink, plot.ambition) || !WriteString(sink, plot.scheme)
-                || !WriteStepVector(sink, plot.plan) || !WritePod(sink, static_cast<std::uint32_t>(plot.cursor))
-                || !WriteStepVector(sink, plot.history) || !WritePod(sink, plot.adaptations)
-                || !WritePod(sink, static_cast<std::uint8_t>(plot.status))
+                || !WriteString(sink, plot.finish) || !WriteStepVector(sink, plot.plan)
+                || !WritePod(sink, static_cast<std::uint32_t>(plot.cursor)) || !WriteStepVector(sink, plot.history)
+                || !WritePod(sink, plot.adaptations) || !WritePod(sink, static_cast<std::uint8_t>(plot.status))
                 || !WritePod(sink, static_cast<std::uint8_t>(plot.outcome)) || !WritePod(sink, plot.bornOnGameDay)
                 || !WritePod(sink, plot.endedOnGameDay) || !WriteString(sink, plot.concession)) {
                 return false;
@@ -350,11 +350,11 @@ namespace NarrativeEngine::PlotSerialize
             // FormID, so there is nothing here left to resolve or to
             // drop a plot over.
             if (!ReadString(source, plot.mastermindName) || !ReadString(source, plot.ambition)
-                || !ReadString(source, plot.scheme) || !ReadStepVector(source, plot.plan, resolved)
-                || !ReadPod(source, cursor) || !ReadStepVector(source, plot.history, resolved)
-                || !ReadPod(source, plot.adaptations) || !ReadPod(source, plotStatus) || !ReadPod(source, plotOutcome)
-                || !ReadPod(source, plot.bornOnGameDay) || !ReadPod(source, plot.endedOnGameDay)
-                || !ReadString(source, plot.concession)) {
+                || !ReadString(source, plot.scheme) || !ReadString(source, plot.finish)
+                || !ReadStepVector(source, plot.plan, resolved) || !ReadPod(source, cursor)
+                || !ReadStepVector(source, plot.history, resolved) || !ReadPod(source, plot.adaptations)
+                || !ReadPod(source, plotStatus) || !ReadPod(source, plotOutcome) || !ReadPod(source, plot.bornOnGameDay)
+                || !ReadPod(source, plot.endedOnGameDay) || !ReadString(source, plot.concession)) {
                 return fail();
             }
             plot.cursor = cursor;
