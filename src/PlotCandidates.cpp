@@ -479,10 +479,11 @@ namespace NarrativeEngine::PlotCandidates
 
         // Which of `names` `text` names most surely, among those `eligible`
         // admits. Each word a name shares with the text counts one over the
-        // number of names carrying it, so "Grelod" says Grelod the Kind and
-        // a word in many names says almost nothing. Returns the indices of
-        // every name scoring best: one is a match, several a shared name,
-        // none nobody.
+        // number of names carrying it, so "Grelod" says Grelod the Kind --
+        // and a word more than two names carry counts for nothing, as
+        // NamedIn counts it: "Captain" names none of six captains, where it
+        // used to tie them. Returns the indices of every name scoring best:
+        // one is a match, several a shared name, none nobody.
         template <typename Eligible>
         std::vector<std::size_t> Closest(const std::vector<std::string_view>& names,
                                          std::string_view text,
@@ -513,9 +514,12 @@ namespace NarrativeEngine::PlotCandidates
                 if (!eligible(i)) {
                     continue;
                 }
+                constexpr std::size_t kMostSharing = 2;
                 double score = 0.0;
                 for (const auto& word : shared(names[i])) {
-                    score += 1.0 / static_cast<double>(carriers[word]);
+                    if (carriers[word] <= kMostSharing) {
+                        score += 1.0 / static_cast<double>(carriers[word]);
+                    }
                 }
                 if (score <= 0.0) {
                     continue;

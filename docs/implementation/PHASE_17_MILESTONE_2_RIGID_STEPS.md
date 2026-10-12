@@ -5,7 +5,7 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: Steps 1–37 complete; Steps 38–40 follow up Step 9's ninth attempt.** Steps 10–12 plan
+> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
 > another way, Steps 21–25 mend what the fifth attempt found, Steps 26–28 add five verbs and the records they act on,
@@ -2319,7 +2319,7 @@ invite a third.
 
 ### Step 40 — A word many names share names nobody
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2332,6 +2332,14 @@ and "Guard" name nobody; "Idgrod", which two people carry, still asks which of t
 
 **Verification:** the candidate suite asserts an invented name behind a common title is refused as nobody, and that a
 real name behind one still resolves.
+
+Done. The scorer `ResolveRoles` shares across the living, the dead and the absent skips any word more than two of its
+names carry. 488 tests pass, with a new section in the candidate suite; the plugin builds with no warnings.
+
+**The same rule as `NamedIn`, for the same reason.** That check settled on two so a parent and child sharing a first
+name are both found; past two a word is a title or a family name, and says nothing about which person is meant.
+"Gray-Mane" and "Black-Briar" now count for nothing on their own, as they never did there: "Vignar Gray-Mane"
+resolves by "Vignar".
 
 ---
 

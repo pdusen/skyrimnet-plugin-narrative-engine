@@ -827,6 +827,27 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
         }
     }
 
+    SECTION("when a name is behind a title many people carry")
+    {
+        RE::FormID npc = 0x00010301;
+        for (const auto* name : {"Captain Valmir", "Captain Aldis", "Captain Metilius", "Captain Wayfinder"}) {
+            f.population.members.push_back(Person(npc++, name, kWhiterunHold, kWhiterun));
+        }
+
+        SECTION("should refuse an invented name as nobody, not as any of them")
+        {
+            const auto out = resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Captain Veiled Lotus"}});
+            REQUIRE(out.problem.find("'Captain Veiled Lotus' names nobody in Skyrim") != std::string::npos);
+        }
+
+        SECTION("should still resolve a real one")
+        {
+            const auto out = resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Captain Aldis"}});
+            REQUIRE(out.problem.empty());
+            REQUIRE(out.values[1].form == 0x00010302);
+        }
+    }
+
     SECTION("when a refused role is told who would do")
     {
         SECTION("should list everybody the rule admits when there are few")
