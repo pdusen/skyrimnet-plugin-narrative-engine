@@ -122,7 +122,7 @@ namespace NarrativeEngine::PlotVerbs
     // says what went wrong.
     inline constexpr std::string_view kConcededTemplate = "I gave up on my plan to {scheme}.";
 
-    inline constexpr std::array<Verb, 13> kVerbs{{
+    inline constexpr std::array<Verb, 15> kVerbs{{
         Verb{
             "watch",
             "Watch",
@@ -390,6 +390,50 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that they had run out of time before paying {witness} to keep quiet.",
             }},
         },
+        // Falsify, not forge: a model reads "forge" as smithing often enough
+        // to plan a plot around a sword.
+        Verb{
+            "falsify",
+            "Falsify",
+            PlotModel::StepType::Acquire,
+            {{Slot{"item", SlotKind::Thing, Rule::DocumentPool, Awareness::Unset},
+              Slot{"subject", SlotKind::Person, Rule::AnyPerson, Awareness::Failure}}},
+            2,
+            false,
+            true,
+            {{
+                "{agent} falsifies {item} in {subject}'s name.",
+                "{mastermind} asked me to falsify {item} in {subject}'s name, so I set off to do it.",
+                "I sent {agent} to falsify {item} in {subject}'s name, as part of my plan to {scheme}.",
+                "I decided to falsify {item} in {subject}'s name myself, as part of my plan to {scheme}.",
+                "I falsified {item} in {subject}'s name, good enough to pass.",
+                "My attempt to falsify {item} in {subject}'s name was found out.",
+                "I ran out of time before I could falsify {item} in {subject}'s name.",
+                "{agent} reported back that their attempt to falsify {item} in {subject}'s name had been found out.",
+                "{agent} reported back that they had run out of time before falsifying {item} in {subject}'s name.",
+            }},
+        },
+        Verb{
+            "dig_up",
+            "Dig Up",
+            PlotModel::StepType::Locate,
+            {{Slot{"item", SlotKind::Thing, Rule::DocumentPool, Awareness::Unset},
+              Slot{"mark", SlotKind::Person, Rule::KnownToMastermind, Awareness::Failure}}},
+            2,
+            false,
+            true,
+            {{
+                "{agent} digs up {item} proving {mark}'s wrongdoing.",
+                "{mastermind} asked me to dig up {item} proving {mark}'s wrongdoing, so I set off to do it.",
+                "I sent {agent} to dig up {item} proving {mark}'s wrongdoing, as part of my plan to {scheme}.",
+                "I decided to dig up {item} proving {mark}'s wrongdoing myself, as part of my plan to {scheme}.",
+                "I dug up {item} proving {mark}'s wrongdoing.",
+                "{mark} found out I was digging into their affairs, and I had to stop.",
+                "I dug into {mark}'s affairs, but ran out of time before I found anything I could prove.",
+                "{agent} reported back that {mark} had found out they were digging into their affairs.",
+                "{agent} reported back that they had run out of time before finding proof against {mark}.",
+            }},
+        },
     }};
 
     // One verb that may be done just before another, to make it work: the
@@ -411,7 +455,7 @@ namespace NarrativeEngine::PlotVerbs
         std::string_view from;
     };
 
-    inline constexpr std::array<Preparation, 24> kPreparations{{
+    inline constexpr std::array<Preparation, 28> kPreparations{{
         {"watch", "ask_around", "mark", "mark"},
 
         {"steal", "watch", "mark", "mark"},
@@ -440,12 +484,18 @@ namespace NarrativeEngine::PlotVerbs
         {"denounce", "spread_rumors", "mark", "mark"},
         {"denounce", "win_over", "mark", "authority"},
         {"denounce", "bribe", "mark", "authority"},
+        {"denounce", "dig_up", "mark", "mark"},
 
         {"sabotage", "watch", "mark", "mark"},
         {"sabotage", "ask_around", "mark", "mark"},
         {"sabotage", "bribe", {}, {}},
 
         {"silence", "ask_around", "mark", "witness"},
+
+        {"falsify", "ask_around", "mark", "subject"},
+
+        {"dig_up", "watch", "mark", "mark"},
+        {"dig_up", "ask_around", "mark", "mark"},
     }};
 
     // Every preparation of a verb, in table order.

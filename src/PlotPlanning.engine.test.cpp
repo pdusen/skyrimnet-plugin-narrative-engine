@@ -38,6 +38,7 @@ namespace
     constexpr RE::FormID kJarl = 0x00010004;
     constexpr RE::FormID kRuby = 0x0000D001;
     constexpr RE::FormID kSkooma = 0x0000D002;
+    constexpr RE::FormID kDeed = 0x0000D003;
 
     // Olfrid schemes against Hulda, who trades in Whiterun. He knows Idolaf.
     // Laila is a stranger to him, and the only authority.
@@ -81,7 +82,9 @@ namespace
     {
         PlotMenus::World w;
         w.settlements = {{kWhiterun, "Whiterun"}, {kRiften, "Riften"}};
-        w.items = {{kRuby, "a ruby", {}}, {kSkooma, "a bottle of skooma", {}}};
+        w.items = {{kRuby, "a ruby", {}},
+                   {kSkooma, "a bottle of skooma", {}},
+                   {kDeed, "a deed to a property", NarrativeEngine::PlotItemPool::Category::Document}};
         return w;
     }
 
@@ -386,7 +389,7 @@ TEST_CASE("PlotPlanning gets the items a plan needs", "[PlotPlanning][engine]")
         SECTION("should choose the item from the pool, since nobody has one yet")
         {
             REQUIRE(f.script.asked[1].ctx["slot"] == "item");
-            REQUIRE(f.script.Offered(1) == std::vector<std::string>{"c1", "c2"});
+            REQUIRE(f.script.Offered(1) == std::vector<std::string>{"c1", "c2", "c3"});
         }
 
         SECTION("should put the theft of that very item just before the delivery")
@@ -525,6 +528,62 @@ TEST_CASE("PlotPlanning gets the items a plan needs", "[PlotPlanning][engine]")
             REQUIRE_FALSE(Contains(f.script.Offered(0), "deliver"));
             REQUIRE_FALSE(Contains(f.script.Offered(0), "plant"));
             REQUIRE(Contains(f.script.Offered(0), "steal"));
+        }
+    }
+}
+
+TEST_CASE("PlotPlanning may falsify a document", "[PlotPlanning][engine]")
+{
+    Fixture f;
+
+    SECTION("when the goal delivers a document nobody holds")
+    {
+        // goal deliver -> the deed (c3) -> to Idolaf (c2). Hulda could be
+        // robbed of it or sell it, and it can be falsified; falsified, in
+        // Hulda's name (c1).
+        f.script.answers = {"deliver", "c3", "c2", "falsify", "c1", "ready"};
+        const auto out = f.Run();
+
+        SECTION("should offer falsifying it beside stealing and buying it")
+        {
+            REQUIRE(f.script.asked[3].templateName == kObtain);
+            REQUIRE(f.script.Offered(3) == std::vector<std::string>{"steal", "buy", "falsify"});
+            REQUIRE(f.script.Lines(3)[2] == "Someone falsifies a deed to a property in [subject]'s name.");
+        }
+
+        SECTION("should plan the forgery to supply the delivery")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(out.plan.size() == 2);
+            REQUIRE(out.plan[0].verb == "falsify");
+            REQUIRE(FormOf(out.plan[0], "item") == kDeed);
+            REQUIRE(FormOf(out.plan[0], "subject") == kTrader);
+            REQUIRE(PlotPlanning::Serves(out.plan[0], out.plan[1]));
+        }
+    }
+
+    SECTION("when the goal delivers something that is not paper")
+    {
+        f.script.answers = {"deliver", "c1", "c2", "buy", "ready"};
+        (void)f.Run();
+
+        SECTION("should not offer to falsify it")
+        {
+            REQUIRE(f.script.Offered(3) == std::vector<std::string>{"steal", "buy"});
+        }
+    }
+
+    SECTION("when the goal is a denunciation")
+    {
+        f.script.answers = {"denounce", "c1", "p1", "c2", "ready"};
+        (void)f.Run();
+
+        SECTION("should offer digging up proof against the person denounced")
+        {
+            const auto lines = f.script.Lines(2);
+            REQUIRE(std::count(
+                        lines.begin(), lines.end(), "Before step 1: Someone digs up [item] proving Hulda's wrongdoing.")
+                    == 1);
         }
     }
 }

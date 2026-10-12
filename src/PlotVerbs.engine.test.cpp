@@ -313,6 +313,7 @@ TEST_CASE("PlotVerbs preparations", "[PlotVerbs][engine]")
         {
             const auto steal = PlotVerbs::PreparationsOf("steal");
             REQUIRE(steal.size() == 3);
+            REQUIRE(PlotVerbs::PreparationsOf("falsify").front()->from == "subject");
             REQUIRE(steal[0]->verb == "watch");
             REQUIRE(steal[2]->verb == "bribe");
             REQUIRE(PlotVerbs::PreparationsOf("ask_around").empty());

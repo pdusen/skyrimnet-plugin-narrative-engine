@@ -259,6 +259,14 @@ namespace NarrativeEngine::PlotPlanning
                 return out;
             }
 
+            // Whether the pool lists this item as a document.
+            bool IsDocument(RE::FormID form) const
+            {
+                return std::any_of(input_.world.items.begin(), input_.world.items.end(), [form](const auto& item) {
+                    return item.form == form && item.category == PlotItemPool::Category::Document;
+                });
+            }
+
             // Whether the plot has given up on `verb` against `target`.
             bool IsAbandoned(const PlotVerbs::Verb& verb, RE::FormID target) const
             {
@@ -492,6 +500,15 @@ namespace NarrativeEngine::PlotPlanning
                         ways.push_back(verb);
                     }
                 }
+                // A document can also be falsified. Whose name it is in is
+                // not kept from the step it serves: a paper in a person's own
+                // name, planted on them, is what framing them is.
+                if (IsDocument(item->form)) {
+                    const auto* falsify = PlotVerbs::Find("falsify");
+                    if (falsify != nullptr && Fillable(*falsify, preset, {}, index)) {
+                        ways.push_back(falsify);
+                    }
+                }
                 if (ways.empty()) {
                     rejection_ = std::format("nobody to get {} from for {}", item->text, needing.verb);
                     return Fill::Unfillable;
@@ -529,7 +546,12 @@ namespace NarrativeEngine::PlotPlanning
 
                 Step step;
                 const auto purpose = std::format("It gets {} for step {}: {}", item->text, index + 1, Sketch(needing));
-                const auto filled = FillSlots(*way, preset, excluded, index, purpose, step);
+                const auto filled = FillSlots(*way,
+                                              preset,
+                                              way->id == "falsify" ? std::unordered_set<RE::FormID>{} : excluded,
+                                              index,
+                                              purpose,
+                                              step);
                 if (filled != Fill::Done) {
                     return filled;
                 }

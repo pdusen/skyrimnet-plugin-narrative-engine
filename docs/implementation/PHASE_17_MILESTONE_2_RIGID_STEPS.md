@@ -1555,7 +1555,7 @@ tome in somebody's hands that teaches the spell, which is what a stolen spellboo
 
 ### Step 27 — `falsify` and `dig_up`: verbs that make documents
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1574,6 +1574,20 @@ paper in their own name is the point.
 
 **Verification:** the verb suite's rules hold for both; the planning suite asserts a needed document offers
 `falsify` beside `steal` and `buy`, a needed valuable does not, and a falsified document supplies a `plant`.
+
+Done. `falsify` and `dig_up` join `PlotVerbs::kVerbs` with the templates above; `kPreparations` gains four rows; the
+planner's `Obtain` offers `falsify` for an item the pool lists as a document. 473 tests pass, one of them new; the
+verb suite's rules -- templates, awareness, the place rule, preparation bindings -- passed for both verbs unchanged.
+
+**The forgery supplies a delivery rather than a planting in the suite.** The planting chain is the same `Serves` link
+through the item, which the new case asserts directly; the fixture's only documents are what a delivery of a deed
+needs.
+
+**`dig_up` is a `locate`.** Its resolution is the investigation row `ask_around` already uses, which is the closest
+of the eight: the risk is being noticed asking, not being caught in the act.
+
+**Neither verb is a preparation of anything but what Step 27 named.** `dig_up` prepares a denunciation; the
+blackmail it is also for arrives in Step 28 with the verb that uses it.
 
 ### Step 28 — `blackmail`, `destroy` and `petition`
 
