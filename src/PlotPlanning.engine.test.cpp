@@ -1797,3 +1797,27 @@ TEST_CASE("PlotPlanning::Prepares", "[PlotPlanning][engine]")
         }
     }
 }
+
+TEST_CASE("PlotPlanning prepares no audience", "[PlotPlanning][engine]")
+{
+    Fixture f;
+
+    SECTION("when a denunciation is made to an organisation rather than a person")
+    {
+        PlotModel::Step kept;
+        kept.verb = "denounce";
+        kept.slots = {
+            {"mastermind", kBoss, "Olfrid"}, {"mark", kTrader, "Hulda"}, {"authority", 0, "the court of Whiterun"}};
+        f.goalStep = &kept;
+        f.script.answers = {"p1", "ready"};
+        (void)f.Run();
+
+        SECTION("should offer nothing that wins over or bribes the organisation")
+        {
+            REQUIRE_FALSE(f.script.asked.empty());
+            for (const auto& line : f.script.Lines(0)) {
+                REQUIRE(line.find("the court of Whiterun") == std::string::npos);
+            }
+        }
+    }
+}

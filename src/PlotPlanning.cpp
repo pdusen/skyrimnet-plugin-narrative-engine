@@ -761,7 +761,9 @@ namespace NarrativeEngine::PlotPlanning
                                 option.excluded.insert(named_.begin(), named_.end());
                             } else {
                                 const auto* value = plan_[k].FindSlot(prep->from);
-                                if (value == nullptr) {
+                                // An audience is nobody to watch or bribe:
+                                // a jarl's court is not won over one by one.
+                                if (value == nullptr || value->form == 0) {
                                     continue;
                                 }
                                 option.preset.push_back({std::string{prep->slot}, value->form, value->text});

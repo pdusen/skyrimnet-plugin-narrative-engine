@@ -2398,6 +2398,10 @@ the court of Whiterun".
 jarl; only a steward with nobody above in the hold -- the jarl dead or gone -- is exposed to the court as a whole. The
 fallbacks past the audience still serve whoever holds no office, as before.
 
+**An audience is never prepared.** Found after Step 42: the denunciation's preparations bind `win_over` and `bribe`
+to its authority, and offered for an audience they read "pays the court of Whiterun to look the other way". A
+preparation is not offered against a slot that holds no person, and the planning suite asserts so.
+
 ### Step 42 — A preparation makes its step easier
 
 - [x] Complete
