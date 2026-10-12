@@ -2356,17 +2356,21 @@ steward, the guard captain and every orc chief in it, as equals.
 - **The court tiers admit only those above the mark.** An accusation against a steward goes to the jarl. One against a
   guard captain goes to the steward or the jarl. One against anybody holding no court office goes to any of them, as
   now. The mark's superiors in an organisation still come first, unchanged.
-- **A jarl answers to nobody.** Skyrim has no throne a jarl can be denounced to, so for a mark who is a jarl no court
-  tier admits anybody, and nor does the last fallback, which takes every authority anywhere and now only those
-  outranking the mark. A denunciation, an exposure or a petition against a jarl cannot be planned. The scheme call is
-  told so beside the verbs, and a role naming an authority over a jarl is refused with the reason.
+- **A top official is exposed to their whole organisation.** Skyrim has no throne a jarl answers to. When nobody in
+  the mark's own hold outranks an official mark -- a jarl, or a steward whose jarl is gone -- the denunciation or
+  exposure is made to the organisation they lead as a whole, not to a person. The authority slot holds no person, only
+  how the organisation is said: the rostered faction the mark stands highest in ("the Court of the Reach"), else the
+  people of the mark's settlement. Nobody hears it as a person, so nobody keeps a memory of hearing it: it works as
+  spreading rumors about them does. A petition has no such audience: a mastermind nobody outranks has nobody to
+  petition, and the verb is not offered. The scheme call is told this beside the verbs. A role naming a person as
+  the authority over a top official resolves to the organisation, whoever it named.
 - **An orc chief judges only their own stronghold.** A chief is the authority over somebody who lives in the chief's
   settlement, and over nobody else; for those people the chief stands where a hold's court would.
 
 **Verification:** the candidate suite asserts:
 
 - a steward's authority is the jarl, and not the guard captain;
-- a jarl has none, so a denunciation of one cannot be filled;
+- a jarl's is their organisation, with no person in the slot, and a jarl has nobody to petition;
 - an orc in a stronghold answers to its chief, and a Markarth smith never to one.
 
 ### Step 42 — A preparation makes its step easier
