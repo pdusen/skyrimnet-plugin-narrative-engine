@@ -208,6 +208,13 @@ namespace NarrativeEngine::PlotPlanning
     // with no verb or no such slot filled.
     [[nodiscard]] RE::FormID TargetOf(const PlotModel::Step& step);
 
+    // Whether `step` prepared `later`: a preparation the verb manifest lists
+    // for it, bound to the same person, as planning binds one. An open
+    // preparation -- the bribe before a theft, of nobody in particular --
+    // and a step that only supplied an item do not count: getting the
+    // ledger is what lets it be shown, not what makes showing it easier.
+    [[nodiscard]] bool Prepares(const PlotModel::Step& step, const PlotModel::Step& later);
+
     // Whether `step` is there to serve `later`: one of its preparations,
     // with the bound person the same, or the step that gets the item it
     // uses.

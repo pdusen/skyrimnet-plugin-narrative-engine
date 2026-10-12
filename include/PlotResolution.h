@@ -88,6 +88,11 @@ namespace NarrativeEngine::PlotResolution
     // function has no opinion about map units.
     [[nodiscard]] float SizeThreshold(PlotModel::StepType type, double targetImportance, double travelDistanceNorm);
 
+    // A threshold after `preparations` preparations that succeeded, each
+    // leaving `ease` of the work: threshold * ease^preparations, never less
+    // than a quarter of it. However well prepared, a step is still work.
+    [[nodiscard]] float EaseThreshold(float threshold, int preparations, double ease);
+
     // How well an actor suits a KIND of step.
     //
     // A thief sent to steal, a courtier sent to discredit. Derived from

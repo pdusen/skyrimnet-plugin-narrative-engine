@@ -42,14 +42,16 @@ namespace NarrativeEngine::PlotLog
                                const PlotModel::Step& step,
                                int rung,
                                std::size_t considered,
-                               std::size_t rejected)
+                               std::size_t rejected,
+                               int prepared,
+                               float eased)
     {
         // The four sizing inputs are on this line and nowhere else.
         // Without them a later RESOLVE says what happened but not what
         // the actor was ever up against.
         return std::format("DISPATCH plot={} step=\"{}\" actor=\"{}\" rung={} budget={} threshold={:.1f} "
                            "travel={:.2f} importance={:.2f} competence={:.2f} suitability={:.2f} "
-                           "considered={} rejected={}",
+                           "considered={} rejected={}{}",
                            plot.id,
                            PlotModel::Label(step),
                            Named(step.actorName, "?"),
@@ -61,7 +63,8 @@ namespace NarrativeEngine::PlotLog
                            step.sizingCompetence,
                            step.sizingSuitability,
                            considered,
-                           rejected);
+                           rejected,
+                           prepared > 0 ? std::format(" prepared={} eased={:.2f}", prepared, eased) : std::string{});
     }
 
     std::string FormatRoll(const PlotModel::Plot& plot,

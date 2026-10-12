@@ -168,9 +168,11 @@ namespace NarrativeEngine::PlotLog
                   const PlotModel::Step& step,
                   int rung,
                   std::size_t considered,
-                  std::size_t rejected)
+                  std::size_t rejected,
+                  int prepared,
+                  float eased)
     {
-        Emit(FormatDispatch(plot, step, rung, considered, rejected));
+        Emit(FormatDispatch(plot, step, rung, considered, rejected, prepared, eased));
     }
 
     void Roll(const PlotModel::Plot& plot, const PlotModel::Step& step, const PlotModel::TickRecord& record)

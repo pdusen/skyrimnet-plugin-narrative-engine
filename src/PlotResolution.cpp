@@ -156,6 +156,13 @@ namespace NarrativeEngine::PlotResolution
         return static_cast<float>(static_cast<double>(BaseThreshold(type)) * byImportance * byTravel);
     }
 
+    float EaseThreshold(float threshold, int preparations, double ease)
+    {
+        constexpr double kLeastWork = 0.25;
+        const double factor = std::pow(std::clamp(ease, 0.0, 1.0), std::max(0, preparations));
+        return static_cast<float>(static_cast<double>(threshold) * std::max(kLeastWork, factor));
+    }
+
     double Suitability(PlotModel::StepType type, double speech, double sneak, double pickpocket)
     {
         const double sp = std::clamp(speech, 0.0, 1.0);

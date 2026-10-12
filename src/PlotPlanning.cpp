@@ -903,6 +903,21 @@ namespace NarrativeEngine::PlotPlanning
         return value != nullptr ? value->form : 0;
     }
 
+    bool Prepares(const Step& step, const Step& later)
+    {
+        for (const auto* prep : PlotVerbs::PreparationsOf(later.verb)) {
+            if (prep->verb != step.verb || prep->slot.empty()) {
+                continue;
+            }
+            const auto* own = step.FindSlot(prep->slot);
+            const auto* theirs = later.FindSlot(prep->from);
+            if (own != nullptr && theirs != nullptr && theirs->form != 0 && own->form == theirs->form) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool Serves(const Step& step, const Step& later)
     {
         const auto* verb = PlotVerbs::Find(step.verb);

@@ -32,6 +32,22 @@ TEST_CASE("PlotResolution craft profile", "[PlotResolution][engine]")
         }
     }
 
+    SECTION("when a step is eased by its preparations")
+    {
+        SECTION("should leave its share of the work for each, and nothing for none")
+        {
+            REQUIRE(PlotResolution::EaseThreshold(20.0f, 0, 0.8) == 20.0f);
+            REQUIRE(PlotResolution::EaseThreshold(20.0f, 1, 0.8) == 16.0f);
+            REQUIRE(PlotResolution::EaseThreshold(20.0f, 2, 0.8) > 12.79f);
+            REQUIRE(PlotResolution::EaseThreshold(20.0f, 2, 0.8) < 12.81f);
+        }
+
+        SECTION("should never leave less than a quarter of the work")
+        {
+            REQUIRE(PlotResolution::EaseThreshold(20.0f, 50, 0.0) == 5.0f);
+        }
+    }
+
     SECTION("when its type is written and read back")
     {
         SECTION("should come back as itself")

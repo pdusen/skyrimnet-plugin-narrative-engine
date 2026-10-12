@@ -2400,7 +2400,7 @@ fallbacks past the audience still serve whoever holds no office, as before.
 
 ### Step 42 — A preparation makes its step easier
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2418,6 +2418,25 @@ The dispatch line in the plots log says how many preparations eased the step, an
 
 **Verification:** the planning suite asserts which earlier steps count as a step's preparations, a supplying step
 among them not counting. The resolution suite asserts that easing shrinks the threshold and leaves the budget.
+
+Done. 490 tests pass, with a new planning case and a new resolution section; the plugin builds with no warnings.
+
+- **The setting.** `fPlotPreparationEase` is new in the `[Plots]` section of the ini, default 0.8.
+- **The easing.** `PlotResolution::EaseThreshold` applies it once per preparation.
+- **Which steps count.** `PlotPlanning::Prepares` says which earlier steps prepared a step: `Serves` without its
+  item-supply link and its open preparations.
+- **At dispatch.** `PlotTick` counts the succeeded preparations and eases the threshold after the budget is set.
+- **In the log.** The DISPATCH line ends "prepared=N eased=x" when any did.
+
+**No step is ever eased below a quarter of its work.** The suite caught the first version promising that no number of
+preparations makes a step free, while many of them at a low ease rounded the threshold to nothing. A step keeps at
+least a quarter of its work however it was prepared; at 0.8 that takes seven preparations, more than a plan holds.
+
+**The budget is not eased.** It is set from the whole of the work before the preparations are counted, as the doc
+step says, so `MinimumViableBudget` cannot shrink it along with the threshold and take the raised odds back.
+
+**An open preparation still serves its step.** A bribe of nobody in particular keeps its place in the plan and still
+falls with the step when the step is abandoned; it only does not ease it.
 
 ### Step 43 — A plan prepares until its odds are good
 

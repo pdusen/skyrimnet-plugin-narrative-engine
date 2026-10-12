@@ -389,6 +389,17 @@ namespace NarrativeEngine::PlotTick
                 PlotResolution::SizeBudget(step.type, importance),
                 PlotResolution::MinimumViableBudget(
                     step.threshold, cfg.plotProgressRateMin, cfg.plotProgressRateMax, cfg.plotProgressMaxFraction));
+            // Each preparation of this step that succeeded leaves less of it
+            // to do. The budget above was set from the whole of the work, so
+            // the same time now covers less: preparing raises the odds.
+            int prepared = 0;
+            for (const auto& past : plot.history) {
+                if (past.outcome == PlotModel::StepOutcome::Succeeded && PlotPlanning::Prepares(past, step)) {
+                    ++prepared;
+                }
+            }
+            const float unprepared = step.threshold;
+            step.threshold = PlotResolution::EaseThreshold(step.threshold, prepared, cfg.plotPreparationEase);
             step.sizingTravel = static_cast<float>(travel);
             step.sizingImportance = static_cast<float>(importance);
             step.sizingCompetence = actor != nullptr ? static_cast<float>(actor->skills.competence) : 0.5f;
@@ -408,7 +419,13 @@ namespace NarrativeEngine::PlotTick
             }
 
             ++state.counters.stepsDispatched;
-            PlotLog::Dispatch(plot, step, rung, considered, rejected);
+            PlotLog::Dispatch(plot,
+                              step,
+                              rung,
+                              considered,
+                              rejected,
+                              prepared,
+                              unprepared > 0.0f ? step.threshold / unprepared : 1.0f);
             PlotMemories::Write(PlotMemories::OnDispatch(plot, step));
             return Dispatched::Yes;
         }

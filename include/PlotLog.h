@@ -74,11 +74,16 @@ namespace NarrativeEngine::PlotLog
     // `rung` is which rung of the agent ladder the actor came from; the
     // rejects are how "the same six NPCs do everything" becomes visible
     // rather than merely suspected.
+    //
+    // `prepared` is how many preparations that succeeded eased the step, and
+    // `eased` what share of its work they left.
     void Dispatch(const PlotModel::Plot& plot,
                   const PlotModel::Step& step,
                   int rung,
                   std::size_t considered,
-                  std::size_t rejected);
+                  std::size_t rejected,
+                  int prepared = 0,
+                  float eased = 1.0f);
 
     void Roll(const PlotModel::Plot& plot, const PlotModel::Step& step, const PlotModel::TickRecord& record);
 
@@ -138,7 +143,9 @@ namespace NarrativeEngine::PlotLog
                                              const PlotModel::Step& step,
                                              int rung,
                                              std::size_t considered,
-                                             std::size_t rejected);
+                                             std::size_t rejected,
+                                             int prepared = 0,
+                                             float eased = 1.0f);
     [[nodiscard]] std::string FormatRoll(const PlotModel::Plot& plot,
                                          const PlotModel::Step& step,
                                          const PlotModel::TickRecord& record);

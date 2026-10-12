@@ -1750,3 +1750,50 @@ TEST_CASE("PlotPlanning plans around abandoned ways", "[PlotPlanning][engine]")
         }
     }
 }
+
+TEST_CASE("PlotPlanning::Prepares", "[PlotPlanning][engine]")
+{
+    const auto step = [](std::string verb, std::vector<PlotModel::SlotValue> slots) {
+        PlotModel::Step out;
+        out.verb = std::move(verb);
+        out.slots = std::move(slots);
+        return out;
+    };
+    const auto theft = step("steal", {{"item", kRuby, "a ruby"}, {"mark", kTrader, "Hulda"}});
+
+    SECTION("when a watch is of the person a theft robs")
+    {
+        SECTION("should count as preparing it")
+        {
+            REQUIRE(PlotPlanning::Prepares(step("watch", {{"mark", kTrader, "Hulda"}}), theft));
+        }
+    }
+
+    SECTION("when a watch is of somebody else")
+    {
+        SECTION("should not")
+        {
+            REQUIRE_FALSE(PlotPlanning::Prepares(step("watch", {{"mark", kFriend, "Idolaf"}}), theft));
+        }
+    }
+
+    SECTION("when a bribe is of nobody the theft names")
+    {
+        SECTION("should not, though it serves the theft")
+        {
+            const auto bribe = step("bribe", {{"mark", kJarl, "Laila"}});
+            REQUIRE(PlotPlanning::Serves(bribe, theft));
+            REQUIRE_FALSE(PlotPlanning::Prepares(bribe, theft));
+        }
+    }
+
+    SECTION("when a theft supplies the item a delivery brings")
+    {
+        SECTION("should not, though it serves the delivery")
+        {
+            const auto delivery = step("deliver", {{"item", kRuby, "a ruby"}, {"recipient", kJarl, "Laila"}});
+            REQUIRE(PlotPlanning::Serves(theft, delivery));
+            REQUIRE_FALSE(PlotPlanning::Prepares(theft, delivery));
+        }
+    }
+}

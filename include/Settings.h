@@ -1134,6 +1134,12 @@ namespace NarrativeEngine::Settings
         // from. For any threshold large enough to matter it never binds.
         float plotProgressMaxFraction = 0.45f;
 
+        // What each preparation that succeeded leaves of the step it
+        // prepared: its threshold is multiplied by this once per
+        // preparation, so two at 0.8 leave 64% of the work. The budget is
+        // not touched, so preparing raises the odds.
+        float plotPreparationEase = 0.8f;
+
         // The caught-in-the-act roll. Typed failure is load-bearing --
         // it decides whether the target gets a memory and whether the
         // plot leaks into gossip -- but progress alone cannot express
