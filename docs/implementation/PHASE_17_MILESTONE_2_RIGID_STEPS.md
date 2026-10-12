@@ -1946,7 +1946,7 @@ is a step the model knew and chose, so the retry is told what the step is for.
 
 ### Step 33 — `expose`: proof, shown to somebody with authority
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1972,6 +1972,19 @@ Two changes to `Obtain` make it read right:
 - an exposure's document can be stolen from its mark, dug up against them, bought or falsified;
 - a dug-up proof is about the exposure's mark without a question;
 - what was got supplies the exposure.
+
+Done. `expose` joins `PlotVerbs::kVerbs`, twenty-four in all, with the templates above, and `kPreparations` gains its
+two rows, thirty-eight in all. `Obtain` now builds each way of getting an item with what it is given: the slots it
+starts with and who it keeps out. 484 tests pass, with a new planning case; the delivery of a forged deed now offers
+`dig_up` too, and its case says so. The verb suite's rules passed for `expose` unchanged.
+
+**`dig_up` keeps people out only when it is asked whom to dig into.** Serving a step with a mark, it is dug up against
+that mark, so there is nobody to keep out. Serving a delivery, it is asked whom the proof is against, and the
+recipient is not offered, as for a theft.
+
+**Only an exposure lifts the rule on robbing.** A planting's mark is the person framed, and robbing them of what is
+then planted on them would be a different scheme. The exception is written as one, against `expose` by name, rather
+than as a property every verb would have to declare.
 
 ### Step 34 — A plan acts on the people its scheme names
 

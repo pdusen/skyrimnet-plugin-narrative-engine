@@ -532,6 +532,56 @@ TEST_CASE("PlotPlanning gets the items a plan needs", "[PlotPlanning][engine]")
     }
 }
 
+TEST_CASE("PlotPlanning exposes somebody with proof", "[PlotPlanning][engine]")
+{
+    Fixture f;
+    // goal expose -> the deed, the pool's one document (c3) -> against Hulda
+    // (c1) -> to Laila, the one authority, without asking.
+    f.finish = "Show a deed to a property to Laila as proof against Hulda";
+
+    SECTION("when the proof is dug up")
+    {
+        f.script.answers = {"expose", "c3", "c1", "dig_up", "ready"};
+        const auto out = f.Run();
+
+        SECTION("should offer taking it from the person exposed, buying, forging or digging it up")
+        {
+            REQUIRE(f.script.asked[3].templateName == kObtain);
+            REQUIRE(f.script.Offered(3) == std::vector<std::string>{"steal", "buy", "falsify", "dig_up"});
+            REQUIRE(f.script.Lines(3)[3] == "Someone digs up a deed to a property proving Hulda's wrongdoing.");
+        }
+
+        SECTION("should dig it up against the person exposed, then show it")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(out.plan.size() == 2);
+            REQUIRE(out.plan[0].verb == "dig_up");
+            REQUIRE(FormOf(out.plan[0], "mark") == kTrader);
+            REQUIRE(out.plan[1].verb == "expose");
+            REQUIRE(FormOf(out.plan[1], "mark") == kTrader);
+            REQUIRE(FormOf(out.plan[1], "authority") == kJarl);
+            REQUIRE(PlotPlanning::Serves(out.plan[0], out.plan[1]));
+        }
+    }
+
+    SECTION("when the proof is stolen")
+    {
+        f.script.answers = {"expose", "c3", "c1", "steal", "c1", "ready"};
+        const auto out = f.Run();
+
+        SECTION("should offer the person exposed as the one to rob, and never the authority")
+        {
+            REQUIRE(f.script.asked[4].templateName == kSlot);
+            REQUIRE(Contains(f.script.Offered(4), "c1"));
+            REQUIRE(out.ok);
+            REQUIRE(FormOf(out.plan[0], "mark") == kTrader);
+            for (const auto& line : f.script.Lines(4)) {
+                REQUIRE(line.find("Laila") == std::string::npos);
+            }
+        }
+    }
+}
+
 TEST_CASE("PlotPlanning ends a scheme only in what can finish it", "[PlotPlanning][engine]")
 {
     Fixture f;
@@ -575,15 +625,15 @@ TEST_CASE("PlotPlanning may falsify a document", "[PlotPlanning][engine]")
     SECTION("when the goal delivers a document nobody holds")
     {
         // goal deliver -> the deed (c3) -> to Idolaf (c2). Hulda could be
-        // robbed of it or sell it, and it can be falsified; falsified, in
-        // Hulda's name (c1).
+        // robbed of it or sell it, and it can be falsified or dug up;
+        // falsified, in Hulda's name (c1).
         f.script.answers = {"deliver", "c3", "c2", "falsify", "c1", "ready"};
         const auto out = f.Run();
 
-        SECTION("should offer falsifying it beside stealing and buying it")
+        SECTION("should offer falsifying it beside stealing, buying and digging it up")
         {
             REQUIRE(f.script.asked[3].templateName == kObtain);
-            REQUIRE(f.script.Offered(3) == std::vector<std::string>{"steal", "buy", "falsify"});
+            REQUIRE(f.script.Offered(3) == std::vector<std::string>{"steal", "buy", "falsify", "dig_up"});
             REQUIRE(f.script.Lines(3)[2] == "Someone falsifies a deed to a property in [subject]'s name.");
         }
 

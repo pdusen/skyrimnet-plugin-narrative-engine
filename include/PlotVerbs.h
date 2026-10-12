@@ -139,7 +139,7 @@ namespace NarrativeEngine::PlotVerbs
     // says what went wrong.
     inline constexpr std::string_view kConcededTemplate = "I gave up on my plan to {scheme}.";
 
-    inline constexpr std::array<Verb, 23> kVerbs{{
+    inline constexpr std::array<Verb, 24> kVerbs{{
         Verb{
             "watch",
             "Watch",
@@ -516,6 +516,29 @@ namespace NarrativeEngine::PlotVerbs
             }},
         },
         Verb{
+            "expose",
+            "Expose",
+            PlotModel::StepType::Discredit,
+            {{Slot{"item", SlotKind::Thing, Rule::BoundItem, Awareness::Unset},
+              Slot{"mark", SlotKind::Person, Rule::AnyPerson, Awareness::Never},
+              Slot{"authority", SlotKind::Person, Rule::AuthorityOverMark, Awareness::Contact}}},
+            3,
+            true,
+            false,
+            {{
+                "{agent} shows {item} to {authority} as proof against {mark}.",
+                "{mastermind} asked me to show {item} to {authority} as proof against {mark}, so I set off to do it.",
+                "I sent {agent} to show {item} to {authority} as proof against {mark}, as part of my plan to {scheme}.",
+                "I decided to show {item} to {authority} myself, as proof against {mark}, as part of my plan to "
+                "{scheme}.",
+                "I showed {item} to {authority}, and they took it as proof against {mark}.",
+                "I showed {item} to {authority}, but they would not take it as proof against {mark}.",
+                "I ran out of time before I could show {item} to {authority}.",
+                "{agent} reported back that {authority} would not take {item} as proof against {mark}.",
+                "{agent} reported back that they had run out of time before showing {item} to {authority}.",
+            }},
+        },
+        Verb{
             "smith",
             "Smith",
             PlotModel::StepType::Craft,
@@ -641,7 +664,7 @@ namespace NarrativeEngine::PlotVerbs
         std::string_view from;
     };
 
-    inline constexpr std::array<Preparation, 36> kPreparations{{
+    inline constexpr std::array<Preparation, 38> kPreparations{{
         {"watch", "ask_around", "mark", "mark"},
 
         {"steal", "watch", "mark", "mark"},
@@ -693,6 +716,9 @@ namespace NarrativeEngine::PlotVerbs
 
         {"petition", "win_over", "mark", "authority"},
         {"petition", "bribe", "mark", "authority"},
+
+        {"expose", "win_over", "mark", "authority"},
+        {"expose", "bribe", "mark", "authority"},
     }};
 
     // Every preparation of a verb, in table order.

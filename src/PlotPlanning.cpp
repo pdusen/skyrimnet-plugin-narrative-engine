@@ -493,33 +493,59 @@ namespace NarrativeEngine::PlotPlanning
                 const Step needing = plan_[index];
                 const auto* item = needing.FindSlot("item");
                 const std::vector<SlotValue> preset{{"item", item->form, item->text}};
-                const auto excluded = PeopleOf(needing);
+                const auto* mark = needing.FindSlot("mark");
 
-                std::vector<const PlotVerbs::Verb*> ways;
-                for (const auto* id : {"steal", "buy"}) {
-                    const auto* verb = PlotVerbs::Find(id);
-                    if (verb != nullptr && Fillable(*verb, preset, excluded, index)) {
-                        ways.push_back(verb);
-                    }
+                // Nobody in the step being served is robbed or paid for it, so
+                // the bribe before a theft never pays the person robbed. An
+                // exposure is the exception: the proof against somebody is
+                // theirs, and the ledger exposing Erikur is Erikur's. Only its
+                // authority is kept out.
+                auto excluded = PeopleOf(needing);
+                if (needing.verb == "expose" && mark != nullptr) {
+                    excluded.erase(mark->form);
                 }
-                // A document can also be falsified. Whose name it is in is
-                // not kept from the step it serves: a paper in a person's own
-                // name, planted on them, is what framing them is.
-                if (IsDocument(item->form)) {
-                    const auto* falsify = PlotVerbs::Find("falsify");
-                    if (falsify != nullptr && Fillable(*falsify, preset, {}, index)) {
-                        ways.push_back(falsify);
+
+                // One way of getting the item, with what it is given.
+                struct Way
+                {
+                    const PlotVerbs::Verb* verb = nullptr;
+                    std::vector<SlotValue> preset;
+                    std::unordered_set<RE::FormID> excluded;
+                };
+                std::vector<Way> ways;
+                const auto offer = [&](const PlotVerbs::Verb* verb,
+                                       std::vector<SlotValue> given,
+                                       std::unordered_set<RE::FormID> keptOut) {
+                    if (verb != nullptr && Fillable(*verb, given, keptOut, index)) {
+                        ways.push_back({verb, std::move(given), std::move(keptOut)});
                     }
+                };
+
+                for (const auto* id : {"steal", "buy"}) {
+                    offer(PlotVerbs::Find(id), preset, excluded);
+                }
+                if (IsDocument(item->form)) {
+                    // A document can also be falsified. Whose name it is in is
+                    // not kept from the step it serves: a paper in a person's
+                    // own name, planted on them, is what framing them is.
+                    offer(PlotVerbs::Find("falsify"), preset, {});
+                    // Or dug up: against the person the step it serves is
+                    // about, when it is about somebody.
+                    auto dug = preset;
+                    if (mark != nullptr) {
+                        dug.push_back({"mark", mark->form, mark->text});
+                    }
+                    offer(PlotVerbs::Find("dig_up"), std::move(dug), mark != nullptr ? decltype(excluded){} : excluded);
                 }
                 // And anything a craftsman the mastermind can reach is able to
                 // make can be made: the crafter then holds it, and carries it
-                // to whoever it is for.
+                // to whoever it is for. Nobody is robbed in the making, so
+                // nobody is kept out.
                 const auto request = RequestOf(preset, Earlier(index), {});
                 for (const auto& verb : PlotVerbs::kVerbs) {
                     const auto craft = PlotVerbs::CraftOf(verb);
-                    if (craft && PlotCandidates::CanBeMade(request, *craft, item->form)
-                        && Fillable(verb, preset, {}, index)) {
-                        ways.push_back(&verb);
+                    if (craft && PlotCandidates::CanBeMade(request, *craft, item->form)) {
+                        offer(&verb, preset, {});
                     }
                 }
                 if (ways.empty()) {
@@ -527,11 +553,11 @@ namespace NarrativeEngine::PlotPlanning
                     return Fill::Unfillable;
                 }
 
-                const PlotVerbs::Verb* way = ways.front();
+                const Way* way = &ways.front();
                 if (ways.size() > 1) {
                     nlohmann::json options = nlohmann::json::array();
-                    for (const auto* verb : ways) {
-                        options.push_back({{"key", verb->id}, {"line", Sketch(Partial(*verb, preset))}});
+                    for (const auto& w : ways) {
+                        options.push_back({{"key", w.verb->id}, {"line", Sketch(Partial(*w.verb, w.preset))}});
                     }
                     auto ctx = Base();
                     ctx["plan"] = PlanText();
@@ -545,9 +571,9 @@ namespace NarrativeEngine::PlotPlanning
                     }
                     const auto key = result.Choice(kObtainQuestion);
                     way = nullptr;
-                    for (const auto* verb : ways) {
-                        if (verb->id == key) {
-                            way = verb;
+                    for (const auto& w : ways) {
+                        if (w.verb->id == key) {
+                            way = &w;
                         }
                     }
                     if (way == nullptr) {
@@ -559,9 +585,7 @@ namespace NarrativeEngine::PlotPlanning
 
                 Step step;
                 const auto purpose = std::format("It gets {} for step {}: {}", item->text, index + 1, Sketch(needing));
-                const bool keepsNobodyOut = way->id == "falsify" || PlotVerbs::CraftOf(*way).has_value();
-                const auto filled = FillSlots(
-                    *way, preset, keepsNobodyOut ? std::unordered_set<RE::FormID>{} : excluded, index, purpose, step);
+                const auto filled = FillSlots(*way->verb, way->preset, way->excluded, index, purpose, step);
                 if (filled != Fill::Done) {
                     return filled;
                 }
