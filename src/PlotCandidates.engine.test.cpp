@@ -827,6 +827,31 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
         }
     }
 
+    SECTION("when a refused role is told who would do")
+    {
+        SECTION("should list everybody the rule admits when there are few")
+        {
+            const auto out = resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Mogrul"}});
+            REQUIRE(out.problem.find("; it can be ") != std::string::npos);
+            REQUIRE(out.problem.find("Idolaf") != std::string::npos);
+        }
+
+        SECTION("should list the closest eight when there are more")
+        {
+            for (RE::FormID npc = 0x00010201; npc < 0x00010209; ++npc) {
+                f.population.members.push_back(
+                    Person(npc, "Townsfolk " + std::to_string(npc), kWhiterunHold, kWhiterun));
+            }
+            const auto out = resolve("denounce", {{"mark", 0, "Ghost of Somebody"}, {"authority", 0, "Laila"}});
+            const auto at = out.problem.find("; it could be, among others, ");
+            REQUIRE(at != std::string::npos);
+            // Eight names: six commas between them, then "or" before the last.
+            const auto offered = out.problem.substr(at + std::string_view{"; it could be, among others, "}.size());
+            REQUIRE(std::count(offered.begin(), offered.end(), ',') == 6);
+            REQUIRE(offered.find(" or ") != std::string::npos);
+        }
+    }
+
     SECTION("when a role names nobody living")
     {
         f.population.absent = {{"Mogrul", "no home location"}, {"Hulda", "a ghost"}};

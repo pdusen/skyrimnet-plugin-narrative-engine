@@ -613,20 +613,20 @@ namespace NarrativeEngine::PlotCandidates
             return std::any_of(list.begin(), list.end(), [form](const Candidate& c) { return c.value.form == form; });
         }
 
-        // Who or what a rule admits, as the retry is told it: the whole list
-        // when it is short enough to read.
+        // Who or what a rule admits, as the retry is told it, so a refused
+        // role always comes with something to choose instead: the whole list
+        // when it is short enough to read, else its first few, which are the
+        // ones the mastermind is closest to as the rule ranks them.
         std::string Admitted(const std::vector<Candidate>& list)
         {
             if (list.empty()) {
                 return "; nobody this plot can reach can be";
             }
             constexpr std::size_t kReadable = 8;
-            if (list.size() > kReadable) {
-                return {};
-            }
-            std::string out = "; it can be ";
-            for (std::size_t i = 0; i < list.size(); ++i) {
-                out += (i == 0 ? "" : i + 1 == list.size() ? " or " : ", ") + list[i].value.text;
+            const auto shown = std::min(list.size(), kReadable);
+            std::string out = list.size() > kReadable ? "; it could be, among others, " : "; it can be ";
+            for (std::size_t i = 0; i < shown; ++i) {
+                out += (i == 0 ? "" : i + 1 == shown ? " or " : ", ") + list[i].value.text;
             }
             return out;
         }
@@ -675,7 +675,7 @@ namespace NarrativeEngine::PlotCandidates
             case PlotVerbs::SlotKind::Person: {
                 const auto called = PeopleCalled(here, text);
                 if (called.living.empty()) {
-                    problems.push_back(std::format("{}, for {}", called.why, role));
+                    problems.push_back(std::format("{}, for {}{}", called.why, role, Admitted(list)));
                     markLost = markLost || slot.name == "mark";
                     continue;
                 }

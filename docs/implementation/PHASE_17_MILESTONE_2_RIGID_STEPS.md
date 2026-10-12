@@ -2294,7 +2294,7 @@ scored first and the absent only when no living person matches, so the living pe
 
 ### Step 39 — A refused role is offered who would do
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2305,6 +2305,17 @@ mastermind is closest to, as the rule ranks them. A thing still lists the pool.
 
 **Verification:** the candidate suite asserts a nobody refusal, a dead one and a rule refusal over a long list each end
 with candidates.
+
+Done. `Admitted`, which ended a rule refusal with a short list, now ends every refused person and place role. It gives
+the whole list when there are eight or fewer, else "it could be, among others," and the first eight. 488 tests pass,
+with a new section in the candidate suite; the plugin builds with no warnings.
+
+**The first eight are the closest, not a sample.** Candidate lists are ranked by how the mastermind knows each person,
+then by standing. The eight a long list offers are the ones the scheme would most plausibly reach for, which is what a
+retry replacing somebody it could not have should choose from.
+
+**A name two people share is not given a list.** Its refusal already names the two it could be; anything more would
+invite a third.
 
 ### Step 40 — A word many names share names nobody
 
