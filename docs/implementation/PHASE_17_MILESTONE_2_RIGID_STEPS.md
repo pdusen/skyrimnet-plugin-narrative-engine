@@ -5,7 +5,7 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
+> **Doc status: Steps 1–43 complete; Step 44 tunes Step 43.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
 > another way, Steps 21–25 mend what the fifth attempt found, Steps 26–28 add five verbs and the records they act on,
@@ -2501,6 +2501,31 @@ ordinary agent's odds at default settings, with no, one and two preparations:
 Most steps start above 75%, and a preparation adds three or four points. A step rarely runs out of time; most that
 fail are caught, and easing the threshold only shortens how long the agent is exposed. The mechanism works as the doc
 says, and at these defaults it is nearly idle: how far to tune it is put to the user.
+
+### Step 44 — Preparing also makes getting caught less likely
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+Step 43's measurement showed preparing nearly idle at its defaults: most steps start above 75%, and a preparation adds
+three or four points, because most steps that fail are caught rather than run out of time. The user chose both
+remedies together.
+
+- **A preparation also makes getting caught less likely.** The share of the work a step's preparations leave --
+  `fPlotPreparationEase` per preparation, never under a quarter -- now multiplies its chance of a mishap on every tick
+  too. Having watched somebody first, an agent is less likely to be seen. The share is fixed at dispatch and saved
+  with the step, since every tick reads it; the co-save's record version moves to 12.
+- **Plans are prepared to 85%.** `fPlotPlanOdds` defaults to 0.85.
+
+Measured as before, with an ordinary agent, a theft from a middling target goes from 78% to 84% to 90% with each
+preparation, and denouncing somebody at the top of an organisation from 67% to 76% to 84%. So a scheme against a
+farmhand is prepared about once, one against somebody middling once or twice, and one against a jarl's court two or
+three times. Asking around, deliveries and crafting stay above 85% unprepared and are not prepared.
+
+**Verification:** the resolution suite asserts the eased share lowers the mishap chance, never below a quarter, and
+that an estimate rises by more with each preparation than easing the threshold alone gives. The co-save suite asserts
+a step's eased share survives a save.
 
 ---
 
