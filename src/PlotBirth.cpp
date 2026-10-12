@@ -4,6 +4,7 @@
 #include <GossipGraph.h>
 #include <LLMTextSanitizer.h>
 #include <logger.h>
+#include <PlotCandidates.h>
 #include <PlotLog.h>
 #include <PlotMenus.h>
 #include <PlotPlanning.h>
@@ -237,7 +238,22 @@ namespace NarrativeEngine::PlotBirth
             return out;
         }
 
-        nlohmann::json AmbitionContext(const PlotCasting::Member& boss)
+        // How many things of each craft the scheme call is shown. Enough to
+        // say what the mastermind's people can make, from the cheap end to
+        // the dear one, without a list of every sword in Skyrim.
+        constexpr std::size_t kMadeExamplesPerCraft = 4;
+
+        // What the mastermind's own craftsmen can make, as it is said.
+        std::vector<std::string> MadeNames(const PlotCasting::Population& population, const PlotCasting::Member& boss)
+        {
+            const std::vector<PlotModel::SlotValue> none;
+            const std::vector<const PlotModel::Step*> earlier;
+            const PlotCandidates::Request request{
+                population, boss.npc, PlotMenus::CurrentWorld(), none, earlier, PlotPopulation::AlivePredicate(), {}};
+            return PlotCandidates::MadeExamples(request, kMadeExamplesPerCraft);
+        }
+
+        nlohmann::json AmbitionContext(const PlotCasting::Member& boss, const std::vector<std::string>& made)
         {
             nlohmann::json ctx;
 
@@ -266,6 +282,7 @@ namespace NarrativeEngine::PlotBirth
             }
             ctx["verbs"] = std::move(verbs);
             ctx["items"] = PoolItemNames();
+            ctx["made"] = made;
             return ctx;
         }
 
@@ -483,11 +500,17 @@ namespace NarrativeEngine::PlotBirth
         }
 
         // --- 2. Why, and what ---------------------------------------------
+        //
+        // A finish may name a thing the mastermind's people can make, as well
+        // as one from the pool: that is how a gift is a scheme's finish.
+        const auto made = MadeNames(population, *boss);
+        auto items = PoolItemNames();
+        items.insert(items.end(), made.begin(), made.end());
         const auto ambition = AskTwice<AmbitionOutcome>(
             pt,
             kAmbitionPrompt,
-            [&] { return AmbitionContext(*boss); },
-            [player = PlayerName(), items = PoolItemNames()](const std::string& response) {
+            [&] { return AmbitionContext(*boss, made); },
+            [player = PlayerName(), &items](const std::string& response) {
                 return ParseAmbition(response, TextLimits{}, player, items);
             },
             boss->name,

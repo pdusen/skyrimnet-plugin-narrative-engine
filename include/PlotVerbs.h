@@ -61,6 +61,7 @@ namespace NarrativeEngine::PlotVerbs
         ItemPool,                   // the curated Acquire pool
         DocumentPool,               // the pool's documents alone
         BoundItem,                  // whatever an earlier step of this plot obtained
+        PoolOrMade,                 // the pool, and what the mastermind's craftsmen can make
         // What a craftsman the mastermind can send is able to make, one rule
         // per craft. See PlotRecipes.
         SmithRecipe,

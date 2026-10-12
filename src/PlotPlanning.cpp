@@ -329,7 +329,7 @@ namespace NarrativeEngine::PlotPlanning
                         continue;
                     }
                     if (slot.rule == PlotVerbs::Rule::BoundItem) {
-                        if (input_.world.items.empty()
+                        if (input_.world.items.empty() && input_.world.recipes.empty()
                             && !PlotCandidates::Bind(slot, RequestOf(preset, earlier, excluded))) {
                             return false;
                         }
@@ -390,7 +390,7 @@ namespace NarrativeEngine::PlotPlanning
                             continue;
                         }
                         auto fromPool = slot;
-                        fromPool.rule = PlotVerbs::Rule::ItemPool;
+                        fromPool.rule = PlotVerbs::Rule::PoolOrMade;
                         list = PlotCandidates::Build(fromPool, request);
                     } else {
                         list = PlotCandidates::Build(slot, request);
@@ -511,6 +511,17 @@ namespace NarrativeEngine::PlotPlanning
                         ways.push_back(falsify);
                     }
                 }
+                // And anything a craftsman the mastermind can reach is able to
+                // make can be made: the crafter then holds it, and carries it
+                // to whoever it is for.
+                const auto request = RequestOf(preset, Earlier(index), {});
+                for (const auto& verb : PlotVerbs::kVerbs) {
+                    const auto craft = PlotVerbs::CraftOf(verb);
+                    if (craft && PlotCandidates::CanBeMade(request, *craft, item->form)
+                        && Fillable(verb, preset, {}, index)) {
+                        ways.push_back(&verb);
+                    }
+                }
                 if (ways.empty()) {
                     rejection_ = std::format("nobody to get {} from for {}", item->text, needing.verb);
                     return Fill::Unfillable;
@@ -548,12 +559,9 @@ namespace NarrativeEngine::PlotPlanning
 
                 Step step;
                 const auto purpose = std::format("It gets {} for step {}: {}", item->text, index + 1, Sketch(needing));
-                const auto filled = FillSlots(*way,
-                                              preset,
-                                              way->id == "falsify" ? std::unordered_set<RE::FormID>{} : excluded,
-                                              index,
-                                              purpose,
-                                              step);
+                const bool keepsNobodyOut = way->id == "falsify" || PlotVerbs::CraftOf(*way).has_value();
+                const auto filled = FillSlots(
+                    *way, preset, keepsNobodyOut ? std::unordered_set<RE::FormID>{} : excluded, index, purpose, step);
                 if (filled != Fill::Done) {
                     return filled;
                 }

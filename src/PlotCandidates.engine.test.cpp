@@ -747,6 +747,39 @@ TEST_CASE("PlotCandidates craft rules", "[PlotCandidates][engine]")
         }
     }
 
+    SECTION("when an item nobody has got is chosen")
+    {
+        crafts(kFriend, PlotRecipes::Craft::Smith, 40);
+        PlotVerbs::Slot slot{"item", PlotVerbs::SlotKind::Thing, PlotVerbs::Rule::PoolOrMade, {}};
+        const std::string finish = "Bring a steel sword to Laila";
+        auto request = f.Request();
+        request.naming = finish;
+        const auto list = PlotCandidates::Build(slot, request);
+
+        SECTION("should offer a made thing the scheme names, then the pool, then the rest that can be made")
+        {
+            REQUIRE(Forms(list) == std::vector<RE::FormID>{kSword, 0x0000D001, 0x0000D002, kDagger});
+        }
+    }
+
+    SECTION("when the scheme call is shown what can be made")
+    {
+        crafts(kFriend, PlotRecipes::Craft::Smith, 100);
+        crafts(kBoss, PlotRecipes::Craft::Concoct, 15);
+
+        SECTION("should show a spread of each craft, from the cheapest")
+        {
+            REQUIRE(PlotCandidates::MadeExamples(f.Request(), 2)
+                    == std::vector<std::string>{"an Iron Dagger", "a Daedric Sword", "a Potion of Healing"});
+        }
+
+        SECTION("should say whether a thing can be made, by its craft")
+        {
+            REQUIRE(PlotCandidates::CanBeMade(f.Request(), PlotRecipes::Craft::Smith, kDaedric));
+            REQUIRE_FALSE(PlotCandidates::CanBeMade(f.Request(), PlotRecipes::Craft::Concoct, kDaedric));
+        }
+    }
+
     SECTION("when there are more things than the list holds")
     {
         crafts(kFriend, PlotRecipes::Craft::Smith, 100);

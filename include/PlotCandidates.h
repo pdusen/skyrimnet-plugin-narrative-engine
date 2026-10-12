@@ -105,6 +105,16 @@ namespace NarrativeEngine::PlotCandidates
                                                const Request& request,
                                                const Limits& limits = {});
 
+    // Whether somebody the mastermind could send, or the mastermind, is able
+    // to make this thing by this craft. Who is busy today does not matter:
+    // a plan is laid before its steps are cast.
+    [[nodiscard]] bool CanBeMade(const Request& request, PlotRecipes::Craft craft, RE::FormID form);
+
+    // A few things the mastermind's craftsmen can make, as they are said: up
+    // to `perCraft` of each craft, spread from the cheapest to the dearest.
+    // What the scheme call is shown, so a finish can name one.
+    [[nodiscard]] std::vector<std::string> MadeExamples(const Request& request, std::size_t perCraft);
+
     // A person's line on a list: name, what they do, and how the
     // mastermind knows them or where they live.
     [[nodiscard]] std::string Describe(const Request& request, const PlotCasting::Member& member);

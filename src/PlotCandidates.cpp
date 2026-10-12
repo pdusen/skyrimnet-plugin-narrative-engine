@@ -396,6 +396,11 @@ namespace NarrativeEngine::PlotCandidates
             return out;
         }
 
+        Candidate Thing(const PlotVerbs::Slot& slot, RE::FormID form, const std::string& text)
+        {
+            return {{}, {std::string{slot.name}, form, text}, text};
+        }
+
         // A list of made things: the ones `naming` says first, then a spread
         // of the rest.
         std::vector<Candidate> MadeThings(const PlotVerbs::Slot& slot,
@@ -410,15 +415,75 @@ namespace NarrativeEngine::PlotCandidates
             }
             std::vector<Candidate> out;
             for (const auto* recipe : named) {
-                out.push_back({{}, {std::string{slot.name}, recipe->form, recipe->displayName}, recipe->displayName});
+                out.push_back(Thing(slot, recipe->form, recipe->displayName));
             }
             const auto room = cap > out.size() ? cap - out.size() : 0;
             for (const auto* recipe : Spread(std::move(rest), room)) {
-                out.push_back({{}, {std::string{slot.name}, recipe->form, recipe->displayName}, recipe->displayName});
+                out.push_back(Thing(slot, recipe->form, recipe->displayName));
+            }
+            return Keyed(std::move(out), cap);
+        }
+
+        // What an item nobody has got yet is chosen from: whatever made thing
+        // the scheme names, then the pool, then an even share of each
+        // craft's spread for whatever room is left. A made thing the pool
+        // already lists is offered once, as the pool's.
+        std::vector<Candidate> PoolAndMade(const PlotVerbs::Slot& slot, const Request& request, std::size_t cap)
+        {
+            std::unordered_set<RE::FormID> pooled;
+            for (const auto& item : request.world.items) {
+                pooled.insert(item.form);
+            }
+
+            std::vector<Candidate> out;
+            std::vector<std::vector<const PlotRecipes::Recipe*>> rest;
+            for (const auto craft : PlotRecipes::kCrafts) {
+                auto& unnamed = rest.emplace_back();
+                for (const auto* recipe : Makeable(request, craft)) {
+                    if (pooled.contains(recipe->form)) {
+                        continue;
+                    }
+                    if (Says(request.naming, recipe->displayName)) {
+                        out.push_back(Thing(slot, recipe->form, recipe->displayName));
+                    } else {
+                        unnamed.push_back(recipe);
+                    }
+                }
+            }
+            for (const auto& item : request.world.items) {
+                out.push_back(Thing(slot, item.form, item.displayName));
+            }
+
+            const auto crafts = static_cast<std::size_t>(
+                std::count_if(rest.begin(), rest.end(), [](const auto& r) { return !r.empty(); }));
+            const auto room = cap > out.size() ? cap - out.size() : 0;
+            if (crafts > 0) {
+                for (auto& recipes : rest) {
+                    for (const auto* recipe : Spread(std::move(recipes), room / crafts)) {
+                        out.push_back(Thing(slot, recipe->form, recipe->displayName));
+                    }
+                }
             }
             return Keyed(std::move(out), cap);
         }
     } // namespace
+
+    bool CanBeMade(const Request& request, PlotRecipes::Craft craft, RE::FormID form)
+    {
+        const auto recipes = Makeable(request, craft);
+        return std::any_of(recipes.begin(), recipes.end(), [form](const auto* r) { return r->form == form; });
+    }
+
+    std::vector<std::string> MadeExamples(const Request& request, std::size_t perCraft)
+    {
+        std::vector<std::string> out;
+        for (const auto craft : PlotRecipes::kCrafts) {
+            for (const auto* recipe : Spread(Makeable(request, craft), perCraft)) {
+                out.push_back(recipe->displayName);
+            }
+        }
+        return out;
+    }
 
     std::string Describe(const Request& request, const PlotCasting::Member& member)
     {
@@ -634,6 +699,9 @@ namespace NarrativeEngine::PlotCandidates
             }
             return out;
         }
+
+        case Rule::PoolOrMade:
+            return PoolAndMade(slot, request, limits.things);
 
         case Rule::SmithRecipe:
         case Rule::ConcoctRecipe:

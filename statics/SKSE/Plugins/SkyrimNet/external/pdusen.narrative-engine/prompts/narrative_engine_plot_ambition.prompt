@@ -12,6 +12,8 @@
      verbs [{ id, line }] — every kind of step a plan is made of, each as
        its generic sentence. The scheme's finishing step is one of them.
      items [string] — every object a step can involve, as it is said.
+     made [string] — a few things the mastermind's own craftsmen can make,
+       as they are said; empty when nobody they can send makes anything.
      player — the player character's name; empty before it is known.
    NOTE: no fenced blocks and no literal braces anywhere in this file; both
    break the render. See docs/CUSTOM_PROMPTS.md. #}
@@ -79,6 +81,15 @@ written here:
 
 {% for i in items %}- {{ i }}
 {% endfor %}
+{% if length(made) > 0 %}
+{{ mastermind.name }}'s own people can also make things, and a delivery or a
+hiding of one may be how the scheme ends -- a gift made for somebody, or
+something made to be found among somebody's belongings. If the finish turns
+on one of these, name it as it is written here:
+
+{% for m in made %}- {{ m }}
+{% endfor %}
+{% endif %}
 ## Not a quest that already exists
 
 The scheme must be something this person is doing OF THEIR OWN ACCORD,

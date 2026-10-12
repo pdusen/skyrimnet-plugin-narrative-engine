@@ -5,7 +5,7 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: Steps 1–8 and 10–28 complete; Steps 29–31 add crafting after Step 9's sixth attempt.** Steps 10–12
+> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12
 > plan backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep
 > the player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
 > another way, Steps 21–25 mend what the fifth attempt found, Steps 26–28 add five verbs and the records they act on,
@@ -1837,7 +1837,7 @@ craft is abandoned against its item, by `TargetSlot` falling back to the verb's 
 
 ### Step 31 — What is made, in a plan
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1865,6 +1865,22 @@ naming a pool item.
 - a crafted thing is not offered as something to make when nobody reachable can make it.
 
 The ambition parse accepts a finish naming a crafted thing it was shown.
+
+Done. A new rule, `PoolOrMade`, is what an unbound item slot now falls back to, in place of `ItemPool`.
+`PlotCandidates::CanBeMade` lets `Obtain` offer a craft verb, and `PlotCandidates::MadeExamples` is what `PlotBirth`
+shows the scheme call as `made`, adding the same names to the items its finish may name. The ambition prompt lists them
+under the pool. 482 tests pass, with a new planning case, two new candidate sections and a new parse section; the
+plugin builds with no warnings.
+
+**The room left after the pool is shared between crafts, not between recipes.** Enchanted variants outnumber every
+other recipe by an order of magnitude, so one spread over all of them together would fill the list with enchanted
+gear. Each craft with something to offer gets an even share instead.
+
+**Making a thing keeps nobody out.** A theft serving a delivery never robs the person it is for. Nobody is robbed in
+the making of a necklace, so a craft step, like a forgery, takes no exclusions from the step it serves.
+
+**The suite's gift is offered to steal or make, not to buy.** The recipient it delivers to is Hulda, the fixture's only
+trader, and a delivery is never bought from the person it is for. That is the existing rule, and the case keeps it.
 
 ---
 

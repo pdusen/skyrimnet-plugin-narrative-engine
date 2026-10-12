@@ -588,6 +588,98 @@ TEST_CASE("PlotPlanning may falsify a document", "[PlotPlanning][engine]")
     }
 }
 
+TEST_CASE("PlotPlanning may have a thing made", "[PlotPlanning][engine]")
+{
+    namespace PlotRecipes = NarrativeEngine::PlotRecipes;
+    constexpr RE::FormID kNecklace = 0x0000E001;
+    constexpr RE::FormID kPoison = 0x0000E002;
+
+    Fixture f;
+    const auto recipe = [](RE::FormID form, std::string name, PlotRecipes::Craft craft) {
+        PlotRecipes::Recipe r;
+        r.form = form;
+        r.displayName = std::move(name);
+        r.craft = craft;
+        r.ingredientValue = 100.0f;
+        r.ingredientCount = 3;
+        return r;
+    };
+    f.world.recipes = {recipe(kNecklace, "a Gold Diamond Necklace", PlotRecipes::Craft::Set),
+                       recipe(kPoison, "a Poison of Lingering Damage", PlotRecipes::Craft::Concoct)};
+    const auto crafts = [&f](RE::FormID npc, PlotRecipes::Craft craft) {
+        for (auto& m : f.population.members) {
+            if (m.npc == npc) {
+                m.crafts |= static_cast<std::uint8_t>(1U << static_cast<unsigned>(craft));
+            }
+        }
+    };
+    // Idolaf, whom Olfrid can send, is a jeweler; Olfrid concocts himself.
+    crafts(kFriend, PlotRecipes::Craft::Set);
+    crafts(kBoss, PlotRecipes::Craft::Concoct);
+
+    SECTION("when the scheme ends in a gift of something a jeweler can make")
+    {
+        // goal deliver -> the necklace, named in the finish (c1) -> to Hulda,
+        // whom the scheme names (c1). It could be stolen, or made; not bought,
+        // since the only trader is the one it is for.
+        f.finish = "Bring a gold diamond necklace to Laila";
+        f.script.answers = {"deliver", "c1", "c1", "set"};
+        const auto out = f.Run();
+
+        SECTION("should offer the made thing first among what may be delivered")
+        {
+            REQUIRE(f.script.Lines(1).front() == "a Gold Diamond Necklace");
+        }
+
+        SECTION("should offer making it beside stealing it")
+        {
+            REQUIRE(f.script.asked[3].templateName == kObtain);
+            REQUIRE(f.script.Offered(3) == std::vector<std::string>{"steal", "set"});
+            REQUIRE(f.script.Lines(3)[1] == "Someone makes a Gold Diamond Necklace at a jeweler's bench.");
+        }
+
+        SECTION("should plan the making to supply the delivery")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(out.plan.size() == 2);
+            REQUIRE(out.plan[0].verb == "set");
+            REQUIRE(FormOf(out.plan[0], "item") == kNecklace);
+            REQUIRE(out.plan[1].verb == "deliver");
+            REQUIRE(PlotPlanning::Serves(out.plan[0], out.plan[1]));
+        }
+    }
+
+    SECTION("when the scheme ends in hiding a poison among somebody's belongings")
+    {
+        f.finish = "Hide a poison of lingering damage among Hulda's belongings";
+        f.script.answers = {"plant", "c1", "c1", "concoct", "ready"};
+        const auto out = f.Run();
+
+        SECTION("should concoct it first")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(out.plan.size() == 2);
+            REQUIRE(out.plan[0].verb == "concoct");
+            REQUIRE(FormOf(out.plan[0], "item") == kPoison);
+            REQUIRE(PlotPlanning::Serves(out.plan[0], out.plan[1]));
+        }
+    }
+
+    SECTION("when the only jeweler is somebody the mastermind cannot reach")
+    {
+        f.population.members[1].crafts = 0;
+        crafts(kJarl, PlotRecipes::Craft::Set);
+        f.script.answers = {"deliver", "c1", "c1", "buy"};
+        (void)f.Run();
+
+        SECTION("should not offer the necklace at all")
+        {
+            const auto lines = f.script.Lines(1);
+            REQUIRE(std::find(lines.begin(), lines.end(), "a Gold Diamond Necklace") == lines.end());
+        }
+    }
+}
+
 TEST_CASE("PlotPlanning never repeats a step", "[PlotPlanning][engine]")
 {
     Fixture f;
@@ -980,6 +1072,17 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
         {
             REQUIRE_FALSE(out.ok);
             REQUIRE(out.rejection.find("a ruby; a deed to a property") != std::string::npos);
+        }
+    }
+
+    SECTION("when the finish delivers a thing it was shown the mastermind's people can make")
+    {
+        j["goal"] = "deliver";
+        j["finish"] = "bring a gold diamond necklace to Elisif";
+
+        SECTION("should accept it as it would a pool item")
+        {
+            REQUIRE(ParseAmbition(j.dump(), TextLimits{}, {}, {"a ruby", "a Gold Diamond Necklace"}).ok);
         }
     }
 
