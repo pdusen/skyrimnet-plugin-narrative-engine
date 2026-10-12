@@ -150,7 +150,7 @@ namespace NarrativeEngine::Settings
         // returns Paused / Combat / Dialogue ahead of it, so this clock
         // is frozen in combat and in dialogue as well as while paused.
         int beatCooldownSeconds = 120;
-        int beatRepetitionWindowSeconds = 300; // window during which the same beat name is excluded from picks
+        int beatRepetitionWindowSeconds = 900; // window during which the same beat name is excluded from picks
 
         // NPCLetterBeat precondition: minimum number of recently-engaged
         // NPCs SkyrimNet must report before the beat becomes available.
