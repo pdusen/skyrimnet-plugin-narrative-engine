@@ -5,13 +5,13 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
+> **Doc status: Steps 1–40 complete; Steps 41–43 follow up Step 9's ninth attempt.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
 > another way, Steps 21–25 mend what the fifth attempt found, Steps 26–28 add five verbs and the records they act on,
 > Steps 29–31 add five crafting verbs, Steps 32–34 make a scheme finish what it starts on the person it names, and
-> Steps 35–37 probe and then replace how a finish's people are read, and Steps 38–40 make a refused role say why
-> and what would do -- each added after an attempt at Step 9.
+> Steps 35–37 probe and then replace how a finish's people are read, Steps 38–40 make a refused role say why and
+> what would do, and Steps 41–43 rank authority and make preparing worth it -- each added after an attempt at Step 9.
 > Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its Steps 20–22 still apply and follow it.
 
 ---
@@ -2340,6 +2340,84 @@ names carry. 488 tests pass, with a new section in the candidate suite; the plug
 name are both found; past two a word is a title or a family name, and says nothing about which person is meant.
 "Gray-Mane" and "Black-Briar" now count for nothing on their own, as they never did there: "Vignar Gray-Mane"
 resolves by "Vignar".
+
+### Step 41 — An authority judges only those below it
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+The ninth attempt exposed Jarl Igmund to his own steward, and offered the orc chiefs Burguk and Larak as authorities
+over a Markarth matter. `AuthorityOverMark` falls back to whoever holds authority in the mark's hold: the jarl, the
+steward, the guard captain and every orc chief in it, as equals.
+
+- **Authority has a rank.** Each member's authority comes from the job faction that gives it: jarl, then steward, then
+  guard captain, highest first. An orc chief is an authority apart (below).
+- **The court tiers admit only those above the mark.** An accusation against a steward goes to the jarl. One against a
+  guard captain goes to the steward or the jarl. One against anybody holding no court office goes to any of them, as
+  now. The mark's superiors in an organisation still come first, unchanged.
+- **A jarl answers to nobody.** Skyrim has no throne a jarl can be denounced to, so for a mark who is a jarl no court
+  tier admits anybody, and nor does the last fallback, which takes every authority anywhere and now only those
+  outranking the mark. A denunciation, an exposure or a petition against a jarl cannot be planned. The scheme call is
+  told so beside the verbs, and a role naming an authority over a jarl is refused with the reason.
+- **An orc chief judges only their own stronghold.** A chief is the authority over somebody who lives in the chief's
+  settlement, and over nobody else; for those people the chief stands where a hold's court would.
+
+**Verification:** the candidate suite asserts:
+
+- a steward's authority is the jarl, and not the guard captain;
+- a jarl has none, so a denunciation of one cannot be filled;
+- an orc in a stronghold answers to its chief, and a Markarth smith never to one.
+
+### Step 42 — A preparation makes its step easier
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+The ninth attempt planned eleven of twelve schemes at two steps, the model answering `ready` at its first chance. A
+preparation changes nothing when it succeeds: the step it was for is sized as though it had not happened. There is
+nothing to be gained by preparing, so nothing teaches a plan to.
+
+A preparation that succeeded now makes the step it prepared easier. At dispatch, each succeeded step of the plot that
+prepared the step being sized -- bound to one of its people, as the preparation table binds it -- multiplies that
+step's threshold by `fPlotPreparationEase`, 0.8 by default, so two preparations make it 64% of the work. A step that
+only supplied an item does not count: getting the ledger is what lets it be shown, not what makes showing it easier.
+Only the threshold moves; the budget does not, so the same time covers less work and the odds rise.
+
+The dispatch line in the plots log says how many preparations eased the step, and by how much.
+
+**Verification:** the planning suite asserts which earlier steps count as a step's preparations, a supplying step
+among them not counting. The resolution suite asserts that easing shrinks the threshold and leaves the budget.
+
+### Step 43 — A plan prepares until its odds are good
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+`ready` is no longer a choice. A plan is prepared until every step that may be prepared -- the goal, and what gets
+its items -- has an estimated chance of success of at least `fPlotPlanOdds`, 75% by default. Only then, or when nothing
+more can be prepared, or at the cap, is it done.
+
+- **The estimate is the resolution model's own.** A pure function plays the step's race a few hundred times from a
+  fixed seed, with its threshold eased by the preparations already planned for it. It uses the step's type, the
+  target's importance or the recipe's, the progress rates and the mishap chance. The agent and the trip are not
+  known until dispatch, so it assumes an ordinary agent, middling in competence and suitability, and a middling trip.
+- **Only steps below the odds are prepared.** The preparation question offers preparations of those steps alone;
+  with one on offer it is taken without asking, as now. A goal against a jarl, whose race is long, is prepared more
+  than one against a farmhand, and the plan says why.
+- **One step is still an errand.** With only the goal planned, a preparation is still added if one exists, whatever
+  the odds.
+
+The plan line in the plots log gives each prepared step's estimated odds.
+
+**Verification:** the resolution suite asserts the estimate is repeatable, rises with each preparation and falls with
+importance. The planning suite asserts:
+
+- a plan whose goal is already likely stops after its floor;
+- one against a hard target is prepared until its odds are met, or until nothing more can be prepared;
+- no `ready` is offered.
 
 ---
 
