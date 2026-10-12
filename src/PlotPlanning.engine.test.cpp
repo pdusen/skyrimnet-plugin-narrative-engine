@@ -177,6 +177,7 @@ namespace
         std::string finish;
         std::vector<PlotModel::Abandoned> abandoned;
         const PlotModel::Step* goalStep = nullptr;
+        std::vector<PlotModel::SlotValue> goalRoles;
         Script script;
 
         PlotPlanning::Outcome Run(std::size_t maxSteps = PlotPlanning::kPlanCap)
@@ -186,6 +187,7 @@ namespace
             input.finish = finish;
             input.abandoned = abandoned;
             input.goalStep = goalStep;
+            input.goalRoles = goalRoles;
             input.mastermind = kBoss;
             input.mastermindName = "Olfrid";
             input.ambition = "He means to own Whiterun.";
@@ -319,18 +321,20 @@ TEST_CASE("PlotPlanning asks for the goal first", "[PlotPlanning][engine]")
 
     SECTION("when how the scheme finishes names somebody the scheme does not")
     {
-        // The scheme names Hulda; the finish names Idolaf, so the watch is of
-        // Idolaf. Its one preparation, asking around about him in Whiterun,
-        // is taken without asking either.
+        // The scheme names Hulda; the finish names Idolaf, so both head the
+        // mark list ahead of anybody named by neither.
         f.goal = "watch";
         f.finish = "watch Idolaf";
+        f.script.answers = {"c2", "p1"};
         const auto out = f.Run();
 
-        SECTION("should do it to the person the finish names, without asking")
+        SECTION("should put the people it names on the list first, and tell the question how it ends")
         {
-            REQUIRE(f.script.asked.empty());
-            REQUIRE(out.ok);
-            REQUIRE(FormOf(out.plan.back(), "mark") == kFriend);
+            const auto lines = f.script.Lines(0);
+            REQUIRE(lines.size() == 2);
+            REQUIRE(lines[0].find("named in the scheme") != std::string::npos);
+            REQUIRE(lines[1].find("named in the scheme") != std::string::npos);
+            REQUIRE(f.script.asked[0].ctx["finish"] == "watch Idolaf");
         }
     }
 
@@ -552,36 +556,44 @@ TEST_CASE("PlotPlanning acts on the people the finish names", "[PlotPlanning][en
 {
     Fixture f;
 
-    SECTION("when the finish names one of the people the goal could be done to")
+    SECTION("when the scheme call named the goal's roles")
     {
-        // goal steal, as the scheme call chose -> the ruby (c1). Hulda, whom
-        // the scheme names, would head the list of marks; the finish names
-        // Idolaf. Prepare p1, the watch; then ready.
-        f.goal = "steal";
-        f.finish = "Steal a ruby from Idolaf";
-        f.script.answers = {"c1", "p1", "ready"};
+        // The case that went wrong: a finish naming only whom the proof is
+        // shown to. The roles say whom it is against. The deed is then dug
+        // up against her; then ready.
+        f.goal = "expose";
+        f.finish = "Show a deed to a property to Laila";
+        f.goalRoles = {
+            {"item", kDeed, "a deed to a property"}, {"mark", kTrader, "Hulda"}, {"authority", kJarl, "Laila"}};
+        f.script.answers = {"dig_up", "ready"};
         const auto out = f.Run();
 
-        SECTION("should take them without asking whom")
+        SECTION("should plan the goal as they say, asking nothing about it")
         {
-            REQUIRE(f.script.Templates() == std::vector<std::string>{kSlot, kPrepare, kPrepare});
-            REQUIRE(f.script.asked[0].ctx["slot"] == "item");
+            REQUIRE(f.script.Templates() == std::vector<std::string>{kObtain, kPrepare});
             REQUIRE(out.ok);
-            REQUIRE(FormOf(out.plan.back(), "mark") == kFriend);
+            REQUIRE(out.plan.back().verb == "expose");
+            REQUIRE(FormOf(out.plan.back(), "mark") == kTrader);
+            REQUIRE(FormOf(out.plan.back(), "authority") == kJarl);
+            REQUIRE(FormOf(out.plan.back(), "item") == kDeed);
         }
     }
 
-    SECTION("when the finish names nobody the goal could be done to")
+    SECTION("when the roles can no longer be filled")
     {
+        // The mark has died since the scheme call. The goal is still a theft;
+        // what it is of, and from whom, is asked again.
         f.goal = "steal";
-        f.finish = "Steal a ruby from the Jarl";
-        f.script.answers = {"c1", "c2", "p1", "ready"};
-        (void)f.Run();
+        f.goalRoles = {{"item", kRuby, "a ruby"}, {"mark", 0x0001FFFF, "Somebody Gone"}};
+        f.script.answers = {"c1", "c1", "p1", "ready"};
+        const auto out = f.Run();
 
-        SECTION("should ask whom, from the list as it stands")
+        SECTION("should fill the goal's slots by asking, as before")
         {
-            REQUIRE(f.script.asked[1].ctx["slot"] == "mark");
-            REQUIRE(f.script.Offered(1).size() > 1);
+            REQUIRE_FALSE(f.script.asked.empty());
+            REQUIRE(f.script.asked[0].templateName == kSlot);
+            REQUIRE(out.ok);
+            REQUIRE(FormOf(out.plan.back(), "mark") != 0x0001FFFF);
         }
     }
 
@@ -797,11 +809,11 @@ TEST_CASE("PlotPlanning may have a thing made", "[PlotPlanning][engine]")
 
     SECTION("when the scheme ends in a gift of something a jeweler can make")
     {
-        // goal deliver -> the necklace, named in the finish (c1) -> to Laila,
-        // whom the finish names, without asking. It could be stolen, bought
+        // goal deliver -> the necklace, named in the finish (c1) -> to Laila
+        // (c2), after Hulda whom the scheme names. It could be stolen, bought
         // from Hulda, or made.
         f.finish = "Bring a gold diamond necklace to Laila";
-        f.script.answers = {"deliver", "c1", "set"};
+        f.script.answers = {"deliver", "c1", "c2", "set"};
         const auto out = f.Run();
 
         SECTION("should offer the made thing first among what may be delivered")
@@ -811,9 +823,9 @@ TEST_CASE("PlotPlanning may have a thing made", "[PlotPlanning][engine]")
 
         SECTION("should offer making it beside stealing and buying it")
         {
-            REQUIRE(f.script.asked[2].templateName == kObtain);
-            REQUIRE(f.script.Offered(2) == std::vector<std::string>{"steal", "buy", "set"});
-            REQUIRE(f.script.Lines(2)[2] == "Someone makes a Gold Diamond Necklace at a jeweler's bench.");
+            REQUIRE(f.script.asked[3].templateName == kObtain);
+            REQUIRE(f.script.Offered(3) == std::vector<std::string>{"steal", "buy", "set"});
+            REQUIRE(f.script.Lines(3)[2] == "Someone makes a Gold Diamond Necklace at a jeweler's bench.");
         }
 
         SECTION("should plan the making to supply the delivery")
@@ -1237,53 +1249,6 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
         }
     }
 
-    SECTION("when the finish takes an item and names one from the pool")
-    {
-        j["goal"] = "steal";
-        j["roles"] = RolesFor("steal");
-        j["finish"] = "steal the deed to a property from Hulda";
-
-        SECTION("should accept it, article or not")
-        {
-            REQUIRE(ParseAmbition(j.dump(), TextLimits{}, {}, {"a ruby", "a deed to a property"}).ok);
-        }
-    }
-
-    SECTION("when the finish takes an item the pool does not hold")
-    {
-        j["goal"] = "steal";
-        j["roles"] = RolesFor("steal");
-        j["finish"] = "steal a spellbook from Nelacar";
-        const auto out = ParseAmbition(j.dump(), TextLimits{}, {}, {"a ruby", "a deed to a property"});
-
-        SECTION("should refuse it, listing what the pool holds")
-        {
-            REQUIRE_FALSE(out.ok);
-            REQUIRE(out.rejection.find("a ruby; a deed to a property") != std::string::npos);
-        }
-    }
-
-    SECTION("when the finish is done to somebody")
-    {
-        j["goal"] = "steal";
-        j["roles"] = RolesFor("steal");
-        const auto namesSomebody = [](std::string_view text) { return text.find("Hulda") != std::string_view::npos; };
-
-        SECTION("should refuse a finish naming nobody who exists, saying why")
-        {
-            j["finish"] = "steal a ruby from Lentilus Batiatus";
-            const auto out = ParseAmbition(j.dump(), TextLimits{}, {}, {}, namesSomebody);
-            REQUIRE_FALSE(out.ok);
-            REQUIRE(out.rejection.find("names nobody who lives in Skyrim") != std::string::npos);
-        }
-
-        SECTION("should accept one naming somebody who does")
-        {
-            j["finish"] = "steal a ruby from Hulda";
-            REQUIRE(ParseAmbition(j.dump(), TextLimits{}, {}, {}, namesSomebody).ok);
-        }
-    }
-
     SECTION("when the goal only prepares for a later step")
     {
         j["goal"] = "plant";
@@ -1295,28 +1260,6 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
         {
             REQUIRE_FALSE(out.ok);
             REQUIRE(out.rejection.find("cannot end a scheme") != std::string::npos);
-        }
-    }
-
-    SECTION("when the finish delivers a thing it was shown the mastermind's people can make")
-    {
-        j["goal"] = "deliver";
-        j["roles"] = RolesFor("deliver");
-        j["finish"] = "bring a gold diamond necklace to Elisif";
-
-        SECTION("should accept it as it would a pool item")
-        {
-            REQUIRE(ParseAmbition(j.dump(), TextLimits{}, {}, {"a ruby", "a Gold Diamond Necklace"}).ok);
-        }
-    }
-
-    SECTION("when the goal takes no item")
-    {
-        j["finish"] = "denounce Hulda to Balgruuf for selling skooma";
-
-        SECTION("should not look for one")
-        {
-            REQUIRE(ParseAmbition(j.dump(), TextLimits{}, {}, {"a ruby"}).ok);
         }
     }
 
@@ -1372,7 +1315,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the roles", "[PlotBirth][engine]")
         j["roles"] = {{"authority", "Balgruuf the Greater"}, {"mark", "Hulda"}};
         std::vector<NarrativeEngine::PlotModel::SlotValue> asked;
         const auto out =
-            ParseAmbition(j.dump(), TextLimits{}, {}, {}, {}, [&asked](const auto&, const auto& named, auto& resolved) {
+            ParseAmbition(j.dump(), TextLimits{}, {}, [&asked](const auto&, const auto& named, auto& resolved) {
                 asked = named;
                 resolved = {{"mark", kTrader, "Hulda"}, {"authority", kJarl, "Laila"}};
                 return std::string{};
@@ -1393,7 +1336,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the roles", "[PlotBirth][engine]")
     SECTION("when the roles do not fit")
     {
         j["roles"] = {{"mark", "Hulda"}, {"authority", "Balgruuf"}};
-        const auto out = ParseAmbition(j.dump(), TextLimits{}, {}, {}, {}, [](const auto&, const auto&, auto&) {
+        const auto out = ParseAmbition(j.dump(), TextLimits{}, {}, [](const auto&, const auto&, auto&) {
             return std::string{"Balgruuf cannot be the authority"};
         });
 

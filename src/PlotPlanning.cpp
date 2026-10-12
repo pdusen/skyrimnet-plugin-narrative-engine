@@ -150,8 +150,7 @@ namespace NarrativeEngine::PlotPlanning
         public:
             Planner(const Input& input, const Ask& ask)
                 : input_(input), ask_(ask), naming_(input.scheme + "\n" + input.finish),
-                  named_(PlotCandidates::NamedIn(input.population, naming_)),
-                  finishNamed_(PlotCandidates::NamedIn(input.population, input.finish))
+                  named_(PlotCandidates::NamedIn(input.population, naming_))
             {}
 
             Outcome Run()
@@ -199,8 +198,6 @@ namespace NarrativeEngine::PlotPlanning
             // Whoever they name. Kept off any slot a preparation leaves
             // open: they are what the plot is about, not its helpers.
             std::unordered_set<RE::FormID> named_;
-            // Whoever the finish alone names: who the goal is done to.
-            std::unordered_set<RE::FormID> finishNamed_;
 
             SkyrimNetAPI::DecisionResult Decide(std::string_view name, const nlohmann::json& ctx)
             {
@@ -329,6 +326,13 @@ namespace NarrativeEngine::PlotPlanning
                         if (slot.name == TargetSlot(verb) && IsAbandoned(verb, given->form)) {
                             return false;
                         }
+                        // A person given from before -- a kept goal, a named
+                        // role -- may have died or gone since.
+                        if (slot.kind == PlotVerbs::SlotKind::Person
+                            && (input_.population.Find(given->form) == nullptr
+                                || (input_.alive && !input_.alive(given->form)))) {
+                            return false;
+                        }
                         continue;
                     }
                     if (slot.rule == PlotVerbs::Rule::BoundItem) {
@@ -355,18 +359,12 @@ namespace NarrativeEngine::PlotPlanning
             // one candidate. An item slot takes an item a succeeded step
             // already got, or else is chosen from the pool -- and the plan
             // then gets it (GetItems).
-            //
-            // `asFinish` fills the goal: a person slot whose list holds
-            // anybody the finish names offers only them. Ranking them first
-            // was not enough; the decision model chose past Svidi to frame
-            // Hemming.
             Fill FillSlots(const PlotVerbs::Verb& verb,
                            const std::vector<SlotValue>& preset,
                            const std::unordered_set<RE::FormID>& excluded,
                            std::size_t index,
                            const std::string& purpose,
-                           Step& step,
-                           bool asFinish = false)
+                           Step& step)
             {
                 step = Partial(verb, preset);
                 step.slots.insert(step.slots.begin(),
@@ -414,14 +412,6 @@ namespace NarrativeEngine::PlotPlanning
                                 return SameStep(trial, *other);
                             });
                         });
-                    }
-                    if (asFinish && slot.kind == PlotVerbs::SlotKind::Person) {
-                        const auto named = [this](const PlotCandidates::Candidate& c) {
-                            return finishNamed_.contains(c.value.form);
-                        };
-                        if (std::any_of(list.begin(), list.end(), named)) {
-                            std::erase_if(list, [&named](const PlotCandidates::Candidate& c) { return !named(c); });
-                        }
                     }
                     if (list.empty()) {
                         rejection_ = std::format("{}: nobody or nothing can fill {{{}}}", verb.id, slot.name);
@@ -648,8 +638,24 @@ namespace NarrativeEngine::PlotPlanning
                     }
                     if (kept != nullptr && kept->finishes && Fillable(*kept, preset, {}, 0)) {
                         Step goal;
+                        const auto filled = FillSlots(*kept, preset, {}, 0, "This step accomplishes the scheme.", goal);
+                        if (filled != Fill::Done) {
+                            return filled;
+                        }
+                        plan_.push_back(std::move(goal));
+                        preparable_.push_back(true);
+                        return GetItems();
+                    }
+                }
+
+                // A goal whose roles the scheme call named is done to them, as
+                // it named them: nothing about it is asked.
+                if (!input_.goalRoles.empty()) {
+                    const auto* named = PlotVerbs::Find(input_.goal);
+                    if (named != nullptr && named->finishes && Fillable(*named, input_.goalRoles, {}, 0)) {
+                        Step goal;
                         const auto filled =
-                            FillSlots(*kept, preset, {}, 0, "This step accomplishes the scheme.", goal, true);
+                            FillSlots(*named, input_.goalRoles, {}, 0, "This step accomplishes the scheme.", goal);
                         if (filled != Fill::Done) {
                             return filled;
                         }
@@ -711,7 +717,7 @@ namespace NarrativeEngine::PlotPlanning
                 }
 
                 Step goal;
-                const auto filled = FillSlots(*verb, {}, {}, 0, "This step accomplishes the scheme.", goal, true);
+                const auto filled = FillSlots(*verb, {}, {}, 0, "This step accomplishes the scheme.", goal);
                 if (filled != Fill::Done) {
                     return filled;
                 }

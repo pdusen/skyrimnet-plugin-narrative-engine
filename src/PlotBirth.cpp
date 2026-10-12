@@ -511,21 +511,14 @@ namespace NarrativeEngine::PlotBirth
 
         // --- 2. Why, and what ---------------------------------------------
         //
-        // A finish may name a thing the mastermind's people can make, as well
-        // as one from the pool: that is how a gift is a scheme's finish.
+        // A gift's item may be a thing the mastermind's people can make, as
+        // well as one from the pool, so the call is shown some of those too.
         const auto made = MadeNames(population, *boss);
-        auto items = PoolItemNames();
-        items.insert(items.end(), made.begin(), made.end());
         const auto ambition = AskTwice<AmbitionOutcome>(
             pt,
             kAmbitionPrompt,
             [&] { return AmbitionContext(*boss, made); },
-            [player = PlayerName(), &items, &population, boss](const std::string& response) {
-                const auto namesSomebody = [&population, boss](std::string_view text) {
-                    auto named = PlotCandidates::NamedIn(population, text);
-                    named.erase(boss->npc);
-                    return !named.empty();
-                };
+            [player = PlayerName(), &population, boss](const std::string& response) {
                 const auto resolveRoles = [&population, boss](const PlotVerbs::Verb& goal,
                                                               const std::vector<PlotModel::SlotValue>& named,
                                                               std::vector<PlotModel::SlotValue>& resolved) {
@@ -542,7 +535,7 @@ namespace NarrativeEngine::PlotBirth
                     resolved = std::move(resolution.values);
                     return resolution.problem;
                 };
-                return ParseAmbition(response, TextLimits{}, player, items, namesSomebody, resolveRoles);
+                return ParseAmbition(response, TextLimits{}, player, resolveRoles);
             },
             boss->name,
             "ambition");
@@ -563,6 +556,7 @@ namespace NarrativeEngine::PlotBirth
         input.ambition = ambition.ambition;
         input.scheme = ambition.scheme;
         input.goal = ambition.goal;
+        input.goalRoles = ambition.roles;
         input.finish = ambition.finish;
         input.bio = BioSections(boss->npc, boss->name, "steps");
         input.alive = PlotPopulation::AlivePredicate();

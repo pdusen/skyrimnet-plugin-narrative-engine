@@ -112,6 +112,12 @@ namespace NarrativeEngine::PlotPlanning
         // stand. Null at birth, or a goal that can no longer be filled asks
         // the goal question as before.
         const PlotModel::Step* goalStep = nullptr;
+
+        // Who and what fills each slot of `goal`, as the scheme call named
+        // them and PlotCandidates::ResolveRoles resolved them. The goal is
+        // planned from them without a question; empty, or no longer
+        // fillable, asks as before.
+        std::vector<PlotModel::SlotValue> goalRoles;
     };
 
     struct Outcome

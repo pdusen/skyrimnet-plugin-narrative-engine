@@ -83,64 +83,6 @@ namespace NarrativeEngine::PlotBirth
         // fed into the next call in the chain. Smart quotes, em-dashes
         // and NBSPs arrive in almost every response and travel a long
         // way -- and here they would travel through two more prompts.
-        std::string Lower(std::string_view text)
-        {
-            std::string out{text};
-            for (auto& c : out) {
-                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            }
-            return out;
-        }
-
-        bool GoalTakesItem(std::string_view goal)
-        {
-            const auto* verb = PlotVerbs::Find(goal);
-            if (verb == nullptr) {
-                return false;
-            }
-            for (std::size_t i = 0; i < verb->slotCount; ++i) {
-                if (verb->slots[i].kind == PlotVerbs::SlotKind::Thing) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        bool GoalActsOnSomebody(std::string_view goal)
-        {
-            const auto* verb = PlotVerbs::Find(goal);
-            if (verb == nullptr) {
-                return false;
-            }
-            for (std::size_t i = 0; i < verb->slotCount; ++i) {
-                if (verb->slots[i].kind == PlotVerbs::SlotKind::Person) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        // Whether `text` names one of `items`: an item's name without its
-        // leading article, anywhere in the text, case aside. "a deed to a
-        // property" is named by "steal the deed to a property".
-        bool NamesAnItem(std::string_view text, const std::vector<std::string>& items)
-        {
-            const auto haystack = Lower(text);
-            for (const auto& item : items) {
-                auto name = Lower(item);
-                for (const std::string_view article : {"a ", "an ", "the "}) {
-                    if (name.starts_with(article)) {
-                        name.erase(0, article.size());
-                        break;
-                    }
-                }
-                if (!name.empty() && haystack.find(name) != std::string::npos) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
         bool ReadText(const nlohmann::json& json,
                       const char* key,
                       std::size_t limit,
@@ -240,8 +182,6 @@ namespace NarrativeEngine::PlotBirth
     AmbitionOutcome ParseAmbition(const std::string& response,
                                   const TextLimits& limits,
                                   std::string_view playerName,
-                                  const std::vector<std::string>& items,
-                                  const std::function<bool(std::string_view)>& namesSomebody,
                                   const RoleResolver& resolveRoles)
     {
         AmbitionOutcome out;
@@ -303,33 +243,6 @@ namespace NarrativeEngine::PlotBirth
         // turns up: "spread_rumors about the court historian".
         out.finish = PlotVerbs::Plain(out.finish);
 
-        // A finish whose step takes an item names one the pool holds. Malur's
-        // "steal a spellbook from Nelacar" named one it does not, and was
-        // planned as a theft of written orders.
-        if (GoalTakesItem(out.goal) && !items.empty() && !NamesAnItem(out.finish, items)) {
-            std::string list;
-            for (const auto& item : items) {
-                list += (list.empty() ? "" : "; ") + item;
-            }
-            out.rejection = "the finish '" + out.finish + "' names no object from the list; it must be one of: " + list;
-            out.ambition.clear();
-            out.scheme.clear();
-            out.goal.clear();
-            out.finish.clear();
-            return out;
-        }
-        // A finish done to somebody names somebody who exists. "Beirandering",
-        // two names run together, and Lentilus Batiatus, nobody in Skyrim,
-        // were each planned against whoever their list put first.
-        if (namesSomebody && GoalActsOnSomebody(out.goal) && !namesSomebody(out.finish)) {
-            out.rejection = "the finish '" + out.finish
-                            + "' names nobody who lives in Skyrim; name the person it is done to as they are known";
-            out.ambition.clear();
-            out.scheme.clear();
-            out.goal.clear();
-            out.finish.clear();
-            return out;
-        }
         if (!SchemeOpensWithVerb(out.finish)) {
             out.rejection = "the finish must open with a plain verb, as an instruction: '" + out.finish + "'";
             out.ambition.clear();

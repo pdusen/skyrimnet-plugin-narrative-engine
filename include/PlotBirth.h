@@ -160,25 +160,14 @@ namespace NarrativeEngine::PlotBirth
     // `playerName` is the player character's name; an answer that names them
     // is refused, as one saying "Dragonborn" always was.
     //
-    // `items` are the pool's items as they are said ("a ruby"). When the goal
-    // is a verb with an item, the finish must name one of them -- its name
-    // without the leading article, in any case -- or the answer is refused
-    // with the list, for the one retry to choose from. Empty checks nothing.
-    //
-    // `namesSomebody` says whether a text names anybody in the plot
-    // population other than the mastermind. When the goal is done to a
-    // person, a finish naming nobody is refused: planning would otherwise
-    // fill the goal with whoever the list put first. Empty checks nothing.
-    //
     // `roles` must name every slot of the goal, each as a string. With a
     // resolver they are resolved into `AmbitionOutcome::roles`, and an answer
     // whose roles do not fit is refused with the resolver's reason; without
-    // one, only their presence is checked.
+    // one, only their presence is checked. Who and what the finish's prose
+    // names is not read: prose does not say which name fills which role.
     [[nodiscard]] AmbitionOutcome ParseAmbition(const std::string& response,
                                                 const TextLimits& limits,
                                                 std::string_view playerName = {},
-                                                const std::vector<std::string>& items = {},
-                                                const std::function<bool(std::string_view)>& namesSomebody = {},
                                                 const RoleResolver& resolveRoles = {});
 
     // --- Call 3: how ------------------------------------------------------

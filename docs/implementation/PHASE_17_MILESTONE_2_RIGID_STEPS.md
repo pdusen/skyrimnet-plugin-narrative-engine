@@ -5,7 +5,7 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: Steps 1–8 and 10–34 complete; Steps 35–37 follow up Step 9's eighth attempt.** Steps 10–12 plan
+> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
 > another way, Steps 21–25 mend what the fifth attempt found, Steps 26–28 add five verbs and the records they act on,
@@ -2200,7 +2200,7 @@ is not judged at all, rather than being refused for reasons that only follow fro
 
 ### Step 37 — The goal is filled from the roles
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2219,6 +2219,26 @@ scheme call.
 
 **Verification:** the planning suite asserts a goal planned from roles asks no slot question and fills each slot as
 given, and that the Elisif case -- proof shown to Elisif against Erikur -- plans Erikur as the mark.
+
+Done. 488 tests pass; the plugin builds with no warnings.
+
+- **The goal from its roles.** `PlotPlanning::Input` gains `goalRoles`, which `PlotBirth::Compose` fills from the
+  parse, and `Goal` plans from them before anything else.
+- **What is removed.** `ParseAmbition` loses its `items` and `namesSomebody` parameters and the checks behind them.
+  `FillSlots` loses its narrowing.
+- **Tests.** The planning suite's case for the finish's people now covers roles; the Elisif case is played by Hulda,
+  against whom a deed is shown to Laila by a finish that names only Laila. Step 13's case is back to its original form,
+  the finish's people heading the list. Step 31's gift asks its recipient again. The parse cases for the removed
+  checks are gone, with their ground covered by the role resolution suite.
+
+**A preset person is checked for being alive.** Planning took any person it was given, a kept goal's or a role's,
+without asking whether they were still there. The new case for a goal whose mark has died found it: the theft was
+planned against nobody. `Fillable` now refuses a given person who is no longer in the population or no longer alive,
+which covers a re-plan's kept goal as well.
+
+**A goal whose roles fail keeps its verb.** It is the slots that are asked again, not the goal: the scheme call chose
+the verb and it is still fillable, only not against the people named. That is the existing path for a goal the scheme
+call chose, and the case says so rather than expecting the goal question.
 
 ---
 
