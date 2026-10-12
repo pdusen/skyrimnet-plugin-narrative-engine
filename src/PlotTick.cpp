@@ -598,6 +598,14 @@ namespace NarrativeEngine::PlotTick
                 }
                 return;
             }
+            // The finish failing fails the scheme, with no adaptation: there
+            // is no other way to an end that has itself just gone wrong. The
+            // failure memories are already written; a concession is not, since
+            // the mastermind lost the scheme rather than gave it up.
+            if (PlotPlanning::FinishFailed(plot)) {
+                EndPlot(state, plot, PlotModel::PlotStatus::Failed, PlotModel::PlotOutcome::FinishFailed, gameDay);
+                return;
+            }
             AdaptPlot(pt, state, plot, gameDay);
         }
 

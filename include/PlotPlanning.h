@@ -185,6 +185,12 @@ namespace NarrativeEngine::PlotPlanning
     // plot worker binds this to PlotBirth::Replan.
     using Replanner = std::function<Outcome(const PlotModel::Plot&)>;
 
+    // Whether the step that just failed -- at the plot's cursor -- was its
+    // finish, the last step of the plan. Such a failure ends the plot rather
+    // than being adapted around: the finish is what the scheme was for, and a
+    // different act against somebody else is a different scheme.
+    [[nodiscard]] bool FinishFailed(const PlotModel::Plot& plot) noexcept;
+
     // The person a step acts on: its verb's first person slot. 0 for a step
     // with no verb or no such slot filled.
     [[nodiscard]] RE::FormID TargetOf(const PlotModel::Step& step);
@@ -196,8 +202,9 @@ namespace NarrativeEngine::PlotPlanning
 
     // The route a failure abandons: the failed step -- the last entry in the
     // plot's history, still at its cursor -- and every later planned step it
-    // served, directly or through another, short of the finish. When the
-    // finish itself failed, that is the whole route.
+    // served, directly or through another, short of the finish. A failed
+    // finish is never adapted (FinishFailed), so the finish itself is never
+    // part of a route.
     [[nodiscard]] std::vector<PlotModel::Abandoned> RouteOf(const PlotModel::Plot& plot);
 
     // Adapt after the step at the plot's cursor failed, which is already the

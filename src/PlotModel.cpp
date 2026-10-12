@@ -75,6 +75,8 @@ namespace NarrativeEngine::PlotModel
             return "adaptation_cap_hit";
         case PlotOutcome::MastermindLost:
             return "mastermind_lost";
+        case PlotOutcome::FinishFailed:
+            return "finish_failed";
         }
         return "unknown";
     }

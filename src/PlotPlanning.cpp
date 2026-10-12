@@ -769,6 +769,11 @@ namespace NarrativeEngine::PlotPlanning
             [](std::string_view name) { return std::format("[{}]", name); }));
     }
 
+    bool FinishFailed(const PlotModel::Plot& plot) noexcept
+    {
+        return !plot.plan.empty() && plot.cursor + 1 >= plot.plan.size();
+    }
+
     RE::FormID TargetOf(const Step& step)
     {
         const auto* verb = PlotVerbs::Find(step.verb);

@@ -1073,12 +1073,18 @@ TEST_CASE("PlotPlanning::RouteOf", "[PlotPlanning][engine]")
 
     SECTION("when the finish itself fails")
     {
-        const auto route = PlotPlanning::RouteOf(Thonar(3));
-
-        SECTION("should abandon the finish, and only it")
+        SECTION("should fail the scheme rather than look for a route around it")
         {
-            REQUIRE(route.size() == 1);
-            REQUIRE(HasWay(route, "plant", kTrader));
+            REQUIRE(PlotPlanning::FinishFailed(Thonar(3)));
+        }
+    }
+
+    SECTION("when a step before the finish fails")
+    {
+        SECTION("should leave the scheme to adapt")
+        {
+            REQUIRE_FALSE(PlotPlanning::FinishFailed(Thonar(0)));
+            REQUIRE_FALSE(PlotPlanning::FinishFailed(Thonar(2)));
         }
     }
 

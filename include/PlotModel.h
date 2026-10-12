@@ -343,7 +343,8 @@ namespace NarrativeEngine::PlotModel
         ObjectiveAchieved,
         Conceded,         // the mastermind judged it unreachable
         AdaptationCapHit, // it would not concede; iPlotMaxAdaptations did
-        MastermindLost    // dead, or no longer resolvable
+        MastermindLost,   // dead, or no longer resolvable
+        FinishFailed      // its last step, the one it was all for, failed
     };
 
     [[nodiscard]] std::string_view PlotOutcomeId(PlotOutcome o) noexcept;

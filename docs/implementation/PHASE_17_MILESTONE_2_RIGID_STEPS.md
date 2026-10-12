@@ -1370,7 +1370,7 @@ only when both a theft and a purchase can be filled, and the adaptation question
 
 ### Step 23 — A failed finish fails the scheme
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1381,6 +1381,18 @@ any failure, and no concession memory is: the mastermind did not give it up, it 
 
 **Verification:** a suite asserts a failed finish ends the plot with `finish_failed` and asks nothing, and a failed
 step before the finish still adapts.
+
+Done. `PlotModel::PlotOutcome::FinishFailed` is new, `PlotPlanning::FinishFailed` says whether the step that failed was
+the plan's last, and the tick ends such a plot before adaptation is reached. 471 tests pass; the `RouteOf` case for
+a failed finish became the two `FinishFailed` sections, since a failed finish no longer has a route to abandon.
+
+**This replaces part of Step 20.** Step 20 abandoned a failed finish's own verb against its own person and re-planned
+to some other ending; Hogni's plot showed where that leads -- the same theft from somebody else, under a finish still
+naming Banning. Now a failed finish is not adapted at all, so `RouteOf` never meets one.
+
+**The test is pure; the ending is one call.** Whether a failure is the finish's is a function of the plot's cursor and
+plan, asserted in the suite; the tick's branch calls it and `EndPlot`, which already writes nothing for an outcome
+other than a concession or the cap, so the mastermind keeps the "told it failed" memory and no "gave up" memory.
 
 ### Step 24 — The scheme's people are not hired as helpers
 
