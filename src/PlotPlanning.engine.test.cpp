@@ -215,18 +215,18 @@ TEST_CASE("PlotPlanning asks for the goal first", "[PlotPlanning][engine]")
 {
     Fixture f;
 
-    SECTION("when the goal is a watch and one preparation is taken")
+    SECTION("when the goal is a theft and one of two preparations is taken")
     {
-        // goal watch -> mark: Hulda (named, first) or Idolaf -> prepare p1:
-        // ask around about Hulda, whose place is Whiterun alone. Then nothing
-        // is left to offer, so planning stops on its own.
-        f.script.answers = {"watch", "c1", "p1"};
+        // goal steal -> the ruby -> from Hulda (named, first). Prepare p2:
+        // ask around about Hulda, whose place is Whiterun alone. Then the
+        // watch is still on offer, with ready beside it.
+        f.script.answers = {"steal", "c1", "c1", "p2", "ready"};
         const auto out = f.Run();
 
-        SECTION("should ask the goal, its slot, then what comes first")
+        SECTION("should ask the goal, its slots, then what comes first")
         {
-            REQUIRE(f.script.Templates() == std::vector<std::string>{kGoal, kSlot, kPrepare});
-            REQUIRE(out.decisions == 3);
+            REQUIRE(f.script.Templates() == std::vector<std::string>{kGoal, kSlot, kSlot, kPrepare, kPrepare});
+            REQUIRE(out.decisions == 5);
         }
 
         SECTION("should put the goal last and the preparation before it")
@@ -234,7 +234,7 @@ TEST_CASE("PlotPlanning asks for the goal first", "[PlotPlanning][engine]")
             REQUIRE(out.ok);
             REQUIRE(out.plan.size() == 2);
             REQUIRE(out.plan[0].verb == "ask_around");
-            REQUIRE(out.plan[1].verb == "watch");
+            REQUIRE(out.plan[1].verb == "steal");
         }
 
         SECTION("should bind the preparation to the person its step is about, without asking")
@@ -244,16 +244,17 @@ TEST_CASE("PlotPlanning asks for the goal first", "[PlotPlanning][engine]")
             REQUIRE(FormOf(out.plan[0], "place") == kWhiterun);
         }
 
-        SECTION("should offer the preparation as a whole step, saying where it goes")
+        SECTION("should offer each preparation as a whole step, saying where it goes")
         {
-            REQUIRE(f.script.Lines(2)
-                    == std::vector<std::string>{"Before step 1: Someone asks around [place] about Hulda."});
-            REQUIRE(f.script.asked[2].ctx["plan"][0] == "1. Someone watches Hulda, learning their habits.");
+            REQUIRE(f.script.Lines(3)
+                    == std::vector<std::string>{"Before step 1: Someone watches Hulda, learning their habits.",
+                                                "Before step 1: Someone asks around [place] about Hulda."});
+            REQUIRE(f.script.asked[3].ctx["plan"][0] == "1. Someone steals a ruby from Hulda.");
         }
 
-        SECTION("should fill the goal's slot knowing it is the goal")
+        SECTION("should fill the goal's slots knowing it is the goal")
         {
-            REQUIRE(f.script.asked[1].ctx["step"] == "Someone watches [mark], learning their habits.");
+            REQUIRE(f.script.asked[1].ctx["step"] == "Someone steals [item] from [mark].");
             REQUIRE(f.script.asked[1].ctx["purpose"] == "This step accomplishes the scheme.");
         }
 
@@ -265,15 +266,31 @@ TEST_CASE("PlotPlanning asks for the goal first", "[PlotPlanning][engine]")
         }
     }
 
+    SECTION("when the goal can be prepared only one way")
+    {
+        // goal watch -> Hulda. Asking around about her is the only
+        // preparation, and with one step planned there is no ready yet.
+        f.script.answers = {"watch", "c1"};
+        const auto out = f.Run();
+
+        SECTION("should plan it without a question of one option")
+        {
+            REQUIRE(f.script.Templates() == std::vector<std::string>{kGoal, kSlot});
+            REQUIRE(out.ok);
+            REQUIRE(out.plan.size() == 2);
+            REQUIRE(out.plan[0].verb == "ask_around");
+        }
+    }
+
     SECTION("when the scheme was written to end in a goal")
     {
         f.goal = "watch";
-        f.script.answers = {"c1", "p1"};
+        f.script.answers = {"c1"};
         const auto out = f.Run();
 
         SECTION("should plan it last without asking for it")
         {
-            REQUIRE(f.script.Templates() == std::vector<std::string>{kSlot, kPrepare});
+            REQUIRE(f.script.Templates() == std::vector<std::string>{kSlot});
             REQUIRE(out.ok);
             REQUIRE(out.plan.back().verb == "watch");
         }
@@ -564,15 +581,16 @@ TEST_CASE("PlotPlanning never repeats a step", "[PlotPlanning][engine]")
         watched.actor = kFriend;
         watched.outcome = PlotModel::StepOutcome::Succeeded;
         f.history = {watched};
-        f.script.answers = {"watch", "p1"};
+        f.script.answers = {"watch"};
         const auto out = f.Run();
 
         SECTION("should leave out the filler that would make it the same step again")
         {
             REQUIRE(out.ok);
             REQUIRE(FormOf(out.plan.back(), "mark") == kFriend);
-            // Idolaf was the only one left, so nobody was asked.
-            REQUIRE(f.script.asked[1].templateName == kPrepare);
+            // Idolaf was the only one left, and asking around about him the
+            // only preparation, so nothing after the goal was asked.
+            REQUIRE(f.script.Templates() == std::vector<std::string>{kGoal});
         }
     }
 }
@@ -668,7 +686,7 @@ TEST_CASE("PlotPlanning ends the preparing", "[PlotPlanning][engine]")
     SECTION("when a slot has one candidate")
     {
         // buy's seller is somebody who trades: only Hulda.
-        f.script.answers = {"buy", "c2", "p1"};
+        f.script.answers = {"buy", "c2"};
         const auto out = f.Run();
 
         SECTION("should fill it without asking")
@@ -676,7 +694,7 @@ TEST_CASE("PlotPlanning ends the preparing", "[PlotPlanning][engine]")
             REQUIRE(out.ok);
             REQUIRE(FormOf(out.plan.back(), "seller") == kTrader);
             REQUIRE(FormOf(out.plan.back(), "item") == kSkooma);
-            REQUIRE(f.script.Templates() == std::vector<std::string>{kGoal, kSlot, kPrepare});
+            REQUIRE(f.script.Templates() == std::vector<std::string>{kGoal, kSlot});
         }
     }
 }
@@ -1234,27 +1252,29 @@ TEST_CASE("PlotPlanning plans around abandoned ways", "[PlotPlanning][engine]")
     SECTION("when the goal's verb against the person the scheme names was abandoned")
     {
         f.abandoned = {{"watch", kTrader, "Hulda"}};
-        f.script.answers = {"watch", "p1"};
+        f.script.answers = {"watch"};
         const auto out = f.Run();
 
         SECTION("should leave that person off the goal's list")
         {
             REQUIRE(out.ok);
             REQUIRE(FormOf(out.plan.back(), "mark") == kFriend);
-            REQUIRE(f.script.asked[1].templateName == kPrepare);
+            REQUIRE(f.script.Templates() == std::vector<std::string>{kGoal});
         }
     }
 
     SECTION("when a preparation was abandoned")
     {
         f.abandoned = {{"watch", kTrader, "Hulda"}};
-        f.script.answers = {"steal", "c1", "c1", "p1"};
-        (void)f.Run();
+        f.script.answers = {"steal", "c1", "c1"};
+        const auto out = f.Run();
 
-        SECTION("should not offer it")
+        SECTION("should not offer it, leaving the other preparation to be planned unasked")
         {
-            REQUIRE(f.script.Lines(3)
-                    == std::vector<std::string>{"Before step 1: Someone asks around [place] about Hulda."});
+            REQUIRE(out.ok);
+            REQUIRE(out.plan.size() == 2);
+            REQUIRE(out.plan[0].verb == "ask_around");
+            REQUIRE(f.script.Templates() == std::vector<std::string>{kGoal, kSlot, kSlot});
         }
     }
 }

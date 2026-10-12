@@ -1345,7 +1345,7 @@ abandoned like any failure; the user ruled that correct.
 
 ### Step 22 — A question with one option is not asked
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1355,6 +1355,18 @@ ever sent with two options or more.
 
 **Verification:** the planning suite asserts a one-step plan with one possible preparation plans it without a
 question, and a goal question with one fillable verb is not asked.
+
+Done. `Prepare` takes the lone option when the list it built has one entry, and `Goal` takes the lone verb when only
+one can be filled. 471 tests pass; one section is new, and six whose scripts answered a one-option question now
+script one answer fewer.
+
+**The goal half is not exercised by the suite.** The fixture province can fill most verbs, and building one where
+exactly one verb is fillable would be a fixture for a single line; the goal change is the same `size() == 1` test as
+the preparation's, beside the same comment. The planning suite's first case moved from a watch, which has one
+preparation, to a theft, which has two, so it still covers what a preparation question looks like.
+
+**Why the other questions were already safe.** A slot is asked only with more than one candidate, the obtain question
+only when both a theft and a purchase can be filled, and the adaptation question always offers two answers.
 
 ### Step 23 — A failed finish fails the scheme
 

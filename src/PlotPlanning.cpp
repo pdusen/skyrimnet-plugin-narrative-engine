@@ -576,6 +576,11 @@ namespace NarrativeEngine::PlotPlanning
                         verb = candidate;
                     }
                 }
+                // One verb that can be filled is the goal without asking:
+                // SkyrimNet refuses a choice question with one option.
+                if (verb == nullptr && offered.size() == 1) {
+                    verb = offered.front();
+                }
                 if (verb == nullptr) {
                     auto ctx = Base();
                     ctx["options"] = std::move(options);
@@ -661,22 +666,31 @@ namespace NarrativeEngine::PlotPlanning
                         options.push_back({{"key", kReady}, {"line", "Nothing more: the plan is ready to carry out."}});
                     }
 
-                    auto ctx = Base();
-                    ctx["plan"] = PlanText();
-                    ctx["options"] = std::move(options);
-                    const auto result = Decide(kPrepareTemplate, ctx);
-                    if (!result.ok) {
-                        error_ = result.error;
-                        return Fill::Failed;
-                    }
-                    const auto key = result.Choice(kPrepareQuestion);
-                    if (key == kReady) {
-                        break;
-                    }
                     const Option* chosen = nullptr;
-                    for (std::size_t i = 0; i < offered.size(); ++i) {
-                        if (key == std::format("p{}", i + 1)) {
-                            chosen = &offered[i];
+                    if (options.size() == 1) {
+                        // One preparation and no `ready` yet: the plan needs a
+                        // second step and this is the only one there is. Taken
+                        // without asking, as SkyrimNet refuses a choice
+                        // question with one option -- Quintus Navale's
+                        // re-plan conceded on exactly that.
+                        chosen = &offered.front();
+                    } else {
+                        auto ctx = Base();
+                        ctx["plan"] = PlanText();
+                        ctx["options"] = std::move(options);
+                        const auto result = Decide(kPrepareTemplate, ctx);
+                        if (!result.ok) {
+                            error_ = result.error;
+                            return Fill::Failed;
+                        }
+                        const auto key = result.Choice(kPrepareQuestion);
+                        if (key == kReady) {
+                            break;
+                        }
+                        for (std::size_t i = 0; i < offered.size(); ++i) {
+                            if (key == std::format("p{}", i + 1)) {
+                                chosen = &offered[i];
+                            }
                         }
                     }
                     // What is planned already holds together; a bad answer
