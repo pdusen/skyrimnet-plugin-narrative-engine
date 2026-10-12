@@ -473,6 +473,16 @@ namespace NarrativeEngine::PlotVerbs
                                      const Lookup& lookup,
                                      const std::function<std::string(std::string_view name)>& missing);
 
+    // A verb's id as plain words: its caption, lowercased. `spread_rumors`
+    // is "spread rumors" and `win_over` is "win over".
+    [[nodiscard]] std::string Words(const Verb& verb);
+
+    // `text` with every verb id that stands in it as a whole word written as
+    // that verb's Words. A model shown the verbs by id sometimes writes one
+    // into prose -- "spread_rumors about the court historian" -- and the
+    // prose is otherwise right, so it is mended rather than refused.
+    [[nodiscard]] std::string Plain(std::string_view text);
+
     // A verb's dashboard sentence with every slot unfilled: "Someone steals
     // something from someone." Says what the verb does without saying to
     // whom, which is how a verb is offered as a kind of step.

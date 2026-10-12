@@ -126,6 +126,39 @@ namespace NarrativeEngine::PlotVerbs
         return "someone";
     }
 
+    std::string Words(const Verb& verb)
+    {
+        std::string out{verb.caption};
+        for (auto& c : out) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return out;
+    }
+
+    std::string Plain(std::string_view text)
+    {
+        // An id's characters: letters, digits and the underscore. Anything
+        // else either side of it means it stands as a word of its own.
+        const auto inWord = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; };
+        std::string out;
+        std::size_t at = 0;
+        while (at < text.size()) {
+            if (!inWord(text[at])) {
+                out.push_back(text[at++]);
+                continue;
+            }
+            auto end = at;
+            while (end < text.size() && inWord(text[end])) {
+                ++end;
+            }
+            const auto word = text.substr(at, end - at);
+            const auto* verb = Find(word);
+            out += verb != nullptr ? Words(*verb) : std::string{word};
+            at = end;
+        }
+        return out;
+    }
+
     std::string Generic(const Verb& verb)
     {
         auto text = Render(

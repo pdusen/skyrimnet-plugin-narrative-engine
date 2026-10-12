@@ -196,6 +196,7 @@ namespace NarrativeEngine::PlotBirth
             out.ambition.clear();
             return out;
         }
+        out.scheme = PlotVerbs::Plain(out.scheme);
 
         // The kind of step the scheme ends in, from the list it was shown.
         // Planning puts it last and builds back from it, so a goal the
@@ -223,6 +224,9 @@ namespace NarrativeEngine::PlotBirth
             out.goal.clear();
             return out;
         }
+        // The finish is written from the verb list, so it is where an id
+        // turns up: "spread_rumors about the court historian".
+        out.finish = PlotVerbs::Plain(out.finish);
         if (!SchemeOpensWithVerb(out.finish)) {
             out.rejection = "the finish must open with a plain verb, as an instruction: '" + out.finish + "'";
             out.ambition.clear();

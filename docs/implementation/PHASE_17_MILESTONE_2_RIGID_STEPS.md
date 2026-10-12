@@ -5,7 +5,7 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: Steps 1–8 and 10–20 complete; Step 21 added before the fifth attempt at Step 9.** Steps 10–12 plan
+> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, and Step 20 makes adapting find
 > another way -- each added after an attempt at Step 9.
@@ -1297,7 +1297,7 @@ remembers the old option concedes, as any unoffered answer does.
 
 ### Step 21 — A verb's id in prose is written as words
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1310,6 +1310,19 @@ around" -- and the parser writes every id that stands as a whole word in the sch
 **Verification:** the verb suite asserts every verb's words carry no underscore and say its id with spaces; the
 parser suite asserts an id in the finish or scheme is written as words, and that an id inside a longer word is left
 alone.
+
+Done. `PlotVerbs::Words` gives a verb's plain words and `PlotVerbs::Plain` writes every id in a text as them;
+`ParseAmbition` passes the scheme and the finish through it before checking that each opens with a verb. 471 tests
+pass, one of them new, with a new section in the parser suite.
+
+**The caption is the replacement, so there is nothing new to keep in step.** Every verb already carries a
+title-case caption for its node on the dashboard -- "Spread Rumors", "Win Over" -- which is its id said in words. The
+verb suite holds each one to its id with spaces, so a verb added later cannot have a caption that mends its id into
+something else.
+
+**An id is mended only where it stands as a word.** A word is a run of letters, digits and underscores, so
+"watchtower" is not `watch` and "my_spread_rumors_plan" is not `spread_rumors`. Ids without an underscore come out
+the same as they went in.
 
 ---
 

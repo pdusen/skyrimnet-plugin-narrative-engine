@@ -5,6 +5,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <set>
 #include <string>
 #include <string_view>
@@ -231,6 +232,35 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
             const auto names = PlotVerbs::PlaceholdersIn(PlotVerbs::kConcededTemplate);
             REQUIRE(names.size() == 1);
             REQUIRE(names.front() == "scheme");
+        }
+    }
+}
+
+TEST_CASE("PlotVerbs words for an id", "[PlotVerbs][engine]")
+{
+    SECTION("when every verb's words are read")
+    {
+        SECTION("should say its id with spaces for underscores")
+        {
+            for (const auto& verb : PlotVerbs::kVerbs) {
+                INFO(verb.id);
+                auto spaced = std::string{verb.id};
+                std::replace(spaced.begin(), spaced.end(), '_', ' ');
+                REQUIRE(PlotVerbs::Words(verb) == spaced);
+            }
+        }
+    }
+
+    SECTION("when prose carries an id")
+    {
+        SECTION("should write each one standing as a word in plain words, and touch nothing else")
+        {
+            REQUIRE(PlotVerbs::Plain("spread_rumors about the court historian around Solitude")
+                    == "spread rumors about the court historian around Solitude");
+            REQUIRE(PlotVerbs::Plain("win_over Brand-Shei, then ask_around Riften")
+                    == "win over Brand-Shei, then ask around Riften");
+            REQUIRE(PlotVerbs::Plain("watch the watchtower") == "watch the watchtower");
+            REQUIRE(PlotVerbs::Plain("my_spread_rumors_plan") == "my_spread_rumors_plan");
         }
     }
 }

@@ -838,6 +838,20 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
         }
     }
 
+    SECTION("when the finish writes its verb as the id from the list")
+    {
+        j["goal"] = "spread_rumors";
+        j["finish"] = "spread_rumors about Hulda around Whiterun";
+
+        SECTION("should write the id as words rather than refuse it")
+        {
+            const auto out = ParseAmbition(j.dump(), TextLimits{});
+            REQUIRE(out.ok);
+            REQUIRE(out.finish == "spread rumors about Hulda around Whiterun");
+            REQUIRE(out.goal == "spread_rumors");
+        }
+    }
+
     SECTION("when the finish opens with a name rather than a verb")
     {
         j["finish"] = "Hulda is denounced to Balgruuf";
