@@ -5,11 +5,12 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12
-> plan backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep
-> the player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
+> **Doc status: Steps 1–8 and 10–31 complete; Steps 32–34 follow up Step 9's seventh attempt.** Steps 10–12 plan
+> backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
+> player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
 > another way, Steps 21–25 mend what the fifth attempt found, Steps 26–28 add five verbs and the records they act on,
-> and Steps 29–31 add five crafting verbs -- each added after an attempt at Step 9.
+> Steps 29–31 add five crafting verbs, and Steps 32–34 make a scheme finish what it starts on the person it names --
+> each added after an attempt at Step 9.
 > Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its Steps 20–22 still apply and follow it.
 
 ---
@@ -104,6 +105,7 @@ Wording is a first draft for review; the shape is the proposal. Profiles are the
 | `enchant`       | `{agent}` makes `{item}` at an arcane enchanter (Step 30)              | item: thing, an enchanted variant of an item, as for `smith`                                       | none               | craft     |
 | `set`           | `{agent}` makes `{item}` at a jeweler's bench (Step 30)                | item: thing, a ring, necklace or circlet recipe, as for `smith`                                    | none               | craft     |
 | `fletch`        | `{agent}` fletches `{item}` (Step 30)                                  | item: thing, a bow, crossbow, arrow or bolt recipe, as for `smith`                                 | none               | craft     |
+| `expose`        | `{agent}` shows `{item}` to `{authority}` as proof against `{mark}`    | item and agent: bound as for deliver; mark: person; authority: as for `denounce` (Step 33)         | authority: contact | discredit |
 
 **Rules every person slot carries without saying so:** alive, adult, not the player, not a ghost, in the plot
 population, not the mastermind (except `{mastermind}` itself), and not the same person as any other slot of the
@@ -534,6 +536,20 @@ agent_failed                I spoiled the work on {item}.
 agent_timed_out             I ran out of time before I could finish fletching {item}.
 mastermind_told_failed      {agent} reported back that they had spoiled the work on {item}.
 mastermind_told_timed_out   {agent} reported back that they had run out of time before finishing {item}.
+```
+
+#### `expose` (Step 33)
+
+```text
+dashboard                   {agent} shows {item} to {authority} as proof against {mark}.
+agent_dispatched            {mastermind} asked me to show {item} to {authority} as proof against {mark}, so I set off to do it.
+mastermind_dispatched       I sent {agent} to show {item} to {authority} as proof against {mark}, as part of my plan to {scheme}.
+self_dispatched             I decided to show {item} to {authority} myself, as proof against {mark}, as part of my plan to {scheme}.
+agent_succeeded             I showed {item} to {authority}, and they took it as proof against {mark}.
+agent_failed                I showed {item} to {authority}, but they would not take it as proof against {mark}.
+agent_timed_out             I ran out of time before I could show {item} to {authority}.
+mastermind_told_failed      {agent} reported back that {authority} would not take {item} as proof against {mark}.
+mastermind_told_timed_out   {agent} reported back that they had run out of time before showing {item} to {authority}.
 ```
 
 ### SkyrimNet Beta 26 becomes the floor
@@ -1881,6 +1897,106 @@ the making of a necklace, so a craft step, like a forgery, takes no exclusions f
 
 **The suite's gift is offered to steal or make, not to buy.** The recipient it delivers to is Hulda, the fixture's only
 trader, and a delivery is never bought from the person it is for. That is the existing rule, and the case keeps it.
+
+### Step 32 — Making, finding and hiding are never the finish
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+The seventh attempt at Step 9 produced twenty plots, and twelve of them stopped short of what their scheme was for:
+
+- **Eight ended in a forgery,** every one a frame or a discredit, the forged paper put nowhere.
+- **Two ended in finding proof** (`dig_up`) shown to nobody: "expose the financial corruption of Erikur".
+- **Two exposures ended in a theft:** "expose the secret debts of Jarl Igmund" by stealing a ledger from Raerek.
+- **Five frames ended in a planting,** the thing hidden and nobody pointed at it.
+
+Not one ended in a denunciation. The scheme call writes the scheme first and then takes the verb its wording matches:
+"fabricate evidence" becomes `falsify`. Nothing on the list takes a document and does something with it.
+
+Asking the decision model whether a finish accomplishes its scheme would not help. It matches words, and would answer
+that `falsify` finishes "falsify the quarterly tax reports". The verbs say it themselves instead:
+
+- **A verb now says whether it can finish a scheme.** `falsify`, `dig_up` and `plant` cannot, and nor can the crafting
+  verbs, which Step 30 kept out of the goal another way; that way becomes this one. What a forgery or a found ledger is
+  for is a later step, and a planted thing is evidence only once somebody is sent to look for it.
+- **`Goal` and the scheme call's list leave them out.** The ambition parse refuses a goal that is not on the list, with
+  the reason, for the one retry.
+- **`spread_rumors` can be prepared by `plant`,** as `denounce` already is. Those two are what lead people to find what
+  was planted, so a frame ends in one of them, with the planting before it.
+
+`steal` and `buy` stay finishes. "Acquire the lycanthropy research from Heimskr" really does end at the theft.
+Making them finish only some schemes is Step 33's job, by giving an exposure a verb of its own.
+
+**Verification:** the verb suite asserts which verbs finish; the planning suite asserts `Goal` offers none that do
+not, and that a rumor may be prepared by a planting; the parse suite asserts a goal that cannot finish is refused.
+
+### Step 33 — `expose`: proof, shown to somebody with authority
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+A new verb, `expose` -- `{agent}` shows `{item}` to `{authority}` as proof against `{mark}`:
+
+- **Item:** bound, as a delivery's is. The agent is whoever got it.
+- **Mark:** anybody, aware never, as in `denounce`.
+- **Authority:** by `AuthorityOverMark`, aware on contact.
+- **Profile:** `discredit`. Prepared by `win_over` and `bribe` of the authority.
+- **Templates:** above.
+
+Planning backwards then builds what these schemes were reaching for: steal, dig up or falsify the ledger, then show it.
+Two changes to `Obtain` make it read right:
+
+- **`dig_up` is a way to get a document,** beside `steal`, `buy` and `falsify`. When the step it serves has a mark, the
+  proof is dug up against that mark, without asking; otherwise the mark is asked for as usual.
+- **The proof may be taken from the person it exposes.** A theft serving a step never robs anybody in that step, so
+  the bribe before a theft never pays the person robbed. For an exposure that rule is wrong: the ledger proving
+  Erikur's corruption is Erikur's. The exposure's mark may be the one robbed; its authority still may not.
+
+**Verification:** the verb suite's rules hold for `expose`. The planning suite asserts:
+
+- an exposure's document can be stolen from its mark, dug up against them, bought or falsified;
+- a dug-up proof is about the exposure's mark without a question;
+- what was got supplies the exposure.
+
+### Step 34 — A plan acts on the people its scheme names
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+The same run planned four plots against somebody other than the person their scheme named:
+
+| Plot | The scheme and its finish named | The plan acted on | Why |
+| ---- | ------------------------------- | ----------------- | --- |
+| 1 | "Beirandering", nobody | Sven | The name is two names run together, and matches nobody |
+| 2 | Svidi | Hemming Black-Briar | The finish's person was offered first, and another was chosen |
+| 3 | Lentilus Batiatus, nobody | Urag gro-Shub | Nobody of that name is in Skyrim |
+| 5 | Jarl Idgrod | Idgrod the Younger, after a re-plan | The forgery's subject was asked again, and both Idgrods carry the name |
+
+The plugin knows who exists, so four rules close the gaps:
+
+- **A finish names somebody who exists.** When the goal acts on a person, the ambition parse refuses a finish that
+  names nobody in the plot population other than the mastermind. The reason it gives says so, and the one retry can
+  name somebody real.
+- **The goal is done to whom the finish names.** Filling the goal, a person slot whose list holds anybody the finish
+  names offers only them, and one is taken without asking. Being ranked first was not enough: the decision model chose
+  past Svidi. A slot whose list holds nobody the finish names is asked as before, so the rules still decide who may
+  fill it.
+- **A re-plan keeps the goal.** Adaptation never abandons the finish, so a re-plan now plans back from the goal step
+  as it was planned, every slot kept, rather than asking for the goal again.
+- **A forgery serving a step with a mark is in that mark's name,** without asking, as a dug-up proof is about them
+  (Step 33). Framing Jarl Idgrod with a letter means a letter in her name, not in the name of somebody else who
+  shares it.
+
+**Verification:**
+
+- the parse suite asserts a finish naming nobody who exists is refused, and one naming somebody is not;
+- the planning suite asserts:
+  - a goal slot offers only the person the finish names when it lists them;
+  - a re-plan keeps every slot of the goal and asks no goal question;
+  - a forgery for a planting is in the mark's name.
 
 ---
 
