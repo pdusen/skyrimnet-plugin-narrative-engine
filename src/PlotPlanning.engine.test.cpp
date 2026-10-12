@@ -900,6 +900,40 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
         }
     }
 
+    SECTION("when the finish takes an item and names one from the pool")
+    {
+        j["goal"] = "steal";
+        j["finish"] = "steal the deed to a property from Hulda";
+
+        SECTION("should accept it, article or not")
+        {
+            REQUIRE(ParseAmbition(j.dump(), TextLimits{}, {}, {"a ruby", "a deed to a property"}).ok);
+        }
+    }
+
+    SECTION("when the finish takes an item the pool does not hold")
+    {
+        j["goal"] = "steal";
+        j["finish"] = "steal a spellbook from Nelacar";
+        const auto out = ParseAmbition(j.dump(), TextLimits{}, {}, {"a ruby", "a deed to a property"});
+
+        SECTION("should refuse it, listing what the pool holds")
+        {
+            REQUIRE_FALSE(out.ok);
+            REQUIRE(out.rejection.find("a ruby; a deed to a property") != std::string::npos);
+        }
+    }
+
+    SECTION("when the goal takes no item")
+    {
+        j["finish"] = "denounce Hulda to Balgruuf for selling skooma";
+
+        SECTION("should not look for one")
+        {
+            REQUIRE(ParseAmbition(j.dump(), TextLimits{}, {}, {"a ruby"}).ok);
+        }
+    }
+
     SECTION("when the finish opens with a name rather than a verb")
     {
         j["finish"] = "Hulda is denounced to Balgruuf";

@@ -226,6 +226,17 @@ namespace NarrativeEngine::PlotBirth
 
         // --- Call 2 -------------------------------------------------------
 
+        // The item pool as it is said: what the ambition call is shown, and
+        // what a finish that takes an item has to name.
+        std::vector<std::string> PoolItemNames()
+        {
+            std::vector<std::string> out;
+            for (const auto& item : PlotMenus::CurrentWorld().items) {
+                out.push_back(item.displayName);
+            }
+            return out;
+        }
+
         nlohmann::json AmbitionContext(const PlotCasting::Member& boss)
         {
             nlohmann::json ctx;
@@ -250,11 +261,7 @@ namespace NarrativeEngine::PlotBirth
                 verbs.push_back({{"id", verb.id}, {"line", PlotVerbs::Generic(verb)}});
             }
             ctx["verbs"] = std::move(verbs);
-            nlohmann::json items = nlohmann::json::array();
-            for (const auto& item : PlotMenus::CurrentWorld().items) {
-                items.push_back(item.displayName);
-            }
-            ctx["items"] = std::move(items);
+            ctx["items"] = PoolItemNames();
             return ctx;
         }
 
@@ -476,8 +483,8 @@ namespace NarrativeEngine::PlotBirth
             pt,
             kAmbitionPrompt,
             [&] { return AmbitionContext(*boss); },
-            [player = PlayerName()](const std::string& response) {
-                return ParseAmbition(response, TextLimits{}, player);
+            [player = PlayerName(), items = PoolItemNames()](const std::string& response) {
+                return ParseAmbition(response, TextLimits{}, player, items);
             },
             boss->name,
             "ambition");

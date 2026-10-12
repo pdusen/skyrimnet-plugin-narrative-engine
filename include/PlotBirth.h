@@ -146,9 +146,15 @@ namespace NarrativeEngine::PlotBirth
 
     // `playerName` is the player character's name; an answer that names them
     // is refused, as one saying "Dragonborn" always was.
+    //
+    // `items` are the pool's items as they are said ("a ruby"). When the goal
+    // is a verb with an item, the finish must name one of them -- its name
+    // without the leading article, in any case -- or the answer is refused
+    // with the list, for the one retry to choose from. Empty checks nothing.
     [[nodiscard]] AmbitionOutcome ParseAmbition(const std::string& response,
                                                 const TextLimits& limits,
-                                                std::string_view playerName = {});
+                                                std::string_view playerName = {},
+                                                const std::vector<std::string>& items = {});
 
     // --- Call 3: how ------------------------------------------------------
     //

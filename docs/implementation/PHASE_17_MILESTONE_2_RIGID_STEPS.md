@@ -5,7 +5,7 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: Steps 1–8 and 10–21 complete; Steps 22–25 added after Step 9's fifth attempt.** Steps 10–12 plan
+> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, and Step 20 makes adapting find
 > another way -- each added after an attempt at Step 9.
@@ -1418,7 +1418,7 @@ named first on every list and so put Thongvor first on Raerek's bribe list.
 
 ### Step 25 — A finish names its object from the pool
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1429,6 +1429,20 @@ the deed to a property from Hemming".
 
 **Verification:** the parser suite asserts a finish naming a pool item passes, one naming an object the pool lacks is
 refused with the list, and a goal with no item is never checked.
+
+Done. `ParseAmbition` takes the pool's names and refuses a finish that needs one and names none; birth passes the
+same names the ambition prompt is shown, from one `PoolItemNames`. 472 tests pass, with three new sections in the
+parser suite.
+
+**A verb takes an item when it has a thing slot.** That is `steal` and `buy`, whose item is chosen from the pool, and
+`deliver` and `plant`, whose item is got by an earlier step -- all four need the finish to say which.
+
+**The match is generous on purpose.** The article is dropped and case ignored, so "the deed to a property" names
+"a deed to a property"; anything stricter would refuse finishes that are right. A finish naming a pool item in
+passing while meaning another object would slip through, which costs no more than the planner choosing the item
+from the list as it does today.
+
+**The refusal carries the list,** so the one retry `AskTwice` allows is asked with exactly the names it may use.
 
 ---
 
