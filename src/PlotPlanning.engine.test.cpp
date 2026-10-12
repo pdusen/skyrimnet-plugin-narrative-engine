@@ -634,6 +634,36 @@ TEST_CASE("PlotPlanning prepares only the goal and what supplies it", "[PlotPlan
     }
 }
 
+TEST_CASE("PlotPlanning keeps the scheme's people out of open slots", "[PlotPlanning][engine]")
+{
+    Fixture f;
+    // Hulda, whom the scheme names, and Laila both have standing somewhere,
+    // so either could be bribed.
+    constexpr RE::FormID kGuild = 0x0000C001;
+    for (auto& member : f.population.members) {
+        if (member.npc == kTrader || member.npc == kJarl) {
+            member.factions.push_back({kGuild, 0.5, true});
+        }
+    }
+
+    SECTION("when a bribe before a theft from Idolaf is chosen")
+    {
+        // goal steal -> the ruby -> from Idolaf (c2; Hulda is named, first).
+        // p3 is the open bribe.
+        f.script.answers = {"steal", "c1", "c2", "p3", "ready"};
+        const auto out = f.Run();
+
+        SECTION("should never offer to bribe the person the scheme names")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(out.plan[0].verb == "bribe");
+            REQUIRE(FormOf(out.plan[0], "mark") == kJarl);
+            // Laila alone was left, so the bribe's slot was not asked.
+            REQUIRE(f.script.Templates() == std::vector<std::string>{kGoal, kSlot, kSlot, kPrepare, kPrepare});
+        }
+    }
+}
+
 TEST_CASE("PlotPlanning ends the preparing", "[PlotPlanning][engine]")
 {
     Fixture f;

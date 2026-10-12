@@ -1396,7 +1396,7 @@ other than a concession or the cap, so the mastermind keeps the "told it failed"
 
 ### Step 24 — The scheme's people are not hired as helpers
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1406,6 +1406,15 @@ is a different plot.
 
 **Verification:** the planning suite asserts an unbound preparation's list leaves out the people the scheme names,
 while a bound one still takes them.
+
+Done. The planner reads who the scheme and finish name once, and adds them to the excluded people of every
+preparation whose slot is open. 472 tests pass, one of them new; the bound case is the existing "preparation needs an
+item" section, which still plants on Hulda, whom the scheme names.
+
+**Only open slots, because bound ones are the point.** A watch of the mark, the planting on the person denounced, the
+win-over of the authority -- each is bound to a person of the step it prepares, and that person is often the one the
+scheme names. What Step 24 stops is a slot with no tie to anybody being filled by Step 10's ranking, which puts the
+named first on every list and so put Thongvor first on Raerek's bribe list.
 
 ### Step 25 — A finish names its object from the pool
 

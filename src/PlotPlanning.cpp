@@ -147,7 +147,8 @@ namespace NarrativeEngine::PlotPlanning
         {
         public:
             Planner(const Input& input, const Ask& ask)
-                : input_(input), ask_(ask), naming_(input.scheme + "\n" + input.finish)
+                : input_(input), ask_(ask), naming_(input.scheme + "\n" + input.finish),
+                  named_(PlotCandidates::NamedIn(input.population, naming_))
             {}
 
             Outcome Run()
@@ -192,6 +193,9 @@ namespace NarrativeEngine::PlotPlanning
             std::string rejection_;
             // The scheme and its finish, whose people head every list.
             std::string naming_;
+            // Whoever they name. Kept off any slot a preparation leaves
+            // open: they are what the plot is about, not its helpers.
+            std::unordered_set<RE::FormID> named_;
 
             SkyrimNetAPI::DecisionResult Decide(std::string_view name, const nlohmann::json& ctx)
             {
@@ -640,7 +644,11 @@ namespace NarrativeEngine::PlotPlanning
                                 continue;
                             }
                             Option option{k, verb, {}, PeopleOf(plan_[k])};
-                            if (!prep->slot.empty()) {
+                            if (prep->slot.empty()) {
+                                // An open slot -- the bribe before a theft --
+                                // never hires somebody the plot is about.
+                                option.excluded.insert(named_.begin(), named_.end());
+                            } else {
                                 const auto* value = plan_[k].FindSlot(prep->from);
                                 if (value == nullptr) {
                                     continue;
