@@ -5,9 +5,10 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan backwards from
-> the goal and Steps 13–16 write the scheme in the plan's vocabulary and bound the preparing, each added after an
-> attempt at Step 9. Step 9 runs again on them.
+> **Doc status: Steps 1–8 and 10–16 complete; Steps 17–19 added after Step 9's third attempt.** Steps 10–12 plan
+> backwards from the goal, Steps 13–16 write the scheme in the plan's vocabulary and bound the preparing, and Steps
+> 17–19 keep the player out, route denunciations by authority and give the scheme back its purpose. Step 9 runs
+> again once they are done.
 > Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its Steps 20–22 still apply and follow it.
 
 ---
@@ -1113,6 +1114,70 @@ prepare the watch, it read the other way round. The planning suite's sequence se
 
 **Malur's plan, re-run by hand against the new rules,** keeps the ask-around and watch of Nelacar and the bribe of
 Enthir, and loses the ask-around and watch of Enthir: four steps, all about the theft.
+
+**Third attempt at Step 9 (2026-10-11): plans that hold together, schemes that do not explain themselves.** Thaena
+steals skooma from Kraldar to plant on Nelacar; Betrid asks around about Raerek before spreading talk about him;
+Helvard takes a dossier from Dengeir for Siddgeir. Two plots were wrong:
+
+1. **Nirya's scheme named the player.** "Denounce Faralda to Varian" -- Varian is the player's character, made
+   Arch-Mage in this save, and named throughout Nirya's memories. The ambition prompt says not to involve the
+   player without saying who the player is, and the parser refuses only the word "Dragonborn". Varian is not in the
+   population, so planning denounced Faralda to Korir instead -- the only authorities `SeniorInCourt` knows are a
+   hold's civic court, never the leadership of the organisation the mark belongs to.
+2. **Orthus Endario's scheme has nothing to do with his ambition.** His ambition is a transfer to Solitude; his
+   scheme is to steal Suvaris Atheron's logbook. Both come from his biography -- the transfer from his aspirations,
+   the logbook from his relationships -- and whatever the model reasoned to connect them is thrown away. Step 13
+   made this worse: a scheme written as its own last step is a bare act, "steal the logbook", which carries no
+   purpose on the dashboard or in "as part of my plan to ..." in every memory.
+
+### Step 17 — The player is named, and refused
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+The ambition prompt is told the player's name in its "Not about the player" section, and the parser refuses an
+ambition, scheme or finishing step that names the player -- by any word of their name, matched whole and with its
+case, as well as by "Dragonborn". The name is read on the plugin thread and handed to the plot worker, which never
+touches the player itself.
+
+**Verification:** the parser suite asserts an answer naming the player by name is refused, one naming nobody passes,
+and a word of the name inside another word, or in lowercase, does not count.
+
+### Step 18 — A denunciation goes to whoever has authority over the mark
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+`SeniorInCourt` becomes `AuthorityOverMark`: first whoever leads, or is senior in, a rostered organisation the mark
+belongs to and stands above the mark in it -- the College's senior mages for a College mage, the family head for a
+Black-Briar -- then Step 14's hold courts. Courts are rostered organisations themselves, so a steward is denounced
+to their jarl by the first rule.
+
+**Verification:** the candidate suite asserts a member of an organisation is denounced to its senior members ahead
+of any jarl, never to a junior or to themselves, and that a mark in no organisation falls through to Step 14's order.
+
+### Step 19 — The scheme says what it is for; the finishing step says how it ends
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+The ambition call returns the scheme and its last step separately:
+
+- `scheme` is again what the mastermind is trying to bring about, written freely as before Step 13 -- "prove the
+  Shatter-Shield clan is in league with the Blood Horkers" -- and must be a step toward the ambition and not another
+  thread of the biography. The dashboard and every memory quote it.
+- `goal` and `finish` are the step that ends it: a listed verb, and that act written out with its people and any
+  item -- "steal the Shatter-Shield logbook from Suvaris Atheron". Planning plans `goal` last and ranks the people
+  `finish` names first.
+
+The plot keeps `finish` in the co-save, so a re-plan after a failure reads it too; the record version goes to 10.
+
+**Verification:** the parser suite asserts `finish` is read and must open with a verb; the planning suite asserts
+people named in `finish` head the goal's lists and that the slot question is told how the scheme ends; the co-save
+suite round-trips `finish`.
 
 ---
 
