@@ -45,6 +45,7 @@ namespace NarrativeEngine::PlotModel
         Discredit, // damage a rival's standing or leverage
         Sabotage,  // impair a thing, a shipment, an arrangement
         Conceal,   // cover the tracks of a step already taken
+        Craft,     // make a thing at a workbench
 
         Count
     };
@@ -110,6 +111,9 @@ namespace NarrativeEngine::PlotModel
         {"discredit", "Discredit", "damage what people think of someone", false, Conspicuousness::Yes},
         {"sabotage", "Sabotage", "quietly ruin a thing, a shipment or an arrangement", false, Conspicuousness::Yes},
         {"conceal", "Cover Tracks", "make sure nobody can tell who did it", false, Conspicuousness::Sometimes},
+        // Never conspicuous: work at your own bench is nothing to hide from
+        // the player.
+        {"craft", "Craft", "make a thing at a workbench", false, Conspicuousness::No},
     }};
 
     static_assert(kStepTypes.size() == kStepTypeCount, "kStepTypes must carry one row per StepType");

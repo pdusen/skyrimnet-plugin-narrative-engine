@@ -1700,7 +1700,7 @@ way they cover `spread_rumors`.
 
 ### Step 29 — Recipes, and the people who make them
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1754,6 +1754,24 @@ not something to hide from the player.
 - that more and costlier ingredients never make a step easier.
 
 The load logs how many recipes each craft has.
+
+Done. `PlotRecipes` is two files: the pure rules in `PlotRecipes.cpp` and the reading in `PlotRecipesLoad.cpp`, the
+split the item pool uses. `Plugin.cpp` loads it after the pool, and `PlotMenus::World` carries the result as
+`recipes`. Each member's `crafts` bits come from the table above, and their skills from the three new fields of the
+skill profile. `StepType::Craft` takes a base threshold of 10 and a budget of 6 ticks, the same scale as a watch.
+478 tests pass, with a new suite for the recipes' pure half; the plugin builds with no warnings.
+
+**The forge's three crafts are told apart by what they make, not where.** Jewelry, bows and swords share one bench in
+vanilla, so the bench says only that something is forge work. An armor piece is jewelry when every body slot it covers
+is a ring, amulet or circlet slot, which keeps a circlet that is also a helmet out of a jeweler's hands.
+
+**Ingredient worth is a log scale.** An iron dagger's ingredients are worth about ten septims and Daedric armor's
+about a thousand, so a linear scale would put nearly everything at the bottom. Worth is three quarters of the figure
+and the number of ingredients a quarter; the suite asserts neither can make a job smaller.
+
+**A step's craft skill is read at dispatch, not by `Suitability`.** `Suitability` takes a step type, and one type
+covers five crafts with three skills; its `craft` row answers a neutral 0.5 that Step 30's dispatch replaces with the
+agent's own skill.
 
 ### Step 30 — Five crafting verbs
 

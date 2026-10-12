@@ -3443,6 +3443,15 @@ const char* RE::TESForm::GetName() const
     return mock ? mock->modEvents.senderName.c_str() : "";
 }
 
+// TESForm::GetGoldValue is out-of-line, and PlotRecipes reads it off every
+// ingredient it weighs. No test fabricates a recipe's forms -- the data
+// handler's arrays are empty here -- so nothing is ever worth anything.
+
+std::int32_t RE::TESForm::GetGoldValue() const
+{
+    return 0;
+}
+
 const char* RE::TESObjectREFR::GetDisplayFullName()
 {
     auto* mock = NarrativeEngine::Testing::EngineMock::Current();

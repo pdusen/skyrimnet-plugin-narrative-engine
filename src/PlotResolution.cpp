@@ -54,6 +54,8 @@ namespace NarrativeEngine::PlotResolution
                 return 9;
             case PlotModel::StepType::Surveil:
                 return 6;
+            case PlotModel::StepType::Craft:
+                return 6;
             case PlotModel::StepType::Count:
                 break;
             }
@@ -92,6 +94,10 @@ namespace NarrativeEngine::PlotResolution
                 return 15.0f;
             case PlotModel::StepType::Discredit:
                 return 18.0f;
+            // About a watch's work. What moves it is the recipe, which a
+            // crafting step reads as its importance.
+            case PlotModel::StepType::Craft:
+                return 10.0f;
             case PlotModel::StepType::Count:
                 break;
             }
@@ -174,6 +180,10 @@ namespace NarrativeEngine::PlotResolution
         // Taking something off someone.
         case PlotModel::StepType::Acquire:
             return 0.5 * sn + 0.5 * pp;
+        // None of these three bears on making a thing. The craft's own skill
+        // does, and is read where the step's verb, and so its craft, is known.
+        case PlotModel::StepType::Craft:
+            return 0.5;
         case PlotModel::StepType::Count:
             break;
         }

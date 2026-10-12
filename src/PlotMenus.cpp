@@ -54,11 +54,13 @@ namespace NarrativeEngine::PlotMenus
         }
 
         g_world.items = PlotItemPool::Items();
+        g_world.recipes = PlotRecipes::Recipes();
 
-        logger::info("PlotMenus: world built -- {} settlement(s), {} faction(s), {} item(s).",
+        logger::info("PlotMenus: world built -- {} settlement(s), {} faction(s), {} item(s), {} recipe(s).",
                      g_world.settlements.size(),
                      g_world.factions.size(),
-                     g_world.items.size());
+                     g_world.items.size(),
+                     g_world.recipes.size());
     }
 
     const World& CurrentWorld()

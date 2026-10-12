@@ -447,6 +447,59 @@ namespace NarrativeEngine::PlotPopulation
                                                             "JobGuardCaptainFaction",
                                                             "JobOrcChiefFaction"};
 
+        // Who practises each craft: their Job factions, then vanilla's vendor
+        // classes, which put Fihada the fletcher where no Job faction does.
+        // Vanilla has no enchanter's job, so a court wizard or a teacher of
+        // enchanting stands in for one.
+        struct CraftProfession
+        {
+            PlotRecipes::Craft craft;
+            std::array<const char*, 2> factions;
+            const char* vendorClass;
+        };
+
+        constexpr std::array<CraftProfession, PlotRecipes::kCraftCount> kCraftProfessions{{
+            {PlotRecipes::Craft::Smith, {"JobBlacksmithFaction", nullptr}, "VendorBlacksmith"},
+            {PlotRecipes::Craft::Concoct, {"JobApothecaryFaction", nullptr}, "VendorApothecary"},
+            {PlotRecipes::Craft::Enchant, {"JobCourtWizardFaction", "JobTrainerEnchantingFaction"}, nullptr},
+            {PlotRecipes::Craft::Set, {"JobJewelerFaction", nullptr}, nullptr},
+            {PlotRecipes::Craft::Fletch, {"JobFletcherFaction", nullptr}, "VendorFletcher"},
+        }};
+
+        // A craft's resolved factions and class.
+        struct CraftForms
+        {
+            PlotRecipes::Craft craft;
+            std::vector<RE::TESFaction*> factions;
+            RE::TESClass* vendorClass = nullptr;
+        };
+
+        std::vector<CraftForms> ResolveCrafts()
+        {
+            std::vector<CraftForms> out;
+            for (const auto& profession : kCraftProfessions) {
+                CraftForms forms{profession.craft, {}, nullptr};
+                for (const char* id : profession.factions) {
+                    if (id == nullptr) {
+                        continue;
+                    }
+                    if (auto* form = RE::TESForm::LookupByEditorID<RE::TESFaction>(id)) {
+                        forms.factions.push_back(form);
+                    } else {
+                        logger::warn("PlotPopulation: job faction {} did not resolve", id);
+                    }
+                }
+                if (profession.vendorClass != nullptr) {
+                    forms.vendorClass = RE::TESForm::LookupByEditorID<RE::TESClass>(profession.vendorClass);
+                    if (forms.vendorClass == nullptr) {
+                        logger::warn("PlotPopulation: class {} did not resolve", profession.vendorClass);
+                    }
+                }
+                out.push_back(std::move(forms));
+            }
+            return out;
+        }
+
         template <std::size_t N> std::vector<RE::TESFaction*> ResolveJobs(const std::array<const char*, N>& ids)
         {
             std::vector<RE::TESFaction*> out;
@@ -473,9 +526,10 @@ namespace NarrativeEngine::PlotPopulation
         }
 
         // Authored competence, normalised. Level is the broad signal;
-        // the three skills are the ones PlotResolution::Suitability
-        // actually consults, and reading only those keeps this a short
-        // walk rather than a copy of Skyrim's whole skill tree.
+        // the other skills are the three PlotResolution::Suitability
+        // consults and the three the crafts are practised with, and reading
+        // only those keeps this a short walk rather than a copy of Skyrim's
+        // whole skill tree.
         //
         // Level is normalised against 50 rather than 100: a level-50
         // NPC is already exceptional in vanilla, and normalising against
@@ -503,6 +557,9 @@ namespace NarrativeEngine::PlotPopulation
                 profile.speech = skill(RE::ActorValue::kSpeech);
                 profile.sneak = skill(RE::ActorValue::kSneak);
                 profile.pickpocket = skill(RE::ActorValue::kPickpocket);
+                profile.smithing = skill(RE::ActorValue::kSmithing);
+                profile.alchemy = skill(RE::ActorValue::kAlchemy);
+                profile.enchanting = skill(RE::ActorValue::kEnchanting);
             }
             return profile;
         }
@@ -539,6 +596,7 @@ namespace NarrativeEngine::PlotPopulation
 
         const auto tradeJobs = ResolveJobs(kTradeJobs);
         const auto authorityJobs = ResolveJobs(kAuthorityJobs);
+        const auto craftForms = ResolveCrafts();
 
         std::size_t withFactions = 0;
         std::size_t children = 0;
@@ -566,6 +624,12 @@ namespace NarrativeEngine::PlotPopulation
                 member.skills = ReadSkills(npcForm);
                 member.tradesForLiving = InAnyOf(npcForm, tradeJobs);
                 member.authority = InAnyOf(npcForm, authorityJobs);
+                for (const auto& forms : craftForms) {
+                    const bool byClass = forms.vendorClass != nullptr && npcForm->npcClass == forms.vendorClass;
+                    if (byClass || InAnyOf(npcForm, forms.factions)) {
+                        member.crafts |= static_cast<std::uint8_t>(1U << static_cast<unsigned>(forms.craft));
+                    }
+                }
 
                 // Gossip's size-filtered set is the FALLBACK: membership
                 // of one of these says "belongs to an organisation" and

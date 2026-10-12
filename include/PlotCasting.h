@@ -8,6 +8,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include <PlotRecipes.h>
 #include <PlotState.h>
 
 #include <RE/Skyrim.h>
@@ -105,6 +106,10 @@ namespace NarrativeEngine::PlotCasting
         double speech = 0.5;
         double sneak = 0.5;
         double pickpocket = 0.5;
+        // The crafts' skills, read for whoever practises one.
+        double smithing = 0.5;
+        double alchemy = 0.5;
+        double enchanting = 0.5;
     };
 
     // "This member is not on the road graph." Their settlement has no
@@ -144,6 +149,16 @@ namespace NarrativeEngine::PlotCasting
         // somebody a denunciation can be made to.
         bool tradesForLiving = false;
         bool authority = false;
+
+        // The crafts they practise, one bit per PlotRecipes::Craft, from the
+        // same Job factions and from vanilla's vendor classes. Only these
+        // people are ever sent to make anything.
+        std::uint8_t crafts = 0;
+
+        [[nodiscard]] bool Practises(PlotRecipes::Craft craft) const noexcept
+        {
+            return (crafts & (1U << static_cast<unsigned>(craft))) != 0;
+        }
     };
 
     struct Population

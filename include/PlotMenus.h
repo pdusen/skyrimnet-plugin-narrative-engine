@@ -6,6 +6,7 @@
 
 #include <PlotCasting.h>
 #include <PlotItemPool.h>
+#include <PlotRecipes.h>
 
 // PlotMenus — every noun a plot can name, resolved before the prompt is
 // built.
@@ -115,6 +116,8 @@ namespace NarrativeEngine::PlotMenus
         std::vector<FactionOption> factions;
         // The curated Acquire pool, in file order.
         std::vector<PlotItemPool::Item> items;
+        // Everything a craftsman can make, read from the game data.
+        std::vector<PlotRecipes::Recipe> recipes;
     };
 
     struct Limits

@@ -16,7 +16,7 @@
 // A step is one of these verbs with its slots filled. Each verb fixes the
 // sentence the dashboard shows, the people, places and things it needs and
 // the rule each is admitted by, who would know it happened, which of the
-// eight resolution profiles sizes and rolls it, and every memory it writes.
+// nine resolution profiles sizes and rolls it, and every memory it writes.
 // Nothing about a step is written by a model: the model only ever chooses a
 // verb from this list and a filler for each slot from a list of candidates.
 //
@@ -98,7 +98,7 @@ namespace NarrativeEngine::PlotVerbs
         std::string_view id;
         // The caption under the step's node on the chain.
         std::string_view caption;
-        // Which of the eight resolution rows sizes, rolls and gates it.
+        // Which of the nine resolution rows sizes, rolls and gates it.
         PlotModel::StepType profile = PlotModel::StepType::Locate;
         // In the order they are filled: a slot whose candidates depend on
         // another comes after it.

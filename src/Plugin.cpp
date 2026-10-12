@@ -36,6 +36,7 @@
 #include <PlotLog.h>
 #include <PlotMenus.h>
 #include <PlotPopulation.h>
+#include <PlotRecipes.h>
 #include <PlotSerialize.h>
 #include <PlotState.h>
 #include <PlotTick.h>
@@ -263,6 +264,9 @@ namespace NarrativeEngine
                 // model is handed a menu of resolved forms rather than
                 // being trusted to name an object that exists.
                 PlotItemPool::Load();
+                // The recipes a crafting step names, read the same way and
+                // for the same reason.
+                PlotRecipes::Load();
                 PlotPopulation::Build();
                 // After both: the menus are drawn from the population's
                 // settlements, the roster's factions and the item pool,

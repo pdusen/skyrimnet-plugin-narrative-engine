@@ -871,6 +871,8 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/PlotMenus.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotModel.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotPopulation.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotRecipes.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotRecipesLoad.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotResolution.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotSchedule.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotSerialize.cpp"
