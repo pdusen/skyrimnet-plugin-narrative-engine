@@ -532,6 +532,42 @@ TEST_CASE("PlotPlanning gets the items a plan needs", "[PlotPlanning][engine]")
     }
 }
 
+TEST_CASE("PlotPlanning ends a scheme only in what can finish it", "[PlotPlanning][engine]")
+{
+    Fixture f;
+
+    SECTION("when the goal is asked for")
+    {
+        f.script.answers = {"watch", "c1", "p1", "ready"};
+        (void)f.Run();
+
+        SECTION("should never offer making, finding or hiding something")
+        {
+            REQUIRE(f.script.asked[0].templateName == kGoal);
+            for (const auto* id : {"falsify", "dig_up", "plant", "smith", "concoct"}) {
+                INFO(id);
+                REQUIRE_FALSE(Contains(f.script.Offered(0), id));
+            }
+        }
+    }
+
+    SECTION("when the goal is a rumor")
+    {
+        // goal spread_rumors -> Hulda (c1), whose place is Whiterun alone.
+        // Prepare p1, the watch; then ready.
+        f.script.answers = {"spread_rumors", "c1", "p1", "ready"};
+        (void)f.Run();
+
+        SECTION("should offer hiding something among their belongings first, for the talk to lead people to")
+        {
+            const auto lines = f.script.Lines(2);
+            REQUIRE(
+                std::count(lines.begin(), lines.end(), "Before step 1: Someone hides [item] among Hulda's belongings.")
+                == 1);
+        }
+    }
+}
+
 TEST_CASE("PlotPlanning may falsify a document", "[PlotPlanning][engine]")
 {
     Fixture f;
@@ -649,19 +685,23 @@ TEST_CASE("PlotPlanning may have a thing made", "[PlotPlanning][engine]")
         }
     }
 
-    SECTION("when the scheme ends in hiding a poison among somebody's belongings")
+    SECTION("when a denunciation is prepared by hiding a poison among the person's belongings")
     {
-        f.finish = "Hide a poison of lingering damage among Hulda's belongings";
-        f.script.answers = {"plant", "c1", "c1", "concoct", "ready"};
+        // goal denounce -> Hulda (c1). Prepare p1, the planting; its item is
+        // the poison the finish names (c1), which can be stolen or concocted.
+        f.finish = "Denounce Hulda to Laila for keeping a poison of lingering damage";
+        f.script.answers = {"denounce", "c1", "p1", "c1", "concoct", "ready"};
         const auto out = f.Run();
 
-        SECTION("should concoct it first")
+        SECTION("should concoct it, plant it, then denounce")
         {
             REQUIRE(out.ok);
-            REQUIRE(out.plan.size() == 2);
+            REQUIRE(out.plan.size() == 3);
             REQUIRE(out.plan[0].verb == "concoct");
             REQUIRE(FormOf(out.plan[0], "item") == kPoison);
+            REQUIRE(out.plan[1].verb == "plant");
             REQUIRE(PlotPlanning::Serves(out.plan[0], out.plan[1]));
+            REQUIRE(out.plan[2].verb == "denounce");
         }
     }
 
@@ -1072,6 +1112,19 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
         {
             REQUIRE_FALSE(out.ok);
             REQUIRE(out.rejection.find("a ruby; a deed to a property") != std::string::npos);
+        }
+    }
+
+    SECTION("when the goal only prepares for a later step")
+    {
+        j["goal"] = "plant";
+        j["finish"] = "hide a ruby among Hulda's belongings";
+        const auto out = ParseAmbition(j.dump(), TextLimits{});
+
+        SECTION("should refuse it, saying it cannot end a scheme")
+        {
+            REQUIRE_FALSE(out.ok);
+            REQUIRE(out.rejection.find("cannot end a scheme") != std::string::npos);
         }
     }
 

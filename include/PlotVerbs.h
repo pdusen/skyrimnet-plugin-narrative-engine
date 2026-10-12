@@ -122,6 +122,11 @@ namespace NarrativeEngine::PlotVerbs
         // A later BoundItem slot can bind to what this verb obtains.
         bool obtainsItem = false;
         std::array<std::string_view, kTemplateCount> templates{};
+        // Whether a scheme can end in it. A verb that only makes, finds or
+        // hides something cannot: what it got is for a later step, and a
+        // forgery nobody is shown, or a ledger nobody reads, finishes
+        // nothing.
+        bool finishes = true;
 
         [[nodiscard]] constexpr std::string_view Text(Template t) const noexcept
         {
@@ -259,6 +264,7 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that {mark} had caught them trying to hide {item} among their belongings.",
                 "{agent} reported back that they had run out of time before hiding {item} among {mark}'s belongings.",
             }},
+            false,
         },
         Verb{
             "bribe",
@@ -424,6 +430,7 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that their attempt to falsify {item} in {subject}'s name had been found out.",
                 "{agent} reported back that they had run out of time before falsifying {item} in {subject}'s name.",
             }},
+            false,
         },
         Verb{
             "dig_up",
@@ -445,6 +452,7 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that {mark} had found out they were digging into their affairs.",
                 "{agent} reported back that they had run out of time before finding proof against {mark}.",
             }},
+            false,
         },
         Verb{
             "blackmail",
@@ -526,6 +534,7 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that they had ruined the work on {item}.",
                 "{agent} reported back that they had run out of time before finishing {item}.",
             }},
+            false,
         },
         Verb{
             "concoct",
@@ -546,6 +555,7 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that they had spoiled the mixture for {item}.",
                 "{agent} reported back that they had run out of time before finishing {item}.",
             }},
+            false,
         },
         Verb{
             "enchant",
@@ -566,6 +576,7 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that the enchantment had slipped and ruined {item}.",
                 "{agent} reported back that they had run out of time before finishing {item}.",
             }},
+            false,
         },
         Verb{
             "set",
@@ -586,6 +597,7 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that they had spoiled the work on {item}.",
                 "{agent} reported back that they had run out of time before finishing {item}.",
             }},
+            false,
         },
         Verb{
             "fletch",
@@ -606,6 +618,7 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that they had spoiled the work on {item}.",
                 "{agent} reported back that they had run out of time before finishing {item}.",
             }},
+            false,
         },
     }};
 
@@ -628,7 +641,7 @@ namespace NarrativeEngine::PlotVerbs
         std::string_view from;
     };
 
-    inline constexpr std::array<Preparation, 35> kPreparations{{
+    inline constexpr std::array<Preparation, 36> kPreparations{{
         {"watch", "ask_around", "mark", "mark"},
 
         {"steal", "watch", "mark", "mark"},
@@ -650,6 +663,7 @@ namespace NarrativeEngine::PlotVerbs
 
         {"spread_rumors", "watch", "mark", "mark"},
         {"spread_rumors", "ask_around", "mark", "mark"},
+        {"spread_rumors", "plant", "mark", "mark"},
 
         {"denounce", "plant", "mark", "mark"},
         {"denounce", "steal", "mark", "mark"},
@@ -688,8 +702,7 @@ namespace NarrativeEngine::PlotVerbs
     [[nodiscard]] const Verb* Find(std::string_view id) noexcept;
 
     // The craft a verb makes things by, or none: the craft of its recipe
-    // slot. A crafting verb is never a plot's finish, and its agent must be
-    // able to make the thing.
+    // slot. A crafting verb's agent must be able to make the thing.
     [[nodiscard]] std::optional<PlotRecipes::Craft> CraftOf(const Verb& verb) noexcept;
 
     // The snake_case name of a template, for the log and the suite.

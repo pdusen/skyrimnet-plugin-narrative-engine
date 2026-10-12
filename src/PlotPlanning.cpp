@@ -596,9 +596,8 @@ namespace NarrativeEngine::PlotPlanning
                     if (HasItemSlot(verb) && input_.maxSteps < kPlanFloor) {
                         continue;
                     }
-                    // Making a thing and keeping it is an errand, and nothing
-                    // prepares one: what is made is for a later step.
-                    if (PlotVerbs::CraftOf(verb)) {
+                    // Making, finding or hiding a thing is for a later step.
+                    if (!verb.finishes) {
                         continue;
                     }
                     if (Fillable(verb, {}, {}, 0)) {

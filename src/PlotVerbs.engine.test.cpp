@@ -209,6 +209,19 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
             }
         }
 
+        SECTION("should finish a scheme unless it only makes, finds or hides something")
+        {
+            // What these get or hide is for a later step: a forgery shown to
+            // nobody, or a thing planted that nobody is sent to find, ends
+            // nothing.
+            const std::set<std::string_view> preparatory{
+                "falsify", "dig_up", "plant", "smith", "concoct", "enchant", "set", "fletch"};
+            for (const auto& verb : PlotVerbs::kVerbs) {
+                INFO(verb.id);
+                REQUIRE(verb.finishes == !preparatory.contains(verb.id));
+            }
+        }
+
         SECTION("should keep a place only where the place is what the step acts on")
         {
             // The rule the milestone doc states for {place}. The two verbs

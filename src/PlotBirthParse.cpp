@@ -254,8 +254,20 @@ namespace NarrativeEngine::PlotBirth
             out.scheme.clear();
             return out;
         }
-        if (PlotVerbs::Find(out.goal) == nullptr) {
+        const auto* goal = PlotVerbs::Find(out.goal);
+        if (goal == nullptr) {
             out.rejection = "the goal '" + out.goal + "' is not one of the kinds of step listed; give one of their ids";
+            out.ambition.clear();
+            out.scheme.clear();
+            out.goal.clear();
+            return out;
+        }
+        // Not listed, and for a reason worth telling the retry: what such a
+        // step makes or hides is for a step after it.
+        if (!goal->finishes) {
+            out.rejection = "the goal '" + out.goal
+                            + "' only prepares for a later step and cannot end a scheme; end it in what that step "
+                              "was for, from the ids listed";
             out.ambition.clear();
             out.scheme.clear();
             out.goal.clear();

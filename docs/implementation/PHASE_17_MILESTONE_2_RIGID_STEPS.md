@@ -1900,7 +1900,7 @@ trader, and a delivery is never bought from the person it is for. That is the ex
 
 ### Step 32 — Making, finding and hiding are never the finish
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1930,6 +1930,19 @@ Making them finish only some schemes is Step 33's job, by giving an exposure a v
 
 **Verification:** the verb suite asserts which verbs finish; the planning suite asserts `Goal` offers none that do
 not, and that a rumor may be prepared by a planting; the parse suite asserts a goal that cannot finish is refused.
+
+Done. `PlotVerbs::Verb` gains `finishes`, true unless set, and false for `plant`, `falsify`, `dig_up` and the five
+crafting verbs. `Goal` and the scheme call's verb list read it in place of Step 30's `CraftOf` test, and
+`ParseAmbition` refuses such a goal, saying it only prepares for a later step. `kPreparations` gains the planting
+before a rumor, thirty-six rows in all. 483 tests pass, with a new planning case and new sections in the verb and parse
+suites; the plugin builds with no warnings.
+
+**Step 31's poisoned frame is now a denunciation.** Its case planted a concocted poison as the goal, which this step
+forbids. It now plants the poison as a preparation of denouncing the person it is planted on, the shape a frame takes
+from here on: concoct, plant, denounce.
+
+**The refusal names the reason, not only the list.** A goal the list does not show could be a typo, but one of these
+is a step the model knew and chose, so the retry is told what the step is for.
 
 ### Step 33 — `expose`: proof, shown to somebody with authority
 

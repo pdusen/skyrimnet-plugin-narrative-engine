@@ -274,8 +274,8 @@ namespace NarrativeEngine::PlotBirth
             // "document" something was planned as whichever verb came nearest.
             nlohmann::json verbs = nlohmann::json::array();
             for (const auto& verb : PlotVerbs::kVerbs) {
-                // A crafting verb is never a finish; see PlotPlanning's Goal.
-                if (PlotVerbs::CraftOf(verb)) {
+                // Only what a scheme can end in; see PlotPlanning's Goal.
+                if (!verb.finishes) {
                     continue;
                 }
                 verbs.push_back({{"id", verb.id}, {"line", PlotVerbs::Generic(verb)}});
