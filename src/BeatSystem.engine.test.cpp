@@ -536,6 +536,29 @@ TEST_CASE("BeatSystem picks a beat once the gates are clear", "[BeatSystem][engi
             REQUIRE(beat->starts.load() == 0);
             REQUIRE(BeatSystem::GetTopLevelState() == BeatSystem::TopLevelState::NO_BEAT_RUNNING);
         }
+
+        SECTION("should ask once more, and no more than that")
+        {
+            // A one-off hallucination usually comes out right on a second
+            // sample; a model that misses twice is not worth a third call.
+            REQUIRE(Consider(SettledSnapshot(), PlainRecord()));
+            REQUIRE(FakeLLM().sendPromptCalls == 2);
+            REQUIRE(SelectedBeat().starts_with("(failed"));
+        }
+    }
+
+    SECTION("when the retry names one of the candidates")
+    {
+        Say(FakeLLM().promptResponse, Answer("fake_not_offered"));
+        Say(FakeLLM().laterPromptResponse, Answer("fake_picked"));
+        REQUIRE(Consider(SettledSnapshot(), PlainRecord()));
+
+        SECTION("should start the one the retry picked")
+        {
+            REQUIRE(offstage->starts.load() == 0);
+            REQUIRE(beat->starts.load() == 1);
+            REQUIRE(SelectedBeat() == "fake_picked");
+        }
     }
 
     SECTION("when the model declines to pick anything")
@@ -887,24 +910,40 @@ TEST_CASE("BeatSystem hands a sender beat the memory the Director chose", "[Beat
         Say(FakeLLM().promptResponse, Answer("npc_visit", R"({"sender_npc_form_id":"0x1A6A0","motivating_memory":7})"));
         REQUIRE(Consider(SettledSnapshot(), PlainRecord()));
 
-        SECTION("should still start the beat, with no memory to work from")
+        SECTION("should ask again, then start nothing")
         {
-            // The composer falls back to choosing a topic from the sender's
-            // own memories, which is a weaker visit but not a wrong one.
-            REQUIRE(beat->starts.load() == 1);
-            REQUIRE_FALSE(startedWith().contains("motivating_memory_entry"));
+            REQUIRE(FakeLLM().sendPromptCalls == 2);
+            REQUIRE(beat->starts.load() == 0);
         }
     }
 
-    SECTION("when the sender is not one the Director was offered")
+    SECTION("when the sender is not one this beat offered")
     {
+        // Someone the game does hold -- a letter sender, say -- but not on
+        // the visit list. The visit list's filters are the only thing that
+        // keep a leveled guard or a follower from being warped in.
         Say(FakeLLM().promptResponse, Answer("npc_visit", R"({"sender_npc_form_id":"0x1A6FF","motivating_memory":1})"));
         REQUIRE(Consider(SettledSnapshot(), PlainRecord()));
 
-        SECTION("should resolve no memory")
+        SECTION("should ask again, then start nothing")
         {
-            // There is no list it could have been read from.
-            REQUIRE_FALSE(startedWith().contains("motivating_memory_entry"));
+            REQUIRE(FakeLLM().sendPromptCalls == 2);
+            REQUIRE(beat->starts.load() == 0);
+            REQUIRE(SelectedBeat().starts_with("(failed"));
+        }
+    }
+
+    SECTION("when the retry names an offered sender")
+    {
+        Say(FakeLLM().promptResponse, Answer("npc_visit", R"({"sender_npc_form_id":"0x1A6FF","motivating_memory":1})"));
+        Say(FakeLLM().laterPromptResponse,
+            Answer("npc_visit", R"({"sender_npc_form_id":"0x1A6A0","motivating_memory":2})"));
+        REQUIRE(Consider(SettledSnapshot(), PlainRecord()));
+
+        SECTION("should start the beat with the retry's pick")
+        {
+            REQUIRE(beat->starts.load() == 1);
+            REQUIRE(startedWith()["motivating_memory_entry"].value("content", "") == "the diary");
         }
     }
 
