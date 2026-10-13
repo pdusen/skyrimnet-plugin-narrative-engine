@@ -1892,3 +1892,25 @@ TEST_CASE("PlotPlanning counts a target on guard", "[PlotPlanning][engine]")
         }
     }
 }
+
+TEST_CASE("PlotPlanning prepares an exposure against its target", "[PlotPlanning][engine]")
+{
+    Fixture f;
+
+    SECTION("when the proof is shown to an organisation, which nothing prepares")
+    {
+        f.goal = "expose";
+        f.goalRoles = {{"item", kDeed, "a deed to a property"},
+                       {"mark", kTrader, "Hulda"},
+                       {"authority", 0, "the court of Whiterun"}};
+        f.targetOdds = 1.0;
+        f.script.answers = {"dig_up", "p99"};
+        (void)f.Run();
+
+        SECTION("should still offer a watch of the person it exposes")
+        {
+            REQUIRE(f.script.asked.size() == 2);
+            REQUIRE(Contains(f.script.Lines(1), "Before step 2: Someone watches Hulda, learning their habits."));
+        }
+    }
+}

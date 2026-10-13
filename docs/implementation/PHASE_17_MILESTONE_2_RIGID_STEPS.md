@@ -5,7 +5,7 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: Steps 1–44 complete; Steps 45–47 follow up Step 9's eleventh attempt.** Steps 10–12 plan
+> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
 > another way, Steps 21–25 mend what the fifth attempt found, Steps 26–28 add five verbs and the records they act on,
@@ -2630,7 +2630,7 @@ the agent at work on them.
 
 ### Step 47 — An exposure is prepared against its target
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2641,6 +2641,13 @@ It now also has the preparations a denunciation has against its mark that do not
 
 **Verification:** the verb suite's preparation rules hold, and the planning suite asserts an exposure to an
 organisation is offered a watch of its target.
+
+Done. `kPreparations` gains the two rows, forty in all. 493 tests pass, with a new planning case; the verb suite's
+preparation rules passed unchanged, and the plugin builds with no warnings.
+
+**Both rows ease the exposure.** They bind to its mark, so `Prepares` counts them (Step 42) and the estimate rises with
+them (Step 43). An exposure to a court can now be prepared to its odds, rather than going ahead at whatever it
+started at.
 
 ---
 

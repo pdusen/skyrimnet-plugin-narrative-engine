@@ -692,7 +692,7 @@ namespace NarrativeEngine::PlotVerbs
         std::string_view from;
     };
 
-    inline constexpr std::array<Preparation, 38> kPreparations{{
+    inline constexpr std::array<Preparation, 40> kPreparations{{
         {"watch", "ask_around", "mark", "mark"},
 
         {"steal", "watch", "mark", "mark"},
@@ -747,6 +747,8 @@ namespace NarrativeEngine::PlotVerbs
 
         {"expose", "win_over", "mark", "authority"},
         {"expose", "bribe", "mark", "authority"},
+        {"expose", "watch", "mark", "mark"},
+        {"expose", "ask_around", "mark", "mark"},
     }};
 
     // Every preparation of a verb, in table order.
