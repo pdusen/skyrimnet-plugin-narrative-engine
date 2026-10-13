@@ -264,27 +264,98 @@ namespace NarrativeEngine::PlotPlanning
                 return out;
             }
 
+            // The recipe a crafting step follows, or none.
+            const PlotRecipes::Recipe* RecipeOf(const Step& step) const
+            {
+                const auto* verb = PlotVerbs::Find(step.verb);
+                const auto craft = verb != nullptr ? PlotVerbs::CraftOf(*verb) : std::nullopt;
+                const auto* item = step.FindSlot("item");
+                if (!craft || item == nullptr) {
+                    return nullptr;
+                }
+                for (const auto& recipe : input_.world.recipes) {
+                    if (recipe.craft == *craft && recipe.form == item->form) {
+                        return &recipe;
+                    }
+                }
+                return nullptr;
+            }
+
+            // The agent dispatch would most likely send on `step`, as an
+            // average: everybody on the best rung of the ladder anybody
+            // reaches, whoever is busy today, with the mastermind beside them
+            // on the third rung or alone when nobody reaches one. A crafting
+            // step counts only those able to make the thing. Their competence
+            // and their suitability for the step, as dispatch reads them.
+            void LikelyAgent(const Step& step, PlotResolution::Estimate& estimate) const
+            {
+                static const PlotCasting::OccupancyTable kNobodyBusy;
+                const auto* recipe = RecipeOf(step);
+                const auto admits = [recipe](const PlotCasting::Member& m) {
+                    return recipe == nullptr || PlotCasting::CanMake(m, *recipe);
+                };
+                const auto text = PlotModel::Label(step);
+
+                int best = 4;
+                std::vector<const PlotCasting::Member*> agents;
+                for (const auto& member : input_.population.members) {
+                    if (!admits(member)) {
+                        continue;
+                    }
+                    const auto q = PlotCasting::QualifyAgent(input_.population,
+                                                             input_.mastermind,
+                                                             member.npc,
+                                                             text,
+                                                             step.target,
+                                                             kNobodyBusy,
+                                                             0.0,
+                                                             input_.alive,
+                                                             {});
+                    if (!q.Eligible() || q.rung > best) {
+                        continue;
+                    }
+                    if (q.rung < best) {
+                        best = q.rung;
+                        agents.clear();
+                    }
+                    agents.push_back(&member);
+                }
+                if (const auto* boss = input_.population.Find(input_.mastermind);
+                    boss != nullptr && admits(*boss) && best >= 3) {
+                    agents.push_back(boss);
+                }
+                if (agents.empty()) {
+                    return;
+                }
+
+                double competence = 0.0;
+                double suitability = 0.0;
+                for (const auto* agent : agents) {
+                    competence += agent->skills.competence;
+                    suitability +=
+                        recipe != nullptr
+                            ? PlotCasting::CraftSkill(*agent, recipe->craft)
+                            : PlotResolution::Suitability(
+                                  step.type, agent->skills.speech, agent->skills.sneak, agent->skills.pickpocket);
+                }
+                estimate.competence = competence / static_cast<double>(agents.size());
+                estimate.suitability = suitability / static_cast<double>(agents.size());
+            }
+
             // The estimated chance the step at `index` succeeds, with the
-            // preparations of it planned so far and those that succeeded
-            // before a re-plan.
+            // agent the mastermind would likely send, the preparations of it
+            // planned so far and those that succeeded before a re-plan.
             double Odds(std::size_t index) const
             {
                 const auto& step = plan_[index];
                 PlotResolution::Estimate estimate;
                 estimate.type = step.type;
                 estimate.importance = PlotCasting::Importance(input_.population.Find(step.target));
-                if (const auto* verb = PlotVerbs::Find(step.verb)) {
-                    if (const auto craft = PlotVerbs::CraftOf(*verb)) {
-                        const auto* item = step.FindSlot("item");
-                        for (const auto& recipe : input_.world.recipes) {
-                            if (item != nullptr && recipe.craft == *craft && recipe.form == item->form) {
-                                estimate.importance =
-                                    PlotRecipes::Importance(recipe.ingredientValue, recipe.ingredientCount);
-                                estimate.travel = 0.0;
-                            }
-                        }
-                    }
+                if (const auto* recipe = RecipeOf(step)) {
+                    estimate.importance = PlotRecipes::Importance(recipe->ingredientValue, recipe->ingredientCount);
+                    estimate.travel = 0.0;
                 }
+                LikelyAgent(step, estimate);
                 for (std::size_t j = 0; j < plan_.size(); ++j) {
                     if (j != index && PlotPlanning::Prepares(plan_[j], step)) {
                         ++estimate.preparations;

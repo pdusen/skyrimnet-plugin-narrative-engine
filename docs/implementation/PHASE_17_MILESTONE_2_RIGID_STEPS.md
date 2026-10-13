@@ -2558,7 +2558,7 @@ more often too, so adaptation does more of the work.
 
 ### Step 45 — The odds are estimated with the agents the mastermind can send
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2575,6 +2575,15 @@ holder takes the same average, its agent not being known until the item is got. 
 
 **Verification:** the planning suite asserts a mastermind with only weak agents prepares a step further than one
 with strong agents, all else equal.
+
+Done. The planner's `LikelyAgent` sets the estimate's competence and suitability from the ladder, with
+`PlotCasting::QualifyAgent` and an empty occupancy table, as the candidate rules judge reach. 491 tests pass, with a
+new planning case; the plugin builds with no warnings.
+
+**A farmhand is easy even for the weak.** The suite's first try asked for 75%: a theft from somebody of no standing,
+by agents of 0.05, came to 80% after one preparation against 95% for experts, and both stopped there. Its case asks
+90%, where the experts stop and the weak are prepared again. In play the difference falls where it should: on the
+hard targets, which weak agents now prepare further than the old ordinary agent did.
 
 ### Step 46 — A target who catches an agent is on guard
 

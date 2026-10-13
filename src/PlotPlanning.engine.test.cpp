@@ -1828,3 +1828,43 @@ TEST_CASE("PlotPlanning prepares no audience", "[PlotPlanning][engine]")
         }
     }
 }
+
+TEST_CASE("PlotPlanning estimates with the agents the mastermind can send", "[PlotPlanning][engine]")
+{
+    // Olfrid's one agent is Idolaf, an acquaintance, beside whom Olfrid may
+    // act himself. Both are made hopeless, or both expert.
+    const auto skilled = [](Fixture& f, double level) {
+        for (auto& m : f.population.members) {
+            if (m.npc == kBoss || m.npc == kFriend) {
+                m.skills.competence = level;
+                m.skills.speech = level;
+                m.skills.sneak = level;
+                m.skills.pickpocket = level;
+            }
+        }
+    };
+
+    SECTION("when the only agents are weak")
+    {
+        Fixture weak;
+        Fixture strong;
+        skilled(weak, 0.05);
+        skilled(strong, 1.0);
+        weak.targetOdds = 0.9;
+        strong.targetOdds = 0.9;
+        weak.script.answers = {"steal", "c1", "c1", "p1", "p1"};
+        strong.script.answers = {"steal", "c1", "c1", "p1", "p1"};
+        const auto w = weak.Run();
+        const auto s = strong.Run();
+
+        SECTION("should estimate the goal's odds lower, and prepare it further")
+        {
+            REQUIRE(w.ok);
+            REQUIRE(s.ok);
+            INFO("weak " << w.plan.back().plannedOdds << " over " << w.plan.size() << " steps; strong "
+                         << s.plan.back().plannedOdds << " over " << s.plan.size());
+            REQUIRE(w.plan.back().plannedOdds < s.plan.back().plannedOdds);
+            REQUIRE(w.plan.size() > s.plan.size());
+        }
+    }
+}
