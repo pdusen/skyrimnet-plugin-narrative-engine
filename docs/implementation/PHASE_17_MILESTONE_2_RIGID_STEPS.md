@@ -5,7 +5,7 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
+> **Doc status: Steps 1–44 complete; Steps 45–47 follow up Step 9's eleventh attempt.** Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
 > another way, Steps 21–25 mend what the fifth attempt found, Steps 26–28 add five verbs and the records they act on,
@@ -2555,6 +2555,63 @@ standing, with no, one, two and three preparations:
 
 A finish now succeeds about three times in four. The steps that prepare it, which are not themselves prepared, fail
 more often too, so adaptation does more of the work.
+
+### Step 45 — The odds are estimated with the agents the mastermind can send
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+Step 9's eleventh attempt sent agents far weaker than the ordinary one Step 43's estimate assumes. Suitability was
+mostly 0.15 to 0.26, because it is read from speech, sneak and pickpocket skills that most NPCs hold low, and 28 of 76
+dispatches went to an agent of competence 0.08. A weaker agent takes more ticks and is caught more, so the odds the
+plans logged were higher than the steps' real chances.
+
+The estimate now takes its agent from the ladder. For each step it averages the competence and suitability of the
+people dispatch would offer for it: the best rung anybody reaches, ignoring who is busy today, with the mastermind
+beside them on the third rung or alone when nobody reaches one, and only those able to make the thing for a crafting
+step. Suitability is the step type's own reading of their skills, or their craft skill. A step bound to an item's
+holder takes the same average, its agent not being known until the item is got. The trip stays middling.
+
+**Verification:** the planning suite asserts a mastermind with only weak agents prepares a step further than one
+with strong agents, all else equal.
+
+### Step 46 — A target who catches an agent is on guard
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+The same run adapted thirteen times and conceded nothing: every failure but a finish's was absorbed by planning another
+way, so a plot failed only when its last step did. A failure costs nothing beyond itself, though the person who caught
+the agent now knows somebody is after them.
+
+- **Who is on guard.** When a step fails because its agent was caught, the person it was done to -- the step's target
+  -- is on guard for the rest of that plot. The plot records them, saved with it at co-save record version 13, and
+  the plots log notes it.
+- **What it costs.** Every later step of the plot done to somebody on guard is harder: its work and its chance of a
+  mishap are multiplied by `fPlotAlertHardening`, 1.25 by default, as a preparation eases them. The dispatch line
+  says so.
+- **Planning knows it.** A re-plan's estimate counts the same hardening, so a plot that tipped off its mark prepares
+  harder, or finds that it cannot reach its odds.
+
+**Verification:** the resolution suite asserts the hardening raises a step's work and its mishap chance and lowers its
+estimated odds. The planning suite asserts a target on guard lowers a re-plan's estimate. The co-save suite asserts
+who is on guard survives a save.
+
+### Step 47 — An exposure is prepared against its target
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+`expose` was prepared only by winning over or bribing its authority. Shown to an organisation, which nothing
+prepares, its odds stayed where they started: the run's exposures to a court sat at 49 to 70% with nothing to offer.
+It now also has the preparations a denunciation has against its mark that do not get an item: `watch` and
+`ask_around` of the person it exposes.
+
+**Verification:** the verb suite's preparation rules hold, and the planning suite asserts an exposure to an
+organisation is offered a watch of its target.
 
 ---
 
