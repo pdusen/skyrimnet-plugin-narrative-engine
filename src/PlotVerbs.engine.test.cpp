@@ -433,6 +433,7 @@ TEST_CASE("PlotVerbs steps survive the co-save", "[PlotVerbs][engine]")
     plot.scheme = "Win the Skaal's trust.";
     plot.finish = "win Storn Crag-Strider over";
     plot.abandoned.push_back({"steal", 0x0001B000, "Frea"});
+    plot.onGuard.push_back(0x0001B001);
     plot.plan.push_back(Filled("deliver"));
     plot.history.push_back(Filled("steal"));
     plot.history.back().sizingEase = 0.64f;
@@ -474,6 +475,11 @@ TEST_CASE("PlotVerbs steps survive the co-save", "[PlotVerbs][engine]")
                 REQUIRE(step.slots[i].form == plot.plan[0].slots[i].form);
                 REQUIRE(step.slots[i].text == plot.plan[0].slots[i].text);
             }
+        }
+
+        SECTION("should keep who is on guard against the plot")
+        {
+            REQUIRE(loaded.plots[0].onGuard == std::vector<RE::FormID>{0x0001B001});
         }
 
         SECTION("should keep what a step's preparations eased it by")

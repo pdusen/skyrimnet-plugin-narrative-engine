@@ -83,7 +83,8 @@ namespace NarrativeEngine::PlotLog
                   std::size_t considered,
                   std::size_t rejected,
                   int prepared = 0,
-                  float eased = 1.0f);
+                  float eased = 1.0f,
+                  bool onGuard = false);
 
     void Roll(const PlotModel::Plot& plot, const PlotModel::Step& step, const PlotModel::TickRecord& record);
 
@@ -145,7 +146,8 @@ namespace NarrativeEngine::PlotLog
                                              std::size_t considered,
                                              std::size_t rejected,
                                              int prepared = 0,
-                                             float eased = 1.0f);
+                                             float eased = 1.0f,
+                                             bool onGuard = false);
     [[nodiscard]] std::string FormatRoll(const PlotModel::Plot& plot,
                                          const PlotModel::Step& step,
                                          const PlotModel::TickRecord& record);

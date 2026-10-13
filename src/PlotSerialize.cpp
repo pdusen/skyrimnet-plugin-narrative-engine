@@ -284,6 +284,14 @@ namespace NarrativeEngine::PlotSerialize
                     return false;
                 }
             }
+            if (!WritePod(sink, static_cast<std::uint32_t>(plot.onGuard.size()))) {
+                return false;
+            }
+            for (const auto npc : plot.onGuard) {
+                if (!WritePod(sink, npc)) {
+                    return false;
+                }
+            }
         }
 
         if (!WritePod(sink, static_cast<std::uint32_t>(state.occupancy.size()))) {
@@ -379,6 +387,22 @@ namespace NarrativeEngine::PlotSerialize
                 }
                 if (savedTarget != 0 && source.ResolveFormID(savedTarget, way.target)) {
                     plot.abandoned.push_back(std::move(way));
+                }
+            }
+            // Somebody on guard who no longer resolves is dropped: no step
+            // can be done to them anyway.
+            std::uint32_t guardCount{};
+            if (!ReadPod(source, guardCount)) {
+                return fail();
+            }
+            for (std::uint32_t n = 0; n < guardCount; ++n) {
+                RE::FormID saved{};
+                RE::FormID npc{};
+                if (!ReadPod(source, saved)) {
+                    return fail();
+                }
+                if (saved != 0 && source.ResolveFormID(saved, npc)) {
+                    plot.onGuard.push_back(npc);
                 }
             }
             plot.cursor = cursor;

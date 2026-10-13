@@ -437,6 +437,11 @@ namespace NarrativeEngine::PlotModel
         // PlotPlanning::RouteOf.
         std::vector<Abandoned> abandoned;
 
+        // Everybody who caught one of this plot's agents at work on them.
+        // They are on guard for the rest of it: every later step done to
+        // them is harder. See PlotResolution::Pressure.
+        std::vector<RE::FormID> onGuard;
+
         int adaptations = 0;
 
         PlotStatus status = PlotStatus::Active;

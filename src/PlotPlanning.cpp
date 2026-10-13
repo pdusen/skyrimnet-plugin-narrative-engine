@@ -356,6 +356,9 @@ namespace NarrativeEngine::PlotPlanning
                     estimate.travel = 0.0;
                 }
                 LikelyAgent(step, estimate);
+                estimate.onGuard =
+                    step.target != 0
+                    && std::find(input_.onGuard.begin(), input_.onGuard.end(), step.target) != input_.onGuard.end();
                 for (std::size_t j = 0; j < plan_.size(); ++j) {
                     if (j != index && PlotPlanning::Prepares(plan_[j], step)) {
                         ++estimate.preparations;

@@ -379,10 +379,17 @@ namespace NarrativeEngine::PlotTick
                     ++prepared;
                 }
             }
+            // And somebody who caught one of the plot's agents before is on
+            // guard, which makes it harder. Both reach the mishap roll too,
+            // on every tick.
+            const bool onGuard =
+                step.target != 0
+                && std::find(plot.onGuard.begin(), plot.onGuard.end(), step.target) != plot.onGuard.end();
+            const auto pressure =
+                PlotResolution::Pressure(prepared, cfg.plotPreparationEase, onGuard, cfg.plotAlertHardening);
             const float unprepared = step.threshold;
-            step.threshold = PlotResolution::EaseThreshold(step.threshold, prepared, cfg.plotPreparationEase);
-            // And the agent is less likely to be seen, on every tick.
-            step.sizingEase = static_cast<float>(PlotResolution::EaseFactor(prepared, cfg.plotPreparationEase));
+            step.threshold = static_cast<float>(static_cast<double>(step.threshold) * pressure);
+            step.sizingEase = static_cast<float>(pressure);
             step.sizingTravel = static_cast<float>(travel);
             step.sizingImportance = static_cast<float>(importance);
             step.sizingCompetence = actor != nullptr ? static_cast<float>(actor->skills.competence) : 0.5f;
@@ -408,7 +415,8 @@ namespace NarrativeEngine::PlotTick
                               considered,
                               rejected,
                               prepared,
-                              unprepared > 0.0f ? step.threshold / unprepared : 1.0f);
+                              unprepared > 0.0f ? step.threshold / unprepared : 1.0f,
+                              onGuard);
             PlotMemories::Write(PlotMemories::OnDispatch(plot, step));
             return Dispatched::Yes;
         }
@@ -626,6 +634,13 @@ namespace NarrativeEngine::PlotTick
                 ++state.counters.stepsCaught;
             } else {
                 ++state.counters.stepsTimedOut;
+            }
+
+            // Whoever caught the agent knows somebody is after them.
+            if (step.outcome == PlotModel::StepOutcome::FailedCaught && step.target != 0
+                && std::find(plot.onGuard.begin(), plot.onGuard.end(), step.target) == plot.onGuard.end()) {
+                plot.onGuard.push_back(step.target);
+                PlotLog::Note(std::format("plot={} {} is on guard", plot.id, step.targetName));
             }
 
             PlotModel::Step resolved = step;

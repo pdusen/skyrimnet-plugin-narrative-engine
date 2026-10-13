@@ -1146,6 +1146,11 @@ namespace NarrativeEngine::Settings
         // longer plans; 0 prepares only what a lone goal needs.
         float plotPlanOdds = 0.75f;
 
+        // What being on guard does to every later step of a plot done to
+        // somebody who caught one of its agents: the step's work and its
+        // chance of a mishap are both multiplied by this.
+        float plotAlertHardening = 1.25f;
+
         // The caught-in-the-act roll. Typed failure is load-bearing --
         // it decides whether the target gets a memory and whether the
         // plot leaks into gossip -- but progress alone cannot express

@@ -2587,7 +2587,7 @@ hard targets, which weak agents now prepare further than the old ordinary agent 
 
 ### Step 46 — A target who catches an agent is on guard
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2607,6 +2607,26 @@ the agent now knows somebody is after them.
 **Verification:** the resolution suite asserts the hardening raises a step's work and its mishap chance and lowers its
 estimated odds. The planning suite asserts a target on guard lowers a re-plan's estimate. The co-save suite asserts
 who is on guard survives a save.
+
+Done. 492 tests pass, with new sections in the resolution and co-save suites and a new planning case; the plugin
+builds with no warnings.
+
+- **The plot.** `Plot::onGuard` lists who is on guard; `PlotTick` adds a caught step's target to it and writes a
+  "NOTE plot=N Erikur is on guard" line.
+- **The arithmetic.** `PlotResolution::Pressure` combines what a step's preparations ease with what being on guard
+  hardens. Dispatch multiplies the threshold by it and keeps it as `sizingEase`, which every tick's mishap roll reads.
+  `RollMishap` no longer caps it at 1.
+- **The setting.** `fPlotAlertHardening`, default 1.25, is new in the ini.
+- **Re-planning.** `PlotBirth::Replan` passes the list to planning as `onGuard`, and each estimate counts it.
+- **The log.** A dispatch line marks a step done to somebody on guard with "on_guard".
+
+**A preparation and a guard cancel out at the defaults.** One preparation leaves 0.8 and being on guard multiplies by
+1.25, so a prepared step against somebody on guard is as hard as an unprepared one against somebody who is not. A
+plot that tipped off its mark has to prepare once more just to stand where it stood.
+
+**Only the person caught at is put on guard.** A caught watch puts its mark on guard, and a caught bribe the person
+offered it. A step's other people -- a delivery's recipient, a denunciation's authority -- are not, as they never saw
+the agent at work on them.
 
 ### Step 47 — An exposure is prepared against its target
 

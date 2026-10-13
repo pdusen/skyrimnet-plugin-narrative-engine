@@ -122,6 +122,10 @@ namespace NarrativeEngine::PlotPlanning
         // it, the step is prepared further while anything can prepare it.
         PlotResolution::Tuning tuning;
         double targetOdds = 0.75;
+
+        // Everybody on guard against this plot, when re-planning: every
+        // step done to them is estimated as harder.
+        std::vector<RE::FormID> onGuard;
     };
 
     struct Outcome

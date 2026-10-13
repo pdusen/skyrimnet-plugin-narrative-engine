@@ -70,6 +70,38 @@ TEST_CASE("PlotResolution craft profile", "[PlotResolution][engine]")
         }
     }
 
+    SECTION("when the person a step is done to is on guard")
+    {
+        SECTION("should make the step harder, and undo only so much of its preparation")
+        {
+            REQUIRE(PlotResolution::Pressure(0, 0.8, true, 1.25) == 1.25);
+            REQUIRE(PlotResolution::Pressure(1, 0.8, true, 1.25) == 1.0);
+            REQUIRE(PlotResolution::Pressure(1, 0.8, false, 1.25) == 0.8);
+        }
+
+        SECTION("should raise the chance of a mishap")
+        {
+            PlotResolution::MishapInputs half;
+            half.chanceBase = 0.5;
+            half.competence = 0.0;
+            half.easing = 2.0;
+            std::uint64_t rng = 7;
+            for (int i = 0; i < 50; ++i) {
+                REQUIRE(PlotResolution::RollMishap(half, rng));
+            }
+        }
+
+        SECTION("should lower the step's estimated odds")
+        {
+            PlotResolution::Estimate theft;
+            theft.type = StepType::Acquire;
+            auto guarded = theft;
+            guarded.onGuard = true;
+            const PlotResolution::Tuning tuning;
+            REQUIRE(PlotResolution::EstimateSuccess(guarded, tuning) < PlotResolution::EstimateSuccess(theft, tuning));
+        }
+    }
+
     SECTION("when a step's odds are estimated")
     {
         const PlotResolution::Tuning tuning;

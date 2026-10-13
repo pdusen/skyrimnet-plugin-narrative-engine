@@ -44,7 +44,8 @@ namespace NarrativeEngine::PlotLog
                                std::size_t considered,
                                std::size_t rejected,
                                int prepared,
-                               float eased)
+                               float eased,
+                               bool onGuard)
     {
         // The four sizing inputs are on this line and nowhere else.
         // Without them a later RESOLVE says what happened but not what
@@ -64,7 +65,9 @@ namespace NarrativeEngine::PlotLog
                            step.sizingSuitability,
                            considered,
                            rejected,
-                           prepared > 0 ? std::format(" prepared={} eased={:.2f}", prepared, eased) : std::string{});
+                           prepared > 0 || onGuard
+                               ? std::format(" prepared={} eased={:.2f}{}", prepared, eased, onGuard ? " on_guard" : "")
+                               : std::string{});
     }
 
     std::string FormatRoll(const PlotModel::Plot& plot,

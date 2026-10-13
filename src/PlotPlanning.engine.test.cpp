@@ -182,6 +182,7 @@ namespace
         // only as far as a lone goal needs, which keeps each case's
         // questions what it scripts.
         double targetOdds = 0.0;
+        std::vector<RE::FormID> onGuard;
         Script script;
 
         PlotPlanning::Outcome Run(std::size_t maxSteps = PlotPlanning::kPlanCap)
@@ -193,6 +194,7 @@ namespace
             input.goalStep = goalStep;
             input.goalRoles = goalRoles;
             input.targetOdds = targetOdds;
+            input.onGuard = onGuard;
             input.mastermind = kBoss;
             input.mastermindName = "Olfrid";
             input.ambition = "He means to own Whiterun.";
@@ -1865,6 +1867,28 @@ TEST_CASE("PlotPlanning estimates with the agents the mastermind can send", "[Pl
                          << s.plan.back().plannedOdds << " over " << s.plan.size());
             REQUIRE(w.plan.back().plannedOdds < s.plan.back().plannedOdds);
             REQUIRE(w.plan.size() > s.plan.size());
+        }
+    }
+}
+
+TEST_CASE("PlotPlanning counts a target on guard", "[PlotPlanning][engine]")
+{
+    SECTION("when the person a goal is done to caught one of the plot's agents before")
+    {
+        Fixture calm;
+        Fixture wary;
+        wary.onGuard = {kTrader};
+        calm.script.answers = {"steal", "c1", "c1", "p1"};
+        wary.script.answers = {"steal", "c1", "c1", "p1"};
+        const auto c = calm.Run();
+        const auto w = wary.Run();
+
+        SECTION("should estimate the goal against them as harder")
+        {
+            REQUIRE(c.ok);
+            REQUIRE(w.ok);
+            REQUIRE(FormOf(w.plan.back(), "mark") == kTrader);
+            REQUIRE(w.plan.back().plannedOdds < c.plan.back().plannedOdds);
         }
     }
 }

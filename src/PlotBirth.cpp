@@ -403,6 +403,7 @@ namespace NarrativeEngine::PlotBirth
             input.tuning.mishapEnabled = cfg.plotMishapEnabled;
             input.tuning.mishapChance = cfg.plotMishapChanceBase;
             input.tuning.preparationEase = cfg.plotPreparationEase;
+            input.tuning.alertHardening = cfg.plotAlertHardening;
             input.targetOdds = cfg.plotPlanOdds;
         }
     } // namespace
@@ -426,6 +427,7 @@ namespace NarrativeEngine::PlotBirth
         input.scheme = plot.scheme;
         input.finish = plot.finish;
         input.abandoned = plot.abandoned;
+        input.onGuard = plot.onGuard;
         // The finish is the plan's last step, and still to come: a failed
         // finish ends the plot rather than re-planning it.
         if (!plot.plan.empty() && plot.cursor < plot.plan.size()) {

@@ -167,13 +167,20 @@ namespace NarrativeEngine::PlotResolution
         return static_cast<float>(static_cast<double>(threshold) * EaseFactor(preparations, ease));
     }
 
+    double Pressure(int preparations, double ease, bool onGuard, double hardening) noexcept
+    {
+        return EaseFactor(preparations, ease) * (onGuard ? std::max(1.0, hardening) : 1.0);
+    }
+
     double EstimateSuccess(const Estimate& step, const Tuning& tuning, int trials)
     {
         const float whole = SizeThreshold(step.type, step.importance, step.travel);
         const int budget =
             std::max(SizeBudget(step.type, step.importance),
                      MinimumViableBudget(whole, tuning.rateMin, tuning.rateMax, tuning.maxFractionPerTick));
-        const float threshold = EaseThreshold(whole, step.preparations, tuning.preparationEase);
+        const double pressure =
+            Pressure(step.preparations, tuning.preparationEase, step.onGuard, tuning.alertHardening);
+        const float threshold = static_cast<float>(static_cast<double>(whole) * pressure);
 
         TickInputs inputs;
         inputs.roll.competence = step.competence;
@@ -186,7 +193,7 @@ namespace NarrativeEngine::PlotResolution
         inputs.mishap.chanceBase = tuning.mishapChance;
         inputs.mishap.conspicuous = PlotModel::IsConspicuous(step.type);
         inputs.mishap.competence = step.competence;
-        inputs.mishap.easing = EaseFactor(step.preparations, tuning.preparationEase);
+        inputs.mishap.easing = pressure;
 
         // One fixed stream for every estimate, so planning the same plan
         // twice plans it the same way.
@@ -301,7 +308,7 @@ namespace NarrativeEngine::PlotResolution
             chance *= 2.5;
         }
         chance *= 1.0 - 0.5 * competence;
-        chance *= std::clamp(inputs.easing, 0.0, 1.0);
+        chance *= std::max(0.0, inputs.easing);
 
         return NextUniform(rng) < std::clamp(chance, 0.0, 1.0);
     }

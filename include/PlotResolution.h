@@ -97,6 +97,12 @@ namespace NarrativeEngine::PlotResolution
     // A threshold eased by its preparations: threshold * EaseFactor.
     [[nodiscard]] float EaseThreshold(float threshold, int preparations, double ease);
 
+    // What a step's circumstances do to its work and its chance of a
+    // mishap together: what its preparations leave, raised by `hardening`
+    // when the person it is done to is on guard -- they caught one of the
+    // plot's agents before. Below 1 a step is easier, above it harder.
+    [[nodiscard]] double Pressure(int preparations, double ease, bool onGuard, double hardening) noexcept;
+
     // The settings a step's race is run with, gathered so a planner can run
     // it without reading Settings.
     struct Tuning
@@ -107,6 +113,7 @@ namespace NarrativeEngine::PlotResolution
         bool mishapEnabled = true;
         double mishapChance = 0.012;
         double preparationEase = 0.8;
+        double alertHardening = 1.25;
     };
 
     // A step as planning knows it: no agent yet and no trip, so an ordinary
@@ -117,6 +124,8 @@ namespace NarrativeEngine::PlotResolution
         double importance = 0.25;
         double travel = 0.5;
         int preparations = 0;
+        // The person it is done to caught one of the plot's agents before.
+        bool onGuard = false;
         double competence = 0.5;
         double suitability = 0.5;
     };
@@ -187,8 +196,10 @@ namespace NarrativeEngine::PlotResolution
         // happens to.
         bool conspicuous = false;
         double competence = 0.5;
-        // The share of the chance a step's preparations leave, 0 to 1. An
-        // agent who watched the mark first is less likely to be seen.
+        // What the step's circumstances do to the chance, from Pressure:
+        // below 1 when it was prepared -- an agent who watched the mark
+        // first is less likely to be seen -- above it when the mark is on
+        // guard.
         double easing = 1.0;
     };
 
