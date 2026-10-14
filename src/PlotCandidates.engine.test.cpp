@@ -258,10 +258,23 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
         f.population.members.push_back(torvar);
         const auto authority = SlotOf("denounce", "authority");
 
-        SECTION("should offer only those who outrank them there, ahead of any jarl")
+        SECTION("should offer only those who outrank them there, when their hold has no court")
         {
             f.filled.push_back({"mark", kColleague, "Vilkas"});
             REQUIRE(Forms(PlotCandidates::Build(authority, f.Request())) == std::vector<RE::FormID>{kKodlak});
+        }
+
+        SECTION("should offer their hold's court alongside those who outrank them")
+        {
+            constexpr RE::FormID kBalgruuf = 0x00010009;
+            auto balgruuf = Person(kBalgruuf, "Balgruuf", kWhiterunHold, kWhiterun);
+            balgruuf.office = PlotCasting::Office::Jarl;
+            f.population.members.push_back(balgruuf);
+            f.filled.push_back({"mark", kColleague, "Vilkas"});
+            const auto list = PlotCandidates::Build(authority, f.Request());
+            REQUIRE(list.size() == 2);
+            REQUIRE(Has(list, kKodlak));
+            REQUIRE(Has(list, kBalgruuf));
         }
 
         SECTION("should fall through to the hold courts for the one nobody outranks")
@@ -280,13 +293,16 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
         f.population.members.push_back(balgruuf);
         const auto authority = SlotOf("petition", "authority");
 
-        SECTION("should go to the mastermind's superior where they have one")
+        SECTION("should go to the mastermind's superior where they have one, or their hold's court")
         {
             f.population.members[0].factions[0].standing = 0.6;
             auto kodlak = Person(kKodlak, "Kodlak", kWhiterunHold, kWhiterun);
             kodlak.factions.push_back({kCompanions, 1.0, true});
             f.population.members.push_back(kodlak);
-            REQUIRE(Forms(PlotCandidates::Build(authority, f.Request())) == std::vector<RE::FormID>{kKodlak});
+            const auto list = PlotCandidates::Build(authority, f.Request());
+            REQUIRE(list.size() == 2);
+            REQUIRE(Has(list, kKodlak));
+            REQUIRE(Has(list, kBalgruuf));
         }
 
         SECTION("should go to the mastermind's hold court where nobody outranks them")
@@ -895,6 +911,20 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
         {
             REQUIRE(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Jarl Vigilia Rulcanella"}})
                         .problem.find("'Jarl Vigilia Rulcanella' names nobody in Skyrim, for the mark")
+                    != std::string::npos);
+        }
+
+        SECTION("should say a role takes one person's name when the words are a group's")
+        {
+            REQUIRE(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "the East Empire Company"}})
+                        .problem.find("; a person's role takes one person's name, never a group's or a place's")
+                    != std::string::npos);
+        }
+
+        SECTION("should say when the role names the mastermind")
+        {
+            REQUIRE(resolve("denounce", {{"mark", 0, "Hulda"}, {"authority", 0, "Olfrid"}})
+                        .problem.find("Olfrid is the one scheming and cannot be in their own scheme, for the authority")
                     != std::string::npos);
         }
 

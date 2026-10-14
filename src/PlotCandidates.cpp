@@ -577,11 +577,13 @@ namespace NarrativeEngine::PlotCandidates
         }
 
         // Who a person role's words name: the living people they name most
-        // surely, and when there are none, why -- for the refusal.
+        // surely, and when there are none, why -- for the refusal -- and what
+        // to tell the retry when the words name nobody at all.
         struct Called
         {
             std::vector<const PlotCasting::Member*> living;
             std::string why;
+            std::string hint;
         };
 
         Called PeopleCalled(const Request& request, std::string_view text)
@@ -600,6 +602,16 @@ namespace NarrativeEngine::PlotCandidates
                 out.living.push_back(&members[i]);
             }
             if (!out.living.empty()) {
+                return out;
+            }
+
+            // The mastermind, who is left out of every role of their own
+            // scheme. Without this they were said to be nobody in Skyrim.
+            if (const auto self =
+                    Closest(names, text, [&](std::size_t k) { return members[k].npc == request.mastermind; });
+                !self.empty()) {
+                out.why =
+                    std::format("{} is the one scheming and cannot be in their own scheme", members[self.front()].name);
                 return out;
             }
 
@@ -623,7 +635,10 @@ namespace NarrativeEngine::PlotCandidates
                 out.why = std::format("{} cannot take part in these plots ({})", a.name, a.reason);
                 return out;
             }
+            // Most often a company, a family or a court named as if it were
+            // somebody: "the East Empire Company", "Honningbrew Meadery".
             out.why = std::format("'{}' names nobody in Skyrim", text);
+            out.hint = "; a person's role takes one person's name, never a group's or a place's";
             return out;
         }
 
@@ -727,7 +742,7 @@ namespace NarrativeEngine::PlotCandidates
                 }
                 const auto called = PeopleCalled(here, text);
                 if (called.living.empty()) {
-                    problems.push_back(std::format("{}, for {}{}", called.why, role, Admitted(list)));
+                    problems.push_back(std::format("{}, for {}{}{}", called.why, role, Admitted(list), called.hint));
                     markLost = markLost || slot.name == "mark";
                     continue;
                 }
@@ -922,16 +937,19 @@ namespace NarrativeEngine::PlotCandidates
         }
 
         case Rule::AuthorityOverMark: {
-            // Who hears a denunciation is whoever the mark answers to. First
-            // their superiors in an organisation they belong to: a College
-            // mage answers to the College's senior mages, a Black-Briar to
-            // the family's head, a steward to the jarl, courts being rostered
-            // organisations too. Only for a mark nobody stands above does it
-            // fall to jurisdiction: the court of the mark's hold, else of the
-            // mastermind's, else any. Each list is narrowed rather than
-            // reordered, because the decision model does not weigh order:
-            // offered Falk Firebeard's own jarl first, it sent his
-            // denunciation of a Solitude thane to Riften.
+            // Who hears a denunciation is whoever the mark answers to: their
+            // superiors in an organisation they belong to -- a College mage
+            // answers to the College's senior mages, a Black-Briar to the
+            // family's head, a steward to the jarl, courts being rostered
+            // organisations too -- and, together with them, whoever holds
+            // jurisdiction where the mark lives: the stronghold's chief, or
+            // the court of their hold above them. A Battle-Born answers to
+            // Olfrid and to Balgruuf alike. Only for a mark with neither does
+            // it fall further: to the organisation an official leads, then to
+            // the court of the mastermind's hold, else any. Each list is
+            // narrowed rather than reordered, because the decision model
+            // does not weigh order: offered Falk Firebeard's own jarl first,
+            // it sent his denunciation of a Solitude thane to Riften.
             //
             // A step with no mark -- a petition -- asks on the mastermind's
             // behalf, so it goes to whoever the mastermind answers to.
@@ -939,24 +957,25 @@ namespace NarrativeEngine::PlotCandidates
             const auto* mark = Mark(request);
             const auto* boss = request.population.Find(request.mastermind);
             const auto* subject = mark != nullptr ? mark : boss;
-            if (subject != nullptr) {
-                const auto superiors = Gather(
-                    ctx, [subject](const PlotCasting::Member& m, const auto&) { return OutranksIn(m, *subject); });
-                if (!superiors.empty()) {
-                    return People(slot, ctx, superiors, limits.people);
-                }
-            }
             if (subject == nullptr) {
                 return {};
             }
+            auto answersTo =
+                Gather(ctx, [subject](const PlotCasting::Member& m, const auto&) { return OutranksIn(m, *subject); });
+            const auto add = [&answersTo](const std::vector<Ranked>& more) {
+                for (const auto& r : more) {
+                    if (std::none_of(answersTo.begin(), answersTo.end(), [&r](const Ranked& had) {
+                            return had.member == r.member;
+                        })) {
+                        answersTo.push_back(r);
+                    }
+                }
+            };
 
             // A stronghold's people answer to its chief, wherever it stands.
             const auto chiefs = Gather(ctx, [subject](const PlotCasting::Member& m, const auto&) {
                 return m.office == Office::OrcChief && m.settlement == subject->settlement;
             });
-            if (!chiefs.empty()) {
-                return People(slot, ctx, chiefs, limits.people);
-            }
 
             // Then the court, and only those on it above the subject: a
             // steward is answerable to the jarl, never to the guard captain.
@@ -970,8 +989,9 @@ namespace NarrativeEngine::PlotCandidates
                 });
                 return local;
             };
-            if (const auto local = inHold(*subject); !local.empty()) {
-                return People(slot, ctx, local, limits.people);
+            add(!chiefs.empty() ? chiefs : inHold(*subject));
+            if (!answersTo.empty()) {
+                return People(slot, ctx, answersTo, limits.people);
             }
 
             // An official nobody in their own hold stands above -- a jarl, a

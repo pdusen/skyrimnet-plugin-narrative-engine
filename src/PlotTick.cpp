@@ -143,6 +143,12 @@ namespace NarrativeEngine::PlotTick
 
             PlotCasting::Release(state.occupancy, plot.mastermind, gameDay, CooldownsFromSettings());
 
+            // What the mastermind has done, for their next scheme call. A
+            // mastermind who is gone schemes no more.
+            if (outcome != PlotModel::PlotOutcome::MastermindLost) {
+                state.RememberScheme(plot.mastermind, plot.scheme, status == PlotModel::PlotStatus::Succeeded);
+            }
+
             // Given up, by choice or by the cap, with the mastermind alive to
             // remember it. A dead mastermind keeps nothing.
             if (outcome == PlotModel::PlotOutcome::Conceded || outcome == PlotModel::PlotOutcome::AdaptationCapHit) {
@@ -542,7 +548,7 @@ namespace NarrativeEngine::PlotTick
             // Compose fills in the mastermind as well as the scheme,
             // because which of the shortlist it is is its first answer.
             std::size_t decisions = 0;
-            if (!PlotBirth::Compose(pt, population, shortlist, plot, decisions)) {
+            if (!PlotBirth::Compose(pt, population, shortlist, state.past, plot, decisions)) {
                 // Rejected at one of the three stages. The slot is never
                 // taken and the id is never spent, so a run of bad
                 // responses costs call budget and nothing else -- no

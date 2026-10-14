@@ -253,7 +253,24 @@ namespace NarrativeEngine::PlotBirth
             return PlotCandidates::MadeExamples(request, kMadeExamplesPerCraft);
         }
 
-        nlohmann::json AmbitionContext(const PlotCasting::Member& boss, const std::vector<std::string>& made)
+        // The schemes `boss` has finished with: those brought off, or those
+        // that failed.
+        std::vector<std::string> PastSchemes(const std::vector<PlotModel::PastScheme>& past,
+                                             const PlotCasting::Member& boss,
+                                             bool succeeded)
+        {
+            std::vector<std::string> out;
+            for (const auto& p : past) {
+                if (p.mastermind == boss.npc && p.succeeded == succeeded) {
+                    out.push_back(p.scheme);
+                }
+            }
+            return out;
+        }
+
+        nlohmann::json AmbitionContext(const PlotCasting::Member& boss,
+                                       const std::vector<std::string>& made,
+                                       const std::vector<PlotModel::PastScheme>& past)
         {
             nlohmann::json ctx;
 
@@ -287,6 +304,8 @@ namespace NarrativeEngine::PlotBirth
             ctx["verbs"] = std::move(verbs);
             ctx["items"] = PoolItemNames();
             ctx["made"] = made;
+            ctx["accomplished"] = PastSchemes(past, boss, true);
+            ctx["failed"] = PastSchemes(past, boss, false);
             return ctx;
         }
 
@@ -487,6 +506,7 @@ namespace NarrativeEngine::PlotBirth
     bool Compose(const PlotThread::Token& pt,
                  const PlotCasting::Population& population,
                  const std::vector<RE::FormID>& shortlist,
+                 const std::vector<PlotModel::PastScheme>& past,
                  PlotModel::Plot& plot,
                  std::size_t& decisions)
     {
@@ -534,11 +554,12 @@ namespace NarrativeEngine::PlotBirth
         // A gift's item may be a thing the mastermind's people can make, as
         // well as one from the pool, so the call is shown some of those too.
         const auto made = MadeNames(population, *boss);
+        const auto accomplished = PastSchemes(past, *boss, true);
         const auto ambition = AskTwice<AmbitionOutcome>(
             pt,
             kAmbitionPrompt,
-            [&] { return AmbitionContext(*boss, made); },
-            [player = PlayerName(), &population, boss](const std::string& response) {
+            [&] { return AmbitionContext(*boss, made, past); },
+            [player = PlayerName(), &population, boss, &accomplished](const std::string& response) {
                 const auto resolveRoles = [&population, boss](const PlotVerbs::Verb& goal,
                                                               const std::vector<PlotModel::SlotValue>& named,
                                                               std::vector<PlotModel::SlotValue>& resolved) {
@@ -555,7 +576,7 @@ namespace NarrativeEngine::PlotBirth
                     resolved = std::move(resolution.values);
                     return resolution.problem;
                 };
-                return ParseAmbition(response, TextLimits{}, player, resolveRoles);
+                return ParseAmbition(response, TextLimits{}, player, resolveRoles, accomplished);
             },
             boss->name,
             "ambition");

@@ -113,6 +113,25 @@ namespace NarrativeEngine::PlotBirth
             }
             return true;
         }
+
+        // A line rather than a sentence: no trailing period.
+        std::string AsLine(std::string text)
+        {
+            while (!text.empty() && (text.back() == '.' || std::isspace(static_cast<unsigned char>(text.back())))) {
+                text.pop_back();
+            }
+            return text;
+        }
+
+        // Two schemes as the same line, whatever their case.
+        bool SameLine(std::string_view a, std::string_view b)
+        {
+            const auto x = AsLine(std::string{a});
+            const auto y = AsLine(std::string{b});
+            return std::ranges::equal(x, y, [](char l, char r) {
+                return std::tolower(static_cast<unsigned char>(l)) == std::tolower(static_cast<unsigned char>(r));
+            });
+        }
     } // namespace
 
     CastOutcome ParseCast(const std::string& response, const std::vector<RE::FormID>& shortlist)
@@ -182,7 +201,8 @@ namespace NarrativeEngine::PlotBirth
     AmbitionOutcome ParseAmbition(const std::string& response,
                                   const TextLimits& limits,
                                   std::string_view playerName,
-                                  const RoleResolver& resolveRoles)
+                                  const RoleResolver& resolveRoles,
+                                  const std::vector<std::string>& accomplished)
     {
         AmbitionOutcome out;
 
@@ -199,7 +219,19 @@ namespace NarrativeEngine::PlotBirth
             out.ambition.clear();
             return out;
         }
-        out.scheme = PlotVerbs::Plain(out.scheme);
+        out.scheme = AsLine(PlotVerbs::Plain(out.scheme));
+
+        // Done already, so not a step toward anything: a scheme that
+        // succeeded was proposed again, word for word, a dozen ticks later.
+        for (const auto& done : accomplished) {
+            if (SameLine(out.scheme, done)) {
+                out.rejection = "the scheme '" + out.scheme
+                                + "' is one this person has already accomplished; choose a different one";
+                out.ambition.clear();
+                out.scheme.clear();
+                return out;
+            }
+        }
 
         // The kind of step the scheme ends in, from the list it was shown.
         // Planning puts it last and builds back from it, so a goal the
@@ -241,7 +273,7 @@ namespace NarrativeEngine::PlotBirth
         }
         // The finish is written from the verb list, so it is where an id
         // turns up: "spread_rumors about the court historian".
-        out.finish = PlotVerbs::Plain(out.finish);
+        out.finish = AsLine(PlotVerbs::Plain(out.finish));
 
         if (!SchemeOpensWithVerb(out.finish)) {
             out.rejection = "the finish must open with a plain verb, as an instruction: '" + out.finish + "'";
@@ -324,7 +356,7 @@ namespace NarrativeEngine::PlotBirth
             return out;
         }
 
-        if (out.ambition == out.scheme) {
+        if (SameLine(out.ambition, out.scheme)) {
             out.ambition.clear();
             out.scheme.clear();
             out.rejection = "the scheme is word for word the ambition; a scheme is a step toward the agenda, "

@@ -16,6 +16,8 @@
      made [string] — a few things the mastermind's own craftsmen can make,
        as they are said; empty when nobody they can send makes anything.
      player — the player character's name; empty before it is known.
+     accomplished [string] — schemes this person has already brought off.
+     failed [string] — schemes this person tried and failed at, or gave up.
    NOTE: no fenced blocks and no literal braces anywhere in this file; both
    break the render. See docs/CUSTOM_PROMPTS.md. #}
 [ system ]
@@ -170,6 +172,9 @@ object.
   with or live near -- and a denunciation, an exposure or a petition goes
   to whoever has authority over the person it is about. Authority runs
   only upward: a steward answers to the jarl, never to the guard captain.
+  A person's role holds ONE person's name -- never a company, a family, a
+  business or a guild, which are not people and cannot be found. The one
+  exception follows.
   A jarl, or an orc chief, has nobody above them: denouncing or exposing
   one is done before the whole of what they lead, so name that as the
   authority, such as their court. A jarl has nobody to petition.
@@ -188,7 +193,9 @@ this person would actually know.
   `finish` and `roles`.
 - `roles` MUST name every role listed for `goal`, each a name that
   exists in Skyrim. A role left out, or a name nobody has, is thrown
-  away.
+  away. A person's role is one person's name, never a group or a place,
+  save for the exposure of a jarl or a chief.
+- The scheme MUST NOT be one this person has already accomplished.
 - `goal` MUST be one of the ids listed under "how the scheme ends". Any
   other word is thrown away.
 - `finish` MUST open with a plain verb, and must name the people its step
@@ -206,6 +213,9 @@ this person would actually know.
 {{ retry }}
 
 Do not repeat that mistake. Everything else about the task is unchanged.
+If correcting it changes who or what fills a role, rewrite the scheme and
+the finish to match: all three must tell the same story, about the same
+people.
 {% endif %}
 
 ## Who is scheming
@@ -240,6 +250,27 @@ it fits the person; a scheme that fits a memory but not the person is
 not.
 
 {% for m in memories %}- {{ m }}
+{% endfor %}
+{% endif %}
+
+{% if length(accomplished) > 0 %}
+## Already done
+
+{{ mastermind.name }} has already brought off these schemes. They are
+finished: the new scheme must be something else, a further step rather
+than the same one again.
+
+{% for s in accomplished %}- {{ s }}
+{% endfor %}
+{% endif %}
+{% if length(failed) > 0 %}
+## Tried and failed
+
+{{ mastermind.name }} tried these and failed, or gave them up. They may
+come back to one, but the people it touched are wary now; another way
+toward the same ambition is often the wiser one.
+
+{% for s in failed %}- {{ s }}
 {% endfor %}
 {% endif %}
 

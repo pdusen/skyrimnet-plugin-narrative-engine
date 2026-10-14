@@ -2649,6 +2649,108 @@ preparation rules passed unchanged, and the plugin builds with no warnings.
 them (Step 43). An exposure to a court can now be prepared to its odds, rather than going ahead at whatever it
 started at.
 
+### Step 48 — A mastermind does not repeat a scheme they have finished
+
+- [x] Complete
+
+**[CLAUDE]**
+
+Step 9's twelfth attempt bore Nenya's "falsify the quarterly tax reports sent to Solitude regarding Siddgeir's personal
+spending" twelve ticks after the same scheme had succeeded, and Raerek's dossier on Ondolemar twice over. The scheme
+call knows nothing of what its mastermind has done: no memory records a plot's success, and an ended plot is reaped.
+
+- **A record of past schemes.** The plot state keeps each mastermind's last six schemes and whether they succeeded,
+  written when a plot ends and saved with it at co-save record version 14. A plot that ends because its mastermind is
+  gone is not kept.
+- **The scheme call is told.** The prompt lists what the mastermind has already accomplished, which must not be done
+  again, and what they tried and failed at, which they may return to by another way.
+- **And held to it.** An answer whose scheme is one the mastermind has already accomplished, compared without case
+  or a trailing period, is refused, which the retry is told.
+
+**Verification:** the co-save suite asserts the record survives a save; the birth parse suite asserts a scheme already
+accomplished is refused.
+
+Done. `PlotState::past` holds `PlotModel::PastScheme` rows, kept by `RememberScheme` at `kPastSchemesKept` per
+mastermind; `EndPlot` records each. `Compose` takes them, shows the prompt `accomplished` and `failed`, and hands
+`ParseAmbition` the accomplished ones. The co-save is at record version 14, so older saves lose their plots.
+
+### Step 49 — A retried scheme is rewritten to match its roles
+
+- [x] Complete
+
+**[CLAUDE]**
+
+Thongvor's first answer named himself as the authority. His retry chose a different mark, Ondolemar, and kept the
+scheme "expose Elenwen's coercive dealings in Markarth", which then titled a plot that exposes Ondolemar to Elenwen. The
+retry note now says a corrected role changes the answer around it: the scheme and the finish are rewritten to agree
+with the roles.
+
+**Verification:** prompt only; the next attempt at Step 9 is the check.
+
+Done, in the ambition prompt's retry block.
+
+### Step 50 — A role naming the mastermind says so
+
+- [x] Complete
+
+**[CLAUDE]**
+
+The same refusal read "'Thongvor Silver-Blood' names nobody in Skyrim", because name resolution leaves the mastermind
+out. A role that names the mastermind is now refused as "Thongvor Silver-Blood is the one scheming, and cannot be the
+authority", followed by who can be, as any refusal is.
+
+**Verification:** the candidates suite asserts the refusal of a role naming the mastermind.
+
+Done, in `PeopleCalled`, which looks for the mastermind once the living are found to have nobody of that name.
+
+### Step 51 — A mark answers to their hold's court as well as their superiors
+
+- [x] Complete
+
+**[CLAUDE]**
+
+Step 41 narrowed a denunciation's authority to a mark's superiors in an organisation, and only for a mark with none to
+their hold's court. A Battle-Born could therefore be exposed only to Olfrid, and Fralia Gray-Mane's exposure of one to
+Balgruuf was refused. The authority is now the mark's superiors and the stronghold chief or the court of their hold
+above them, together. The list stays narrow -- everybody on it is somebody with a claim on the mark -- so Step 41's
+reason for narrowing holds. The fallbacks for a mark with neither are unchanged.
+
+**Verification:** the candidates suite asserts a member of a family with a head can be denounced to their jarl as
+well as to the head.
+
+Done. A petition's authority follows the same rule, so a mastermind with a superior may now petition their jarl too;
+the suite's petition case was widened to say so.
+
+### Step 52 — A person's role names one person
+
+- [x] Complete
+
+**[CLAUDE]**
+
+Three births died on a role naming a group or a place as a person: "the East Empire Company", "Honningbrew Meadery",
+"the Solitude court". The prompt now says a person's role holds one person's name -- never a company, a family, a
+business or a court, outside the exposure of a jarl or chief -- and a refusal for a name that finds nobody says the
+same, so the retry is told what kind of name was wanted.
+
+**Verification:** the candidates suite asserts the refusal's wording.
+
+Done. The prompt keeps its one exception, a jarl's or a chief's exposure to the organisation they lead.
+
+### Step 53 — A scheme and its finish lose a trailing period
+
+- [x] Complete
+
+**[CLAUDE]**
+
+A scheme is a plot's title and is quoted inside a memory after "as part of my plan to", and a finish is a line in the
+plots log; neither is a sentence. "Forge a dossier linking Ondolemar to Forsworn gold." arrived with its period. The
+parse strips trailing periods from both.
+
+**Verification:** the birth parse suite asserts the period is gone.
+
+Done. The check that a scheme is not its own ambition now compares the two as lines too, without case or a period.
+494 tests pass and the plugin builds with no warnings.
+
 ---
 
 ## Open questions

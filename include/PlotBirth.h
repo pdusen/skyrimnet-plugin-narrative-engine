@@ -8,6 +8,7 @@
 #include <PlotCasting.h>
 #include <PlotModel.h>
 #include <PlotPlanning.h>
+#include <PlotState.h>
 #include <PlotThread.h>
 #include <PlotVerbs.h>
 
@@ -165,10 +166,19 @@ namespace NarrativeEngine::PlotBirth
     // whose roles do not fit is refused with the resolver's reason; without
     // one, only their presence is checked. Who and what the finish's prose
     // names is not read: prose does not say which name fills which role.
+    //
+    // `accomplished` holds the schemes the mastermind has already brought
+    // off. One of them again is refused, compared without case or a
+    // trailing period.
+    //
+    // The scheme and the finish come back without a trailing period: the
+    // one is a title and is quoted mid-sentence in memories, the other is a
+    // line of the log.
     [[nodiscard]] AmbitionOutcome ParseAmbition(const std::string& response,
                                                 const TextLimits& limits,
                                                 std::string_view playerName = {},
-                                                const RoleResolver& resolveRoles = {});
+                                                const RoleResolver& resolveRoles = {},
+                                                const std::vector<std::string>& accomplished = {});
 
     // --- Call 3: how ------------------------------------------------------
     //
@@ -227,11 +237,16 @@ namespace NarrativeEngine::PlotBirth
     // slot and spends no plot id, so a birth that dies at call 3 costs
     // call budget and nothing else.
     //
+    // `past` is every mastermind's finished schemes; the chosen one's are
+    // shown to the scheme call, and one they brought off is not accepted
+    // again.
+    //
     // `decisions` is how many decisions planning asked, kept or not, for
     // the trace.
     [[nodiscard]] bool Compose(const PlotThread::Token& pt,
                                const PlotCasting::Population& population,
                                const std::vector<RE::FormID>& shortlist,
+                               const std::vector<PlotModel::PastScheme>& past,
                                PlotModel::Plot& plot,
                                std::size_t& decisions);
 } // namespace NarrativeEngine::PlotBirth

@@ -305,6 +305,16 @@ namespace NarrativeEngine::PlotSerialize
             }
         }
 
+        if (!WritePod(sink, static_cast<std::uint32_t>(state.past.size()))) {
+            return false;
+        }
+        for (const auto& p : state.past) {
+            if (!WritePod(sink, p.mastermind) || !WriteString(sink, p.scheme)
+                || !WritePod(sink, static_cast<std::uint8_t>(p.succeeded ? 1 : 0))) {
+                return false;
+            }
+        }
+
         // Counters are session-scoped diagnostics, deliberately NOT
         // saved: they describe what this session did, and carrying them
         // across a load would make "plots born" a number nobody can
@@ -448,6 +458,25 @@ namespace NarrativeEngine::PlotSerialize
                 row.plotId = 0;
             }
             state.occupancy[npc] = row;
+        }
+
+        // A past scheme whose mastermind no longer resolves is dropped: they
+        // will scheme no more.
+        std::uint32_t pastCount{};
+        if (!ReadPod(source, pastCount) || pastCount > kMaxCollection) {
+            return fail();
+        }
+        for (std::uint32_t i = 0; i < pastCount; ++i) {
+            RE::FormID saved{};
+            PlotModel::PastScheme p;
+            std::uint8_t succeeded{};
+            if (!ReadPod(source, saved) || !ReadString(source, p.scheme) || !ReadPod(source, succeeded)) {
+                return fail();
+            }
+            if (saved != 0 && source.ResolveFormID(saved, p.mastermind)) {
+                p.succeeded = succeeded != 0;
+                state.past.push_back(std::move(p));
+            }
         }
 
         return true;

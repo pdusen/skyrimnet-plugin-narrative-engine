@@ -1272,6 +1272,37 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
         }
     }
 
+    SECTION("when the scheme and the finish end in a period")
+    {
+        j["scheme"] = "expose Hulda's skooma trade.";
+        j["finish"] = "denounce Hulda to Balgruuf.";
+        const auto out = ParseAmbition(j.dump(), TextLimits{});
+
+        SECTION("should drop it from both, as lines rather than sentences")
+        {
+            REQUIRE(out.ok);
+            REQUIRE(out.scheme == "expose Hulda's skooma trade");
+            REQUIRE(out.finish == "denounce Hulda to Balgruuf");
+        }
+    }
+
+    SECTION("when the scheme is one the mastermind has already accomplished")
+    {
+        j["finish"] = "denounce Hulda to Balgruuf";
+        const auto out = ParseAmbition(j.dump(), TextLimits{}, {}, {}, {"Expose Hulda's skooma trade."});
+
+        SECTION("should refuse it, whatever its case or period, saying why")
+        {
+            REQUIRE_FALSE(out.ok);
+            REQUIRE(out.rejection.find("already accomplished") != std::string::npos);
+        }
+
+        SECTION("should accept one they have not")
+        {
+            REQUIRE(ParseAmbition(j.dump(), TextLimits{}, {}, {}, {"ruin Hulda's farm"}).ok);
+        }
+    }
+
     SECTION("when the finish opens with a name rather than a verb")
     {
         j["finish"] = "Hulda is denounced to Balgruuf";

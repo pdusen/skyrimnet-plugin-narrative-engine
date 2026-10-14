@@ -438,6 +438,8 @@ TEST_CASE("PlotVerbs steps survive the co-save", "[PlotVerbs][engine]")
     plot.history.push_back(Filled("steal"));
     plot.history.back().sizingEase = 0.64f;
     state.plots.push_back(plot);
+    state.RememberScheme(0x0001A000, "forge a dossier on Ondolemar", true);
+    state.RememberScheme(0x0001A000, "win the Skaal's trust", false);
 
     PlotSerialize::VectorSink sink;
     REQUIRE(PlotSerialize::WriteState(state, sink));
@@ -477,6 +479,15 @@ TEST_CASE("PlotVerbs steps survive the co-save", "[PlotVerbs][engine]")
             }
         }
 
+        SECTION("should keep the mastermind's past schemes and how each went")
+        {
+            REQUIRE(loaded.past.size() == 2);
+            REQUIRE(loaded.past[0].mastermind == 0x0001A000);
+            REQUIRE(loaded.past[0].scheme == "forge a dossier on Ondolemar");
+            REQUIRE(loaded.past[0].succeeded);
+            REQUIRE_FALSE(loaded.past[1].succeeded);
+        }
+
         SECTION("should keep who is on guard against the plot")
         {
             REQUIRE(loaded.plots[0].onGuard == std::vector<RE::FormID>{0x0001B001});
@@ -510,6 +521,25 @@ TEST_CASE("PlotVerbs steps survive the co-save", "[PlotVerbs][engine]")
         {
             REQUIRE(dropped == 1);
             REQUIRE(loaded.plots.empty());
+        }
+    }
+}
+
+TEST_CASE("PlotState keeps a mastermind's last few schemes", "[PlotVerbs][engine]")
+{
+    NarrativeEngine::PlotState state;
+    for (std::size_t i = 0; i < PlotModel::kPastSchemesKept + 2; ++i) {
+        state.RememberScheme(0x0001A000, "scheme " + std::to_string(i), true);
+    }
+    state.RememberScheme(0x0001A001, "somebody else's", false);
+
+    SECTION("when a mastermind has finished more than are kept")
+    {
+        SECTION("should drop their oldest, and nobody else's")
+        {
+            REQUIRE(state.past.size() == PlotModel::kPastSchemesKept + 1);
+            REQUIRE(state.past.front().scheme == "scheme 2");
+            REQUIRE(state.past.back().mastermind == 0x0001A001);
         }
     }
 }

@@ -48,7 +48,7 @@ namespace NarrativeEngine::PlotSerialize
     // v8 (Milestone 2 step 3) adds each step's verb and its filled slots.
     // v9 (Milestone 2 step 7) drops a step's agent query and free-text
     // target, which nothing writes once every step is a verb.
-    inline constexpr std::uint32_t kRecordVersion = 13;
+    inline constexpr std::uint32_t kRecordVersion = 14;
 
     class ByteSink
     {

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -71,6 +72,18 @@ namespace NarrativeEngine::PlotModel
         }
     };
 
+    // A scheme a mastermind has finished with, kept after its plot is
+    // reaped so the scheme call can be told what they have already done.
+    struct PastScheme
+    {
+        RE::FormID mastermind = 0;
+        std::string scheme;
+        bool succeeded = false;
+    };
+
+    // How many of a mastermind's past schemes are kept, the newest.
+    inline constexpr std::size_t kPastSchemesKept = 6;
+
     // Session-scoped tallies. Diagnostic, and the first thing the
     // dashboard's budget header reads.
     struct Counters
@@ -97,6 +110,11 @@ namespace NarrativeEngine
         std::vector<PlotModel::Plot> plots;
 
         std::unordered_map<RE::FormID, PlotModel::Occupancy> occupancy;
+
+        // Every mastermind's last few schemes, oldest first. Unlike a
+        // terminal plot this is never reaped: a scheme done a season ago is
+        // still one the mastermind has done.
+        std::vector<PlotModel::PastScheme> past;
 
         std::uint32_t nextPlotId = 1;
 
@@ -158,6 +176,18 @@ namespace NarrativeEngine
         [[nodiscard]] PlotModel::Plot* FindPlot(std::uint32_t id) noexcept
         {
             return const_cast<PlotModel::Plot*>(static_cast<const PlotState*>(this)->FindPlot(id));
+        }
+
+        // Record a mastermind's finished scheme, dropping their oldest past
+        // the kept number.
+        void RememberScheme(RE::FormID mastermind, std::string scheme, bool succeeded)
+        {
+            past.push_back({mastermind, std::move(scheme), succeeded});
+            const auto theirs = [mastermind](const PlotModel::PastScheme& p) { return p.mastermind == mastermind; };
+            if (static_cast<std::size_t>(std::count_if(past.begin(), past.end(), theirs))
+                > PlotModel::kPastSchemesKept) {
+                past.erase(std::find_if(past.begin(), past.end(), theirs));
+            }
         }
 
         // Plots holding a budget slot: active ones only. Terminal plots
