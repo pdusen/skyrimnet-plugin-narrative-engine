@@ -110,6 +110,13 @@ function ProgressRing({ fraction }: { fraction: number }) {
     );
 }
 
+// A plot's title and ambition as a heading and a sentence. Both are the
+// model's words, and it starts them in lower case about as often as not:
+// it writes them as a goal to slot into a sentence, not as one.
+function sentence(text: string): string {
+    return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 function num(v: number, places = 2): string {
     return Number.isFinite(v) ? v.toFixed(places) : '—';
 }
@@ -241,14 +248,14 @@ export function PlotChain({ plot }: { plot: PlotEntry }): ReactNode {
     return (
         <div className={`plot-card ${plot.status}`}>
             <div className="plot-card-header">
-                <h3 className="plot-title">{plot.title}</h3>
+                <h3 className="plot-title">{sentence(plot.title)}</h3>
                 <span className="plot-meta">
                     {plot.mastermind}
                     {plot.adaptations > 0 && `  ·  ${plot.adaptations}/${plot.max_adaptations} adaptations`}
                     {plot.status !== 'active' && `  ·  ${plot.status} (${plot.outcome.replace(/_/g, ' ')})`}
                 </span>
             </div>
-            {plot.ambition && <p className="plot-ambition">{plot.ambition}</p>}
+            {plot.ambition && <p className="plot-ambition">{sentence(plot.ambition)}</p>}
 
             {/* A chain wider than its card scrolls horizontally; nodes keep
                 their size rather than shrinking to fit. */}
@@ -271,8 +278,14 @@ export function PlotChain({ plot }: { plot: PlotEntry }): ReactNode {
                 </div>
             </div>
 
-            {/* Outside the button, so a button is never nested in a button. */}
-            {node && <NodeDetail node={node} />}
+            {/* Outside the button, so a button is never nested in a button.
+
+                Keyed by the node, so moving from one step to another
+                replaces the panel rather than rewriting its text in place.
+                Ultralight repaints a rewritten text node only as far as the
+                new text reaches: the old sentence stayed on screen beneath
+                the new one, showing through wherever the new was shorter. */}
+            {node && <NodeDetail key={node.number} node={node} />}
         </div>
     );
 }
