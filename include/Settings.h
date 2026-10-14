@@ -1136,15 +1136,24 @@ namespace NarrativeEngine::Settings
 
         // What each preparation that succeeded leaves of the step it
         // prepared: its threshold and its per-tick chance of a mishap are
-        // both multiplied by this once per preparation, so two at 0.8
-        // leave 64% of each. The budget is not touched, so preparing
+        // both multiplied by this once per preparation, so two at 0.9
+        // leave 81% of each. The budget is not touched, so preparing
         // raises the odds.
-        float plotPreparationEase = 0.8f;
+        //
+        // Raised from 0.8 after Step 53: one preparation raised a finish's
+        // odds by about fifteen points, so plans overshot their target and
+        // the target barely steered how often plots succeed.
+        float plotPreparationEase = 0.9f;
 
         // The odds, 0 to 1, a plan prepares each preparable step to -- the
         // goal and what gets its items -- before it is done. Higher makes
         // longer plans; 0 prepares only what a lone goal needs.
-        float plotPlanOdds = 0.75f;
+        //
+        // Plots succeed about as often as their finish's planned odds say:
+        // a run planned to an average of 71% succeeded 19 times in 26. A
+        // plot fails only when its finish does, so this is close to the
+        // plot success rate. Lowered from 0.75 after Step 53 to aim at half.
+        float plotPlanOdds = 0.5f;
 
         // What being on guard does to every later step of a plot done to
         // somebody who caught one of its agents: the step's work and its
@@ -1185,7 +1194,12 @@ namespace NarrativeEngine::Settings
         // at 0.012 an unprepared step already succeeded about four times in
         // five, preparing to 85% made nearly every plot succeed, and
         // preparation had little ground to make up.
-        float plotMishapChanceBase = 0.02f;
+        //
+        // Raised to 0.04 after Step 53, with the plan odds lowered to 0.5:
+        // at 0.02 most finishes were above even odds unprepared, so no
+        // target below that could bring plots down to succeeding half the
+        // time, and plans aimed at 0.5 would not have prepared at all.
+        float plotMishapChanceBase = 0.04f;
 
         // Seeds the plot RNG stream. 0 means nondeterministic; any other
         // value makes a run reproducible, which is what the offline
