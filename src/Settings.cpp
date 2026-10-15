@@ -324,6 +324,8 @@ namespace NarrativeEngine::Settings
             dst.plotPlanOdds = static_cast<float>(ini.GetDoubleValue("Plots", "fPlotPlanOdds", dst.plotPlanOdds));
             dst.plotBudgetScale =
                 static_cast<float>(ini.GetDoubleValue("Plots", "fPlotBudgetScale", dst.plotBudgetScale));
+            dst.plotConcedeOdds =
+                static_cast<float>(ini.GetDoubleValue("Plots", "fPlotConcedeOdds", dst.plotConcedeOdds));
             dst.plotAlertHardening =
                 static_cast<float>(ini.GetDoubleValue("Plots", "fPlotAlertHardening", dst.plotAlertHardening));
             dst.plotBirthMemoryCount =

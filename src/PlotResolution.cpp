@@ -180,7 +180,7 @@ namespace NarrativeEngine::PlotResolution
                      MinimumViableBudget(whole, tuning.rateMin, tuning.rateMax, tuning.maxFractionPerTick));
         const double pressure =
             Pressure(step.preparations, tuning.preparationEase, step.onGuard, tuning.alertHardening);
-        const float threshold = static_cast<float>(static_cast<double>(whole) * pressure);
+        const float threshold = EaseThreshold(whole, step.preparations, tuning.preparationEase);
 
         TickInputs inputs;
         inputs.roll.competence = step.competence;

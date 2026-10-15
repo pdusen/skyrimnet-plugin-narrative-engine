@@ -1165,9 +1165,16 @@ namespace NarrativeEngine::Settings
         // putting anybody on guard.
         float plotBudgetScale = 0.7f;
 
+        // A mastermind gives a scheme up when the best way a re-plan finds
+        // has less than this chance of its finish succeeding, rather than
+        // spending agents on a plot that cannot work. 0 never gives up.
+        float plotConcedeOdds = 0.1f;
+
         // What being on guard does to every later step of a plot done to
-        // somebody who caught one of its agents: the step's work and its
-        // chance of a mishap are both multiplied by this.
+        // somebody who caught one of its agents: the step's chance of a
+        // mishap is multiplied by this. Until Step 55 its work was too,
+        // which against a budget that did not grow made a weak agent's
+        // timing out certain: such steps succeeded one time in five.
         float plotAlertHardening = 1.25f;
 
         // The caught-in-the-act roll. Typed failure is load-bearing --
@@ -1214,7 +1221,10 @@ namespace NarrativeEngine::Settings
         // caught, every catch put somebody on guard, and steps against
         // somebody on guard succeeded one time in five. Running out of
         // time took over part of the failing, through fPlotBudgetScale.
-        float plotMishapChanceBase = 0.025f;
+        //
+        // Lowered to 0.02 in Step 55, with plots succeeding 22 times in 58
+        // and a third of all steps caught.
+        float plotMishapChanceBase = 0.02f;
 
         // Seeds the plot RNG stream. 0 means nondeterministic; any other
         // value makes a run reproducible, which is what the offline

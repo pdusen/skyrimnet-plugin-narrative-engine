@@ -2780,6 +2780,31 @@ does not.
 
 Done. 495 tests pass and the plugin builds with no warnings.
 
+### Step 55 — Being on guard is a risk, and a hopeless plot is given up
+
+- [x] Complete
+
+**[CLAUDE]**
+
+Step 9's fourteenth attempt, at Step 54's values, had plots succeed 22 times in 58, with 32% of steps caught and 15%
+out of time. Plans still predicted their plots well -- 19.7 successes expected -- but averaged 34% at their finish, and
+53 plan lines put a step under 10%. Nearly all came from a re-plan after a catch: being on guard multiplied a step's
+work by 1.25 against a budget that did not grow, so a weak agent's running out of time was certain. Thaena's purchase
+from Faralda was 37.6 of work in 11 ticks, which she could not do in under 14. Steps against somebody on guard
+succeeded one time in five, and the plots planned under 10% succeeded once in 21.
+
+- **Being on guard hardens only the chance of a mishap.** A mark watching for somebody is harder to slip past, not a
+  bigger job. The step's work is eased by its preparations alone, in dispatch and in planning's estimate.
+- **`fPlotConcedeOdds`, new, 0.1.** A re-plan whose finish is planned under it is not taken: the mastermind concedes
+  the scheme, and remembers doing so, rather than sending agents after a plot that cannot work.
+- **`fPlotMishapChanceBase` 0.025 to 0.02**, to bring catches below a third of all steps.
+
+**Verification:** the resolution suite asserts being on guard lowers a step's odds and leaves its work unchanged. The
+planning suite asserts a hopeless re-plan is conceded and leaves the plan as it was, and is taken with no limit set.
+
+Done. 495 tests pass, with new sections in the resolution and planning suites, and the plugin builds with no
+warnings.
+
 ---
 
 ## Open questions

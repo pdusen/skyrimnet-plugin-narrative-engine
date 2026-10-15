@@ -386,15 +386,15 @@ namespace NarrativeEngine::PlotTick
                 }
             }
             // And somebody who caught one of the plot's agents before is on
-            // guard, which makes it harder. Both reach the mishap roll too,
-            // on every tick.
+            // guard, which makes the agent likelier to be seen though the
+            // work is no greater. Both reach the mishap roll, on every tick.
             const bool onGuard =
                 step.target != 0
                 && std::find(plot.onGuard.begin(), plot.onGuard.end(), step.target) != plot.onGuard.end();
             const auto pressure =
                 PlotResolution::Pressure(prepared, cfg.plotPreparationEase, onGuard, cfg.plotAlertHardening);
             const float unprepared = step.threshold;
-            step.threshold = static_cast<float>(static_cast<double>(step.threshold) * pressure);
+            step.threshold = PlotResolution::EaseThreshold(step.threshold, prepared, cfg.plotPreparationEase);
             step.sizingEase = static_cast<float>(pressure);
             step.sizingTravel = static_cast<float>(travel);
             step.sizingImportance = static_cast<float>(importance);
@@ -445,7 +445,8 @@ namespace NarrativeEngine::PlotTick
                 [&pt](std::string_view name, const nlohmann::json& ctx) {
                     return SkyrimNetAPI::SendCustomDecision(pt, std::string{name}, ctx.dump());
                 },
-                [&pt](const PlotModel::Plot& p) { return PlotBirth::Replan(pt, PlotPopulation::Get(), p); });
+                [&pt](const PlotModel::Plot& p) { return PlotBirth::Replan(pt, PlotPopulation::Get(), p); },
+                Settings::Get().plotConcedeOdds);
             if (plot.adaptations > before) {
                 ++state.counters.adaptations;
             }

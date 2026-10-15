@@ -100,10 +100,14 @@ namespace NarrativeEngine::PlotResolution
     // A threshold eased by its preparations: threshold * EaseFactor.
     [[nodiscard]] float EaseThreshold(float threshold, int preparations, double ease);
 
-    // What a step's circumstances do to its work and its chance of a
-    // mishap together: what its preparations leave, raised by `hardening`
-    // when the person it is done to is on guard -- they caught one of the
-    // plot's agents before. Below 1 a step is easier, above it harder.
+    // What a step's circumstances do to its chance of a mishap: what its
+    // preparations leave, raised by `hardening` when the person it is done
+    // to is on guard -- they caught one of the plot's agents before. Below 1
+    // an agent is less likely to be seen, above it more. Being on guard
+    // does not touch the work, which is EaseFactor alone: a mark who is
+    // watching for somebody is harder to slip past, not a bigger job, and
+    // more work against a budget that did not grow made the step's timing
+    // out a certainty rather than a risk.
     [[nodiscard]] double Pressure(int preparations, double ease, bool onGuard, double hardening) noexcept;
 
     // The settings a step's race is run with, gathered so a planner can run

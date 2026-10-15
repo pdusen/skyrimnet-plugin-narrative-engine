@@ -1689,6 +1689,31 @@ TEST_CASE("PlotPlanning::Adapt", "[PlotPlanning][engine]")
         }
     }
 
+    SECTION("when the best way left is hopeless")
+    {
+        auto plot = Thonar(0);
+        script.answers = {"substitute"};
+        const auto hopeless = [](const PlotModel::Plot&) {
+            auto out = OneStep("ask_around");
+            out.plan.back().plannedOdds = 0.04f;
+            return out;
+        };
+        const auto planned = plot.plan.size();
+
+        SECTION("should concede, leaving the plan as it was")
+        {
+            const auto a = PlotPlanning::Adapt(plot, 3, ask, hopeless, 0.1);
+            REQUIRE(a.revision == PlotPlanning::Revision::Conceded);
+            REQUIRE(a.reason.find("4%") != std::string::npos);
+            REQUIRE(plot.plan.size() == planned);
+        }
+
+        SECTION("should take it all the same when nothing is too hopeless")
+        {
+            REQUIRE(PlotPlanning::Adapt(plot, 3, ask, hopeless).revision == PlotPlanning::Revision::Substituted);
+        }
+    }
+
     SECTION("when the schemer gives up")
     {
         auto plot = Thonar(0);

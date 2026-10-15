@@ -245,7 +245,15 @@ namespace NarrativeEngine::PlotPlanning
     //
     // There is no retry. A failure says the route it was on does not work,
     // and the same step with somebody else carrying it is the same route.
-    [[nodiscard]] Adaptation Adapt(PlotModel::Plot& plot, int cap, const Ask& ask, const Replanner& replan);
+    //
+    // A way whose finish is planned at less than `giveUpBelow` is no way:
+    // the scheme is conceded instead, and the plan left as it was. Agents
+    // spent on a plot planned at 0% only ever fail.
+    [[nodiscard]] Adaptation Adapt(PlotModel::Plot& plot,
+                                   int cap,
+                                   const Ask& ask,
+                                   const Replanner& replan,
+                                   double giveUpBelow = 0.0);
 
     // Whether an error code means no decision will be answered this
     // session, however many more are asked.

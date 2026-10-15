@@ -91,7 +91,7 @@ TEST_CASE("PlotResolution craft profile", "[PlotResolution][engine]")
             }
         }
 
-        SECTION("should lower the step's estimated odds")
+        SECTION("should lower the step's estimated odds, by its agent's being seen and not by more work")
         {
             PlotResolution::Estimate theft;
             theft.type = StepType::Acquire;
@@ -99,6 +99,11 @@ TEST_CASE("PlotResolution craft profile", "[PlotResolution][engine]")
             guarded.onGuard = true;
             const PlotResolution::Tuning tuning;
             REQUIRE(PlotResolution::EstimateSuccess(guarded, tuning) < PlotResolution::EstimateSuccess(theft, tuning));
+
+            auto workOnly = tuning;
+            workOnly.mishapEnabled = false;
+            REQUIRE(PlotResolution::EstimateSuccess(guarded, workOnly)
+                    == PlotResolution::EstimateSuccess(theft, workOnly));
         }
     }
 

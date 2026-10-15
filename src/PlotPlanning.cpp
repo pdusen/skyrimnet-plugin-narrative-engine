@@ -1088,7 +1088,7 @@ namespace NarrativeEngine::PlotPlanning
         return out;
     }
 
-    Adaptation Adapt(PlotModel::Plot& plot, int cap, const Ask& ask, const Replanner& replan)
+    Adaptation Adapt(PlotModel::Plot& plot, int cap, const Ask& ask, const Replanner& replan, double giveUpBelow)
     {
         // Checked before asking. Whatever the model would say, a plot that
         // has spent its attempts stops, which is what makes "it would not
@@ -1144,6 +1144,15 @@ namespace NarrativeEngine::PlotPlanning
                 return {Revision::Conceded,
                         std::format("no other way could be planned ({})",
                                     !tail.error.empty() ? tail.error : tail.rejection),
+                        0,
+                        tail.decisions,
+                        std::move(abandoned)};
+            }
+            // The tail ends in the finish, re-planned with what has happened.
+            if (const auto odds = !tail.plan.empty() ? tail.plan.back().plannedOdds : -1.0f;
+                odds >= 0.0f && odds < giveUpBelow) {
+                return {Revision::Conceded,
+                        std::format("the best way left gives it {:.0f}%", 100.0f * odds),
                         0,
                         tail.decisions,
                         std::move(abandoned)};
