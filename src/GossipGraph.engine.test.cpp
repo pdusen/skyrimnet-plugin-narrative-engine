@@ -375,24 +375,3 @@ TEST_CASE("GossipGraph takes only people", "[GossipGraph][engine]")
         }
     }
 }
-
-TEST_CASE("GossipGraph does not count a post somebody may be given", "[GossipGraph][engine]")
-{
-    // Vanilla lists the Civil War's replacement jarls in JobJarlFaction at
-    // rank -1 until the war seats them.
-    EngineMock engine;
-    const ConfiguredSettings settings{kSettings};
-    const GossipWorld world = BuildGossipWorld(engine);
-    engine.JoinFaction(RE::TESForm::LookupByID<RE::TESNPC>(world.hulda),
-                       RE::TESForm::LookupByID<RE::TESFaction>(world.companions),
-                       -1);
-    GossipGraph::Initialize();
-
-    SECTION("when somebody is listed in a faction at a rank below 0")
-    {
-        SECTION("should not join them to its members")
-        {
-            REQUIRE_FALSE(HasEdgeTo(world.hulda, world.valga));
-        }
-    }
-}

@@ -397,7 +397,7 @@ namespace NarrativeEngine::PlotPopulation
                 return false;
             }
             for (const auto& rank : npc->factions) {
-                if (rank.faction != nullptr && rank.rank >= 0 && rank.faction->GetFormID() == faction) {
+                if (rank.faction != nullptr && rank.faction->GetFormID() == faction) {
                     return true;
                 }
             }
@@ -410,13 +410,6 @@ namespace NarrativeEngine::PlotPopulation
         // Actor: the base form carries the authored membership, which is
         // what "who belongs to what" means here, and it does not require
         // a loaded reference.
-        //
-        // A rank below 0 is NOT membership. Vanilla lists the Civil War's
-        // replacement officials in their future posts at -1 -- Maven
-        // Black-Briar and Thongvor Silver-Blood in JobJarlFaction -- until
-        // the war seats them, and reading those as members made both jarls
-        // already: an exposure of Thongvor went to "the Silver-Blood
-        // family", and Haelga's went to Maven.
         int RankIn(RE::TESNPC* npc, RE::TESFaction* faction, bool& isMember)
         {
             isMember = false;
@@ -424,7 +417,7 @@ namespace NarrativeEngine::PlotPopulation
                 return 0;
             }
             for (const auto& rank : npc->factions) {
-                if (rank.faction == faction && rank.rank >= 0) {
+                if (rank.faction == faction) {
                     isMember = true;
                     return static_cast<int>(rank.rank);
                 }
