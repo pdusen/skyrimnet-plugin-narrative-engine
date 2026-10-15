@@ -17,17 +17,18 @@
 //                -- or, when the mastermind is their own agent, one memory
 //                of deciding to do it themselves
 //   resolution   the agent, on how it went; the mastermind who sent them, on
-//                hearing of a success
+//                hearing of a success; and everybody the step reached, by
+//                their slot's awareness, each from their slot's own template
 //   answered     the mastermind, on a failed step, once the plot has decided
 //                what to do about it: one memory of the failure, ending in
 //                going on another way when it does
 //   the end      the mastermind, on bringing the scheme off, on its failing
 //                at the finish, or on giving it up
 //
-// Nobody else in a step keeps anything yet: the template set has no memory
-// for a mark, a recipient or a witness (the milestone doc's open question 4).
+// Only the living keep anything: Write skips a keeper who is not alive.
 //
-// See docs/implementation/PHASE_17_MILESTONE_2_RIGID_STEPS.md.
+// See docs/implementation/PHASE_17_MILESTONE_2_RIGID_STEPS.md and
+// PHASE_17_MILESTONE_3_PLOT_MEMORIES.md.
 namespace NarrativeEngine::PlotMemories
 {
     // The tag every plot memory carries, so a reader of SkyrimNet's store

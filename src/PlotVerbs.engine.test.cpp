@@ -180,6 +180,40 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
             }
         }
 
+        SECTION("should give each slot exactly the memories its awareness can fire, in the voice of who is reached")
+        {
+            using PlotVerbs::Awareness;
+            using PlotVerbs::TargetTemplate;
+            for (const auto& verb : PlotVerbs::kVerbs) {
+                const auto dashboard = verb.Text(Template::Dashboard);
+                for (std::size_t i = 0; i < verb.slotCount; ++i) {
+                    const auto& slot = verb.slots[i];
+                    INFO(verb.id << " {" << slot.name << "}");
+                    const bool onFailure = slot.awareness == Awareness::Contact || slot.awareness == Awareness::Failure;
+                    const bool onSuccess = slot.awareness == Awareness::Contact || slot.awareness == Awareness::Success;
+                    REQUIRE(slot.Text(TargetTemplate::Failed).empty() == !onFailure);
+                    REQUIRE(slot.Text(TargetTemplate::Succeeded).empty() == !onSuccess);
+                    for (const auto t : {TargetTemplate::Failed, TargetTemplate::Succeeded}) {
+                        const auto text = slot.Text(t);
+                        if (text.empty()) {
+                            continue;
+                        }
+                        // They saw the agent; they say "me", not their own name;
+                        // they never know the plan; and they know the mastermind
+                        // only where the act itself says whose it is.
+                        REQUIRE(Names(text, "agent"));
+                        REQUIRE_FALSE(Names(text, slot.name));
+                        REQUIRE_FALSE(Names(text, "scheme"));
+                        REQUIRE((!Names(text, "mastermind") || Names(dashboard, "mastermind")));
+                        for (const auto name : PlotVerbs::PlaceholdersIn(text)) {
+                            INFO("{" << name << "}");
+                            REQUIRE((name == "agent" || name == "mastermind" || PlotVerbs::FindSlot(verb, name)));
+                        }
+                    }
+                }
+            }
+        }
+
         SECTION("should give every person slot an awareness, and no other slot one")
         {
             for (const auto& verb : PlotVerbs::kVerbs) {

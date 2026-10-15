@@ -2,6 +2,8 @@
 
 #include <GossipGraph.h>
 #include <logger.h>
+#include <PlotCandidates.h>
+#include <PlotPopulation.h>
 #include <SkyrimNetAPI.h>
 
 #include <algorithm>
@@ -128,6 +130,74 @@ namespace NarrativeEngine::PlotMemories
             return step.actor == plot.mastermind;
         }
 
+        // Being caught at it, or turned away, is what gets talked about:
+        // level with the agent's own failure. Having it done to one openly is
+        // level with the agent's success.
+        constexpr float kTargetFailedImportance = 0.75f;
+        constexpr float kTargetSucceededImportance = 0.55f;
+
+        // Everybody a person slot's template names, besides its keeper: the
+        // agent, the mastermind where the verb's sentence puts them, and
+        // anybody else in the step it mentions. Somebody remembers who they
+        // dealt with, and nobody they did not.
+        std::vector<RE::FormID> NamedIn(const PlotModel::Plot& plot,
+                                        const PlotModel::Step& step,
+                                        std::string_view text,
+                                        RE::FormID keeper)
+        {
+            std::vector<RE::FormID> out;
+            for (const auto name : PlotVerbs::PlaceholdersIn(text)) {
+                RE::FormID npc = 0;
+                if (name == "agent") {
+                    npc = step.actor;
+                } else if (name == "mastermind") {
+                    npc = plot.mastermind;
+                } else if (const auto* value = step.FindSlot(name)) {
+                    const auto* verb = PlotVerbs::Find(step.verb);
+                    const auto* slot = verb != nullptr ? PlotVerbs::FindSlot(*verb, name) : nullptr;
+                    npc = slot != nullptr && slot->kind == PlotVerbs::SlotKind::Person ? value->form : 0;
+                }
+                if (npc != 0 && npc != keeper && std::find(out.begin(), out.end(), npc) == out.end()) {
+                    out.push_back(npc);
+                }
+            }
+            return out;
+        }
+
+        // The people a step reached, each remembering it from their own
+        // slot's template: everybody whose awareness fired for the outcome.
+        // A timeout reaches nobody.
+        void Targets(const PlotModel::Plot& plot, const PlotModel::Step& step, std::vector<Memory>& out)
+        {
+            const auto* verb = PlotVerbs::Find(step.verb);
+            const bool succeeded = step.outcome == PlotModel::StepOutcome::Succeeded;
+            if (verb == nullptr || (!succeeded && step.outcome != PlotModel::StepOutcome::FailedCaught)) {
+                return;
+            }
+            const auto t = succeeded ? PlotVerbs::TargetTemplate::Succeeded : PlotVerbs::TargetTemplate::Failed;
+            for (std::size_t i = 0; i < verb->slotCount; ++i) {
+                const auto& slot = verb->slots[i];
+                if (slot.kind != PlotVerbs::SlotKind::Person || slot.Text(t).empty()
+                    || !PlotCandidates::AwarenessFired(slot.awareness, step.outcome)) {
+                    continue;
+                }
+                const auto* value = step.FindSlot(slot.name);
+                if (value == nullptr || value->form == 0 || value->form == step.actor
+                    || value->form == plot.mastermind) {
+                    continue;
+                }
+                Memory m;
+                m.npc = value->form;
+                m.text = PlotVerbs::RenderTarget(step, slot.name, t);
+                m.importance = succeeded ? kTargetSucceededImportance : kTargetFailedImportance;
+                m.type = "EXPERIENCE";
+                m.related = NamedIn(plot, step, slot.Text(t), m.npc);
+                m.location = PlaceOf(step);
+                m.source = succeeded ? "target_succeeded" : "target_failed";
+                out.push_back(std::move(m));
+            }
+        }
+
         std::string JsonArray(const std::vector<std::string>& items)
         {
             std::string out = "[";
@@ -161,20 +231,24 @@ namespace NarrativeEngine::PlotMemories
             if (!ByOwnHand(plot, step)) {
                 out.push_back(Make(plot, step, plot.mastermind, Template::MastermindToldSucceeded));
             }
+            Targets(plot, step, out);
             return out;
         }
         case PlotModel::StepOutcome::FailedCaught:
-        case PlotModel::StepOutcome::FailedTimeout:
+        case PlotModel::StepOutcome::FailedTimeout: {
             // The agent's own, at once. A mastermind who did it themselves
             // is the agent, and keeps theirs until the plot answers it.
-            if (ByOwnHand(plot, step)) {
-                return {};
+            std::vector<Memory> out;
+            if (!ByOwnHand(plot, step)) {
+                out.push_back(Make(plot,
+                                   step,
+                                   step.actor,
+                                   step.outcome == PlotModel::StepOutcome::FailedCaught ? Template::AgentFailed
+                                                                                        : Template::AgentTimedOut));
             }
-            return {Make(plot,
-                         step,
-                         step.actor,
-                         step.outcome == PlotModel::StepOutcome::FailedCaught ? Template::AgentFailed
-                                                                              : Template::AgentTimedOut)};
+            Targets(plot, step, out);
+            return out;
+        }
         case PlotModel::StepOutcome::None:
             break;
         }
@@ -239,6 +313,13 @@ namespace NarrativeEngine::PlotMemories
         const auto tags = JsonArray({std::format("\"{}\"", kTag)});
         std::size_t written = 0;
         for (const auto& m : memories) {
+            // Only the living remember. A keeper may have died since the step
+            // began, and a memory written to the dead would surface the day
+            // somebody resurrects them, about a plot long over.
+            if (!PlotPopulation::IsAlive(m.npc)) {
+                logger::debug("PlotMemories: {} for 0x{:X} not written: they are not alive", m.source, m.npc);
+                continue;
+            }
             const auto keeper = GossipGraph::ActorRefFor(m.npc);
             if (keeper == 0 || m.text.empty()) {
                 logger::debug("PlotMemories: {} for 0x{:X} not written: no reference or no text", m.source, m.npc);

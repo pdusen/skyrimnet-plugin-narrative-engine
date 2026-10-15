@@ -5,7 +5,7 @@ fixed sentence templates and wrote memories from them at dispatch, at resolution
 the agent completely and the mastermind only in part, and the people a step is done to remember nothing. This
 milestone fills in the rest, so that everybody a plot touches can talk about it.
 
-> **Doc status: in progress; Steps 1–3 complete.** Steps 1–2 complete the mastermind's side, Steps 3–5 give the people a
+> **Doc status: in progress; Steps 1–4 complete.** Steps 1–2 complete the mastermind's side, Steps 3–5 give the people a
 > step reaches memories of their own, and Step 6 is the in-game check. Phase 17's Steps 20–22 (world effects, gossip
 > seeding and their validation) still follow this milestone.
 
@@ -264,7 +264,7 @@ have been structure with nothing to hold.
 
 ### Step 4 — The person a step reaches remembers it
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -278,6 +278,22 @@ and per outcome, exactly who receives which template: a caught `steal` writes `t
 `bribe` writes `target_succeeded` to its mark, a successful `denounce` or `expose` writes it to the mark and the
 authority, a successful `petition` to the authority, a failed appeal `target_failed` to the authority alone, a timeout
 to no target, and a dead target keeps nothing.
+
+Done. `PlotVerbs::Slot` carries `remembers`, indexed by the new `TargetTemplate` (failed, succeeded, noticed), and
+the 21 person slots whose awareness can fire carry their lines; `RenderTarget` fills one from a step. `OnResolve`
+appends a memory for everybody in a slot whose awareness fired for the outcome. 499 tests pass:
+
+- the verb suite holds every slot to exactly the templates its awareness can fire, each naming the agent, never the
+  keeper's own slot or the scheme, and the mastermind only where the verb's sentence does;
+- the memory suite checks, across every verb and outcome, that exactly the people whose awareness fired are reached,
+  and pins the cases the plan names, wording and relations included.
+
+**A target memory relates everybody it names**, not only the agent and the mastermind: the authority who believed a
+denunciation relates the accused as well. Somebody remembers who they dealt with, and nobody else.
+
+**Only the living remember** is enforced in `PlotMemories::Write`, which skips a keeper `PlotPopulation::IsAlive`
+refuses, for every plot memory. `Write` calls SkyrimNet and is not under test, so that rule is checked by Step 6 rather
+than the suite.
 
 ### Step 5 — A quiet success that leaves a mark is noticed
 

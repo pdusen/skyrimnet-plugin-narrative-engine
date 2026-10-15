@@ -214,39 +214,56 @@ namespace NarrativeEngine::PlotVerbs
         return nullptr;
     }
 
+    namespace
+    {
+        // A sentence of `verb`, filled from `step`.
+        std::string RenderOf(const PlotModel::Step& step,
+                             const Verb* verb,
+                             std::string_view text,
+                             std::string_view scheme)
+        {
+            const auto lookup = [&](std::string_view name) -> std::optional<std::string> {
+                if (name == "agent") {
+                    return step.actorName.empty() ? std::nullopt : std::optional<std::string>{step.actorName};
+                }
+                if (name == "scheme") {
+                    return scheme.empty() ? std::nullopt : std::optional<std::string>{SchemePhrase(scheme)};
+                }
+                const auto* value = step.FindSlot(name);
+                return value != nullptr && !value->text.empty() ? std::optional<std::string>{value->text}
+                                                                : std::nullopt;
+            };
+            const auto missing = [verb](std::string_view name) {
+                if (const auto* slot = FindSlot(*verb, name)) {
+                    return std::string{Unfilled(slot->kind)};
+                }
+                // `agent` and `mastermind` are people; `scheme` only goes
+                // missing on a plot with no scheme, which reads least badly as
+                // this.
+                return std::string{name == "scheme" ? "it" : "someone"};
+            };
+            auto out = Render(text, lookup, missing);
+            // A sentence can open with a slot -- "{agent} watches..." -- and an
+            // unfilled one reads as "someone", so the first letter is not the
+            // template's to guarantee.
+            if (!out.empty()) {
+                out[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(out[0])));
+            }
+            return out;
+        }
+    } // namespace
+
     std::string RenderStep(const PlotModel::Step& step, Template t, std::string_view scheme)
     {
         const Verb* verb = Find(step.verb);
-        if (verb == nullptr) {
-            return {};
-        }
-        const auto lookup = [&](std::string_view name) -> std::optional<std::string> {
-            if (name == "agent") {
-                return step.actorName.empty() ? std::nullopt : std::optional<std::string>{step.actorName};
-            }
-            if (name == "scheme") {
-                return scheme.empty() ? std::nullopt : std::optional<std::string>{SchemePhrase(scheme)};
-            }
-            const auto* value = step.FindSlot(name);
-            return value != nullptr && !value->text.empty() ? std::optional<std::string>{value->text} : std::nullopt;
-        };
-        const auto missing = [verb](std::string_view name) {
-            if (const auto* slot = FindSlot(*verb, name)) {
-                return std::string{Unfilled(slot->kind)};
-            }
-            // `agent` and `mastermind` are people; `scheme` only goes
-            // missing on a plot with no scheme, which reads least badly as
-            // this.
-            return std::string{name == "scheme" ? "it" : "someone"};
-        };
-        auto out = Render(verb->Text(t), lookup, missing);
-        // A sentence can open with a slot -- "{agent} watches..." -- and an
-        // unfilled one reads as "someone", so the first letter is not the
-        // template's to guarantee.
-        if (!out.empty()) {
-            out[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(out[0])));
-        }
-        return out;
+        return verb != nullptr ? RenderOf(step, verb, verb->Text(t), scheme) : std::string{};
+    }
+
+    std::string RenderTarget(const PlotModel::Step& step, std::string_view slot, TargetTemplate t)
+    {
+        const Verb* verb = Find(step.verb);
+        const auto* found = verb != nullptr ? FindSlot(*verb, slot) : nullptr;
+        return found != nullptr && !found->Text(t).empty() ? RenderOf(step, verb, found->Text(t), {}) : std::string{};
     }
 
     std::string Caption(const PlotModel::Step& step)

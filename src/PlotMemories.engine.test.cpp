@@ -1,5 +1,7 @@
 #include <PlotMemories.h>
 
+#include <PlotCandidates.h>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <string>
@@ -16,6 +18,7 @@
 
 namespace
 {
+    namespace PlotCandidates = NarrativeEngine::PlotCandidates;
     namespace PlotMemories = NarrativeEngine::PlotMemories;
     namespace PlotModel = NarrativeEngine::PlotModel;
     namespace PlotVerbs = NarrativeEngine::PlotVerbs;
@@ -82,6 +85,24 @@ namespace
             out.push_back(m.source);
         }
         return out;
+    }
+
+    bool IsTarget(const PlotMemories::Memory& m)
+    {
+        return m.source == "target_failed" || m.source == "target_succeeded" || m.source == "target_noticed";
+    }
+
+    // The agent's and the mastermind's memories, or the reached people's.
+    std::vector<PlotMemories::Memory> Own(std::vector<PlotMemories::Memory> memories)
+    {
+        std::erase_if(memories, IsTarget);
+        return memories;
+    }
+
+    std::vector<PlotMemories::Memory> Reached(std::vector<PlotMemories::Memory> memories)
+    {
+        std::erase_if(memories, [](const PlotMemories::Memory& m) { return !IsTarget(m); });
+        return memories;
     }
 } // namespace
 
@@ -170,7 +191,8 @@ TEST_CASE("PlotMemories at resolution", "[PlotMemories][engine]")
         {
             for (const auto& verb : PlotVerbs::kVerbs) {
                 INFO(verb.id);
-                const auto memories = PlotMemories::OnResolve(plot, resolved(verb, kAgent, StepOutcome::Succeeded));
+                const auto memories =
+                    Own(PlotMemories::OnResolve(plot, resolved(verb, kAgent, StepOutcome::Succeeded)));
                 REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kAgent, kBoss});
                 REQUIRE(Sources(memories)
                         == std::vector<std::string_view>{"agent_succeeded", "mastermind_told_succeeded"});
@@ -185,7 +207,8 @@ TEST_CASE("PlotMemories at resolution", "[PlotMemories][engine]")
         {
             for (const auto& verb : PlotVerbs::kVerbs) {
                 INFO(verb.id);
-                const auto memories = PlotMemories::OnResolve(plot, resolved(verb, kAgent, StepOutcome::FailedCaught));
+                const auto memories =
+                    Own(PlotMemories::OnResolve(plot, resolved(verb, kAgent, StepOutcome::FailedCaught)));
                 REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kAgent});
                 REQUIRE(Sources(memories) == std::vector<std::string_view>{"agent_failed"});
             }
@@ -198,7 +221,8 @@ TEST_CASE("PlotMemories at resolution", "[PlotMemories][engine]")
         {
             for (const auto& verb : PlotVerbs::kVerbs) {
                 INFO(verb.id);
-                const auto memories = PlotMemories::OnResolve(plot, resolved(verb, kAgent, StepOutcome::FailedTimeout));
+                const auto memories =
+                    Own(PlotMemories::OnResolve(plot, resolved(verb, kAgent, StepOutcome::FailedTimeout)));
                 REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kAgent});
                 REQUIRE(Sources(memories) == std::vector<std::string_view>{"agent_timed_out"});
             }
@@ -210,7 +234,7 @@ TEST_CASE("PlotMemories at resolution", "[PlotMemories][engine]")
         SECTION("should give them their success, and no report to themselves")
         {
             const auto memories =
-                PlotMemories::OnResolve(plot, resolved(*PlotVerbs::Find("steal"), kBoss, StepOutcome::Succeeded));
+                Own(PlotMemories::OnResolve(plot, resolved(*PlotVerbs::Find("steal"), kBoss, StepOutcome::Succeeded)));
             REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kBoss});
             REQUIRE(Sources(memories) == std::vector<std::string_view>{"agent_succeeded"});
         }
@@ -218,21 +242,28 @@ TEST_CASE("PlotMemories at resolution", "[PlotMemories][engine]")
         SECTION("should hold their failure back until the plot answers it")
         {
             for (const auto how : {StepOutcome::FailedCaught, StepOutcome::FailedTimeout}) {
-                REQUIRE(PlotMemories::OnResolve(plot, resolved(*PlotVerbs::Find("steal"), kBoss, how)).empty());
+                REQUIRE(Own(PlotMemories::OnResolve(plot, resolved(*PlotVerbs::Find("steal"), kBoss, how))).empty());
             }
         }
     }
 
     SECTION("when anybody else is in the step")
     {
-        SECTION("should give them nothing")
+        SECTION("should give a memory to exactly those the step reached, by their slot's awareness")
         {
             for (const auto& verb : PlotVerbs::kVerbs) {
                 for (const auto how : {StepOutcome::Succeeded, StepOutcome::FailedCaught, StepOutcome::FailedTimeout}) {
-                    for (const auto keeper : Keepers(PlotMemories::OnResolve(plot, resolved(verb, kAgent, how)))) {
-                        REQUIRE(keeper != kMark);
-                        REQUIRE(keeper != kOther);
+                    INFO(verb.id << " outcome " << static_cast<int>(how));
+                    const auto step = resolved(verb, kAgent, how);
+                    std::vector<RE::FormID> expected;
+                    for (std::size_t i = 0; i < verb.slotCount; ++i) {
+                        const auto& slot = verb.slots[i];
+                        if (slot.kind == PlotVerbs::SlotKind::Person
+                            && PlotCandidates::AwarenessFired(slot.awareness, how)) {
+                            expected.push_back(step.FindSlot(slot.name)->form);
+                        }
                     }
+                    REQUIRE(Keepers(Reached(PlotMemories::OnResolve(plot, step))) == expected);
                 }
             }
         }
@@ -377,6 +408,89 @@ TEST_CASE("PlotMemories when a plot is given up", "[PlotMemories][engine]")
         {
             REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kBoss});
             REQUIRE(memories[0].text == "I gave up on my plan to ruin Hulda's trade.");
+        }
+    }
+}
+
+TEST_CASE("PlotMemories for the people a step reaches", "[PlotMemories][engine]")
+{
+    const auto plot = Scheme();
+    const auto reached = [&plot](std::string_view verb, StepOutcome how) {
+        auto step = Cast(*PlotVerbs::Find(verb), kAgent);
+        step.outcome = how;
+        return Reached(PlotMemories::OnResolve(plot, step));
+    };
+
+    SECTION("when an agent is caught at it")
+    {
+        const auto memories = reached("steal", StepOutcome::FailedCaught);
+
+        SECTION("should give the person caught at a memory of catching them, by name")
+        {
+            REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kMark});
+            REQUIRE(Sources(memories) == std::vector<std::string_view>{"target_failed"});
+            REQUIRE(memories[0].text == "I caught Idolaf trying to steal a ruby from me.");
+            REQUIRE(memories[0].related == std::vector<RE::FormID>{kAgent});
+        }
+    }
+
+    SECTION("when it is done to somebody openly")
+    {
+        SECTION("should give them a memory of who did it")
+        {
+            const auto memories = reached("bribe", StepOutcome::Succeeded);
+            REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kMark});
+            REQUIRE(Sources(memories) == std::vector<std::string_view>{"target_succeeded"});
+            REQUIRE(memories[0].text == "Idolaf paid me to look the other way.");
+        }
+
+        SECTION("should relate the mastermind only where the memory names them")
+        {
+            REQUIRE(reached("win_over", StepOutcome::Succeeded)[0].related == std::vector<RE::FormID>{kAgent, kBoss});
+            REQUIRE(reached("bribe", StepOutcome::Succeeded)[0].related == std::vector<RE::FormID>{kAgent});
+        }
+    }
+
+    SECTION("when a denunciation works")
+    {
+        const auto memories = reached("denounce", StepOutcome::Succeeded);
+
+        SECTION("should give the accused and the authority each their own memory of it")
+        {
+            REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kMark, kOther});
+            REQUIRE(memories[0].text == "Idolaf denounced me to Vignar.");
+            REQUIRE(memories[1].text == "Idolaf came to me denouncing Hulda, and I believed them.");
+            REQUIRE(memories[1].related == std::vector<RE::FormID>{kAgent, kMark});
+        }
+    }
+
+    SECTION("when a denunciation fails")
+    {
+        SECTION("should give the authority alone a memory of not being swayed")
+        {
+            const auto memories = reached("denounce", StepOutcome::FailedCaught);
+            REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kOther});
+            REQUIRE(memories[0].text == "Idolaf came to me denouncing Hulda, and I was not convinced.");
+        }
+    }
+
+    SECTION("when a step runs out of time")
+    {
+        SECTION("should reach nobody")
+        {
+            for (const auto& verb : PlotVerbs::kVerbs) {
+                INFO(verb.id);
+                REQUIRE(reached(verb.id, StepOutcome::FailedTimeout).empty());
+            }
+        }
+    }
+
+    SECTION("when catching somebody is weighed against having it done openly")
+    {
+        SECTION("should make catching them the more important")
+        {
+            REQUIRE(reached("steal", StepOutcome::FailedCaught)[0].importance
+                    > reached("bribe", StepOutcome::Succeeded)[0].importance);
         }
     }
 }

@@ -75,6 +75,21 @@ namespace NarrativeEngine::PlotVerbs
     // The craft a rule lists the recipes of, or none.
     [[nodiscard]] std::optional<PlotRecipes::Craft> CraftOf(Rule rule) noexcept;
 
+    // What the person in a slot remembers of a step that reached them, in
+    // this order. First person and past tense, like the verb's own
+    // templates; each is carried only where the slot's awareness can fire
+    // for it, and empty otherwise.
+    enum class TargetTemplate : std::uint8_t
+    {
+        Failed,    // it went wrong in front of them: they caught the agent, or turned them away
+        Succeeded, // it was done to them openly
+        Noticed,   // it was done to them quietly, and left something they would notice -- but not who
+
+        Count
+    };
+
+    inline constexpr std::size_t kTargetTemplateCount = static_cast<std::size_t>(TargetTemplate::Count);
+
     struct Slot
     {
         std::string_view name;
@@ -85,6 +100,15 @@ namespace NarrativeEngine::PlotVerbs
         // scheme call is shown it beside the slot's name, so it can name who
         // or what fills each role of the step it ends in.
         std::string_view says{};
+        // What its person remembers. Per slot rather than per verb, because
+        // two people a step reaches -- a denunciation's accused and the
+        // authority -- remember the same act in different words.
+        std::array<std::string_view, kTargetTemplateCount> remembers{};
+
+        [[nodiscard]] constexpr std::string_view Text(TargetTemplate t) const noexcept
+        {
+            return remembers[static_cast<std::size_t>(t)];
+        }
     };
 
     // The ten sentences every verb carries, in this order. The first is
@@ -160,7 +184,12 @@ namespace NarrativeEngine::PlotVerbs
             "watch",
             "Watch",
             PlotModel::StepType::Surveil,
-            {{Slot{"mark", SlotKind::Person, Rule::KnownToMastermind, Awareness::Failure, "whom they watch"}}},
+            {{Slot{"mark",
+                   SlotKind::Person,
+                   Rule::KnownToMastermind,
+                   Awareness::Failure,
+                   "whom they watch",
+                   {{"I caught {agent} watching me.", "", ""}}}}},
             1,
             false,
             false,
@@ -181,7 +210,12 @@ namespace NarrativeEngine::PlotVerbs
             "ask_around",
             "Ask Around",
             PlotModel::StepType::Locate,
-            {{Slot{"mark", SlotKind::Person, Rule::KnownToMastermind, Awareness::Failure, "whom they ask about"},
+            {{Slot{"mark",
+                   SlotKind::Person,
+                   Rule::KnownToMastermind,
+                   Awareness::Failure,
+                   "whom they ask about",
+                   {{"I heard that {agent} was asking questions about me around {place}.", "", ""}}},
               Slot{"place", SlotKind::Place, Rule::MarkCommunity, Awareness::Unset, "the settlement they ask around"}}},
             2,
             false,
@@ -204,7 +238,12 @@ namespace NarrativeEngine::PlotVerbs
             "Steal",
             PlotModel::StepType::Acquire,
             {{Slot{"item", SlotKind::Thing, Rule::ItemPool, Awareness::Unset, "what is stolen"},
-              Slot{"mark", SlotKind::Person, Rule::KnownToMastermind, Awareness::Failure, "whom it is stolen from"}}},
+              Slot{"mark",
+                   SlotKind::Person,
+                   Rule::KnownToMastermind,
+                   Awareness::Failure,
+                   "whom it is stolen from",
+                   {{"I caught {agent} trying to steal {item} from me.", "", ""}}}}},
             2,
             false,
             true,
@@ -226,7 +265,14 @@ namespace NarrativeEngine::PlotVerbs
             "Buy",
             PlotModel::StepType::Acquire,
             {{Slot{"item", SlotKind::Thing, Rule::ItemPool, Awareness::Unset, "what is bought"},
-              Slot{"seller", SlotKind::Person, Rule::TradesForLiving, Awareness::Contact, "who sells it"}}},
+              Slot{"seller",
+                   SlotKind::Person,
+                   Rule::TradesForLiving,
+                   Awareness::Contact,
+                   "who sells it",
+                   {{"{agent} tried to buy {item} from me, but the deal went sour.",
+                     "I sold {item} to {agent}.",
+                     ""}}}}},
             2,
             false,
             true,
@@ -248,7 +294,12 @@ namespace NarrativeEngine::PlotVerbs
             "Deliver",
             PlotModel::StepType::Deliver,
             {{Slot{"item", SlotKind::Thing, Rule::BoundItem, Awareness::Unset, "what is brought"},
-              Slot{"recipient", SlotKind::Person, Rule::AnyPerson, Awareness::Contact, "whom it is brought to"}}},
+              Slot{"recipient",
+                   SlotKind::Person,
+                   Rule::AnyPerson,
+                   Awareness::Contact,
+                   "whom it is brought to",
+                   {{"{agent} set out to bring me {item}, but never arrived.", "{agent} brought me {item}.", ""}}}}},
             2,
             true,
             false,
@@ -270,7 +321,12 @@ namespace NarrativeEngine::PlotVerbs
             "Plant",
             PlotModel::StepType::Conceal,
             {{Slot{"item", SlotKind::Thing, Rule::BoundItem, Awareness::Unset, "what is hidden"},
-              Slot{"mark", SlotKind::Person, Rule::AnyPerson, Awareness::Failure, "among whose belongings"}}},
+              Slot{"mark",
+                   SlotKind::Person,
+                   Rule::AnyPerson,
+                   Awareness::Failure,
+                   "among whose belongings",
+                   {{"I caught {agent} trying to hide {item} among my belongings.", "", ""}}}}},
             2,
             true,
             false,
@@ -296,7 +352,10 @@ namespace NarrativeEngine::PlotVerbs
                    SlotKind::Person,
                    Rule::RosteredStanding,
                    Awareness::Contact,
-                   "who is paid to look the other way"}}},
+                   "who is paid to look the other way",
+                   {{"{agent} offered me coin to look the other way, and I refused it.",
+                     "{agent} paid me to look the other way.",
+                     ""}}}}},
             1,
             false,
             false,
@@ -317,7 +376,14 @@ namespace NarrativeEngine::PlotVerbs
             "win_over",
             "Win Over",
             PlotModel::StepType::Recruit,
-            {{Slot{"mark", SlotKind::Person, Rule::NotHostileKnown, Awareness::Contact, "who is won over"}}},
+            {{Slot{"mark",
+                   SlotKind::Person,
+                   Rule::NotHostileKnown,
+                   Awareness::Contact,
+                   "who is won over",
+                   {{"{agent} tried to win me over to {mastermind}'s side, but I would not be swayed.",
+                     "{agent} won me over to {mastermind}'s side.",
+                     ""}}}}},
             1,
             false,
             false,
@@ -338,7 +404,14 @@ namespace NarrativeEngine::PlotVerbs
             "threaten",
             "Threaten",
             PlotModel::StepType::Recruit,
-            {{Slot{"mark", SlotKind::Person, Rule::KnownToMastermind, Awareness::Contact, "who is warned off"}}},
+            {{Slot{"mark",
+                   SlotKind::Person,
+                   Rule::KnownToMastermind,
+                   Awareness::Contact,
+                   "who is warned off",
+                   {{"{agent} warned me to stay out of {mastermind}'s affairs, but I would not be frightened.",
+                     "{agent} warned me to stay out of {mastermind}'s affairs, and I took the warning to heart.",
+                     ""}}}}},
             1,
             false,
             false,
@@ -359,7 +432,12 @@ namespace NarrativeEngine::PlotVerbs
             "spread_rumors",
             "Spread Rumors",
             PlotModel::StepType::Discredit,
-            {{Slot{"mark", SlotKind::Person, Rule::AnyPerson, Awareness::Failure, "whom the talk is about"},
+            {{Slot{"mark",
+                   SlotKind::Person,
+                   Rule::AnyPerson,
+                   Awareness::Failure,
+                   "whom the talk is about",
+                   {{"I found out that {agent} was spreading ugly talk about me around {place}.", "", ""}}},
               Slot{"place",
                    SlotKind::Place,
                    Rule::MarkOrMastermindSettlement,
@@ -385,12 +463,20 @@ namespace NarrativeEngine::PlotVerbs
             "denounce",
             "Denounce",
             PlotModel::StepType::Discredit,
-            {{Slot{"mark", SlotKind::Person, Rule::AnyPerson, Awareness::Success, "who is denounced"},
+            {{Slot{"mark",
+                   SlotKind::Person,
+                   Rule::AnyPerson,
+                   Awareness::Success,
+                   "who is denounced",
+                   {{"", "{agent} denounced me to {authority}.", ""}}},
               Slot{"authority",
                    SlotKind::Person,
                    Rule::AuthorityOverMark,
                    Awareness::Contact,
-                   "whom they are denounced to"}}},
+                   "whom they are denounced to",
+                   {{"{agent} came to me denouncing {mark}, and I was not convinced.",
+                     "{agent} came to me denouncing {mark}, and I believed them.",
+                     ""}}}}},
             2,
             false,
             false,
@@ -415,7 +501,8 @@ namespace NarrativeEngine::PlotVerbs
                    SlotKind::Person,
                    Rule::TradesForLiving,
                    Awareness::Failure,
-                   "whose livelihood is sabotaged"}}},
+                   "whose livelihood is sabotaged",
+                   {{"I caught {agent} trying to sabotage my livelihood.", "", ""}}}}},
             1,
             false,
             false,
@@ -436,11 +523,13 @@ namespace NarrativeEngine::PlotVerbs
             "silence",
             "Silence",
             PlotModel::StepType::Conceal,
-            {{Slot{"witness",
-                   SlotKind::Person,
-                   Rule::AwareOfEarlierStep,
-                   Awareness::Contact,
-                   "who is paid to keep quiet"}}},
+            {{Slot{
+                "witness",
+                SlotKind::Person,
+                Rule::AwareOfEarlierStep,
+                Awareness::Contact,
+                "who is paid to keep quiet",
+                {{"{agent} offered me coin to keep quiet, and I refused it.", "{agent} paid me to keep quiet.", ""}}}}},
             1,
             false,
             false,
@@ -464,7 +553,12 @@ namespace NarrativeEngine::PlotVerbs
             "Falsify",
             PlotModel::StepType::Acquire,
             {{Slot{"item", SlotKind::Thing, Rule::DocumentPool, Awareness::Unset, "what is forged"},
-              Slot{"subject", SlotKind::Person, Rule::AnyPerson, Awareness::Failure, "in whose name"}}},
+              Slot{"subject",
+                   SlotKind::Person,
+                   Rule::AnyPerson,
+                   Awareness::Failure,
+                   "in whose name",
+                   {{"I found out that {agent} had tried to falsify {item} in my name.", "", ""}}}}},
             2,
             false,
             true,
@@ -491,7 +585,8 @@ namespace NarrativeEngine::PlotVerbs
                    SlotKind::Person,
                    Rule::KnownToMastermind,
                    Awareness::Failure,
-                   "whom it proves wrongdoing against"}}},
+                   "whom it proves wrongdoing against",
+                   {{"I found out that {agent} was digging into my affairs.", "", ""}}}}},
             2,
             false,
             true,
@@ -513,7 +608,14 @@ namespace NarrativeEngine::PlotVerbs
             "blackmail",
             "Blackmail",
             PlotModel::StepType::Recruit,
-            {{Slot{"mark", SlotKind::Person, Rule::KnownToMastermind, Awareness::Contact, "who is blackmailed"}}},
+            {{Slot{"mark",
+                   SlotKind::Person,
+                   Rule::KnownToMastermind,
+                   Awareness::Contact,
+                   "who is blackmailed",
+                   {{"{agent} tried to blackmail me into serving {mastermind}, but I called their bluff.",
+                     "{agent} blackmailed me into serving {mastermind}.",
+                     ""}}}}},
             1,
             false,
             false,
@@ -535,7 +637,12 @@ namespace NarrativeEngine::PlotVerbs
             "Destroy",
             PlotModel::StepType::Sabotage,
             {{Slot{"item", SlotKind::Thing, Rule::ItemPool, Awareness::Unset, "what is destroyed"},
-              Slot{"mark", SlotKind::Person, Rule::KnownToMastermind, Awareness::Failure, "whom it belongs to"}}},
+              Slot{"mark",
+                   SlotKind::Person,
+                   Rule::KnownToMastermind,
+                   Awareness::Failure,
+                   "whom it belongs to",
+                   {{"I caught {agent} trying to destroy {item} of mine.", "", ""}}}}},
             2,
             false,
             false,
@@ -556,7 +663,14 @@ namespace NarrativeEngine::PlotVerbs
             "petition",
             "Petition",
             PlotModel::StepType::Recruit,
-            {{Slot{"authority", SlotKind::Person, Rule::AuthorityOverMark, Awareness::Contact, "who is petitioned"}}},
+            {{Slot{"authority",
+                   SlotKind::Person,
+                   Rule::AuthorityOverMark,
+                   Awareness::Contact,
+                   "who is petitioned",
+                   {{"{agent} petitioned me on {mastermind}'s behalf, and I turned them away.",
+                     "{agent} petitioned me on {mastermind}'s behalf, and I granted it.",
+                     ""}}}}},
             1,
             false,
             false,
@@ -578,8 +692,20 @@ namespace NarrativeEngine::PlotVerbs
             "Expose",
             PlotModel::StepType::Discredit,
             {{Slot{"item", SlotKind::Thing, Rule::BoundItem, Awareness::Unset, "the proof shown"},
-              Slot{"mark", SlotKind::Person, Rule::AnyPerson, Awareness::Success, "whom it is proof against"},
-              Slot{"authority", SlotKind::Person, Rule::AuthorityOverMark, Awareness::Contact, "whom it is shown to"}}},
+              Slot{"mark",
+                   SlotKind::Person,
+                   Rule::AnyPerson,
+                   Awareness::Success,
+                   "whom it is proof against",
+                   {{"", "{agent} showed {item} to {authority} as proof against me.", ""}}},
+              Slot{"authority",
+                   SlotKind::Person,
+                   Rule::AuthorityOverMark,
+                   Awareness::Contact,
+                   "whom it is shown to",
+                   {{"{agent} showed me {item} as proof against {mark}, but I was not convinced.",
+                     "{agent} showed me {item} as proof against {mark}, and it convinced me.",
+                     ""}}}}},
             3,
             true,
             false,
@@ -844,6 +970,11 @@ namespace NarrativeEngine::PlotVerbs
     // other name from its slots. Anything not yet filled reads as Unfilled
     // of its kind. Empty for a step with no verb.
     [[nodiscard]] std::string RenderStep(const PlotModel::Step& step, Template t, std::string_view scheme = {});
+
+    // What the person in slot `slot` of a step remembers, filled the same
+    // way. Empty for a step with no verb, a slot it does not have, or a
+    // template that slot does not carry.
+    [[nodiscard]] std::string RenderTarget(const PlotModel::Step& step, std::string_view slot, TargetTemplate t);
 
     // The caption under a step's node: its verb's, the model's own for a
     // prose step that wrote one, or the resolution profile's verb.
