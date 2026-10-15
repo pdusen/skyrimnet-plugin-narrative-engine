@@ -5,9 +5,9 @@ fixed sentence templates and wrote memories from them at dispatch, at resolution
 the agent completely and the mastermind only in part, and the people a step is done to remember nothing. This
 milestone fills in the rest, so that everybody a plot touches can talk about it.
 
-> **Doc status: Steps 1–5 complete; Step 6's validation outstanding.** Steps 1–2 complete the mastermind's side, Steps
-> 3–5 give the people a step reaches memories of their own, and Step 6 is the in-game check. Phase 17's Steps 20–22
-> (world effects, gossip seeding and their validation) still follow this milestone.
+> **Doc status: Steps 1–6 complete; Step 7 planned, and Step 8 checks it in game.** Steps 1–2 complete the mastermind's
+> side, Steps 3–5 give the people a step reaches memories of their own, and Step 6 is the in-game check. Phase 17's
+> Steps 20–22 (world effects, gossip seeding and their validation) still follow this milestone.
 
 ---
 
@@ -317,7 +317,7 @@ and the plugin builds with no warnings.
 
 ### Step 6 — In-game validation
 
-- [ ] Complete
+- [x] Complete
 
 **[USER]**
 
@@ -332,6 +332,48 @@ With plots running over a session long enough for several to end:
 6. Find somebody watched without noticing. Do they know nothing?
 
 Record findings, and any wording or importance changes, under this step.
+
+**Accepted (2026-10-15).** Every kind of memory was found as described. One finding led to Step 7: Keerava, acting for
+herself, failed the last step of her plot and kept two memories written at the same moment -- "I tried to win Indaryn
+over, but they would not be swayed." and "My plan to win over Indaryn to refuse Thieves Guild protection payments came
+to nothing." -- where one would do.
+
+### Step 7 — One memory per person per plot per tick
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+Everything one plot writes to one person in one tick is a single memory: its statements joined, in the order they
+were made, into a paragraph. Keerava's two become
+
+```text
+I tried to win Indaryn over, but they would not be swayed. My plan to win over Indaryn to refuse Thieves Guild
+protection payments came to nothing.
+```
+
+and the same holds for a failure followed by giving up, and for any other pair a tick produces. Step 2's clause is
+untouched: going on after a failure is part of the failure's own sentence.
+
+- **Collected, then combined.** The plot worker gathers each plot's memories while it advances that plot, and writes
+  them once it is done with it: one per keeper, in the order keepers first appear.
+- **The combined memory** takes the most important statement's importance and type, everybody any statement relates,
+  the first location any statement has, and every statement's source.
+- **Per plot.** Two plots that both reach somebody in the same tick still give them two memories; each is its own
+  story.
+
+**Verification:** the memory suite asserts that combining leaves one memory per keeper with the statements joined in
+order, the highest importance and its type, the union of related people and the first location, and leaves a keeper
+with a single statement as they were.
+
+### Step 8 — In-game check of combined memories
+
+- [ ] Complete
+
+**[USER]**
+
+Find a mastermind who did a plot's last step themselves and failed it, or one who gave a plot up after a failure. Do
+they keep one memory saying both things, rather than two?
 
 ---
 
