@@ -144,6 +144,16 @@ namespace NarrativeEngine::PlotVerbs
     // says what went wrong.
     inline constexpr std::string_view kConcededTemplate = "I gave up on my plan to {scheme}.";
 
+    // Written to the mastermind when the finish succeeds, and when it fails.
+    // Like the concession, each follows the step memories that say how.
+    inline constexpr std::string_view kSucceededTemplate = "I brought off my plan to {scheme}.";
+    inline constexpr std::string_view kFailedTemplate = "My plan to {scheme} came to nothing.";
+
+    // Not a memory of its own: the end of the mastermind's memory of a failed
+    // step, when the plot goes on another way. Going on is what they make of
+    // the failure, so it belongs in the same memory rather than a second one.
+    inline constexpr std::string_view kWentOnClause = ", but I found another way to go on with my plan to {scheme}.";
+
     inline constexpr std::array<Verb, 24> kVerbs{{
         Verb{
             "watch",
@@ -837,6 +847,9 @@ namespace NarrativeEngine::PlotVerbs
     // The caption under a step's node: its verb's, the model's own for a
     // prose step that wrote one, or the resolution profile's verb.
     [[nodiscard]] std::string Caption(const PlotModel::Step& step);
+
+    // One of the plot-level lines above, with `{scheme}` as a verb phrase.
+    [[nodiscard]] std::string RenderPlotLine(std::string_view text, std::string_view scheme);
 
     // The concession memory for a plot whose scheme this is.
     [[nodiscard]] std::string RenderConceded(std::string_view scheme);

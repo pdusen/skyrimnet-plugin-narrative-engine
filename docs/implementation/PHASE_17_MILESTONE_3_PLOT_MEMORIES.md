@@ -5,7 +5,7 @@ fixed sentence templates and wrote memories from them at dispatch, at resolution
 the agent completely and the mastermind only in part, and the people a step is done to remember nothing. This
 milestone fills in the rest, so that everybody a plot touches can talk about it.
 
-> **Doc status: in progress; Step 1 complete.** Steps 1–2 complete the mastermind's side, Steps 3–5 give the people a
+> **Doc status: in progress; Steps 1–2 complete.** Steps 1–2 complete the mastermind's side, Steps 3–5 give the people a
 > step reaches memories of their own, and Step 6 is the in-game check. Phase 17's Steps 20–22 (world effects, gossip
 > seeding and their validation) still follow this milestone.
 
@@ -205,7 +205,7 @@ tests pass.
 
 ### Step 2 — The mastermind remembers how the scheme went
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -226,6 +226,21 @@ one they did themselves, while the agent's memory is written at resolution as be
 failure memory without the clause and then `mastermind_conceded`; an achieved plot writes `mastermind_succeeded`, a plot
 that fails at its finish writes `mastermind_failed` and not `mastermind_conceded`, and a plot ended by its mastermind's
 death writes none.
+
+Done. `PlotMemories` gains three pure functions beside `OnResolve`, which no longer writes the mastermind anything on a
+failure:
+
+- `OnFailureAnswered(plot, step, wentOn)` is the mastermind's one memory of a failed or timed-out step -- the report,
+  or their own failure when they did it -- ending in `PlotVerbs::kWentOnClause` when the plot went on.
+- `OnSucceeded` and `OnFinishFailed` write `kSucceededTemplate` and `kFailedTemplate`, rendered as the concession is
+  by the new `PlotVerbs::RenderPlotLine`.
+
+`PlotTick` writes the answered failure in `AdaptPlot` once `Adapt` has decided, before any concession, and on the
+finish failing before the plot ends; `EndPlot` writes the success or the loss beside the concession. 498 tests pass.
+
+**The wiring in `PlotTick` is not under test.** There is no plot-worker suite, so the memory suite drives the four
+outcomes through the pure functions -- going on, not going on, a self-agent going on, and a step that did not fail --
+and the two plot endings, and the tick's part is three calls at the points that already decide them.
 
 ### Step 3 — Awareness that fires on success
 

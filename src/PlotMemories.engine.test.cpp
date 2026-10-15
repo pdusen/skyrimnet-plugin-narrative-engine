@@ -181,38 +181,44 @@ TEST_CASE("PlotMemories at resolution", "[PlotMemories][engine]")
 
     SECTION("when a step fails")
     {
-        SECTION("should give the agent their failure and the mastermind the report of it")
+        SECTION("should give the agent their failure, and the mastermind nothing until the plot answers it")
         {
             for (const auto& verb : PlotVerbs::kVerbs) {
                 INFO(verb.id);
                 const auto memories = PlotMemories::OnResolve(plot, resolved(verb, kAgent, StepOutcome::FailedCaught));
-                REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kAgent, kBoss});
-                REQUIRE(Sources(memories) == std::vector<std::string_view>{"agent_failed", "mastermind_told_failed"});
+                REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kAgent});
+                REQUIRE(Sources(memories) == std::vector<std::string_view>{"agent_failed"});
             }
         }
     }
 
     SECTION("when a step runs out of time")
     {
-        SECTION("should give the agent the timeout and the mastermind the report of it")
+        SECTION("should give the agent the timeout, and the mastermind nothing until the plot answers it")
         {
             for (const auto& verb : PlotVerbs::kVerbs) {
                 INFO(verb.id);
                 const auto memories = PlotMemories::OnResolve(plot, resolved(verb, kAgent, StepOutcome::FailedTimeout));
-                REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kAgent, kBoss});
-                REQUIRE(Sources(memories)
-                        == std::vector<std::string_view>{"agent_timed_out", "mastermind_told_timed_out"});
+                REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kAgent});
+                REQUIRE(Sources(memories) == std::vector<std::string_view>{"agent_timed_out"});
             }
         }
     }
 
     SECTION("when the mastermind did it themselves")
     {
-        SECTION("should give them one memory of how it went, and no report to themselves")
+        SECTION("should give them their success, and no report to themselves")
         {
-            for (const auto how : {StepOutcome::Succeeded, StepOutcome::FailedCaught, StepOutcome::FailedTimeout}) {
-                const auto memories = PlotMemories::OnResolve(plot, resolved(*PlotVerbs::Find("steal"), kBoss, how));
-                REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kBoss});
+            const auto memories =
+                PlotMemories::OnResolve(plot, resolved(*PlotVerbs::Find("steal"), kBoss, StepOutcome::Succeeded));
+            REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kBoss});
+            REQUIRE(Sources(memories) == std::vector<std::string_view>{"agent_succeeded"});
+        }
+
+        SECTION("should hold their failure back until the plot answers it")
+        {
+            for (const auto how : {StepOutcome::FailedCaught, StepOutcome::FailedTimeout}) {
+                REQUIRE(PlotMemories::OnResolve(plot, resolved(*PlotVerbs::Find("steal"), kBoss, how)).empty());
             }
         }
     }
@@ -246,10 +252,117 @@ TEST_CASE("PlotMemories at resolution", "[PlotMemories][engine]")
         SECTION("should make the failure the more important of the two, for both voices")
         {
             const auto* steal = PlotVerbs::Find("steal");
-            const auto failed = PlotMemories::OnResolve(plot, resolved(*steal, kAgent, StepOutcome::FailedCaught));
-            const auto late = PlotMemories::OnResolve(plot, resolved(*steal, kAgent, StepOutcome::FailedTimeout));
-            REQUIRE(failed[0].importance > late[0].importance);
-            REQUIRE(failed[1].importance > late[1].importance);
+            const auto failed = resolved(*steal, kAgent, StepOutcome::FailedCaught);
+            const auto late = resolved(*steal, kAgent, StepOutcome::FailedTimeout);
+            REQUIRE(PlotMemories::OnResolve(plot, failed)[0].importance
+                    > PlotMemories::OnResolve(plot, late)[0].importance);
+            REQUIRE(PlotMemories::OnFailureAnswered(plot, failed, false)[0].importance
+                    > PlotMemories::OnFailureAnswered(plot, late, false)[0].importance);
+        }
+    }
+}
+
+TEST_CASE("PlotMemories when the plot answers a failure", "[PlotMemories][engine]")
+{
+    const auto plot = Scheme();
+    const auto resolved = [](std::string_view verb, RE::FormID agent, StepOutcome how) {
+        auto step = Cast(*PlotVerbs::Find(verb), agent);
+        step.outcome = how;
+        return step;
+    };
+
+    SECTION("when it goes on another way")
+    {
+        const auto memories =
+            PlotMemories::OnFailureAnswered(plot, resolved("steal", kAgent, StepOutcome::FailedCaught), true);
+
+        SECTION("should give the mastermind one memory of the failure, ending in going on")
+        {
+            REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kBoss});
+            REQUIRE(Sources(memories) == std::vector<std::string_view>{"mastermind_told_failed"});
+            REQUIRE(
+                memories[0].text
+                == "Idolaf reported back that Hulda had caught them trying to steal a ruby, but I found another way "
+                   "to go on with my plan to ruin Hulda's trade.");
+        }
+
+        SECTION("should relate the step's people, as the report alone would")
+        {
+            REQUIRE(memories[0].related == std::vector<RE::FormID>{kAgent, kMark});
+        }
+    }
+
+    SECTION("when it does not go on")
+    {
+        SECTION("should give the mastermind the report alone, for a failure or a timeout")
+        {
+            const auto failed =
+                PlotMemories::OnFailureAnswered(plot, resolved("steal", kAgent, StepOutcome::FailedCaught), false);
+            REQUIRE(failed[0].text == "Idolaf reported back that Hulda had caught them trying to steal a ruby.");
+            const auto late =
+                PlotMemories::OnFailureAnswered(plot, resolved("steal", kAgent, StepOutcome::FailedTimeout), false);
+            REQUIRE(Sources(late) == std::vector<std::string_view>{"mastermind_told_timed_out"});
+        }
+    }
+
+    SECTION("when the mastermind did the step themselves")
+    {
+        SECTION("should give them their own failure, ending in going on when it does")
+        {
+            const auto memories =
+                PlotMemories::OnFailureAnswered(plot, resolved("steal", kBoss, StepOutcome::FailedCaught), true);
+            REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kBoss});
+            REQUIRE(Sources(memories) == std::vector<std::string_view>{"agent_failed"});
+            REQUIRE(
+                memories[0].text
+                == "Hulda caught me trying to steal a ruby from them, but I found another way to go on with my plan "
+                   "to ruin Hulda's trade.");
+        }
+    }
+
+    SECTION("when the step did not fail")
+    {
+        SECTION("should write nothing")
+        {
+            REQUIRE(
+                PlotMemories::OnFailureAnswered(plot, resolved("steal", kAgent, StepOutcome::Succeeded), true).empty());
+        }
+    }
+}
+
+TEST_CASE("PlotMemories when a plot ends", "[PlotMemories][engine]")
+{
+    SECTION("when the scheme is brought off, or lost at its finish")
+    {
+        const auto won = PlotMemories::OnSucceeded(Scheme());
+        const auto lost = PlotMemories::OnFinishFailed(Scheme());
+
+        SECTION("should give the mastermind one memory naming only the scheme, relating nobody")
+        {
+            REQUIRE(Keepers(won) == std::vector<RE::FormID>{kBoss});
+            REQUIRE(won[0].text == "I brought off my plan to ruin Hulda's trade.");
+            REQUIRE(won[0].related.empty());
+            REQUIRE(Keepers(lost) == std::vector<RE::FormID>{kBoss});
+            REQUIRE(lost[0].text == "My plan to ruin Hulda's trade came to nothing.");
+            REQUIRE(lost[0].related.empty());
+        }
+
+        SECTION("should weigh success above loss, and loss above giving up")
+        {
+            const auto conceded = PlotMemories::OnConceded(Scheme());
+            REQUIRE(won[0].importance > lost[0].importance);
+            REQUIRE(lost[0].importance > conceded[0].importance);
+        }
+    }
+
+    SECTION("when the plot has no mastermind")
+    {
+        SECTION("should write nothing")
+        {
+            auto orphan = Scheme();
+            orphan.mastermind = 0;
+            REQUIRE(PlotMemories::OnSucceeded(orphan).empty());
+            REQUIRE(PlotMemories::OnFinishFailed(orphan).empty());
         }
     }
 }

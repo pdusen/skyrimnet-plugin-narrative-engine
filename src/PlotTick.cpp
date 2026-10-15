@@ -149,10 +149,21 @@ namespace NarrativeEngine::PlotTick
                 state.RememberScheme(plot.mastermind, plot.scheme, status == PlotModel::PlotStatus::Succeeded);
             }
 
-            // Given up, by choice or by the cap, with the mastermind alive to
-            // remember it. A dead mastermind keeps nothing.
-            if (outcome == PlotModel::PlotOutcome::Conceded || outcome == PlotModel::PlotOutcome::AdaptationCapHit) {
+            // How it ended, with the mastermind alive to remember it. A dead
+            // mastermind keeps nothing.
+            switch (outcome) {
+            case PlotModel::PlotOutcome::Conceded:
+            case PlotModel::PlotOutcome::AdaptationCapHit:
                 PlotMemories::Write(PlotMemories::OnConceded(plot));
+                break;
+            case PlotModel::PlotOutcome::ObjectiveAchieved:
+                PlotMemories::Write(PlotMemories::OnSucceeded(plot));
+                break;
+            case PlotModel::PlotOutcome::FinishFailed:
+                PlotMemories::Write(PlotMemories::OnFinishFailed(plot));
+                break;
+            default:
+                break;
             }
 
             if (status == PlotModel::PlotStatus::Succeeded) {
@@ -451,6 +462,14 @@ namespace NarrativeEngine::PlotTick
                 ++state.counters.adaptations;
             }
 
+            // The mastermind's one memory of the failure, now that they know
+            // what they made of it -- written before a concession, which
+            // follows from it.
+            if (!plot.history.empty()) {
+                PlotMemories::Write(PlotMemories::OnFailureAnswered(
+                    plot, plot.history.back(), adaptation.revision == PlotPlanning::Revision::Substituted));
+            }
+
             switch (adaptation.revision) {
             case PlotPlanning::Revision::CapHit:
                 EndPlot(state, plot, PlotModel::PlotStatus::Failed, PlotModel::PlotOutcome::AdaptationCapHit, gameDay);
@@ -666,9 +685,10 @@ namespace NarrativeEngine::PlotTick
             }
             // The finish failing fails the scheme, with no adaptation: there
             // is no other way to an end that has itself just gone wrong. The
-            // failure memories are already written; a concession is not, since
-            // the mastermind lost the scheme rather than gave it up.
+            // mastermind remembers the failure, then the scheme lost; not a
+            // concession, since they lost it rather than gave it up.
             if (PlotPlanning::FinishFailed(plot)) {
+                PlotMemories::Write(PlotMemories::OnFailureAnswered(plot, plot.history.back(), false));
                 EndPlot(state, plot, PlotModel::PlotStatus::Failed, PlotModel::PlotOutcome::FinishFailed, gameDay);
                 return;
             }

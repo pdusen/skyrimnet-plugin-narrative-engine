@@ -257,14 +257,19 @@ namespace NarrativeEngine::PlotVerbs
         return step.label.empty() ? std::string{PlotModel::Verb(step.type)} : step.label;
     }
 
-    std::string RenderConceded(std::string_view scheme)
+    std::string RenderPlotLine(std::string_view text, std::string_view scheme)
     {
         const auto phrase = SchemePhrase(scheme);
         return Render(
-            kConcededTemplate,
+            text,
             [&](std::string_view name) -> std::optional<std::string> {
                 return name == "scheme" && !phrase.empty() ? std::optional<std::string>{phrase} : std::nullopt;
             },
             [](std::string_view) { return std::string{"it"}; });
+    }
+
+    std::string RenderConceded(std::string_view scheme)
+    {
+        return RenderPlotLine(kConcededTemplate, scheme);
     }
 } // namespace NarrativeEngine::PlotVerbs

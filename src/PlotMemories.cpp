@@ -49,6 +49,23 @@ namespace NarrativeEngine::PlotMemories
         }
 
         constexpr float kConcededImportance = 0.6f;
+        // The plan done is the most a mastermind has to show; lost at the
+        // finish is above giving up, since it was lost rather than let go.
+        constexpr float kSucceededImportance = 0.7f;
+        constexpr float kFailedImportance = 0.65f;
+
+        // The mastermind's memory of the plot as a whole: theirs alone,
+        // relating nobody, since the step memories before it say who.
+        Memory PlotLine(const PlotModel::Plot& plot, std::string_view text, float importance, std::string_view source)
+        {
+            Memory m;
+            m.npc = plot.mastermind;
+            m.text = PlotVerbs::RenderPlotLine(text, plot.scheme);
+            m.importance = importance;
+            m.type = "EXPERIENCE";
+            m.source = source;
+            return m;
+        }
 
         // Everybody in the step: the mastermind, the agent and every person
         // slot.
@@ -138,29 +155,69 @@ namespace NarrativeEngine::PlotMemories
         if (step.verb.empty() || step.actor == 0) {
             return {};
         }
-        Template agent{};
-        Template told{};
         switch (step.outcome) {
-        case PlotModel::StepOutcome::Succeeded:
-            agent = Template::AgentSucceeded;
-            told = Template::MastermindToldSucceeded;
-            break;
+        case PlotModel::StepOutcome::Succeeded: {
+            std::vector<Memory> out{Make(plot, step, step.actor, Template::AgentSucceeded)};
+            if (!ByOwnHand(plot, step)) {
+                out.push_back(Make(plot, step, plot.mastermind, Template::MastermindToldSucceeded));
+            }
+            return out;
+        }
         case PlotModel::StepOutcome::FailedCaught:
-            agent = Template::AgentFailed;
-            told = Template::MastermindToldFailed;
-            break;
         case PlotModel::StepOutcome::FailedTimeout:
-            agent = Template::AgentTimedOut;
-            told = Template::MastermindToldTimedOut;
-            break;
+            // The agent's own, at once. A mastermind who did it themselves
+            // is the agent, and keeps theirs until the plot answers it.
+            if (ByOwnHand(plot, step)) {
+                return {};
+            }
+            return {Make(plot,
+                         step,
+                         step.actor,
+                         step.outcome == PlotModel::StepOutcome::FailedCaught ? Template::AgentFailed
+                                                                              : Template::AgentTimedOut)};
         case PlotModel::StepOutcome::None:
+            break;
+        }
+        return {};
+    }
+
+    std::vector<Memory> OnFailureAnswered(const PlotModel::Plot& plot, const PlotModel::Step& step, bool wentOn)
+    {
+        if (step.verb.empty() || step.actor == 0 || plot.mastermind == 0) {
             return {};
         }
-        std::vector<Memory> out{Make(plot, step, step.actor, agent)};
-        if (!ByOwnHand(plot, step)) {
-            out.push_back(Make(plot, step, plot.mastermind, told));
+        const bool caught = step.outcome == PlotModel::StepOutcome::FailedCaught;
+        if (!caught && step.outcome != PlotModel::StepOutcome::FailedTimeout) {
+            return {};
         }
-        return out;
+        const auto t = ByOwnHand(plot, step)
+                           ? (caught ? Template::AgentFailed : Template::AgentTimedOut)
+                           : (caught ? Template::MastermindToldFailed : Template::MastermindToldTimedOut);
+        auto m = Make(plot, step, plot.mastermind, t);
+        if (wentOn) {
+            // The failure's own full stop gives way to the clause's.
+            while (!m.text.empty() && (m.text.back() == '.' || m.text.back() == ' ')) {
+                m.text.pop_back();
+            }
+            m.text += PlotVerbs::RenderPlotLine(PlotVerbs::kWentOnClause, plot.scheme);
+        }
+        return {m};
+    }
+
+    std::vector<Memory> OnSucceeded(const PlotModel::Plot& plot)
+    {
+        if (plot.mastermind == 0) {
+            return {};
+        }
+        return {PlotLine(plot, PlotVerbs::kSucceededTemplate, kSucceededImportance, "mastermind_succeeded")};
+    }
+
+    std::vector<Memory> OnFinishFailed(const PlotModel::Plot& plot)
+    {
+        if (plot.mastermind == 0) {
+            return {};
+        }
+        return {PlotLine(plot, PlotVerbs::kFailedTemplate, kFailedImportance, "mastermind_failed")};
     }
 
     std::vector<Memory> OnConceded(const PlotModel::Plot& plot)

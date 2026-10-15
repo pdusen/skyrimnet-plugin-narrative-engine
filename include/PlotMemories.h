@@ -11,15 +11,18 @@
 //
 // Every memory is one of a verb's own first-person templates filled from
 // the step, so no model writes any of it and the people in a step can never
-// disagree about what the step was. Written at three moments:
+// disagree about what the step was. Written at these moments:
 //
 //   dispatch     the agent, on being sent; the mastermind, on sending them
 //                -- or, when the mastermind is their own agent, one memory
 //                of deciding to do it themselves
-//   resolution   the agent, on how it went; the mastermind who sent them,
-//                on hearing about it
-//   giving up    the mastermind, once, when a plot ends unfinished with
-//                them alive
+//   resolution   the agent, on how it went; the mastermind who sent them, on
+//                hearing of a success
+//   answered     the mastermind, on a failed step, once the plot has decided
+//                what to do about it: one memory of the failure, ending in
+//                going on another way when it does
+//   the end      the mastermind, on bringing the scheme off, on its failing
+//                at the finish, or on giving it up
 //
 // Nobody else in a step keeps anything yet: the template set has no memory
 // for a mark, a recipient or a witness (the milestone doc's open question 4).
@@ -54,8 +57,23 @@ namespace NarrativeEngine::PlotMemories
     [[nodiscard]] std::vector<Memory> OnDispatch(const PlotModel::Plot& plot, const PlotModel::Step& step);
 
     // Pure. What a step's resolution writes, from its outcome. Nothing for a
-    // step that has not ended.
+    // step that has not ended. The mastermind's memory of a failure is not
+    // among it: see OnFailureAnswered.
     [[nodiscard]] std::vector<Memory> OnResolve(const PlotModel::Plot& plot, const PlotModel::Step& step);
+
+    // Pure. The mastermind's one memory of a failed or timed-out step, once
+    // the plot has answered it: the report of it, or their own failure when
+    // they did the step themselves, ending in kWentOnClause when the plot
+    // went on another way. Nothing for a step that did not fail.
+    [[nodiscard]] std::vector<Memory> OnFailureAnswered(const PlotModel::Plot& plot,
+                                                        const PlotModel::Step& step,
+                                                        bool wentOn);
+
+    // Pure. What bringing the scheme off writes.
+    [[nodiscard]] std::vector<Memory> OnSucceeded(const PlotModel::Plot& plot);
+
+    // Pure. What the scheme failing at its finish writes.
+    [[nodiscard]] std::vector<Memory> OnFinishFailed(const PlotModel::Plot& plot);
 
     // Pure. What giving a plot up writes.
     [[nodiscard]] std::vector<Memory> OnConceded(const PlotModel::Plot& plot);
