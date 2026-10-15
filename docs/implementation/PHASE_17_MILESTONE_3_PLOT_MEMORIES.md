@@ -70,6 +70,12 @@ The crafting verbs have no person slot, and reach nobody.
   them. `target_failed`.
 - **It was done to them openly.** The step succeeded and their awareness fires on success: they took the coin, were
   handed the parcel, were won over, were denounced before the jarl. They know who the agent was. `target_succeeded`.
+
+  **An authority who is appealed to and swayed remembers being swayed.** When Hulda's denunciation of Ysolda to
+  Balgruuf works, Balgruuf remembers that Hulda came to him about Ysolda and that he was convinced; the same holds for
+  proof shown in an exposure, and for a petition granted. It is the authority's `target_succeeded`, worded for each
+  kind of appeal, and the accused's own `target_succeeded` is a separate memory of the same act. An appeal that fails
+  leaves the authority remembering that they were not swayed, and the accused nothing.
 - **It was done to them quietly, and left a mark.** The step succeeded, their awareness fires only on failure, and
   the verb leaves something behind they would notice. They know something happened and **not who did it**.
   `target_noticed`. Of the `failure` verbs, these leave a mark:
@@ -118,6 +124,10 @@ win_over    target_succeeded            Aeta won me over to Thonar's side.
 denounce    target_succeeded (mark)     Aeta denounced me to Igmund.
 denounce    target_succeeded (auth.)    Aeta came to me denouncing Thongvor, and I believed them.
 denounce    target_failed (authority)   Aeta came to me denouncing Thongvor, and I was not convinced.
+expose      target_succeeded (auth.)    Aeta showed me a merchant's ledger as proof against Thongvor, and it convinced me.
+expose      target_failed (authority)   Aeta showed me a merchant's ledger as proof against Thongvor; I was not convinced.
+petition    target_succeeded (auth.)    Aeta petitioned me on Thonar's behalf, and I granted it.
+petition    target_failed (authority)   Aeta petitioned me on Thonar's behalf, and I turned them away.
 spread_rum. target_noticed              Somebody has been spreading ugly talk about me around Markarth.
 plot        mastermind_adapted          When that went wrong, I found another way to go on with my plan to ruin Hulda.
 plot        mastermind_succeeded        I brought off my plan to ruin Hulda.
@@ -216,11 +226,12 @@ asserts a successful denunciation makes its mark aware and a failed one does not
 to the person in that slot when it fires: on failure for `contact` and `failure`, on success for `contact` and `success`.
 Nothing on a timeout. A keeper who is not alive keeps nothing, for these and every other plot memory.
 
-**Verification:** the verb suite asserts each slot carries exactly the target templates its awareness can use, and
-that they name `{mastermind}` only where the verb's sentence does and never `{scheme}`. The memory suite asserts, per
-verb and per outcome, exactly who receives which template: a caught `steal` writes `target_failed` to its mark, a
-successful `bribe` writes `target_succeeded` to its mark, a successful `denounce` writes it to the mark and the
-authority, a failed one to the authority alone, a timeout to no target, and a dead target keeps nothing.
+**Verification:** the verb suite asserts each slot carries exactly the target templates its awareness can use, and that
+they name `{mastermind}` only where the verb's sentence does and never `{scheme}`. The memory suite asserts, per verb
+and per outcome, exactly who receives which template: a caught `steal` writes `target_failed` to its mark, a successful
+`bribe` writes `target_succeeded` to its mark, a successful `denounce` or `expose` writes it to the mark and the
+authority, a successful `petition` to the authority, a failed appeal `target_failed` to the authority alone, a timeout
+to no target, and a dead target keeps nothing.
 
 ### Step 5 — A quiet success that leaves a mark is noticed
 
