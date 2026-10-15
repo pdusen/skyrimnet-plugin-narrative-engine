@@ -95,7 +95,7 @@ The crafting verbs have no person slot, and reach nobody.
 ### Templates
 
 Each verb gains one template beside Milestone 2's nine, each person slot whose awareness can fire gains up to three,
-and the plot gains three:
+and the plot gains two templates and one clause:
 
 | Template                    | Voice                                                               | Written                                         | To                                  |
 | --------------------------- | ------------------------------------------------------------------- | ----------------------------------------------- | ----------------------------------- |
@@ -103,7 +103,7 @@ and the plot gains three:
 | `target_failed`             | The person reached, on the attempt going wrong in front of them     | When the step fails, awareness firing           | That person                         |
 | `target_succeeded`          | The person reached, on it being done to them openly                 | When the step succeeds, awareness firing        | That person                         |
 | `target_noticed`            | The person reached, on noticing what was done, not by whom          | When the step succeeds, on a verb that marks    | That person                         |
-| `mastermind_adapted`        | The mastermind, on going on another way after a failure. Per plot   | When a re-plan is taken                         | The mastermind                      |
+| `mastermind_adapted`        | A clause ending the mastermind's failure memory. Per plot           | When a re-plan is taken                         | The mastermind                      |
 | `mastermind_succeeded`      | The mastermind, on bringing the scheme off. Per plot                | When the finish succeeds                        | The mastermind                      |
 | `mastermind_failed`         | The mastermind, on the scheme failing at its finish. Per plot       | When the finish fails                           | The mastermind                      |
 
@@ -111,6 +111,20 @@ A slot carries only the target templates its awareness can fire: a `contact` slo
 `target_succeeded`, a `failure` slot has `target_failed` and, if its verb leaves a mark, `target_noticed`, a `success`
 slot has `target_succeeded`, and a `never` slot none. The verb suite asserts every slot carries exactly the ones it
 can use.
+
+**Going on after a failure is one memory, not two.** When a step fails and the plot finds another way, the
+mastermind's memory of the failure ends with `mastermind_adapted` rather than being followed by a memory of its own:
+
+```text
+Aeta reported back that Hulda had caught them trying to steal a ruby, but I found another way to go on with my plan to
+ruin Hulda.
+```
+
+So the mastermind's failure memory is no longer written when the step resolves. It waits for the plot's answer to the
+failure -- the next tick at the latest, since adapting is decided in the same pass -- and is written once, with the
+clause when a re-plan is taken and without it otherwise. That holds for `mastermind_told_failed` and
+`mastermind_told_timed_out`, and for a mastermind who did the step themselves, whose `agent_failed` or
+`agent_timed_out` takes the clause the same way. The agent's own memory is still written at resolution.
 
 Drafts, for review at the step that writes them:
 
@@ -129,7 +143,7 @@ expose      target_failed (authority)   Aeta showed me a merchant's ledger as pr
 petition    target_succeeded (auth.)    Aeta petitioned me on Thonar's behalf, and I granted it.
 petition    target_failed (authority)   Aeta petitioned me on Thonar's behalf, and I turned them away.
 spread_rum. target_noticed              Somebody has been spreading ugly talk about me around Markarth.
-plot        mastermind_adapted          When that went wrong, I found another way to go on with my plan to ruin Hulda.
+plot        mastermind_adapted          ..., but I found another way to go on with my plan to ruin Hulda.
 plot        mastermind_succeeded        I brought off my plan to ruin Hulda.
 plot        mastermind_failed           My plan to ruin Hulda came to nothing.
 ```
@@ -142,7 +156,8 @@ Rules the suite holds every template to, beside Milestone 2's:
   side, or petitioned on his behalf, says whose side it is; being robbed by Aeta does not say who sent her.
 - **The target templates never name `{scheme}`.** The person reached does not know the plan.
 - **The plot templates name nothing but `{scheme}`**, as `mastermind_conceded` already does: the step memories kept
-  before them say what happened.
+  before them say what happened. `mastermind_adapted` is a clause, not a sentence: it opens with ", but" and is joined
+  to a failure memory with that memory's own final stop dropped.
 
 ### Importance and type
 
@@ -152,7 +167,7 @@ Rules the suite holds every template to, beside Milestone 2's:
 | `target_failed`             | 0.75       | `EXPERIENCE` | Level with the agent's failure: catching somebody is what gets talked of |
 | `target_succeeded`          | 0.55       | `EXPERIENCE` | Level with the agent's success                                          |
 | `target_noticed`            | 0.6        | `EXPERIENCE` | Being wronged by nobody one can name lingers                            |
-| `mastermind_adapted`        | 0.5        | `EXPERIENCE` | Below the failure memory it follows                                     |
+| `mastermind_adapted`        | --         | --           | A clause: the failure memory it ends keeps that memory's importance     |
 | `mastermind_succeeded`      | 0.7        | `EXPERIENCE` | The plan done is the most a mastermind has to show                      |
 | `mastermind_failed`         | 0.65       | `EXPERIENCE` | Above giving up: it was lost, not let go                                |
 
@@ -190,18 +205,21 @@ A mastermind who did the step themselves keeps `agent_succeeded` alone, as now. 
 
 The three plot templates, written by the plot worker where it already decides each outcome:
 
-- `mastermind_adapted` when a re-plan is taken after a failure, after the failure's own memory;
+- the mastermind's failure memory, held back from resolution until the plot answers the failure, and written once:
+  ending in `mastermind_adapted` when a re-plan is taken, and as it stands otherwise;
 - `mastermind_succeeded` when the finish succeeds and the plot ends achieved;
 - `mastermind_failed` when the finish fails and the plot ends, after the step's own failure memory.
 
 `mastermind_conceded` stays as it is for a plot given up, by decision, by the cap or by a hopeless re-plan. A plot
 whose mastermind is gone writes none of them.
 
-**Verification:** the memory suite asserts each plot template goes to the mastermind alone, names only the scheme
-and relates nobody; a plot-worker suite, or the memory suite over the outcomes that decide them, asserts a taken
-re-plan writes `mastermind_adapted` and a conceded one does not, an achieved plot writes `mastermind_succeeded`, a
-plot that fails at its finish writes `mastermind_failed` and not `mastermind_conceded`, and a plot ended by its
-mastermind's death writes none.
+**Verification:** the memory suite asserts each plot template goes to the mastermind alone, names only the scheme and
+relates nobody; a plot-worker suite, or the memory suite over the outcomes that decide them, asserts a taken re-plan
+writes the mastermind exactly one memory of the failure, ending in the clause, for a step they sent somebody on and for
+one they did themselves, while the agent's memory is written at resolution as before; a conceded re-plan writes the
+failure memory without the clause and then `mastermind_conceded`; an achieved plot writes `mastermind_succeeded`, a plot
+that fails at its finish writes `mastermind_failed` and not `mastermind_conceded`, and a plot ended by its mastermind's
+death writes none.
 
 ### Step 3 — Awareness that fires on success
 
