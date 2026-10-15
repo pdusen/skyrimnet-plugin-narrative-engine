@@ -5,7 +5,7 @@ fixed sentence templates and wrote memories from them at dispatch, at resolution
 the agent completely and the mastermind only in part, and the people a step is done to remember nothing. This
 milestone fills in the rest, so that everybody a plot touches can talk about it.
 
-> **Doc status: Steps 1–6 complete; Step 7 planned, and Step 8 checks it in game.** Steps 1–2 complete the mastermind's
+> **Doc status: Steps 1–7 complete; Step 8's in-game check outstanding.** Steps 1–2 complete the mastermind's
 > side, Steps 3–5 give the people a step reaches memories of their own, and Step 6 is the in-game check. Phase 17's
 > Steps 20–22 (world effects, gossip seeding and their validation) still follow this milestone.
 
@@ -340,7 +340,7 @@ to nothing." -- where one would do.
 
 ### Step 7 — One memory per person per plot per tick
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -365,6 +365,12 @@ untouched: going on after a failure is part of the failure's own sentence.
 **Verification:** the memory suite asserts that combining leaves one memory per keeper with the statements joined in
 order, the highest importance and its type, the union of related people and the first location, and leaves a keeper
 with a single statement as they were.
+
+Done. `PlotMemories::Combine` does the merging, and `Memory::source` became a string so a combined memory can list
+every statement's source ("agent_failed+mastermind_failed"). `PlotTick` gathers into a plot-worker buffer wherever it
+wrote before and writes the combined batch after each plot is advanced. 501 tests pass, with a new memory-suite case,
+and the plugin builds with no warnings. As with Step 2, the gathering in `PlotTick` is not under test; the suite drives
+`Combine` itself.
 
 ### Step 8 — In-game check of combined memories
 

@@ -121,7 +121,7 @@ namespace NarrativeEngine::PlotMemories
                 }
             }
             m.location = PlaceOf(step);
-            m.source = PlotVerbs::TemplateId(t);
+            m.source = std::string{PlotVerbs::TemplateId(t)};
             return m;
         }
 
@@ -330,6 +330,39 @@ namespace NarrativeEngine::PlotMemories
         m.type = "EXPERIENCE";
         m.source = "mastermind_conceded";
         return {m};
+    }
+
+    std::vector<Memory> Combine(const std::vector<Memory>& memories)
+    {
+        std::vector<Memory> out;
+        // The importance each combined memory's type was taken from.
+        std::vector<float> typedBy;
+        for (const auto& m : memories) {
+            const auto it =
+                std::find_if(out.begin(), out.end(), [&m](const Memory& kept) { return kept.npc == m.npc; });
+            if (it == out.end()) {
+                out.push_back(m);
+                typedBy.push_back(m.importance);
+                continue;
+            }
+            auto& kept = *it;
+            kept.text += (kept.text.empty() || m.text.empty() ? "" : " ") + m.text;
+            if (m.importance > typedBy[static_cast<std::size_t>(it - out.begin())]) {
+                typedBy[static_cast<std::size_t>(it - out.begin())] = m.importance;
+                kept.type = m.type;
+            }
+            kept.importance = std::max(kept.importance, m.importance);
+            for (const auto npc : m.related) {
+                if (npc != kept.npc && std::find(kept.related.begin(), kept.related.end(), npc) == kept.related.end()) {
+                    kept.related.push_back(npc);
+                }
+            }
+            if (kept.location.empty()) {
+                kept.location = m.location;
+            }
+            kept.source += "+" + m.source;
+        }
+        return out;
     }
 
     std::size_t Write(const std::vector<Memory>& memories)

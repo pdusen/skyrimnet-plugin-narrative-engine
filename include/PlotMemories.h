@@ -25,7 +25,9 @@
 //   the end      the mastermind, on bringing the scheme off, on its failing
 //                at the finish, or on giving it up
 //
-// Only the living keep anything: Write skips a keeper who is not alive.
+// Only the living keep anything: Write skips a keeper who is not alive. And
+// nobody keeps two memories of one plot from one tick: the plot worker
+// gathers a plot's memories as it advances it and Combines them per keeper.
 //
 // See docs/implementation/PHASE_17_MILESTONE_2_RIGID_STEPS.md and
 // PHASE_17_MILESTONE_3_PLOT_MEMORIES.md.
@@ -50,8 +52,9 @@ namespace NarrativeEngine::PlotMemories
         // The step's place, when its verb has one; otherwise empty, because
         // the people in it move on schedules and a guess would be wrong.
         std::string location;
-        // Which template it came from, for the trace and the suite.
-        std::string_view source;
+        // Which template it came from, for the trace and the suite; for a
+        // combined memory, each of its statements' in order, joined by '+'.
+        std::string source;
     };
 
     // Pure. What a step's dispatch writes.
@@ -78,6 +81,13 @@ namespace NarrativeEngine::PlotMemories
 
     // Pure. What giving a plot up writes.
     [[nodiscard]] std::vector<Memory> OnConceded(const PlotModel::Plot& plot);
+
+    // Pure. One memory per keeper, in the order keepers first appear: their
+    // statements joined into a paragraph in the order they were made, the
+    // most important statement's importance and type, everybody any of them
+    // relates, and the first location any of them has. A keeper with one
+    // statement keeps it as it was.
+    [[nodiscard]] std::vector<Memory> Combine(const std::vector<Memory>& memories);
 
     // Write each memory through SkyrimNet to its keeper's actor reference.
     // Returns how many SkyrimNet accepted. A keeper with no reference, or a

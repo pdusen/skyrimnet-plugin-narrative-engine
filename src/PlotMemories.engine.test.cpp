@@ -530,3 +530,86 @@ TEST_CASE("PlotMemories for a quiet success that leaves a mark", "[PlotMemories]
         }
     }
 }
+
+TEST_CASE("PlotMemories combines what one plot gives one person", "[PlotMemories][engine]")
+{
+    const auto statement = [](RE::FormID keeper,
+                              std::string text,
+                              float importance,
+                              std::string type,
+                              std::vector<RE::FormID> related,
+                              std::string location,
+                              std::string source) {
+        PlotMemories::Memory m;
+        m.npc = keeper;
+        m.text = std::move(text);
+        m.importance = importance;
+        m.type = std::move(type);
+        m.related = std::move(related);
+        m.location = std::move(location);
+        m.source = std::move(source);
+        return m;
+    };
+
+    SECTION("when one person is given two statements and another one")
+    {
+        const auto combined = PlotMemories::Combine({
+            statement(kBoss,
+                      "I tried to win Indaryn over, but they would not be swayed.",
+                      0.75f,
+                      "EXPERIENCE",
+                      {kMark},
+                      "",
+                      "agent_failed"),
+            statement(kAgent, "I stole a ruby from Hulda.", 0.55f, "EXPERIENCE", {kBoss, kMark}, "", "agent_succeeded"),
+            statement(kBoss,
+                      "My plan to win over Indaryn came to nothing.",
+                      0.65f,
+                      "EXPERIENCE",
+                      {},
+                      "Riften",
+                      "mastermind_failed"),
+        });
+
+        SECTION("should give each person one memory, in the order they first appear")
+        {
+            REQUIRE(Keepers(combined) == std::vector<RE::FormID>{kBoss, kAgent});
+        }
+
+        SECTION("should join the statements into a paragraph, in the order they were made")
+        {
+            REQUIRE(combined[0].text
+                    == "I tried to win Indaryn over, but they would not be swayed. My plan to win over Indaryn came to "
+                       "nothing.");
+            REQUIRE(combined[0].source == "agent_failed+mastermind_failed");
+        }
+
+        SECTION("should keep the most important statement's weight, everybody related and the first location")
+        {
+            REQUIRE(combined[0].importance == 0.75f);
+            REQUIRE(combined[0].related == std::vector<RE::FormID>{kMark});
+            REQUIRE(combined[0].location == "Riften");
+        }
+
+        SECTION("should leave somebody with a single statement as they were")
+        {
+            REQUIRE(combined[1].text == "I stole a ruby from Hulda.");
+            REQUIRE(combined[1].related == std::vector<RE::FormID>{kBoss, kMark});
+            REQUIRE(combined[1].source == "agent_succeeded");
+        }
+    }
+
+    SECTION("when the statements differ in kind")
+    {
+        SECTION("should take the type of the most important")
+        {
+            const auto combined = PlotMemories::Combine({
+                statement(kBoss, "Idolaf reported back.", 0.5f, "KNOWLEDGE", {kAgent}, "", "mastermind_told_succeeded"),
+                statement(kBoss, "I brought off my plan.", 0.7f, "EXPERIENCE", {}, "", "mastermind_succeeded"),
+            });
+            REQUIRE(combined.size() == 1);
+            REQUIRE(combined[0].type == "EXPERIENCE");
+            REQUIRE(combined[0].importance == 0.7f);
+        }
+    }
+}

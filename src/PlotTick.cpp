@@ -26,6 +26,8 @@
 #include <format>
 #include <limits>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace NarrativeEngine::PlotTick
 {
@@ -130,6 +132,28 @@ namespace NarrativeEngine::PlotTick
                     static_cast<double>(cfg.plotActorCooldownDays)};
         }
 
+        // The memories the plot being advanced has written this tick. Gathered
+        // rather than written at once, so that everything one plot gives one
+        // person in one tick is combined into a single memory: a failed finish
+        // and the scheme lost with it are one thing to remember, not two.
+        //
+        // Plot worker only, like every other thing in this file, and empty
+        // between plots: RunSimulation writes it out after each one.
+        std::vector<PlotMemories::Memory> g_pendingMemories;
+
+        void Remember(std::vector<PlotMemories::Memory> memories)
+        {
+            for (auto& m : memories) {
+                g_pendingMemories.push_back(std::move(m));
+            }
+        }
+
+        // Write what the plot just advanced remembered, one memory per keeper.
+        void WriteRemembered()
+        {
+            PlotMemories::Write(PlotMemories::Combine(std::exchange(g_pendingMemories, {})));
+        }
+
         // Free the mastermind's slot and stamp the plot terminal.
         void EndPlot(PlotState& state,
                      PlotModel::Plot& plot,
@@ -154,13 +178,13 @@ namespace NarrativeEngine::PlotTick
             switch (outcome) {
             case PlotModel::PlotOutcome::Conceded:
             case PlotModel::PlotOutcome::AdaptationCapHit:
-                PlotMemories::Write(PlotMemories::OnConceded(plot));
+                Remember(PlotMemories::OnConceded(plot));
                 break;
             case PlotModel::PlotOutcome::ObjectiveAchieved:
-                PlotMemories::Write(PlotMemories::OnSucceeded(plot));
+                Remember(PlotMemories::OnSucceeded(plot));
                 break;
             case PlotModel::PlotOutcome::FinishFailed:
-                PlotMemories::Write(PlotMemories::OnFinishFailed(plot));
+                Remember(PlotMemories::OnFinishFailed(plot));
                 break;
             default:
                 break;
@@ -434,7 +458,7 @@ namespace NarrativeEngine::PlotTick
                               prepared,
                               unprepared > 0.0f ? step.threshold / unprepared : 1.0f,
                               onGuard);
-            PlotMemories::Write(PlotMemories::OnDispatch(plot, step));
+            Remember(PlotMemories::OnDispatch(plot, step));
             return Dispatched::Yes;
         }
 
@@ -466,7 +490,7 @@ namespace NarrativeEngine::PlotTick
             // what they made of it -- written before a concession, which
             // follows from it.
             if (!plot.history.empty()) {
-                PlotMemories::Write(PlotMemories::OnFailureAnswered(
+                Remember(PlotMemories::OnFailureAnswered(
                     plot, plot.history.back(), adaptation.revision == PlotPlanning::Revision::Substituted));
             }
 
@@ -651,7 +675,7 @@ namespace NarrativeEngine::PlotTick
                 return;
             }
             PlotLog::Resolve(plot, step);
-            PlotMemories::Write(PlotMemories::OnResolve(plot, step));
+            Remember(PlotMemories::OnResolve(plot, step));
 
             const bool succeeded = step.state == PlotModel::StepState::Succeeded;
             if (succeeded) {
@@ -688,7 +712,7 @@ namespace NarrativeEngine::PlotTick
             // mastermind remembers the failure, then the scheme lost; not a
             // concession, since they lost it rather than gave it up.
             if (PlotPlanning::FinishFailed(plot)) {
-                PlotMemories::Write(PlotMemories::OnFailureAnswered(plot, plot.history.back(), false));
+                Remember(PlotMemories::OnFailureAnswered(plot, plot.history.back(), false));
                 EndPlot(state, plot, PlotModel::PlotStatus::Failed, PlotModel::PlotOutcome::FinishFailed, gameDay);
                 return;
             }
@@ -734,6 +758,7 @@ namespace NarrativeEngine::PlotTick
             for (std::size_t i = 0; i < state.plots.size(); ++i) {
                 if (!state.plots[i].IsTerminal()) {
                     AdvancePlot(pt, state, state.plots[i], gameDay);
+                    WriteRemembered();
                 }
             }
 
