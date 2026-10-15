@@ -12,7 +12,8 @@ ESP surface. Everything here is C++ plus prompts, observable from the log and th
 
 > **Doc status: Steps 1–17 complete; Steps 18 and 19 superseded.** How a step is chosen, described and
 > remembered is being rebuilt by [Milestone 2](PHASE_17_MILESTONE_2_RIGID_STEPS.md), which replaces Step 18's
-> validation and Step 19's memory calls. Steps 20–22 still apply after it. Step 9 replaced the settings table's
+> validation and Step 19's memory calls, and [Milestone 3](PHASE_17_MILESTONE_3_PLOT_MEMORIES.md) completes the
+> memories. Steps 20–22 still apply after both. Step 9 replaced the settings table's
 > proposed numbers with figures from an offline harness, and Step 22 checks those against real play. Two
 > design-level questions (the conspicuousness split, and how a step gets caught) are still open in the design
 > doc and are deliberately built behind switches here rather than blocked on.

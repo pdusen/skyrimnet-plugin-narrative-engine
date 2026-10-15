@@ -2858,10 +2858,10 @@ attempt at Step 9 to show, in the plugin log's "offices read from the running ga
 3. **Data file or code for the wording?** The draft keeps sentences and templates in the `constexpr` table beside
    their rules. A data file under `statics/` would let wording be tuned without a rebuild, at the cost of a loader
    that validates slot names at load.
-4. **Do marks remember?** The template set has nobody but the agent and the mastermind. A bribed guard, a
-   recipient handed a parcel, or a mark who caught their watcher would each need a template of their own, and
-   awareness already says which of them should get one. A mark who catches somebody is also what Phase 17 Step 21
-   would seed gossip from.
-5. **Does the mastermind hear about a success?** There are templates for being told of a failure and of a
-   timeout and none for a success, so a mastermind whose agent succeeds keeps only the dispatch memory of
-   sending them.
+4. **Do marks remember?** Taken up by [Milestone 3](PHASE_17_MILESTONE_3_PLOT_MEMORIES.md). The template set has nobody
+   but the agent and the mastermind. A bribed guard, a recipient handed a parcel, or a mark who caught their watcher
+   would each need a template of their own, and awareness already says which of them should get one. A mark who catches
+   somebody is also what Phase 17 Step 21 would seed gossip from.
+5. **Does the mastermind hear about a success?** Taken up by [Milestone 3](PHASE_17_MILESTONE_3_PLOT_MEMORIES.md). There
+   are templates for being told of a failure and of a timeout and none for a success, so a mastermind whose agent
+   succeeds keeps only the dispatch memory of sending them.
