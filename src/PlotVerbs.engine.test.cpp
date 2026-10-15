@@ -214,6 +214,25 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
             }
         }
 
+        SECTION("should leave a mark to notice only where a quiet success would, naming nobody")
+        {
+            using PlotVerbs::TargetTemplate;
+            const std::set<std::string_view> marking{"steal", "destroy", "sabotage", "spread_rumors"};
+            for (const auto& verb : PlotVerbs::kVerbs) {
+                for (std::size_t i = 0; i < verb.slotCount; ++i) {
+                    const auto& slot = verb.slots[i];
+                    INFO(verb.id << " {" << slot.name << "}");
+                    const auto text = slot.Text(TargetTemplate::Noticed);
+                    const bool expected = marking.contains(verb.id) && slot.awareness == PlotVerbs::Awareness::Failure;
+                    REQUIRE(text.empty() == !expected);
+                    REQUIRE_FALSE(Names(text, "agent"));
+                    REQUIRE_FALSE(Names(text, "mastermind"));
+                    REQUIRE_FALSE(Names(text, "scheme"));
+                    REQUIRE_FALSE(Names(text, slot.name));
+                }
+            }
+        }
+
         SECTION("should give every person slot an awareness, and no other slot one")
         {
             for (const auto& verb : PlotVerbs::kVerbs) {

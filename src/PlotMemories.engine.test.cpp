@@ -258,8 +258,10 @@ TEST_CASE("PlotMemories at resolution", "[PlotMemories][engine]")
                     std::vector<RE::FormID> expected;
                     for (std::size_t i = 0; i < verb.slotCount; ++i) {
                         const auto& slot = verb.slots[i];
+                        const bool noticed =
+                            how == StepOutcome::Succeeded && !slot.Text(PlotVerbs::TargetTemplate::Noticed).empty();
                         if (slot.kind == PlotVerbs::SlotKind::Person
-                            && PlotCandidates::AwarenessFired(slot.awareness, how)) {
+                            && (noticed || PlotCandidates::AwarenessFired(slot.awareness, how))) {
                             expected.push_back(step.FindSlot(slot.name)->form);
                         }
                     }
@@ -491,6 +493,40 @@ TEST_CASE("PlotMemories for the people a step reaches", "[PlotMemories][engine]"
         {
             REQUIRE(reached("steal", StepOutcome::FailedCaught)[0].importance
                     > reached("bribe", StepOutcome::Succeeded)[0].importance);
+        }
+    }
+}
+
+TEST_CASE("PlotMemories for a quiet success that leaves a mark", "[PlotMemories][engine]")
+{
+    const auto plot = Scheme();
+    const auto reached = [&plot](std::string_view verb) {
+        auto step = Cast(*PlotVerbs::Find(verb), kAgent);
+        step.outcome = StepOutcome::Succeeded;
+        return Reached(PlotMemories::OnResolve(plot, step));
+    };
+
+    SECTION("when a theft succeeds")
+    {
+        const auto memories = reached("steal");
+
+        SECTION("should give the person robbed a memory of it, naming and relating nobody")
+        {
+            REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kMark});
+            REQUIRE(Sources(memories) == std::vector<std::string_view>{"target_noticed"});
+            REQUIRE(memories[0].text == "Someone stole a ruby from me.");
+            REQUIRE(memories[0].related.empty());
+        }
+    }
+
+    SECTION("when a step that leaves nothing behind succeeds")
+    {
+        SECTION("should give the person it was done to nothing")
+        {
+            for (const auto* verb : {"watch", "ask_around", "dig_up", "falsify", "plant"}) {
+                INFO(verb);
+                REQUIRE(reached(verb).empty());
+            }
         }
     }
 }

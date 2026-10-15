@@ -135,6 +135,8 @@ namespace NarrativeEngine::PlotMemories
         // level with the agent's success.
         constexpr float kTargetFailedImportance = 0.75f;
         constexpr float kTargetSucceededImportance = 0.55f;
+        // Being wronged by nobody one can name lingers.
+        constexpr float kTargetNoticedImportance = 0.6f;
 
         // Everybody a person slot's template names, besides its keeper: the
         // agent, the mastermind where the verb's sentence puts them, and
@@ -165,8 +167,10 @@ namespace NarrativeEngine::PlotMemories
         }
 
         // The people a step reached, each remembering it from their own
-        // slot's template: everybody whose awareness fired for the outcome.
-        // A timeout reaches nobody.
+        // slot's template: everybody whose awareness fired for the outcome,
+        // and on a success anybody it was done to quietly who would notice
+        // what it left behind -- without knowing who. A timeout reaches
+        // nobody.
         void Targets(const PlotModel::Plot& plot, const PlotModel::Step& step, std::vector<Memory>& out)
         {
             const auto* verb = PlotVerbs::Find(step.verb);
@@ -177,8 +181,28 @@ namespace NarrativeEngine::PlotMemories
             const auto t = succeeded ? PlotVerbs::TargetTemplate::Succeeded : PlotVerbs::TargetTemplate::Failed;
             for (std::size_t i = 0; i < verb->slotCount; ++i) {
                 const auto& slot = verb->slots[i];
-                if (slot.kind != PlotVerbs::SlotKind::Person || slot.Text(t).empty()
-                    || !PlotCandidates::AwarenessFired(slot.awareness, step.outcome)) {
+                if (slot.kind != PlotVerbs::SlotKind::Person) {
+                    continue;
+                }
+                if (succeeded && !PlotCandidates::AwarenessFired(slot.awareness, step.outcome)
+                    && !slot.Text(PlotVerbs::TargetTemplate::Noticed).empty()) {
+                    const auto* value = step.FindSlot(slot.name);
+                    if (value != nullptr && value->form != 0 && value->form != step.actor
+                        && value->form != plot.mastermind) {
+                        // Nothing related: the memory's related actors would
+                        // tell them exactly who they do not know did it.
+                        Memory m;
+                        m.npc = value->form;
+                        m.text = PlotVerbs::RenderTarget(step, slot.name, PlotVerbs::TargetTemplate::Noticed);
+                        m.importance = kTargetNoticedImportance;
+                        m.type = "EXPERIENCE";
+                        m.location = PlaceOf(step);
+                        m.source = "target_noticed";
+                        out.push_back(std::move(m));
+                    }
+                    continue;
+                }
+                if (slot.Text(t).empty() || !PlotCandidates::AwarenessFired(slot.awareness, step.outcome)) {
                     continue;
                 }
                 const auto* value = step.FindSlot(slot.name);

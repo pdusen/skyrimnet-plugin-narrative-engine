@@ -5,9 +5,9 @@ fixed sentence templates and wrote memories from them at dispatch, at resolution
 the agent completely and the mastermind only in part, and the people a step is done to remember nothing. This
 milestone fills in the rest, so that everybody a plot touches can talk about it.
 
-> **Doc status: in progress; Steps 1–4 complete.** Steps 1–2 complete the mastermind's side, Steps 3–5 give the people a
-> step reaches memories of their own, and Step 6 is the in-game check. Phase 17's Steps 20–22 (world effects, gossip
-> seeding and their validation) still follow this milestone.
+> **Doc status: Steps 1–5 complete; Step 6's validation outstanding.** Steps 1–2 complete the mastermind's side, Steps
+> 3–5 give the people a step reaches memories of their own, and Step 6 is the in-game check. Phase 17's Steps 20–22
+> (world effects, gossip seeding and their validation) still follow this milestone.
 
 ---
 
@@ -297,7 +297,7 @@ than the suite.
 
 ### Step 5 — A quiet success that leaves a mark is noticed
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -308,6 +308,12 @@ mastermind.
 **Verification:** the verb suite asserts exactly the four verbs carry the flag and the template, and that the template
 names neither `{agent}` nor `{mastermind}`. The memory suite asserts a successful `steal` writes `target_noticed` to
 its mark with no related actors, and a successful `watch`, `dig_up` or `plant` writes nothing to theirs.
+
+Done. The flag is the template itself: a `failure` slot that carries a `target_noticed` line leaves a mark, and the
+four marks named above are the only ones that do. `OnResolve` writes it to them on a success, relating nobody, at 0.6.
+The verb suite pins the four and holds the line to naming nobody; the memory suite checks a theft noticed without a
+name or a relation, five quiet verbs leaving nothing, and the every-verb case now expects the noticed. 500 tests pass,
+and the plugin builds with no warnings.
 
 ### Step 6 — In-game validation
 
