@@ -2751,6 +2751,35 @@ parse strips trailing periods from both.
 Done. The check that a scheme is not its own ambition now compares the two as lines too, without case or a period.
 494 tests pass and the plugin builds with no warnings.
 
+### Step 54 — A step can run out of time
+
+- [x] Complete
+
+**[CLAUDE]**
+
+Step 9's thirteenth attempt, the first at plan odds 0.5, a mishap chance of 0.04 and preparation ease 0.9, had plots
+succeed 13 times in 35. Half of all steps were caught and 1 in 150 ran out of time: an agent finished in about two
+thirds of their budget, and the race's rolls vary too little for a late finish to happen by chance. Every catch put
+somebody on guard, steps against somebody on guard succeeded one time in five, and 14 plans reached the six-step cap
+without reaching their odds.
+
+- **`fPlotBudgetScale`, new, 0.7.** It multiplies every step's budget, never below the fewest ticks the work could be
+  done in, and planning's estimate reads it too. A weak agent on a big job now runs out of time, which fails the step
+  without putting anybody on guard. Preparations shorten the work and not the time, so they now guard against
+  timeouts as well.
+- **`fPlotMishapChanceBase` 0.04 to 0.025**, so catching takes back the share of failing that timing out now has.
+- **`fPlotPlanOdds` 0.5 to 0.55**, since the race is less forgiving of being late than the estimate's middling trip
+  allows.
+
+Replaying the run's 149 dispatches offline at these values gave about 61% of unprepared steps succeeding, 29% caught
+and 10% out of time, against 56%, 42% and none at the old values. The budget has a cliff below 0.7: at 0.65 the same
+replay ran 28% of steps out of time, because a step's rolls vary so little that a budget either covers an agent or
+does not.
+
+**Verification:** the resolution suite asserts a scaled budget is shorter and lowers a weak agent's estimated odds.
+
+Done. 495 tests pass and the plugin builds with no warnings.
+
 ---
 
 ## Open questions

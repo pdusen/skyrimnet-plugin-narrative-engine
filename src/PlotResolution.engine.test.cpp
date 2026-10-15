@@ -165,3 +165,32 @@ TEST_CASE("PlotResolution craft profile", "[PlotResolution][engine]")
         }
     }
 }
+
+TEST_CASE("PlotResolution scales a step's budget", "[PlotResolution][engine]")
+{
+    SECTION("when the budget is scaled down")
+    {
+        SECTION("should give a step fewer ticks, in proportion")
+        {
+            REQUIRE(PlotResolution::SizeBudget(StepType::Discredit, 1.0, 0.5)
+                    < PlotResolution::SizeBudget(StepType::Discredit, 1.0));
+            REQUIRE(PlotResolution::SizeBudget(StepType::Discredit, 1.0, 1.0)
+                    == PlotResolution::SizeBudget(StepType::Discredit, 1.0));
+        }
+
+        SECTION("should lower a weak agent's estimated odds, by their running out of time")
+        {
+            PlotResolution::Estimate weak;
+            weak.type = StepType::Discredit;
+            weak.importance = 1.0;
+            weak.competence = 0.3;
+            weak.suitability = 0.3;
+            PlotResolution::Tuning roomy;
+            roomy.mishapEnabled = false;
+            auto tight = roomy;
+            tight.budgetScale = 0.5;
+            REQUIRE(PlotResolution::EstimateSuccess(weak, roomy, 300) == 1.0);
+            REQUIRE(PlotResolution::EstimateSuccess(weak, tight, 300) < 1.0);
+        }
+    }
+}

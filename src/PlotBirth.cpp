@@ -423,6 +423,7 @@ namespace NarrativeEngine::PlotBirth
             input.tuning.mishapChance = cfg.plotMishapChanceBase;
             input.tuning.preparationEase = cfg.plotPreparationEase;
             input.tuning.alertHardening = cfg.plotAlertHardening;
+            input.tuning.budgetScale = cfg.plotBudgetScale;
             input.targetOdds = cfg.plotPlanOdds;
         }
     } // namespace

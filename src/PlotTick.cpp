@@ -373,7 +373,7 @@ namespace NarrativeEngine::PlotTick
             // it, so the deadline cannot be settled until the work is.
             step.threshold = PlotResolution::SizeThreshold(step.type, importance, travel);
             step.budget = std::max(
-                PlotResolution::SizeBudget(step.type, importance),
+                PlotResolution::SizeBudget(step.type, importance, cfg.plotBudgetScale),
                 PlotResolution::MinimumViableBudget(
                     step.threshold, cfg.plotProgressRateMin, cfg.plotProgressRateMax, cfg.plotProgressMaxFraction));
             // Each preparation of this step that succeeded leaves less of it

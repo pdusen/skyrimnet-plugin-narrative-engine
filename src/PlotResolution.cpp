@@ -127,7 +127,7 @@ namespace NarrativeEngine::PlotResolution
         return std::max(1, static_cast<int>(std::ceil(work / perTick)));
     }
 
-    int SizeBudget(PlotModel::StepType type, double targetImportance)
+    int SizeBudget(PlotModel::StepType type, double targetImportance, double scale)
     {
         const double importance = std::clamp(targetImportance, 0.0, 1.0);
         // A bigger job is worth waiting longer for, at the same rate the
@@ -135,7 +135,7 @@ namespace NarrativeEngine::PlotResolution
         // making it more likely to fail. What it costs is exposure: more
         // ticks is more mishap rolls.
         const double multiplier = 1.0 + importance * (kMaxImportanceMultiplier - 1.0);
-        return static_cast<int>(static_cast<double>(BaseBudgetTicks(type)) * multiplier + 0.5);
+        return static_cast<int>(static_cast<double>(BaseBudgetTicks(type)) * multiplier * std::max(0.0, scale) + 0.5);
     }
 
     float SizeThreshold(PlotModel::StepType type, double targetImportance, double travelDistanceNorm)
@@ -176,7 +176,7 @@ namespace NarrativeEngine::PlotResolution
     {
         const float whole = SizeThreshold(step.type, step.importance, step.travel);
         const int budget =
-            std::max(SizeBudget(step.type, step.importance),
+            std::max(SizeBudget(step.type, step.importance, tuning.budgetScale),
                      MinimumViableBudget(whole, tuning.rateMin, tuning.rateMax, tuning.maxFractionPerTick));
         const double pressure =
             Pressure(step.preparations, tuning.preparationEase, step.onGuard, tuning.alertHardening);

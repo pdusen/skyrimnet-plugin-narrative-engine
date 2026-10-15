@@ -1152,8 +1152,18 @@ namespace NarrativeEngine::Settings
         // Plots succeed about as often as their finish's planned odds say:
         // a run planned to an average of 71% succeeded 19 times in 26. A
         // plot fails only when its finish does, so this is close to the
-        // plot success rate. Lowered from 0.75 after Step 53 to aim at half.
-        float plotPlanOdds = 0.5f;
+        // plot success rate. Lowered from 0.75 after Step 53 to aim at half,
+        // which with the mishap chance doubled left plans unable to reach it
+        // and plots succeeding 13 times in 35; 0.55 since Step 54.
+        float plotPlanOdds = 0.55f;
+
+        // How long a step is given, as a share of the ticks its kind and
+        // its target's importance call for. Never below the fewest ticks
+        // the work could be done in. At 1.0 an agent finished in about two
+        // thirds of the time and 1 step in 150 ran out of it; at 0.7 a weak
+        // agent on a big job runs out of time, which fails the step without
+        // putting anybody on guard.
+        float plotBudgetScale = 0.7f;
 
         // What being on guard does to every later step of a plot done to
         // somebody who caught one of its agents: the step's work and its
@@ -1199,7 +1209,12 @@ namespace NarrativeEngine::Settings
         // at 0.02 most finishes were above even odds unprepared, so no
         // target below that could bring plots down to succeeding half the
         // time, and plans aimed at 0.5 would not have prepared at all.
-        float plotMishapChanceBase = 0.04f;
+        //
+        // Lowered to 0.025 in Step 54: at 0.04 half of all steps were
+        // caught, every catch put somebody on guard, and steps against
+        // somebody on guard succeeded one time in five. Running out of
+        // time took over part of the failing, through fPlotBudgetScale.
+        float plotMishapChanceBase = 0.025f;
 
         // Seeds the plot RNG stream. 0 means nondeterministic; any other
         // value makes a run reproducible, which is what the offline

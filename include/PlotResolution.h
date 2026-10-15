@@ -55,7 +55,10 @@ namespace NarrativeEngine::PlotResolution
     // with it is deliberate: importance makes a step LONGER rather than
     // less likely to succeed, and a longer step is more exposed to the
     // mishap roll. Travel is what moves the odds.
-    [[nodiscard]] int SizeBudget(PlotModel::StepType type, double targetImportance);
+    //
+    // `scale` multiplies the whole of it, fPlotBudgetScale: lower makes a
+    // weak agent run out of time rather than finish late.
+    [[nodiscard]] int SizeBudget(PlotModel::StepType type, double targetImportance, double scale = 1.0);
 
     // The fewest ticks in which this threshold can be reached at all, by
     // ANY actor, on a perfect roll every tick.
@@ -114,6 +117,7 @@ namespace NarrativeEngine::PlotResolution
         double mishapChance = 0.012;
         double preparationEase = 0.8;
         double alertHardening = 1.25;
+        double budgetScale = 1.0;
     };
 
     // A step as planning knows it: no agent yet and no trip, so an ordinary
