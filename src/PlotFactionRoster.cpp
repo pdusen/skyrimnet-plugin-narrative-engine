@@ -257,7 +257,9 @@ namespace NarrativeEngine::PlotFactionRoster
         MemberFacts facts;
         facts.npc = npc;
         for (const auto& membership : npcForm->factions) {
-            if (membership.faction == nullptr) {
+            // Below 0 is a post somebody may be given, not one they hold;
+            // see PlotPopulation's RankIn.
+            if (membership.faction == nullptr || membership.rank < 0) {
                 continue;
             }
             const auto id = membership.faction->GetFormID();

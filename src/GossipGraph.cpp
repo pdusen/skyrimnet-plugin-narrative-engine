@@ -698,7 +698,10 @@ namespace NarrativeEngine::GossipGraph
                     continue;
                 }
                 for (const auto& fr : npc->factions) {
-                    if (fr.faction) {
+                    // A rank below 0 is a post somebody may be given, not
+                    // one they hold: vanilla lists Maven Black-Briar among
+                    // the jarls at -1 until the Civil War seats her.
+                    if (fr.faction && fr.rank >= 0) {
                         members[fr.faction->GetFormID()].push_back(id);
                     }
                 }

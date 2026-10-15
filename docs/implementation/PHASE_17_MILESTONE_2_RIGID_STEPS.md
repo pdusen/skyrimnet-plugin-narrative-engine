@@ -2805,6 +2805,27 @@ planning suite asserts a hopeless re-plan is conceded and leaves the plan as it 
 Done. 495 tests pass, with new sections in the resolution and planning suites, and the plugin builds with no
 warnings.
 
+### Step 56 — A post somebody may be given is not one they hold
+
+- [x] Complete
+
+**[CLAUDE]**
+
+Step 9's fifteenth attempt had plots succeed 34 times in 63 against 33.2 planned, and steps succeed 68% of the time,
+24% caught and 8% out of time. Its one fault was authority: Maven Black-Briar and Thongvor Silver-Blood were read as
+jarls. Vanilla lists the Civil War's replacement officials in their future posts at rank -1 -- both are in
+`JobJarlFaction` at -1 -- and every reader of a base record's factions counted any entry as membership. An exposure of
+Thongvor to Igmund's court went to "the Silver-Blood family" five times, Vulwulf's exposure of Maven to Laila went to
+"the Black-Briar family", and Haelga and Elgrim were exposed to Maven.
+
+A rank below 0 is now not membership, wherever a base record's factions are read: the plot population's offices,
+trades, crafts and organisations, the faction roster's standing, and the gossip graph's shared factions, which had
+joined Maven to every jarl.
+
+**Verification:** the gossip graph suite asserts somebody listed in a faction at -1 is not joined to its members.
+
+Done. 496 tests pass and the plugin builds with no warnings.
+
 ---
 
 ## Open questions
