@@ -9,7 +9,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <format>
 #include <limits>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -19,6 +21,9 @@ namespace NarrativeEngine::PlotPopulation
     namespace
     {
         PlotCasting::Population g_population;
+        // Each member's office as their record lists it, by member index:
+        // what every session starts from, and keeps where it cannot see.
+        std::vector<PlotCasting::Office> g_recordedOffices;
         bool g_ready = false;
 
         // --- The road-distance table ------------------------------------
@@ -470,6 +475,107 @@ namespace NarrativeEngine::PlotPopulation
             return out;
         }
 
+        const char* OfficeName(PlotCasting::Office office)
+        {
+            switch (office) {
+            case PlotCasting::Office::Jarl:
+                return "jarl";
+            case PlotCasting::Office::Steward:
+                return "steward";
+            case PlotCasting::Office::GuardCaptain:
+                return "guard captain";
+            case PlotCasting::Office::OrcChief:
+                return "chief";
+            case PlotCasting::Office::None:
+                break;
+            }
+            return "nobody";
+        }
+
+        // Who holds each office in the running game, in place of what the
+        // records list.
+        //
+        // The records cannot say. Vanilla lists every jarl the Civil War may
+        // seat in JobJarlFaction, nearly all at rank -1 -- Laila and Maven,
+        // Igmund and Thongvor alike -- and the game ranks whoever actually
+        // rules once it is running; stewards are the same. Read off the base
+        // records, Maven and Thongvor were jarls already, so an exposure of
+        // Thongvor went to "the Silver-Blood family". Reading only ranks of 0
+        // and up left Skald the one jarl in Skyrim.
+        //
+        // So the live actor's rank decides, once a game is loaded. Somebody
+        // with no actor keeps what their record lists. A game that seats no
+        // jarl at all is taken to be one that ranks nobody this way, and
+        // keeps the records' answer for everybody: worse than the truth,
+        // but not a Skyrim with no authority in it.
+        void ReadLiveOffices()
+        {
+            const auto offices = ResolveOffices();
+            auto& members = g_population.members;
+            if (g_recordedOffices.size() != members.size()) {
+                return;
+            }
+            std::vector<PlotCasting::Office> live(members.size(), PlotCasting::Office::None);
+            std::vector<std::string> jarls;
+            std::size_t rankedJarls = 0;
+            std::vector<std::string> unseated;
+            std::array<std::size_t, 5> counts{};
+            for (std::size_t i = 0; i < members.size(); ++i) {
+                const auto& member = members[i];
+                const auto* participant = GossipGraph::Find(member.npc);
+                auto* actor = participant != nullptr && participant->actorRef != 0
+                                  ? RE::TESForm::LookupByID<RE::Actor>(participant->actorRef)
+                                  : nullptr;
+                const auto recorded = g_recordedOffices[i];
+                if (actor == nullptr) {
+                    live[i] = recorded;
+                } else {
+                    for (const auto& [faction, office] : offices) {
+                        if (actor->GetFactionRank(faction, false) >= 0) {
+                            live[i] = office;
+                            break;
+                        }
+                    }
+                    rankedJarls += live[i] == PlotCasting::Office::Jarl ? 1 : 0;
+                }
+                ++counts[static_cast<std::size_t>(live[i])];
+                if (live[i] == PlotCasting::Office::Jarl) {
+                    jarls.push_back(member.name);
+                }
+                if (recorded != PlotCasting::Office::None && live[i] != recorded) {
+                    unseated.push_back(std::format("{} ({})", member.name, OfficeName(recorded)));
+                }
+            }
+
+            const auto list = [](const std::vector<std::string>& names) {
+                std::string out;
+                for (const auto& name : names) {
+                    out += (out.empty() ? "" : ", ") + name;
+                }
+                return out.empty() ? std::string{"none"} : out;
+            };
+            if (rankedJarls == 0) {
+                for (std::size_t i = 0; i < members.size(); ++i) {
+                    members[i].office = g_recordedOffices[i];
+                }
+                logger::warn("PlotPopulation: the running game ranks nobody as a jarl; keeping the offices the records "
+                             "list, which seat every jarl the Civil War could");
+                return;
+            }
+            for (std::size_t i = 0; i < members.size(); ++i) {
+                members[i].office = live[i];
+            }
+            logger::info(
+                "PlotPopulation: offices read from the running game -- {} jarl(s): {}; {} steward(s), {} guard "
+                "captain(s), {} chief(s). Listed by their records but not holding the post: {}",
+                jarls.size(),
+                list(jarls),
+                counts[static_cast<std::size_t>(PlotCasting::Office::Steward)],
+                counts[static_cast<std::size_t>(PlotCasting::Office::GuardCaptain)],
+                counts[static_cast<std::size_t>(PlotCasting::Office::OrcChief)],
+                list(unseated));
+        }
+
         // Who practises each craft: their Job factions, then vanilla's vendor
         // classes, which put Fihada the fletcher where no Job faction does.
         // Vanilla has no enchanter's job, so a court wizard or a teacher of
@@ -741,6 +847,10 @@ namespace NarrativeEngine::PlotPopulation
             g_population.members.push_back(std::move(member));
         }
 
+        g_recordedOffices.clear();
+        for (const auto& member : g_population.members) {
+            g_recordedOffices.push_back(member.office);
+        }
         g_ready = true;
         logger::info("PlotPopulation: {} member(s), {} in an admitted faction, {} admitted faction(s), {} "
                      "child(ren) left out",
@@ -787,6 +897,9 @@ namespace NarrativeEngine::PlotPopulation
         if (!g_ready) {
             return;
         }
+        // Every session, unlike the roads: the war can seat somebody else.
+        ReadLiveOffices();
+
         // Already placed: the graph and the markers are both static, so
         // a second session has nothing new to learn. A session that
         // placed NOBODY falls through and tries again, which is what

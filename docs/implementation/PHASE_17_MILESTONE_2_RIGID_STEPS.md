@@ -2805,6 +2805,40 @@ planning suite asserts a hopeless re-plan is conceded and leaves the plan as it 
 Done. 495 tests pass, with new sections in the resolution and planning suites, and the plugin builds with no
 warnings.
 
+### Step 56 — Offices are read from the running game
+
+- [x] Complete
+
+**[CLAUDE]**
+
+Step 9's fifteenth attempt had plots succeed 34 times in 63 against 33.2 planned. Its one fault was authority: Maven
+Black-Briar and Thongvor Silver-Blood were read as jarls, so an exposure of Thongvor to Igmund's court went to "the
+Silver-Blood family" five times, and Haelga and Elgrim were exposed to Maven.
+
+The records cannot say who rules. Vanilla lists every jarl the Civil War may seat in `JobJarlFaction` -- 19 of its 20,
+the sitting and the replacements alike, at rank -1 -- and stewards the same way; the game ranks whoever actually holds
+the post once it is running. A first fix that read rank -1 as non-membership left Skald the only jarl in Skyrim, and,
+since vanilla authors 93 merchants, 20 innkeepers and half its smiths and apothecaries at -1 as well, took trades and
+crafts from many of them. The sixteenth attempt refused birth after birth with "it can be Skald or Commander Caius". It
+was reverted.
+
+- **Offices from the live actor.** At every session's start the population reads each member's office from their
+  actor's rank in the four job factions, in place of what their record lists. A member with no actor keeps the
+  record's office, and every session starts again from the records, so a war that changes who rules is followed.
+- **A fallback.** A game that ranks nobody as a jarl keeps the records' offices for everybody -- worse than the truth,
+  but not a Skyrim with no authority -- and says so in the plugin log.
+- **The log says who.** The plugin log names the jarls the running game seats, counts the other offices, and names
+  everybody the records list in a post they do not hold.
+
+Trades, crafts, organisations, the faction roster and gossip's shared factions still read the records at any rank, as
+before the first fix.
+
+**Verification:** a new population suite asserts the records' offices before a game, only the live-ranked one after,
+a fresh reading on a later load, and the records' offices when the game ranks no jarl.
+
+Done. 496 tests pass and the plugin builds with no warnings. Whether the running game ranks its jarls is for the next
+attempt at Step 9 to show, in the plugin log's "offices read from the running game" line.
+
 ---
 
 ## Open questions
