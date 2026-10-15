@@ -17,23 +17,11 @@ import { PlotChain, PlotChainLegend } from '../PlotChain';
 declare global {
     interface Window {
         ne_forcePlotTicks?: (count: string) => void;
-        ne_seedDebugPlot?: (arg: string) => void;
-        ne_probeDecisions?: (arg: string) => void;
     }
 }
 
 function forceTicks(count: number) {
     window.ne_forcePlotTicks?.(String(count));
-}
-
-function seedPlot() {
-    window.ne_seedDebugPlot?.('');
-}
-
-// Sends the decision API probe. Its findings go to the plugin log, not the
-// dashboard: it is a one-off measurement, not something to keep watching.
-function probeDecisions() {
-    window.ne_probeDecisions?.('');
 }
 
 export function PlotsTab({ plots }: { plots: PlotsTabState }): ReactNode {
@@ -88,11 +76,13 @@ export function PlotsTab({ plots }: { plots: PlotsTabState }): ReactNode {
                     <button type="button" disabled={busy} onClick={() => forceTicks(20)}>
                         Force 20
                     </button>
-                    <button type="button" disabled={busy} onClick={seedPlot}>
-                        Seed debug plot
+                    {/* A whole tuning run in one press. The plugin caps a
+                        burst at 200, so this is the largest there is. */}
+                    <button type="button" disabled={busy} onClick={() => forceTicks(100)}>
+                        Force 100
                     </button>
-                    <button type="button" onClick={probeDecisions}>
-                        Probe decisions
+                    <button type="button" disabled={busy} onClick={() => forceTicks(200)}>
+                        Force 200
                     </button>
                     {busy && (
                         <span className="plot-busy">
