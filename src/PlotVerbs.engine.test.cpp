@@ -171,6 +171,15 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
             }
         }
 
+        SECTION("should let the accused of a denunciation or an exposure know of it only when it works")
+        {
+            for (const auto* id : {"denounce", "expose"}) {
+                INFO(id);
+                const auto* mark = PlotVerbs::FindSlot(*PlotVerbs::Find(id), "mark");
+                REQUIRE(mark->awareness == PlotVerbs::Awareness::Success);
+            }
+        }
+
         SECTION("should give every person slot an awareness, and no other slot one")
         {
             for (const auto& verb : PlotVerbs::kVerbs) {

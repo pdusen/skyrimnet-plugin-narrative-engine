@@ -644,8 +644,12 @@ TEST_CASE("PlotCandidates witnesses", "[PlotCandidates][engine]")
         using PlotModel::StepOutcome;
         using PlotVerbs::Awareness;
 
-        SECTION("should fire contact on success or failure, failure only on failure, and nothing on a timeout")
+        SECTION("should fire contact on success or failure, failure and success only on their own, and nothing on a "
+                "timeout")
         {
+            REQUIRE(PlotCandidates::AwarenessFired(Awareness::Success, StepOutcome::Succeeded));
+            REQUIRE_FALSE(PlotCandidates::AwarenessFired(Awareness::Success, StepOutcome::FailedCaught));
+            REQUIRE_FALSE(PlotCandidates::AwarenessFired(Awareness::Success, StepOutcome::FailedTimeout));
             REQUIRE(PlotCandidates::AwarenessFired(Awareness::Contact, StepOutcome::Succeeded));
             REQUIRE(PlotCandidates::AwarenessFired(Awareness::Contact, StepOutcome::FailedCaught));
             REQUIRE_FALSE(PlotCandidates::AwarenessFired(Awareness::Contact, StepOutcome::FailedTimeout));
@@ -653,6 +657,13 @@ TEST_CASE("PlotCandidates witnesses", "[PlotCandidates][engine]")
             REQUIRE(PlotCandidates::AwarenessFired(Awareness::Failure, StepOutcome::FailedCaught));
             REQUIRE_FALSE(PlotCandidates::AwarenessFired(Awareness::Failure, StepOutcome::FailedTimeout));
             REQUIRE_FALSE(PlotCandidates::AwarenessFired(Awareness::Never, StepOutcome::FailedCaught));
+        }
+
+        SECTION("should make a denunciation's accused aware only when it worked")
+        {
+            const auto accused = SlotOf("denounce", "mark");
+            REQUIRE(PlotCandidates::AwarenessFired(accused.awareness, StepOutcome::Succeeded));
+            REQUIRE_FALSE(PlotCandidates::AwarenessFired(accused.awareness, StepOutcome::FailedCaught));
         }
     }
 }

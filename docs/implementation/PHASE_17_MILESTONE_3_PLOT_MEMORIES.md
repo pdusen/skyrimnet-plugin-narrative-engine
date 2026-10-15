@@ -5,7 +5,7 @@ fixed sentence templates and wrote memories from them at dispatch, at resolution
 the agent completely and the mastermind only in part, and the people a step is done to remember nothing. This
 milestone fills in the rest, so that everybody a plot touches can talk about it.
 
-> **Doc status: in progress; Steps 1–2 complete.** Steps 1–2 complete the mastermind's side, Steps 3–5 give the people a
+> **Doc status: in progress; Steps 1–3 complete.** Steps 1–2 complete the mastermind's side, Steps 3–5 give the people a
 > step reaches memories of their own, and Step 6 is the in-game check. Phase 17's Steps 20–22 (world effects, gossip
 > seeding and their validation) still follow this milestone.
 
@@ -244,7 +244,7 @@ and the two plot endings, and the tick's part is three calls at the points that 
 
 ### Step 3 — Awareness that fires on success
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -254,6 +254,13 @@ of the plot follows it, as it follows the others: somebody denounced before the 
 
 **Verification:** the verb suite asserts `denounce`'s and `expose`'s marks are `success`, and the candidates suite
 asserts a successful denunciation makes its mark aware and a failed one does not.
+
+Done. `PlotVerbs::Awareness::Success`, which `PlotCandidates::AwarenessFired` fires on a success alone, and the two
+marks moved to it; no verb's slot is `never` any more. The candidates suite checks the new value against every outcome
+and a denunciation's accused against both, and the verb suite pins the two marks. 498 tests pass.
+
+**The per-slot templates moved to Step 4**, which is the first step to write any: carrying an empty table here would
+have been structure with nothing to hold.
 
 ### Step 4 — The person a step reaches remembers it
 

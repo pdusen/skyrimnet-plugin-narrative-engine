@@ -41,7 +41,8 @@ namespace NarrativeEngine::PlotVerbs
         Unset,
         Never,
         Failure, // only when the step fails: a watch's mark, if they spotted the watcher
-        Contact  // whenever the attempt reached them, on success or failure
+        Contact, // whenever the attempt reached them, on success or failure
+        Success  // only when the step succeeds: the accused, once an authority acts on it
     };
 
     // What a slot's candidates are admitted by. Declared with the verbs so
@@ -384,7 +385,7 @@ namespace NarrativeEngine::PlotVerbs
             "denounce",
             "Denounce",
             PlotModel::StepType::Discredit,
-            {{Slot{"mark", SlotKind::Person, Rule::AnyPerson, Awareness::Never, "who is denounced"},
+            {{Slot{"mark", SlotKind::Person, Rule::AnyPerson, Awareness::Success, "who is denounced"},
               Slot{"authority",
                    SlotKind::Person,
                    Rule::AuthorityOverMark,
@@ -577,7 +578,7 @@ namespace NarrativeEngine::PlotVerbs
             "Expose",
             PlotModel::StepType::Discredit,
             {{Slot{"item", SlotKind::Thing, Rule::BoundItem, Awareness::Unset, "the proof shown"},
-              Slot{"mark", SlotKind::Person, Rule::AnyPerson, Awareness::Never, "whom it is proof against"},
+              Slot{"mark", SlotKind::Person, Rule::AnyPerson, Awareness::Success, "whom it is proof against"},
               Slot{"authority", SlotKind::Person, Rule::AuthorityOverMark, Awareness::Contact, "whom it is shown to"}}},
             3,
             true,

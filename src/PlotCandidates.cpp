@@ -867,6 +867,8 @@ namespace NarrativeEngine::PlotCandidates
             return outcome == PlotModel::StepOutcome::Succeeded || outcome == PlotModel::StepOutcome::FailedCaught;
         case PlotVerbs::Awareness::Failure:
             return outcome == PlotModel::StepOutcome::FailedCaught;
+        case PlotVerbs::Awareness::Success:
+            return outcome == PlotModel::StepOutcome::Succeeded;
         case PlotVerbs::Awareness::Never:
         case PlotVerbs::Awareness::Unset:
             break;
