@@ -34,7 +34,8 @@ namespace
                                  Template::AgentFailed,
                                  Template::AgentTimedOut,
                                  Template::MastermindToldFailed,
-                                 Template::MastermindToldTimedOut};
+                                 Template::MastermindToldTimedOut,
+                                 Template::MastermindToldSucceeded};
 
     constexpr Template kAgentOutcomes[] = {Template::AgentSucceeded, Template::AgentFailed, Template::AgentTimedOut};
 
@@ -101,7 +102,7 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
             }
         }
 
-        SECTION("should carry all nine templates")
+        SECTION("should carry all ten templates")
         {
             for (const auto& verb : PlotVerbs::kVerbs) {
                 for (const auto t : kAll) {
@@ -165,6 +166,7 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
                 REQUIRE_FALSE(Names(verb.Text(Template::SelfDispatched), "mastermind"));
                 REQUIRE(Names(verb.Text(Template::MastermindToldFailed), "agent"));
                 REQUIRE(Names(verb.Text(Template::MastermindToldTimedOut), "agent"));
+                REQUIRE(Names(verb.Text(Template::MastermindToldSucceeded), "agent"));
                 REQUIRE(Names(verb.Text(Template::Dashboard), "agent"));
             }
         }

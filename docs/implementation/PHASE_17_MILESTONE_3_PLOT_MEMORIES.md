@@ -5,7 +5,7 @@ fixed sentence templates and wrote memories from them at dispatch, at resolution
 the agent completely and the mastermind only in part, and the people a step is done to remember nothing. This
 milestone fills in the rest, so that everybody a plot touches can talk about it.
 
-> **Doc status: planned; no step started.** Steps 1–2 complete the mastermind's side, Steps 3–5 give the people a
+> **Doc status: in progress; Step 1 complete.** Steps 1–2 complete the mastermind's side, Steps 3–5 give the people a
 > step reaches memories of their own, and Step 6 is the in-game check. Phase 17's Steps 20–22 (world effects, gossip
 > seeding and their validation) still follow this milestone.
 
@@ -187,7 +187,7 @@ state, only memories written as things happen.
 
 ### Step 1 — The mastermind hears of a success
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -196,6 +196,12 @@ A mastermind who did the step themselves keeps `agent_succeeded` alone, as now. 
 
 **Verification:** the memory suite asserts, per verb, that a success writes `agent_succeeded` to the agent and
 `mastermind_told_succeeded` to a mastermind who sent them, and only the first to a mastermind who acted themselves.
+
+Done. `Template::MastermindToldSucceeded` is each verb's tenth template, worded as the other reports are ("Aeta reported
+back that they had stolen a ruby from Hulda."), and `PlotMemories::OnResolve` writes it on a success exactly as it
+writes the failure and timeout reports. The verb suite holds all ten templates to the existing rules and requires the
+new one to name the agent; the memory suite's success case now expects both memories, the report as `KNOWLEDGE`. 496
+tests pass.
 
 ### Step 2 — The mastermind remembers how the scheme went
 

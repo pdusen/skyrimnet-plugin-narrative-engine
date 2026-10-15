@@ -16,8 +16,8 @@
 //   dispatch     the agent, on being sent; the mastermind, on sending them
 //                -- or, when the mastermind is their own agent, one memory
 //                of deciding to do it themselves
-//   resolution   the agent, on how it went; on a failure or a timeout, the
-//                mastermind, on hearing about it
+//   resolution   the agent, on how it went; the mastermind who sent them,
+//                on hearing about it
 //   giving up    the mastermind, once, when a plot ends unfinished with
 //                them alive
 //

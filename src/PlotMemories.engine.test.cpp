@@ -166,13 +166,15 @@ TEST_CASE("PlotMemories at resolution", "[PlotMemories][engine]")
 
     SECTION("when a step succeeds")
     {
-        SECTION("should give the agent alone a memory of succeeding")
+        SECTION("should give the agent their success and the mastermind the report of it")
         {
             for (const auto& verb : PlotVerbs::kVerbs) {
                 INFO(verb.id);
                 const auto memories = PlotMemories::OnResolve(plot, resolved(verb, kAgent, StepOutcome::Succeeded));
-                REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kAgent});
-                REQUIRE(Sources(memories) == std::vector<std::string_view>{"agent_succeeded"});
+                REQUIRE(Keepers(memories) == std::vector<RE::FormID>{kAgent, kBoss});
+                REQUIRE(Sources(memories)
+                        == std::vector<std::string_view>{"agent_succeeded", "mastermind_told_succeeded"});
+                REQUIRE(memories[1].type == "KNOWLEDGE");
             }
         }
     }

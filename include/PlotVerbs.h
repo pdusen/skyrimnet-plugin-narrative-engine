@@ -86,9 +86,9 @@ namespace NarrativeEngine::PlotVerbs
         std::string_view says{};
     };
 
-    // The nine sentences every verb carries, in this order. The first is
+    // The ten sentences every verb carries, in this order. The first is
     // the dashboard's present-tense line; the rest are first-person, past
-    // tense memories.
+    // tense memories. The last was added after the rest, by Milestone 3.
     enum class Template : std::uint8_t
     {
         Dashboard,
@@ -100,6 +100,7 @@ namespace NarrativeEngine::PlotVerbs
         AgentTimedOut,
         MastermindToldFailed,
         MastermindToldTimedOut,
+        MastermindToldSucceeded,
 
         Count
     };
@@ -162,6 +163,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I kept watch on {mark}, but ran out of time before I learned their habits.",
                 "{agent} reported back that {mark} had spotted them watching.",
                 "{agent} reported back that they had run out of time before learning {mark}'s habits.",
+                "{agent} reported back that they had learned {mark}'s habits.",
             }},
         },
         Verb{
@@ -183,6 +185,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I asked around {place} about {mark}, but ran out of time before anyone told me anything useful.",
                 "{agent} reported back that {mark} had heard they were asking questions around {place}.",
                 "{agent} reported back that they had run out of time before learning anything useful about {mark}.",
+                "{agent} reported back that they had learned what I needed to know about {mark} around {place}.",
             }},
         },
         Verb{
@@ -204,6 +207,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I tried to steal {item} from {mark}, but ran out of time before I could get my hands on it.",
                 "{agent} reported back that {mark} had caught them trying to steal {item}.",
                 "{agent} reported back that they had run out of time before they could steal {item} from {mark}.",
+                "{agent} reported back that they had stolen {item} from {mark}.",
             }},
         },
         Verb{
@@ -225,6 +229,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I tried to buy {item} from {seller}, but ran out of time before we could strike a deal.",
                 "{agent} reported back that the deal with {seller} for {item} had gone sour.",
                 "{agent} reported back that they had run out of time before striking a deal with {seller} for {item}.",
+                "{agent} reported back that they had bought {item} from {seller}.",
             }},
         },
         Verb{
@@ -246,6 +251,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could bring {item} to {recipient}.",
                 "{agent} reported back that they had been stopped on the way to bring {item} to {recipient}.",
                 "{agent} reported back that they had run out of time before bringing {item} to {recipient}.",
+                "{agent} reported back that they had brought {item} to {recipient}.",
             }},
         },
         Verb{
@@ -267,6 +273,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could hide {item} among {mark}'s belongings.",
                 "{agent} reported back that {mark} had caught them trying to hide {item} among their belongings.",
                 "{agent} reported back that they had run out of time before hiding {item} among {mark}'s belongings.",
+                "{agent} reported back that they had hidden {item} among {mark}'s belongings.",
             }},
             false,
         },
@@ -292,6 +299,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could get {mark} alone to offer them coin.",
                 "{agent} reported back that {mark} had refused the bribe.",
                 "{agent} reported back that they had run out of time before they could offer {mark} the bribe.",
+                "{agent} reported back that {mark} had taken the coin and would look the other way.",
             }},
         },
         Verb{
@@ -312,6 +320,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could win {mark} over.",
                 "{agent} reported back that {mark} would not be won over.",
                 "{agent} reported back that they had run out of time before winning {mark} over.",
+                "{agent} reported back that they had won {mark} over to my side.",
             }},
         },
         Verb{
@@ -332,6 +341,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could warn {mark} off.",
                 "{agent} reported back that {mark} would not be warned off.",
                 "{agent} reported back that they had run out of time before warning {mark} off.",
+                "{agent} reported back that {mark} had taken the warning to heart.",
             }},
         },
         Verb{
@@ -357,6 +367,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before the talk about {mark} took hold around {place}.",
                 "{agent} reported back that the talk about {mark} around {place} had been traced back to them.",
                 "{agent} reported back that they had run out of time before the talk about {mark} took hold around {place}.",
+                "{agent} reported back that people around {place} had started repeating the talk about {mark}.",
             }},
         },
         Verb{
@@ -382,6 +393,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could get an audience with {authority} to denounce {mark}.",
                 "{agent} reported back that {authority} would not hear a word against {mark}.",
                 "{agent} reported back that they had run out of time before getting an audience with {authority}.",
+                "{agent} reported back that they had denounced {mark} to {authority}, and {authority} had listened.",
             }},
         },
         Verb{
@@ -406,6 +418,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could do {mark}'s livelihood any real harm.",
                 "{agent} reported back that {mark} had caught them trying to sabotage their livelihood.",
                 "{agent} reported back that they had run out of time before doing {mark}'s livelihood any real harm.",
+                "{agent} reported back that they had sabotaged {mark}'s livelihood.",
             }},
         },
         Verb{
@@ -430,6 +443,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could pay {witness} to keep quiet.",
                 "{agent} reported back that {witness} would not be paid to keep quiet.",
                 "{agent} reported back that they had run out of time before paying {witness} to keep quiet.",
+                "{agent} reported back that {witness} had taken the coin and would keep quiet.",
             }},
         },
         // Falsify, not forge: a model reads "forge" as smithing often enough
@@ -453,6 +467,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could falsify {item} in {subject}'s name.",
                 "{agent} reported back that their attempt to falsify {item} in {subject}'s name had been found out.",
                 "{agent} reported back that they had run out of time before falsifying {item} in {subject}'s name.",
+                "{agent} reported back that they had falsified {item} in {subject}'s name, good enough to pass.",
             }},
             false,
         },
@@ -479,6 +494,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I dug into {mark}'s affairs, but ran out of time before I found anything I could prove.",
                 "{agent} reported back that {mark} had found out they were digging into their affairs.",
                 "{agent} reported back that they had run out of time before finding proof against {mark}.",
+                "{agent} reported back that they had dug up {item} proving {mark}'s wrongdoing.",
             }},
             false,
         },
@@ -500,6 +516,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could put the squeeze on {mark}.",
                 "{agent} reported back that {mark} had called their bluff.",
                 "{agent} reported back that they had run out of time before blackmailing {mark}.",
+                "{agent} reported back that {mark} had given in to the blackmail.",
             }},
         },
         Verb{
@@ -521,6 +538,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could get at {item} belonging to {mark}.",
                 "{agent} reported back that {mark} had caught them trying to destroy {item}.",
                 "{agent} reported back that they had run out of time before destroying {item} belonging to {mark}.",
+                "{agent} reported back that they had destroyed {item} belonging to {mark}.",
             }},
         },
         Verb{
@@ -541,6 +559,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could get an audience with {authority}.",
                 "{agent} reported back that {authority} had turned them away.",
                 "{agent} reported back that they had run out of time before getting an audience with {authority}.",
+                "{agent} reported back that {authority} had granted the petition.",
             }},
         },
         Verb{
@@ -564,6 +583,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could show {item} to {authority}.",
                 "{agent} reported back that {authority} would not take {item} as proof against {mark}.",
                 "{agent} reported back that they had run out of time before showing {item} to {authority}.",
+                "{agent} reported back that {authority} had taken {item} as proof against {mark}.",
             }},
         },
         Verb{
@@ -584,6 +604,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could finish smithing {item}.",
                 "{agent} reported back that they had ruined the work on {item}.",
                 "{agent} reported back that they had run out of time before finishing {item}.",
+                "{agent} reported back that they had smithed {item}.",
             }},
             false,
         },
@@ -605,6 +626,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could finish concocting {item}.",
                 "{agent} reported back that they had spoiled the mixture for {item}.",
                 "{agent} reported back that they had run out of time before finishing {item}.",
+                "{agent} reported back that they had concocted {item}.",
             }},
             false,
         },
@@ -626,6 +648,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could finish enchanting {item}.",
                 "{agent} reported back that the enchantment had slipped and ruined {item}.",
                 "{agent} reported back that they had run out of time before finishing {item}.",
+                "{agent} reported back that they had made {item}.",
             }},
             false,
         },
@@ -647,6 +670,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could finish {item}.",
                 "{agent} reported back that they had spoiled the work on {item}.",
                 "{agent} reported back that they had run out of time before finishing {item}.",
+                "{agent} reported back that they had made {item}.",
             }},
             false,
         },
@@ -668,6 +692,7 @@ namespace NarrativeEngine::PlotVerbs
                 "I ran out of time before I could finish fletching {item}.",
                 "{agent} reported back that they had spoiled the work on {item}.",
                 "{agent} reported back that they had run out of time before finishing {item}.",
+                "{agent} reported back that they had fletched {item}.",
             }},
             false,
         },

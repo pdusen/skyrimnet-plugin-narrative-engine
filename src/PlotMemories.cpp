@@ -39,6 +39,7 @@ namespace NarrativeEngine::PlotMemories
             case Template::MastermindToldFailed:
                 return {0.7f, "KNOWLEDGE"};
             case Template::MastermindToldTimedOut:
+            case Template::MastermindToldSucceeded:
                 return {0.5f, "KNOWLEDGE"};
             case Template::Dashboard:
             case Template::Count:
@@ -141,9 +142,9 @@ namespace NarrativeEngine::PlotMemories
         Template told{};
         switch (step.outcome) {
         case PlotModel::StepOutcome::Succeeded:
-            // A success is the agent's alone: the template set has no
-            // memory of hearing about one (open question 5).
-            return {Make(plot, step, step.actor, Template::AgentSucceeded)};
+            agent = Template::AgentSucceeded;
+            told = Template::MastermindToldSucceeded;
+            break;
         case PlotModel::StepOutcome::FailedCaught:
             agent = Template::AgentFailed;
             told = Template::MastermindToldFailed;

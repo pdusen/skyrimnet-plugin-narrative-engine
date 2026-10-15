@@ -74,6 +74,8 @@ namespace NarrativeEngine::PlotVerbs
             return "mastermind_told_failed";
         case Template::MastermindToldTimedOut:
             return "mastermind_told_timed_out";
+        case Template::MastermindToldSucceeded:
+            return "mastermind_told_succeeded";
         case Template::Count:
             break;
         }
