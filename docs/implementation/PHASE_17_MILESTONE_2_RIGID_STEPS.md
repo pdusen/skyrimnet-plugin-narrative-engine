@@ -5,13 +5,15 @@ simulation whose masterminds, ambitions and schemes are good and whose steps are
 a step is chosen, described and remembered. The mastermind draw, the ambition and scheme prose, the casting
 ladder, the progress race and the co-save all stay.
 
-> **Doc status: every `[CLAUDE]` step complete; Step 9's validation outstanding.** Steps 10–12 plan
+> **Doc status: complete.** Every step is done and Step 9's validation was accepted. Steps 10–12 plan
 > backwards from the goal, Steps 13–16 tie the plan to the vocabulary and bound the preparing, Steps 17–19 keep the
 > player out, route denunciations by authority and give the scheme back its purpose, Step 20 makes adapting find
 > another way, Steps 21–25 mend what the fifth attempt found, Steps 26–28 add five verbs and the records they act on,
 > Steps 29–31 add five crafting verbs, Steps 32–34 make a scheme finish what it starts on the person it names, and
 > Steps 35–37 probe and then replace how a finish's people are read, Steps 38–40 make a refused role say why and
-> what would do, and Steps 41–43 rank authority and make preparing worth it -- each added after an attempt at Step 9.
+> what would do, Steps 41–43 rank authority and make preparing worth it, Steps 44–47 and 54–55 tune how often
+> schemes succeed, Steps 48–53 mend repeated and misread schemes, and Step 56 reads who rules from the running game --
+> each added after an attempt at Step 9.
 > Steps 18 and 19 of the Phase 17 doc are superseded by this milestone; its Steps 20–22 still apply and follow it.
 
 ---
@@ -962,7 +964,7 @@ scheme started from nothing.
 
 ### Step 9 — In-game validation
 
-- [ ] Complete
+- [x] Complete
 
 **[USER]**
 
@@ -1000,6 +1002,11 @@ Four causes, each of which Steps 10–12 answer:
    reckoning, but a scheme that names her shows they know of her.
 
 Run again once Steps 10–12 are done. The second attempt is recorded after Step 12, and led to Steps 13–16.
+
+**Accepted (2026-10-14), at the seventeenth attempt.** Each attempt between led to the steps after Step 12 that name
+it. The last ran a long forced session: plots succeeded 33 times in 67 against 33.1 their plans predicted, steps
+succeeded 70% of the time with 24% caught and 6% out of time, and the running game's own offices put every exposure
+before the authority over the person exposed.
 
 ### Step 10 — The scheme's own people head every list
 
