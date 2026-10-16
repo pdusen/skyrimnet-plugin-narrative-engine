@@ -2681,6 +2681,10 @@ namespace NarrativeEngine::Testing
     {
         Actors().Clear();
         FactionObjects().clear();
+        // Keyed by actor ADDRESS, and fabricated actors recycle addresses
+        // between tests. Left uncleared, an actor a test made without a base
+        // form can land where an earlier test's actor was and inherit its base.
+        ActorBases().clear();
     }
 } // namespace NarrativeEngine::Testing
 

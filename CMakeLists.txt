@@ -987,6 +987,23 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         )
         add_dependencies(NarrativeEngineEngineMockTests SkyrimNetFake)
 
+        # And for powerofthree's Tweaks, whose EditorID cache the sender pool
+        # reaches with GetModuleHandle("po3_Tweaks.dll") and GetProcAddress.
+        add_library(
+            Po3TweaksFake
+            SHARED
+            "${CMAKE_SOURCE_DIR}/testsupport/FakePo3Tweaks.cpp"
+        )
+        target_compile_features(Po3TweaksFake PRIVATE cxx_std_23)
+        target_include_directories(Po3TweaksFake PRIVATE testsupport)
+        set_target_properties(
+            Po3TweaksFake
+            PROPERTIES
+                OUTPUT_NAME po3_Tweaks
+                RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+        )
+        add_dependencies(NarrativeEngineEngineMockTests Po3TweaksFake)
+
         catch_discover_tests(NarrativeEngineEngineMockTests)
 
         list(LENGTH engine_test_sources NARRATIVEENGINE_ENGINE_TEST_COUNT)
