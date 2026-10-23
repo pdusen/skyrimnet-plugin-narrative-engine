@@ -252,20 +252,27 @@ namespace NarrativeEngine::CharacterBios
         for (const auto& member : PlotPopulation::Get().members) {
             Member entry{member.npc, member.name, {}};
             entry.facts.refId = GossipGraph::ActorRefFor(member.npc);
-            if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(entry.facts.refId); actor != nullptr) {
+            // A reference is only in memory while its cell is, or while it is
+            // persistent: a fifth of the population was not, on the first
+            // in-game run. The BASE record always is, and it carries every
+            // fact but the display name -- which, for a reference nobody has
+            // renamed, is the base's name anyway, and is what SkyrimNet
+            // falls back to when it is empty.
+            auto* actor = RE::TESForm::LookupByID<RE::Actor>(entry.facts.refId);
+            const RE::TESNPC* base =
+                actor != nullptr ? actor->GetActorBase() : RE::TESForm::LookupByID<RE::TESNPC>(member.npc);
+            if (actor != nullptr) {
                 if (const char* display = actor->GetDisplayFullName(); display != nullptr) {
                     entry.facts.displayName = display;
                 }
                 entry.facts.refPlugin = FileName(actor);
-                if (auto* base = actor->GetActorBase(); base != nullptr) {
-                    if (const char* name = base->GetFullName(); name != nullptr) {
-                        entry.facts.baseName = name;
-                    }
-                    entry.facts.basePlugin = FileName(base);
-                    entry.facts.baseUnique = base->IsUnique();
+            }
+            if (base != nullptr) {
+                if (const char* name = base->GetFullName(); name != nullptr) {
+                    entry.facts.baseName = name;
                 }
-            } else {
-                entry.facts.refId = 0;
+                entry.facts.basePlugin = FileName(base);
+                entry.facts.baseUnique = base->IsUnique();
             }
             facts->members.push_back(std::move(entry));
         }

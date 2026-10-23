@@ -4,8 +4,8 @@ Plots need every schemer's character profile, and most schemers are people the p
 replaces `CharacterBios`' guesswork with a resolver that picks the profile SkyrimNet itself would render for an NPC,
 met or not: the same bio name, the same layer, the same fallbacks.
 
-> **Doc status: Steps 1–5 complete; Step 6's in-game check is next.** Nothing here touches the co-save or the
-> settings. It is the last obstacle to releasing the plot system.
+> **Doc status: complete.** Steps 1–7 are done. Step 7 found and fixed one defect, unloaded references; the next
+> session's census line confirms the fix in game. Nothing here touches the co-save or the settings.
 
 The rules this implements were decoded from SkyrimNet's DLL and are written up as engine findings. They are the
 contract for every step below, and where this document and they disagree, they win:
@@ -414,7 +414,7 @@ files read there are the CSVs and the layer listing, never a profile.
 
 ### Step 6 — In-game validation
 
-- [ ] Complete
+- [x] Complete
 
 **[USER]**
 
@@ -440,9 +440,12 @@ The resolver computes the name for every member, met or not, and checks it again
 there is one. So every NPC the save has met is a test of the naming rule on real engine data. The stored name is
 still the one used.
 
+**Done (2026-10-23).** One session on save `1778871594119-52513`: a load, then 200 plot ticks. 71 plots were born,
+with 49 distinct masterminds. The logs are analysed under Step 7.
+
 ### Step 7 — The resolver against the logs, the disk and SkyrimNet
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -474,3 +477,52 @@ and in the engine findings:
 **What a load-and-tick session cannot show:** how a player's own overlay edit or pin ranks against the other layers,
 since a session that makes neither has nothing to observe. Those rules rest on the disassembly and Step 3's unit tests.
 They also have no instance on the development install other than one pin to the layer that wins anyway.
+
+**Done.** Step 6's session, check by check. The harness and probes stayed in the scratchpad.
+
+1. **Naming: holds, 623 of 623.** SkyrimNet had a stored name for 623 of the 808 members, and the rule computed every
+   one of them identically. No disagreement line was logged.
+2. **Engine facts: hold, with one difference from vanilla explained.** Every member with a reference had a base plugin.
+   - **Unique flags:** 581 of 586 checked against Spriggit match. The five that differ are Herebane Sorenshield,
+     Illia, Golldir, Henrik and Snilf, all flagged unique in game but not in the vanilla record. The game reports the
+     winning override, which is what SkyrimNet reads too. A patch this install loads (USSEP or Cutting Room Floor)
+     presumably sets the flag; which one was not confirmed without xEdit.
+   - **Base vs reference plugin:** 134 members' base plugin differs from their reference's, which is why the unique
+     table is keyed by the base's.
+3. **The stack against the disk: holds.** The logged stack matches the one rebuilt offline from the MO2-merged tree and
+   the registry, entry for entry:
+   - the save layer, the overlay, the sixteen registered plugins in priority order, then `skyrimnet.base`;
+   - the one pin read correctly.
+
+   Rebuilt offline from each member's logged facts, all **808 of 808** tiers, layers and paths, and all 623 computed
+   names, came out as logged.
+4. **The refresh: holds.** There were 200 census lines for 200 ticks: 808 resolutions logged on the first, and 0
+   changes on each of the 199 after. Nothing changed on disk during the session, so nothing should have.
+5. **Dynamic bios: hold.** The save layer holds two, for Brelyna Maryon and Carlotta Valentia, and both resolved
+   `Dynamic` from it.
+6. **The prompts: hold, 49 of 49.** Every mastermind's resolved profile text appears in this session's birth prompts.
+7. **SkyrimNet's own renders: nothing to compare.** SkyrimNet sent none of its own profile-bearing prompts during a
+   session spent ticking plots; this session's only request of its own was one `vision` call.
+
+**One defect, found and fixed: 185 members resolved to nothing.**
+
+- **What happened:** all 185 logged `ref=0x0`. GossipGraph knows a reference for each of them; the old census
+  reported "0 with no reference id". But `LookupByID<RE::Actor>` returned null, because a reference is only in memory
+  while its cell is loaded or while it is persistent. The code took a missing actor to mean a missing reference and
+  dropped the id.
+- **Who was affected:** precisely the members SkyrimNet had not met. The 623 with loaded references are the 623 it
+  has met, so the computed path was not exercised in game at all.
+- **The fix:** `OnSessionStart` keeps the reference id, and reads the base name, base plugin and unique flag from the
+  base `TESNPC`, which is always loaded. The display name stays empty for an unloaded reference, so the rule falls
+  back to the base name, as SkyrimNet does. The reference plugin, consulted only when a base has no file, stays empty
+  for these.
+- **Checked:** the build is clean, all 511 tests pass, and the fix was run offline. Spriggit's cell exports give a
+  unique placed reference for 129 of the 185, and run through the real rule and stack, **all 129 resolve `Own`** from
+  `pdusen.skyrim-the-abridged-edition`. The other 56 are placed by DLC or mods, which the export does not cover.
+- **Still to see in game:** the next session's census line should show those 185 as computed names rather than
+  `none`.
+
+**A finding beyond this milestone.** `PlotPopulation::IsAlive` makes the same assumption, reading
+`LookupByID<RE::Actor>` and answering false when it is null, and its comment says unique actors are always resident.
+They are not, so those 185 can be neither cast nor remembered while their cells are unloaded. That is plot casting's
+behaviour, not profile resolution's, and is left for the phase to decide.
