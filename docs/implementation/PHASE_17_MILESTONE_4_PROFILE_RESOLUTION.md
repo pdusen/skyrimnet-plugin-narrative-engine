@@ -86,24 +86,30 @@ generic is shown the generic text, because that is how SkyrimNet portrays them t
 
 ### Where the work happens
 
-The shape stays `CharacterBios`': **one resolution per save, held for the session, read lock-free by the plot
-worker.** `OnSessionStart` on the main thread gathers what needs the engine and the disk, and resolves every
-population member. `OnRevert` drops it. That is `PlotPopulation`'s arrangement, for the same reason.
+**Resolved afresh at the start of every plot tick.** SkyrimNet re-resolves whenever its content changes: a dynamic bio
+written during play, a dashboard edit, a new pin, an actor met for the first time. Ticks are hours of game time apart,
+so redoing the whole resolution each time costs nothing that matters, and it means a plot never reads a profile more
+than one tick older than the one SkyrimNet would render.
 
-The engine reads at session start, all on the main thread:
+The work splits along what each part needs:
 
-- per population member: the reference id (`GossipGraph::ActorRefFor`), `GetDisplayFullName()` on the reference, the
-  base NPC's `TESFullName`, the base's `GetFile(0)` file name, and the base's `kUnique` flag;
-- per generic-table row: the row form's `TESFullName`, through the data handler;
-- `SkyrimNetAPI::GetBioTemplateName` for each member, and the save id.
+- **Engine facts, once per save, on the main thread.** `OnSessionStart` gathers:
+  - per population member: the reference id (`GossipGraph::ActorRefFor`), `GetDisplayFullName()` on the reference,
+    the base NPC's `TESFullName`, the base's `GetFile(0)` file name, and the base's `kUnique` flag;
+  - per generic-table row: the row form's `TESFullName`, through the data handler.
 
-The disk, read on the same pass:
+  These are record data and do not change during a session. They are held stable for it and read lock-free by the
+  plot worker, with the same lifecycle and guarantees as `PlotPopulation::Get()`. `OnRevert` drops them.
+- **Everything else, every tick, on the plot worker.** `CharacterBios::Refresh(pt)`, the first thing `RunTick` does:
+  - asks `SkyrimNetAPI::GetBioTemplateName` for each member, plus the save id, both of which change as the player
+    meets people and changes saves;
+  - re-reads the disk: `content-registry.json`, every layer's `manifest.json`, the relative paths under each layer's
+    `prompts/`, the translation CSVs, and the winning bio files;
+  - re-resolves every member, and replaces the held profiles wholesale.
 
-- `content-registry.json`;
-- every layer's `manifest.json`;
-- the relative paths under each layer's `prompts/`;
-- the translation CSVs;
-- the winning bio files.
+**The plot worker owns the resolved profiles.** Every reader (`PlotTick`'s castability filter, `PlotBirth`'s prompt
+sections and occupations) runs inside a tick, after that tick's refresh, so no reader can see a previous save's
+profiles and none needs a lock.
 
 The rule itself, from bio name to winning file, is pure and lives in **`CharacterBioResolver`**, a new core source
 with no engine dependency. It takes the facts gathered above as plain data, and the unit-test target exercises the
@@ -121,8 +127,9 @@ profile generator, so the rule is applied to every tier rather than chosen per f
 - **Rendering.** Today's bios are plain blocks with no template logic (see the profile-lookup finding), so reading the
   blocks yields the words a render would. If content ever ships template logic in a bio, this breaks; the census
   below counts files with anything but blocks so that the day it happens is visible.
-- **Mid-session changes.** SkyrimNet re-resolves when the content library changes, when a dynamic bio is written, and
-  when a pin is set. This resolves once per load. See open question 1.
+- **Changes between ticks.** SkyrimNet applies a change at once; plots see it at the next tick.
+- **A rename mid-session, before meeting.** Display names are read once per save. An unmet NPC renamed during the
+  session is named by their old name until the next load.
 
 ---
 
@@ -255,27 +262,31 @@ suffix. A dynamic bio is `prompts/characters/dynamic/<name>.dynamic.prompt`; eve
 
 **[CLAUDE]**
 
-`CharacterBioLibrary` gathers the facts and the listing at `OnSessionStart` as the Design section says, resolves every
-population member, reads each winning file's blocks through the sanitizer, and holds them.
+The split in the Design section:
 
+- `CharacterBioLibrary` gathers the engine facts at `OnSessionStart` and drops them at `OnRevert`.
+- `CharacterBios::Refresh(pt)`, called first in `PlotTick`'s `RunTick`, does the rest on the plot worker. It queries
+  SkyrimNet's stored names, reads the listing, resolves every population member, reads each winning file's blocks
+  through the sanitizer, and replaces the held profiles.
 - `Has` becomes "resolved `Dynamic` or `Own`". `For` returns whatever tier resolved.
 - `Catalog`, `Find`, the suffix index, `NameAffinity` and the `Outcome` enum are deleted.
 - The header comment's "RECOGNITION, NOT DERIVATION" section is replaced by a pointer to the two engine findings.
 
-The census line becomes one log line per session:
+The census becomes one log line per refresh:
 
 - how many members came from a stored name and how many from a computed one;
 - the count per tier, and per layer for `Own`;
 - how many files carried anything but blocks.
 
-At debug level, one line per member gives the name, the tier and the layer, so a session's log can be checked against
-what SkyrimNet sent.
+At debug level, one line per member gives the name, the tier and the layer. It is written for every member on a
+session's first refresh and, after that, only for members whose resolution changed since the previous tick, so a
+session's log can be checked against what SkyrimNet sent without repeating 881 lines every tick.
 
 **Verification:**
 
 - `pwsh -File build.ps1 build` is clean, and every test passes.
-- `PlotBirth` and `PlotTick` compile unchanged against the new `Has` and `For`.
-- No `CharacterBios` code path reads a file outside `OnSessionStart`.
+- `PlotBirth` and `PlotTick` compile unchanged against the new `Has` and `For`, apart from the `Refresh` call.
+- `Refresh` takes a `PlotThread::Token`, and no `CharacterBios` code path reads a file outside it.
 
 ### Step 6 — In-game validation
 
@@ -287,8 +298,9 @@ On a save with plots running, the logs at debug, and `openrouter_input.log` kept
 
 1. Load, and read the census line. How many members are castable now, against the old census's "bio(s) loaded" figure on
    the same save?
-2. In the dashboard, edit one NPC's bio in the overlay and pin a different plugin's version of another. Reload. Talk
-   to both, and to one NPC who has a dynamic bio.
+2. In the dashboard, edit one NPC's bio in the overlay and pin a different plugin's version of another. Without
+   reloading, wait for the next plot tick, and check that its debug lines show both changes. Talk to both, and to one
+   NPC who has a dynamic bio.
 3. Let a plot be born and read its birth prompt. Do the masterminds read in character?
 
 Record the census and anything surprising under this step.
@@ -305,15 +317,3 @@ text SkyrimNet put into `openrouter_input.log` for the same person.
 **Verification:** every person who appears in both agrees, including the overlay edit, the pin and the dynamic bio
 from Step 6. Each disagreement is either explained by a rule above and fixed, or written up here and in the engine
 findings.
-
----
-
-## Open questions
-
-1. **Should the resolution refresh mid-session?** A dynamic bio written during play, a dashboard edit or a new pin
-   shows in SkyrimNet's dialogue at once and in plots only after the next load. A cheap answer is to re-resolve at the
-   start of a plot tick when the registry's or the save layer's modification time has moved. Left until Step 6 shows
-   whether the lag is noticeable.
-2. **What happens when SkyrimNet changes these rules?** They are decoded from Beta 26 RC4 and nothing announces a
-   change. Step 7's harness is the check to rerun after a SkyrimNet update, and issue #744 remains the durable fix; if
-   it lands, this resolver should give way to it.
