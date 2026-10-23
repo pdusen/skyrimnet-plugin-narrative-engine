@@ -664,4 +664,62 @@ namespace NarrativeEngine::CharacterBioResolver
         return first;
     }
 
+    Resolution Resolve(const ActorFacts& facts, std::string_view bioName, const Tables& tables, const Stack& stack)
+    {
+        if (bioName.empty()) {
+            return {};
+        }
+        const auto attempt = [&](Tier tier, std::string path) -> std::optional<Resolution> {
+            if (const auto* layer = Winner(stack, path); layer != nullptr) {
+                return Resolution{tier, std::move(path), layer};
+            }
+            return std::nullopt;
+        };
+
+        if (auto dynamic =
+                attempt(Tier::Dynamic, std::format("prompts/characters/dynamic/{}.dynamic.prompt", bioName))) {
+            return *dynamic;
+        }
+        if (auto own = attempt(Tier::Own, std::format("prompts/characters/{}.prompt", bioName))) {
+            return *own;
+        }
+
+        if (!facts.baseUnique) {
+            // Entity::GetDisplayName: the display name, else the base's.
+            const auto name = RepairWindows1252(!facts.displayName.empty() ? facts.displayName : facts.baseName);
+            // A generic-table hit is used as it stands; otherwise the slug.
+            const auto genericKey = [&](std::string_view text, bool trimFirst) {
+                if (const auto trimmed = Trim(text); !trimmed.empty()) {
+                    if (const auto hit = tables.generic.find(Slug(trimmed)); hit != tables.generic.end()) {
+                        return hit->second;
+                    }
+                }
+                return Slug(trimFirst ? Trim(text) : text);
+            };
+
+            // First the bracketed tag: "Boren Vallkirson [Courier]" is a courier.
+            const auto open = name.find('[');
+            const auto close = name.find(']');
+            if (open != std::string::npos && close != std::string::npos && open < close) {
+                if (const auto tag = Trim(std::string_view{name}.substr(open + 1, close - open - 1)); !tag.empty()) {
+                    if (auto generic =
+                            attempt(Tier::Generic,
+                                    std::format("prompts/characters/{}_generic.prompt", genericKey(tag, true)))) {
+                        return *generic;
+                    }
+                }
+            }
+            // Then the whole name, untrimmed when it is slugged.
+            if (auto generic = attempt(Tier::Generic,
+                                       std::format("prompts/characters/{}_generic.prompt", genericKey(name, false)))) {
+                return *generic;
+            }
+        }
+
+        if (auto fallback = attempt(Tier::Default, "prompts/characters/default.prompt")) {
+            return *fallback;
+        }
+        return {};
+    }
+
 } // namespace NarrativeEngine::CharacterBioResolver

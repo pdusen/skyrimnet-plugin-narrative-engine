@@ -4,7 +4,7 @@ Plots need every schemer's character profile, and most schemers are people the p
 replaces `CharacterBios`' guesswork with a resolver that picks the profile SkyrimNet itself would render for an NPC,
 met or not: the same bio name, the same layer, the same fallbacks.
 
-> **Doc status: Steps 1–3 complete.** Nothing here touches the co-save or the settings. It is the last obstacle to releasing
+> **Doc status: Steps 1–4 complete.** Nothing here touches the co-save or the settings. It is the last obstacle to releasing
 > the plot system.
 
 The rules this implements were decoded from SkyrimNet's DLL and are written up as engine findings. They are the
@@ -298,7 +298,7 @@ all of the above.
 
 ### Step 4 — The fallback chain
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -322,6 +322,20 @@ suffix. A dynamic bio is `prompts/characters/dynamic/<name>.dynamic.prompt`; eve
 - `[Courier]` resolving `courier_generic`, an untagged "Bandit" resolving `bandit_generic`, and a generic-table hit
   used verbatim;
 - `None` only when `default` itself is missing.
+
+Done. `CharacterBioResolver::Resolve` returns a `Resolution`: its `Tier`, the winning content path, and the layer
+providing it. `ActorFacts` gained `baseUnique`. Two details came out of the decorator rather than the plan:
+
+- **An actor with no bio name resolves to `None`,** not to `default`. The decorator stops with "No bio template found"
+  before its fallbacks, which only run when a named template fails to render. Today that is an actor named
+  `"Unknown"` or with no name at all.
+- **Which text each `_generic` key is slugged from.** The bracketed tag is trimmed before it is slugged; the whole
+  name is slugged untrimmed, as SkyrimNet's second attempt does. Both are looked up in the generic table on their
+  trimmed slug first. The name is the display name, else the base's, repaired as in Step 1.
+
+**Unit tests** cover every case listed above, the fall from a tag to the whole name, and the `None` for no bio name.
+511 tests pass. The first run crashed in the test file, not the resolver: one section built a stack over a temporary
+vector of layers, whose pointers the header says must outlive the stack.
 
 ### Step 5 — Wire it in
 

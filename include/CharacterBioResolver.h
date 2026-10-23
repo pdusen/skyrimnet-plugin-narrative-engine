@@ -50,6 +50,9 @@ namespace NarrativeEngine::CharacterBioResolver
         std::string basePlugin;
         // The reference's own GetFile(0), used only when the base has none.
         std::string refPlugin;
+        // The base NPC's kUnique flag. A unique actor never falls back to a
+        // _generic profile.
+        bool baseUnique = false;
     };
 
     // The two translation tables, already built (from the CSVs under
@@ -217,5 +220,35 @@ namespace NarrativeEngine::CharacterBioResolver
     // in the stack that holds it -- outright when that is the save layer --
     // unless a pin names another layer that holds it.
     [[nodiscard]] const Layer* Winner(const Stack& stack, std::string_view path);
+
+    // --- The profile ------------------------------------------------------
+    //
+    // render_character_profile's chain, from a bio name to the file it
+    // renders. DecoratorLibrary::Initialize, lambda 3.
+
+    enum class Tier : std::uint8_t
+    {
+        Dynamic, // characters/dynamic/<name>: LLM-written, this save only
+        Own,     // characters/<name>: written for this person
+        Generic, // characters/<key>_generic, by bracketed tag or by name
+        Default, // characters/default
+        None     // nothing resolves, or the actor has no bio name
+    };
+
+    struct Resolution
+    {
+        Tier tier = Tier::None;
+        // The content path that won, "prompts/...", and the layer providing it.
+        std::string path;
+        const Layer* layer = nullptr;
+    };
+
+    // The profile SkyrimNet renders for an actor with this bio name. An
+    // empty name resolves to None: SkyrimNet stops there rather than falling
+    // back.
+    [[nodiscard]] Resolution Resolve(const ActorFacts& facts,
+                                     std::string_view bioName,
+                                     const Tables& tables,
+                                     const Stack& stack);
 
 } // namespace NarrativeEngine::CharacterBioResolver

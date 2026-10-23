@@ -477,3 +477,87 @@ TEST_CASE("CharacterBioResolver::BuildStack and Winner", "[CharacterBioResolver]
         CHECK(Winner(stack, "prompts/characters/grelka_0b3.prompt") == nullptr);
     }
 }
+
+TEST_CASE("CharacterBioResolver::Resolve", "[CharacterBioResolver][Resolve]")
+{
+    constexpr std::string_view kDefault = "prompts/characters/default.prompt";
+    const auto stackOf = [](const std::vector<Layer>& layers) { return BuildStack(layers, Registry{}); };
+    const auto base = [&](std::initializer_list<std::string> paths) {
+        return MakeLayer(LayerKind::Base, "skyrimnet.base", paths, "1.0.0", "skyrimnet.base");
+    };
+    Tables tables;
+    tables.generic[Slug("Refugee")] = "deceased_refugee";
+
+    auto courier = Actor(0x00039FB7, "Boren Vallkirson [Courier]");
+    auto bandit = Actor(0x0001A2B3, "Bandit");
+    auto grelka = Actor(0x0004E0B3, "Grelka");
+    grelka.baseUnique = true;
+
+    SECTION("prefers a dynamic bio to the actor's own")
+    {
+        const std::vector layers{
+            base({"prompts/characters/grelka_0B3.prompt", std::string{kDefault}}),
+            MakeLayer(LayerKind::Save, "save", {"prompts/characters/dynamic/grelka_0B3.dynamic.prompt"})};
+        const auto stack = stackOf(layers);
+        const auto resolution = Resolve(grelka, "grelka_0B3", tables, stack);
+        CHECK(resolution.tier == Tier::Dynamic);
+        CHECK(resolution.path == "prompts/characters/dynamic/grelka_0B3.dynamic.prompt");
+        CHECK(resolution.layer->folder == "save");
+    }
+    SECTION("prefers the actor's own file to any generic")
+    {
+        const std::vector layers{
+            base({"prompts/characters/courier_FB7.prompt", "prompts/characters/courier_generic.prompt"})};
+        const auto stack = stackOf(layers);
+        CHECK(Resolve(courier, "courier_FB7", tables, stack).tier == Tier::Own);
+    }
+    SECTION("sends a unique actor with no file of their own straight to default")
+    {
+        const std::vector layers{base({"prompts/characters/grelka_generic.prompt", std::string{kDefault}})};
+        const auto stack = stackOf(layers);
+        const auto resolution = Resolve(grelka, "grelka_0B3", tables, stack);
+        CHECK(resolution.tier == Tier::Default);
+        CHECK(resolution.path == kDefault);
+    }
+    SECTION("resolves a bracketed tag to its _generic")
+    {
+        const std::vector layers{base({"prompts/characters/courier_generic.prompt", std::string{kDefault}})};
+        const auto stack = stackOf(layers);
+        const auto resolution = Resolve(courier, "courier_FB7", tables, stack);
+        CHECK(resolution.tier == Tier::Generic);
+        CHECK(resolution.path == "prompts/characters/courier_generic.prompt");
+    }
+    SECTION("falls from the tag to the whole name")
+    {
+        const std::vector layers{
+            base({"prompts/characters/boren_vallkirson_[courier]_generic.prompt", std::string{kDefault}})};
+        const auto stack = stackOf(layers);
+        CHECK(Resolve(courier, "courier_FB7", tables, stack).path
+              == "prompts/characters/boren_vallkirson_[courier]_generic.prompt");
+    }
+    SECTION("resolves an untagged name to its _generic")
+    {
+        const std::vector layers{base({"prompts/characters/bandit_generic.prompt"})};
+        const auto stack = stackOf(layers);
+        CHECK(Resolve(bandit, "bandit_2B3", tables, stack).path == "prompts/characters/bandit_generic.prompt");
+    }
+    SECTION("uses a generic-table hit as it stands, with no suffix")
+    {
+        const std::vector layers{base({"prompts/characters/deceased_refugee_generic.prompt"})};
+        const auto stack = stackOf(layers);
+        CHECK(Resolve(Actor(0x4C00B503, "Refugee"), "deceased_refugee_503", tables, stack).path
+              == "prompts/characters/deceased_refugee_generic.prompt");
+    }
+    SECTION("resolves None only when even default is missing")
+    {
+        const std::vector withDefaultLayers{base({std::string{kDefault}})};
+        CHECK(Resolve(bandit, "bandit_2B3", tables, stackOf(withDefaultLayers)).tier == Tier::Default);
+        const std::vector emptyLayers{base({})};
+        CHECK(Resolve(bandit, "bandit_2B3", tables, stackOf(emptyLayers)).tier == Tier::None);
+    }
+    SECTION("resolves None for an actor with no bio name, default or not")
+    {
+        const std::vector layers{base({std::string{kDefault}})};
+        CHECK(Resolve(bandit, "", tables, stackOf(layers)).tier == Tier::None);
+    }
+}
