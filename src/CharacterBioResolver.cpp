@@ -1,5 +1,6 @@
 #include <CharacterBioResolver.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <format>
@@ -85,6 +86,96 @@ namespace NarrativeEngine::CharacterBioResolver
         [[nodiscard]] std::string Suffixed(std::string_view stem, std::uint32_t refId)
         {
             return std::format("{}_{:03X}", stem, refId & 0xFFF);
+        }
+
+        [[nodiscard]] bool IsHexDigit(char c) noexcept
+        {
+            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+        }
+
+        // One CSV line's cells, the way SkyrimNet's reader (rapidcsv, with
+        // auto-unquoting and no quoted line breaks) splits them: ',' outside
+        // quotes separates, a quoted cell loses its quotes and "" inside it
+        // is one quote. Cells are not trimmed here; the callers trim.
+        [[nodiscard]] std::vector<std::string> SplitCsvLine(std::string_view line)
+        {
+            std::vector<std::string> cells(1);
+            bool quoted = false;
+            for (std::size_t i = 0; i < line.size(); ++i) {
+                const char c = line[i];
+                if (quoted) {
+                    if (c == '"' && i + 1 < line.size() && line[i + 1] == '"') {
+                        cells.back().push_back('"');
+                        ++i;
+                    } else if (c == '"') {
+                        quoted = false;
+                    } else {
+                        cells.back().push_back(c);
+                    }
+                } else if (c == '"') {
+                    quoted = true;
+                } else if (c == ',') {
+                    cells.emplace_back();
+                } else {
+                    cells.back().push_back(c);
+                }
+            }
+            return cells;
+        }
+
+        // Every data row of a file: the header line dropped, a UTF-8 byte
+        // order mark and each line's trailing CR removed.
+        template <typename RowFn> void ForEachRow(std::string_view text, RowFn&& onRow)
+        {
+            constexpr std::string_view kBom = "\xEF\xBB\xBF";
+            if (text.starts_with(kBom)) {
+                text.remove_prefix(kBom.size());
+            }
+            bool header = true;
+            while (!text.empty()) {
+                const auto end = text.find('\n');
+                auto line = text.substr(0, end);
+                text = end == std::string_view::npos ? std::string_view{} : text.substr(end + 1);
+                if (line.ends_with('\r')) {
+                    line.remove_suffix(1);
+                }
+                if (header) {
+                    header = false;
+                    continue;
+                }
+                onRow(SplitCsvLine(line));
+            }
+        }
+
+        // The three cells every row of either table carries, trimmed, or
+        // nothing when the row is one SkyrimNet skips.
+        struct Row
+        {
+            std::string plugin;
+            std::uint32_t id = 0;
+            std::string key;
+        };
+
+        [[nodiscard]] std::optional<Row> ReadRow(const std::vector<std::string>& cells)
+        {
+            if (cells.size() < 3) {
+                return std::nullopt;
+            }
+            const auto plugin = Trim(cells[0]);
+            if (plugin.empty() || plugin.front() == '#') {
+                return std::nullopt;
+            }
+            const auto id = ParseHexId(cells[1]);
+            const auto key = Trim(cells[2]);
+            if (!id || key.empty()) {
+                return std::nullopt;
+            }
+            return Row{std::string{plugin}, *id, std::string{key}};
+        }
+
+        void SortByPath(std::vector<CsvFile>& files)
+        {
+            std::ranges::sort(files, {}, &CsvFile::path);
         }
     } // namespace
 
@@ -178,6 +269,75 @@ namespace NarrativeEngine::CharacterBioResolver
             return {};
         }
         return Suffixed(Slug(name), facts.refId);
+    }
+
+    std::optional<std::uint32_t> ParseHexId(std::string_view text) noexcept
+    {
+        text = Trim(text);
+        if (text.starts_with("0x") || text.starts_with("0X")) {
+            text.remove_prefix(2);
+        }
+        if (text.empty() || text.size() > 8 || !std::ranges::all_of(text, IsHexDigit)) {
+            return std::nullopt;
+        }
+        std::uint32_t value = 0;
+        for (const char c : text) {
+            const auto digit = c <= '9' ? c - '0' : (c | 0x20) - 'a' + 10;
+            value = value * 16 + static_cast<std::uint32_t>(digit);
+        }
+        return value;
+    }
+
+    Tables BuildTables(std::vector<CsvFile> uniqueFiles,
+                       std::vector<CsvFile> genericFiles,
+                       const IsLightPlugin& isLight,
+                       const FormName& nameOf,
+                       TableCensus* census)
+    {
+        Tables tables;
+        TableCensus counts;
+        SortByPath(uniqueFiles);
+        SortByPath(genericFiles);
+
+        for (const auto& file : uniqueFiles) {
+            ForEachRow(file.text, [&](const std::vector<std::string>& cells) {
+                const auto row = ReadRow(cells);
+                if (!row) {
+                    ++counts.skipped;
+                    return;
+                }
+                // The mask comes from how the plugin is LOADED, not from the
+                // id: a light plugin's rows carry twelve-bit ids.
+                const auto localId = row->id & (isLight(row->plugin) ? 0xFFFu : 0xFFFFFFu);
+                tables.unique.insert_or_assign(UniqueKey(row->plugin, localId), row->key);
+                ++counts.uniqueRows;
+            });
+        }
+
+        for (const auto& file : genericFiles) {
+            ForEachRow(file.text, [&](const std::vector<std::string>& cells) {
+                const auto row = ReadRow(cells);
+                if (!row) {
+                    ++counts.skipped;
+                    return;
+                }
+                // Keyed by the form's NAME, as the game shows it, so that
+                // every actor carrying that name finds the row.
+                const auto name = RepairWindows1252(nameOf(row->plugin, row->id));
+                const auto trimmed = Trim(name);
+                if (trimmed.empty()) {
+                    ++counts.genericUnnamed;
+                    return;
+                }
+                tables.generic.insert_or_assign(Slug(trimmed), row->key);
+                ++counts.genericRows;
+            });
+        }
+
+        if (census != nullptr) {
+            *census = counts;
+        }
+        return tables;
     }
 
 } // namespace NarrativeEngine::CharacterBioResolver

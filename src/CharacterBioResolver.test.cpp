@@ -17,6 +17,22 @@ namespace
 {
     using namespace NarrativeEngine::CharacterBioResolver;
 
+    const IsLightPlugin kNoLightPlugins = [](std::string_view) { return false; };
+    const FormName kNoNames = [](std::string_view, std::uint32_t) { return std::string{}; };
+
+    constexpr std::string_view kUniqueHeader = "\"pluginName\",\"refId\",\"sanitizedEnglishKey\"\n";
+    constexpr std::string_view kGenericHeader = "\"pluginName\",\"formId\",\"sanitizedEnglishKey\"\n";
+
+    CsvFile Unique(std::string path, std::string_view rows)
+    {
+        return CsvFile{std::move(path), std::string{kUniqueHeader} + std::string{rows}};
+    }
+
+    CsvFile Generic(std::string path, std::string_view rows)
+    {
+        return CsvFile{std::move(path), std::string{kGenericHeader} + std::string{rows}};
+    }
+
     ActorFacts Actor(std::uint32_t refId, std::string displayName, std::string basePlugin = "Skyrim.esm")
     {
         ActorFacts facts;
@@ -159,5 +175,108 @@ TEST_CASE("CharacterBioResolver::BioName", "[CharacterBioResolver][BioName]")
     {
         CHECK(BioName(Actor(0x00000ABC, ""), tables).empty());
         CHECK(BioName(Actor(0x00000ABC, "Unknown"), tables).empty());
+    }
+}
+
+TEST_CASE("CharacterBioResolver::ParseHexId", "[CharacterBioResolver][Tables]")
+{
+    CHECK(ParseHexId("019DDC") == 0x019DDCu);
+    CHECK(ParseHexId(" 0x19ddc ") == 0x019DDCu);
+    CHECK(ParseHexId("0X19DDC") == 0x019DDCu);
+    CHECK(ParseHexId("FFFFFFFF") == 0xFFFFFFFFu);
+    CHECK_FALSE(ParseHexId("").has_value());
+    CHECK_FALSE(ParseHexId("0x").has_value());
+    CHECK_FALSE(ParseHexId("123456789").has_value());
+    CHECK_FALSE(ParseHexId("19DDG").has_value());
+    CHECK_FALSE(ParseHexId("refId").has_value());
+}
+
+TEST_CASE("CharacterBioResolver::BuildTables", "[CharacterBioResolver][Tables]")
+{
+    SECTION("reads quoted rows and skips the header")
+    {
+        const auto tables =
+            BuildTables({Unique("prompts/translation/unique/00.csv", "\"Skyrim.esm\",\"019DDC\",\"brandish\"\r\n")},
+                        {},
+                        kNoLightPlugins,
+                        kNoNames);
+        REQUIRE(tables.unique.size() == 1);
+        CHECK(tables.unique.at(UniqueKey("skyrim.esm", 0x019DDC)) == "brandish");
+    }
+    SECTION("lets a later file override one row of an earlier one and leaves the rest")
+    {
+        // Passed out of order on purpose: path order decides, not argument order.
+        TableCensus census;
+        const auto tables =
+            BuildTables({Unique("prompts/translation/unique/50_mod.csv", "Skyrim.esm,019DDC,brand_shei\n"),
+                         Unique("prompts/translation/unique/00_base.csv",
+                                "Skyrim.esm,019DDC,brandish\nSkyrim.esm,039FB7,courier\n")},
+                        {},
+                        kNoLightPlugins,
+                        kNoNames,
+                        &census);
+        CHECK(tables.unique.at(UniqueKey("Skyrim.esm", 0x019DDC)) == "brand_shei");
+        CHECK(tables.unique.at(UniqueKey("Skyrim.esm", 0x039FB7)) == "courier");
+        CHECK(census.uniqueRows == 3);
+    }
+    SECTION("skips a malformed row or a bad id without dropping the file")
+    {
+        TableCensus census;
+        const auto tables = BuildTables({Unique("u.csv",
+                                                "# a comment,000001,x\n"
+                                                "\n"
+                                                "Skyrim.esm,000002\n"
+                                                "Skyrim.esm,not-hex,x\n"
+                                                "Skyrim.esm,000003,   \n"
+                                                ",000004,x\n"
+                                                "Skyrim.esm,000005,kept\n")},
+                                        {},
+                                        kNoLightPlugins,
+                                        kNoNames,
+                                        &census);
+        CHECK(tables.unique.size() == 1);
+        CHECK(tables.unique.contains(UniqueKey("Skyrim.esm", 0x000005)));
+        CHECK(census.skipped == 6);
+    }
+    SECTION("masks a light plugin's ids to twelve bits")
+    {
+        const IsLightPlugin lightIsLight = [](std::string_view plugin) { return plugin == "Light.esp"; };
+        const auto tables = BuildTables(
+            {Unique("u.csv", "Light.esp,FE000CAC,light_one\nHeavy.esp,01000CAC,heavy\n")}, {}, lightIsLight, kNoNames);
+        CHECK(tables.unique.contains(UniqueKey("Light.esp", 0xCAC)));
+        CHECK(tables.unique.contains(UniqueKey("Heavy.esp", 0x000CAC)));
+    }
+    SECTION("keys the generic table by the slug of each row's trimmed, repaired name")
+    {
+        const FormName names = [](std::string_view plugin, std::uint32_t formId) -> std::string {
+            if (plugin == "Skyrim.esm" && formId == 0x0745CD) {
+                return " Refugee ";
+            }
+            if (plugin == "Mod.esp" && formId == 0x000ABC) {
+                return "Fl\xFC"
+                       "chtling";
+            }
+            return {};
+        };
+        TableCensus census;
+        const auto tables = BuildTables(
+            {},
+            {Generic("g.csv", "Skyrim.esm,0745CD,deceased_refugee\nMod.esp,000ABC,refugee\nGone.esp,000001,x\n")},
+            kNoLightPlugins,
+            names,
+            &census);
+        CHECK(tables.generic.at("refugee") == "deceased_refugee");
+        CHECK(tables.generic.at("fl\xC3\xBC"
+                                "chtling")
+              == "refugee");
+        CHECK(census.genericRows == 2);
+        CHECK(census.genericUnnamed == 1);
+    }
+    SECTION("keeps the later of two generic rows with the same name")
+    {
+        const FormName refugee = [](std::string_view, std::uint32_t) { return std::string{"Refugee"}; };
+        const auto tables = BuildTables(
+            {}, {Generic("g.csv", "Skyrim.esm,0745CD,first\nSkyrim.esm,07443C,second\n")}, kNoLightPlugins, refugee);
+        CHECK(tables.generic.at("refugee") == "second");
     }
 }

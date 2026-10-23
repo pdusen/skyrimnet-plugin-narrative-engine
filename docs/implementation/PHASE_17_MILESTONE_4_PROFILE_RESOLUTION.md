@@ -4,7 +4,7 @@ Plots need every schemer's character profile, and most schemers are people the p
 replaces `CharacterBios`' guesswork with a resolver that picks the profile SkyrimNet itself would render for an NPC,
 met or not: the same bio name, the same layer, the same fallbacks.
 
-> **Doc status: Step 1 complete.** Nothing here touches the co-save or the settings. It is the last obstacle to releasing
+> **Doc status: Steps 1–2 complete.** Nothing here touches the co-save or the settings. It is the last obstacle to releasing
 > the plot system.
 
 The rules this implements were decoded from SkyrimNet's DLL and are written up as engine findings. They are the
@@ -190,7 +190,7 @@ does.
 
 ### Step 2 — The translation tables
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -212,6 +212,26 @@ chosen.
   with the same name keep the later.
 - **Step 1's probe**, rerun on tables built by this code rather than the probe's own CSV reader, must give the same
   result.
+
+Done. `BuildTables` takes the two file lists and two callbacks for the engine facts the loader needs:
+`IsLightPlugin` and `FormName`. `ParseHexId` is public so the tests can pin its rules directly. The DLL settled three
+details the plan left open:
+
+- **The reader is rapidcsv** with the header as row 0, `,` as the separator and `"` quoting, so `ForEachRow` drops the
+  first line and `SplitCsvLine` unquotes. A row is skipped when its trimmed plugin is empty or starts with `#`,
+  SkyrimNet's comment rule.
+- **An id** is trimmed, may carry `0x` or `0X`, and must then be one to eight hex digits.
+- **A unique row's id is masked by how its plugin is loaded:** twelve bits for a light plugin, twenty-four otherwise,
+  and twenty-four for a plugin that is not loaded. Generic ids go to the form lookup as written.
+
+A row with fewer than three cells is skipped. rapidcsv would throw on it instead, and whether SkyrimNet then drops the
+whole file was not decoded. No shipped file has such a row.
+
+- **Unit tests:** `ParseHexId` and `BuildTables` cover each case listed above, plus the light mask, the header, and the
+  argument order not mattering. 507 tests pass.
+- **The probe**, rerun with both tables from `BuildTables`, again reproduced **9,096 of 9,098**, with the same two
+  Sahpur rows missing. The shipped CSVs gave 2,228 unique rows in 2,227 keys (one row overrides another) and 233 named
+  generic rows; 533 generic rows name forms outside the five masters, which Spriggit cannot name.
 
 ### Step 3 — The layer stack and each path's winner
 

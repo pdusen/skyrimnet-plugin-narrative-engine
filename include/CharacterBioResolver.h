@@ -1,9 +1,13 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 // CharacterBioResolver — the profile SkyrimNet would render for an NPC,
 // worked out without asking SkyrimNet.
@@ -85,5 +89,52 @@ namespace NarrativeEngine::CharacterBioResolver
     // player, nothing for an empty name or "Unknown", then the slug -- each
     // but player_special suffixed with _{refId & 0xFFF:03X}.
     [[nodiscard]] std::string BioName(const ActorFacts& facts, const Tables& tables);
+
+    // --- The translation tables -------------------------------------------
+    //
+    // prompts/translation/unique/*.csv and prompts/translation/generic/*.csv,
+    // as PromptNameTranslation loads them. Which files are in play is the
+    // layer stack's business; these take the files already chosen.
+
+    struct CsvFile
+    {
+        // The resolved content path. Used only for ORDER: files are applied
+        // in byte-wise path order, and a later row replaces an earlier one
+        // with the same key.
+        std::string path;
+        std::string text;
+    };
+
+    // Whether a plugin is loaded as a light plugin. A unique row's id is
+    // masked to twelve bits when it is and to twenty-four otherwise --
+    // including when the plugin is not loaded at all.
+    using IsLightPlugin = std::function<bool(std::string_view plugin)>;
+
+    // A form's TESFullName, raw, looked up by plugin and the id as the CSV
+    // gives it; "" when the form does not resolve, which drops the row.
+    using FormName = std::function<std::string(std::string_view plugin, std::uint32_t formId)>;
+
+    // What the build kept and dropped, for the census.
+    struct TableCensus
+    {
+        std::size_t uniqueRows = 0;     // applied, overrides included
+        std::size_t genericRows = 0;    // applied, overrides included
+        std::size_t genericUnnamed = 0; // form did not resolve, or has no name
+        std::size_t skipped = 0;        // comment, blank, short, bad id, no key
+    };
+
+    // A CSV id as SkyrimNet parses one: trimmed, an optional 0x or 0X, then
+    // one to eight hex digits and nothing else.
+    [[nodiscard]] std::optional<std::uint32_t> ParseHexId(std::string_view text) noexcept;
+
+    // Both tables from their files. The first line of each file is its
+    // header; a row whose trimmed plugin cell is empty or starts with '#' is
+    // skipped, as is one with fewer than three cells, a bad id or an empty
+    // key.
+    [[nodiscard]] Tables BuildTables(std::vector<CsvFile> uniqueFiles,
+                                     std::vector<CsvFile> genericFiles,
+                                     const IsLightPlugin& isLight,
+                                     const FormName& nameOf,
+                                     TableCensus* census = nullptr);
 
 } // namespace NarrativeEngine::CharacterBioResolver
