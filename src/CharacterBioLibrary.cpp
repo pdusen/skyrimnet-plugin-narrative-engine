@@ -346,27 +346,60 @@ namespace NarrativeEngine::CharacterBios
                                                   nameOf,
                                                   &tableCensus);
 
+        if (firstRefresh) {
+            std::string order;
+            for (const auto* layer : stack.layers) {
+                order += std::format("{}{}", order.empty() ? "" : ", ", layer->folder);
+            }
+            std::string pins;
+            for (const auto& [path, id] : stack.pins) {
+                pins += std::format("{}{} -> {}", pins.empty() ? "" : ", ", path, id);
+            }
+            logger::info("CharacterBios: save '{}'; {} layer(s) on disk; stack, highest first: {}; pins: {}.",
+                         saveId,
+                         layers.size(),
+                         order,
+                         pins.empty() ? std::string{"none"} : pins);
+        }
+
         Held held;
         held.session = facts.get();
         std::size_t stored = 0;
         std::size_t computed = 0;
+        std::size_t agreed = 0;
         std::size_t templated = 0;
         std::size_t changed = 0;
         std::map<Resolver::Tier, std::size_t> byTier;
         std::map<std::string, std::size_t> ownByLayer;
 
         for (const auto& member : facts->members) {
-            std::string bioName;
-            if (member.facts.refId != 0) {
-                // SkyrimNet's own answer for anybody it has met: it already
-                // reflects whatever has happened since.
-                bioName = SkyrimNetAPI::GetBioTemplateName(member.facts.refId);
-                if (!bioName.empty()) {
-                    ++stored;
-                } else {
-                    bioName = Resolver::BioName(member.facts, tables);
-                    ++computed;
+            // Computed for EVERYONE, met or not. For somebody SkyrimNet has
+            // met, its stored name is the one used -- it already reflects
+            // whatever has happened since -- and the computed one is checked
+            // against it: every met member is a test of the naming rule on
+            // real engine data.
+            const auto computedName = member.facts.refId != 0 ? Resolver::BioName(member.facts, tables) : std::string{};
+            const auto storedName =
+                member.facts.refId != 0 ? SkyrimNetAPI::GetBioTemplateName(member.facts.refId) : std::string{};
+            const auto& bioName = storedName.empty() ? computedName : storedName;
+            if (!storedName.empty()) {
+                ++stored;
+                if (storedName == computedName) {
+                    ++agreed;
+                } else if (firstRefresh) {
+                    logger::info("CharacterBios: {} (base 0x{:X}, ref 0x{:X}) -- SkyrimNet stored '{}' but the rule "
+                                 "computes '{}' (display '{}', base name '{}', base plugin '{}').",
+                                 member.name,
+                                 member.npc,
+                                 member.facts.refId,
+                                 storedName,
+                                 computedName,
+                                 member.facts.displayName,
+                                 member.facts.baseName,
+                                 member.facts.basePlugin);
                 }
+            } else if (!computedName.empty()) {
+                ++computed;
             }
 
             const auto resolution = Resolver::Resolve(member.facts, bioName, tables, stack);
@@ -389,14 +422,23 @@ namespace NarrativeEngine::CharacterBios
             const auto previous = g_held.lastLine.find(member.npc);
             if (firstRefresh || previous == g_held.lastLine.end() || previous->second != line) {
                 ++changed;
-                logger::debug("CharacterBios: {} (base 0x{:X}, ref 0x{:X}) -> bio '{}', {} from '{}' ({})",
-                              member.name,
+                // Tab-separated key=value, free text last, so a session's log
+                // can be checked mechanically against the disk and SkyrimNet.
+                logger::debug("CharacterBios: member\tbase=0x{:X}\tref=0x{:X}\ttier={}\tlayer={}\tpath={}\tstored={}"
+                              "\tcomputed={}\tunique={}\tbasePlugin={}\trefPlugin={}\tname={}\tdisplay={}\tbaseName={}",
                               member.npc,
                               member.facts.refId,
-                              bioName,
                               TierName(resolution.tier),
-                              resolution.layer != nullptr ? resolution.layer->folder : std::string{"-"},
-                              resolution.path.empty() ? std::string{"-"} : resolution.path);
+                              resolution.layer != nullptr ? resolution.layer->folder : std::string{},
+                              resolution.path,
+                              storedName,
+                              computedName,
+                              member.facts.baseUnique ? 1 : 0,
+                              member.facts.basePlugin,
+                              member.facts.refPlugin,
+                              member.name,
+                              member.facts.displayName,
+                              member.facts.baseName);
             }
             held.lastLine.emplace(member.npc, std::move(line));
         }
@@ -405,24 +447,27 @@ namespace NarrativeEngine::CharacterBios
         for (const auto& [folder, count] : ownByLayer) {
             layerCounts += std::format("{}{} {}", layerCounts.empty() ? "" : ", ", count, folder);
         }
-        logger::info("CharacterBios: resolved {} member(s) -- {} by SkyrimNet's stored name, {} computed; {} dynamic, "
-                     "{} own, {} generic, {} default, {} none; own by layer: {}. {} layer(s) stacked, {} unique and {} "
-                     "generic translation row(s), {} profile(s) with template logic, {} resolution(s) changed{}.",
-                     facts->members.size(),
-                     stored,
-                     computed,
-                     byTier[Resolver::Tier::Dynamic],
-                     byTier[Resolver::Tier::Own],
-                     byTier[Resolver::Tier::Generic],
-                     byTier[Resolver::Tier::Default],
-                     byTier[Resolver::Tier::None],
-                     layerCounts.empty() ? std::string{"none"} : layerCounts,
-                     stack.layers.size(),
-                     tableCensus.uniqueRows,
-                     tableCensus.genericRows,
-                     templated,
-                     changed,
-                     firstRefresh ? " (first refresh this session)" : "");
+        logger::info(
+            "CharacterBios: resolved {} member(s) -- {} by SkyrimNet's stored name ({} of them computed "
+            "identically), {} computed; {} dynamic, {} own, {} generic, {} default, {} none; own by layer: {}. "
+            "{} layer(s) stacked, {} unique and {} generic translation row(s), {} profile(s) with template "
+            "logic, {} resolution(s) changed{}.",
+            facts->members.size(),
+            stored,
+            agreed,
+            computed,
+            byTier[Resolver::Tier::Dynamic],
+            byTier[Resolver::Tier::Own],
+            byTier[Resolver::Tier::Generic],
+            byTier[Resolver::Tier::Default],
+            byTier[Resolver::Tier::None],
+            layerCounts.empty() ? std::string{"none"} : layerCounts,
+            stack.layers.size(),
+            tableCensus.uniqueRows,
+            tableCensus.genericRows,
+            templated,
+            changed,
+            firstRefresh ? " (first refresh this session)" : "");
         if (byTier[Resolver::Tier::None] == facts->members.size() && !facts->members.empty()) {
             logger::warn("CharacterBios: nobody resolved to any profile, not even characters/default. Is SkyrimNet's "
                          "content library at {}?",

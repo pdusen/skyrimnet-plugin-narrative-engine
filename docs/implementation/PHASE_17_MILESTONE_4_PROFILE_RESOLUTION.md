@@ -418,26 +418,59 @@ files read there are the CSVs and the layer listing, never a profile.
 
 **[USER]**
 
-On a save with plots running, the logs at debug, and `openrouter_input.log` kept:
+Open the game, load a save with plots enabled, and let several plot ticks run. A plot being born during them helps,
+but is not required. Then quit. Nothing needs judging or recording; Step 7 reads everything from the logs.
 
-1. Load, and read the census line. How many members are castable now, against the old census's "bio(s) loaded" figure on
-   the same save?
-2. In the dashboard, edit one NPC's bio in the overlay and pin a different plugin's version of another. Without
-   reloading, wait for the next plot tick, and check that its debug lines show both changes. Talk to both, and to one
-   NPC who has a dynamic bio.
-3. Let a plot be born and read its birth prompt. Do the masterminds read in character?
+**What the logs carry.** Everything below is written by default; the plugin's logger runs at trace level.
 
-Record the census and anything surprising under this step.
+- **Once per session, at load:** a session-facts line counting members, light plugins and generic row names.
+- **Once per session, at the first refresh:**
+  - the save id, the layers on disk, the stack in order, and the pins;
+  - a line for every member whose SkyrimNet-stored bio name differs from the computed one, with the facts that
+    produced it.
+- **Every refresh, so every tick:** the census line. It now also says how many stored names the rule computed
+  identically.
+- **Per member, on the first refresh and on any later change:** a tab-separated debug line holding:
+  - the base and reference ids;
+  - the tier, layer and path;
+  - the stored and computed names;
+  - the unique flag, the base and reference plugins, and the population, display and base names.
 
-### Step 7 — The resolver against what SkyrimNet sent
+The resolver computes the name for every member, met or not, and checks it against SkyrimNet's stored name wherever
+there is one. So every NPC the save has met is a test of the naming rule on real engine data. The stored name is
+still the one used.
+
+### Step 7 — The resolver against the logs, the disk and SkyrimNet
 
 - [ ] Complete
 
 **[CLAUDE]**
 
-A throwaway harness over Step 6's logs compares each member's resolved file, from the debug lines, with the profile
-text SkyrimNet put into `openrouter_input.log` for the same person.
+A throwaway harness over Step 6's session. Its inputs are `NarrativeEngine.log`, `NarrativeEngine_Plots.log`,
+SkyrimNet's `openrouter_input.log`, the save's `uuid_mappings` table, and the MO2-merged content tree as Step 3's
+probe built it.
 
-**Verification:** every person who appears in both agrees, including the overlay edit, the pin and the dynamic bio
-from Step 6. Each disagreement is either explained by a rule above and fixed, or written up here and in the engine
-findings.
+**Verification:** each of these holds, or every exception is explained by a rule above and fixed, or written up here
+and in the engine findings:
+
+1. **The naming rule on real engine data.** For every member SkyrimNet has met, the computed name equals the stored
+   one. A disagreement is checked against `uuid_mappings`. The `actor_name` stored there is the name at first
+   meeting, so a rename since then is the documented exception, and anything else is a bug.
+2. **The engine facts.** Every member with a reference id has a base plugin. Every unique flag matches the base
+   record, checked through Spriggit for the masters. Every unique-table hit uses the base's plugin.
+3. **The in-game stack against the disk.** The logged stack order equals the stack Step 3's probe builds offline from
+   the same tree and registry. Each member's logged tier, layer and path equal what `Resolve` gives offline from the
+   logged facts and that stack, so the in-game scan read the virtual file system correctly.
+4. **The refresh.** There is a census line per tick, and the later ticks report only what genuinely changed between
+   them.
+5. **Dynamic bios.** Every member whose dynamic bio exists in the loaded save's layer resolves `Dynamic`, from the save
+   layer.
+6. **The prompts.** If a plot was born, its birth prompt in `openrouter_input.log` carries the sanitized blocks of
+   each named person's resolved file.
+7. **SkyrimNet's own renders.** Wherever SkyrimNet rendered the profile of a population member during the session,
+   the text it sent comes from the same file the resolver chose. This check is opportunistic: it covers only the
+   people SkyrimNet happened to render.
+
+**What a load-and-tick session cannot show:** how a player's own overlay edit or pin ranks against the other layers,
+since a session that makes neither has nothing to observe. Those rules rest on the disassembly and Step 3's unit tests.
+They also have no instance on the development install other than one pin to the layer that wins anyway.
