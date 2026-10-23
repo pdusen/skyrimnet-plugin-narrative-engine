@@ -4,7 +4,7 @@ Plots need every schemer's character profile, and most schemers are people the p
 replaces `CharacterBios`' guesswork with a resolver that picks the profile SkyrimNet itself would render for an NPC,
 met or not: the same bio name, the same layer, the same fallbacks.
 
-> **Doc status: Steps 1–2 complete.** Nothing here touches the co-save or the settings. It is the last obstacle to releasing
+> **Doc status: Steps 1–3 complete.** Nothing here touches the co-save or the settings. It is the last obstacle to releasing
 > the plot system.
 
 The rules this implements were decoded from SkyrimNet's DLL and are written up as engine findings. They are the
@@ -235,7 +235,7 @@ whole file was not decoded. No shipped file has such a row.
 
 ### Step 3 — The layer stack and each path's winner
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -263,6 +263,38 @@ Turning the registry, the layer listing and the manifests into the stack, and ch
   ranked below every prioritized one.
 - **A probe** builds the stack from this machine's registry and layer folders and resolves the 315 bios that
   SkyrimNet's prompt logs showed winning. It must pick the logged winner every time.
+
+Done. `ParseRegistry`, `CompareVersions`, `BuildStack` and `Winner` hold the stack. A `Layer` is plain data: kind,
+folder, manifest id and version, and the set of relative paths it holds. Decoding the rest of the DLL corrected the
+plan in two places and filled in a rule it had left open:
+
+- **Paths and pin ids compare exactly, not case-folded.** The pin map and the snapshot are keyed by a byte-wise
+  compare, and a pin's id is matched to a layer's after trimming only. Only the registry folds case, when it drops a
+  record or pin that differs from an earlier one only in case. `Winner` therefore treats `grelka_0b3.prompt` and
+  `grelka_0B3.prompt` as different paths, and normalises only `\` to `/`.
+- **The unprioritized group is empty in practice.** SkyrimNet's registry loader appends a priority entry, in key
+  order, for every record that lacks one. `ParseRegistry` does the same, so the stack has no separate group for
+  them.
+- **Two copies of one id:**
+  - the higher version wins;
+  - on a tie a `library/` copy beats an `external/` one;
+  - then `library/skyrimnet.base` beats `library/skyrimnet.base.update`, the reserved folder SkyrimNet's content
+    updater fills with newer shipped defaults;
+  - then the copy discovered first stays.
+
+  Versions compare by semantic-versioning precedence.
+
+The reserved registry id that is dropped is taken to be `skyrimnet.base`, the one id with no record of its own. The
+DLL's reserved-id check was not decoded far enough to confirm the list. The profile-lookup finding is updated with
+all of the above.
+
+- **Unit tests:** `ParseRegistry`, `CompareVersions`, and `BuildStack` with `Winner` cover each rule in the step and
+  each correction. 510 tests pass.
+- **The probe** merged the MO2 `Default` profile's enabled mods and `overwrite` into the tree the game sees, read
+  each layer's manifest and the live registry, and built the stack.
+  - The stack came out as the overlay, the registry's priority list, then `skyrimnet.base`. It correctly left out
+    `pdusen.skyrim-but-its-p` (flagged `missing`) and `library/.archive` (no manifest naming it).
+  - It picked the logged winner for **315 of 315** bios.
 
 ### Step 4 — The fallback chain
 

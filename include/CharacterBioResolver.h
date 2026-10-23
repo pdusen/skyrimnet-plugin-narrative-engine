@@ -3,10 +3,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // CharacterBioResolver — the profile SkyrimNet would render for an NPC,
@@ -136,5 +138,84 @@ namespace NarrativeEngine::CharacterBioResolver
                                      const IsLightPlugin& isLight,
                                      const FormName& nameOf,
                                      TableCensus* census = nullptr);
+
+    // --- The layer stack --------------------------------------------------
+    //
+    // SkyrimNet's content store: content-registry.json, the layer folders
+    // under SKSE/Plugins/SkyrimNet, and which layer wins each path.
+    // Content::BuildLayerStack and Content::ResolveSnapshot.
+
+    // In SkyrimNet's own enum order.
+    enum class LayerKind : std::uint8_t
+    {
+        Base,     // library/skyrimnet.base, or library/skyrimnet.base.update
+        Library,  // library/<id>
+        External, // external/<id>
+        Overlay,  // overlay
+        Save      // saves/<save id>, only while a save is active
+    };
+
+    inline constexpr std::string_view kBaseId = "skyrimnet.base";
+    inline constexpr std::string_view kBaseUpdateFolder = "skyrimnet.base.update";
+
+    struct Layer
+    {
+        LayerKind kind = LayerKind::External;
+        // The directory's own name.
+        std::string folder;
+        // manifest.json's "id" and "version"; "" when absent.
+        std::string manifestId;
+        std::string version;
+        // Every file the layer holds, relative to it, '/'-separated and in
+        // the case the disk has: "prompts/characters/grelka_0B3.prompt".
+        std::unordered_set<std::string> paths;
+    };
+
+    // The registry as SkyrimNet reads it: case-folded duplicates dropped, a
+    // non-boolean "enabled" taken as true, and every record given a priority
+    // entry, the ones the file lacks appended at the bottom in key order.
+    struct Registry
+    {
+        struct Plugin
+        {
+            bool enabled = true;
+            bool missing = false;
+        };
+        std::map<std::string, Plugin> plugins;
+        // Highest first.
+        std::vector<std::string> priority;
+        // Content path -> the plugin id chosen to provide it.
+        std::map<std::string, std::string, std::less<>> pins;
+    };
+
+    // An unreadable file, or one with a schema_version above 1, is an empty
+    // registry: SkyrimNet quarantines it and starts empty.
+    [[nodiscard]] Registry ParseRegistry(std::string_view json);
+
+    // -1, 0 or 1. Semantic versioning precedence; a version that does not
+    // parse counts as 0.0.0.
+    [[nodiscard]] int CompareVersions(std::string_view a, std::string_view b);
+
+    struct Stack
+    {
+        // Highest first: the save layer, the overlay, plugins in priority
+        // order, then skyrimnet.base.
+        std::vector<const Layer*> layers;
+        std::map<std::string, std::string, std::less<>> pins;
+    };
+
+    // Left out of the stack: a plugin layer with no registry record, a
+    // disabled or missing one, and a library or base folder whose manifest
+    // does not carry its id. Of two copies of one id, the higher version
+    // stays; on a tie a library copy beats an external one, and
+    // skyrimnet.base beats skyrimnet.base.update.
+    //
+    // The returned stack points into `layers`, which must outlive it.
+    [[nodiscard]] Stack BuildStack(const std::vector<Layer>& layers, const Registry& registry);
+
+    // The layer that provides `path`, or nullptr when none does: the first
+    // in the stack that holds it -- outright when that is the save layer --
+    // unless a pin names another layer that holds it.
+    [[nodiscard]] const Layer* Winner(const Stack& stack, std::string_view path);
 
 } // namespace NarrativeEngine::CharacterBioResolver

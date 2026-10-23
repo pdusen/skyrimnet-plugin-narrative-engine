@@ -22,7 +22,8 @@ copy that wins is:
 2. the pinned plugin's copy          content-registry.json "pins", if that plugin provides the file
 3. the overlay's copy                overlay/
 4. plugins in "priority" order       first entry highest
-5. registered plugins with no priority entry, by case-folded id
+5. registered plugins with no priority entry, by case-folded id (in practice none: the registry loader appends a
+   priority entry for every record that lacks one)
 6. skyrimnet.base
 ```
 
@@ -164,8 +165,19 @@ The stack is an ordered list, assembled in four groups:
 3. **Registered plugins with no `priority` entry**, sorted by case-folded layer id.
 4. **`skyrimnet.base`**, last (`No skyrimnet.base layer participates …` when it is absent).
 
-One plugin id present in two places (an `external/` folder and a `library/` store copy) resolves **once**, at the
-higher version (`Plugin '{}' v{} in '{}' is superseded by …`).
+One id present in two places resolves **once** (`Plugin '{}' v{} in '{}' is superseded by …`). The rule is
+`sub_9f8ba0`, asking whether a later copy replaces the one already held:
+
+1. **The higher manifest version wins.** A copy with no parseable version counts as 0.0.0.
+2. **On a tie, location decides:** a `library/` copy beats an `external/` one, which beats anything else.
+3. **Then the plain base folder beats `library/skyrimnet.base.update`.** That is a reserved folder SkyrimNet's
+   content updater installs newer shipped defaults into. It carries the id `skyrimnet.base` too, so the newer of the
+   two is the base layer.
+4. **Then the copy discovered first stays.**
+
+A library folder must carry its own name as its manifest id (compared case-insensitively). A reserved base folder
+must carry `skyrimnet.base`, and no other folder may claim it. Folders failing either check are ignored, as is a
+library folder with no registry record.
 
 At boot SkyrimNet registers any external folders it finds before resolving (`… external registered`), and a new
 record gets a priority entry appended at the bottom. So in practice group 3 is nearly always empty, and "no
@@ -176,8 +188,10 @@ registry record" only affects someone reading the registry before SkyrimNet has 
 Every layer's entries are sorted by path, and the snapshot is built by a k-way merge over them. For each path, the
 candidates are the layers that provide it, **in stack order**, and a selector picks one:
 
-1. Normalise the path and look it up in `pins` (case-folded). If there is a pin, scan the candidates for the layer
-   whose id matches it (case-folded).
+1. Look the path up in `pins`, exactly: paths are byte-compared, so `grelka_0b3.prompt` is not `grelka_0B3.prompt`.
+   If there is a pin, scan the candidates for the layer whose id equals it after trimming whitespace, again exactly.
+   Only the *registry* folds case, when it drops a second pin or record that differs from an earlier one only in
+   case.
 2. Default to the **first** candidate.
 3. **If that first candidate is the save layer, it wins, whatever the pin says.** Otherwise, if the pin matched a
    candidate, that candidate wins.
@@ -190,8 +204,9 @@ write (`WriteSaveFile`) clears any pin on the path it wrote, because otherwise t
 overlay edit from showing. A save-layer write would win anyway; clearing the pin there is just tidying up.
 
 The result is a vector of resolved entries sorted by path, with an active flag on each. Template names map to
-paths by adding `prompts/` and `.prompt` (`characters/default` is `prompts/characters/default.prompt`). Where two
-paths collide on one template key, the lower-sorting path wins.
+paths by adding `prompts/` and `.prompt` (`characters/default` is `prompts/characters/default.prompt`); a dynamic bio
+is `.dynamic.prompt`. The `prompts/` prefix and the extension are matched ignoring ASCII case, but the rest of the key
+keeps the case on disk. Where two paths collide on one template key, the lower-sorting path wins.
 
 ### Translation CSVs
 
@@ -204,6 +219,15 @@ Consequences:
 - Files with **different names** from different layers are all loaded, in byte-wise path order, and a later row
   **replaces** an earlier one with the same key (`Overriding unique translation {} -> {} (was {}) from {}:{}`). So a
   plugin's `50_mymod.csv` overrides individual rows of `00_SkyrimNet_unique.csv`.
+
+The reader is rapidcsv, with the header as row 0, `,` separators and `"` quoting, reading columns by position:
+
+- **Skipped rows:** a row whose trimmed plugin cell is empty or starts with `#`, and a row whose key is empty after
+  trimming.
+- **Ids:** an id may carry `0x`, and must then be one to eight hex digits.
+- **The unique mask:** a unique row's id is masked to twelve bits when its plugin is **loaded** as a light plugin
+  (the data handler's `TESFile`, flag bit 9), and to twenty-four otherwise, including when the plugin is not loaded.
+- **Generic ids** go to `TESDataHandler::LookupFormID` as written.
 
 On this install only `skyrimnet.base` ships translation CSVs.
 

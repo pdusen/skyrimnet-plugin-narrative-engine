@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <format>
 
+#include <nlohmann/json.hpp>
+
 namespace NarrativeEngine::CharacterBioResolver
 {
     namespace
@@ -177,6 +179,148 @@ namespace NarrativeEngine::CharacterBioResolver
         {
             std::ranges::sort(files, {}, &CsvFile::path);
         }
+
+        [[nodiscard]] std::string Folded(std::string_view text)
+        {
+            std::string out;
+            out.reserve(text.size());
+            for (const char c : text) {
+                out.push_back(AsciiLower(c));
+            }
+            return out;
+        }
+
+        // A content path as SkyrimNet keys one: trimmed, '\' as '/'.
+        [[nodiscard]] std::string NormalPath(std::string_view path)
+        {
+            std::string out{Trim(path)};
+            std::ranges::replace(out, '\\', '/');
+            return out;
+        }
+
+        // --- Semantic versions ---------------------------------------------
+
+        struct Version
+        {
+            std::uint64_t major = 0;
+            std::uint64_t minor = 0;
+            std::uint64_t patch = 0;
+            std::vector<std::string> prerelease;
+        };
+
+        [[nodiscard]] bool AllDigits(std::string_view text) noexcept
+        {
+            return !text.empty() && std::ranges::all_of(text, [](char c) { return c >= '0' && c <= '9'; });
+        }
+
+        [[nodiscard]] std::uint64_t Number(std::string_view text) noexcept
+        {
+            std::uint64_t value = 0;
+            for (const char c : text) {
+                value = value * 10 + static_cast<std::uint64_t>(c - '0');
+            }
+            return value;
+        }
+
+        [[nodiscard]] std::vector<std::string_view> Split(std::string_view text, char separator)
+        {
+            std::vector<std::string_view> parts;
+            std::size_t start = 0;
+            while (true) {
+                const auto end = text.find(separator, start);
+                parts.push_back(text.substr(start, end - start));
+                if (end == std::string_view::npos) {
+                    return parts;
+                }
+                start = end + 1;
+            }
+        }
+
+        // MAJOR.MINOR.PATCH[-PRERELEASE][+BUILD], an optional leading 'v'.
+        // Anything else is 0.0.0, as a manifest with no version is.
+        [[nodiscard]] Version ParseVersion(std::string_view text)
+        {
+            text = Trim(text);
+            if (text.starts_with('v') || text.starts_with('V')) {
+                text.remove_prefix(1);
+            }
+            if (const auto build = text.find('+'); build != std::string_view::npos) {
+                text = text.substr(0, build);
+            }
+            std::string_view prerelease;
+            if (const auto dash = text.find('-'); dash != std::string_view::npos) {
+                prerelease = text.substr(dash + 1);
+                text = text.substr(0, dash);
+            }
+            const auto core = Split(text, '.');
+            if (core.size() != 3 || !std::ranges::all_of(core, AllDigits)) {
+                return {};
+            }
+            Version version{Number(core[0]), Number(core[1]), Number(core[2]), {}};
+            if (!prerelease.empty()) {
+                for (const auto part : Split(prerelease, '.')) {
+                    version.prerelease.emplace_back(part);
+                }
+            }
+            return version;
+        }
+
+        [[nodiscard]] int Sign(auto a, auto b) noexcept
+        {
+            return a < b ? -1 : (b < a ? 1 : 0);
+        }
+
+        // --- The stack ---------------------------------------------------------
+
+        // The id a layer answers to in the registry and in pins.
+        [[nodiscard]] std::string_view LayerId(const Layer& layer) noexcept
+        {
+            return layer.kind == LayerKind::Base ? kBaseId : std::string_view{layer.folder};
+        }
+
+        // Discovery's checks on a store folder: a library folder must carry
+        // its own id in its manifest, and a base folder the base id.
+        [[nodiscard]] bool Discoverable(const Layer& layer)
+        {
+            switch (layer.kind) {
+            case LayerKind::Base:
+                return (Folded(layer.folder) == kBaseId || Folded(layer.folder) == kBaseUpdateFolder)
+                       && Folded(layer.manifestId) == kBaseId;
+            case LayerKind::Library:
+                return Folded(layer.manifestId) == Folded(layer.folder) && Folded(layer.folder) != kBaseId
+                       && Folded(layer.folder) != kBaseUpdateFolder;
+            default:
+                return true;
+            }
+        }
+
+        // Where a copy ranks on a version tie: library, then external, then
+        // anything else.
+        [[nodiscard]] int TieRank(LayerKind kind) noexcept
+        {
+            switch (kind) {
+            case LayerKind::Library:
+                return 0;
+            case LayerKind::External:
+                return 1;
+            default:
+                return 2;
+            }
+        }
+
+        // Does `candidate` replace `held` as the copy of their shared id?
+        [[nodiscard]] bool Supersedes(const Layer& candidate, const Layer& held)
+        {
+            if (const auto order = CompareVersions(candidate.version, held.version); order != 0) {
+                return order > 0;
+            }
+            if (TieRank(candidate.kind) != TieRank(held.kind)) {
+                return TieRank(candidate.kind) < TieRank(held.kind);
+            }
+            const auto candidateIsUpdate = Folded(candidate.folder) == kBaseUpdateFolder;
+            const auto heldIsUpdate = Folded(held.folder) == kBaseUpdateFolder;
+            return heldIsUpdate && !candidateIsUpdate;
+        }
     } // namespace
 
     std::uint32_t LocalId(std::uint32_t formId) noexcept
@@ -338,6 +482,186 @@ namespace NarrativeEngine::CharacterBioResolver
             *census = counts;
         }
         return tables;
+    }
+
+    Registry ParseRegistry(std::string_view json)
+    {
+        Registry registry;
+        const auto document = nlohmann::json::parse(json, nullptr, false);
+        if (!document.is_object()) {
+            return registry;
+        }
+        // A file written by a newer SkyrimNet is quarantined, not guessed at.
+        if (const auto schema = document.find("schema_version");
+            schema != document.end() && schema->is_number_integer() && schema->get<std::int64_t>() > 1) {
+            return registry;
+        }
+
+        // Records. nlohmann iterates keys in byte order, which is also the
+        // order SkyrimNet meets them in, so the first of a case-folded pair is
+        // the one kept.
+        std::map<std::string, std::string> byFolded;
+        if (const auto plugins = document.find("plugins"); plugins != document.end() && plugins->is_object()) {
+            for (const auto& [rawId, record] : plugins->items()) {
+                const std::string id{Trim(rawId)};
+                const auto folded = Folded(id);
+                if (id.empty() || folded == kBaseId || !record.is_object() || byFolded.contains(folded)) {
+                    continue;
+                }
+                Registry::Plugin plugin;
+                if (const auto enabled = record.find("enabled"); enabled != record.end() && enabled->is_boolean()) {
+                    plugin.enabled = enabled->get<bool>();
+                }
+                if (const auto missing = record.find("missing"); missing != record.end() && missing->is_boolean()) {
+                    plugin.missing = missing->get<bool>();
+                }
+                byFolded.emplace(folded, id);
+                registry.plugins.emplace(id, plugin);
+            }
+        }
+
+        // Priority: entries naming no record, and repeats, are dropped; a
+        // record with no entry is appended at the bottom.
+        std::unordered_set<std::string> ranked;
+        if (const auto priority = document.find("priority"); priority != document.end() && priority->is_array()) {
+            for (const auto& entry : *priority) {
+                if (!entry.is_string()) {
+                    continue;
+                }
+                const auto record = byFolded.find(Folded(Trim(entry.get<std::string>())));
+                if (record != byFolded.end() && ranked.insert(record->first).second) {
+                    registry.priority.push_back(record->second);
+                }
+            }
+        }
+        for (const auto& [folded, id] : byFolded) {
+            if (ranked.insert(folded).second) {
+                registry.priority.push_back(id);
+            }
+        }
+
+        // Pins: a path to the plugin id chosen for it.
+        std::unordered_set<std::string> pinned;
+        if (const auto pins = document.find("pins"); pins != document.end() && pins->is_object()) {
+            for (const auto& [rawPath, id] : pins->items()) {
+                auto path = NormalPath(rawPath);
+                if (path.empty() || !id.is_string() || Trim(id.get<std::string>()).empty()
+                    || !pinned.insert(Folded(path)).second) {
+                    continue;
+                }
+                registry.pins.emplace(std::move(path), std::string{Trim(id.get<std::string>())});
+            }
+        }
+        return registry;
+    }
+
+    int CompareVersions(std::string_view a, std::string_view b)
+    {
+        const auto left = ParseVersion(a);
+        const auto right = ParseVersion(b);
+        for (const auto order :
+             {Sign(left.major, right.major), Sign(left.minor, right.minor), Sign(left.patch, right.patch)}) {
+            if (order != 0) {
+                return order;
+            }
+        }
+        // A release outranks any pre-release of it.
+        if (left.prerelease.empty() != right.prerelease.empty()) {
+            return left.prerelease.empty() ? 1 : -1;
+        }
+        for (std::size_t i = 0; i < left.prerelease.size() && i < right.prerelease.size(); ++i) {
+            const auto& x = left.prerelease[i];
+            const auto& y = right.prerelease[i];
+            const bool xNumeric = AllDigits(x);
+            const bool yNumeric = AllDigits(y);
+            int order = 0;
+            if (xNumeric && yNumeric) {
+                order = Sign(Number(x), Number(y));
+            } else if (xNumeric != yNumeric) {
+                order = xNumeric ? -1 : 1;
+            } else {
+                order = Sign(x, y);
+            }
+            if (order != 0) {
+                return order;
+            }
+        }
+        return Sign(left.prerelease.size(), right.prerelease.size());
+    }
+
+    Stack BuildStack(const std::vector<Layer>& layers, const Registry& registry)
+    {
+        Stack stack;
+        stack.pins = registry.pins;
+
+        // One copy per id.
+        std::map<std::string, const Layer*> copies;
+        const Layer* save = nullptr;
+        const Layer* overlay = nullptr;
+        for (const auto& layer : layers) {
+            if (layer.kind == LayerKind::Save) {
+                save = save == nullptr ? &layer : save;
+                continue;
+            }
+            if (layer.kind == LayerKind::Overlay) {
+                overlay = overlay == nullptr ? &layer : overlay;
+                continue;
+            }
+            if (!Discoverable(layer)) {
+                continue;
+            }
+            auto [held, inserted] = copies.try_emplace(Folded(LayerId(layer)), &layer);
+            if (!inserted && Supersedes(layer, *held->second)) {
+                held->second = &layer;
+            }
+        }
+
+        if (save != nullptr) {
+            stack.layers.push_back(save);
+        }
+        if (overlay != nullptr) {
+            stack.layers.push_back(overlay);
+        }
+        // Plugins, in priority order; a layer the registry does not list,
+        // or lists as disabled or missing, takes no part.
+        for (const auto& id : registry.priority) {
+            const auto copy = copies.find(Folded(id));
+            if (copy == copies.end() || copy->second->kind == LayerKind::Base) {
+                continue;
+            }
+            const auto& record = registry.plugins.at(id);
+            if (record.enabled && !record.missing) {
+                stack.layers.push_back(copy->second);
+            }
+        }
+        if (const auto base = copies.find(std::string{kBaseId}); base != copies.end()) {
+            stack.layers.push_back(base->second);
+        }
+        return stack;
+    }
+
+    const Layer* Winner(const Stack& stack, std::string_view path)
+    {
+        const auto key = NormalPath(path);
+        const Layer* first = nullptr;
+        for (const auto* layer : stack.layers) {
+            if (layer->paths.contains(key)) {
+                first = layer;
+                break;
+            }
+        }
+        // Nobody has it; or the save layer does, which outranks even a pin.
+        if (first == nullptr || first->kind == LayerKind::Save) {
+            return first;
+        }
+        if (const auto pin = stack.pins.find(key); pin != stack.pins.end()) {
+            for (const auto* layer : stack.layers) {
+                if (layer->kind != LayerKind::Save && LayerId(*layer) == pin->second && layer->paths.contains(key)) {
+                    return layer;
+                }
+            }
+        }
+        return first;
     }
 
 } // namespace NarrativeEngine::CharacterBioResolver

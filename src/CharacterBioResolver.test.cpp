@@ -2,8 +2,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <initializer_list>
 #include <string>
 #include <utility>
+#include <vector>
 
 // Unit tests for the profile resolver.
 //
@@ -40,6 +42,44 @@ namespace
         facts.displayName = std::move(displayName);
         facts.basePlugin = std::move(basePlugin);
         return facts;
+    }
+
+    Layer MakeLayer(LayerKind kind,
+                    std::string folder,
+                    std::initializer_list<std::string> paths,
+                    std::string version = "1.0.0",
+                    std::string manifestId = {})
+    {
+        Layer layer;
+        layer.kind = kind;
+        layer.manifestId = manifestId.empty() ? folder : std::move(manifestId);
+        layer.folder = std::move(folder);
+        layer.version = std::move(version);
+        layer.paths.insert(paths.begin(), paths.end());
+        return layer;
+    }
+
+    constexpr std::string_view kBio = "prompts/characters/grelka_0B3.prompt";
+
+    // A registry naming `ids`, highest first, all enabled.
+    std::string RegistryJson(std::initializer_list<std::string_view> ids, std::string_view pins = "{}")
+    {
+        std::string plugins;
+        std::string priority;
+        for (const auto id : ids) {
+            plugins += std::string{plugins.empty() ? "" : ","} + "\"" + std::string{id}
+                       + "\":{\"enabled\":true,\"source\":\"external\"}";
+            priority += std::string{priority.empty() ? "" : ","} + "\"" + std::string{id} + "\"";
+        }
+        return "{\"schema_version\":1,\"plugins\":{" + plugins + "},\"priority\":[" + priority
+               + "],\"pins\":" + std::string{pins} + ",\"items\":{}}";
+    }
+
+    std::string WinnerFolder(const std::vector<Layer>& layers, const Registry& registry, std::string_view path = kBio)
+    {
+        const auto stack = BuildStack(layers, registry);
+        const auto* winner = Winner(stack, path);
+        return winner == nullptr ? std::string{"<none>"} : winner->folder;
     }
 } // namespace
 
@@ -278,5 +318,162 @@ TEST_CASE("CharacterBioResolver::BuildTables", "[CharacterBioResolver][Tables]")
         const auto tables = BuildTables(
             {}, {Generic("g.csv", "Skyrim.esm,0745CD,first\nSkyrim.esm,07443C,second\n")}, kNoLightPlugins, refugee);
         CHECK(tables.generic.at("refugee") == "second");
+    }
+}
+
+TEST_CASE("CharacterBioResolver::ParseRegistry", "[CharacterBioResolver][Stack]")
+{
+    SECTION("reads records, priority and pins")
+    {
+        const auto registry =
+            ParseRegistry(RegistryJson({"a.one", "b.two"}, R"({"prompts/characters/x.prompt":"b.two"})"));
+        CHECK(registry.plugins.size() == 2);
+        CHECK(registry.priority == std::vector<std::string>{"a.one", "b.two"});
+        CHECK(registry.pins.at("prompts/characters/x.prompt") == "b.two");
+    }
+    SECTION("takes a non-boolean enabled as true, and reads missing")
+    {
+        const auto registry = ParseRegistry(
+            R"({"plugins":{"a.one":{"enabled":"no"},"b.two":{"enabled":false},"c.three":{"missing":true}}})");
+        CHECK(registry.plugins.at("a.one").enabled);
+        CHECK_FALSE(registry.plugins.at("b.two").enabled);
+        CHECK(registry.plugins.at("c.three").missing);
+    }
+    SECTION("appends records without a priority entry at the bottom, in key order")
+    {
+        const auto registry = ParseRegistry(
+            R"({"plugins":{"c.three":{},"a.one":{},"b.two":{}},"priority":["b.two",7,"b.two","gone.x"]})");
+        CHECK(registry.priority == std::vector<std::string>{"b.two", "a.one", "c.three"});
+    }
+    SECTION("drops a record that collides case-folded, and the reserved base id")
+    {
+        const auto registry = ParseRegistry(R"({"plugins":{"A.One":{},"a.one":{},"skyrimnet.base":{},"x":5}})");
+        CHECK(registry.plugins.size() == 1);
+        CHECK(registry.plugins.contains("A.One"));
+    }
+    SECTION("treats an unreadable or newer-schema file as empty")
+    {
+        CHECK(ParseRegistry("{not json").plugins.empty());
+        CHECK(ParseRegistry(R"({"schema_version":2,"plugins":{"a.one":{}}})").plugins.empty());
+    }
+}
+
+TEST_CASE("CharacterBioResolver::CompareVersions", "[CharacterBioResolver][Stack]")
+{
+    CHECK(CompareVersions("1.4.0", "1.10.0") < 0);
+    CHECK(CompareVersions("2.0.0", "1.99.99") > 0);
+    CHECK(CompareVersions("1.0.0", "v1.0.0+build.7") == 0);
+    CHECK(CompareVersions("1.0.0-beta", "1.0.0") < 0);
+    CHECK(CompareVersions("1.0.0-alpha.2", "1.0.0-alpha.10") < 0);
+    CHECK(CompareVersions("1.0.0-alpha", "1.0.0-alpha.1") < 0);
+    CHECK(CompareVersions("", "0.0.0") == 0);
+    CHECK(CompareVersions("garbage", "0.0.1") < 0);
+}
+
+TEST_CASE("CharacterBioResolver::BuildStack and Winner", "[CharacterBioResolver][Stack]")
+{
+    const auto bio = std::string{kBio};
+    const auto base = MakeLayer(LayerKind::Base, "skyrimnet.base", {bio}, "1.0.0", "skyrimnet.base");
+
+    SECTION("ranks plugins by priority, first highest, above the base")
+    {
+        const std::vector layers{
+            base, MakeLayer(LayerKind::External, "low.mod", {bio}), MakeLayer(LayerKind::Library, "high.mod", {bio})};
+        CHECK(WinnerFolder(layers, ParseRegistry(RegistryJson({"high.mod", "low.mod"}))) == "high.mod");
+        CHECK(WinnerFolder(layers, ParseRegistry(RegistryJson({"low.mod", "high.mod"}))) == "low.mod");
+    }
+    SECTION("falls back to the base when no plugin has the file")
+    {
+        const std::vector layers{base, MakeLayer(LayerKind::External, "a.mod", {"prompts/other.prompt"})};
+        CHECK(WinnerFolder(layers, ParseRegistry(RegistryJson({"a.mod"}))) == "skyrimnet.base");
+    }
+    SECTION("puts the overlay above every plugin")
+    {
+        const std::vector layers{
+            base, MakeLayer(LayerKind::External, "a.mod", {bio}), MakeLayer(LayerKind::Overlay, "overlay", {bio})};
+        CHECK(WinnerFolder(layers, ParseRegistry(RegistryJson({"a.mod"}))) == "overlay");
+    }
+    SECTION("lets a pin beat the overlay")
+    {
+        const std::vector layers{base,
+                                 MakeLayer(LayerKind::External, "a.mod", {bio}),
+                                 MakeLayer(LayerKind::External, "b.mod", {bio}),
+                                 MakeLayer(LayerKind::Overlay, "overlay", {bio})};
+        const auto pins = std::string{"{\""} + bio + "\":\"b.mod\"}";
+        CHECK(WinnerFolder(layers, ParseRegistry(RegistryJson({"a.mod", "b.mod"}, pins))) == "b.mod");
+    }
+    SECTION("lets the save layer beat a pin")
+    {
+        const std::vector layers{base,
+                                 MakeLayer(LayerKind::External, "b.mod", {bio}),
+                                 MakeLayer(LayerKind::Save, "1778871594119-52513", {bio})};
+        const auto pins = std::string{"{\""} + bio + "\":\"b.mod\"}";
+        CHECK(WinnerFolder(layers, ParseRegistry(RegistryJson({"b.mod"}, pins))) == "1778871594119-52513");
+    }
+    SECTION("falls back to stack order when the pinned plugin lacks the file")
+    {
+        const std::vector layers{base,
+                                 MakeLayer(LayerKind::External, "a.mod", {bio}),
+                                 MakeLayer(LayerKind::External, "b.mod", {"prompts/other.prompt"})};
+        const auto pins = std::string{"{\""} + bio + "\":\"b.mod\"}";
+        CHECK(WinnerFolder(layers, ParseRegistry(RegistryJson({"b.mod", "a.mod"}, pins))) == "a.mod");
+    }
+    SECTION("ignores a plugin the registry does not list, or lists as disabled or missing")
+    {
+        const std::vector layers{base,
+                                 MakeLayer(LayerKind::External, "unlisted.mod", {bio}),
+                                 MakeLayer(LayerKind::External, "off.mod", {bio}),
+                                 MakeLayer(LayerKind::External, "gone.mod", {bio})};
+        const auto registry = ParseRegistry(
+            R"({"plugins":{"off.mod":{"enabled":false},"gone.mod":{"missing":true}},"priority":["off.mod","gone.mod"]})");
+        CHECK(WinnerFolder(layers, registry) == "skyrimnet.base");
+    }
+    SECTION("ranks a registered plugin without a priority entry below every prioritized one")
+    {
+        const std::vector layers{base,
+                                 MakeLayer(LayerKind::External, "a.unranked", {bio}),
+                                 MakeLayer(LayerKind::External, "z.ranked", {bio})};
+        const auto registry = ParseRegistry(R"({"plugins":{"a.unranked":{},"z.ranked":{}},"priority":["z.ranked"]})");
+        CHECK(WinnerFolder(layers, registry) == "z.ranked");
+    }
+    SECTION("ignores a library folder whose manifest names another id")
+    {
+        const std::vector layers{base, MakeLayer(LayerKind::Library, "a.mod", {bio}, "1.0.0", "someone.else")};
+        CHECK(WinnerFolder(layers, ParseRegistry(RegistryJson({"a.mod"}))) == "skyrimnet.base");
+    }
+    SECTION("keeps the higher version of one id in two places")
+    {
+        const std::vector layers{base,
+                                 MakeLayer(LayerKind::External, "a.mod", {bio}, "2.0.0"),
+                                 MakeLayer(LayerKind::Library, "a.mod", {"prompts/other.prompt"}, "1.5.0")};
+        const auto registry = ParseRegistry(RegistryJson({"a.mod"}));
+        const auto stack = BuildStack(layers, registry);
+        REQUIRE(Winner(stack, bio) != nullptr);
+        CHECK(Winner(stack, bio)->kind == LayerKind::External);
+        CHECK(Winner(stack, "prompts/other.prompt") == nullptr);
+    }
+    SECTION("prefers the library copy of one id on a version tie")
+    {
+        const std::vector layers{base,
+                                 MakeLayer(LayerKind::External, "a.mod", {bio}, "1.0.0"),
+                                 MakeLayer(LayerKind::Library, "a.mod", {"prompts/other.prompt"}, "1.0.0")};
+        const auto stack = BuildStack(layers, ParseRegistry(RegistryJson({"a.mod"})));
+        CHECK(Winner(stack, bio)->folder == "skyrimnet.base");
+        CHECK(Winner(stack, "prompts/other.prompt")->kind == LayerKind::Library);
+    }
+    SECTION("takes a newer base update, and the plain base on a tie")
+    {
+        const auto update = [&](std::string version) {
+            return MakeLayer(LayerKind::Base, "skyrimnet.base.update", {bio}, std::move(version), "skyrimnet.base");
+        };
+        CHECK(WinnerFolder({base, update("1.1.0")}, Registry{}) == "skyrimnet.base.update");
+        CHECK(WinnerFolder({update("1.0.0"), base}, Registry{}) == "skyrimnet.base");
+    }
+    SECTION("matches a path with backslashes, but not one in another case")
+    {
+        const std::vector layers{base};
+        const auto stack = BuildStack(layers, Registry{});
+        CHECK(Winner(stack, "prompts\\characters\\grelka_0B3.prompt") != nullptr);
+        CHECK(Winner(stack, "prompts/characters/grelka_0b3.prompt") == nullptr);
     }
 }
