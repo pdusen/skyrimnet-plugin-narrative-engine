@@ -86,6 +86,7 @@ endif()
 # src/SKSECosaveIO.cpp (which stays out of this list, being the adapter).
 set(NARRATIVEENGINE_CORE_SOURCES
     "${CMAKE_SOURCE_DIR}/src/BookTextRenderer.cpp"
+    "${CMAKE_SOURCE_DIR}/src/CharacterBioResolver.cpp"
     "${CMAKE_SOURCE_DIR}/src/JsonUtils.cpp"
     "${CMAKE_SOURCE_DIR}/src/LLMTextSanitizer.cpp"
     "${CMAKE_SOURCE_DIR}/src/SenderCooldownTable.cpp"

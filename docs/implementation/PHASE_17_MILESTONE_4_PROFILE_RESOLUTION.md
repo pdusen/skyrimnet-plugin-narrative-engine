@@ -4,7 +4,7 @@ Plots need every schemer's character profile, and most schemers are people the p
 replaces `CharacterBios`' guesswork with a resolver that picks the profile SkyrimNet itself would render for an NPC,
 met or not: the same bio name, the same layer, the same fallbacks.
 
-> **Doc status: not started.** Nothing here touches the co-save or the settings. It is the last obstacle to releasing
+> **Doc status: Step 1 complete.** Nothing here touches the co-save or the settings. It is the last obstacle to releasing
 > the plot system.
 
 The rules this implements were decoded from SkyrimNet's DLL and are written up as engine findings. They are the
@@ -145,7 +145,7 @@ result recorded under the step.
 
 ### Step 1 — The bio name
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -172,6 +172,21 @@ The tables are passed in already built; Step 2 builds them.
 - **A probe** feeds every `uuid_mappings` row on this machine through `BioName`, with tables from the shipped CSVs, and
   must reproduce the finding's result: every row matched but Sahpur's two. Brand-Shei's two are reproduced by giving the
   probe her base plugin, not the reference's.
+
+Done. `CharacterBioResolver` is a new core source with `BioName`, `Slug`, `Trim`, `RepairWindows1252`, `LocalId` and
+`UniqueKey`, and an `ActorFacts` / `Tables` pair for its inputs. The Windows-1252 table is SkyrimNet's own, read out of
+the DLL: standard Windows-1252, with the five undefined bytes mapped to the C1 control of the same value. A byte that
+does not begin a well-formed UTF-8 sequence is re-encoded on its own and decoding resumes at the next, as SkyrimNet
+does.
+
+- **Unit tests:** four suites cover every case listed above, plus the base name standing in for an empty display name
+  and the repair running before the slug. All 505 tests pass.
+- **The probe** compiled against `NarrativeEngineCore.lib` and read all 9,098 named rows from 17 save databases.
+  - It reproduced **9,096**. The two misses are Sahpur's rows in the oldest database, as predicted.
+  - The unique table came from the shipped CSV, read by the probe's own small reader until Step 2's builder exists.
+    The generic table came from the 233 rows whose forms Spriggit could name.
+  - The base plugin was the master that owns the id (load-order index 00 to 04) where there is one, and the stored
+    `mod_file` otherwise. That is what makes Brand-Shei come out as `brandish_DDC`.
 
 ### Step 2 — The translation tables
 
