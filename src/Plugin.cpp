@@ -338,8 +338,9 @@ namespace NarrativeEngine
                 // schedule: the first tick after it should already have
                 // real travel distances rather than the hold proxy.
                 PlotPopulation::OnSessionStart();
-                // Per save, not per session: a save can carry its own
-                // edited character profiles, so this purges and reloads.
+                // Per save, not per session: display names are the save's.
+                // Publishes the engine facts every plot tick's profile
+                // refresh resolves from.
                 CharacterBios::OnSessionStart();
                 PlotTick::OnSessionStart();
                 PlotLog::OnSessionStart();
@@ -545,10 +546,9 @@ namespace NarrativeEngine
         void OnRevert(SKSE::SerializationInterface*)
         {
             logger::debug("OnRevert");
-            // Biographies are per SAVE, not per process: a save can
-            // carry its own edited copies. Dropped here rather than at
-            // load because revert also fires on quit to main menu,
-            // where nothing loads afterwards.
+            // Profile facts are per SAVE, not per process. Dropped here
+            // rather than at load because revert also fires on quit to
+            // main menu, where nothing loads afterwards.
             CharacterBios::OnRevert();
             PhaseTracker::OnRevert();
             DecisionLog::OnRevert();

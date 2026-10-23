@@ -1,5 +1,6 @@
 #include <PlotTick.h>
 
+#include <CharacterBios.h>
 #include <DashboardUIManager.h>
 #include <EngineUtils.h>
 #include <logger.h>
@@ -783,6 +784,11 @@ namespace NarrativeEngine::PlotTick
             // A load that landed while this job sat in the queue takes
             // effect here, before anything reads live state.
             Plots::TakePendingState(pt);
+
+            // Before anything reads a profile: dynamic bios, dashboard edits
+            // and newly met actors all change what SkyrimNet would render,
+            // and every reader of CharacterBios runs inside this tick.
+            CharacterBios::Refresh(pt);
 
             if (cancel && cancel->IsCancelled()) {
                 return;

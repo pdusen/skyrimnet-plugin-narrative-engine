@@ -1654,6 +1654,13 @@ RE::BSTArray<RE::TESForm*>& RE::TESDataHandler::GetFormArray(RE::FormType a_form
     return NarrativeEngine::Testing::FormsOfType(a_formType);
 }
 
+RE::TESForm* RE::TESDataHandler::LookupForm(RE::FormID, std::string_view)
+{
+    // The mocked world loads no plugins, so no plugin-local id resolves --
+    // what the engine answers for a plugin that is not in the load order.
+    return nullptr;
+}
+
 RE::EXTERIOR_DATA* RE::TESObjectCELL::GetCoordinates()
 {
     const auto* facts = NarrativeEngine::Testing::FactsFor(this);

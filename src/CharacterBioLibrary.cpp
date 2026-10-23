@@ -1,14 +1,22 @@
 #include <CharacterBios.h>
 
 #include <algorithm>
-#include <cctype>
+#include <atomic>
+#include <filesystem>
+#include <format>
 #include <fstream>
+#include <map>
+#include <memory>
+#include <set>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
+#include <CharacterBioResolver.h>
 #include <GossipGraph.h>
 #include <logger.h>
 #include <PlotPopulation.h>
@@ -16,126 +24,48 @@
 
 // CharacterBioLibrary — the engine-bound half of CharacterBios.
 //
-// The catalogue, the filename matching and the block parsing are all
-// pure and live in CharacterBios.cpp, where a probe can drive them with
-// invented stems and no game. This file is what needs a running plugin:
-// it knows where the bios are on disk, it crosses base NPC forms to
-// reference ids through GossipGraph, and it holds the result for the
-// session.
-//
-// The split is PlotCasting / PlotPopulation's, for the same reason. The
-// rule that a filename suffix is the low 12 bits of a REFERENCE id is
-// the part worth asserting directly, and it would not be assertable if
-// it only existed inside a function that reads a directory.
+// CharacterBioResolver holds SkyrimNet's rules and is pure. This file feeds
+// it: the engine facts at session start on the main thread, and the disk at
+// every refresh on the plot worker.
 namespace NarrativeEngine::CharacterBios
 {
     namespace
     {
+        namespace Resolver = CharacterBioResolver;
+
         const std::filesystem::path kSkyrimNetRoot{"Data/SKSE/Plugins/SkyrimNet"};
 
-        // --- where the bios are ------------------------------------------
-        //
-        // SkyrimNet Beta 25 serves a bio from a stack of LAYERS, each a
-        // folder holding its own `prompts/characters/`, and the highest
-        // layer that has the file provides it. Highest first:
-        //
-        //   saves/<save id>/      this playthrough's own edited profiles
-        //   overlay/              the player's dashboard edits
-        //   pins                  a file the player told one plugin to win
-        //   plugins               external/<id>/ and library/<id>/, in the
-        //                         order content-registry.json gives, with
-        //                         any external one it does not list yet on
-        //                         top -- which is where SkyrimNet puts a
-        //                         newly found layer
-        //   library/skyrimnet.base/   SkyrimNet's shipped defaults
-        //
-        // The loose `prompts/characters/` and `prompts/_saves/` of the
-        // betas before 25 are NOT read: Beta 25 ignores them and leaves
-        // them in place, so a stale copy there would describe somebody
-        // the way SkyrimNet itself no longer does.
-        //
-        // Catalog::Scan is first-wins, so walking this list in order is
-        // the whole of the precedence rule.
-        [[nodiscard]] std::filesystem::path BiosIn(const std::filesystem::path& layer)
-        {
-            return layer / "prompts" / "characters";
-        }
+        // --- Engine facts, once per save -------------------------------------
 
-        struct Layers
+        struct Member
         {
-            std::vector<std::filesystem::path> plugins; // highest first
-            // A pinned bio, keyed by its file name, and the plugin layer
-            // the player chose to provide it.
-            std::vector<std::pair<std::string, std::filesystem::path>> pins;
+            RE::FormID npc = 0;
+            std::string name;
+            Resolver::ActorFacts facts;
         };
 
-        // A plugin the registry does not mention, or one it mentions but
-        // whose folder has gone, is not an error: the registry is
-        // SkyrimNet's record of what it last saw, not a manifest.
-        [[nodiscard]] Layers ReadPluginLayers()
+        struct SessionFacts
         {
-            Layers out;
-            const auto registryPath = kSkyrimNetRoot / "content-registry.json";
-            nlohmann::json registry;
-            try {
-                std::ifstream in{registryPath};
-                if (in) {
-                    registry = nlohmann::json::parse(in);
-                }
-            } catch (const std::exception& e) {
-                logger::warn("CharacterBios: could not read {} ({}); reading external plugins in folder order.",
-                             registryPath.string(),
-                             e.what());
-                registry = nlohmann::json{};
-            }
+            std::vector<Member> members;
+            // Every plugin the data handler knows that is flagged light,
+            // case-folded: a unique translation row's id is masked by it.
+            std::unordered_set<std::string> lightPlugins;
+            // (case-folded plugin, id as the CSV gives it) -> TESFullName, for
+            // every generic translation row in any layer.
+            std::map<std::pair<std::string, std::uint32_t>, std::string> formNames;
+        };
 
-            const auto* plugins =
-                registry.contains("plugins") && registry["plugins"].is_object() ? &registry["plugins"] : nullptr;
-            const auto layerOf = [](const std::string& id, const nlohmann::json& entry) {
-                const auto source = entry.is_object() ? entry.value("source", std::string{}) : std::string{};
-                return kSkyrimNetRoot / (source == "external" ? "external" : "library") / id;
-            };
-            const auto enabled = [](const nlohmann::json& entry) {
-                return entry.is_object() && entry.value("enabled", true) && !entry.value("missing", false);
-            };
+        // Published by the main thread, read by the plot worker. One
+        // immutable snapshot, swapped whole, so a tick in flight across a
+        // load keeps the copy it started with.
+        std::atomic<std::shared_ptr<const SessionFacts>> g_facts;
 
-            // External layers SkyrimNet has not registered yet go on top.
-            std::error_code ec;
-            for (const auto& dir : std::filesystem::directory_iterator{kSkyrimNetRoot / "external", ec}) {
-                const auto id = dir.path().filename().string();
-                if (dir.is_directory(ec) && !(plugins && plugins->contains(id))) {
-                    out.plugins.push_back(dir.path());
-                }
-            }
-
-            if (plugins && registry.contains("priority") && registry["priority"].is_array()) {
-                for (const auto& idJson : registry["priority"]) {
-                    if (!idJson.is_string()) {
-                        continue;
-                    }
-                    const auto id = idJson.get<std::string>();
-                    if (const auto entry = plugins->find(id); entry != plugins->end() && enabled(*entry)) {
-                        out.plugins.push_back(layerOf(id, *entry));
-                    }
-                }
-            }
-
-            if (plugins && registry.contains("pins") && registry["pins"].is_object()) {
-                constexpr std::string_view kBioPrefix = "prompts/characters/";
-                for (const auto& [file, idJson] : registry["pins"].items()) {
-                    if (!file.starts_with(kBioPrefix) || !idJson.is_string()) {
-                        continue;
-                    }
-                    const auto id = idJson.get<std::string>();
-                    // A pin to an external layer SkyrimNet has not
-                    // registered yet still names a folder on disk.
-                    const auto entry = plugins->find(id);
-                    const auto layer = entry != plugins->end() ? layerOf(id, *entry) : kSkyrimNetRoot / "external" / id;
-                    if (entry == plugins->end() || enabled(*entry)) {
-                        out.pins.emplace_back(file.substr(kBioPrefix.size()), layer);
-                    }
-                }
-            }
+        [[nodiscard]] std::string Folded(std::string_view text)
+        {
+            std::string out{text};
+            std::ranges::transform(out, out.begin(), [](unsigned char c) {
+                return static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+            });
             return out;
         }
 
@@ -149,177 +79,369 @@ namespace NarrativeEngine::CharacterBios
             buffer << in.rdbuf();
             return buffer.str();
         }
-        // What Build managed, for the one line it logs. Internal: the
-        // only consumer outside this file was the smoke test.
-        struct Census
+
+        [[nodiscard]] std::string FileName(const RE::TESForm* form)
         {
-            // The save whose overrides were read, or empty when only the
-            // shared layers were used.
-            std::string saveId;
-            std::size_t saveFiles = 0;     // catalogued from this save's own directory
-            std::size_t files = 0;         // catalogued in total, with a usable suffix
-            std::size_t generic = 0;       // shared templates, skipped
-            std::size_t confirmed = 0;     // matched, name agreed
-            std::size_t bySuffixAlone = 0; // matched on the suffix alone -- excluded
-            std::size_t ambiguous = 0;     // several candidates, none matched -- refused
-            std::size_t noFile = 0;
-            std::size_t noRef = 0;
-            std::size_t unreadable = 0;
-            std::size_t loaded = 0;
+            const auto* file = form != nullptr ? form->GetFile(0) : nullptr;
+            return file != nullptr ? std::string{file->GetFilename()} : std::string{};
+        }
+
+        // --- The disk ----------------------------------------------------------
+
+        // Where a layer lives, relative to the SkyrimNet root.
+        [[nodiscard]] std::filesystem::path LayerDirectory(const Resolver::Layer& layer)
+        {
+            switch (layer.kind) {
+            case Resolver::LayerKind::Base:
+            case Resolver::LayerKind::Library:
+                return kSkyrimNetRoot / "library" / layer.folder;
+            case Resolver::LayerKind::External:
+                return kSkyrimNetRoot / "external" / layer.folder;
+            case Resolver::LayerKind::Overlay:
+                return kSkyrimNetRoot / "overlay";
+            case Resolver::LayerKind::Save:
+                return kSkyrimNetRoot / "saves" / layer.folder;
+            }
+            return {};
+        }
+
+        // One layer: its manifest, and every file under its prompts/, which
+        // is all profile resolution ever asks about.
+        [[nodiscard]] Resolver::Layer ScanLayer(Resolver::LayerKind kind, std::string folder)
+        {
+            Resolver::Layer layer;
+            layer.kind = kind;
+            layer.folder = std::move(folder);
+            const auto directory = LayerDirectory(layer);
+
+            const auto manifest = nlohmann::json::parse(ReadFile(directory / "manifest.json"), nullptr, false);
+            if (manifest.is_object()) {
+                layer.manifestId = manifest.value("id", std::string{});
+                layer.version = manifest.value("version", std::string{});
+            }
+
+            std::error_code ec;
+            const auto prompts = directory / "prompts";
+            for (auto it = std::filesystem::recursive_directory_iterator{prompts, ec};
+                 !ec && it != std::filesystem::recursive_directory_iterator{};
+                 it.increment(ec)) {
+                if (it->is_regular_file(ec)) {
+                    layer.paths.insert(std::filesystem::relative(it->path(), directory, ec).generic_string());
+                }
+            }
+            return layer;
+        }
+
+        // Every layer on disk. The save layer only when there is a save.
+        [[nodiscard]] std::vector<Resolver::Layer> ScanLayers(const std::string& saveId)
+        {
+            std::vector<Resolver::Layer> layers;
+            std::error_code ec;
+            for (const auto& entry : std::filesystem::directory_iterator{kSkyrimNetRoot / "library", ec}) {
+                if (entry.is_directory(ec)) {
+                    const auto folder = entry.path().filename().string();
+                    const auto folded = Folded(folder);
+                    const auto kind = folded == Resolver::kBaseId || folded == Resolver::kBaseUpdateFolder
+                                          ? Resolver::LayerKind::Base
+                                          : Resolver::LayerKind::Library;
+                    layers.push_back(ScanLayer(kind, folder));
+                }
+            }
+            for (const auto& entry : std::filesystem::directory_iterator{kSkyrimNetRoot / "external", ec}) {
+                if (entry.is_directory(ec)) {
+                    layers.push_back(ScanLayer(Resolver::LayerKind::External, entry.path().filename().string()));
+                }
+            }
+            if (std::filesystem::is_directory(kSkyrimNetRoot / "overlay", ec)) {
+                layers.push_back(ScanLayer(Resolver::LayerKind::Overlay, "overlay"));
+            }
+            if (!saveId.empty() && std::filesystem::is_directory(kSkyrimNetRoot / "saves" / saveId, ec)) {
+                layers.push_back(ScanLayer(Resolver::LayerKind::Save, saveId));
+            }
+            return layers;
+        }
+
+        [[nodiscard]] bool HasPrefix(std::string_view path, std::string_view prefix)
+        {
+            return path.size() >= prefix.size() && Folded(path.substr(0, prefix.size())) == prefix;
+        }
+
+        [[nodiscard]] bool IsCsv(std::string_view path)
+        {
+            return path.size() >= 4 && Folded(path.substr(path.size() - 4)) == ".csv";
+        }
+
+        // Every CSV under `prefix` in any layer, each read from the layer that
+        // wins it.
+        [[nodiscard]] std::vector<Resolver::CsvFile> TranslationFiles(const std::vector<Resolver::Layer>& layers,
+                                                                      const Resolver::Stack& stack,
+                                                                      std::string_view prefix)
+        {
+            std::set<std::string> paths;
+            for (const auto& layer : layers) {
+                for (const auto& path : layer.paths) {
+                    if (HasPrefix(path, prefix) && IsCsv(path)) {
+                        paths.insert(path);
+                    }
+                }
+            }
+            std::vector<Resolver::CsvFile> files;
+            for (const auto& path : paths) {
+                if (const auto* winner = Resolver::Winner(stack, path); winner != nullptr) {
+                    files.push_back({path, ReadFile(LayerDirectory(*winner) / path)});
+                }
+            }
+            return files;
+        }
+
+        // Does a profile hold anything but blocks? Reading blocks yields the
+        // words a render would only while the answer is no.
+        [[nodiscard]] bool HasTemplateLogic(std::string_view text)
+        {
+            if (text.find("{{") != std::string_view::npos) {
+                return true;
+            }
+            for (auto at = text.find("{%"); at != std::string_view::npos; at = text.find("{%", at + 2)) {
+                const auto tag = text.substr(at + 2, 12);
+                if (!tag.starts_with(" block ") && !tag.starts_with(" endblock ")) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        [[nodiscard]] std::string_view TierName(Resolver::Tier tier)
+        {
+            switch (tier) {
+            case Resolver::Tier::Dynamic:
+                return "dynamic";
+            case Resolver::Tier::Own:
+                return "own";
+            case Resolver::Tier::Generic:
+                return "generic";
+            case Resolver::Tier::Default:
+                return "default";
+            case Resolver::Tier::None:
+                return "none";
+            }
+            return "none";
+        }
+
+        // --- What the plot worker holds ---------------------------------------
+
+        struct Held
+        {
+            // The snapshot these were resolved from; a new one means a new
+            // session, and every member is logged afresh.
+            const SessionFacts* session = nullptr;
+            std::unordered_map<RE::FormID, Bio> bios;
+            std::unordered_map<RE::FormID, Resolver::Tier> tiers;
+            // name|tier|layer|path per member, to log only what changed.
+            std::unordered_map<RE::FormID, std::string> lastLine;
         };
 
-        Census g_census;
-        std::unordered_map<RE::FormID, Bio> g_bios;
+        // Plot worker only.
+        Held g_held;
         const Bio g_empty;
     } // namespace
 
-    void OnRevert()
-    {
-        g_bios.clear();
-        g_census = Census{};
-    }
-
     void OnSessionStart()
     {
-        // OnRevert has already emptied this on every path that reaches
-        // here -- the serialization interface guarantees revert runs
-        // before both kNewGame and kPostLoadGame. Cleared again anyway,
-        // because emplace() does NOT overwrite an existing key: if that
-        // guarantee ever failed, the load below would silently keep the
-        // previous save's entry for everybody it had already seen, which
-        // is precisely the leak this is here to prevent.
-        g_bios.clear();
-        g_census = Census{};
-
-        Catalog catalog;
-
-        // The save's own copies FIRST, so they win. SkyrimNet writes an
-        // edited profile into the save's directory rather than over the
-        // shared one, which is what lets two saves disagree about a
-        // character; scanning any other layer first would make those
-        // edits invisible.
-        g_census.saveId = SkyrimNetAPI::GetSaveUniqueID();
-        if (!g_census.saveId.empty()) {
-            g_census.saveFiles = catalog.Scan(BiosIn(kSkyrimNetRoot / "saves" / g_census.saveId));
-        } else {
-            // A new game before SkyrimNet has minted an id, an older
-            // SkyrimNet without the v7 export, or no SkyrimNet at all.
-            // The shared profiles are still correct; only the save's
-            // own edits are missing.
-            logger::info("CharacterBios: no save id available; reading the shared profiles only.");
-        }
-
-        g_census.files = g_census.saveFiles + catalog.Scan(BiosIn(kSkyrimNetRoot / "overlay"));
-
-        const auto layers = ReadPluginLayers();
-        for (const auto& [file, layer] : layers.pins) {
-            const auto path = BiosIn(layer) / file;
-            std::error_code ec;
-            if (std::filesystem::is_regular_file(path, ec)) {
-                const auto before = catalog.Size();
-                catalog.Add(path.stem().string(), path);
-                g_census.files += catalog.Size() - before;
-            }
-        }
-        for (const auto& layer : layers.plugins) {
-            g_census.files += catalog.Scan(BiosIn(layer));
-        }
-
-        const auto baseBios = BiosIn(kSkyrimNetRoot / "library" / "skyrimnet.base");
-        g_census.files += catalog.Scan(baseBios);
-        g_census.generic = catalog.GenericCount();
-        if (g_census.files == 0) {
-            logger::warn("CharacterBios: no bio files under {} or any layer above it; plots will have no character "
-                         "prose to work from.",
-                         baseBios.string());
-            return;
-        }
+        auto facts = std::make_shared<SessionFacts>();
 
         for (const auto& member : PlotPopulation::Get().members) {
-            // A REFERENCE id. The base NPC form is the near miss: the CK
-            // usually numbers a reference one past the base it came
-            // from, so base forms resolve for most people and quietly
-            // mis-file everyone else.
-            const auto ref = GossipGraph::ActorRefFor(member.npc);
-            if (ref == 0) {
-                ++g_census.noRef;
-                continue;
+            Member entry{member.npc, member.name, {}};
+            entry.facts.refId = GossipGraph::ActorRefFor(member.npc);
+            if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(entry.facts.refId); actor != nullptr) {
+                if (const char* display = actor->GetDisplayFullName(); display != nullptr) {
+                    entry.facts.displayName = display;
+                }
+                entry.facts.refPlugin = FileName(actor);
+                if (auto* base = actor->GetActorBase(); base != nullptr) {
+                    if (const char* name = base->GetFullName(); name != nullptr) {
+                        entry.facts.baseName = name;
+                    }
+                    entry.facts.basePlugin = FileName(base);
+                    entry.facts.baseUnique = base->IsUnique();
+                }
+            } else {
+                entry.facts.refId = 0;
             }
-
-            const auto found = catalog.Find(ref, member.name);
-            switch (found.outcome) {
-            case Outcome::Confirmed:
-                ++g_census.confirmed;
-                break;
-            case Outcome::BySuffixAlone:
-                ++g_census.bySuffixAlone;
-                // EXCLUDED, not accepted. A suffix is only twelve bits,
-                // and with 2237 files landing in 1733 buckets a
-                // collision is ordinary rather than rare -- so a lone
-                // candidate whose name does not agree is far more often
-                // somebody else's biography than an alternate spelling
-                // of this person's. Measured on a real run: of 35 such
-                // matches roughly 25 were a different character
-                // entirely, including the Arch-Mage of Winterhold
-                // carrying a Tel Mithryn alchemist's life story.
-                //
-                // The handful of genuine cases lost with them -- files
-                // named for a character's real or former name -- are
-                // worth less than the damage a wrong biography does,
-                // which is invisible: it reads perfectly, it feeds the
-                // agent scorer, and it describes the wrong person.
-                logger::debug("CharacterBios: {} (ref 0x{:X}) EXCLUDED -- '{}' matched on the suffix alone and "
-                              "the name did not agree, so it is probably not their biography.",
-                              member.name,
-                              ref,
-                              found.stem);
-                continue;
-            case Outcome::Ambiguous:
-                ++g_census.ambiguous;
-                continue;
-            case Outcome::NoFile:
-                ++g_census.noFile;
-                continue;
-            }
-
-            // The path the catalogue resolved, not one rebuilt from the
-            // stem: the same stem exists in both directories whenever
-            // this save has edited that profile, and rebuilding would
-            // always pick the shared one.
-            auto bio = ParseBio(ReadFile(found.path));
-            if (bio.Empty()) {
-                ++g_census.unreadable;
-                continue;
-            }
-            g_bios.emplace(member.npc, std::move(bio));
-            ++g_census.loaded;
+            facts->members.push_back(std::move(entry));
         }
 
-        logger::info("CharacterBios: {} bio(s) loaded for {} population member(s) from {} file(s) ({} of them this "
-                     "save's own, id '{}') -- {} confirmed by name, {} EXCLUDED as suffix-only matches, {} ambiguous, "
-                     "{} with no file, {} with no reference id, {} unreadable.",
-                     g_census.loaded,
-                     PlotPopulation::Get().members.size(),
-                     g_census.files,
-                     g_census.saveFiles,
-                     g_census.saveId,
-                     g_census.confirmed,
-                     g_census.bySuffixAlone,
-                     g_census.ambiguous,
-                     g_census.noFile,
-                     g_census.noRef,
-                     g_census.unreadable);
+        auto* dataHandler = RE::TESDataHandler::GetSingleton();
+        if (dataHandler != nullptr) {
+            for (const auto* file : dataHandler->files) {
+                if (file != nullptr && file->IsLight()) {
+                    facts->lightPlugins.insert(Folded(file->GetFilename()));
+                }
+            }
+
+            // The generic rows' names, for every generic CSV any layer holds:
+            // which copy of a file wins can change during the session, the
+            // names cannot.
+            const auto layers = ScanLayers(SkyrimNetAPI::GetSaveUniqueID());
+            std::vector<Resolver::CsvFile> genericFiles;
+            for (const auto& layer : layers) {
+                for (const auto& path : layer.paths) {
+                    if (HasPrefix(path, "prompts/translation/generic/") && IsCsv(path)) {
+                        genericFiles.push_back({path, ReadFile(LayerDirectory(layer) / path)});
+                    }
+                }
+            }
+            const auto record = [&](std::string_view plugin, std::uint32_t formId) {
+                std::string name;
+                if (const auto* form = dataHandler->LookupForm(formId, plugin); form != nullptr) {
+                    if (const auto* full = form->As<RE::TESFullName>();
+                        full != nullptr && full->GetFullName() != nullptr) {
+                        name = full->GetFullName();
+                    }
+                }
+                facts->formNames.insert_or_assign({Folded(plugin), formId}, name);
+                return name;
+            };
+            // Built only for its calls to `record`; no unique rows, so the
+            // light test is never asked.
+            const auto notLight = [](std::string_view) { return false; };
+            static_cast<void>(Resolver::BuildTables({}, std::move(genericFiles), notLight, record));
+        }
+
+        logger::info("CharacterBios: session facts for {} population member(s), {} light plugin(s), {} generic "
+                     "translation row name(s).",
+                     facts->members.size(),
+                     facts->lightPlugins.size(),
+                     facts->formNames.size());
+        g_facts.store(std::move(facts));
+    }
+
+    void OnRevert()
+    {
+        g_facts.store(nullptr);
+    }
+
+    void Refresh(const PlotThread::Token&)
+    {
+        const auto facts = g_facts.load();
+        if (!facts) {
+            g_held = Held{};
+            return;
+        }
+        const bool firstRefresh = g_held.session != facts.get();
+
+        const auto saveId = SkyrimNetAPI::GetSaveUniqueID();
+        const auto layers = ScanLayers(saveId);
+        const auto registry = Resolver::ParseRegistry(ReadFile(kSkyrimNetRoot / "content-registry.json"));
+        const auto stack = Resolver::BuildStack(layers, registry);
+
+        const auto isLight = [&](std::string_view plugin) { return facts->lightPlugins.contains(Folded(plugin)); };
+        const auto nameOf = [&](std::string_view plugin, std::uint32_t formId) {
+            const auto it = facts->formNames.find({Folded(plugin), formId});
+            return it == facts->formNames.end() ? std::string{} : it->second;
+        };
+        Resolver::TableCensus tableCensus;
+        const auto tables = Resolver::BuildTables(TranslationFiles(layers, stack, "prompts/translation/unique/"),
+                                                  TranslationFiles(layers, stack, "prompts/translation/generic/"),
+                                                  isLight,
+                                                  nameOf,
+                                                  &tableCensus);
+
+        Held held;
+        held.session = facts.get();
+        std::size_t stored = 0;
+        std::size_t computed = 0;
+        std::size_t templated = 0;
+        std::size_t changed = 0;
+        std::map<Resolver::Tier, std::size_t> byTier;
+        std::map<std::string, std::size_t> ownByLayer;
+
+        for (const auto& member : facts->members) {
+            std::string bioName;
+            if (member.facts.refId != 0) {
+                // SkyrimNet's own answer for anybody it has met: it already
+                // reflects whatever has happened since.
+                bioName = SkyrimNetAPI::GetBioTemplateName(member.facts.refId);
+                if (!bioName.empty()) {
+                    ++stored;
+                } else {
+                    bioName = Resolver::BioName(member.facts, tables);
+                    ++computed;
+                }
+            }
+
+            const auto resolution = Resolver::Resolve(member.facts, bioName, tables, stack);
+            ++byTier[resolution.tier];
+            held.tiers.emplace(member.npc, resolution.tier);
+            if (resolution.layer != nullptr) {
+                const auto text = ReadFile(LayerDirectory(*resolution.layer) / resolution.path);
+                templated += HasTemplateLogic(text) ? 1 : 0;
+                held.bios.emplace(member.npc, ParseBio(text));
+                if (resolution.tier == Resolver::Tier::Own) {
+                    ++ownByLayer[resolution.layer->folder];
+                }
+            }
+
+            auto line = std::format("{}|{}|{}|{}",
+                                    bioName,
+                                    TierName(resolution.tier),
+                                    resolution.layer != nullptr ? resolution.layer->folder : std::string{},
+                                    resolution.path);
+            const auto previous = g_held.lastLine.find(member.npc);
+            if (firstRefresh || previous == g_held.lastLine.end() || previous->second != line) {
+                ++changed;
+                logger::debug("CharacterBios: {} (base 0x{:X}, ref 0x{:X}) -> bio '{}', {} from '{}' ({})",
+                              member.name,
+                              member.npc,
+                              member.facts.refId,
+                              bioName,
+                              TierName(resolution.tier),
+                              resolution.layer != nullptr ? resolution.layer->folder : std::string{"-"},
+                              resolution.path.empty() ? std::string{"-"} : resolution.path);
+            }
+            held.lastLine.emplace(member.npc, std::move(line));
+        }
+
+        std::string layerCounts;
+        for (const auto& [folder, count] : ownByLayer) {
+            layerCounts += std::format("{}{} {}", layerCounts.empty() ? "" : ", ", count, folder);
+        }
+        logger::info("CharacterBios: resolved {} member(s) -- {} by SkyrimNet's stored name, {} computed; {} dynamic, "
+                     "{} own, {} generic, {} default, {} none; own by layer: {}. {} layer(s) stacked, {} unique and {} "
+                     "generic translation row(s), {} profile(s) with template logic, {} resolution(s) changed{}.",
+                     facts->members.size(),
+                     stored,
+                     computed,
+                     byTier[Resolver::Tier::Dynamic],
+                     byTier[Resolver::Tier::Own],
+                     byTier[Resolver::Tier::Generic],
+                     byTier[Resolver::Tier::Default],
+                     byTier[Resolver::Tier::None],
+                     layerCounts.empty() ? std::string{"none"} : layerCounts,
+                     stack.layers.size(),
+                     tableCensus.uniqueRows,
+                     tableCensus.genericRows,
+                     templated,
+                     changed,
+                     firstRefresh ? " (first refresh this session)" : "");
+        if (byTier[Resolver::Tier::None] == facts->members.size() && !facts->members.empty()) {
+            logger::warn("CharacterBios: nobody resolved to any profile, not even characters/default. Is SkyrimNet's "
+                         "content library at {}?",
+                         kSkyrimNetRoot.string());
+        }
+        g_held = std::move(held);
     }
 
     bool Has(RE::FormID npc)
     {
-        return g_bios.contains(npc);
+        const auto tier = g_held.tiers.find(npc);
+        return tier != g_held.tiers.end()
+               && (tier->second == Resolver::Tier::Dynamic || tier->second == Resolver::Tier::Own);
     }
 
     const Bio& For(RE::FormID npc)
     {
-        const auto found = g_bios.find(npc);
-        return found == g_bios.end() ? g_empty : found->second;
+        const auto found = g_held.bios.find(npc);
+        return found == g_held.bios.end() ? g_empty : found->second;
     }
 
 } // namespace NarrativeEngine::CharacterBios

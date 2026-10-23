@@ -1,164 +1,43 @@
 #pragma once
 
-#include <array>
-#include <cstdint>
-#include <filesystem>
 #include <string>
 #include <string_view>
-#include <unordered_map>
-#include <unordered_set>
-#include <vector>
 
 #include <RE/Skyrim.h>
 
-// CharacterBios — finding an NPC's biography without asking SkyrimNet.
+#include <PlotThread.h>
+
+// CharacterBios — an NPC's character profile, the one SkyrimNet would render
+// for them, whether or not the player has met them.
+//
+// SkyrimNet only hands out a profile through a UUID, and mints a UUID when
+// the player MEETS someone: on a fresh save it knew 88 of the 881 people
+// plots draw from. So this works out the answer the way SkyrimNet does --
+// the same bio name, the same content layer, the same fallbacks -- from the
+// rules decoded out of its DLL:
+//
+//   docs/engine-findings/skyrimnet-bio-template-name-assignment.md
+//   docs/engine-findings/skyrimnet-character-profile-lookup.md
+//
+// The rules themselves are pure and live in CharacterBioResolver. This
+// module gathers their inputs from the engine and the disk, and holds the
+// result.
 //
 // ---------------------------------------------------------------------
-// WHY NOT JUST ASK
+// WHO DOES WHAT, ON WHICH THREAD
 //
-// SkyrimNet exposes PublicGetBioTemplateName, which answers exactly this
-// question, and it was the obvious way to do it. It is also the wrong
-// one, because it only answers for actors SkyrimNet has ALREADY MET.
+// Engine facts -- names, plugins, the unique flag -- are record data, read
+// once per save on the main thread by OnSessionStart and published as one
+// immutable snapshot.
 //
-// The mapping lives in SkyrimNet's `uuid_mappings` table, which is
-// created per save file and filled in as the player encounters people.
-// A first run of this lookup over an 881-member population resolved 88
-// of them: the table held 171 rows in total. Older, longer-played saves
-// on the same machine held anywhere from 2 to 2087. The number says
-// nothing about what data exists — only about where that playthrough
-// has been. FormIDToUUID has the same gate, which is why plot casting
-// was drawing 25 mastermind candidates to keep 5.
-//
-// The bios themselves have no such gate. They are files, they ship with
-// the mod, and 842 of the 857 members of the plot population have one.
-//
-// ---------------------------------------------------------------------
-// HOW THE FILENAME WORKS
-//
-// A bio is `prompts/characters/<slug>_<hex>.prompt`, where `<hex>` is
-// the low 12 bits of the actor's REFERENCE form id — not the base NPC
-// form. Checked against every `uuid_mappings` row across every save on
-// the machine whose template names a real file: 642 matched, 0 differed.
-//
-// The base-form spelling is the near miss to watch for. Abelone's base
-// is 08774F and her file is `abelone_750`; Aela's base is 01A696 and her
-// file is `aela_the_huntress_697`. Both are base + 1, because the
-// Creation Kit hands a new reference the next form id after the base it
-// was made from — close enough to look right in a spot check and wrong
-// for everyone the CK placed in a different order.
-//
-// GossipGraph carries a reference id for every participant (881 of 881
-// on the run this was written against), so nothing here needs a running
-// SkyrimNet or a save that has been anywhere.
-//
-// ---------------------------------------------------------------------
-// RECOGNITION, NOT DERIVATION
-//
-// This does NOT construct a filename from a name and an id. That was
-// tried: `slug(name)_<hex>` reproduces the real stem about 70% of the
-// time and breaks on hyphens (`parvana_al-rihad`), on bracketed
-// suffixes (`..._[riften_guard]_84F`), on zero-padding (`grelka_0B3`),
-// and on people whose file is named for someone else entirely
-// (Brand-Shei's is `brandish_DDC`).
-//
-// Instead it reads the directory and MATCHES. The suffix is a strong
-// key on its own — 1,305 of 1,733 are unique to one file and no more
-// than four files ever share one — so a name only has to break a tie
-// among a handful, and the spelling of the slug stops mattering.
+// Everything else changes during play: SkyrimNet writes dynamic bios, the
+// player edits and pins profiles in the dashboard, actors get met. So the
+// plot worker re-resolves every population member at the start of every
+// plot tick (Refresh), and OWNS the result. Every reader -- castability,
+// the prompt sections, occupations -- runs inside a tick after that tick's
+// refresh, so none needs a lock and none can see another save's profiles.
 namespace NarrativeEngine::CharacterBios
 {
-    // What a lookup did, so a caller can log the difference between
-    // "no file" and "would have had to guess".
-    enum class Outcome : std::uint8_t
-    {
-        // Matched, and the name agreed with the slug.
-        Confirmed,
-        // Exactly one file carried the suffix and its slug bears no
-        // resemblance to this NPC's name. Almost always a coincidence:
-        // twelve bits of suffix across 2237 files collide readily, and
-        // of 35 such matches in one session, 29 were a different
-        // character outright -- the Arch-Mage of Winterhold carrying a
-        // Tel Mithryn alchemist's life story.
-        //
-        // A file named for the same person under ANOTHER name does not
-        // land here. That is what the affinity test is for, and the six
-        // real cases it rescues are the reason it is loose: Brand-Shei's
-        // file is "brandish", Siddgeir's is "jarl_siddgeir", the Voice
-        // of Namira's is "namira".
-        BySuffixAlone,
-        // No file carries that suffix.
-        NoFile,
-        // Several files carry it and none matched the name. Refused
-        // rather than guessed -- attaching the wrong biography to the
-        // wrong person is invisible until it is embarrassing.
-        Ambiguous
-    };
-
-    struct Lookup
-    {
-        Outcome outcome = Outcome::NoFile;
-        std::string stem;
-        // The file to actually read. Carried rather than rebuilt from
-        // the stem, because the same stem can live in two directories
-        // and only the catalogue knows which one won.
-        std::filesystem::path path;
-    };
-
-    class Catalog
-    {
-    public:
-        // Read every `*.prompt` in `directory` and index it. Returns how
-        // many carried a usable `<slug>_<hex>` name; `_generic` files
-        // and anything else are counted but not indexed, because they
-        // belong to no specific actor.
-        //
-        // FIRST SCAN WINS. A stem already in the catalogue is skipped,
-        // so scanning the save-specific directory before the shared one
-        // gives the save's own copy priority -- which is the whole point
-        // of there being two. Scanning them the other way round would
-        // silently serve the default to every save that has edited a
-        // profile.
-        std::size_t Scan(const std::filesystem::path& directory);
-
-        // Index one already-known stem, with the file it came from.
-        // Pure, and the seam a probe uses to build a catalog without a
-        // filesystem.
-        void Add(std::string_view stem, const std::filesystem::path& path = {});
-
-        // `actorRef` is a REFERENCE form id -- GossipGraph::ActorRefFor,
-        // never the base NPC form. `name` is the NPC's display name and
-        // is used only to break ties.
-        [[nodiscard]] Lookup Find(RE::FormID actorRef, std::string_view name) const;
-
-        [[nodiscard]] std::size_t Size() const noexcept
-        {
-            return _count;
-        }
-        [[nodiscard]] std::size_t GenericCount() const noexcept
-        {
-            return _generic;
-        }
-
-    private:
-        struct Entry
-        {
-            std::string stem;
-            std::string slug; // normalised, for comparison only
-            std::filesystem::path path;
-        };
-
-        std::unordered_map<std::uint16_t, std::vector<Entry>> _bySuffix;
-        // Every stem taken, so a later Scan cannot shadow an earlier one.
-        std::unordered_set<std::string> _seen;
-        std::size_t _count = 0;
-        std::size_t _generic = 0;
-    };
-
-    // Lowercase, strip everything that is not a letter or digit. Applied
-    // to both sides of a tie-break so that "Brand-Shei", "brand_shei"
-    // and "BrandShei" all compare equal.
-    [[nodiscard]] std::string Normalise(std::string_view text);
-
     // One biography, block by block.
     //
     // Kept as separate fields rather than one string because the prompts
@@ -166,9 +45,10 @@ namespace NarrativeEngine::CharacterBios
     // occupation set apart from the personality, not both glommed
     // together into a wall of text.
     //
-    // `appearance` and `speech_style` are deliberately absent. They say
-    // how somebody looks and sounds, which answers neither "what would
-    // this person scheme for" nor "who should carry this out".
+    // `appearance`, `speech_style` and a dynamic bio's `interject_summary`
+    // are deliberately absent. They say how somebody looks and sounds,
+    // which answers neither "what would this person scheme for" nor "who
+    // should carry this out".
     struct Bio
     {
         std::string summary;
@@ -182,49 +62,35 @@ namespace NarrativeEngine::CharacterBios
         [[nodiscard]] bool Empty() const noexcept;
     };
 
-    // Pull the blocks out of a bio file's text.
+    // Pull the blocks out of a bio file's text. Every block goes through
+    // LLMTextSanitizer: dynamic bios are LLM output, and a dashboard-written
+    // one may be too.
     [[nodiscard]] Bio ParseBio(std::string_view file);
 
-    // --- The session catalogue --------------------------------------------
-    //
-    // One scan, one set of reads, held for the session. Roughly 2 MB for
-    // a full population, which buys a lock-free read from the plot
-    // worker afterwards -- PlotPopulation's arrangement, for the same
-    // reason: a lazily-filled cache would need a mutex on every access
-    // to answer a question whose answer never changes.
-
-    // Main thread, at kNewGame / kPostLoadGame.
-    //
-    // PER SAVE, NOT PER SESSION. SkyrimNet lets a save carry its own
-    // edited copy of a character profile under
-    // `saves/<save id>/prompts/characters/`, so two saves of the same
-    // playthrough can legitimately disagree about who somebody is.
-    //
-    // Not at kDataLoaded, where this used to run: there is no save yet,
-    // so there is no save id to scan for.
+    // Main thread, at kNewGame / kPostLoadGame, after
+    // PlotPopulation::OnSessionStart. Reads the engine facts for every
+    // population member and every generic translation row, and publishes
+    // them for the plot worker.
     void OnSessionStart();
 
-    // Main thread, from the serialization revert callback.
-    //
-    // Drops everything the outgoing save loaded. Holding it would leak
-    // one character's version of the world into another's, and silently
-    // -- a stale biography still reads as a biography, so nothing
-    // downstream would ever report a problem.
-    //
-    // Revert rather than the load path, because revert also fires on
-    // QUIT TO MAIN MENU, where nothing loads afterwards. Purging only on
-    // load would leave the previous character's profiles resident until
-    // the player happened to start another game.
+    // Main thread, from the serialization revert callback. Drops the
+    // published facts, so a tick that runs before the next load resolves
+    // nobody rather than the previous save's people.
     void OnRevert();
 
-    // Does this NPC have a biography we can actually read? The
-    // replacement for "does SkyrimNet happen to know them".
+    // Plot worker, first thing in every tick. Re-reads SkyrimNet's stored
+    // bio names, the content registry, every layer and the profile files,
+    // and replaces what Has and For answer.
+    void Refresh(const PlotThread::Token& pt);
+
+    // Does this NPC have a profile of their OWN -- a dynamic bio or a file
+    // written for them? A _generic or default profile does not count: a
+    // mastermind who reads like everyone else is what plots exist to avoid.
     [[nodiscard]] bool Has(RE::FormID npc);
 
-    // Keyed on the BASE NPC form, the way the rest of the plugin refers
-    // to people; the reference-id crossing happens inside. Returns an
-    // empty Bio for anyone without one, so a caller may render it
-    // unconditionally and get empty sections rather than a crash.
+    // Keyed on the BASE NPC form, the way the rest of the plugin refers to
+    // people. Whatever SkyrimNet would render, generic and default
+    // included; an empty Bio for anyone with no profile at all.
     [[nodiscard]] const Bio& For(RE::FormID npc);
 
 } // namespace NarrativeEngine::CharacterBios

@@ -4,8 +4,8 @@ Plots need every schemer's character profile, and most schemers are people the p
 replaces `CharacterBios`' guesswork with a resolver that picks the profile SkyrimNet itself would render for an NPC,
 met or not: the same bio name, the same layer, the same fallbacks.
 
-> **Doc status: Steps 1–4 complete.** Nothing here touches the co-save or the settings. It is the last obstacle to releasing
-> the plot system.
+> **Doc status: Steps 1–5 complete; Step 6's in-game check is next.** Nothing here touches the co-save or the
+> settings. It is the last obstacle to releasing the plot system.
 
 The rules this implements were decoded from SkyrimNet's DLL and are written up as engine findings. They are the
 contract for every step below, and where this document and they disagree, they win:
@@ -339,7 +339,7 @@ vector of layers, whose pointers the header says must outlive the stack.
 
 ### Step 5 — Wire it in
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -368,6 +368,49 @@ session's log can be checked against what SkyrimNet sent without repeating 881 l
 - `pwsh -File build.ps1 build` is clean, and every test passes.
 - `PlotBirth` and `PlotTick` compile unchanged against the new `Has` and `For`, apart from the `Refresh` call.
 - `Refresh` takes a `PlotThread::Token`, and no `CharacterBios` code path reads a file outside it.
+
+Done.
+
+- **`OnSessionStart` (main thread)** publishes one immutable `SessionFacts` snapshot through an
+  `std::atomic<std::shared_ptr>`, so a tick in flight across a load keeps the copy it started with. The snapshot
+  holds:
+  - each population member's `ActorFacts`;
+  - the set of plugins the data handler flags light;
+  - the `TESFullName` of every row in every generic CSV any layer holds. Any of those files may win a later refresh.
+- **`OnRevert`** clears the snapshot.
+- **`Refresh(pt)` runs first in `RunTick`**, straight after `TakePendingState`. It:
+  - asks SkyrimNet for the save id and each member's stored bio name;
+  - scans every layer's `manifest.json` and its files under `prompts/`;
+  - parses the registry, builds the stack, and builds the tables from each CSV's winning copy;
+  - resolves every member, reading each winning file's blocks through `LLMTextSanitizer`;
+  - replaces the worker-owned profiles.
+
+`Has` is now `Dynamic` or `Own`. The suffix catalogue, `Find`, `NameAffinity`, `Normalise` and the `Outcome` enum are
+gone, and the header points to the two engine findings instead.
+
+The census is one info line per refresh:
+
+- stored against computed names;
+- the five tiers;
+- `Own` counts by layer;
+- the stack's size and the table rows;
+- profiles holding template logic;
+- how many resolutions changed.
+
+Each member gets a debug line on a session's first refresh, and after that only when its name, tier, layer or path
+changes.
+
+**Verification:**
+
+- `pwsh -File build.ps1 build` is clean, with no errors or warnings in any target, and all 511 tests pass.
+- `PlotBirth` is unchanged. `PlotTick` gained only the include and the `Refresh` call.
+- The mocked-engine target needed one new mock, `TESDataHandler::LookupForm`. It answers `nullptr`, because the
+  mocked world loads no plugins.
+
+**The last check holds only for the per-tick work.** `OnSessionStart` reads files too: it scans the layers and reads
+the generic CSVs to learn which forms to name, because naming a form needs the main thread and the plot worker
+cannot call onto it. The Design section asks for exactly that, so the check as written contradicted the design. The
+files read there are the CSVs and the layer listing, never a profile.
 
 ### Step 6 — In-game validation
 
