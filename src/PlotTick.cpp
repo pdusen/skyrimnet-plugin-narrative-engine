@@ -787,7 +787,7 @@ namespace NarrativeEngine::PlotTick
             Plots::TakePendingState(pt);
 
             // Before anything reads a profile: dynamic bios, dashboard edits
-            // and newly met actors all change what SkyrimNet would render,
+            // and newly registered actors all change what SkyrimNet would render,
             // and every reader of CharacterBios runs inside this tick.
             CharacterBios::Refresh(pt);
 
@@ -932,7 +932,7 @@ namespace NarrativeEngine::PlotTick
         }
         if (!decision.stamps.empty()) {
             // Who has died since the last tick, for the NPCs whose
-            // references are not in memory: the worker cannot ask the
+            // references do not resolve: the worker cannot ask the
             // main thread itself, so it is asked here, once per batch.
             static_cast<void>(MainThread::Run(pt, [](const MainThread::Token& mt) {
                 PlotPopulation::RefreshDeadCounts(mt);

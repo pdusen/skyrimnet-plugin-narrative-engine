@@ -45,16 +45,18 @@ and a UUID).
   `characters/<name>` otherwise (`Using static bio`). There is no feature switch in this decision; the file's
   existence is the switch.
 
-**Dynamic bios** are profiles the LLM writes for actors the player spends time with. They have the same block
-format as a static bio and live at:
+**Dynamic bios** are profiles the LLM writes for chosen actors, on a hotkey, a trigger or a Papyrus call
+(`HotkeyManager::OnGenerateDiaryBio`, `TriggerManager::ExecuteDynamicBioUpdate`,
+`Papyrus::UpdateActorDynamicBio`). They have the same block format as a static bio and live at:
 
 ```text
 saves/<save id>/prompts/characters/dynamic/<name>.dynamic.prompt
 ```
 
 `CharacterProfileGenerator::WriteDynamicBio` writes them through `ContentStore::WriteFile`, and refuses when no
-playthrough is loaded (`Not writing dynamic bio for '{}': no playthrough is loaded`). So they are per save, they
-exist only for actors SkyrimNet has met, and they resolve through the same layer stack as any other path.
+playthrough is loaded (`Not writing dynamic bio for '{}': no playthrough is loaded`). So they are per save. Creating
+one looks the actor's UUID up (`DynamicBioManager::getCharacterUUID`), so they exist only for registered actors. They
+resolve through the same layer stack as any other path.
 
 ### 2. `_generic`, for actors that are not unique
 

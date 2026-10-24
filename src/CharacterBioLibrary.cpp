@@ -252,12 +252,13 @@ namespace NarrativeEngine::CharacterBios
         for (const auto& member : PlotPopulation::Get().members) {
             Member entry{member.npc, member.name, {}};
             entry.facts.refId = GossipGraph::ActorRefFor(member.npc);
-            // A reference is only in memory while its cell is, or while it is
-            // persistent: a fifth of the population was not, on the first
-            // in-game run. The BASE record always is, and it carries every
-            // fact but the display name -- which, for a reference nobody has
-            // renamed, is the base's name anyway, and is what SkyrimNet
-            // falls back to when it is empty.
+            // The reference does not always resolve: for 185 of 808 members
+            // on the first in-game run, LookupByID<RE::Actor> returned null.
+            // Why is not established (see PlotPopulation::IsAlive). The BASE
+            // record resolves, and it carries every fact but the display
+            // name -- which, for a reference nobody has renamed, is the
+            // base's name anyway, and is what SkyrimNet falls back to when
+            // it is empty.
             auto* actor = RE::TESForm::LookupByID<RE::Actor>(entry.facts.refId);
             const RE::TESNPC* base =
                 actor != nullptr ? actor->GetActorBase() : RE::TESForm::LookupByID<RE::TESNPC>(member.npc);
@@ -380,11 +381,11 @@ namespace NarrativeEngine::CharacterBios
         std::map<std::string, std::size_t> ownByLayer;
 
         for (const auto& member : facts->members) {
-            // Computed for EVERYONE, met or not. For somebody SkyrimNet has
-            // met, its stored name is the one used -- it already reflects
-            // whatever has happened since -- and the computed one is checked
-            // against it: every met member is a test of the naming rule on
-            // real engine data.
+            // Computed for EVERYONE, registered or not. For somebody
+            // SkyrimNet has registered, its stored name is the one used -- it
+            // already reflects whatever has happened since -- and the
+            // computed one is checked against it: every registered member is
+            // a test of the naming rule on real engine data.
             const auto computedName = member.facts.refId != 0 ? Resolver::BioName(member.facts, tables) : std::string{};
             const auto storedName =
                 member.facts.refId != 0 ? SkyrimNetAPI::GetBioTemplateName(member.facts.refId) : std::string{};

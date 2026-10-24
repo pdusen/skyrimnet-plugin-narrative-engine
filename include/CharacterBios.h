@@ -8,11 +8,11 @@
 #include <PlotThread.h>
 
 // CharacterBios — an NPC's character profile, the one SkyrimNet would render
-// for them, whether or not the player has met them.
+// for them, whether or not SkyrimNet has registered them yet.
 //
-// SkyrimNet only hands out a profile through a UUID, and mints a UUID when
-// the player MEETS someone: on a fresh save it knew 88 of the 881 people
-// plots draw from. So this works out the answer the way SkyrimNet does --
+// SkyrimNet only hands out a profile through a UUID, and has one only for
+// actors it has registered in this save: on a fresh save it knew 88 of the
+// 881 people plots draw from. So this works out the answer the way SkyrimNet does --
 // the same bio name, the same content layer, the same fallbacks -- from the
 // rules decoded out of its DLL:
 //
@@ -31,7 +31,7 @@
 // immutable snapshot.
 //
 // Everything else changes during play: SkyrimNet writes dynamic bios, the
-// player edits and pins profiles in the dashboard, actors get met. So the
+// player edits and pins profiles in the dashboard, actors get registered. So the
 // plot worker re-resolves every population member at the start of every
 // plot tick (Refresh), and OWNS the result. Every reader -- castability,
 // the prompt sections, occupations -- runs inside a tick after that tick's

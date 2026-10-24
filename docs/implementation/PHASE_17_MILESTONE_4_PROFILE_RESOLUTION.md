@@ -1,11 +1,11 @@
 # Phase 17 — Milestone 4: Profile Resolution
 
-Plots need every schemer's character profile, and most schemers are people the player has never met. This milestone
-replaces `CharacterBios`' guesswork with a resolver that picks the profile SkyrimNet itself would render for an NPC,
-met or not: the same bio name, the same layer, the same fallbacks.
+Plots need every schemer's character profile, and many schemers are people SkyrimNet has not registered. This
+milestone replaces `CharacterBios`' guesswork with a resolver that picks the profile SkyrimNet itself would render for
+an NPC, registered or not: the same bio name, the same layer, the same fallbacks.
 
-> **Doc status: complete.** Steps 1–7 are done. Step 7 found and fixed one defect, unloaded references; the next
-> session's census line confirms the fix in game. Nothing here touches the co-save or the settings.
+> **Doc status: complete.** Steps 1–7 are done. Step 7 found and fixed one defect, members whose reference does not
+> resolve, and a second session confirmed the fix. Nothing here touches the co-save or the settings.
 
 The rules this implements were decoded from SkyrimNet's DLL and are written up as engine findings. They are the
 contract for every step below, and where this document and they disagree, they win:
@@ -19,8 +19,8 @@ contract for every step below, and where this document and they disagree, they w
 
 ## Why this milestone exists
 
-SkyrimNet only hands out a profile through a UUID, and it mints a UUID when the player meets someone. On a fresh save
-it knew 88 of the 881 people in the plot population. Issue
+SkyrimNet only hands out a profile through a UUID, and has one only for actors it has registered in this save. On a
+fresh save it knew 88 of the 881 people in the plot population. Issue
 [MinLL/SkyrimNet-GamePlugin#744](https://github.com/MinLL/SkyrimNet-GamePlugin/issues/744) asks for an API that
 does not need one; it has had no answer.
 
@@ -51,11 +51,11 @@ the engine, and everything after that is pure.
 
 **The bio name.**
 
-- *Met actors:* when `SkyrimNetAPI::GetBioTemplateName` returns a name, that name is used. SkyrimNet stored it at
-  first meeting. It already reflects anything that has happened since (a rename after meeting, a re-registered actor
-  inheriting a former self's name), and recomputing it could only disagree.
-- *Unmet actors:* the name is computed by the decoded rule: unique table, then generic table, then slug. It is what
-  SkyrimNet will store when they are met, provided their display name has not changed by then.
+- *Registered actors:* when `SkyrimNetAPI::GetBioTemplateName` returns a name, that name is used. SkyrimNet stored
+  it at registration. It already reflects anything that has happened since (a rename after registration, a
+  re-registered actor inheriting a former self's name), and recomputing it could only disagree.
+- *Unregistered actors:* the name is computed by the decoded rule: unique table, then generic table, then slug. It is
+  what SkyrimNet will store when it registers them, provided their display name has not changed by then.
 
 **The file.** The chain is `characters/dynamic/<name>`, `characters/<name>`, then, for an actor whose base is not
 flagged unique, `characters/<tag>_generic` and `characters/<name-key>_generic`, then `characters/default`. Each path
@@ -87,7 +87,7 @@ generic is shown the generic text, because that is how SkyrimNet portrays them t
 ### Where the work happens
 
 **Resolved afresh at the start of every plot tick.** SkyrimNet re-resolves whenever its content changes: a dynamic bio
-written during play, a dashboard edit, a new pin, an actor met for the first time. Ticks are hours of game time apart,
+written during play, a dashboard edit, a new pin, an actor newly registered. Ticks are hours of game time apart,
 so redoing the whole resolution each time costs nothing that matters, and it means a plot never reads a profile more
 than one tick older than the one SkyrimNet would render.
 
@@ -101,8 +101,8 @@ The work splits along what each part needs:
   These are record data and do not change during a session. They are held stable for it and read lock-free by the
   plot worker, with the same lifecycle and guarantees as `PlotPopulation::Get()`. `OnRevert` drops them.
 - **Everything else, every tick, on the plot worker.** `CharacterBios::Refresh(pt)`, the first thing `RunTick` does:
-  - asks `SkyrimNetAPI::GetBioTemplateName` for each member, plus the save id, both of which change as the player
-    meets people and changes saves;
+  - asks `SkyrimNetAPI::GetBioTemplateName` for each member, plus the save id, both of which change as SkyrimNet
+    registers people and the player changes saves;
   - re-reads the disk: `content-registry.json`, every layer's `manifest.json`, the relative paths under each layer's
     `prompts/`, the translation CSVs, and the winning bio files;
   - re-resolves every member, and replaces the held profiles wholesale.
@@ -128,8 +128,8 @@ profile generator, so the rule is applied to every tier rather than chosen per f
   blocks yields the words a render would. If content ever ships template logic in a bio, this breaks; the census
   below counts files with anything but blocks so that the day it happens is visible.
 - **Changes between ticks.** SkyrimNet applies a change at once; plots see it at the next tick.
-- **A rename mid-session, before meeting.** Display names are read once per save. An unmet NPC renamed during the
-  session is named by their old name until the next load.
+- **A rename mid-session, before registration.** Display names are read once per save. An unregistered NPC renamed
+  during the session is named by their old name until the next load.
 
 ---
 
@@ -436,8 +436,9 @@ but is not required. Then quit. Nothing needs judging or recording; Step 7 reads
   - the stored and computed names;
   - the unique flag, the base and reference plugins, and the population, display and base names.
 
-The resolver computes the name for every member, met or not, and checks it against SkyrimNet's stored name wherever
-there is one. So every NPC the save has met is a test of the naming rule on real engine data. The stored name is
+The resolver computes the name for every member, registered or not, and checks it against SkyrimNet's stored name
+wherever there is one. So every NPC SkyrimNet has registered in the save is a test of the naming rule on real engine
+data. The stored name is
 still the one used.
 
 **Done (2026-10-23).** One session on save `1778871594119-52513`: a load, then 200 plot ticks. 71 plots were born,
@@ -456,9 +457,9 @@ probe built it.
 **Verification:** each of these holds, or every exception is explained by a rule above and fixed, or written up here
 and in the engine findings:
 
-1. **The naming rule on real engine data.** For every member SkyrimNet has met, the computed name equals the stored
-   one. A disagreement is checked against `uuid_mappings`. The `actor_name` stored there is the name at first
-   meeting, so a rename since then is the documented exception, and anything else is a bug.
+1. **The naming rule on real engine data.** For every member SkyrimNet has registered, the computed name equals the
+   stored one. A disagreement is checked against `uuid_mappings`. The `actor_name` stored there is the name at
+   registration, so a rename since then is the documented exception, and anything else is a bug.
 2. **The engine facts.** Every member with a reference id has a base plugin. Every unique flag matches the base
    record, checked through Spriggit for the masters. Every unique-table hit uses the base's plugin.
 3. **The in-game stack against the disk.** The logged stack order equals the stack Step 3's probe builds offline from
@@ -507,34 +508,56 @@ They also have no instance on the development install other than one pin to the 
 **One defect, found and fixed: 185 members resolved to nothing.**
 
 - **What happened:** all 185 logged `ref=0x0`. GossipGraph knows a reference for each of them; the old census
-  reported "0 with no reference id". But `LookupByID<RE::Actor>` returned null, because a reference is only in memory
-  while its cell is loaded or while it is persistent. The code took a missing actor to mean a missing reference and
-  dropped the id.
-- **Who was affected:** precisely the members SkyrimNet had not met. The 623 with loaded references are the 623 it
-  has met, so the computed path was not exercised in game at all.
+  reported "0 with no reference id". But `LookupByID<RE::Actor>` returned null for those references, and the code
+  took a null actor to mean a missing reference and dropped the id.
+- **Why the reference does not resolve is not established.** The first explanation written here, that their cells
+  were not loaded, cannot be right: no loaded set of cells holds the 623 unique NPCs whose references did resolve.
+  What the data does show, from Spriggit's vanilla placements, for the Skyrim.esm references only:
+
+  | References | Persistent placement | Temporary placement | Not in the export |
+  | ---------- | -------------------- | ------------------- | ----------------- |
+  | Resolved   | 341                  | 173                 | 24                |
+  | Unresolved | 0                    | 136                 | —                 |
+
+  Every unresolved reference is a temporary placement, but so are 173 that resolved, so persistence alone does not
+  separate them. Mod overrides of persistence, what the save holds, and quest aliases are untested candidates.
+- **Who was affected:** exactly the members with no SkyrimNet-stored name. The 623 whose reference resolved are the
+  623 SkyrimNet has registered, so the computed path was not exercised in game at all. That the two sets coincide is
+  observed; why is not known. It does not mean the player had met those 623: the save's `uuid_mappings` holds about
+  1,800 rows.
 - **The fix:** `OnSessionStart` keeps the reference id, and reads the base name, base plugin and unique flag from the
-  base `TESNPC`, which is always loaded. The display name stays empty for an unloaded reference, so the rule falls
-  back to the base name, as SkyrimNet does. The reference plugin, consulted only when a base has no file, stays empty
-  for these.
+  base `TESNPC`, which resolves for all of them. The display name stays empty for a reference that does not resolve,
+  so the rule falls back to the base name, as SkyrimNet does. The reference plugin, consulted only when a base has no
+  file, stays empty for these.
 - **Checked:** the build is clean, all 511 tests pass, and the fix was run offline. Spriggit's cell exports give a
   unique placed reference for 129 of the 185, and run through the real rule and stack, **all 129 resolve `Own`** from
   `pdusen.skyrim-the-abridged-edition`. The other 56 are placed by DLC or mods, which the export does not cover.
-- **Still to see in game:** the next session's census line should show those 185 as computed names rather than
-  `none`.
+- **Confirmed in a second session** on the same save, again 200 ticks:
+  - the 185 resolved by computed name, 183 to their own profile and 2 to `default`;
+  - every one of the 129 predicted offline matched, reference and result alike;
+  - nothing that had resolved in the first session changed, and all 808 resolutions again reproduced offline.
+
+  The two `default`s are both Miraak. The only Miraak profile, `miraak_B99`, belongs by the unique table to one
+  placement (`Dragonborn.esm` 01FB99), and these are two other Miraak records with no profile under their own names.
+  Miraak is unique, so there is no `_generic` fallback, and SkyrimNet would render `default` too.
 
 **The same assumption in casting, fixed in place.** `PlotPopulation::IsAlive` read `LookupByID<RE::Actor>` and
-answered false when it was null, on the stated grounds that unique actors are always resident. They are not, so those
-185 could be neither cast nor remembered while their cells were unloaded.
+answered false when it was null, on the stated grounds that unique actors are always resident. For those 185 it was
+null, so they could be neither cast nor remembered.
 
-- **`IsAlive`:** an NPC whose reference is not in memory is now judged by the engine's per-base dead count, `TES`'s
-  `deadCount`, the list `GetDeadCount` reads. The save keeps it with or without the reference, and the NPC counts as
-  alive unless it records a death. Whether such a reference is disabled cannot be known without it, so it is taken as
-  enabled.
+- **`IsAlive`:** an NPC whose reference does not resolve is now judged by the engine's per-base dead count, `TES`'s
+  `deadCount`, the list `GetDeadCount` reads. It is keyed by the base and needs no reference, and the NPC counts as
+  alive unless it records a death. Whether such a reference is disabled cannot be asked without it, so it is taken
+  as enabled.
 - **When the counts are read:** the main thread appends to that list, so it is read there and published as one
   snapshot. `PlotPopulation::OnSessionStart` takes the first, and `PlotTick::Poll` takes another through
   `MainThread::Run` before each batch of scheduled ticks. Forced ticks use the latest snapshot.
-- **`IsViableMastermind`:** for such an NPC it asks only the unique test, of the base record. An NPC in an unloaded
-  cell is not fighting, not following the player, and in a real place.
-- **`IsNearPlayer`:** keeps answering false for them, which is right.
+- **`IsViableMastermind`:** for such an NPC it asks only the unique test, of the base record. The combat, follower
+  and location checks need the reference.
+- **`IsNearPlayer`:** keeps answering false for them: there is no 3D to ask about.
+
+In the second session, NPCs from the 185 were masterminds of 5 plots and agents in 18 dispatches. SkyrimNet refused
+45 plot memories, all for 7 of them, every one an NPC it has not registered; the first session refused none. Why
+SkyrimNet refuses an unregistered actor's memory, and what would register them, is not established.
 
 `GossipSim`'s availability check makes the same assumption, and is gossip's to decide.

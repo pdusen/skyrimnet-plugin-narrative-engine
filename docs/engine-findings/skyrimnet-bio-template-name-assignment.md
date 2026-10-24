@@ -4,8 +4,8 @@
 
 SkyrimNet does not look an actor's bio up. It **computes** the bio's name (its `bio_template_name`, the stem of
 `prompts/characters/<stem>.prompt`) from the actor once, the first time it registers them, and stores the answer in
-the save's `uuid_mappings` table. The calculation needs nothing SkyrimNet learns by meeting the actor, so it can be
-run for anyone, met or not:
+the save's `uuid_mappings` table. The calculation needs nothing SkyrimNet learns by registering the actor, so it can
+be run for anyone, registered or not:
 
 ```text
 id = the actor's REFERENCE form id
@@ -124,9 +124,13 @@ None of this matters to a plugin that never asks about the player.
   change it. `UUIDResolver::ResolveClassBioTemplate` also lets a re-registered actor "inherit" a former self's name
   (log: `uuid {:X} inherits bio template '{}' from former self {:X}`). That path was not decoded.
 
-For an actor SkyrimNet has already met, the stored name is the authoritative answer
-(`PublicGetBioTemplateName`). For anyone else, the computation above is what SkyrimNet *will* store at first
-meeting, provided the actor's display name has not changed in between.
+For an actor SkyrimNet has already registered, the stored name is the authoritative answer
+(`PublicGetBioTemplateName`). For anyone else, the computation above is what SkyrimNet *will* store when it registers
+them, provided the actor's display name has not changed in between.
+
+**Registered is not the same as met.** What makes SkyrimNet register an actor was not decoded. It is far broader
+than the player meeting them: the testing save's `uuid_mappings` holds about 1,800 rows, many more people than that
+save has encountered.
 
 ## Validation
 

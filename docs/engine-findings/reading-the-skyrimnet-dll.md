@@ -50,7 +50,7 @@ and query tool was about 150 lines.
 ## Ground truth to check against
 
 - **`SkyrimNet/data/SkyrimNet-*.db`**, one SQLite database per save. `uuid_mappings` holds what SkyrimNet assigned
-  each actor it met (`form_id`, `actor_name`, `bio_template_name`, and in newer schemas `mod_file`,
+  each actor it registered (`form_id`, `actor_name`, `bio_template_name`, and in newer schemas `mod_file`,
   `local_form_id`). Open it read-only (`file:…?mode=ro`).
 - **`SkyrimNet/logs/openrouter_input*.log`**: every prompt SkyrimNet sent, fully rendered. This is the way to test
   *which content* SkyrimNet used: find text that exists in only one candidate file and search for it.

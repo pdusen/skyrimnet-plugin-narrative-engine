@@ -14,9 +14,9 @@
 // CharacterBioResolver — the profile SkyrimNet would render for an NPC,
 // worked out without asking SkyrimNet.
 //
-// SkyrimNet hands a profile out only through a UUID, and mints a UUID when
-// the player MEETS someone. Plots need profiles for people the player has
-// never met. The way round that is to do what SkyrimNet does, exactly, from
+// SkyrimNet hands a profile out only through a UUID, and has one only for
+// actors it has registered in this save. Plots need profiles for people it
+// has not registered. The way round that is to do what SkyrimNet does, exactly, from
 // the same inputs -- and the rules for that were decoded from its DLL:
 //
 //   docs/engine-findings/skyrimnet-bio-template-name-assignment.md

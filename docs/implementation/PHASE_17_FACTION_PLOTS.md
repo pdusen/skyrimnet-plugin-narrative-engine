@@ -14,11 +14,11 @@ ESP surface. Everything here is C++ plus prompts, observable from the log and th
 > remembered is being rebuilt by [Milestone 2](PHASE_17_MILESTONE_2_RIGID_STEPS.md), which replaces Step 18's
 > validation and Step 19's memory calls, and [Milestone 3](PHASE_17_MILESTONE_3_PLOT_MEMORIES.md) completes the
 > memories. [Milestone 4](PHASE_17_MILESTONE_4_PROFILE_RESOLUTION.md) makes the character profiles plots read the
-> ones SkyrimNet itself would render, for NPCs the player has not met. Steps 20–22 still apply after both. Step 9
-> replaced the settings table's
-> proposed numbers with figures from an offline harness, and Step 22 checks those against real play. Two
-> design-level questions (the conspicuousness split, and how a step gets caught) are still open in the design
-> doc and are deliberately built behind switches here rather than blocked on.
+> ones SkyrimNet itself would render, including for NPCs SkyrimNet has not registered. Steps 20–22 still apply
+> after both. Step 9 replaced the settings table's proposed numbers with figures from an offline harness, and
+> Step 22 checks those against real play. Two design-level questions (the conspicuousness split, and how a step
+> gets caught) are still open in the design doc and are deliberately built behind switches here rather than blocked
+> on.
 >
 > Every step is owned by either `[CLAUDE]` or `[USER]` and carries its own standalone verification; see
 > **How steps are verified** at the head of the implementation plan.

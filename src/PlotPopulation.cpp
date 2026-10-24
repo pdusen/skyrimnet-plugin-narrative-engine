@@ -28,11 +28,11 @@ namespace NarrativeEngine::PlotPopulation
         std::vector<PlotCasting::Office> g_recordedOffices;
         bool g_ready = false;
 
-        // --- The dead, for NPCs whose reference is not in memory ---------
+        // --- The dead, for NPCs whose reference does not resolve --------
         //
         // Base NPCs the engine counts at least one death of: TES's
-        // deadCount, the list GetDeadCount reads, which the save keeps
-        // whether or not the reference is loaded. Read on the main thread,
+        // deadCount, the list GetDeadCount reads, which is keyed by the base
+        // and needs no reference. Read on the main thread,
         // which is the one that appends to it, and published whole so the
         // plot worker reads a stable copy.
         std::atomic<std::shared_ptr<const std::unordered_set<RE::FormID>>> g_deadBases;
@@ -975,9 +975,9 @@ namespace NarrativeEngine::PlotPopulation
         }
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(participant->actorRef);
         if (actor == nullptr) {
-            // Not in memory: a non-persistent reference in a cell that is
-            // not loaded. Its life state is in the save, out of reach; the
-            // engine's per-base dead count is not.
+            // The reference does not resolve (why is not established; see
+            // the header), so its life state cannot be read. The engine's
+            // per-base dead count can.
             const auto dead = g_deadBases.load();
             return dead == nullptr || !dead->contains(npc);
         }
@@ -1013,8 +1013,8 @@ namespace NarrativeEngine::PlotPopulation
         // which is exactly the set of actors the player could plausibly
         // be watching. A distance check would be both more expensive and
         // less correct — an actor thirty feet away through a wall in an
-        // unloaded cell is not being watched. An actor not even in memory
-        // (above) is in such a cell.
+        // unloaded cell is not being watched. An actor whose reference does
+        // not resolve (above) has no 3D to ask about.
         //
         // A plain bool load once the pointer resolves, safe off the main
         // thread.
@@ -1040,9 +1040,9 @@ namespace NarrativeEngine::PlotPopulation
         }
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(participant->actorRef);
         if (actor == nullptr) {
-            // In an unloaded cell: not fighting, not following the player,
-            // and somewhere real. Only the unique test can be asked, of the
-            // base record, which is always loaded.
+            // The reference does not resolve, so the combat, follower and
+            // location checks cannot be asked. Only the unique test can, of
+            // the base record.
             const auto* base = RE::TESForm::LookupByID<RE::TESNPC>(npc);
             return base != nullptr && base->IsUnique();
         }
