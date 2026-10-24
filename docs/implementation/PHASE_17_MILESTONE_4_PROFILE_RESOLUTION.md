@@ -522,7 +522,19 @@ They also have no instance on the development install other than one pin to the 
 - **Still to see in game:** the next session's census line should show those 185 as computed names rather than
   `none`.
 
-**A finding beyond this milestone.** `PlotPopulation::IsAlive` makes the same assumption, reading
-`LookupByID<RE::Actor>` and answering false when it is null, and its comment says unique actors are always resident.
-They are not, so those 185 can be neither cast nor remembered while their cells are unloaded. That is plot casting's
-behaviour, not profile resolution's, and is left for the phase to decide.
+**The same assumption in casting, fixed in place.** `PlotPopulation::IsAlive` read `LookupByID<RE::Actor>` and
+answered false when it was null, on the stated grounds that unique actors are always resident. They are not, so those
+185 could be neither cast nor remembered while their cells were unloaded.
+
+- **`IsAlive`:** an NPC whose reference is not in memory is now judged by the engine's per-base dead count, `TES`'s
+  `deadCount`, the list `GetDeadCount` reads. The save keeps it with or without the reference, and the NPC counts as
+  alive unless it records a death. Whether such a reference is disabled cannot be known without it, so it is taken as
+  enabled.
+- **When the counts are read:** the main thread appends to that list, so it is read there and published as one
+  snapshot. `PlotPopulation::OnSessionStart` takes the first, and `PlotTick::Poll` takes another through
+  `MainThread::Run` before each batch of scheduled ticks. Forced ticks use the latest snapshot.
+- **`IsViableMastermind`:** for such an NPC it asks only the unique test, of the base record. An NPC in an unloaded
+  cell is not fighting, not following the player, and in a real place.
+- **`IsNearPlayer`:** keeps answering false for them, which is right.
+
+`GossipSim`'s availability check makes the same assumption, and is gossip's to decide.

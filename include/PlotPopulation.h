@@ -1,5 +1,6 @@
 #pragma once
 
+#include <MainThread.h>
 #include <PlotCasting.h>
 
 // PlotPopulation — the engine-bound half of casting.
@@ -55,11 +56,23 @@ namespace NarrativeEngine::PlotPopulation
     [[nodiscard]] const PlotCasting::Population& Get();
 
     // Alive-and-enabled check for one participant, safe off the main
-    // thread: unique NPCs' Actor objects are persistent and always
-    // resident, and only their 3D unloads, so this is a plain pointer
-    // and bool load. The same property gossip relies on for its own
-    // life checks.
+    // thread.
+    //
+    // A unique NPC's Actor is NOT always resident. A non-persistent
+    // reference exists in memory only while its cell is loaded: on the
+    // first in-game run of profile resolution, 185 of 808 members did
+    // not resolve. A loaded actor is judged by its life state and
+    // disabled flag. One that is not loaded is judged by the engine's
+    // per-base dead count, which the save keeps without the reference:
+    // alive unless the count says otherwise. Whether an unloaded
+    // reference is disabled is not knowable from here, so it is taken
+    // as enabled.
     [[nodiscard]] bool IsAlive(RE::FormID npc);
+
+    // Main thread. Re-reads the engine's per-base dead counts that
+    // IsAlive judges an unloaded NPC by. OnSessionStart takes the first
+    // reading; PlotTick takes another before every scheduled tick.
+    void RefreshDeadCounts(const MainThread::Token& mt);
 
     // Is this NPC's 3D loaded — i.e. could the player plausibly be
     // watching them right now?
@@ -68,13 +81,16 @@ namespace NarrativeEngine::PlotPopulation
     // distance check because it is both cheaper and more correct: an
     // actor thirty feet away through a wall in an unloaded cell is not
     // being watched. Safe off the main thread for the same reason
-    // IsAlive is.
+    // IsAlive is. An NPC whose reference is not even in memory is in an
+    // unloaded cell, so is never near.
     [[nodiscard]] bool IsNearPlayer(RE::FormID npc);
 
     // Alive, and in a state to START a scheme right now: unique, not
     // mid-fight, not trailing the player, and somewhere the world can
     // act on. The same four checks the visit beat makes before warping
-    // somebody in.
+    // somebody in. An NPC whose reference is not in memory is in an
+    // unloaded cell: not fighting, not following the player, and in a
+    // real place, so only the unique test applies, read off the base.
     //
     // MASTERMIND selection only. An agent is cast for a step that plays
     // out over in-world days, so their state this second says nothing

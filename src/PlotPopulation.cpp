@@ -8,9 +8,11 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <format>
 #include <limits>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -25,6 +27,28 @@ namespace NarrativeEngine::PlotPopulation
         // what every session starts from, and keeps where it cannot see.
         std::vector<PlotCasting::Office> g_recordedOffices;
         bool g_ready = false;
+
+        // --- The dead, for NPCs whose reference is not in memory ---------
+        //
+        // Base NPCs the engine counts at least one death of: TES's
+        // deadCount, the list GetDeadCount reads, which the save keeps
+        // whether or not the reference is loaded. Read on the main thread,
+        // which is the one that appends to it, and published whole so the
+        // plot worker reads a stable copy.
+        std::atomic<std::shared_ptr<const std::unordered_set<RE::FormID>>> g_deadBases;
+
+        void SnapshotDeadCounts()
+        {
+            auto dead = std::make_shared<std::unordered_set<RE::FormID>>();
+            if (auto* tes = RE::TES::GetSingleton(); tes != nullptr) {
+                for (const auto* entry : tes->GetRuntimeData2().deadCount) {
+                    if (entry != nullptr && entry->first != nullptr && entry->second > 0) {
+                        dead->insert(entry->first->GetFormID());
+                    }
+                }
+            }
+            g_deadBases.store(std::move(dead));
+        }
 
         // --- The road-distance table ------------------------------------
         //
@@ -894,6 +918,9 @@ namespace NarrativeEngine::PlotPopulation
 
     void OnSessionStart()
     {
+        // Before the readiness check: a save with no population still
+        // must not inherit the previous save's dead.
+        SnapshotDeadCounts();
         if (!g_ready) {
             return;
         }
@@ -935,6 +962,11 @@ namespace NarrativeEngine::PlotPopulation
         return g_population;
     }
 
+    void RefreshDeadCounts(const MainThread::Token&)
+    {
+        SnapshotDeadCounts();
+    }
+
     bool IsAlive(RE::FormID npc)
     {
         const auto* participant = GossipGraph::Find(npc);
@@ -943,7 +975,11 @@ namespace NarrativeEngine::PlotPopulation
         }
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(participant->actorRef);
         if (actor == nullptr) {
-            return false;
+            // Not in memory: a non-persistent reference in a cell that is
+            // not loaded. Its life state is in the save, out of reach; the
+            // engine's per-base dead count is not.
+            const auto dead = g_deadBases.load();
+            return dead == nullptr || !dead->contains(npc);
         }
         // AsActorState() rather than the inherited GetLifeState(): the
         // ActorState base sits at a different offset on AE than on SE,
@@ -977,11 +1013,11 @@ namespace NarrativeEngine::PlotPopulation
         // which is exactly the set of actors the player could plausibly
         // be watching. A distance check would be both more expensive and
         // less correct — an actor thirty feet away through a wall in an
-        // unloaded cell is not being watched.
+        // unloaded cell is not being watched. An actor not even in memory
+        // (above) is in such a cell.
         //
-        // Unique NPCs' Actor objects are persistent and always resident;
-        // only their 3D unloads. That is what makes this a plain bool
-        // load, safe off the main thread.
+        // A plain bool load once the pointer resolves, safe off the main
+        // thread.
         return actor->Is3DLoaded();
     }
 
@@ -1004,7 +1040,11 @@ namespace NarrativeEngine::PlotPopulation
         }
         auto* actor = RE::TESForm::LookupByID<RE::Actor>(participant->actorRef);
         if (actor == nullptr) {
-            return false;
+            // In an unloaded cell: not fighting, not following the player,
+            // and somewhere real. Only the unique test can be asked, of the
+            // base record, which is always loaded.
+            const auto* base = RE::TESForm::LookupByID<RE::TESNPC>(npc);
+            return base != nullptr && base->IsUnique();
         }
         if (auto* base = actor->GetActorBase(); base != nullptr && !base->IsUnique()) {
             return false;

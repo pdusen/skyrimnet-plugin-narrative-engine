@@ -4,6 +4,7 @@
 #include <DashboardUIManager.h>
 #include <EngineUtils.h>
 #include <logger.h>
+#include <MainThread.h>
 #include <PlotBirth.h>
 #include <PlotCandidates.h>
 #include <PlotCasting.h>
@@ -886,7 +887,7 @@ namespace NarrativeEngine::PlotTick
         PlotBirth::OnSessionStart();
     }
 
-    void Poll(const PluginThread::Token&)
+    void Poll(const PluginThread::Token& pt)
     {
         const auto& cfg = Settings::Get();
         if (!cfg.plotsEnabled) {
@@ -928,6 +929,15 @@ namespace NarrativeEngine::PlotTick
         if (decision.skipped > 0) {
             logger::warn("PlotTick: outstanding cap reached; advancing schedule past {} tick(s) without running them",
                          decision.skipped);
+        }
+        if (!decision.stamps.empty()) {
+            // Who has died since the last tick, for the NPCs whose
+            // references are not in memory: the worker cannot ask the
+            // main thread itself, so it is asked here, once per batch.
+            static_cast<void>(MainThread::Run(pt, [](const MainThread::Token& mt) {
+                PlotPopulation::RefreshDeadCounts(mt);
+                return true;
+            }));
         }
         for (const double stamp : decision.stamps) {
             Enqueue(stamp + g_forcedAheadGameHours);
