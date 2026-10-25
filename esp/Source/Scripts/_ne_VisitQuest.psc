@@ -134,6 +134,28 @@ Function RunSenderSilentSceneEvent(String content)
 EndFunction
 
 ; -----------------------------------------------------------------
+; Walk-out trampoline
+; -----------------------------------------------------------------
+;
+; Records, silently, that the player left in the middle of the
+; conversation: the player is the originator and the sender the
+; target, so the walk-out lands in the sender's history. Used when the
+; player fast-travels away mid-visit.
+;
+; Takes the sender's FormID rather than reading the Sender alias,
+; because C++ dispatches the Stage 200 shutdown straight after this
+; call and Reset() empties the alias.
+Function RecordPlayerLeftAbruptly(int aiSenderFormID, String content)
+    Actor senderActor = Game.GetFormEx(aiSenderFormID) as Actor
+    if senderActor == None
+        Debug.Trace("[_ne_VisitQuest] RecordPlayerLeftAbruptly: form " + aiSenderFormID + " is not an Actor")
+        return
+    endIf
+    int result = SkyrimNetApi.RegisterPersistentEvent(content, Game.GetPlayer(), senderActor)
+    Debug.Trace("[_ne_VisitQuest] RecordPlayerLeftAbruptly: RegisterPersistentEvent returned " + result)
+EndFunction
+
+; -----------------------------------------------------------------
 ; Shutdown — terminal teardown
 ; -----------------------------------------------------------------
 ;

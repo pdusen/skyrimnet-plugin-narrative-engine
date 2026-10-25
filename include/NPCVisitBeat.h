@@ -46,6 +46,8 @@
 //               Stage 30 (Valediction)— closing narration + dwell
 //               Stage 50 (ReturnHome) — distance / LOS / cell / timeout
 //               Stage 60 / 200        — terminal → CLEANUP
+//             A fast travel rolls the visit back before the opening line,
+//             and after it records the walk-out silently and aborts.
 //   CLEANUP — send the sender home if alive (to the return anchor, or
 //             to the snapshotted position when there is none), dispatch
 //             the Shutdown fragment, wait for the quest to drop to
@@ -90,6 +92,13 @@ namespace NarrativeEngine
         // Production never calls this and the pointer stays null there,
         // so the only cost on the real path is one atomic load per Tick.
         void SetClock(double (*clock)());
+
+        // Run what the fast-travel sink runs when the player arrives.
+        //
+        // The sink is registered on an event source the harness cannot
+        // fire, so this is the only way a test reaches the handler. It is
+        // the same call the sink makes, on the same thread.
+        void FastTravel(const MainThread::Token& mt);
     } // namespace NPCVisitBeat_Testing
 
     namespace NPCVisitBeat_Query

@@ -285,6 +285,11 @@ namespace NarrativeEngine
         // they have moved. 0 until the first look of a visit.
         std::atomic<RE::FormID> g_lastPlayerCellFormID = 0;
 
+        // True from OnStart until the beat is back at NOT_RUNNING. The event
+        // sinks fire whether or not anybody is visiting, and this is how
+        // they tell.
+        std::atomic<bool> g_visitInFlight = false;
+
         // Why the visit has to be rolled back, held until the beat reaches
         // a point where that can be done cleanly: before the sender has
         // been moved, or once RUNNING can send them home. A string literal,
@@ -629,6 +634,97 @@ namespace NarrativeEngine
         };
 
         VisitDeathSink g_deathSink;
+
+        void RunReturnHomeShutdown(const char* triggerReason);
+        void RequestRollback(const char* reason);
+
+        // Leave a note in the sender's history that the player walked out
+        // on them. Silent -- RegisterPersistentEvent, not DirectNarration --
+        // because there is nobody left to say anything to.
+        //
+        // The sender goes to Papyrus as a FormID rather than through the
+        // alias, because the shutdown dispatched right after this one
+        // empties the alias and the two calls race in the VM.
+        void RecordPlayerLeftAbruptly()
+        {
+            const auto snap = VisitState::GetSnapshot();
+            std::string senderName;
+            if (auto* form = RE::TESForm::LookupByID(snap.senderFormID)) {
+                if (auto* actor = form->As<RE::Actor>()) {
+                    if (const auto* n = actor->GetName())
+                        senderName = n;
+                }
+            }
+            if (senderName.empty())
+                senderName = "their visitor";
+            std::string playerName;
+            if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+                if (const auto* n = player->GetName())
+                    playerName = n;
+            }
+            if (playerName.empty())
+                playerName = "The player";
+            const std::string content =
+                playerName + " left abruptly, in the middle of their conversation with " + senderName + ".";
+            logger::info("NPCVisitBeat[FAST-TRAVEL]: recording the walk-out silently ({} chars)", content.size());
+            QuestUtils::VMDispatchOnQuest(g_visitQuest,
+                                          kQuestScriptName,
+                                          "RecordPlayerLeftAbruptly",
+                                          static_cast<std::int32_t>(snap.senderFormID),
+                                          RE::BSFixedString(content.c_str()));
+        }
+
+        // The player fast-travelled. Runs on the main thread.
+        //
+        // Before the opening line the player has not met the visitor, so
+        // the visit is undone as though it never happened. After it they
+        // have, and simply vanishing is something the visitor would notice:
+        // the walk-out goes into the sender's history and the visit ends
+        // the way any other interrupted one does.
+        //
+        // Once the closing line has been said there is no conversation left
+        // to walk out of, so the visit is finished as it would have been
+        // anyway, only sooner.
+        void OnPlayerFastTraveled()
+        {
+            if (!g_visitInFlight.load(std::memory_order_acquire) || g_hardAbortFired.load()
+                || g_terminalCleanupDone.load()) {
+                return;
+            }
+            if (!g_salutationNarrationFired.load(std::memory_order_acquire)) {
+                RequestRollback("player_fast_traveled");
+                return;
+            }
+            if (!g_visitQuest) {
+                return;
+            }
+            switch (g_visitQuest->GetCurrentStageID()) {
+            case kStageSalutation: // the opening line is out; the stage change is still landing
+            case kStageDiscuss:
+                logger::warn("NPCVisitBeat[FAST-TRAVEL]: the player left mid-conversation");
+                RecordPlayerLeftAbruptly();
+                HardAbortVisit("player_fast_traveled");
+                return;
+            case kStageValediction:
+            case kStageReturnHome:
+                RunReturnHomeShutdown("fast-travel");
+                return;
+            default:
+                return;
+            }
+        }
+
+        struct VisitFastTravelSink : public RE::BSTEventSink<RE::TESFastTravelEndEvent>
+        {
+            RE::BSEventNotifyControl ProcessEvent(const RE::TESFastTravelEndEvent*,
+                                                  RE::BSTEventSource<RE::TESFastTravelEndEvent>*) override
+            {
+                OnPlayerFastTraveled();
+                return RE::BSEventNotifyControl::kContinue;
+            }
+        };
+
+        VisitFastTravelSink g_fastTravelSink;
         std::atomic<bool> g_sinksRegistered = false;
 
         void RegisterSinks()
@@ -641,6 +737,10 @@ namespace NarrativeEngine
             } else {
                 logger::warn("NPCVisitBeat: ScriptEventSourceHolder unavailable — "
                              "death sink NOT registered");
+            }
+            // False on VR, which has no fast travel to watch for.
+            if (EngineUtils::AddFastTravelEndSink(&g_fastTravelSink)) {
+                logger::info("NPCVisitBeat: fast-travel sink registered");
             }
         }
 
@@ -2205,6 +2305,7 @@ namespace NarrativeEngine
         ResetSessionState();
         VisitState::Reset();
         VisitState::SetComposingSender(true);
+        g_visitInFlight.store(true, std::memory_order_release);
         if (!senderParsed) {
             g_subPhase.Fail(ComposeSubPhase::Failed, std::move(failureReason));
         } else {
@@ -2348,6 +2449,7 @@ namespace NarrativeEngine
                     logger::info("NPCVisitBeat: CLEANUP done; returning to NOT_RUNNING");
                     VisitState::Reset();
                     VisitState::SetComposingSender(false);
+                    g_visitInFlight.store(false, std::memory_order_release);
                     return {BeatState::NOT_RUNNING};
                 }
                 // If we haven't yet dispatched a terminal stage
@@ -2361,6 +2463,7 @@ namespace NarrativeEngine
             } else {
                 VisitState::Reset();
                 VisitState::SetComposingSender(false);
+                g_visitInFlight.store(false, std::memory_order_release);
                 return {BeatState::NOT_RUNNING};
             }
             return {};
@@ -2389,6 +2492,7 @@ namespace NarrativeEngine
         HardAbortVisit("user_abort");
         VisitState::Reset();
         VisitState::SetComposingSender(false);
+        g_visitInFlight.store(false, std::memory_order_release);
     }
 
     // ---------------------------------------------------------------
@@ -2400,6 +2504,11 @@ namespace NarrativeEngine
         void SetClock(double (*clock)())
         {
             g_clockOverride.store(clock, std::memory_order_release);
+        }
+
+        void FastTravel(const MainThread::Token&)
+        {
+            OnPlayerFastTraveled();
         }
     } // namespace NPCVisitBeat_Testing
 

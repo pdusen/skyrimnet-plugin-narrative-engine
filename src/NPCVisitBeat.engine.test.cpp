@@ -471,6 +471,25 @@ namespace
         });
     }
 
+    void FastTravelFromMainThread()
+    {
+        PluginThread::detail::JobDispatcher::Invoke([](const PluginThread::Token& pt) {
+            NarrativeEngine::MainThread::Run(pt, [](const NarrativeEngine::MainThread::Token& mt) {
+                NarrativeEngine::NPCVisitBeat_Testing::FastTravel(mt);
+            });
+        });
+    }
+
+    // Where in the dispatch log a method was first sent, or -1.
+    int DispatchIndex(const EngineMock& engine, const std::string& method)
+    {
+        for (std::size_t i = 0; i < engine.papyrus.dispatches.size(); ++i) {
+            if (engine.papyrus.dispatches[i].methodName == method)
+                return static_cast<int>(i);
+        }
+        return -1;
+    }
+
     bool DispatchedMethod(const EngineMock& engine, const std::string& method)
     {
         for (const auto& sent : engine.papyrus.dispatches) {
@@ -1244,7 +1263,7 @@ TEST_CASE("NPCVisitBeat calls off a visit the player has walked away from", "[NP
             {
                 const auto history = VisitState::GetHistory();
                 REQUIRE_FALSE(history.empty());
-                REQUIRE(history.front().outcome == VisitState::Outcome::RolledBack);
+                REQUIRE(history.back().outcome == VisitState::Outcome::RolledBack);
             }
 
             SECTION("should leave both cooldowns unstamped")
@@ -1323,6 +1342,176 @@ TEST_CASE("NPCVisitBeat calls off a visit the player has walked away from", "[NP
             REQUIRE(RunCompose(beat) == BeatState::CLEANUP);
             REQUIRE(engine.questControl.teleports.empty());
         }
+    }
+}
+
+TEST_CASE("NPCVisitBeat ends a visit the player fast-travels away from", "[NPCVisitBeat][engine]")
+{
+    // Fast travel is the player leaving, and nobody follows them. Before the
+    // visitor has spoken the visit is undone as if it never happened; after,
+    // the visitor knows they were walked out on.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    PrimeModel();
+    const auto world = BuildWorld(engine);
+    Init::Initialize();
+    const RunningDispatch dispatch;
+    NPCVisitBeat beat;
+    FillAliases(engine, world);
+    engine.calendar.hoursPassed = 100.0f;
+    PlaceSenderAway(engine, world.sender, 3000.0f);
+    const auto clearDispatches = [&] {
+        engine.papyrus.dispatches.clear();
+        engine.papyrus.packedInts.clear();
+        engine.papyrus.packedStrings.clear();
+        engine.questControl.teleports.clear();
+    };
+
+    SECTION("when the visitor is still on the road")
+    {
+        beat.OnStart(BeatContext{}, SenderParams());
+        REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageSalutation);
+        clearDispatches();
+        FastTravelFromMainThread();
+        StageTick(beat);
+
+        SECTION("should send the visitor back where they came from")
+        {
+            REQUIRE_FALSE(engine.questControl.teleports.empty());
+            REQUIRE(engine.questControl.teleports.back().moverFormID == kSender);
+            REQUIRE(engine.questControl.teleports.back().destinationFormID == kReturnAnchor);
+        }
+
+        SECTION("should roll the quest back")
+        {
+            REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+        }
+
+        SECTION("should leave no trace in the visitor's history")
+        {
+            // The player never met them, so there is nothing to have walked
+            // out on.
+            REQUIRE_FALSE(DispatchedMethod(engine, "RecordPlayerLeftAbruptly"));
+            REQUIRE_FALSE(DispatchedMethod(engine, "RunSenderNarration"));
+        }
+
+        SECTION("should record the visit as rolled back")
+        {
+            const auto history = VisitState::GetHistory();
+            REQUIRE_FALSE(history.empty());
+            REQUIRE(history.back().outcome == VisitState::Outcome::RolledBack);
+            REQUIRE_FALSE(Cooldowns::IsSenderOnCooldown(kSender));
+        }
+    }
+
+    SECTION("when the visitor has not set out yet")
+    {
+        beat.OnStart(BeatContext{}, SenderParams());
+        Tick(beat, BeatState::COMPOSE);
+        FastTravelFromMainThread();
+
+        SECTION("should give up without moving anybody")
+        {
+            REQUIRE(RunCompose(beat) == BeatState::CLEANUP);
+            REQUIRE(engine.questControl.teleports.empty());
+        }
+    }
+
+    SECTION("when the player leaves in the middle of the conversation")
+    {
+        beat.OnStart(BeatContext{}, SenderParams());
+        REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageSalutation);
+        PlaceSenderAway(engine, world.sender, 100.0f);
+        StageTick(beat);
+        REQUIRE(DispatchedMethod(engine, "RunSenderNarration"));
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageDiscuss);
+        clearDispatches();
+        FastTravelFromMainThread();
+
+        SECTION("should record the walk-out against the visitor, silently")
+        {
+            REQUIRE(DispatchedMethod(engine, "RecordPlayerLeftAbruptly"));
+            REQUIRE_FALSE(DispatchedMethod(engine, "RunSenderNarration"));
+            REQUIRE_FALSE(engine.papyrus.packedStrings.empty());
+            REQUIRE(engine.papyrus.packedStrings.front().find("left abruptly") != std::string::npos);
+            REQUIRE(engine.papyrus.packedStrings.front().find("Ysolda") != std::string::npos);
+            REQUIRE_FALSE(engine.papyrus.packedInts.empty());
+            REQUIRE(engine.papyrus.packedInts.front() == static_cast<std::int32_t>(kSender));
+        }
+
+        SECTION("should record it before the quest shuts down")
+        {
+            // The shutdown empties the alias, which is why the trampoline is
+            // handed the visitor's id; the order is the other half of that.
+            const auto recorded = DispatchIndex(engine, "RecordPlayerLeftAbruptly");
+            const auto shutdown = DispatchIndex(engine, "SetStage");
+            REQUIRE(recorded >= 0);
+            REQUIRE(shutdown > recorded);
+            REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageShutdown)));
+        }
+
+        SECTION("should send the visitor home")
+        {
+            REQUIRE_FALSE(engine.questControl.teleports.empty());
+            REQUIRE(engine.questControl.teleports.back().destinationFormID == kReturnAnchor);
+        }
+
+        SECTION("should record the visit as aborted")
+        {
+            const auto history = VisitState::GetHistory();
+            REQUIRE_FALSE(history.empty());
+            REQUIRE(history.back().outcome == VisitState::Outcome::Aborted);
+        }
+
+        SECTION("should hand the beat to cleanup")
+        {
+            REQUIRE(Tick(beat, BeatState::RUNNING).transitionTo == BeatState::CLEANUP);
+        }
+    }
+
+    SECTION("when the visitor has already said goodbye")
+    {
+        beat.OnStart(BeatContext{}, SenderParams());
+        REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageSalutation);
+        PlaceSenderAway(engine, world.sender, 100.0f);
+        StageTick(beat);
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageValediction);
+        clearDispatches();
+        FastTravelFromMainThread();
+
+        SECTION("should finish the visit as it would have finished anyway")
+        {
+            // There is no conversation left to walk out of.
+            REQUIRE_FALSE(DispatchedMethod(engine, "RecordPlayerLeftAbruptly"));
+            REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageShutdown)));
+            const auto history = VisitState::GetHistory();
+            REQUIRE_FALSE(history.empty());
+            REQUIRE(history.back().outcome == VisitState::Outcome::Completed);
+        }
+    }
+}
+
+TEST_CASE("NPCVisitBeat ignores a fast travel when nobody is visiting", "[NPCVisitBeat][engine]")
+{
+    // The sink is registered for the whole session and fires on every fast
+    // travel, visit or no visit. Its own process under ctest, because which
+    // visit last ran is state the module keeps.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    (void)BuildWorld(engine);
+    Init::Initialize();
+    engine.courier.questStage = 0;
+    FastTravelFromMainThread();
+
+    SECTION("should do nothing at all")
+    {
+        REQUIRE(engine.papyrus.dispatches.empty());
+        REQUIRE(engine.questControl.teleports.empty());
     }
 }
 
