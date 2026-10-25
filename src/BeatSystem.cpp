@@ -797,7 +797,6 @@ namespace NarrativeEngine::BeatSystem
                     continue;
                 nlohmann::json cj = {
                     {"name", b->Name()},
-                    {"description", b->Description()},
                     {"letter_sender_candidates",
                      (b->Name() == "npc_letter") ? serializedLetterCandidates : nlohmann::json::array()},
                     {"visit_sender_candidates",

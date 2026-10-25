@@ -116,10 +116,10 @@ namespace NarrativeEngine
         // never changes for a given beat class.
         virtual std::string Name() const = 0;
 
-        // One-paragraph description read by the beat-select prompt so
-        // the LLM understands what each candidate does and when it's
-        // appropriate.
-        virtual std::string Description() const = 0;
+        // What the beat-select prompt says of it -- what it does and when it
+        // fits -- is not here: it is the prompt file
+        // components/narrative_engine/beats/<Name()>.prompt, so it can be
+        // edited without a rebuild and can use SkyrimNet's own decorators.
 
         virtual BeatPolarity Polarity() const = 0;
 

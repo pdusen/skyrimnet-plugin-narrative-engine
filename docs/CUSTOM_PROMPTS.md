@@ -110,14 +110,25 @@ output — semantic search queries, memory text we write via
 string is going to end up in front of either an LLM or the player, the
 player's actual name belongs there, not a generic title.
 
-The one place this rule doesn't apply is action / module descriptions
-written as C++ string constants (e.g. `IAction::Description`) that get
-embedded into a prompt as a raw JSON value. Inja doesn't re-render
-nested template syntax inside string values by default, so
-`{{ player.name }}` written inside a C++ literal would print
-literally as those characters. In those cases, use neutral phrasing
-("the player", "the player character") and let SkyrimNet-rendered
-context elsewhere in the prompt carry the actual name.
+The one place this rule doesn't apply is text written as a C++ string
+constant and embedded into a prompt as a raw JSON value. Inja doesn't
+re-render nested template syntax inside string values by default, so
+`{{ player.name }}` written inside a C++ literal would print literally
+as those characters. In those cases, use neutral phrasing ("the player",
+"the player character") and let SkyrimNet-rendered context elsewhere in
+the prompt carry the actual name.
+
+Beat descriptions used to be such constants (`IBeat::Description`). Since
+Phase 18 they are prompt files of their own,
+`prompts/components/narrative_engine/beats/<beat id>.prompt`, which
+`narrative_engine_action_select` renders by name, so the rule applies to
+them like any other prompt. They still say "the player" only because the
+move kept their words unchanged.
+
+A file rendered through `render_template` keeps its trailing newline in
+the output, which Inja's `{%-` does not remove (it strips only the spaces
+on its own line). Plan for one blank line after an included file rather
+than fighting the template engine for it.
 
 Where to source the name from C++ when you need it in a search query
 or memory write: `RE::PlayerCharacter::GetSingleton()->GetDisplayFullName()`,

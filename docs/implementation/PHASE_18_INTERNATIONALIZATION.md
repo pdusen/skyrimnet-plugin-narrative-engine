@@ -1154,7 +1154,7 @@ is the "identical with no overrides" half of the verification.
 
 #### Step 10 — Beat descriptions as prompt files
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1170,6 +1170,38 @@ is the "identical with no overrides" half of the verification.
 **Verification:** offline render comparison of `action_select` over each beat as the sole candidate and all three
 together. The only allowed difference is "the player" → the player-name marker, and each occurrence is listed in the
 write-up.
+
+Done. The three descriptions are `prompts/components/narrative_engine/beats/ambush.prompt`, `npc_letter.prompt` and
+`npc_visit.prompt`, each holding exactly the text `Description()` returned. `action_select` renders each through
+`render_template` on the candidate's name, guarded by `prompt_file_exists`. `Description()` is gone from `IBeat`,
+from the three beats and from the three test fakes, and `BeatSystem` no longer sends a description. The three engine
+tests that checked a description names the parameters its beat reads now read the beat's prompt file, through a new
+`testsupport` `ShippedPrompt`.
+
+**The offline harness, built for this step and reused by the rest of Phase C.** It lives in the scratchpad, is
+rebuilt per session, and is never committed. It is a vcpkg-manifest CMake project with `inja` and `nlohmann-json`,
+plus `harness.cpp`, which renders one template against a context and a stubs file. vcpkg's baseline gives **Inja
+3.5.0**, not the 3.4 the plan named; `CUSTOM_PROMPTS.md` already records renders agreeing across 3.3–3.5. Building it
+surfaced one setting the harness must match: Inja treats a line opening with `##` as a statement by default, and every
+Markdown heading in our prompts opens that way, so line statements are switched off.
+
+**The comparison.** `BuildBeatSelectPromptContext` sits in an anonymous namespace, so no probe could call it. As the
+plan allows, the contexts were hand-built: four of them (each beat alone, and all three), with sender candidates,
+memories, attacker groups, recent events and the player context. They carry the real `Name()` and `Description()`
+strings, which a throwaway probe constructed the three beats to dump. The "before" side rendered the prompt tree
+snapshotted before the change, with descriptions in the context. The "after" side rendered the working tree without
+them. **Every rendering is identical except for one added newline per description**, and that is the one named
+whitespace difference. A file rendered through `render_template` keeps its trailing newline, and Inja's `{%-` strips
+only the spaces on its own line, not the newline before it; a test against the harness showed exactly that. Each
+description was already followed by three to five blank lines, so a model sees no difference. `CUSTOM_PROMPTS.md`
+now records the behaviour.
+
+**What was not done, and why.** The plan allowed the descriptions to say `{{ player.name }}` where they say "the
+player". They keep their words, so that this step's comparison stays exact; `CUSTOM_PROMPTS.md` notes that the old
+exception no longer applies to them. The plan's `[Dashboard.Beat]` caption was not needed: the dashboard never showed
+beat descriptions, and only the beat-select context read them.
+
+`pwsh -File build.ps1 test`: 555 of 555 passed. The three prompt files deploy with the build.
 
 #### Step 11 — The event timeline as structured events
 

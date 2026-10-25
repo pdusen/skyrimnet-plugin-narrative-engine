@@ -17,6 +17,15 @@ namespace NarrativeEngine::Testing
         return std::string{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
     }
 
+    std::string ShippedPrompt(std::string_view path)
+    {
+        const auto file = std::filesystem::path{NARRATIVEENGINE_STATICS_DIR}
+                          / "SKSE/Plugins/SkyrimNet/external/pdusen.narrative-engine/prompts"
+                          / (std::string{path} + ".prompt");
+        std::ifstream in(file, std::ios::binary);
+        return std::string{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    }
+
     const LanguageTable::Table& ShippedEnglish()
     {
         static const std::string text = ShippedLanguageFile("english");

@@ -7,6 +7,10 @@
    Individual candidates may carry their own action-specific context
    (e.g. npc_letter carries a letter_sender_candidates list).
 
+   Each candidate's description is its own prompt file,
+   components/narrative_engine/beats/<name>.prompt, named by the beat's
+   id. A beat with no such file is listed without one.
+
    Template style: every {% ... %} scope tag lives on its own line and
    is indented by its nesting depth so open/close tags line up visually.
    `{%- ... -%}` whitespace-trim markers strip the template's own
@@ -75,7 +79,7 @@ before or after the object.
 {% for cand in candidates -%}
 ### {{ cand.name }}
 
-{{ cand.description }}
+{% if prompt_file_exists("components\\narrative_engine\\beats\\" + cand.name) %}{{ render_template("components\\narrative_engine\\beats\\" + cand.name) }}{% endif %}
 
     {%- if length(cand.letter_sender_candidates) > 0 %}
 #### Available letter senders

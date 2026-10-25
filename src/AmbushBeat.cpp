@@ -1248,41 +1248,6 @@ namespace NarrativeEngine
         return BeatPolarity::Raise;
     }
 
-    std::string AmbushBeat::Description() const
-    {
-        return "A group of hostile NPCs ambushes the player in the open world. They appear out of sight "
-               "at a distance, close on the player on foot with weapons drawn, and turn hostile at short "
-               "range, resolving into ordinary combat.\n"
-               "\n"
-               "Fits when the story wants sudden physical danger: tension has been building with no "
-               "outlet, the player is travelling through open country, or someone they have wronged has "
-               "had time to send people. Works best when the chosen group has a specific reason to want "
-               "this player in particular.\n"
-               "\n"
-               "Does NOT fit when the player is somewhere an ambush reads as absurd (a city, an inn, a "
-               "guarded camp), when they are already in a fight, or when the scene calls for reflection "
-               "rather than escalation. This beat only ever raises tension; it cannot resolve anything.\n"
-               "\n"
-               "Parameters:\n"
-               "  attacker_group (REQUIRED, string) — MUST be one of the `id` values listed in this "
-               "candidate's ambush_attacker_candidates. Do not invent an id, do not use a display name, "
-               "and do not reuse an id from a previous turn: the list is recomputed from current game "
-               "state every time, and an id that is not on it right now will be rejected.\n"
-               "  attacker_count (REQUIRED, integer) — how many attackers appear. Clamped to the "
-               "configured range. Larger groups read as an organized operation; two or three read as "
-               "opportunists.\n"
-               "  narration_prose (REQUIRED, string) — one to three sentences of in-world prose stating WHO "
-               "is attacking and WHAT their motivation is. Refer to the player by the name given under "
-               "'Where the player is', exactly as that section instructs — never as 'the "
-               "player', and never by an epithet such as 'the intruder' or 'the outsider'. Written as "
-               "narration, not as an explanation of your choice: describe the attackers and their grievance "
-               "the way a chronicler would. It is recorded in the world's event log the moment the fight "
-               "begins, so it must read as a statement of what is happening rather than as commentary "
-               "about the decision. It MUST NOT contain dialogue of any kind: no quoted speech, no line "
-               "attributed to anyone, and no narrated or paraphrased speech either. Leave out what is "
-               "said entirely — the attackers do their own talking once the fight starts.";
-    }
-
     double AmbushBeat::RemainingCooldownGameHours() const
     {
         const auto& cfg = Settings::Get();

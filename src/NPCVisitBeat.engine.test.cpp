@@ -1,5 +1,7 @@
 #include <NPCVisitBeat.h>
 
+#include <ShippedLanguage.h>
+
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
 #include <FakeSkyrimNet.h>
@@ -548,8 +550,12 @@ TEST_CASE("NPCVisitBeat says what it is", "[NPCVisitBeat][engine]")
         // The description IS the prompt the picker reads, and the letter beat
         // covers the same ground. Without the comparison the two read as
         // interchangeable and the Director picks by coin toss.
-        REQUIRE(beat.Description().find("npc_letter") != std::string::npos);
-        REQUIRE(beat.Description().find("urgency_hint") != std::string::npos);
+        REQUIRE(NarrativeEngine::Testing::ShippedPrompt("components/narrative_engine/beats/" + beat.Name())
+                    .find("npc_letter")
+                != std::string::npos);
+        REQUIRE(NarrativeEngine::Testing::ShippedPrompt("components/narrative_engine/beats/" + beat.Name())
+                    .find("urgency_hint")
+                != std::string::npos);
     }
 }
 

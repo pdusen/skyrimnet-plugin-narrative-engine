@@ -536,45 +536,6 @@ namespace NarrativeEngine
         return "npc_letter";
     }
 
-    std::string NPCLetterBeat::Description() const
-    {
-        return "An NPC who knows the player character — chosen by you at "
-               "action-select time from the letter sender candidates listed "
-               "below — sends a personal letter via the vanilla courier "
-               "system. Tone and polarity are driven by the generated "
-               "content: warm thank-yous, mournful condolences, businesslike "
-               "follow-ups, and urgent or menacing demands are all in scope, so "
-               "this beat can serve either a raising or lowering direction "
-               "depending on what the situation calls for. The courier reaches "
-               "the player anywhere a vanilla courier can — exteriors, "
-               "settlements, inns, player homes — so this is a good catch-all "
-               "for non-dangerous space. Avoid when the player is in a "
-               "dungeon, lair, or other hostile area (the courier can't get "
-               "there anyway, and a letter beat doesn't fit those moments).\n"
-               "\n"
-               "Parameters:\n"
-               "  - `sender_npc_form_id` (REQUIRED, string): hex FormID of "
-               "ONE entry from the `letter_sender_candidates` list at the "
-               "end of this prompt (e.g. `\"0xA2C8E\"`). Pick the NPC "
-               "whose recent memories about the player best carry the tone "
-               "this moment needs. If this field is missing, unparseable, "
-               "or names a form outside the candidate list, the beat "
-               "fails to start.\n"
-               "  - `motivating_memory` (REQUIRED, integer): the number of "
-               "the ONE memory in that sender's list that gives them their "
-               "reason to write now. The letter is built from that memory, "
-               "so pick the one that carries the topic you intend.\n"
-               "  - `urgency_hint` (optional, string): `low` / `medium` / "
-               "`high`. Defaults to `medium`. One input among several to "
-               "the letter-writing prompt — not a hard directive.\n"
-               "\n"
-               "Do NOT include any other parameter fields — letter body, "
-               "tone, mood, and recipient are all decided by the "
-               "beat's own internal letter-writing pipeline, which "
-               "embodies the sender you chose. Extra fields will be "
-               "silently ignored.";
-    }
-
     BeatPolarity NPCLetterBeat::Polarity() const
     {
         return BeatPolarity::Either;
