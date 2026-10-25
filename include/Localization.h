@@ -63,6 +63,12 @@ namespace NarrativeEngine::Localization
     // after Settings::Load and before anything renders text.
     void Load();
 
+    // Make `session` and `english` the tables every reader sees. Load does
+    // this once, from the files it chose. The mocked-engine tests do it at
+    // start-up with the shipped English, so production code under test
+    // renders real text without a game; nothing else should.
+    void Publish(LanguageTable::Table session, LanguageTable::Table english, FontCheck fonts = {});
+
     // The session's table. Before Load it is empty, and every key renders
     // empty. Immutable once published, so any thread may read it without a
     // lock.

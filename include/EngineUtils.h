@@ -1,6 +1,7 @@
 #pragma once
 
 #include <MainThread.h>
+#include <TextTemplate.h>
 
 namespace RE
 {
@@ -66,6 +67,12 @@ namespace NarrativeEngine::EngineUtils
     // checks on the gossip, plot and beat workers that hold no token to
     // pass, and both reads are safe off the main thread.
     bool IsGhostRecord(const RE::TESNPC* npc);
+
+    // A person's sex off their base record, for language-file templates that
+    // agree with it. Record data, so safe from any thread; Other when there
+    // is no record.
+    [[nodiscard]] TextTemplate::Sex SexOf(const RE::TESNPC* npc);
+    [[nodiscard]] TextTemplate::Sex SexOf(RE::FormID npc);
 
     // Whether a live actor is a ghost right now: its base record by the
     // rule above, or the reference's own ghost state, which a script can

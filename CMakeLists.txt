@@ -91,6 +91,7 @@ set(NARRATIVEENGINE_CORE_SOURCES
     "${CMAKE_SOURCE_DIR}/src/LanguageTable.cpp"
     "${CMAKE_SOURCE_DIR}/src/LLMTextSanitizer.cpp"
     "${CMAKE_SOURCE_DIR}/src/LocalizationRules.cpp"
+    "${CMAKE_SOURCE_DIR}/src/NarrativeText.cpp"
     "${CMAKE_SOURCE_DIR}/src/SenderCooldownTable.cpp"
     "${CMAKE_SOURCE_DIR}/src/SkyrimNetEvents.cpp"
     "${CMAKE_SOURCE_DIR}/src/TextKeys.cpp"

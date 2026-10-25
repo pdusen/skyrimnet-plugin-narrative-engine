@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace NarrativeEngine::Localization
@@ -125,15 +126,16 @@ namespace NarrativeEngine::Localization
         const auto overlay = ReadFile(folder / (resolution.stem + std::string{kOverlaySuffix}));
 
         const auto& keys = TextKeys::All();
-        g_english.emplace(LanguageTable::Table::Build({englishText, std::nullopt, std::nullopt}, keys));
-        g_session.emplace(
+        auto englishTable = LanguageTable::Table::Build({englishText, std::nullopt, std::nullopt}, keys);
+        auto sessionTable =
             LanguageTable::Table::Build({englishText,
                                          shipped ? std::optional<std::string_view>{*shipped} : std::nullopt,
                                          overlay ? std::optional<std::string_view>{*overlay} : std::nullopt},
-                                        keys));
-        LogCensus(*g_session, resolution.stem);
+                                        keys);
+        LogCensus(sessionTable, resolution.stem);
 
-        g_fonts = FontsCover(fontConfig, g_session->GetHeader().fonts);
+        auto fonts = FontsCover(fontConfig, sessionTable.GetHeader().fonts);
+        Publish(std::move(sessionTable), std::move(englishTable), std::move(fonts));
         switch (g_fonts.verdict) {
         case FontVerdict::Covered:
             logger::info(
@@ -159,7 +161,13 @@ namespace NarrativeEngine::Localization
                 g_session->GetHeader().name);
             break;
         }
+    }
 
+    void Publish(LanguageTable::Table session, LanguageTable::Table english, FontCheck fonts)
+    {
+        g_english.emplace(std::move(english));
+        g_session.emplace(std::move(session));
+        g_fonts = std::move(fonts);
         g_englishPtr.store(&*g_english, std::memory_order_release);
         g_sessionPtr.store(&*g_session, std::memory_order_release);
     }

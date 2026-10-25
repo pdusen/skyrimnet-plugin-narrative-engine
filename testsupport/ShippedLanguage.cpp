@@ -1,5 +1,6 @@
 #include "ShippedLanguage.h"
 
+#include <Localization.h>
 #include <TextKeys.h>
 
 #include <filesystem>
@@ -22,4 +23,16 @@ namespace NarrativeEngine::Testing
         static const auto table = LanguageTable::Table::Build({text, std::nullopt, std::nullopt}, TextKeys::All());
         return table;
     }
+
+    namespace
+    {
+        // Production code renders through Localization::Get(), which is empty
+        // until Load runs, and Load never runs in a test. So before any test
+        // starts, the session and English tables are the shipped English: what
+        // an English-language game would have.
+        [[maybe_unused]] const bool g_installed = [] {
+            Localization::Publish(ShippedEnglish(), ShippedEnglish());
+            return true;
+        }();
+    } // namespace
 } // namespace NarrativeEngine::Testing

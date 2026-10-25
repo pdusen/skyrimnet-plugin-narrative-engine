@@ -3,6 +3,7 @@
 // because some of these lists are generated from engine-coupled tables.
 #include <TextKeys.h>
 
+#include <NarrativeText.h>
 #include <PlotText.h>
 
 namespace NarrativeEngine::TextKeys
@@ -13,6 +14,7 @@ namespace NarrativeEngine::TextKeys
             std::vector<Key> out;
             const auto add = [&out](const std::vector<Key>& more) { out.insert(out.end(), more.begin(), more.end()); };
             add(PlotText::Keys());
+            add(NarrativeText::Keys());
             return out;
         }();
         return keys;

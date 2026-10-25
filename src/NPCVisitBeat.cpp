@@ -8,9 +8,11 @@
 #include <DebugNotify.h>
 #include <EngineUtils.h>
 #include <FineRoads.h>
+#include <Localization.h>
 #include <LocationKeywords.h>
 #include <logger.h>
 #include <MainThread.h>
+#include <NarrativeText.h>
 #include <QuestUtils.h>
 #include <SenderCandidatePool.h>
 #include <SenderCooldownTable.h>
@@ -671,17 +673,16 @@ namespace NarrativeEngine
                         senderName = n;
                 }
             }
-            if (senderName.empty())
-                senderName = "their visitor";
             std::string playerName;
+            RE::TESNPC* playerBase = nullptr;
             if (auto* player = RE::PlayerCharacter::GetSingleton()) {
                 if (const auto* n = player->GetName())
                     playerName = n;
+                playerBase = player->GetActorBase();
             }
-            if (playerName.empty())
-                playerName = "The player";
-            const std::string content =
-                playerName + " left abruptly, in the middle of their conversation with " + senderName + ".";
+            const std::string content = NarrativeText::WalkedOut(Localization::Get(),
+                                                                 {playerName, EngineUtils::SexOf(playerBase)},
+                                                                 {senderName, EngineUtils::SexOf(snap.senderFormID)});
             logger::info("NPCVisitBeat[FAST-TRAVEL]: recording the walk-out silently ({} chars)", content.size());
             QuestUtils::VMDispatchOnQuest(g_visitQuest,
                                           kQuestScriptName,
@@ -1043,12 +1044,8 @@ namespace NarrativeEngine
                         senderName = n;
                 }
             }
-            if (senderName.empty())
-                senderName = "the sender";
-            const std::string closingNarration =
-                ignored ? "Having failed to hold the conversation, " + senderName
-                              + " prepares to leave, frustrated by being ignored."
-                        : "Having said what needed saying, " + senderName + " prepares to take their leave.";
+            const std::string closingNarration = NarrativeText::Valediction(
+                Localization::Get(), {senderName, EngineUtils::SexOf(snap.senderFormID)}, ignored);
             if (closingAlreadySpoken) {
                 logger::info("NPCVisitBeat[VALEDICTION]: dispatching SILENT closing scene "
                              "event ({} chars, ignored={})",
@@ -2054,16 +2051,13 @@ namespace NarrativeEngine
                                 if (const auto* n = senderActor->GetName())
                                     senderName = n;
                             }
-                            if (senderName.empty())
-                                senderName = "the sender";
                             std::string playerName;
                             if (const auto* n = player->GetName())
                                 playerName = n;
-                            if (playerName.empty())
-                                playerName = "the player";
                             const std::string resumptionNarration =
-                                "Now that the interruption has ended, " + senderName + " turns back to " + playerName
-                                + " to try and resume their discussion where it left off.";
+                                NarrativeText::ReEngage(Localization::Get(),
+                                                        {senderName, EngineUtils::SexOf(snap.senderFormID)},
+                                                        {playerName, EngineUtils::SexOf(player->GetActorBase())});
                             VMDispatchRunSenderNarration(g_visitQuest, resumptionNarration);
                             VisitConclusionPoll::Arm(snap);
                             g_discussSenderFormID.store(snap.senderFormID);

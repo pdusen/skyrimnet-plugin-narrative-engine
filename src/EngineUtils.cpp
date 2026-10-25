@@ -84,6 +84,19 @@ namespace NarrativeEngine::EngineUtils
         return true;
     }
 
+    TextTemplate::Sex SexOf(const RE::TESNPC* npc)
+    {
+        if (npc == nullptr) {
+            return TextTemplate::Sex::Other;
+        }
+        return npc->GetSex() == RE::SEX::kFemale ? TextTemplate::Sex::Female : TextTemplate::Sex::Male;
+    }
+
+    TextTemplate::Sex SexOf(RE::FormID npc)
+    {
+        return SexOf(RE::TESForm::LookupByID<RE::TESNPC>(npc));
+    }
+
     bool IsGhost(const RE::Actor* actor)
     {
         if (actor == nullptr) {

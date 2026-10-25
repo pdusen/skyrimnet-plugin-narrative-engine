@@ -1,8 +1,11 @@
 #include <LetterPool.h>
 
 #include <CourierUtils.h>
+#include <EngineUtils.h>
+#include <Localization.h>
 #include <logger.h>
 #include <MainThread.h>
+#include <NarrativeText.h>
 #include <NPCLetterBeat.h>
 #include <QuestUtils.h>
 #include <Settings.h>
@@ -1301,10 +1304,10 @@ namespace NarrativeEngine::LetterPool
             // resolvable — never an epithet like "the Dragonborn".
             // The actor's actual character name is what belongs in
             // every generated string across this project.
-            const std::string playerName =
-                (playerNameC && *playerNameC != '\0') ? std::string{playerNameC} : std::string{"the recipient"};
-            const auto contentText = std::string{"I wrote and sent a letter to "} + playerName
-                                     + ". The contents were as follows:\n\n" + body;
+            const NarrativeText::Person recipient{(playerNameC && *playerNameC != '\0') ? std::string{playerNameC}
+                                                                                        : std::string{},
+                                                  EngineUtils::SexOf(player ? player->GetActorBase() : nullptr)};
+            const auto contentText = NarrativeText::LetterSent(Localization::Get(), recipient, body);
             // Sender's known location, falling back to the player's
             // location if the sender's location doesn't resolve (e.g.
             // sender is in an unloaded cell with no assigned location).

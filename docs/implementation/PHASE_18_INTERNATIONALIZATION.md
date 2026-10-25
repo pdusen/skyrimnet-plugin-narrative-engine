@@ -952,7 +952,7 @@ How the pieces moved, and the choices that went with them:
 
 #### Step 6 — Gossip, letter-memory and visit narration templates
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -970,6 +970,38 @@ Persons carry sex from where each subsystem already gathers its engine facts.
 **Verification:** a characterization test over each composer, first passed against unmodified code. Gossip covers
 every kinship and source form, and one to four listeners. Visits cover every narration with real and missing names.
 It passes unchanged after the move.
+
+Done. The new core module `NarrativeText` (`include/NarrativeText.h`, `src/NarrativeText.cpp`) renders all of these
+from English's `[Gossip.Memory]`, `[Letter.Memory]` and `[Visit.Narration]`. `GossipContent::ComposeHeard` and
+`ComposeTold` keep their API and now delegate to it, choosing only which framing applies. The letter's memory and
+the visit's three narrations are one call each in `LetterPool` and `NPCVisitBeat`.
+
+**Two passes, because three of the four composers had nothing to pin.** The visit narrations and the letter memory
+were string concatenation inline in engine-coupled functions. Pass (a) extracted every one into `NarrativeText` with
+its English literal unchanged, rewired the callers, and added `src/NarrativeText.test.cpp`, which pins every sentence
+and fallback exactly. That includes two edge cases a careless move would change: a lower-case player name is *not*
+capitalised for opening a sentence, and an empty listener list renders as it did. All 550 tests passed against
+pass (a). Gossip's existing exact-string engine tests (all five framings, one to three listeners, an unknown name)
+were already a characterization, and passed there too. Pass (b) moved the literals into `english.ini` and changed
+nothing else; the same 550 passed.
+
+Choices the step made:
+
+- **English lists drop the Oxford comma.** Gossip's "Ysolda, Saadia and Hulda" was deliberate ("spoken-voice
+  memories, not prose"), so English's `ListFinalSeparator` is now `" and "`. Nothing rendered a list before this step,
+  so no output changed. The travel log's party ("A, B, and C") is the one other English list; Step 11 moves it and
+  records how it comes out.
+- **Fallbacks are keyed by where the person stands.** Today's code says "The player" opening a sentence, "the player"
+  inside one, and "their visitor" for the walk-out where the other narrations say "the sender". Each is its own key, so
+  nothing had to be capitalised by rule, and a player's own name is never touched.
+- **People carry their sex.** `EngineUtils::SexOf` reads it off the base record. That is static record data, already
+  read by gossip's kinship lookup on the same worker, so it is safe from any thread. Kinship words still come from the
+  game itself, already chosen for the right sex.
+- **Engine tests see real English.** Production code now renders through `Localization::Get()`, which is empty until
+  `Load` runs, and `Load` never runs in a test. `Localization::Publish` (which `Load` itself now calls) lets
+  `testsupport/ShippedLanguage` install the shipped English before any test starts. Every engine test therefore
+  renders exactly what an English game would. Without it, the existing gossip, letter and visit tests all failed, and
+  they were right to.
 
 #### Step 7 — Notifications and letters
 
