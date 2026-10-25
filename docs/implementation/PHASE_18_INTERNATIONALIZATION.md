@@ -1640,7 +1640,7 @@ no checks yet, since its two lists are plain ones, so the rule starts biting in 
 
 #### Step 17 — Content validators on `[Matching]`
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1655,6 +1655,57 @@ no checks yet, since its two lists are plain ones, so the rule starts biting in 
 unchanged. New cases cover non-English inputs under synthetic tables. Today's three-*byte* name minimum becomes
 three code points, so a two-letter Cyrillic name is now correctly too short. That is the one intended English-table
 behaviour change, and it is listed in the write-up.
+
+Done. All five validators read their rules from the table they are given, which defaults to the session's:
+
+- `SchemeOpensWithVerb` reads `Scheme`.
+- `NamesThePlayer` reads `PlayerTitle` for its title half. Its name half splits with Step 1's splitter and allows
+  `Name.Suffixes`, matching anywhere in a language written without spaces.
+- `IsGhostRecord` reads `Ghost`.
+- Title stripping compares with Step 1's folding.
+- `SameLine` compares with Step 1's folding.
+
+`ParseAmbition` passes its table down, for the trial. The 24-character fallback title was already fitted by rendering
+the localized template, in Step 7.
+
+**`english.ini` reproduces today's lists exactly**, with three entries that exist to reproduce quirks of the old code
+rather than to describe English:
+
+- The old scheme check compared letters only, so "It's" read as "its" and was refused. `it's` is listed beside `it`
+  and `its`.
+- The old ghost check took "Ghost" after any non-letter, hyphen included. `*-ghost` keeps "Snow-Ghost".
+- The old title check counted only letters, digits and the hyphen as word characters, so "Dragonborn's" counted.
+  `dragonborn's` keeps it.
+
+Text with no words at all fails the scheme check in C++ whatever the rules say, as it always did.
+
+**Verification.** The characterization test `ContentChecks.engine.test.cpp` holds 56 assertions over the five
+validators, including each quirk above, contractions, a name-then-modal split by a comma, and words that only begin
+like refused ones. They passed against the unmodified code, then unchanged. A further case builds German, Russian
+and Japanese tables from synthetic files:
+
+- a German *zu*-clause scheme, with no English rule mixed in;
+- a Japanese plain-form scheme against its polite form;
+- a disabled check;
+- *Drachenbluts*, the Russian genitive of the title, and the Japanese title written without spaces;
+- German and Russian name endings, and a Japanese name inside unseparated text;
+- a compounded German ghost;
+- a German fallback label stripping after *der*.
+
+The shipped-files test now bites: English defines `Scheme`, `PlayerTitle` and `Ghost`, so every language's file will
+have to give each of them rules or a reason.
+
+**The intended behaviour changes**, each only for text outside ASCII:
+
+- A player's name word must be three *code points* long, not three bytes. A two-letter Cyrillic name such as *Ян*,
+  four bytes, used to count and now does not. This is the change the plan names.
+- `SameLine`, and the case-insensitive comparison in title stripping, fold case in every script rather than in ASCII
+  only, as **Validators that read content** prescribes. "Ölfrún's" and "ölfrún's" are now the same line, and a test
+  pins it.
+
+Every English input behaves exactly as before.
+
+`pwsh -File build.ps1 test`: 572 of 572 passed. `build.ps1 build` is clean.
 
 #### Step 18 — Name matchers in the player's script
 

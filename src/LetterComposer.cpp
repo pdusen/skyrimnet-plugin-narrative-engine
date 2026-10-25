@@ -561,12 +561,8 @@ namespace NarrativeEngine::LetterComposer
         {
             if (s.size() <= prefix.size())
                 return 0;
-            for (std::size_t i = 0; i < prefix.size(); ++i) {
-                const char a = static_cast<char>(std::tolower(static_cast<unsigned char>(s[i])));
-                const char b = static_cast<char>(std::tolower(static_cast<unsigned char>(prefix[i])));
-                if (a != b)
-                    return 0;
-            }
+            if (!TextUtf8::EqualsFolded(std::string_view{s}.substr(0, prefix.size()), prefix))
+                return 0;
             const char nextCh = s[prefix.size()];
             if (nextCh != ' ' && nextCh != '\t')
                 return 0;
@@ -588,13 +584,18 @@ namespace NarrativeEngine::LetterComposer
         constexpr std::string_view kTitleStart = "Title.Strip.Start";
         constexpr std::string_view kTitleAfter = "Title.Strip.After";
 
-        std::string AsciiLowered(std::string_view text)
+        // The last place " <word> " stands in `name`, whatever its case, or
+        // npos.
+        std::size_t LastSeparator(std::string_view name, std::string_view word)
         {
-            std::string out{text};
-            for (auto& c : out) {
-                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            const auto length = word.size() + 2;
+            for (std::size_t at = name.size() >= length ? name.size() - length + 1 : 0; at-- > 0;) {
+                if (name[at] == ' ' && name[at + length - 1] == ' '
+                    && TextUtf8::EqualsFolded(name.substr(at + 1, word.size()), word)) {
+                    return at;
+                }
             }
-            return out;
+            return std::string_view::npos;
         }
 
         // Strip a trailing epithet: everything from the last " <word> " of
@@ -602,15 +603,13 @@ namespace NarrativeEngine::LetterComposer
         // the original name if no match.
         std::string StripSuffixTitle(const std::string& name, const std::vector<std::string>& after)
         {
-            const auto lower = AsciiLowered(name);
             std::size_t best = std::string::npos;
             std::size_t bestLength = 0;
             for (const auto& word : after) {
-                const auto needle = " " + AsciiLowered(word) + " ";
-                const auto pos = lower.rfind(needle);
+                const auto pos = LastSeparator(name, word);
                 if (pos != std::string::npos && (best == std::string::npos || pos > best)) {
                     best = pos;
-                    bestLength = needle.size();
+                    bestLength = word.size() + 2;
                 }
             }
             // A word has to follow, or the separator is mid-name (like

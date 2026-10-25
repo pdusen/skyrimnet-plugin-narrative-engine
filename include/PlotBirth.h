@@ -5,6 +5,8 @@
 #include <string_view>
 #include <vector>
 
+#include <LanguageTable.h>
+#include <Localization.h>
 #include <PlotCasting.h>
 #include <PlotModel.h>
 #include <PlotPlanning.h>
@@ -180,7 +182,8 @@ namespace NarrativeEngine::PlotBirth
                                                 const TextLimits& limits,
                                                 std::string_view playerName = {},
                                                 const RoleResolver& resolveRoles = {},
-                                                const std::vector<std::string>& accomplished = {});
+                                                const std::vector<std::string>& accomplished = {},
+                                                const LanguageTable::Table& table = Localization::Get());
 
     // --- Call 3: how ------------------------------------------------------
     //
@@ -192,7 +195,10 @@ namespace NarrativeEngine::PlotBirth
     // prompt asks; false for one that opens with a pronoun, an article, or a
     // name followed by what they mean to do ("Korir plans to ..."), each of
     // which would read as broken grammar in every memory the plot writes.
-    [[nodiscard]] bool SchemeOpensWithVerb(std::string_view scheme);
+    // In `table`'s language, by its [Matching] Scheme check. Text with no
+    // words fails, whatever the check says.
+    [[nodiscard]] bool SchemeOpensWithVerb(std::string_view scheme,
+                                           const LanguageTable::Table& table = Localization::Get());
 
     // --- The engine-bound half --------------------------------------------
 

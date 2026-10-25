@@ -1,38 +1,24 @@
 #include <PlotStepParse.h>
 
-#include <cctype>
+#include <TextUtf8.h>
 
 namespace NarrativeEngine::PlotStepParse
 {
     namespace
     {
-        bool IsWordChar(char c)
-        {
-            return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '-';
-        }
+        // A name word too short to count: "Al" is a word in too many
+        // sentences that are not about anyone.
+        constexpr std::size_t kShortestName = 3;
 
-        // `word` stands whole somewhere in `text`. With `foldCase`, letters
-        // compare without regard to case.
-        bool HasWord(std::string_view text, std::string_view word, bool foldCase)
+        // Whether `said`, a word of the text, is `name`, bare or with one of
+        // the language's name suffixes.
+        bool IsName(std::string_view said, std::string_view name, const std::vector<std::string>& suffixes)
         {
-            if (word.empty()) {
-                return false;
+            if (said == name) {
+                return true;
             }
-            for (std::size_t at = 0; at + word.size() <= text.size(); ++at) {
-                bool same = true;
-                for (std::size_t i = 0; i < word.size() && same; ++i) {
-                    const char a = text[at + i];
-                    const char b = word[i];
-                    same = foldCase ? std::tolower(static_cast<unsigned char>(a))
-                                          == std::tolower(static_cast<unsigned char>(b))
-                                    : a == b;
-                }
-                if (!same) {
-                    continue;
-                }
-                const auto before = at == 0 || !IsWordChar(text[at - 1]);
-                const auto after = at + word.size() >= text.size() || !IsWordChar(text[at + word.size()]);
-                if (before && after) {
+            for (const auto& suffix : suffixes) {
+                if (said.size() == name.size() + suffix.size() && said.starts_with(name) && said.ends_with(suffix)) {
                     return true;
                 }
             }
@@ -40,22 +26,29 @@ namespace NarrativeEngine::PlotStepParse
         }
     } // namespace
 
-    bool NamesThePlayer(std::string_view text, std::string_view playerName)
+    bool NamesThePlayer(std::string_view text, std::string_view playerName, const LanguageTable::Table& table)
     {
-        if (HasWord(text, "dragonborn", true)) {
+        const auto& rules = table.Matching();
+        if (const auto* title = rules.Find("PlayerTitle"); title != nullptr && title->Fires(text, rules.options)) {
             return true;
         }
-        std::size_t start = 0;
-        while (start < playerName.size()) {
-            auto end = playerName.find(' ', start);
-            if (end == std::string_view::npos) {
-                end = playerName.size();
+        const auto suffixes = rules.List("Name.Suffixes");
+        const auto said = TextUtf8::Words(text);
+        for (const auto name : TextUtf8::Words(playerName)) {
+            if (TextUtf8::CodePointCount(name) < kShortestName) {
+                continue;
             }
-            const auto word = playerName.substr(start, end - start);
-            if (word.size() >= 3 && HasWord(text, word, false)) {
-                return true;
+            if (!rules.options.wordSeparated) {
+                if (text.find(name) != std::string_view::npos) {
+                    return true;
+                }
+                continue;
             }
-            start = end + 1;
+            for (const auto word : said) {
+                if (IsName(word, name, suffixes)) {
+                    return true;
+                }
+            }
         }
         return false;
     }

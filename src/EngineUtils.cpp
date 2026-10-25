@@ -53,7 +53,7 @@ namespace NarrativeEngine::EngineUtils
         return IsPlayerInDialogue();
     }
 
-    bool IsGhostRecord(const RE::TESNPC* npc)
+    bool IsGhostRecord(const RE::TESNPC* npc, const LanguageTable::Table& table)
     {
         if (npc == nullptr) {
             return false;
@@ -62,26 +62,15 @@ namespace NarrativeEngine::EngineUtils
             return true;
         }
         // The ones the flag misses, usually because their spectral quality
-        // comes from an ability or a race instead.
+        // comes from an ability or a race instead, but whose name says so:
+        // the language file's [Matching] Ghost check says how.
         const char* name = npc->GetName();
         if (name == nullptr) {
             return false;
         }
-        constexpr std::string_view kGhost = "ghost";
-        const std::string_view display{name};
-        if (display.size() < kGhost.size()) {
-            return false;
-        }
-        const auto start = display.size() - kGhost.size();
-        if (start > 0 && std::isalpha(static_cast<unsigned char>(display[start - 1]))) {
-            return false;
-        }
-        for (std::size_t i = 0; i < kGhost.size(); ++i) {
-            if (std::tolower(static_cast<unsigned char>(display[start + i])) != kGhost[i]) {
-                return false;
-            }
-        }
-        return true;
+        const auto& rules = table.Matching();
+        const auto* ghost = rules.Find("Ghost");
+        return ghost != nullptr && ghost->Fires(name, rules.options);
     }
 
     TextTemplate::Sex SexOf(const RE::TESNPC* npc)
