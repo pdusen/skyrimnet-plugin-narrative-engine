@@ -348,212 +348,197 @@ namespace NarrativeEngine::DashboardUIManager
             return arg == "true" || arg == "1";
         }
 
-        // Friendly-name display for a DIK scan code + SkyUI-convention
-        // modifier bitmask. Powers state.settings.dashboard_hotkey_display
-        // so the Settings tab shows "Ctrl+F7" instead of raw numbers.
-        // Uncommon codes fall back to "DIK #<N>". Modifiers render in a
-        // fixed order (Ctrl, Shift, Alt) — one canonical shape so
-        // rebinds always display the same way.
-        std::string FormatHotkeyBinding(int dxsc, std::uint8_t mods)
+        // The dashboard hotkey as the Settings tab shows it: a DIK scan code
+        // and the SkyUI-convention modifier bitmask, as parts the dashboard
+        // words itself. `key` is the key's own legend ("F7", "Q") or, when
+        // `named`, a token its language file names ("esc", "space"); empty
+        // for a code with neither, which shows as its number. Null when
+        // nothing is bound.
+        nlohmann::json HotkeyJson(int dxsc, std::uint8_t mods)
         {
             if (dxsc < 0) {
-                return "(none)";
+                return nullptr;
             }
-            std::string s;
-            if (mods & Settings::kModCtrl)
-                s += "Ctrl+";
-            if (mods & Settings::kModShift)
-                s += "Shift+";
-            if (mods & Settings::kModAlt)
-                s += "Alt+";
+            struct Legend
+            {
+                std::string_view key;
+                bool named;
+            };
+            // DIK constants -- same values SKSE's button events emit.
+            const auto legend = [](int code) -> Legend {
+                switch (code) {
+                case 1:
+                    return {"esc", true};
+                case 14:
+                    return {"backspace", true};
+                case 15:
+                    return {"tab", true};
+                case 28:
+                    return {"enter", true};
+                case 41:
+                    return {"`", false};
+                case 43:
+                    return {"\\", false};
+                case 57:
+                    return {"space", true};
+                case 59:
+                    return {"F1", false};
+                case 60:
+                    return {"F2", false};
+                case 61:
+                    return {"F3", false};
+                case 62:
+                    return {"F4", false};
+                case 63:
+                    return {"F5", false};
+                case 64:
+                    return {"F6", false};
+                case 65:
+                    return {"F7", false};
+                case 66:
+                    return {"F8", false};
+                case 67:
+                    return {"F9", false};
+                case 68:
+                    return {"F10", false};
+                case 87:
+                    return {"F11", false};
+                case 88:
+                    return {"F12", false};
+                case 2:
+                    return {"1", false};
+                case 3:
+                    return {"2", false};
+                case 4:
+                    return {"3", false};
+                case 5:
+                    return {"4", false};
+                case 6:
+                    return {"5", false};
+                case 7:
+                    return {"6", false};
+                case 8:
+                    return {"7", false};
+                case 9:
+                    return {"8", false};
+                case 10:
+                    return {"9", false};
+                case 11:
+                    return {"0", false};
+                case 16:
+                    return {"Q", false};
+                case 17:
+                    return {"W", false};
+                case 18:
+                    return {"E", false};
+                case 19:
+                    return {"R", false};
+                case 20:
+                    return {"T", false};
+                case 21:
+                    return {"Y", false};
+                case 22:
+                    return {"U", false};
+                case 23:
+                    return {"I", false};
+                case 24:
+                    return {"O", false};
+                case 25:
+                    return {"P", false};
+                case 30:
+                    return {"A", false};
+                case 31:
+                    return {"S", false};
+                case 32:
+                    return {"D", false};
+                case 33:
+                    return {"F", false};
+                case 34:
+                    return {"G", false};
+                case 35:
+                    return {"H", false};
+                case 36:
+                    return {"J", false};
+                case 37:
+                    return {"K", false};
+                case 38:
+                    return {"L", false};
+                case 44:
+                    return {"Z", false};
+                case 45:
+                    return {"X", false};
+                case 46:
+                    return {"C", false};
+                case 47:
+                    return {"V", false};
+                case 48:
+                    return {"B", false};
+                case 49:
+                    return {"N", false};
+                case 50:
+                    return {"M", false};
+                case 200:
+                    return {"up", true};
+                case 208:
+                    return {"down", true};
+                case 203:
+                    return {"left", true};
+                case 205:
+                    return {"right", true};
+                default:
+                    return {"", false};
+                }
+            };
+            const auto [key, named] = legend(dxsc);
+            return {
+                {"key", key},
+                {"named", named},
+                {"code", dxsc},
+                {"ctrl", (mods & Settings::kModCtrl) != 0},
+                {"shift", (mods & Settings::kModShift) != 0},
+                {"alt", (mods & Settings::kModAlt) != 0},
+            };
+        }
 
-            // DIK constants — same values SKSE's button events emit.
-            switch (dxsc) {
-            case 1:
-                s += "Esc";
-                break;
-            case 14:
-                s += "Backspace";
-                break;
-            case 15:
-                s += "Tab";
-                break;
-            case 28:
-                s += "Enter";
-                break;
-            case 41:
-                s += "`";
-                break;
-            case 43:
-                s += "\\";
-                break;
-            case 57:
-                s += "Space";
-                break;
-            case 59:
-                s += "F1";
-                break;
-            case 60:
-                s += "F2";
-                break;
-            case 61:
-                s += "F3";
-                break;
-            case 62:
-                s += "F4";
-                break;
-            case 63:
-                s += "F5";
-                break;
-            case 64:
-                s += "F6";
-                break;
-            case 65:
-                s += "F7";
-                break;
-            case 66:
-                s += "F8";
-                break;
-            case 67:
-                s += "F9";
-                break;
-            case 68:
-                s += "F10";
-                break;
-            case 87:
-                s += "F11";
-                break;
-            case 88:
-                s += "F12";
-                break;
-            // Digits (main row).
-            case 2:
-                s += "1";
-                break;
-            case 3:
-                s += "2";
-                break;
-            case 4:
-                s += "3";
-                break;
-            case 5:
-                s += "4";
-                break;
-            case 6:
-                s += "5";
-                break;
-            case 7:
-                s += "6";
-                break;
-            case 8:
-                s += "7";
-                break;
-            case 9:
-                s += "8";
-                break;
-            case 10:
-                s += "9";
-                break;
-            case 11:
-                s += "0";
-                break;
-            // Letters (QWERTY-order DIK layout — not alphabetical).
-            case 16:
-                s += "Q";
-                break;
-            case 17:
-                s += "W";
-                break;
-            case 18:
-                s += "E";
-                break;
-            case 19:
-                s += "R";
-                break;
-            case 20:
-                s += "T";
-                break;
-            case 21:
-                s += "Y";
-                break;
-            case 22:
-                s += "U";
-                break;
-            case 23:
-                s += "I";
-                break;
-            case 24:
-                s += "O";
-                break;
-            case 25:
-                s += "P";
-                break;
-            case 30:
-                s += "A";
-                break;
-            case 31:
-                s += "S";
-                break;
-            case 32:
-                s += "D";
-                break;
-            case 33:
-                s += "F";
-                break;
-            case 34:
-                s += "G";
-                break;
-            case 35:
-                s += "H";
-                break;
-            case 36:
-                s += "J";
-                break;
-            case 37:
-                s += "K";
-                break;
-            case 38:
-                s += "L";
-                break;
-            case 44:
-                s += "Z";
-                break;
-            case 45:
-                s += "X";
-                break;
-            case 46:
-                s += "C";
-                break;
-            case 47:
-                s += "V";
-                break;
-            case 48:
-                s += "B";
-                break;
-            case 49:
-                s += "N";
-                break;
-            case 50:
-                s += "M";
-                break;
-            // Arrows.
-            case 200:
-                s += "Up";
-                break;
-            case 208:
-                s += "Down";
-                break;
-            case 203:
-                s += "Left";
-                break;
-            case 205:
-                s += "Right";
-                break;
-            default:
-                s += "DIK #" + std::to_string(dxsc);
-                break;
-            }
-            return s;
+        // What the dashboard words for itself: the session's [Dashboard]
+        // strings, the grammar its formatter needs, and the font check for
+        // the status banner. The language is chosen once, at kDataLoaded,
+        // so this is built once and sent with every state; a push the view
+        // missed while loading costs nothing the next one does not resend.
+        const nlohmann::json& LanguageJson()
+        {
+            static const nlohmann::json language = [] {
+                const auto& table = Localization::Get();
+                const auto& grammar = table.Grammar();
+                nlohmann::json strings = nlohmann::json::object();
+                for (const auto& [key, text] : table.Strings()) {
+                    strings[key] = text;
+                }
+                const auto fonts = Localization::Fonts();
+                const char* verdict = "unknown";
+                if (fonts.verdict == Localization::FontVerdict::Covered) {
+                    verdict = "covered";
+                } else if (fonts.verdict == Localization::FontVerdict::NotCovered) {
+                    verdict = "not_covered";
+                }
+                return nlohmann::json{
+                    {"code", table.GetHeader().code},
+                    {"name", table.GetHeader().name},
+                    {"native_name", table.GetHeader().nativeName},
+                    {"grammar",
+                     {
+                         {"listSeparator", grammar.listSeparator},
+                         {"listPairSeparator", grammar.listPairSeparator},
+                         {"listFinalSeparator", grammar.listFinalSeparator},
+                         {"capitalizeSentenceStart", grammar.capitalizeSentenceStart},
+                         {"phraseTrailingPunctuation", grammar.phraseTrailingPunctuation},
+                         {"phraseLowercaseFirst", grammar.phraseLowercaseFirst},
+                     }},
+                    {"fonts", {{"verdict", verdict}, {"font_set", fonts.fontSet}}},
+                    {"strings", std::move(strings)},
+                };
+            }();
+            return language;
         }
 
         // JS -> C++ listener for the dashboard debug tick killswitch.
@@ -1130,6 +1115,8 @@ namespace NarrativeEngine::DashboardUIManager
     {
         nlohmann::json j;
 
+        j["language"] = LanguageJson();
+
         // status
         j["status"] = {
             {"skyrim_net_available", SkyrimNetAPI::IsAvailable()},
@@ -1153,8 +1140,7 @@ namespace NarrativeEngine::DashboardUIManager
             j["settings"] = {
                 {"debug_mode", cfg.debugMode},
                 {"debug_notifications", cfg.debugNotifications},
-                {"dashboard_hotkey_display",
-                 FormatHotkeyBinding(cfg.dashboardHotkeyDXSC, cfg.dashboardHotkeyModifiers)},
+                {"dashboard_hotkey", HotkeyJson(cfg.dashboardHotkeyDXSC, cfg.dashboardHotkeyModifiers)},
                 {"dashboard_hotkey_capture_active", g_hotkeyCaptureMode.load(std::memory_order_acquire)},
                 {"tick_enabled", Tick::IsEnabled()},
                 {"tick_interval_seconds", cfg.tickIntervalSeconds},
@@ -1207,15 +1193,19 @@ namespace NarrativeEngine::DashboardUIManager
         if (!tail.empty()) {
             const auto& latest = tail.back();
             const auto mask = static_cast<AlphaCanon::Signal>(latest.alphaCanonActiveSignals);
+            const auto failure = DecisionLog::FailureText(latest, Localization::Get());
             j["last_evaluation"] = {
                 {"timestamp", latest.realTimeSec},
                 {"tension_score", latest.tensionScore},
-                {"narrative_note", latest.narrativeNote},
+                {"narrative_note", DecisionLog::NoteText(latest, Localization::Get())},
                 {"advanced_to",
                  latest.advancedToPhase ? nlohmann::json(PhaseTracker::PhaseName(*latest.advancedToPhase))
                                         : nlohmann::json(nullptr)},
                 {"alpha_canon_signals", AlphaCanon::Names(mask)},
+                // The beat's id, which the dashboard labels; on a failure,
+                // why, worded.
                 {"action", latest.beatSelected.empty() ? nlohmann::json(nullptr) : nlohmann::json(latest.beatSelected)},
+                {"failure", failure.empty() ? nlohmann::json(nullptr) : nlohmann::json(failure)},
             };
         } else {
             j["last_evaluation"] = nullptr;

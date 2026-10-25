@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
-import type { DirectorState } from '../../types';
+import { t as tr } from '../../i18n/strings';
+import type { DirectorState, Hotkey, PhaseName } from '../../types';
 
 interface Props {
     state: DirectorState;
@@ -31,18 +32,38 @@ declare global {
 // Per-phase slider config. Ranges match the clamps in
 // DashboardUIManager::OnSetPhaseIdealDuration — if either side changes,
 // both must stay in sync.
+// Each is labelled by its phase's `phase.<id>` string.
 const PHASE_SLIDERS: Array<{
     key: keyof DirectorState['settings']['ideal_duration_seconds'];
-    label: string;
+    phase: PhaseName;
     min: number;
     max: number;
 }> = [
-    { key: 'exposition', label: 'Exposition', min: 60, max: 1200 },
-    { key: 'rising_action', label: 'Rising Action', min: 60, max: 1200 },
-    { key: 'climax', label: 'Climax', min: 30, max: 600 },
-    { key: 'falling_action', label: 'Falling Action', min: 60, max: 1200 },
-    { key: 'resolution', label: 'Resolution', min: 60, max: 1200 },
+    { key: 'exposition', phase: 'Exposition', min: 60, max: 1200 },
+    { key: 'rising_action', phase: 'RisingAction', min: 60, max: 1200 },
+    { key: 'climax', phase: 'Climax', min: 30, max: 600 },
+    { key: 'falling_action', phase: 'FallingAction', min: 60, max: 1200 },
+    { key: 'resolution', phase: 'Resolution', min: 60, max: 1200 },
 ];
+
+// The binding as the language says it: each modifier, then the key, joined
+// with "+". A key with a legend of its own shows it ("F7"); a named key
+// takes its `key.<name>` string; anything else shows its scan code.
+function hotkeyText(hotkey: Hotkey | null): string {
+    if (!hotkey) {
+        return tr('key.none');
+    }
+    const parts: string[] = [];
+    if (hotkey.ctrl) parts.push(tr('key.ctrl'));
+    if (hotkey.shift) parts.push(tr('key.shift'));
+    if (hotkey.alt) parts.push(tr('key.alt'));
+    if (hotkey.named) {
+        parts.push(tr(`key.${hotkey.key}`));
+    } else {
+        parts.push(hotkey.key || tr('key.code', { code: hotkey.code }));
+    }
+    return parts.join('+');
+}
 
 // Live-update slider. Displays the current-drag value locally (via
 // oninput) so the label tracks the thumb, but only fires the C++
@@ -53,14 +74,15 @@ function LiveSlider({
     min,
     max,
     step,
-    unit,
+    seconds,
     onCommit,
 }: {
     value: number;
     min: number;
     max: number;
     step: number;
-    unit: string;
+    // Whether the value is a number of seconds, and says so; else a count.
+    seconds: boolean;
     onCommit: (v: number) => void;
 }) {
     const [drag, setDrag] = useState<number | null>(null);
@@ -80,10 +102,7 @@ function LiveSlider({
                     onCommit(v);
                 }}
             />
-            <span className="settings-slider-value">
-                {display}
-                {unit}
-            </span>
+            <span className="settings-slider-value">{seconds ? tr('time.seconds', { s: display }) : display}</span>
         </div>
     );
 }
@@ -93,13 +112,10 @@ function HotkeyRebindModal() {
     return (
         <div className="settings-rebind-overlay" role="dialog" aria-modal="true">
             <div className="settings-rebind-panel">
-                <h3>Press any key to bind.</h3>
-                <p>
-                    Hold modifiers (Ctrl, Shift, Alt) while pressing to include them. Esc
-                    cancels. A modifier alone is not a valid binding.
-                </p>
+                <h3>{tr('settings.rebind_title')}</h3>
+                <p>{tr('settings.rebind_body')}</p>
                 <button type="button" className="bulk-button" onClick={onCancel}>
-                    Cancel
+                    {tr('common.cancel')}
                 </button>
             </div>
         </div>
@@ -141,10 +157,10 @@ export function SettingsTab({ state }: Props) {
             {s.dashboard_hotkey_capture_active && <HotkeyRebindModal />}
 
             <section className="panel">
-                <h2>General</h2>
+                <h2>{tr('settings.general')}</h2>
                 <label className="tick-toggle">
                     <input type="checkbox" checked={s.debug_mode} onChange={onToggleDebug} />
-                    <span>Debug Mode</span>
+                    <span>{tr('settings.debug_mode')}</span>
                 </label>
                 <label className="tick-toggle">
                     <input
@@ -152,58 +168,58 @@ export function SettingsTab({ state }: Props) {
                         checked={s.debug_notifications}
                         onChange={onToggleDebugNotifications}
                     />
-                    <span>Debug Notifications</span>
+                    <span>{tr('settings.debug_notifications')}</span>
                 </label>
                 <div className="settings-row">
-                    <span className="settings-row-label">Dashboard Hotkey</span>
-                    <span className="settings-hotkey-display">{s.dashboard_hotkey_display}</span>
+                    <span className="settings-row-label">{tr('settings.hotkey')}</span>
+                    <span className="settings-hotkey-display">{hotkeyText(s.dashboard_hotkey)}</span>
                     <button type="button" className="bulk-button" onClick={onRebind}>
-                        Rebind
+                        {tr('settings.rebind')}
                     </button>
                 </div>
             </section>
 
             <section className="panel">
-                <h2>Narrative Director</h2>
+                <h2>{tr('settings.director')}</h2>
                 <label className="tick-toggle">
                     <input type="checkbox" checked={s.tick_enabled} onChange={onToggleTick} />
-                    <span>Enable Narrative Tick</span>
+                    <span>{tr('settings.tick_enabled')}</span>
                 </label>
                 <div className="settings-row">
-                    <span className="settings-row-label">Tick Interval</span>
+                    <span className="settings-row-label">{tr('settings.tick_interval')}</span>
                     <LiveSlider
                         value={s.tick_interval_seconds}
                         min={10}
                         max={600}
                         step={5}
-                        unit="s"
+                        seconds
                         onCommit={onCommitTickInterval}
                     />
                 </div>
                 <div className="settings-row">
-                    <span className="settings-row-label">Min Phase Duration</span>
+                    <span className="settings-row-label">{tr('settings.min_phase_duration')}</span>
                     <LiveSlider
                         value={s.min_phase_duration_seconds}
                         min={0}
                         max={600}
                         step={5}
-                        unit="s"
+                        seconds
                         onCommit={onCommitMinPhaseDuration}
                     />
                 </div>
             </section>
 
             <section className="panel">
-                <h2>Narrative Cycle Phase Durations</h2>
+                <h2>{tr('settings.phase_durations')}</h2>
                 {PHASE_SLIDERS.map(p => (
                     <div key={p.key} className="settings-row">
-                        <span className="settings-row-label">{p.label}</span>
+                        <span className="settings-row-label">{tr(`phase.${p.phase}`)}</span>
                         <LiveSlider
                             value={s.ideal_duration_seconds[p.key]}
                             min={p.min}
                             max={p.max}
                             step={5}
-                            unit="s"
+                            seconds
                             onCommit={v => onCommitPhase(p.key, v)}
                         />
                     </div>
@@ -211,144 +227,130 @@ export function SettingsTab({ state }: Props) {
             </section>
 
             <section className="panel">
-                <h2>Story Eval Prompt Caps</h2>
-                <p className="settings-panel-hint">
-                    Bound how much rendered context lands in the per-tick tension-score
-                    prompt. Lower these if your LLM's context window is tight.
-                </p>
+                <h2>{tr('settings.story_eval_caps')}</h2>
+                <p className="settings-panel-hint">{tr('settings.story_eval_caps.hint')}</p>
                 <div className="settings-row">
-                    <span className="settings-row-label">Recent Events</span>
+                    <span className="settings-row-label">{tr('settings.recent_events')}</span>
                     <LiveSlider
                         value={s.story_eval_event_tail_size}
                         min={5}
                         max={100}
                         step={1}
-                        unit=""
+                        seconds={false}
                         onCommit={onCommitStoryEvalEventTail}
                     />
                 </div>
                 <div className="settings-row">
-                    <span className="settings-row-label">Decision Log Tail</span>
+                    <span className="settings-row-label">{tr('settings.decision_log_tail')}</span>
                     <LiveSlider
                         value={s.story_eval_decision_log_tail_size}
                         min={3}
                         max={30}
                         step={1}
-                        unit=""
+                        seconds={false}
                         onCommit={onCommitStoryEvalDecisionLogTail}
                     />
                 </div>
             </section>
 
             <section className="panel">
-                <h2>Action Select Prompt Caps</h2>
-                <p className="settings-panel-hint">
-                    Bound how much rendered context lands in the beat-select prompt
-                    (which picks which action fires). Lower these if your LLM's context
-                    window is tight.
-                </p>
+                <h2>{tr('settings.action_select_caps')}</h2>
+                <p className="settings-panel-hint">{tr('settings.action_select_caps.hint')}</p>
                 <div className="settings-row">
-                    <span className="settings-row-label">Recent Events</span>
+                    <span className="settings-row-label">{tr('settings.recent_events')}</span>
                     <LiveSlider
                         value={s.action_select_event_render_cap}
                         min={3}
                         max={30}
                         step={1}
-                        unit=""
+                        seconds={false}
                         onCommit={onCommitActionSelectEventCap}
                     />
                 </div>
                 <div className="settings-row">
-                    <span className="settings-row-label">Letter Sender Memories</span>
+                    <span className="settings-row-label">{tr('settings.letter_sender_memories')}</span>
                     <LiveSlider
                         value={s.action_select_letter_memory_render_cap}
                         min={3}
                         max={15}
                         step={1}
-                        unit=""
+                        seconds={false}
                         onCommit={onCommitActionSelectLetterMemoryCap}
                     />
                 </div>
                 <div className="settings-row">
-                    <span className="settings-row-label">Visit Sender Memories</span>
+                    <span className="settings-row-label">{tr('settings.visit_sender_memories')}</span>
                     <LiveSlider
                         value={s.action_select_visit_memory_render_cap}
                         min={3}
                         max={15}
                         step={1}
-                        unit=""
+                        seconds={false}
                         onCommit={onCommitActionSelectVisitMemoryCap}
                     />
                 </div>
             </section>
 
             <section className="panel">
-                <h2>Letter Compose Prompt Caps</h2>
-                <p className="settings-panel-hint">
-                    Bound how much sender context is rendered into the letter compose
-                    prompt. Lower these if your LLM's context window is tight; 0 renders
-                    an empty section.
-                </p>
+                <h2>{tr('settings.letter_compose_caps')}</h2>
+                <p className="settings-panel-hint">{tr('settings.letter_compose_caps.hint')}</p>
                 <div className="settings-row">
-                    <span className="settings-row-label">Memories</span>
+                    <span className="settings-row-label">{tr('settings.memories')}</span>
                     <LiveSlider
                         value={s.letter_compose_memory_render_cap}
                         min={3}
                         max={20}
                         step={1}
-                        unit=""
+                        seconds={false}
                         onCommit={onCommitLetterMemoryCap}
                     />
                 </div>
                 <div className="settings-row">
-                    <span className="settings-row-label">Recent Dialogue Lines</span>
+                    <span className="settings-row-label">{tr('settings.recent_dialogue_lines')}</span>
                     <LiveSlider
                         value={s.letter_compose_dialogue_render_cap}
                         min={5}
                         max={50}
                         step={1}
-                        unit=""
+                        seconds={false}
                         onCommit={onCommitLetterDialogueCap}
                     />
                 </div>
             </section>
 
             <section className="panel">
-                <h2>Visit Compose Prompt Caps</h2>
-                <p className="settings-panel-hint">
-                    Bound how much sender context is rendered into the visit compose
-                    prompt. Same shape as the letter compose caps above.
-                </p>
+                <h2>{tr('settings.visit_compose_caps')}</h2>
+                <p className="settings-panel-hint">{tr('settings.visit_compose_caps.hint')}</p>
                 <div className="settings-row">
-                    <span className="settings-row-label">Memories</span>
+                    <span className="settings-row-label">{tr('settings.memories')}</span>
                     <LiveSlider
                         value={s.visit_compose_memory_render_cap}
                         min={3}
                         max={20}
                         step={1}
-                        unit=""
+                        seconds={false}
                         onCommit={onCommitVisitMemoryCap}
                     />
                 </div>
                 <div className="settings-row">
-                    <span className="settings-row-label">Recent Dialogue Lines</span>
+                    <span className="settings-row-label">{tr('settings.recent_dialogue_lines')}</span>
                     <LiveSlider
                         value={s.visit_compose_dialogue_render_cap}
                         min={5}
                         max={50}
                         step={1}
-                        unit=""
+                        seconds={false}
                         onCommit={onCommitVisitDialogueCap}
                     />
                 </div>
                 <div className="settings-row">
-                    <span className="settings-row-label">Conclusion Poll Recent Lines</span>
+                    <span className="settings-row-label">{tr('settings.conclusion_poll_lines')}</span>
                     <LiveSlider
                         value={s.visit_conclusion_poll_recent_lines_render_cap}
                         min={3}
                         max={20}
                         step={1}
-                        unit=""
+                        seconds={false}
                         onCommit={onCommitVisitConclusionPollRecentLinesCap}
                     />
                 </div>

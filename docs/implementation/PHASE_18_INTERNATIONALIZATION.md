@@ -154,6 +154,12 @@ IndefiniteArticleBeforeVowel =
 never names a key with a string literal. Each key is declared once in a C++ table, together with its placeholder
 signature, so a mistyped key fails to compile and the formatter knows which arguments each template takes.
 
+The one exception is `[Dashboard]`, whose keys only the dashboard's TypeScript names. C++ never renders them, so a C++
+declaration would be a second list to keep in step, and it would catch no typo the TypeScript makes. English's file
+declares them instead. Its `[Dashboard]` keys are the section's keys, and each key's placeholders are the ones its
+English template uses: a number where English pluralizes it, a list where English joins it, text otherwise. A
+translation is validated against that like any other key, and falls back to English the same way.
+
 **Fallback is per key.** When the active file is missing a key, or the key fails validation, that key renders from
 English. The file still loads. A load census logs, once per session, how many keys fell back and why, the way the
 plot census reports rejections.
@@ -501,8 +507,8 @@ requires. Those files are the MCM's language files, shipped for every language. 
 in each, and nothing generates them. Skyrim picks that file by the *game's* language, not by our override, so a
 player who overrides Portuguese on an English install gets an English MCM. That is a documented limitation.
 
-**Dashboard.** The TSX holds keys, not English. C++ sends the `[Dashboard]` section as a string table with the
-initial state. The dashboard formats through a TypeScript port of the same formatter subset, and both
+**Dashboard.** The TSX holds keys, not English. C++ sends the `[Dashboard]` section as a string table with every
+state. The dashboard formats through a TypeScript port of the same formatter subset, and both
 implementations run a shared fixture of template, arguments and expected output, so they cannot drift. The port
 takes plural categories from the browser's own `Intl.PluralRules`. Ultralight, which PrismaUI runs on, bundles ICU
 data and its `WebCore.dll` carries `Intl.PluralRules`. If `Intl` turns out to be missing at runtime, every plural
@@ -1907,7 +1913,7 @@ fixture expectation is changed. `build.ps1 build`, including the Rollup bundle, 
 
 #### Step 21 — Dashboard strings
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1925,6 +1931,78 @@ fixture expectation is changed. `build.ps1 build`, including the Rollup bundle, 
 - A throwaway script confirms two things: every `t()` key exists in `english.ini`, and no JSX text node or label
   attribute outside a `t()` call contains a letter.
 - The `plots.sample.json` fixture still renders through the dashboard's dev entry point.
+
+Done. `english.ini` gains a `[Dashboard]` section of 280 strings, and every component reads its words through `t()`.
+
+**`[Dashboard]` is declared by English's file**, as the design now says under **Language files**. The keys are the
+ones English has, and each key's placeholders are the ones its English template uses. A new
+`TextTemplate::ImpliedSignature` reads them: a number where the template pluralizes, a list where it joins, text
+otherwise. The keys resolve and validate like declared ones, so a translation's typo, a stray placeholder, or a
+plural on a value English treats as text falls back to English and is named in the census.
+`LanguageTable::Table::Strings()` returns the resolved section in English's order.
+
+**What C++ sends.** Each state carries a `language` block:
+
+- `code`, `name` and `native_name`;
+- the six grammar fields the formatter port reads;
+- the font check (`covered`, `not_covered` or `unknown`, with the font set);
+- `strings`.
+
+It is built once, since the language never changes within a session, and attached to every push rather than only the
+first. A push the view misses while it loads therefore costs nothing.
+
+**Ids, not English.** Most of what the dashboard labels already arrived as ids, and only three fields still sent
+English:
+
+- The hotkey was `"Ctrl+F7"`. It is now `{key, named, code, ctrl, shift, alt}`. A key with its own legend (`F7`,
+  `Q`) shows it; the named ones (`esc`, `space`, the arrows) and the modifiers take `key.*` strings. An unknown code
+  shows `DIK #{code}`.
+- `last_evaluation.action` mixed a beat id with a "(failed: …)" sentence the dashboard picked apart with a regex. It
+  is now the beat id alone, beside a `failure` that the new `DecisionLog::FailureText` words from `[Decision]`.
+- `last_evaluation.narrative_note` now goes through `NoteText`, as the decision list's already did.
+
+The dashboard labels everything it was sent as an id: phases (`phase.*`), beats (`beat.*`), AlphaCanon signals
+(`signal.*`), letter-slot, visit-mode, visit-outcome and plot-step states, plot statuses and outcomes, faction ranking
+methods, timer clocks and tabs. `label(prefix, id)` falls back to the id when no string exists, for a beat a test
+registers. A side effect is that the dashboard now shows "Rising Action" where it showed `RisingAction`, and "in
+dialogue" where it showed `InDialogue`.
+
+**The rest of the surface.**
+
+- `t()` lives in `src/i18n/strings.ts` and renders through Step 20's port with the session's grammar and plural rules.
+  `setLanguage` sets `<html lang>` from `Code`.
+- Strings that emphasize a number mark it with `<b>`, `<strong>` or `<i>`, and a small `Rich` component renders those
+  three tags and nothing else. A translation can therefore move the emphasized number along with its words. The gossip
+  counters needed this, because their bold figures sat between words a translation must be free to reorder.
+- The status banner shows Step 4's font warning when the game's font set lacks the language's letters. The
+  dashboard's own font is the browser's, so it can say what the game cannot show. The banner also carries the design's
+  notice when `Intl.PluralRules` is missing.
+- Before the first state there is no table, so the waiting placeholder shows "…".
+- Numbers keep the browser's default formatting (`1.5` rather than `1,5`). Number formatting was never in this
+  step's scope.
+
+**Verification.**
+
+- `npm run build` (through `build.ps1 build`) and `tsc --noEmit` are clean.
+- The throwaway check parsed every `.ts` and `.tsx` file with the TypeScript compiler. A key built from a template
+  literal was expanded over the ids it can take. All 280 keys asked for exist in `english.ini`, and none of its keys
+  goes unused. No JSX text node or display attribute outside `t()` contains a letter. What the check listed for
+  review was ids, colours, bridge arguments, and the bootstrap `throw` for a missing `#root`, which no player can see.
+- A throwaway render probe compiled the dashboard for Node. It rendered every tab through `renderToString` against a
+  state the C++ composed in the `DashboardUIManager` engine test, with `plots.sample.json` as the Plots tab:
+  - **English.** No key rendered as itself. Spot checks found "action in flight: Ambush (started 1m 15s ago)",
+    "Active signals: in dialogue and in combat", "Ctrl+F7", the step nodes' accessible names, and the gossip counters'
+    `<b>` emphasis.
+  - **A marked language.** Every string was wrapped in «», the code was `de`, and the fonts were `not_covered`. Every
+    word outside the marks was data: event lines, plot titles and names, rumor text. `<html lang>` became `de`, and
+    the banner showed the font warning naming Deutsch.
+- `LanguageTable` tests cover `[Dashboard]`: English's keys and order, a translation held to English's placeholders,
+  a key English lacks, and the overlay. `TextTemplate` tests cover `ImpliedSignature`.
+- The shipped-files test now counts `[Dashboard]` among English's keys.
+- The fake PrismaUI's last-argument buffer grew from 32 KB to 256 KB, since the state now carries about 20 KB of
+  strings.
+
+`pwsh -File build.ps1 test`: 584 of 584 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
 
 #### Step 22 — MCM translation files and the language setting
 

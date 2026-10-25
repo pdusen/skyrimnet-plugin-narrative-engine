@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 
+import { t } from '../i18n/strings';
+
 export type TabId = 'director' | 'letters' | 'visit' | 'gossip' | 'plots' | 'dispatch' | 'settings';
 
 interface Props {
@@ -11,32 +13,20 @@ interface Props {
     hidden?: ReadonlySet<TabId>;
 }
 
-interface TabDef {
-    id: TabId;
-    label: string;
-}
-
-const TABS: TabDef[] = [
-    { id: 'director', label: 'Director' },
-    { id: 'letters',  label: 'Letters'  },
-    { id: 'visit',    label: 'Visit'    },
-    { id: 'gossip',   label: 'Gossip'   },
-    { id: 'plots',    label: 'Plots'    },
-    { id: 'dispatch', label: 'Dispatch' },
-    { id: 'settings', label: 'Settings' },
-];
+// In bar order. Each is labelled by its `tab.<id>` string.
+const TABS: TabId[] = ['director', 'letters', 'visit', 'gossip', 'plots', 'dispatch', 'settings'];
 
 export function TabBar({ active, onChange, hidden }: Props): ReactNode {
     return (
         <div className="tab-bar">
-            {TABS.filter(t => !hidden?.has(t.id)).map(t => (
+            {TABS.filter(id => !hidden?.has(id)).map(id => (
                 <button
-                    key={t.id}
+                    key={id}
                     type="button"
-                    className={t.id === active ? 'tab-button active' : 'tab-button'}
-                    onClick={() => onChange(t.id)}
+                    className={id === active ? 'tab-button active' : 'tab-button'}
+                    onClick={() => onChange(id)}
                 >
-                    {t.label}
+                    {t(`tab.${id}`)}
                 </button>
             ))}
         </div>

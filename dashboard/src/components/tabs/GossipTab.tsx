@@ -1,5 +1,7 @@
 import { useState } from 'react';
 
+import { Rich } from '../../i18n/Rich';
+import { t } from '../../i18n/strings';
 import type { GossipTabState, GossipTimers, RumorEntry } from '../../types';
 import { TimerPanel, TimerRow } from '../TimerPanel';
 
@@ -13,13 +15,9 @@ interface Props {
 function duration(valueDays: number): string {
     if (valueDays < 1) {
         const hours = valueDays * 24;
-        return hours < 1 ? `${Math.round(hours * 60)}m` : `${hours.toFixed(1)}h`;
+        return hours < 1 ? t('time.minutes', { m: Math.round(hours * 60) }) : t('time.hours', { h: hours.toFixed(1) });
     }
-    return `${valueDays.toFixed(1)}d`;
-}
-
-function plural(n: number, one: string, many = `${one}s`): string {
-    return `${n} ${n === 1 ? one : many}`;
+    return t('time.days', { d: valueDays.toFixed(1) });
 }
 
 // The generation window a band covers. Band selection at transmission time
@@ -27,14 +25,14 @@ function plural(n: number, one: string, many = `${one}s`): string {
 // except the last, which absorbs everything above it.
 function bandRange(index: number, total: number): string {
     const lo = index * 3;
-    return index === total - 1 ? `gen ${lo}+` : `gen ${lo}–${lo + 2}`;
+    return index === total - 1 ? t('gossip.band_from', { lo }) : t('gossip.band_range', { lo, hi: lo + 2 });
 }
 
 function RumorRow({ rumor }: { rumor: RumorEntry }) {
     const [expanded, setExpanded] = useState(false);
     // A rumor with no text should still be identifiable, so fall back to
     // naming its source rather than rendering an empty quote.
-    const headline = rumor.text || `(no text — from memory m${rumor.source_memory_id})`;
+    const headline = rumor.text || t('gossip.no_text', { memory: rumor.source_memory_id });
 
     return (
         <li className={rumor.stalled ? 'rumor stalled' : 'rumor'}>
@@ -51,15 +49,15 @@ function RumorRow({ rumor }: { rumor: RumorEntry }) {
                 className="rumor-summary"
                 onClick={() => setExpanded(v => !v)}
                 aria-expanded={expanded}
-                title={expanded ? 'Collapse' : 'Show every generation band and provenance'}
+                title={expanded ? t('gossip.collapse') : t('gossip.expand')}
             >
                 <div className="rumor-head">
-                    <span className="rumor-id">r{String(rumor.id).padStart(2, '0')}</span>
+                    <span className="rumor-id">{t('gossip.rumor_id', { id: String(rumor.id).padStart(2, '0') })}</span>
                     <span className={rumor.stalled ? 'rumor-state stalled' : 'rumor-state spreading'}>
-                        {rumor.stalled ? 'Stalled' : 'Spreading'}
+                        {rumor.stalled ? t('gossip.stalled') : t('gossip.spreading')}
                     </span>
-                    <span className="rumor-meta">n={rumor.notability.toFixed(2)}</span>
-                    <span className="rumor-meta">{duration(rumor.age_days)} old</span>
+                    <span className="rumor-meta">{t('gossip.notability', { n: rumor.notability.toFixed(2) })}</span>
+                    <span className="rumor-meta">{t('gossip.age', { age: duration(rumor.age_days) })}</span>
                     <span className="rumor-expand" aria-hidden="true">
                         {expanded ? '▾' : '▸'}
                     </span>
@@ -69,23 +67,22 @@ function RumorRow({ rumor }: { rumor: RumorEntry }) {
 
                 <div className="rumor-stats">
                     <span>
-                        <b>{rumor.carriers}</b> {rumor.carriers === 1 ? 'carrier' : 'carriers'}{' '}
-                        <i>({rumor.active_carriers} still telling)</i>
+                        <Rich k="gossip.carriers" args={{ n: rumor.carriers, active: rumor.active_carriers }} />
                     </span>
                     <span>
-                        <b>{rumor.settlements}</b> {rumor.settlements === 1 ? 'settlement' : 'settlements'}
+                        <Rich k="gossip.settlements" args={{ n: rumor.settlements }} />
                     </span>
                     <span>
-                        <b>{rumor.holds}</b> {rumor.holds === 1 ? 'hold' : 'holds'}
+                        <Rich k="gossip.holds" args={{ n: rumor.holds }} />
                     </span>
                     <span>
-                        gen <b>{rumor.max_depth}</b>
+                        <Rich k="gossip.generation" args={{ n: rumor.max_depth }} />
                     </span>
                     <span>
-                        <b>{rumor.transmissions}</b> told <i>({rumor.wasted} wasted)</i>
+                        <Rich k="gossip.told" args={{ n: rumor.transmissions, wasted: rumor.wasted }} />
                     </span>
                     <span>
-                        quiet <b>{duration(rumor.idle_days)}</b>
+                        <Rich k="gossip.quiet" args={{ time: duration(rumor.idle_days) }} />
                     </span>
                 </div>
             </button>
@@ -93,9 +90,14 @@ function RumorRow({ rumor }: { rumor: RumorEntry }) {
             {expanded && (
                 <div className="rumor-detail">
                     <div className="rumor-origin">
-                        from <b>{rumor.origin_name || 'unknown'}</b>
-                        {rumor.origin_location ? ` @ ${rumor.origin_location}` : ''} · source memory{' '}
-                        <b>m{rumor.source_memory_id}</b>
+                        <Rich
+                            k={rumor.origin_location ? 'gossip.origin_at' : 'gossip.origin'}
+                            args={{
+                                name: rumor.origin_name || t('gossip.unknown_origin'),
+                                location: rumor.origin_location,
+                                memory: rumor.source_memory_id,
+                            }}
+                        />
                     </div>
                     <ol className="rumor-bands">
                         {rumor.bands.map((b, i) => (
@@ -116,10 +118,8 @@ export function GossipTab({ gossip, timers }: Props) {
         return (
             <div className="gossip-tab">
                 <section className="panel">
-                    <h2>Gossip</h2>
-                    <p className="empty-state">
-                        Disabled. Set bGossipEnabled=true in the [Gossip] section of NarrativeEngine.ini.
-                    </p>
+                    <h2>{t('tab.gossip')}</h2>
+                    <p className="empty-state">{t('gossip.disabled')}</p>
                 </section>
             </div>
         );
@@ -129,49 +129,46 @@ export function GossipTab({ gossip, timers }: Props) {
 
     return (
         <div className="gossip-tab">
-            <TimerPanel title="Next up">
-                <TimerRow label="Next schedule check" timer={timers.next_schedule_check} />
-                <TimerRow
-                    label="Next tick"
-                    timer={timers.next_tick}
-                    note="harvest sweep and simulation step are one tick"
-                />
+            <TimerPanel title={t('timer.next_up')}>
+                <TimerRow label={t('gossip.next_schedule_check')} timer={timers.next_schedule_check} />
+                <TimerRow label={t('gossip.next_tick')} timer={timers.next_tick} note={t('gossip.next_tick_note')} />
             </TimerPanel>
             <section className="panel">
-                <h2>Gossip</h2>
+                <h2>{t('tab.gossip')}</h2>
                 <div className="gossip-summary">
                     <span>
-                        <b>{gossip.rumors.length}</b> in the world
+                        <Rich k="gossip.in_the_world" args={{ n: gossip.rumors.length }} />
                     </span>
                     <span>
-                        <b>{stalled}</b> stalled
+                        <Rich k="gossip.stalled_count" args={{ n: stalled }} />
                     </span>
                     <span>
-                        <b>{gossip.queued_events}</b> queued {gossip.queued_events === 1 ? 'step' : 'steps'}
+                        <Rich k="gossip.queued" args={{ n: gossip.queued_events }} />
                     </span>
                     <span>
-                        <b>{gossip.transmissions_session}</b> told this session{' '}
-                        <i>({gossip.wasted_session} wasted)</i>
+                        <Rich
+                            k="gossip.told_this_session"
+                            args={{ n: gossip.transmissions_session, wasted: gossip.wasted_session }}
+                        />
                     </span>
                     <span>
-                        <b>{plural(gossip.harvest_sweeps, 'sweep')}</b>, {gossip.harvest_sent_for_generation} sent to
-                        generation
+                        <Rich
+                            k="gossip.sweeps"
+                            args={{ n: gossip.harvest_sweeps, sent: gossip.harvest_sent_for_generation }}
+                        />
                     </span>
                     <span>
-                        <b>{plural(gossip.claims_outstanding, 'claim')}</b> held
+                        <Rich k="gossip.claims" args={{ n: gossip.claims_outstanding }} />
                     </span>
-                    {!gossip.graph_ready && <span className="gossip-warn">social graph not built</span>}
-                    {!gossip.harvest_enabled && <span className="gossip-warn">auto-harvest off</span>}
+                    {!gossip.graph_ready && <span className="gossip-warn">{t('gossip.graph_not_built')}</span>}
+                    {!gossip.harvest_enabled && <span className="gossip-warn">{t('gossip.harvest_off')}</span>}
                 </div>
             </section>
 
             <section className="panel gossip-list-panel">
-                <h2>Active rumors — newest first</h2>
+                <h2>{t('gossip.active_rumors')}</h2>
                 {gossip.rumors.length === 0 ? (
-                    <p className="empty-state">
-                        No rumors in the world. Sweeps look for new material every
-                        fGossipHarvestIntervalGameHours.
-                    </p>
+                    <p className="empty-state">{t('gossip.no_rumors')}</p>
                 ) : (
                     <ul className="rumor-list">
                         {gossip.rumors.map(r => (

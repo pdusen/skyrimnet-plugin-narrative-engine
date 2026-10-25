@@ -33,7 +33,9 @@ TEST_CASE("Every shipped language file", "[LanguageFiles][engine]")
         }
         CHECK(census.unavailable.empty());
         CHECK(census.rejected.empty());
-        CHECK(census.keys == keys.size());
+        // The declared keys, and [Dashboard]'s, which English declares itself.
+        CHECK_FALSE(table.Strings().empty());
+        CHECK(census.keys == keys.size() + table.Strings().size());
         CHECK(table.GetHeader().code == "en");
     }
     SECTION("every other language loads with no rejections")

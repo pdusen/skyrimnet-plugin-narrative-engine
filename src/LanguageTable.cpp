@@ -29,6 +29,9 @@ namespace NarrativeEngine::LanguageTable
         constexpr std::string_view kDataPrefix = "data.";
         constexpr std::string_view kMatchingSection = "Matching";
         constexpr std::string_view kPromptFormSection = "Prompt.Form";
+        // The section English's file declares: only the dashboard names its
+        // keys, so no C++ list does. See Table::Strings.
+        constexpr std::string_view kDashboardSection = "Dashboard";
 
         constexpr std::array<std::string_view, 6> kHeaderKeys =
             {"Name", "NativeName", "Code", "Status", "PluralRule", "Fonts"};
@@ -374,46 +377,62 @@ namespace NarrativeEngine::LanguageTable
 
         // Every declared key, from the first source that has it right.
         std::unordered_set<std::string> declared;
+        const auto resolve =
+            [&](std::string_view section, std::string_view name, const TextTemplate::Signature& signature) {
+                declared.insert(Id(section, name));
+                for (const auto* source : order) {
+                    const auto value = source->Value(section, name);
+                    if (!value) {
+                        if (source == &shipped && hasShipped) {
+                            census.fellBack.push_back(
+                                std::format("{}: missing from the language's file", Where(section, name)));
+                        }
+                        continue;
+                    }
+                    auto parsed = TextTemplate::Parse(*value);
+                    auto problems =
+                        parsed.Ok() ? TextTemplate::Validate(parsed.message, signature) : std::move(parsed.problems);
+                    if (!problems.empty()) {
+                        census.rejected.push_back(
+                            std::format("{}: {}: {}", source->label, Where(section, name), problems.front()));
+                        if (source != &english) {
+                            census.fellBack.push_back(
+                                std::format("{}: the {} text was rejected", Where(section, name), source->label));
+                        }
+                        continue;
+                    }
+                    table.messages_.emplace(Id(section, name), std::move(parsed.message));
+                    table.sources_.emplace(Id(section, name), *value);
+                    ++census.keys;
+                    if (source == &overlay) {
+                        ++census.fromOverlay;
+                    } else if (source == &shipped) {
+                        ++census.fromShipped;
+                    } else {
+                        ++census.fromEnglish;
+                    }
+                    return true;
+                }
+                census.unavailable.push_back(Where(section, name));
+                return false;
+            };
         for (const auto& key : keys) {
-            declared.insert(Id(key.section, key.name));
-            const auto signature = TextKeys::SignatureOf(key);
-            bool found = false;
-            for (const auto* source : order) {
-                const auto value = source->Value(key.section, key.name);
-                if (!value) {
-                    if (source == &shipped && hasShipped) {
-                        census.fellBack.push_back(
-                            std::format("{}: missing from the language's file", Where(key.section, key.name)));
-                    }
-                    continue;
-                }
-                auto parsed = TextTemplate::Parse(*value);
-                auto problems =
-                    parsed.Ok() ? TextTemplate::Validate(parsed.message, signature) : std::move(parsed.problems);
-                if (!problems.empty()) {
-                    census.rejected.push_back(
-                        std::format("{}: {}: {}", source->label, Where(key.section, key.name), problems.front()));
-                    if (source != &english) {
-                        census.fellBack.push_back(
-                            std::format("{}: the {} text was rejected", Where(key.section, key.name), source->label));
-                    }
-                    continue;
-                }
-                table.messages_.emplace(Id(key.section, key.name), std::move(parsed.message));
-                table.sources_.emplace(Id(key.section, key.name), *value);
-                ++census.keys;
-                if (source == &overlay) {
-                    ++census.fromOverlay;
-                } else if (source == &shipped) {
-                    ++census.fromShipped;
-                } else {
-                    ++census.fromEnglish;
-                }
-                found = true;
-                break;
+            resolve(key.section, key.name, TextKeys::SignatureOf(key));
+        }
+
+        // [Dashboard]: English's keys, each with the signature its English
+        // template implies. An English template that does not parse leaves
+        // the key unavailable, as it would a declared one.
+        for (const auto& [section, name] : Entries(english)) {
+            if (!SameName(section, kDashboardSection)) {
+                continue;
             }
-            if (!found) {
-                census.unavailable.push_back(Where(key.section, key.name));
+            const auto value = english.Value(section, name);
+            auto parsed = TextTemplate::Parse(value ? *value : std::string_view{});
+            const auto signature =
+                parsed.Ok() ? TextTemplate::ImpliedSignature(parsed.message) : TextTemplate::Signature{};
+            if (resolve(section, name, signature)) {
+                table.dashboardKeys_.push_back(name);
             }
         }
 
@@ -465,6 +484,16 @@ namespace NarrativeEngine::LanguageTable
             }
         }
         return table;
+    }
+
+    std::vector<std::pair<std::string, std::string>> Table::Strings() const
+    {
+        std::vector<std::pair<std::string, std::string>> out;
+        out.reserve(dashboardKeys_.size());
+        for (const auto& name : dashboardKeys_) {
+            out.emplace_back(name, sources_.at(Id(kDashboardSection, name)));
+        }
+        return out;
     }
 
     const std::string* Table::PromptForm(std::string_view field) const

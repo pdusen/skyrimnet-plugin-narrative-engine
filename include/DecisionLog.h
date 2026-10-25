@@ -72,6 +72,9 @@ namespace NarrativeEngine::DecisionLog
     // What was chosen: the beat's id, or "(failed: ...)" with the reason.
     [[nodiscard]] std::string ActionText(const DecisionRecord& record, const LanguageTable::Table& table);
 
+    // Why the choice failed, worded; empty when it did not.
+    [[nodiscard]] std::string FailureText(const DecisionRecord& record, const LanguageTable::Table& table);
+
     // The record's note: the model's own words, or the stand-in for why
     // there were none.
     [[nodiscard]] std::string NoteText(const DecisionRecord& record, const LanguageTable::Table& table);

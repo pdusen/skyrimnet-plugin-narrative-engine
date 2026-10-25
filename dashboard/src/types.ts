@@ -1,3 +1,5 @@
+import type { Grammar } from './i18n/textTemplate';
+
 // Schema contract between the C++ DashboardUIManager (Step 16) and the
 // React app. The C++ side composes JSON matching exactly this shape;
 // changing this file means a coordinated C++ change is also required.
@@ -86,7 +88,25 @@ export interface TimersState {
     gossip: GossipTimers;
 }
 
+// What the dashboard words for itself, sent with every state. `strings` is
+// the session's [Dashboard] section, each key already resolved by C++ to the
+// player's overlay, the language's file or English. See i18n/strings.ts.
+export interface LanguageState {
+    code: string;                   // ISO 639-1; also <html lang>
+    name: string;                   // the English name
+    native_name: string;
+    grammar: Grammar;
+    fonts: {
+        // Whether the game's font set has the language's letters; see
+        // Localization::FontsCover.
+        verdict: 'covered' | 'not_covered' | 'unknown';
+        font_set: string;           // "en", "pl", "ru", "ja", "cn"; empty when unknown
+    };
+    strings: Record<string, string>;
+}
+
 export interface DirectorState {
+    language: LanguageState;
     status: {
         skyrim_net_available: boolean;
         skyrim_net_version: number;
@@ -104,13 +124,12 @@ export interface DirectorState {
         timestamp: number;            // realTimeSec from the DecisionRecord
         tension_score: number;        // 0..100
         narrative_note: string;
-        advanced_to: string | null;   // PhaseName when the eval triggered an advance
+        advanced_to: PhaseName | null; // when the eval triggered an advance
         alpha_canon_signals: string[];
-        // Action selected for this evaluation, if any. Either a snake_case
-        // action name (e.g. "ambush") for a successful start, or a string
-        // starting with "(failed:" carrying the failure reason. Null when
-        // no action fired this tick.
+        // The beat this evaluation started, by id (e.g. "ambush"), or null.
         action: string | null;
+        // Why the choice failed, worded by C++; null when it did not.
+        failure: string | null;
     } | null;
     // Currently-running action, or null. `started_at` is Unix-epoch seconds
     // (same time base as `last_evaluation.timestamp`).
@@ -137,10 +156,10 @@ export interface DirectorState {
 export interface SettingsTabState {
     debug_mode: boolean;
     debug_notifications: boolean;
-    // Human-readable display of the current dashboard hotkey binding
-    // (e.g. "F7", "Ctrl+F7"). Composed on the C++ side so the friendly
-    // name matches what the input sink actually matches against.
-    dashboard_hotkey_display: string;
+    // The current dashboard hotkey binding, in parts the Settings tab
+    // words; null when nothing is bound. C++ names the key from the same
+    // scan code the input sink matches against.
+    dashboard_hotkey: Hotkey | null;
     // When true, HotkeySink is in temporary capture mode: the next
     // non-modifier keypress becomes the new binding. Drives the Rebind
     // modal's visibility as a pure function of server state.
@@ -184,6 +203,17 @@ export interface SettingsTabState {
     // Cap on the recent-lines block in the per-poll visit-conclusion
     // LLM check (narrative_engine_visit_conclusion_poll.prompt).
     visit_conclusion_poll_recent_lines_render_cap: number;
+}
+
+export interface Hotkey {
+    // The key's own legend ("F7", "Q"), or when `named` a token the
+    // language file words ("esc", "space"); empty for a code with neither.
+    key: string;
+    named: boolean;
+    code: number;                   // the DIK scan code
+    ctrl: boolean;
+    shift: boolean;
+    alt: boolean;
 }
 
 // Visit tab payload — populated by the C++ DashboardUIManager per
@@ -271,7 +301,7 @@ export interface LetterPoolState {
 export interface DecisionEntry {
     timestamp: number;
     tension_score: number;
-    phase: string;
+    phase: PhaseName;
     action: string | null;
     narrative_note: string;
 }

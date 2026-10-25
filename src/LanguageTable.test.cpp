@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <array>
 #include <string>
+#include <utility>
+#include <vector>
 
 // Unit tests for building a language table: where each key's text comes from,
 // and what the census says about what could not be used.
@@ -355,5 +357,65 @@ TEST_CASE("LanguageTable: prompt forms", "[LanguageTable]")
         const auto table = Table::Build({englishWithForm, shipped, overlay}, kKeys);
         CHECK(table.GetCensus().rejected.empty());
         CHECK(table.GetCensus().overlayUnmatched.empty());
+    }
+}
+
+TEST_CASE("LanguageTable: the dashboard's strings", "[LanguageTable]")
+{
+    constexpr std::string_view english = "[Language]\nName = English\nNativeName = English\nCode = en\n"
+                                         "Status = reviewed\nPluralRule = one_other\nFonts = en\n"
+                                         "[Dashboard]\n"
+                                         "tab.director = Director\n"
+                                         "ticks = {n, plural, one {# tick} other {# ticks}}\n"
+                                         "slot = Slot {index}\n"
+                                         "who = {names, list}\n";
+
+    SECTION("English's keys are the section's, in its order")
+    {
+        const auto table = Table::Build({english, std::nullopt, std::nullopt}, kKeys);
+        using Pair = std::pair<std::string, std::string>;
+        CHECK(table.Strings()
+              == std::vector<Pair>{{"tab.director", "Director"},
+                                   {"ticks", "{n, plural, one {# tick} other {# ticks}}"},
+                                   {"slot", "Slot {index}"},
+                                   {"who", "{names, list}"}});
+        CHECK(table.GetCensus().rejected.empty());
+    }
+    SECTION("a translation is held to the placeholders English's template uses")
+    {
+        constexpr std::string_view german = "[Language]\nName = German\nNativeName = Deutsch\nCode = de\n"
+                                            "Status = draft\nPluralRule = one_other\nFonts = en\n"
+                                            "[Dashboard]\n"
+                                            "tab.director = Regie\n"
+                                            "ticks = {n, plural, one {# Tick} other {# Ticks}}\n"
+                                            "slot = Platz {index, plural, other {#}}\n"
+                                            "who = {names, list} und {others}\n";
+        const auto table = Table::Build({english, german, std::nullopt}, kKeys);
+        const auto strings = table.Strings();
+        REQUIRE(strings.size() == 4);
+        CHECK(strings[0].second == "Regie");
+        CHECK(strings[1].second == "{n, plural, one {# Tick} other {# Ticks}}");
+        // English says {index} plainly, so it is text, and text cannot be
+        // pluralized; and English has no {others}.
+        CHECK(strings[2].second == "Slot {index}");
+        CHECK(strings[3].second == "{names, list}");
+        CHECK(AnyContains(table.GetCensus().rejected, "[Dashboard] slot"));
+        CHECK(AnyContains(table.GetCensus().rejected, "[Dashboard] who"));
+    }
+    SECTION("a key English's file does not have is not a key")
+    {
+        constexpr std::string_view german = "[Language]\nName = German\nNativeName = Deutsch\nCode = de\n"
+                                            "Status = draft\nPluralRule = one_other\nFonts = en\n"
+                                            "[Dashboard]\ntab.directr = Regie\n";
+        const auto table = Table::Build({english, german, "[Dashboard]\ntab.lettres = Briefe\n"}, kKeys);
+        CHECK(AnyContains(table.GetCensus().rejected, "[Dashboard] tab.directr is not a key"));
+        CHECK(table.GetCensus().overlayUnmatched == std::vector<std::string>{"[Dashboard] tab.lettres"});
+        CHECK(table.Strings().size() == 4);
+    }
+    SECTION("the overlay rewords one string and leaves the rest")
+    {
+        const auto table = Table::Build({english, std::nullopt, "[Dashboard]\ntab.director = The Director\n"}, kKeys);
+        CHECK(table.Strings()[0].second == "The Director");
+        CHECK(table.Strings()[2].second == "Slot {index}");
     }
 }

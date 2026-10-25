@@ -184,6 +184,11 @@ namespace NarrativeEngine::TextTemplate
     // Every placeholder name `message` uses, in order of first use.
     [[nodiscard]] std::vector<std::string> PlaceholderNames(const Message& message);
 
+    // The signature `message` implies, for text no code declares: each
+    // placeholder, in order of first use, is a number if it is pluralized
+    // anywhere, a list if it is joined, and text otherwise.
+    [[nodiscard]] Signature ImpliedSignature(const Message& message);
+
     class Arguments
     {
     public:

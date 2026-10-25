@@ -1,5 +1,7 @@
 import { useState, type ReactNode } from 'react';
 
+import { Rich } from '../../i18n/Rich';
+import { label, t } from '../../i18n/strings';
 import type { PlotEntry, PlotsTabState } from '../../types';
 import { PlotChain, PlotChainLegend } from '../PlotChain';
 
@@ -52,80 +54,63 @@ export function PlotsTab({ plots }: { plots: PlotsTabState }): ReactNode {
     // whole wait and invited a second click, which just queued a second
     // burst behind the first.
     const busy = plots.ticks_pending > 0;
-    const pct = (n: number) => (resolved > 0 ? `${Math.round((100 * n) / resolved)}%` : '—');
+    const pct = (n: number) => (resolved > 0 ? t('plots.percent', { n: Math.round((100 * n) / resolved) }) : '—');
 
     return (
         <div className="plots-tab">
             <div className="plot-header">
                 <div className="plot-header-top">
                     <div className="plot-budget">
-                        <strong>
-                            {plots.active} / {plots.budget}
-                        </strong>
-                        <span> slots in use</span>
+                        <Rich k="plots.slots_in_use" args={{ active: plots.active, budget: plots.budget }} />
                     </div>
-                    <label
-                        className="tick-toggle"
-                        title="When off, scheduled plot ticks do not fire and the time they would have covered is skipped. Forced ticks still run."
-                    >
+                    <label className="tick-toggle" title={t('plots.simulation_enabled.title')}>
                         <input
                             type="checkbox"
                             checked={plots.ticks_enabled}
                             onChange={e => setTicksEnabled(e.target.checked)}
                         />
-                        <span>Simulation Enabled</span>
+                        <span>{t('plots.simulation_enabled')}</span>
                     </label>
                 </div>
                 <div className="plot-counters">
-                    <span>day {plots.sim_game_day.toFixed(1)}</span>
-                    <span>{plots.ticks_run} ticks</span>
-                    <span>{plots.plots_born} born</span>
+                    <span>{t('plots.day', { day: plots.sim_game_day.toFixed(1) })}</span>
+                    <span>{t('plots.ticks_run', { n: plots.ticks_run })}</span>
+                    <span>{t('plots.born', { n: plots.plots_born })}</span>
                     <span>
-                        {plots.plots_succeeded} succeeded / {plots.plots_failed} failed
+                        {t('plots.succeeded_failed', { succeeded: plots.plots_succeeded, failed: plots.plots_failed })}
                     </span>
-                    <span>{plots.adaptations} adaptations</span>
+                    <span>{t('plots.adaptations', { n: plots.adaptations })}</span>
                 </div>
                 <div className="plot-counters">
-                    <span>steps: {plots.steps_succeeded} done ({pct(plots.steps_succeeded)})</span>
-                    <span>{plots.steps_timed_out} timed out ({pct(plots.steps_timed_out)})</span>
-                    <span>{plots.steps_caught} caught ({pct(plots.steps_caught)})</span>
+                    <span>{t('plots.steps_done', { n: plots.steps_succeeded, pct: pct(plots.steps_succeeded) })}</span>
+                    <span>{t('plots.steps_timed_out', { n: plots.steps_timed_out, pct: pct(plots.steps_timed_out) })}</span>
+                    <span>{t('plots.steps_caught', { n: plots.steps_caught, pct: pct(plots.steps_caught) })}</span>
                 </div>
                 {plots.debug_buttons && (
                     <div className="plot-debug-actions">
                         <button type="button" disabled={busy} onClick={() => forceTicks(1)}>
-                            Force tick
+                            {t('plots.force_tick')}
                         </button>
-                        <button type="button" disabled={busy} onClick={() => forceTicks(5)}>
-                            Force 5
-                        </button>
-                        <button type="button" disabled={busy} onClick={() => forceTicks(10)}>
-                            Force 10
-                        </button>
-                        <button type="button" disabled={busy} onClick={() => forceTicks(20)}>
-                            Force 20
-                        </button>
-                        {/* A whole tuning run in one press. The plugin caps a
-                            burst at 200, so this is the largest there is. */}
-                        <button type="button" disabled={busy} onClick={() => forceTicks(100)}>
-                            Force 100
-                        </button>
-                        <button type="button" disabled={busy} onClick={() => forceTicks(200)}>
-                            Force 200
-                        </button>
+                        {/* The largest is a whole tuning run in one press. The
+                            plugin caps a burst at 200, so that is the largest
+                            there is. */}
+                        {[5, 10, 20, 100, 200].map(n => (
+                            <button key={n} type="button" disabled={busy} onClick={() => forceTicks(n)}>
+                                {t('plots.force_n', { n })}
+                            </button>
+                        ))}
                         {/* Premade plots, for checking plots in game against a
                             known one. See PlotTestPlots.h. */}
                         <button type="button" disabled={busy} onClick={() => seedTestPlot('brelyna')}>
-                            Test: Brelyna's plot
+                            {t('plots.test_brelyna')}
                         </button>
                         <button type="button" disabled={busy} onClick={() => seedTestPlot('tolfdir')}>
-                            Test: Brelyna as agent
+                            {t('plots.test_brelyna_agent')}
                         </button>
                         {busy && (
                             <span className="plot-busy">
                                 <i className="plot-spinner" />
-                                {plots.ticks_pending === 1
-                                    ? 'running a tick…'
-                                    : `running ${plots.ticks_pending} ticks…`}
+                                {t('plots.running_ticks', { n: plots.ticks_pending })}
                             </span>
                         )}
                     </div>
@@ -135,10 +120,7 @@ export function PlotsTab({ plots }: { plots: PlotsTabState }): ReactNode {
             <PlotChainLegend />
 
             {plots.list.length === 0 && (
-                <p className="plot-empty">
-                    No plots yet. Plots are born on a tick with a free slot — force a few, or wait for the
-                    world to get around to it.
-                </p>
+                <p className="plot-empty">{t('plots.none_yet')}</p>
             )}
 
             {active.map(p => (
@@ -147,7 +129,7 @@ export function PlotsTab({ plots }: { plots: PlotsTabState }): ReactNode {
 
             {ended.length > 0 && (
                 <>
-                    <h4 className="plot-section-heading">Recently ended</h4>
+                    <h4 className="plot-section-heading">{t('plots.recently_ended')}</h4>
                     {ended.map(p => (
                         <PlotChain key={p.id} plot={p} />
                     ))}
@@ -165,7 +147,8 @@ export function PlotsTab({ plots }: { plots: PlotsTabState }): ReactNode {
                         aria-expanded={factionsOpen}
                     >
                         <span aria-hidden="true">{factionsOpen ? '▾' : '▸'}</span>
-                        {` Faction hierarchies (${plots.factions.length})`}
+                        {' '}
+                        {t('plots.faction_hierarchies', { n: plots.factions.length })}
                     </button>
                     {factionsOpen && (
                         <ul>
@@ -174,8 +157,12 @@ export function PlotsTab({ plots }: { plots: PlotsTabState }): ReactNode {
                                     <strong>{f.name}</strong>
                                     <span>
                                         {' '}
-                                        — {f.method}
-                                        {f.overrides > 0 && `, ${f.overrides} override${f.overrides === 1 ? '' : 's'}`}
+                                        {f.overrides > 0
+                                            ? t('plots.faction_method_overrides', {
+                                                  method: label('faction_method.', f.method),
+                                                  n: f.overrides,
+                                              })
+                                            : t('plots.faction_method', { method: label('faction_method.', f.method) })}
                                     </span>
                                 </li>
                             ))}

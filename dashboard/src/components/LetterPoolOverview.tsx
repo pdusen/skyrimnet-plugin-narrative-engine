@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 
+import { t } from '../i18n/strings';
 import type { LetterSlot } from '../types';
 
 interface Props {
@@ -8,24 +9,21 @@ interface Props {
 }
 
 function formatRelative(deltaSeconds: number): string {
-    if (deltaSeconds < 1)     return 'just now';
-    if (deltaSeconds < 60)    return `${Math.round(deltaSeconds)}s ago`;
-    if (deltaSeconds < 3600)  return `${Math.round(deltaSeconds / 60)}m ago`;
-    if (deltaSeconds < 86400) return `${Math.round(deltaSeconds / 3600)}h ago`;
-    return `${Math.round(deltaSeconds / 86400)}d ago`;
+    if (deltaSeconds < 1) return t('time.just_now');
+    const ago = (time: string) => t('time.ago', { time });
+    if (deltaSeconds < 60) return ago(t('time.seconds', { s: Math.round(deltaSeconds) }));
+    if (deltaSeconds < 3600) return ago(t('time.minutes', { m: Math.round(deltaSeconds / 60) }));
+    if (deltaSeconds < 86400) return ago(t('time.hours', { h: Math.round(deltaSeconds / 3600) }));
+    return ago(t('time.days', { d: Math.round(deltaSeconds / 86400) }));
 }
 
 function stateBadgeClass(state: LetterSlot['state']): string {
     return `state-badge state-${state}`;
 }
 
+// The table's narrow column takes each state's short form.
 function prettyState(state: LetterSlot['state']): string {
-    switch (state) {
-        case 'free':             return 'Free';
-        case 'pending_delivery': return 'Pending';
-        case 'in_inventory':     return 'In Inv';
-        case 'read':             return 'Read';
-    }
+    return t(`slot_state.${state}.short`);
 }
 
 function truncate(s: string, max: number): string {
@@ -52,21 +50,21 @@ export function LetterPoolOverview({ slots, nowSeconds }: Props) {
 
     return (
         <section className="panel letter-pool-overview">
-            <h2>Pool</h2>
+            <h2>{t('letters.pool')}</h2>
             <div className="pool-stats">
-                <span>Free: {stats.free}</span>
-                <span>Pending: {stats.pending}</span>
-                <span>In Inventory: {stats.inv}</span>
-                <span>Read: {stats.read}</span>
+                <span>{t('letters.count', { state: t('slot_state.free'), n: stats.free })}</span>
+                <span>{t('letters.count', { state: t('slot_state.pending_delivery'), n: stats.pending })}</span>
+                <span>{t('letters.count', { state: t('slot_state.in_inventory'), n: stats.inv })}</span>
+                <span>{t('letters.count', { state: t('slot_state.read'), n: stats.read })}</span>
             </div>
             <table className="pool-table">
                 <thead>
                     <tr>
                         <th className="col-idx">#</th>
-                        <th className="col-state">State</th>
-                        <th className="col-sender">Sender</th>
-                        <th className="col-topic">Topic</th>
-                        <th className="col-age">Age</th>
+                        <th className="col-state">{t('letters.column.state')}</th>
+                        <th className="col-sender">{t('letters.column.sender')}</th>
+                        <th className="col-topic">{t('letters.column.topic')}</th>
+                        <th className="col-age">{t('letters.column.age')}</th>
                     </tr>
                 </thead>
                 <tbody>

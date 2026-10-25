@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { label, t } from '../../i18n/strings';
 import type { DirectorState } from '../../types';
 import { ActionDispatchTable } from '../ActionDispatchTable';
 import { TimerPanel, TimerRow } from '../TimerPanel';
@@ -24,19 +25,14 @@ function AbortConfirmModal({ beatName, onConfirm, onCancel }: {
     return (
         <div className="settings-rebind-overlay" role="dialog" aria-modal="true">
             <div className="settings-rebind-panel">
-                <h3>Abort narrative beat “{beatName}”?</h3>
-                <p>
-                    The in-progress beat will be stopped and reset immediately. Any
-                    memories that SkyrimNet has already recorded and any narrations that
-                    NPCs have already spoken will remain — only the running beat itself
-                    is unwound.
-                </p>
+                <h3>{t('dispatch.abort_confirm', { beat: label('beat.', beatName) })}</h3>
+                <p>{t('dispatch.abort_confirm.body')}</p>
                 <div className="settings-rebind-buttons">
                     <button type="button" className="bulk-button" onClick={onCancel}>
-                        Cancel
+                        {t('common.cancel')}
                     </button>
                     <button type="button" className="bulk-button bulk-button-danger" onClick={onConfirm}>
-                        Confirm Abort
+                        {t('dispatch.confirm_abort')}
                     </button>
                 </div>
             </div>
@@ -75,29 +71,27 @@ export function DispatchTab({ state, nowSeconds }: Props) {
                     onCancel={onCancelAbort}
                 />
             )}
-            <TimerPanel title="Gates on every pick">
-                <TimerRow label="Global beat cooldown" timer={gates.global_beat_cooldown} />
+            <TimerPanel title={t('dispatch.gates')}>
+                <TimerRow label={t('timer.global_beat_cooldown')} timer={gates.global_beat_cooldown} />
                 <TimerRow
-                    label="Repetition window"
+                    label={t('timer.repetition_window')}
                     timer={gates.repetition_window.soonest}
                     note={
                         gates.repetition_window.suppressed_count > 0
-                            ? `${gates.repetition_window.suppressed_count} beat${
-                                  gates.repetition_window.suppressed_count === 1 ? '' : 's'
-                              } suppressed`
-                            : 'nothing suppressed'
+                            ? t('timer.suppressed', { n: gates.repetition_window.suppressed_count })
+                            : t('timer.nothing_suppressed')
                     }
                 />
             </TimerPanel>
             <section className="panel dispatch-controls">
-                <h2>Controls</h2>
-                <label className="tick-toggle" title="When off, the plugin skips its periodic poll: no phase advance, no evaluation, no dispatcher tick. Debug aid.">
+                <h2>{t('dispatch.controls')}</h2>
+                <label className="tick-toggle" title={t('dispatch.tick_enabled.title')}>
                     <input
                         type="checkbox"
                         checked={state.status.tick_enabled}
                         onChange={onToggleTick}
                     />
-                    <span>Tick Enabled</span>
+                    <span>{t('dispatch.tick_enabled')}</span>
                 </label>
                 <button
                     type="button"
@@ -105,14 +99,14 @@ export function DispatchTab({ state, nowSeconds }: Props) {
                     disabled={!inFlightName}
                     onClick={onAbortClick}
                     title={inFlightName
-                        ? `Abort the running beat: ${inFlightName}`
-                        : 'No narrative beat is currently in flight.'}
+                        ? t('dispatch.abort.title', { beat: label('beat.', inFlightName) })
+                        : t('dispatch.abort.none')}
                 >
-                    Abort Running Beat
+                    {t('dispatch.abort')}
                 </button>
             </section>
             <section className="panel action-dispatch">
-                <h2>Actions</h2>
+                <h2>{t('dispatch.actions')}</h2>
                 <ActionDispatchTable
                     actions={state.actions}
                     inFlightName={inFlightName}
@@ -124,14 +118,14 @@ export function DispatchTab({ state, nowSeconds }: Props) {
                         className="bulk-button"
                         onClick={() => onBulk(true)}
                     >
-                        Enable All
+                        {t('dispatch.enable_all')}
                     </button>
                     <button
                         type="button"
                         className="bulk-button"
                         onClick={() => onBulk(false)}
                     >
-                        Disable All
+                        {t('dispatch.disable_all')}
                     </button>
                 </div>
             </section>

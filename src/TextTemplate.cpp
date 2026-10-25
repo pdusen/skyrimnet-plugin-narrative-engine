@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdlib>
 #include <format>
+#include <iterator>
 
 namespace NarrativeEngine::TextTemplate
 {
@@ -364,6 +365,29 @@ namespace NarrativeEngine::TextTemplate
             }
         }
 
+        void ImpliedInto(const Message& message, Signature& out)
+        {
+            for (const auto& node : message) {
+                const auto* placeholder = std::get_if<Placeholder>(&node.value);
+                if (placeholder == nullptr) {
+                    continue;
+                }
+                auto parameter = std::ranges::find(out, placeholder->name, &Parameter::name);
+                if (parameter == out.end()) {
+                    out.push_back(Parameter{placeholder->name, Kind::Text});
+                    parameter = std::prev(out.end());
+                }
+                if (placeholder->format == Placeholder::Format::Plural) {
+                    parameter->kind = Kind::Number;
+                } else if (placeholder->format == Placeholder::Format::List && parameter->kind != Kind::Number) {
+                    parameter->kind = Kind::List;
+                }
+                for (const auto& branch : placeholder->branches) {
+                    ImpliedInto(branch.message, out);
+                }
+            }
+        }
+
         class Renderer
         {
         public:
@@ -505,6 +529,13 @@ namespace NarrativeEngine::TextTemplate
     {
         std::vector<std::string> out;
         NamesInto(message, out);
+        return out;
+    }
+
+    Signature ImpliedSignature(const Message& message)
+    {
+        Signature out;
+        ImpliedInto(message, out);
         return out;
     }
 

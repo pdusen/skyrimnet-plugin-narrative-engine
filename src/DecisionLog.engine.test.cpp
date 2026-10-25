@@ -445,6 +445,15 @@ TEST_CASE("DecisionLog survives a save and load", "[DecisionLog][engine]")
                        "'fake_not_offered'))");
             REQUIRE(DecisionLog::NoteText(tail[0], english) == "forced dispatch via debug UI");
         }
+
+        SECTION("should give the dashboard the reason alone")
+        {
+            const auto& english = NarrativeEngine::Testing::ShippedEnglish();
+            REQUIRE(DecisionLog::FailureText(tail[0], english)
+                    == "LLM picked an option it was not offered on every attempt (last: unknown beat "
+                       "'fake_not_offered')");
+            REQUIRE(DecisionLog::FailureText(DecisionLog::DecisionRecord{}, english).empty());
+        }
     }
 
     SECTION("when every failure and note is rendered")

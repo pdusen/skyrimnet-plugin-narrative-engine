@@ -4,6 +4,8 @@
 
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 // Unit tests for the template formatter.
 //
@@ -291,4 +293,42 @@ TEST_CASE("TextTemplate::JoinList", "[TextTemplate]")
     german.listPairSeparator = " und ";
     german.listFinalSeparator = " und ";
     CHECK(JoinList({"A", "B", "C"}, german) == "A, B und C");
+}
+
+TEST_CASE("TextTemplate::ImpliedSignature", "[TextTemplate]")
+{
+    const auto implied = [](std::string_view text) { return ImpliedSignature(MustParse(text)); };
+    const auto kinds = [](const Signature& signature) {
+        std::vector<std::pair<std::string, Kind>> out;
+        for (const auto& parameter : signature) {
+            out.emplace_back(parameter.name, parameter.kind);
+        }
+        return out;
+    };
+    using Pairs = std::vector<std::pair<std::string, Kind>>;
+    SECTION("plain text implies nothing")
+    {
+        CHECK(implied("Director").empty());
+    }
+    SECTION("each placeholder once, in order of first use, by how it is used")
+    {
+        CHECK(kinds(implied("{who} saw {names, list} on {n, plural, other {# days}}, {who, select, other {x}}"))
+              == Pairs{{"who", Kind::Text}, {"names", Kind::List}, {"n", Kind::Number}});
+    }
+    SECTION("a placeholder pluralized anywhere is a number, however else it appears")
+    {
+        CHECK(kinds(implied("{n} of {n, plural, one {one} other {{n, list}}}")) == Pairs{{"n", Kind::Number}});
+    }
+    SECTION("placeholders inside branches count")
+    {
+        CHECK(kinds(implied("{who, select, female {{her}} other {{them, list}}}"))
+              == Pairs{{"who", Kind::Text}, {"her", Kind::Text}, {"them", Kind::List}});
+    }
+    SECTION("a translation validated against it")
+    {
+        const auto signature = implied("{n, plural, one {# day} other {# days}} for {who}");
+        CHECK(Validate(MustParse("{who}: {n, plural, other {# Tage}}"), signature).empty());
+        CHECK_FALSE(Validate(MustParse("{who, plural, other {#}} {n}"), signature).empty());
+        CHECK_FALSE(Validate(MustParse("{n} {whom}"), signature).empty());
+    }
 }

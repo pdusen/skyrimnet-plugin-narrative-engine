@@ -8,6 +8,7 @@
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
+import { language, setLanguage, t } from './i18n/strings';
 import { stateStore } from './stateStore';
 import type { DirectorState } from './types';
 
@@ -43,9 +44,13 @@ root.render(<App />);
 window.updateFullState = (jsonString: string): void => {
     try {
         const parsed = JSON.parse(jsonString) as DirectorState;
+        // Before the state, so its first render already has the words.
+        setLanguage(parsed.language);
         stateStore.set(parsed);
     } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        stateStore.setError(`updateFullState parse failure: ${msg}`);
+        // With no table yet there is nothing to word it with but the
+        // browser's own message.
+        stateStore.setError(language() ? t('app.parse_failure', { message: msg }) : msg);
     }
 };

@@ -280,9 +280,16 @@ namespace NarrativeEngine::DecisionLog
         if (record.failure == DecisionRecord::Failure::None) {
             return record.beatSelected;
         }
+        return table.Render(kFailed, TextTemplate::Arguments{}.Set("reason", FailureText(record, table)));
+    }
+
+    std::string FailureText(const DecisionRecord& record, const LanguageTable::Table& table)
+    {
+        if (record.failure == DecisionRecord::Failure::None) {
+            return {};
+        }
         const auto& reasonKey = kReasonKeys[static_cast<std::size_t>(record.failure) - 1];
-        const auto reason = table.Render(reasonKey, TextTemplate::Arguments{}.Set("detail", record.failureDetail));
-        return table.Render(kFailed, TextTemplate::Arguments{}.Set("reason", reason));
+        return table.Render(reasonKey, TextTemplate::Arguments{}.Set("detail", record.failureDetail));
     }
 
     std::string_view FailureId(DecisionRecord::Failure failure) noexcept

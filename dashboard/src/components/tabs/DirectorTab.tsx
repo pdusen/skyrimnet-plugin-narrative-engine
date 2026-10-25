@@ -1,3 +1,4 @@
+import { t as tr } from '../../i18n/strings';
 import type { DirectorState } from '../../types';
 import { TimerPanel, TimerRow } from '../TimerPanel';
 import { DecisionList } from '../DecisionList';
@@ -18,19 +19,17 @@ export function DirectorTab({ state }: Props) {
                 timeInPhaseSeconds={state.time_in_phase_seconds}
                 actionInFlight={state.action_in_flight}
             />
-            <TimerPanel title="Next up">
-                <TimerRow label="Next evaluation" timer={t.next_evaluation} />
-                <TimerRow label="Phase may advance in" timer={t.phase_advance_unlock} />
-                <TimerRow label="Global beat cooldown" timer={t.global_beat_cooldown} />
+            <TimerPanel title={tr('timer.next_up')}>
+                <TimerRow label={tr('director.next_evaluation')} timer={t.next_evaluation} />
+                <TimerRow label={tr('director.phase_may_advance')} timer={t.phase_advance_unlock} />
+                <TimerRow label={tr('timer.global_beat_cooldown')} timer={t.global_beat_cooldown} />
                 <TimerRow
-                    label="Repetition window"
+                    label={tr('timer.repetition_window')}
                     timer={t.repetition_window.soonest}
                     note={
                         t.repetition_window.suppressed_count > 0
-                            ? `${t.repetition_window.suppressed_count} beat${
-                                  t.repetition_window.suppressed_count === 1 ? '' : 's'
-                              } suppressed`
-                            : 'nothing suppressed'
+                            ? tr('timer.suppressed', { n: t.repetition_window.suppressed_count })
+                            : tr('timer.nothing_suppressed')
                     }
                 />
             </TimerPanel>
