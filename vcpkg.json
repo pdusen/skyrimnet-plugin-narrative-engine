@@ -8,6 +8,7 @@
     "directxtk",
     "simpleini",
     "nlohmann-json",
-    "minhook"
+    "minhook",
+    "utf8proc"
   ]
 }

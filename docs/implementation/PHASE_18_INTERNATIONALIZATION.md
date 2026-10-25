@@ -695,7 +695,7 @@ A step whose verification *fails* is not a stopping condition: fix it and finish
 
 #### Step 1 — UTF-8 text primitives
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -717,6 +717,27 @@ No caller changes in this step.
 **Verification:** `*.test.cpp` cases covering each function. They include Cyrillic, Greek, Polish, Japanese and
 mixed-script strings; invalid sequences; a truncation that would split a multi-byte character; and folding pairs
 such as `Ä`/`ä`, `Ж`/`ж` and `Ł`/`ł`. `CharacterBioResolver`'s existing tests pass unchanged.
+
+Done. `include/TextUtf8.h`, `src/TextUtf8.cpp` (a core source) and `src/TextUtf8.test.cpp`, with utf8proc 2.11.3
+from vcpkg linked privately into `NarrativeEngineCore`. The vcpkg target sets `UTF8PROC_STATIC` itself, so nothing
+else in the build had to know.
+
+`RepairWindows1252` moved together with the three helpers only it used (`SequenceLength`, the UTF-8 encoder and the
+code-page table). Its test case moved with it, section for section and byte for byte; only the `TEST_CASE` name
+changed, from `CharacterBioResolver::` to `TextUtf8::`. Every other `CharacterBioResolver` test runs unchanged. No
+other caller was touched.
+
+`pwsh -File build.ps1 test`: 528 of 528 passed, eleven of them new. The cases worth recording:
+
+- **Folding is full, and normalizing.** `Straße` equals `STRASSE`, and a precomposed `é` equals `e` plus a combining
+  acute. Today's ASCII folding treats `Ä` and `ä` as different letters.
+- **Ulfric's Russian name is seven code points and fourteen bytes.** `TruncateToCodePoints` cuts it by letters, and
+  never splits a four-byte character.
+- **`Words` splits Japanese on `・` and the ideographic space, and nowhere else.** An unseparated run comes back as
+  one word. A test case records that `StandsAlone` can therefore never match a name inside such a run, which is why
+  Step 18 needs substring matching for `WordSeparated = false`.
+- **The typographic apostrophe `’` separates words.** The ASCII one does not. This matches today's splitters, which
+  only ever saw ASCII apostrophes, because the sanitizer turns the typographic one into `'` in LLM text.
 
 #### Step 2 — The `TextTemplate` formatter
 

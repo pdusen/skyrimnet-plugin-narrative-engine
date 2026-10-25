@@ -91,6 +91,7 @@ set(NARRATIVEENGINE_CORE_SOURCES
     "${CMAKE_SOURCE_DIR}/src/LLMTextSanitizer.cpp"
     "${CMAKE_SOURCE_DIR}/src/SenderCooldownTable.cpp"
     "${CMAKE_SOURCE_DIR}/src/SkyrimNetEvents.cpp"
+    "${CMAKE_SOURCE_DIR}/src/TextUtf8.cpp"
     "${CMAKE_SOURCE_DIR}/src/ThreadRole.cpp"
 )
 
@@ -121,6 +122,7 @@ endforeach()
 
 find_package(directxtk CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(utf8proc CONFIG REQUIRED)
 # Setup your SKSE plugin as an SKSE plugin!
 find_package(CommonLibSSE CONFIG REQUIRED)
 # MinHook — battle-tested function-entry detour library. Used by the
@@ -181,6 +183,10 @@ target_include_directories(NarrativeEngineCore PUBLIC include)
 # nlohmann_json is header-only and carries nothing engine-specific, so a core
 # source may parse JSON without breaking the "runs with no Skyrim" rule.
 target_link_libraries(NarrativeEngineCore PUBLIC nlohmann_json::nlohmann_json)
+# utf8proc is a small C library with no engine in it: Unicode case mapping,
+# folding and character categories for TextUtf8. No public header includes
+# it, so it links privately.
+target_link_libraries(NarrativeEngineCore PRIVATE utf8proc::utf8proc)
 
 # ---------------------------------------------------------------------------
 # The advertised version

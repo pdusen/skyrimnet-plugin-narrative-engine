@@ -83,12 +83,6 @@ namespace NarrativeEngine::CharacterBioResolver
     // the generic lookup trims first and the fallback does not.
     [[nodiscard]] std::string Slug(std::string_view text);
 
-    // Valid UTF-8 comes back untouched. Otherwise every byte that does not
-    // begin a valid UTF-8 sequence is read as Windows-1252 (0x80-0x9F through
-    // its table, the rest as Latin-1) and re-encoded; valid sequences around
-    // it are kept.
-    [[nodiscard]] std::string RepairWindows1252(std::string_view text);
-
     // The bio name SkyrimNet assigns this actor, or "" when it assigns none.
     // In order: the unique table, the generic table, player_special for the
     // player, nothing for an empty name or "Unknown", then the slug -- each
