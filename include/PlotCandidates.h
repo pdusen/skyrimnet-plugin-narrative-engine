@@ -30,16 +30,31 @@
 // drive it against a fabricated province.
 namespace NarrativeEngine::PlotCandidates
 {
+    // Why somebody is on a list, beside their name: what the model reads of
+    // them, which plot_slot.prompt words. Empty for a place or a thing, whose
+    // name is all there is to say.
+    struct Why
+    {
+        // What they do, from their biography. May be empty.
+        std::string occupation;
+        // How the mastermind knows them, as a PlotMenus::RelationId, or
+        // empty for a stranger.
+        std::string relation;
+        // Where a stranger lives, when that is known.
+        std::string lives;
+        // The scheme, or how it finishes, names them.
+        bool named = false;
+    };
+
     struct Candidate
     {
         // c1, c2, ... in list order: what the decision question offers
         // and what its answer is matched against.
         std::string key;
-        // What filling the slot with this candidate writes into the step.
+        // What filling the slot with this candidate writes into the step,
+        // and the name the model reads.
         PlotModel::SlotValue value;
-        // The one line the model reads: who or what this is, and why it
-        // is on the list.
-        std::string line;
+        Why why;
     };
 
     struct Request
@@ -142,9 +157,9 @@ namespace NarrativeEngine::PlotCandidates
     // What the scheme call is shown, so a finish can name one.
     [[nodiscard]] std::vector<std::string> MadeExamples(const Request& request, std::size_t perCraft);
 
-    // A person's line on a list: name, what they do, and how the
-    // mastermind knows them or where they live.
-    [[nodiscard]] std::string Describe(const Request& request, const PlotCasting::Member& member);
+    // Why a person is on a list: what they do, and how the mastermind knows
+    // them or where they live.
+    [[nodiscard]] Why Describe(const Request& request, const PlotCasting::Member& member);
 
     // Everybody `text` names. A person is named when a word of their name
     // stands in the text as a whole word -- a trailing 's dropped -- and no

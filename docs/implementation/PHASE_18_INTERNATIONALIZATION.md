@@ -620,6 +620,14 @@ what it established is.
    German, Russian and Japanese, each compared against an English baseline from the same run.
 6. **Whether to support a player overlay file.** Decided: yes. `Languages/<stem>.custom.ini` layers over the shipped
    file key by key. See **Language files**.
+7. **How a shared prompt file words one item of a list.** Found in Step 12. `render_template` passes no arguments,
+   so a file it renders cannot be handed the item. SkyrimNet's devkit documents `{% include "name" %}` as well, and
+   its Inja installs an include callback that resolves the path at parse time. Disassembling `SkyrimNet.dll`'s
+   include visitor (at `0x3651b0`) shows it renders the included file with the includer's data **and** its
+   `additional_data`, which is where Inja keeps loop and `{% set %}` variables. So
+   `{% set step = o.step %}{% include "components/narrative_engine/plot_step.prompt" %}` words `o`. OStimNet's
+   `{% include "submodules/character_bio/7100_memories.prompt" %}` is a working instance of the path form. Step 29's
+   render check confirms the variables reach the include in the running game.
 
 ---
 
@@ -1291,7 +1299,7 @@ build.
 
 #### Step 12 — Plot menus, plans and verb phrasing in prompts
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1310,6 +1318,69 @@ holds only ids, slots and traits.
 **Verification:** offline render comparison of every plot prompt and decision template, over a synthetic plot at
 birth, mid-plan, and at adaptation, with every verb represented somewhere.
 
+Done. Every step a plot prompt shows is now a record, and the prompts word it. The record is `{verb, fill, open,
+agent_open}`:
+
+- `fill` holds each filled placeholder.
+- `open` says an unfilled slot shows as `[mark]`, for a step still being planned. Otherwise it reads as someone,
+  somewhere or something, as a step that has happened, or a verb on a menu, does.
+- `agent_open` says the same of the agent alone.
+
+`PlotPlanning::StepRecord` builds it in three forms, `Planned`, `Done` and `Menu`, which are today's sketch, label
+and generic sentence. One file words all three.
+
+**The prompt files.** All are under `components/narrative_engine/`:
+
+- `plot_step.prompt` words a step. It has one branch per verb, generated once from `kVerbs` by a scratchpad script.
+- `plot_role.prompt` words what each role of a verb is for, which is the old slot `says`.
+- `plot_done.prompt` words a step that has happened, with how it went.
+- `plot_purpose.prompt` words what a slot's step is for in the plan.
+- `plot_standing.prompt` words a faction standing token.
+
+The templates reach them through `{% set %}` and `{% include %}`, the mechanism recorded as resolved question 7.
+
+**What the callers pass now.**
+
+- `PlotPlanning`'s option lines are records: a preparation carries its `before`, and the adapt options carry only
+  their keys.
+- Its purposes are a `kind` with fields, and its outcome phrases are `PlotModel::StepOutcomeId` tokens.
+- `StepsSoFar` and `PlanText` are lists of records, which the templates number.
+- `PlotCandidates::PersonLine` became a `Why` (occupation, a `RelationId` token, where a stranger lives, whether the
+  scheme names them), which `plot_slot.prompt` words. `PlotMenus::RelationPhrase` is gone.
+- `PlotBirth::StandingPhrase` became `StandingId`: `leads`, `senior`, `member`.
+- `kVerbs` lost its dashboard sentence, and `PlotVerbs::Generic` and `RenderStep` went with it.
+- `PlotModel::Label` remains for the plot log and for casting's word matching. It now renders the English
+  `[Plot.Dashboard]` line, which a PlotText test had already pinned equal to the one removed.
+
+**The comparison.** The scratchpad harness gained Inja's include callback, resolving paths under `prompts/` as
+SkyrimNet does. The contexts are the real ones the planner builds: `PlotPlanning` was instrumented for the
+comparison only, behind an environment variable, and the instrumentation was removed before the commit. It dumped
+every context it handed its `Ask` across the plot test suite, 238 of them, once from the old code and once from the
+new.
+
+A conversion script turns each new context back into the old strings by the old C++ rules. It agreed with the old
+code's dump on all 238, matched as multisets because the two test runs ordered their cases differently. It then
+built 24 synthetic contexts for what the tests do not reach:
+
+- every verb filled, done and on a menu, including the nine the tests never fill;
+- every outcome, and an empty slot in a done step;
+- every purpose, place and thing slots, every relation, a named stranger, and the mastermind's own option;
+- every standing, and both birth prompts.
+
+Every context, real and synthetic, was rendered twice: the old prompt tree against its old strings, and the new tree
+against its record. **All 262 renders are byte-identical.**
+
+**Left for the steps that remove their last readers.** Plot awareness, which Step 14 converts, still reads
+`kVerbs`' two task phrases through `RenderPhrase`. The retry messages that `PlotBirthParse` and
+`PlotCandidates::ResolveRoles` compose, which Step 13 turns into codes, still read the slot `says`. Both stay in
+C++ until then, and the prompts carry their own copy of `says` meanwhile. `caption` stays as well. It is the
+dashboard's fallback and `PlotVerbs::Plain`'s word for an id, a matching rule, which is Phase D's subject.
+
+`pwsh -File build.ps1 test`: 557 of 557 passed. `build.ps1 build` is clean, and the five includes deploy with the
+build. The planning tests keep their expected sentences: their helper rebuilds each from the record and the English
+dashboard line, so they now also check that the records carry the right fills. A PlotText test fails the build when
+a verb or a role has no branch in `plot_step.prompt` or `plot_role.prompt`.
+
 #### Step 13 — Retry and rejection codes
 
 - [ ] Complete
@@ -1321,6 +1392,8 @@ birth, mid-plan, and at adaptation, with every verb represented somewhere.
 - Every rejection in `PlotBirthParse` and `PlotCandidates` becomes a code plus arguments.
 - `ctx["retry"]` carries them, and `plot_cast` / `plot_ambition` word each code they can receive.
 - `PlotLog` records the code and its arguments.
+- `kVerbs`' slot `says` goes, since those messages are its last C++ readers. Step 12 left it for them, and the
+  prompts already word it in `plot_role.prompt`.
 
 **Verification:**
 
@@ -1340,6 +1413,8 @@ birth, mid-plan, and at adaptation, with every verb represented somewhere.
   task and its sender for an agent.
 - `0300_ne_plot_awareness.prompt` indexes into it and words it.
 - An NPC in no plot still renders nothing.
+- `kVerbs`' two task phrases go, with `PlotVerbs::RenderPhrase` and `Unfilled`: plot awareness was their last
+  reader, which Step 12 left them for.
 
 **Verification:** offline render comparison of the submodule for a mastermind at each step state, an agent, and an
 NPC in no plot. The harness applies SkyrimNet's parse-as-JSON rule, which is the behaviour established by
@@ -1595,9 +1670,9 @@ verification cannot.
 The button does three things:
 
 - **Renders a check prompt.** `narrative_engine_render_check` loads a sentinel file through a *computed*
-  `render_template` name, and reads a field out of a check decorator's JSON. It asks the model to repeat both
-  sentinels verbatim. The dashboard shows pass or fail for each, from the response and from whether SkyrimNet
-  reported a render error.
+  `render_template` name, reads a field out of a check decorator's JSON, and words a loop variable and a `{% set %}`
+  variable through an `{% include %}`. It asks the model to repeat the three sentinels verbatim. The dashboard shows
+  pass or fail for each, from the response and from whether SkyrimNet reported a render error.
 - **Queues a notification** containing Latin-1 text the English font covers ("Café · Jörgen · naïve · Ærø ·
   Ölfrún"), for the user to read once the dashboard closes.
 - **Shows the font-check result**, and whether the dashboard's `Intl.PluralRules` is available.
@@ -1641,7 +1716,7 @@ one missing either fails. The prompt passes the offline render comparison with S
 
 **What to judge:**
 
-- Both render checks say **pass**.
+- All three render checks say **pass**.
 - The notification after closing reads "Café · Jörgen · naïve · Ærø · Ölfrún" exactly, with no blanks, boxes or
   `Ã©`-style mangling.
 - The font check says the active font set covers English, and `Intl.PluralRules` is reported available. If it is
@@ -1649,7 +1724,8 @@ one missing either fails. The prompt passes the offline render comparison with S
 
 A failed computed-name check switches Step 10's include to an `if` chain over the beat set, as a follow-up step
 inserted here. A failed decorator check means `ne_plot_awareness` returns prose again, rendered from a template file
-through `TextTemplate`.
+through `TextTemplate`. A failed include check means the plot includes are inlined into each template that uses
+them, which a script can generate from the include files.
 
 #### Step 30 — Language trial
 

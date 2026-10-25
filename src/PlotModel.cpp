@@ -1,5 +1,7 @@
 #include <PlotModel.h>
 
+#include <Localization.h>
+#include <PlotText.h>
 #include <PlotVerbs.h>
 
 #include <algorithm>
@@ -124,7 +126,10 @@ namespace NarrativeEngine::PlotModel
     std::string Label(const Step& step)
     {
         if (!step.verb.empty()) {
-            return PlotVerbs::RenderStep(step, PlotVerbs::Template::Dashboard);
+            // In English whatever the player reads: the plot log and the
+            // casting ladder's word matching are its readers.
+            return PlotVerbs::Find(step.verb) != nullptr ? PlotText::DashboardLine(Localization::English(), step)
+                                                         : std::string{};
         }
         if (!step.description.empty()) {
             return step.description;

@@ -68,10 +68,9 @@ namespace NarrativeEngine::PlotMenus
         Count
     };
 
+    // The relation's token, which the prompts word: close_and_colleague,
+    // close, colleague or neighbour.
     [[nodiscard]] std::string_view RelationId(Relation r) noexcept;
-
-    // A short phrase for the prompt, e.g. "a friend and colleague".
-    [[nodiscard]] std::string_view RelationPhrase(Relation r) noexcept;
 
     // How `other` is connected to `boss`, if at all. False when they share
     // nothing the ladder ranks -- no tie, no organisation, not even a hold.

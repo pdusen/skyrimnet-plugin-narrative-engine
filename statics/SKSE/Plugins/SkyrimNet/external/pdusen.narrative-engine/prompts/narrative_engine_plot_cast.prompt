@@ -2,7 +2,7 @@
    weighted shortlist of people who COULD be scheming; this call decides
    which of them IS.
    Receives the JSON object produced by PlotBirth::CastContext:
-     candidates [{ form_id, name, hold, standing,
+     candidates [{ form_id, name, hold, standing (a plot_standing token),
                    bio { summary, occupation, aspirations, ... } }],
      retry — empty on the first attempt; on the second it is why the
        first answer was refused
@@ -84,7 +84,7 @@ Do not repeat that mistake. Everything else about the task is unchanged.
 ## The candidates
 
 {% for c in candidates %}
-### {{ c.name }} (form_id: {{ c.form_id }}){% if length(c.standing) > 0 %} — {{ c.standing }}{% endif %}
+### {{ c.name }} (form_id: {{ c.form_id }}){% if length(c.standing) > 0 %} — {% set standing = c.standing %}{% include "components/narrative_engine/plot_standing.prompt" %}{% endif %}
 
 {% if length(c.hold) > 0 %}Lives in {{ c.hold }}.{% endif %}
 

@@ -179,28 +179,19 @@ namespace NarrativeEngine::PlotCandidates
             });
         }
 
-        std::string PersonLine(const Request& request, const Ranked& r)
+        Why WhyOf(const Request& request, const Ranked& r)
         {
-            std::string line = r.member->name;
+            Why why;
             if (request.occupation) {
-                const auto what = request.occupation(r.member->npc);
-                if (!what.empty()) {
-                    line += ", " + what;
-                }
+                why.occupation = request.occupation(r.member->npc);
             }
-            std::string why;
             if (r.rank < kStranger) {
-                why = PlotMenus::RelationPhrase(static_cast<PlotMenus::Relation>(r.rank));
-            } else if (const auto where = SettlementName(request, r.member->settlement); !where.empty()) {
-                why = std::format("lives in {}", where);
+                why.relation = PlotMenus::RelationId(static_cast<PlotMenus::Relation>(r.rank));
+            } else {
+                why.lives = SettlementName(request, r.member->settlement);
             }
-            if (r.named) {
-                why = why.empty() ? std::string{"named in the scheme"} : why + "; named in the scheme";
-            }
-            if (!why.empty()) {
-                line += std::format(" ({})", why);
-            }
-            return line;
+            why.named = r.named;
+            return why;
         }
 
         std::vector<Candidate> Keyed(std::vector<Candidate> list, std::size_t cap)
@@ -221,8 +212,7 @@ namespace NarrativeEngine::PlotCandidates
         {
             std::vector<Candidate> out;
             for (const auto& r : ranked) {
-                out.push_back(
-                    {{}, {std::string{slot.name}, r.member->npc, r.member->name}, PersonLine(ctx.request, r)});
+                out.push_back({{}, {std::string{slot.name}, r.member->npc, r.member->name}, WhyOf(ctx.request, r)});
             }
             return Keyed(std::move(out), cap);
         }
@@ -296,7 +286,7 @@ namespace NarrativeEngine::PlotCandidates
                 if (name.empty()) {
                     continue;
                 }
-                out.push_back({{}, {std::string{slot.name}, settlement, name}, name});
+                out.push_back({{}, {std::string{slot.name}, settlement, name}, {}});
             }
             return Keyed(std::move(out), cap);
         }
@@ -440,7 +430,7 @@ namespace NarrativeEngine::PlotCandidates
 
         Candidate Thing(const PlotVerbs::Slot& slot, RE::FormID form, const std::string& text)
         {
-            return {{}, {std::string{slot.name}, form, text}, text};
+            return {{}, {std::string{slot.name}, form, text}, {}};
         }
 
         // A list of made things: the ones `naming` says first, then a spread
@@ -823,10 +813,10 @@ namespace NarrativeEngine::PlotCandidates
         return out;
     }
 
-    std::string Describe(const Request& request, const PlotCasting::Member& member)
+    Why Describe(const Request& request, const PlotCasting::Member& member)
     {
         const Ctx ctx{request, NamedIn(request.population, request.naming)};
-        return PersonLine(request, Rank(ctx, member));
+        return WhyOf(request, Rank(ctx, member));
     }
 
     std::unordered_set<RE::FormID> NamedIn(const PlotCasting::Population& population, std::string_view text)
@@ -1067,7 +1057,7 @@ namespace NarrativeEngine::PlotCandidates
         case Rule::ItemPool: {
             std::vector<Candidate> out;
             for (const auto& item : request.world.items) {
-                out.push_back({{}, {std::string{slot.name}, item.form, item.displayName}, item.displayName});
+                out.push_back({{}, {std::string{slot.name}, item.form, item.displayName}, {}});
             }
             return Keyed(std::move(out), limits.things);
         }
@@ -1078,7 +1068,7 @@ namespace NarrativeEngine::PlotCandidates
             std::vector<Candidate> out;
             for (const auto& item : request.world.items) {
                 if (item.category == PlotItemPool::Category::Document) {
-                    out.push_back({{}, {std::string{slot.name}, item.form, item.displayName}, item.displayName});
+                    out.push_back({{}, {std::string{slot.name}, item.form, item.displayName}, {}});
                 }
             }
             return Keyed(std::move(out), limits.things);
@@ -1087,7 +1077,7 @@ namespace NarrativeEngine::PlotCandidates
         case Rule::BoundItem: {
             std::vector<Candidate> out;
             if (auto bound = Bind(slot, request)) {
-                out.push_back({"c1", *bound, bound->text});
+                out.push_back({"c1", *bound, {}});
             }
             return out;
         }

@@ -185,17 +185,25 @@ TEST_CASE("PlotText: every plot sentence renders as it did before the move", "[P
     CHECK(Fnv1a(transcript) == 0xc2fc18bbda4005bcull);
 }
 
-TEST_CASE("PlotText: the dashboard's copy of each verb's line matches what the prompts read", "[PlotText][engine]")
+TEST_CASE("PlotText: the prompts word every verb and every role", "[PlotText][engine]")
 {
-    // Until the prompt-facing text moves into a prompt include of its own,
-    // each verb's line and caption exist twice: in PlotVerbs, for the scheme
-    // call's menu and the plan sketch, and in [Plot.Dashboard], for the
-    // dashboard. They must not drift apart in English.
+    // The prompts word a step themselves, in plot_step.prompt, and what each
+    // role of a verb is for in plot_role.prompt, one branch per verb or
+    // role. A verb added to PlotVerbs without a branch would reach the model
+    // as nothing, so it fails here instead.
+    const auto step = NarrativeEngine::Testing::ShippedPrompt("components/narrative_engine/plot_step");
+    const auto role = NarrativeEngine::Testing::ShippedPrompt("components/narrative_engine/plot_role");
+    REQUIRE_FALSE(step.empty());
+    REQUIRE_FALSE(role.empty());
     for (const auto& verb : PV::kVerbs) {
         INFO(verb.id);
-        const auto* line = ShippedEnglish().Source(PT::LineKey(verb));
-        REQUIRE(line != nullptr);
-        CHECK(*line == verb.dashboard);
+        CHECK(step.find(std::format("step.verb == \"{}\"", verb.id)) != std::string::npos);
+        for (std::size_t i = 0; i < verb.slotCount; ++i) {
+            INFO(verb.slots[i].name);
+            CHECK(role.find(std::format("verb == \"{}\" and role == \"{}\"", verb.id, verb.slots[i].name))
+                  != std::string::npos);
+        }
+        // The caption is the dashboard's, and the language file has it.
         const auto* caption = ShippedEnglish().Source(PT::CaptionKey(verb));
         REQUIRE(caption != nullptr);
         CHECK(*caption == verb.caption);

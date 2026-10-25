@@ -1,0 +1,5 @@
+{# plot_done.prompt — a step that has happened, and how it went: "Aeta steals
+   a ruby from Hulda. (it went wrong)". Included after setting `done` to
+   { step, outcome }: `step` a step record (see plot_step.prompt), `outcome`
+   succeeded, failed_caught, failed_timeout, or empty for a step not yet
+   resolved, which says nothing of how it went. No trailing newline. #}{% set step = done.step %}{% include "components/narrative_engine/plot_step.prompt" %}{% if length(done.outcome) > 0 %} ({% if done.outcome == "succeeded" %}it worked{% else if done.outcome == "failed_caught" %}it went wrong{% else if done.outcome == "failed_timeout" %}it ran out of time{% endif %}){% endif -%}

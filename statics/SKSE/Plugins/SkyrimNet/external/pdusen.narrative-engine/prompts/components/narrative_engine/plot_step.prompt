@@ -1,0 +1,54 @@
+{# plot_step.prompt — one plot step as a sentence: "Aeta steals a ruby from
+   Hulda." Included by the plot decision templates and narrative_engine_plot_
+   ambition, after setting `step` to a step record:
+
+     verb        the verb's id
+     fill        { placeholder: text } for each placeholder that is filled;
+                 agent, mastermind and the verb's own slots
+     open        an unfilled slot shows as its own name in brackets, "[mark]",
+                 for a step still being planned; otherwise it reads as
+                 someone, somewhere or something, as a step that has
+                 happened, or a verb on a menu, does
+     agent_open  the same, of the agent alone, for the question that casts
+                 one
+     text        for a step with no verb this file knows, its sentence
+
+   One branch per verb in PlotVerbs::kVerbs; a verb with none reads as
+   `text`. A test fails the build when a verb has no branch here. The
+   dashboard and the memories word the same steps from the language files'
+   [Plot.*] sections. No trailing newline: the caller places the sentence. #}{% if existsIn(step.fill, "agent") %}{% set words.agent = step.fill.agent %}{% else if step.agent_open %}{% set words.agent = "[agent]" %}{% else %}{% set words.agent = "Someone" %}{% endif -%}
+{% if existsIn(step.fill, "mastermind") %}{% set words.mastermind = step.fill.mastermind %}{% else if step.open %}{% set words.mastermind = "[mastermind]" %}{% else %}{% set words.mastermind = "someone" %}{% endif -%}
+{% if existsIn(step.fill, "mark") %}{% set words.mark = step.fill.mark %}{% else if step.open %}{% set words.mark = "[mark]" %}{% else %}{% set words.mark = "someone" %}{% endif -%}
+{% if existsIn(step.fill, "place") %}{% set words.place = step.fill.place %}{% else if step.open %}{% set words.place = "[place]" %}{% else %}{% set words.place = "somewhere" %}{% endif -%}
+{% if existsIn(step.fill, "item") %}{% set words.item = step.fill.item %}{% else if step.open %}{% set words.item = "[item]" %}{% else %}{% set words.item = "something" %}{% endif -%}
+{% if existsIn(step.fill, "seller") %}{% set words.seller = step.fill.seller %}{% else if step.open %}{% set words.seller = "[seller]" %}{% else %}{% set words.seller = "someone" %}{% endif -%}
+{% if existsIn(step.fill, "recipient") %}{% set words.recipient = step.fill.recipient %}{% else if step.open %}{% set words.recipient = "[recipient]" %}{% else %}{% set words.recipient = "someone" %}{% endif -%}
+{% if existsIn(step.fill, "authority") %}{% set words.authority = step.fill.authority %}{% else if step.open %}{% set words.authority = "[authority]" %}{% else %}{% set words.authority = "someone" %}{% endif -%}
+{% if existsIn(step.fill, "witness") %}{% set words.witness = step.fill.witness %}{% else if step.open %}{% set words.witness = "[witness]" %}{% else %}{% set words.witness = "someone" %}{% endif -%}
+{% if existsIn(step.fill, "subject") %}{% set words.subject = step.fill.subject %}{% else if step.open %}{% set words.subject = "[subject]" %}{% else %}{% set words.subject = "someone" %}{% endif -%}
+{% if step.verb == "watch" -%}
+    {{ words.agent }} watches {{ words.mark }}, learning their habits.{% else if step.verb == "ask_around" -%}
+    {{ words.agent }} asks around {{ words.place }} about {{ words.mark }}.{% else if step.verb == "steal" -%}
+    {{ words.agent }} steals {{ words.item }} from {{ words.mark }}.{% else if step.verb == "buy" -%}
+    {{ words.agent }} buys {{ words.item }} from {{ words.seller }}.{% else if step.verb == "deliver" -%}
+    {{ words.agent }} brings {{ words.item }} to {{ words.recipient }}.{% else if step.verb == "plant" -%}
+    {{ words.agent }} hides {{ words.item }} among {{ words.mark }}'s belongings.{% else if step.verb == "bribe" -%}
+    {{ words.agent }} pays {{ words.mark }} to look the other way.{% else if step.verb == "win_over" -%}
+    {{ words.agent }} wins {{ words.mark }} over to {{ words.mastermind }}'s side.{% else if step.verb == "threaten" -%}
+    {{ words.agent }} warns {{ words.mark }} to stay out of {{ words.mastermind }}'s affairs.{% else if step.verb == "spread_rumors" -%}
+    {{ words.agent }} spreads ugly talk about {{ words.mark }} around {{ words.place }}.{% else if step.verb == "denounce" -%}
+    {{ words.agent }} denounces {{ words.mark }} to {{ words.authority }}.{% else if step.verb == "sabotage" -%}
+    {{ words.agent }} sabotages {{ words.mark }}'s livelihood.{% else if step.verb == "silence" -%}
+    {{ words.agent }} pays {{ words.witness }} to keep quiet.{% else if step.verb == "falsify" -%}
+    {{ words.agent }} falsifies {{ words.item }} in {{ words.subject }}'s name.{% else if step.verb == "dig_up" -%}
+    {{ words.agent }} digs up {{ words.item }} proving {{ words.mark }}'s wrongdoing.{% else if step.verb == "blackmail" -%}
+    {{ words.agent }} blackmails {{ words.mark }} into serving {{ words.mastermind }}.{% else if step.verb == "destroy" -%}
+    {{ words.agent }} destroys {{ words.item }} belonging to {{ words.mark }}.{% else if step.verb == "petition" -%}
+    {{ words.agent }} petitions {{ words.authority }} on {{ words.mastermind }}'s behalf.{% else if step.verb == "expose" -%}
+    {{ words.agent }} shows {{ words.item }} to {{ words.authority }} as proof against {{ words.mark }}.{% else if step.verb == "smith" -%}
+    {{ words.agent }} smiths {{ words.item }}.{% else if step.verb == "concoct" -%}
+    {{ words.agent }} concocts {{ words.item }}.{% else if step.verb == "enchant" -%}
+    {{ words.agent }} makes {{ words.item }} at an arcane enchanter.{% else if step.verb == "set" -%}
+    {{ words.agent }} makes {{ words.item }} at a jeweler's bench.{% else if step.verb == "fletch" -%}
+    {{ words.agent }} fletches {{ words.item }}.{% else -%}
+    {{ step.text }}{% endif -%}

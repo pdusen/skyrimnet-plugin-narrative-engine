@@ -3,9 +3,10 @@
    is given up, or spends its attempts. The answer is substitute (find
    another way, leaving the failed route behind) or concede. There is no
    retry: a failure means the route it was on does not work.
-   Receives: mastermind { name }, ambition, scheme, steps [string] (what
-     has happened so far, numbered, with how each went), failed (the step
-     that just failed and how), attempt, max_attempts, options [{ key, line }].
+   Receives: mastermind { name }, ambition, scheme, steps [{ step,
+     outcome }] (what has happened so far, worded by plot_done), failed (the
+     step that just failed and how, the same way), attempt, max_attempts,
+     options [{ key }] (substitute and concede, worded here).
    NOTE: no fenced blocks and no literal braces anywhere in this file. #}
 [ state aims ]
 {{ mastermind.name }} is ultimately after this: {{ ambition }}
@@ -13,18 +14,18 @@ The scheme they are working on: {{ scheme }}
 [ end state ]
 
 [ state history ]
-{% for s in steps %}{{ s }}
+{% for s in steps %}{{ loop.index1 }}. {% set done = s %}{% include "components/narrative_engine/plot_done.prompt" %}
 {% endfor %}
 [ end state ]
 
 [ state setback ]
-The step that just failed: {{ failed }}
+The step that just failed: {% set done = failed %}{% include "components/narrative_engine/plot_done.prompt" %}
 This is attempt {{ attempt }} of {{ max_attempts }} to recover the scheme.
 [ end state ]
 
 [ question next choice ]
 Given the scheme in `aims`, what has happened in `history`, and the setback in `setback`, what does `aims`' schemer do now? The way that failed, and everything it was there to make possible, is closed to them. Finding another way suits a scheme that can still be reached by a different road; giving up suits one that has cost more than it is worth or can no longer work.
 [ criteria ]
-{% for o in options %}{{ o.key }}: {{ o.line }}
+{% for o in options %}{{ o.key }}: {% if o.key == "substitute" %}Find another way to the same end, leaving behind what failed and everything it was there to make possible.{% else if o.key == "concede" %}Give the scheme up.{% endif %}
 {% endfor %}[ end criteria ]
 [ end question ]

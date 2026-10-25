@@ -43,8 +43,12 @@ namespace
     // from the shipped english.ini.
     std::string Text(const PlotVerbs::Verb& verb, Template t)
     {
-        if (t == Template::Dashboard || t == Template::MastermindTask || t == Template::AgentTask) {
+        if (t == Template::MastermindTask || t == Template::AgentTask) {
             return std::string{verb.Text(t)};
+        }
+        if (t == Template::Dashboard) {
+            const auto* line = ShippedEnglish().Source(PlotText::LineKey(verb));
+            return line != nullptr ? *line : std::string{};
         }
         const auto* source = ShippedEnglish().Source(PlotText::MemoryKey(verb, t));
         return source != nullptr ? *source : std::string{};
@@ -594,7 +598,6 @@ TEST_CASE("PlotVerbs rendering", "[PlotVerbs][engine]")
         SECTION("should still read its prose")
         {
             REQUIRE(PlotModel::Label(prose) == "wait for the steward to leave");
-            REQUIRE(PlotVerbs::RenderStep(prose, Template::Dashboard).empty());
         }
     }
 }

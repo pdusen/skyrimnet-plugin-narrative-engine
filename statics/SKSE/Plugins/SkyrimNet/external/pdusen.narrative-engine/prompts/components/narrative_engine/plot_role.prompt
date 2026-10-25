@@ -1,0 +1,44 @@
+{# plot_role.prompt — what one role of a verb is for, in a few words: "whom
+   it is shown to". Included by narrative_engine_plot_ambition's list of
+   verbs, after setting `verb` to the verb's id and `role` to the role's name,
+   so the scheme call can name who or what fills each role of the step it
+   ends in.
+
+   One branch per role of each verb in PlotVerbs::kVerbs. A test fails the
+   build when a role has none. No trailing newline. #}{% if verb == "watch" and role == "mark" -%}
+    whom they watch{% else if verb == "ask_around" and role == "mark" -%}
+    whom they ask about{% else if verb == "ask_around" and role == "place" -%}
+    the settlement they ask around{% else if verb == "steal" and role == "item" -%}
+    what is stolen{% else if verb == "steal" and role == "mark" -%}
+    whom it is stolen from{% else if verb == "buy" and role == "item" -%}
+    what is bought{% else if verb == "buy" and role == "seller" -%}
+    who sells it{% else if verb == "deliver" and role == "item" -%}
+    what is brought{% else if verb == "deliver" and role == "recipient" -%}
+    whom it is brought to{% else if verb == "plant" and role == "item" -%}
+    what is hidden{% else if verb == "plant" and role == "mark" -%}
+    among whose belongings{% else if verb == "bribe" and role == "mark" -%}
+    who is paid to look the other way{% else if verb == "win_over" and role == "mark" -%}
+    who is won over{% else if verb == "threaten" and role == "mark" -%}
+    who is warned off{% else if verb == "spread_rumors" and role == "mark" -%}
+    whom the talk is about{% else if verb == "spread_rumors" and role == "place" -%}
+    the settlement it is spread around{% else if verb == "denounce" and role == "mark" -%}
+    who is denounced{% else if verb == "denounce" and role == "authority" -%}
+    whom they are denounced to{% else if verb == "sabotage" and role == "mark" -%}
+    whose livelihood is sabotaged{% else if verb == "silence" and role == "witness" -%}
+    who is paid to keep quiet{% else if verb == "falsify" and role == "item" -%}
+    what is forged{% else if verb == "falsify" and role == "subject" -%}
+    in whose name{% else if verb == "dig_up" and role == "item" -%}
+    the proof found{% else if verb == "dig_up" and role == "mark" -%}
+    whom it proves wrongdoing against{% else if verb == "blackmail" and role == "mark" -%}
+    who is blackmailed{% else if verb == "destroy" and role == "item" -%}
+    what is destroyed{% else if verb == "destroy" and role == "mark" -%}
+    whom it belongs to{% else if verb == "petition" and role == "authority" -%}
+    who is petitioned{% else if verb == "expose" and role == "item" -%}
+    the proof shown{% else if verb == "expose" and role == "mark" -%}
+    whom it is proof against{% else if verb == "expose" and role == "authority" -%}
+    whom it is shown to{% else if verb == "smith" and role == "item" -%}
+    what is made{% else if verb == "concoct" and role == "item" -%}
+    what is made{% else if verb == "enchant" and role == "item" -%}
+    what is made{% else if verb == "set" and role == "item" -%}
+    what is made{% else if verb == "fletch" and role == "item" -%}
+    what is made{% endif -%}

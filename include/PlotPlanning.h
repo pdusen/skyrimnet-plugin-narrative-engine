@@ -7,6 +7,7 @@
 #include <SkyrimNetAPI.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <string_view>
@@ -74,7 +75,8 @@ namespace NarrativeEngine::PlotPlanning
 
         RE::FormID mastermind = 0;
         std::string mastermindName;
-        // "who leads it", "who is senior in it", or empty.
+        // Their place in their best faction, as PlotBirth::StandingId says
+        // it: leads, senior, member, or empty.
         std::string standing;
         std::string ambition;
         std::string scheme;
@@ -150,22 +152,38 @@ namespace NarrativeEngine::PlotPlanning
     // has filled the same way. Who carried it out does not enter into it.
     [[nodiscard]] bool SameStep(const PlotModel::Step& a, const PlotModel::Step& b);
 
-    // The sentence a planned step reads as before anybody is cast, with
-    // each unfilled slot shown as its name in brackets. What the plan so
-    // far, and the slot being asked about, look like to the model.
-    // With `agentOpen`, an uncast agent shows as [agent] too, for the
-    // question that casts one.
-    [[nodiscard]] std::string Sketch(const PlotModel::Step& step, bool agentOpen = false);
+    // How a step is to read in a decision template.
+    enum class Form : std::uint8_t
+    {
+        // A step still being planned: each unfilled slot shows as its name in
+        // brackets. What the plan so far, and the slot being asked about,
+        // look like to the model.
+        Planned,
+        // A step that has happened: an unfilled slot reads as someone,
+        // somewhere or something.
+        Done,
+        // A verb on a menu: nothing is filled.
+        Menu,
+    };
+
+    // A step as the decision templates read it, which they word through
+    // components/narrative_engine/plot_step.prompt; that file lists the
+    // record's fields. With `agentOpen`, an uncast agent shows as [agent]
+    // too, for the question that casts one.
+    [[nodiscard]] nlohmann::json StepRecord(const PlotModel::Step& step, Form form, bool agentOpen = false);
 
     // Whoever holds the item `step` needs: the agent of the plot's latest
     // step that got that very item and succeeded. 0 when there is none.
     [[nodiscard]] RE::FormID ItemHolder(const PlotModel::Plot& plot, const PlotModel::Step& step);
 
-    // One agent a step could be given, with the line the model reads.
+    // One agent a step could be given, and what the model reads of them.
     struct AgentOption
     {
         RE::FormID npc = 0;
-        std::string line;
+        std::string name;
+        PlotCandidates::Why why;
+        // The mastermind, doing it in person.
+        bool self = false;
     };
 
     // Choose the agent from the ladder's eligible list, best rung first.

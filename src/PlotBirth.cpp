@@ -122,16 +122,18 @@ namespace NarrativeEngine::PlotBirth
         // How to describe someone's rank in one phrase. Coarse on
         // purpose: the prompt wants "who is this", and a number would
         // invite the model to reason about a scale it cannot see.
-        std::string StandingPhrase(double standing)
+        // Somebody's place in their best faction, as a token the prompts
+        // word: leads, senior, member, or empty for none.
+        std::string StandingId(double standing)
         {
             if (standing >= 0.99) {
-                return "who leads it";
+                return "leads";
             }
             if (standing >= 0.6) {
-                return "who is senior in it";
+                return "senior";
             }
             if (standing > 0.0) {
-                return "who holds a place in it";
+                return "member";
             }
             return {};
         }
@@ -213,7 +215,7 @@ namespace NarrativeEngine::PlotBirth
                 entry["form_id"] = FormIdString(member->npc);
                 entry["name"] = member->name;
                 entry["hold"] = HoldNameOf(member->hold);
-                entry["standing"] = StandingPhrase(BestStanding(*member));
+                entry["standing"] = StandingId(BestStanding(*member));
                 // Each candidate carries their own prose so the prompt
                 // can render a profile per row. That is the whole point
                 // of the call: a choice between five names is a coin
@@ -279,7 +281,7 @@ namespace NarrativeEngine::PlotBirth
             nlohmann::json person = nlohmann::json::object();
             person["name"] = boss.name;
             person["hold"] = HoldNameOf(boss.hold);
-            person["standing"] = StandingPhrase(BestStanding(boss));
+            person["standing"] = StandingId(BestStanding(boss));
             ctx["mastermind"] = std::move(person);
 
             ctx["memories"] = MemoriesOf(RefOf(boss.npc));
@@ -297,9 +299,13 @@ namespace NarrativeEngine::PlotBirth
                 }
                 nlohmann::json roles = nlohmann::json::array();
                 for (std::size_t i = 0; i < verb.slotCount; ++i) {
-                    roles.push_back({{"name", verb.slots[i].name}, {"says", verb.slots[i].says}});
+                    roles.push_back({{"name", verb.slots[i].name}});
                 }
-                verbs.push_back({{"id", verb.id}, {"line", PlotVerbs::Generic(verb)}, {"roles", std::move(roles)}});
+                PlotModel::Step generic;
+                generic.verb = std::string{verb.id};
+                verbs.push_back({{"id", verb.id},
+                                 {"step", PlotPlanning::StepRecord(generic, PlotPlanning::Form::Menu)},
+                                 {"roles", std::move(roles)}});
             }
             ctx["verbs"] = std::move(verbs);
             ctx["items"] = PoolItemNames();
@@ -442,7 +448,7 @@ namespace NarrativeEngine::PlotBirth
         PlotPlanning::Input input{population, PlotMenus::CurrentWorld()};
         input.mastermind = boss->npc;
         input.mastermindName = boss->name;
-        input.standing = StandingPhrase(BestStanding(*boss));
+        input.standing = StandingId(BestStanding(*boss));
         input.ambition = plot.ambition;
         input.scheme = plot.scheme;
         input.finish = plot.finish;
@@ -594,7 +600,7 @@ namespace NarrativeEngine::PlotBirth
         PlotPlanning::Input input{population, PlotMenus::CurrentWorld()};
         input.mastermind = boss->npc;
         input.mastermindName = boss->name;
-        input.standing = StandingPhrase(BestStanding(*boss));
+        input.standing = StandingId(BestStanding(*boss));
         input.ambition = ambition.ambition;
         input.scheme = ambition.scheme;
         input.goal = ambition.goal;

@@ -177,7 +177,8 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
 
         SECTION("should say on each line why the person is there")
         {
-            REQUIRE(list.front().line == "Idolaf (someone they know)");
+            REQUIRE(list.front().value.text == "Idolaf");
+            REQUIRE(list.front().why.relation == "close");
         }
     }
 
@@ -203,7 +204,9 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
 
         SECTION("should place a stranger by where they live")
         {
-            REQUIRE(list.back().line == "Brand-Shei (lives in Riften)");
+            REQUIRE(list.back().value.text == "Brand-Shei");
+            REQUIRE(list.back().why.relation.empty());
+            REQUIRE(list.back().why.lives == "Riften");
         }
     }
 
@@ -354,8 +357,12 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
 
         SECTION("should put it on the line, and leave it off for nobody else")
         {
-            REQUIRE(list.front().line == "Hulda, runs the Bannered Mare (lives in the same hold)");
-            REQUIRE(list.back().line == "Brand-Shei (lives in Riften)");
+            REQUIRE(list.front().value.text == "Hulda");
+            REQUIRE(list.front().why.occupation == "runs the Bannered Mare");
+            REQUIRE(list.front().why.relation == "neighbour");
+            REQUIRE(list.back().value.text == "Brand-Shei");
+            REQUIRE(list.back().why.relation.empty());
+            REQUIRE(list.back().why.lives == "Riften");
         }
     }
 
@@ -368,7 +375,9 @@ TEST_CASE("PlotCandidates people rules", "[PlotCandidates][engine]")
         SECTION("should admit them to a slot about whom the mastermind knows, first, saying why")
         {
             REQUIRE(list.front().value.form == kStranger);
-            REQUIRE(list.front().line == "Brand-Shei (lives in Riften; named in the scheme)");
+            REQUIRE(list.front().value.text == "Brand-Shei");
+            REQUIRE(list.front().why.lives == "Riften");
+            REQUIRE(list.front().why.named);
             REQUIRE(list.size() == 5);
         }
     }
@@ -510,7 +519,7 @@ TEST_CASE("PlotCandidates things and bindings", "[PlotCandidates][engine]")
         SECTION("should offer the pool in its own order, as it is said aloud")
         {
             REQUIRE(Forms(list) == std::vector<RE::FormID>{0x0000D001, 0x0000D002});
-            REQUIRE(list.front().line == "a ruby");
+            REQUIRE(list.front().value.text == "a ruby");
         }
 
         SECTION("should be asked")
@@ -731,7 +740,7 @@ TEST_CASE("PlotCandidates craft rules", "[PlotCandidates][engine]")
         SECTION("should list what the friend is skilled enough to make, and nothing beyond it")
         {
             REQUIRE(Forms(list) == std::vector<RE::FormID>{kDagger, kSword});
-            REQUIRE(list[1].line == "a Steel Sword");
+            REQUIRE(list[1].value.text == "a Steel Sword");
         }
 
         SECTION("should list nothing of another craft")

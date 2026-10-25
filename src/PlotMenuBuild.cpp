@@ -26,23 +26,6 @@ namespace NarrativeEngine::PlotMenus
         return "unknown";
     }
 
-    std::string_view RelationPhrase(Relation r) noexcept
-    {
-        switch (r) {
-        case Relation::CloseAndColleague:
-            return "someone they know, in the same organisation";
-        case Relation::Close:
-            return "someone they know";
-        case Relation::Colleague:
-            return "in the same organisation";
-        case Relation::Neighbour:
-            return "lives in the same hold";
-        case Relation::Count:
-            break;
-        }
-        return "";
-    }
-
     // The strongest link between two people, or nothing.
     //
     // Deliberately a total order rather than a score. A score would

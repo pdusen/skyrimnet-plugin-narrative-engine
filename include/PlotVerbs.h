@@ -121,9 +121,10 @@ namespace NarrativeEngine::PlotVerbs
     // tense memories, the last of them added by Milestone 3; the final two
     // are the work alone, for the plot each person in it is told of.
     //
-    // The memories, and the dashboard's own copy of its line, are in the
-    // language files and rendered by PlotText. Verb::Text holds only what the
-    // prompts still read: the line and the two task phrases.
+    // The line and the memories are in the language files and rendered by
+    // PlotText; the prompts word the line themselves, in
+    // components/narrative_engine/plot_step.prompt. Verb::Text holds only
+    // the two task phrases, which plot awareness still reads.
     enum class Template : std::uint8_t
     {
         Dashboard,
@@ -167,9 +168,7 @@ namespace NarrativeEngine::PlotVerbs
         bool agentBoundToItem = false;
         // A later BoundItem slot can bind to what this verb obtains.
         bool obtainsItem = false;
-        // What the prompts read: the dashboard line (as the scheme call's
-        // menu line and the plan sketch) and the two task phrases.
-        std::string_view dashboard;
+        // What plot awareness tells each person in a plot of their part.
         std::string_view mastermindTask;
         std::string_view agentTask;
         // Whether a scheme can end in it. A verb that only makes, finds or
@@ -178,13 +177,11 @@ namespace NarrativeEngine::PlotVerbs
         // nothing.
         bool finishes = true;
 
-        // Dashboard, MastermindTask or AgentTask; empty for a memory, whose
+        // MastermindTask or AgentTask; empty for the line or a memory, whose
         // words are not in C++.
         [[nodiscard]] constexpr std::string_view Text(Template t) const noexcept
         {
             switch (t) {
-            case Template::Dashboard:
-                return dashboard;
             case Template::MastermindTask:
                 return mastermindTask;
             case Template::AgentTask:
@@ -209,7 +206,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             false,
-            "{agent} watches {mark}, learning their habits.",
             "keep watch on {mark} and learn their habits",
             "keep watch on {mark} and learn their habits",
         },
@@ -227,7 +223,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             false,
             false,
-            "{agent} asks around {place} about {mark}.",
             "ask around {place} about {mark}",
             "go around {place} asking questions about {mark}",
         },
@@ -245,7 +240,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             false,
             true,
-            "{agent} steals {item} from {mark}.",
             "steal {item} from {mark}",
             "steal {item} from {mark}",
         },
@@ -263,7 +257,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             false,
             true,
-            "{agent} buys {item} from {seller}.",
             "buy {item} from {seller}",
             "buy {item} from {seller}",
         },
@@ -281,7 +274,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             true,
             false,
-            "{agent} brings {item} to {recipient}.",
             "bring {item} to {recipient}",
             "bring {item} to {recipient}",
         },
@@ -299,7 +291,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             true,
             false,
-            "{agent} hides {item} among {mark}'s belongings.",
             "hide {item} among {mark}'s belongings",
             "hide {item} among {mark}'s belongings",
             false,
@@ -317,7 +308,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             false,
-            "{agent} pays {mark} to look the other way.",
             "pay {mark} to look the other way",
             "pay {mark} to look the other way",
         },
@@ -334,7 +324,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             false,
-            "{agent} wins {mark} over to {mastermind}'s side.",
             "win {mark} over to your side",
             "win {mark} over to their side",
         },
@@ -351,7 +340,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             false,
-            "{agent} warns {mark} to stay out of {mastermind}'s affairs.",
             "warn {mark} to stay out of your affairs",
             "warn {mark} to stay out of their affairs",
         },
@@ -373,7 +361,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             false,
             false,
-            "{agent} spreads ugly talk about {mark} around {place}.",
             "spread ugly talk about {mark} around {place}",
             "spread ugly talk about {mark} around {place}",
         },
@@ -396,7 +383,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             false,
             false,
-            "{agent} denounces {mark} to {authority}.",
             "denounce {mark} to {authority}",
             "denounce {mark} to {authority}",
         },
@@ -413,7 +399,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             false,
-            "{agent} sabotages {mark}'s livelihood.",
             "sabotage {mark}'s livelihood",
             "sabotage {mark}'s livelihood",
         },
@@ -430,7 +415,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             false,
-            "{agent} pays {witness} to keep quiet.",
             "pay {witness} to keep quiet",
             "pay {witness} to keep quiet",
         },
@@ -450,7 +434,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             false,
             true,
-            "{agent} falsifies {item} in {subject}'s name.",
             "falsify {item} in {subject}'s name",
             "falsify {item} in {subject}'s name",
             false,
@@ -469,7 +452,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             false,
             true,
-            "{agent} digs up {item} proving {mark}'s wrongdoing.",
             "dig up {item} proving {mark}'s wrongdoing",
             "dig up {item} proving {mark}'s wrongdoing",
             false,
@@ -487,7 +469,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             false,
-            "{agent} blackmails {mark} into serving {mastermind}.",
             "blackmail {mark} into serving you",
             "blackmail {mark} into serving them",
         },
@@ -505,7 +486,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             false,
             false,
-            "{agent} destroys {item} belonging to {mark}.",
             "destroy {item} belonging to {mark}",
             "destroy {item} belonging to {mark}",
         },
@@ -522,7 +502,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             false,
-            "{agent} petitions {authority} on {mastermind}'s behalf.",
             "petition {authority} on your behalf",
             "petition {authority} on their behalf",
         },
@@ -546,7 +525,6 @@ namespace NarrativeEngine::PlotVerbs
             3,
             true,
             false,
-            "{agent} shows {item} to {authority} as proof against {mark}.",
             "show {item} to {authority} as proof against {mark}",
             "show {item} to {authority} as proof against {mark}",
         },
@@ -558,7 +536,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             true,
-            "{agent} smiths {item}.",
             "smith {item}",
             "smith {item} for them",
             false,
@@ -571,7 +548,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             true,
-            "{agent} concocts {item}.",
             "concoct {item}",
             "concoct {item} for them",
             false,
@@ -584,7 +560,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             true,
-            "{agent} makes {item} at an arcane enchanter.",
             "make {item} at an arcane enchanter",
             "make {item} for them at an arcane enchanter",
             false,
@@ -597,7 +572,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             true,
-            "{agent} makes {item} at a jeweler's bench.",
             "make {item}",
             "make {item} for them",
             false,
@@ -610,7 +584,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             true,
-            "{agent} fletches {item}.",
             "fletch {item}",
             "fletch {item} for them",
             false,
@@ -735,11 +708,6 @@ namespace NarrativeEngine::PlotVerbs
     // prose is otherwise right, so it is mended rather than refused.
     [[nodiscard]] std::string Plain(std::string_view text);
 
-    // A verb's dashboard sentence with every slot unfilled: "Someone steals
-    // something from someone." Says what the verb does without saying to
-    // whom, which is how a verb is offered as a kind of step.
-    [[nodiscard]] std::string Generic(const Verb& verb);
-
     // What an unfilled slot of each kind reads as.
     [[nodiscard]] std::string_view Unfilled(SlotKind kind) noexcept;
 
@@ -747,16 +715,11 @@ namespace NarrativeEngine::PlotVerbs
     // `scheme` are not slots: every verb has them implicitly.
     [[nodiscard]] const Slot* FindSlot(const Verb& verb, std::string_view name) noexcept;
 
-    // One of a step's prompt-facing templates -- Dashboard, MastermindTask or
-    // AgentTask -- filled from what the step holds: `{agent}` from its actor,
-    // `{scheme}` from `scheme` as a verb phrase, and every other name from its
-    // slots. Anything not yet filled reads as Unfilled of its kind. Empty for
-    // a step with no verb, and for a memory template: what a player reads is
-    // PlotText's, from the language file.
-    [[nodiscard]] std::string RenderStep(const PlotModel::Step& step, Template t, std::string_view scheme = {});
-
-    // RenderStep for a template that is a phrase rather than a sentence, so
-    // it is not capitalised: "steal a ruby from Hulda", to go mid-sentence.
+    // One of a step's task phrases -- MastermindTask or AgentTask -- filled
+    // from what the step holds: `{agent}` from its actor and every other name
+    // from its slots, anything not yet filled reading as Unfilled of its
+    // kind. Not capitalised, to go mid-sentence: "steal a ruby from Hulda".
+    // Empty for a step with no verb, and for any other template.
     [[nodiscard]] std::string RenderPhrase(const PlotModel::Step& step, Template t);
 
     // The caption under a step's node: its verb's, the model's own for a

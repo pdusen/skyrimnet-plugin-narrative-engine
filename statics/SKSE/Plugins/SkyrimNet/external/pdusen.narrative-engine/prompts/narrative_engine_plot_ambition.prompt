@@ -2,16 +2,18 @@
    already chosen; this call decides what they are ultimately after, what
    one concrete scheme they are starting now, and the step it ends in.
    Receives the JSON object produced by PlotBirth::AmbitionContext:
-     mastermind { name, hold, standing }, memories [string],
+     mastermind { name, hold, standing (a plot_standing token) },
+     memories [string],
      retry — empty on the first attempt; on the second it is why the
        first answer was refused,
      bio { summary, background, personality, aspirations, relationships,
        occupation } — the mastermind's biography, read straight from their
        bio file by CharacterBios. Plain text, already rendered; no
        character-profile decorator is involved.
-     verbs [{ id, line, roles [{ name, says }] }] — every kind of step a
-       scheme can end in, each as its generic sentence, with the roles its
-       step has and what each is for. The finishing step is one of them.
+     verbs [{ id, step, roles [{ name }] }] — every kind of step a scheme
+       can end in, each as its generic sentence (`step`, worded by
+       plot_step), with the roles its step has and what each is for (worded
+       by plot_role). The finishing step is one of them.
      items [string] — every object a step can involve, as it is said.
      made [string] — a few things the mastermind's own craftsmen can make,
        as they are said; empty when nobody they can send makes anything.
@@ -68,7 +70,7 @@ they fit better than stealing an object does.
 and every step is one of the kinds below. Its last step -- the one that,
 once done, means the scheme is done -- must be one of them:
 
-{% for v in verbs %}- {{ v.id }}: {{ v.line }} Roles:{% for r in v.roles %} {{ r.name }} = {{ r.says }};{% endfor %}
+{% for v in verbs %}- {{ v.id }}: {% set step = v.step %}{% include "components/narrative_engine/plot_step.prompt" %} Roles:{% for r in v.roles %} {{ r.name }} = {% set verb = v.id %}{% set role = r.name %}{% include "components/narrative_engine/plot_role.prompt" %};{% endfor %}
 {% endfor %}
 The scheme itself is written however suits it. "Expose the bribes a thane
 takes" is a fine scheme; nothing here exposes anything, so it would end
@@ -220,7 +222,7 @@ people.
 
 ## Who is scheming
 
-**{{ mastermind.name }}**{% if length(mastermind.standing) > 0 %}, {{ mastermind.standing }}{% endif %}.
+**{{ mastermind.name }}**{% if length(mastermind.standing) > 0 %}, {% set standing = mastermind.standing %}{% include "components/narrative_engine/plot_standing.prompt" %}{% endif %}.
 {% if length(mastermind.hold) > 0 %}They live in {{ mastermind.hold }}.{% endif %}
 
 ### Summary

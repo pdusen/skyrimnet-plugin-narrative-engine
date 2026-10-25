@@ -1,0 +1,7 @@
+{# plot_purpose.prompt — what the step a slot is asked for is for in the
+   plan. Reads `purpose`, whose `kind` is one of
+     goal      the step that accomplishes the scheme
+     carries   the step whose agent is being chosen
+     prepares  a step done before step `before` of the plan, `step`
+     gets      a step that gets `item` for step `before`, `step`
+   No trailing newline. #}{% if purpose.kind == "goal" %}This step accomplishes the scheme.{% else if purpose.kind == "carries" %}Whoever is chosen carries this step out.{% else if purpose.kind == "prepares" %}It prepares for step {{ purpose.before }}: {% set step = purpose.step %}{% include "components/narrative_engine/plot_step.prompt" %}{% else if purpose.kind == "gets" %}It gets {{ purpose.item }} for step {{ purpose.before }}: {% set step = purpose.step %}{% include "components/narrative_engine/plot_step.prompt" %}{% endif -%}

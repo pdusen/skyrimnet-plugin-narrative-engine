@@ -468,8 +468,10 @@ namespace NarrativeEngine::PlotModel
     // Verb plus target, or the bare verb when there is no target name.
     [[nodiscard]] std::string Label(StepType type, std::string_view targetName);
 
-    // A verb step's dashboard sentence; otherwise the step's own prose when
-    // it has some, and the verb-plus-target form when it does not.
+    // A verb step's dashboard sentence, in English; otherwise the step's own
+    // prose when it has some, and the verb-plus-target form when it does
+    // not. For the plot log and for matching, never for a prompt, which
+    // words a step itself (PlotPlanning::StepRecord).
     [[nodiscard]] std::string Label(const Step& step);
 
     // The plot's title, as the dashboard card's heading. Same

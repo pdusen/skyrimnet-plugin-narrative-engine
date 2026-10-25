@@ -1,0 +1,4 @@
+{# plot_standing.prompt — somebody's place in the faction they stand
+   highest in, as it follows their name: "who leads it". Included after
+   setting `standing` to the token PlotBirth gives: leads, senior or member.
+   Renders nothing for any other. No trailing newline. #}{% if standing == "leads" %}who leads it{% else if standing == "senior" %}who is senior in it{% else if standing == "member" %}who holds a place in it{% endif -%}

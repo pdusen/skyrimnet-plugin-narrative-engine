@@ -264,13 +264,15 @@ namespace NarrativeEngine::PlotTick
             std::vector<PlotPlanning::AgentOption> options;
             for (const auto npc : eligible) {
                 const auto* member = population.Find(npc);
-                std::string line;
+                PlotPlanning::AgentOption option{npc};
                 if (npc == plot.mastermind) {
-                    line = std::format("{} themselves", plot.mastermindName);
+                    option.name = plot.mastermindName;
+                    option.self = true;
                 } else if (member != nullptr) {
-                    line = PlotCandidates::Describe(request, *member);
+                    option.name = member->name;
+                    option.why = PlotCandidates::Describe(request, *member);
                 }
-                options.push_back({npc, std::move(line)});
+                options.push_back(std::move(option));
             }
 
             std::string error;

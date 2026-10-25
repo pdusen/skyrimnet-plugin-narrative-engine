@@ -1,7 +1,6 @@
 #include <PlotPlanning.h>
 
 #include <algorithm>
-#include <cctype>
 #include <format>
 
 namespace NarrativeEngine::PlotPlanning
@@ -37,55 +36,66 @@ namespace NarrativeEngine::PlotPlanning
             return nullptr;
         }
 
-        std::string Capitalised(std::string text)
+        // A step that has happened, and how it went: a PlotModel::StepOutcomeId,
+        // or empty for one not yet resolved. See plot_done.prompt.
+        nlohmann::json DoneRecord(const Step& step)
         {
-            if (!text.empty()) {
-                text[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(text[0])));
-            }
-            return text;
+            const auto how = step.outcome == PlotModel::StepOutcome::None
+                                 ? std::string{}
+                                 : std::string{PlotModel::StepOutcomeId(step.outcome)};
+            return {{"step", StepRecord(step, Form::Done)}, {"outcome", how}};
         }
 
-        std::string_view OutcomePhrase(PlotModel::StepOutcome outcome)
-        {
-            switch (outcome) {
-            case PlotModel::StepOutcome::Succeeded:
-                return "it worked";
-            case PlotModel::StepOutcome::FailedCaught:
-                return "it went wrong";
-            case PlotModel::StepOutcome::FailedTimeout:
-                return "it ran out of time";
-            case PlotModel::StepOutcome::None:
-                break;
-            }
-            return {};
-        }
-
-        // Steps as the model reads them: numbered, and for a step that has
-        // already happened, how it went.
+        // Steps as the model reads them, in order; the templates number them.
         nlohmann::json StepsSoFar(const std::vector<const Step*>& steps)
         {
             nlohmann::json out = nlohmann::json::array();
-            std::size_t n = 0;
             for (const auto* step : steps) {
-                if (step == nullptr) {
-                    continue;
+                if (step != nullptr) {
+                    out.push_back(DoneRecord(*step));
                 }
-                auto line = std::format("{}. {}", ++n, PlotModel::Label(*step));
-                if (const auto how = OutcomePhrase(step->outcome); !how.empty()) {
-                    line += std::format(" ({})", how);
-                }
-                out.push_back(std::move(line));
             }
             return out;
+        }
+
+        // One option of a candidate list: its key, the name it is offered by,
+        // and, for a person, why they are on it. plot_slot.prompt words it.
+        nlohmann::json OptionOf(std::string key,
+                                const std::string& name,
+                                const PlotCandidates::Why& why,
+                                bool self = false)
+        {
+            return {{"key", std::move(key)},
+                    {"name", name},
+                    {"occupation", why.occupation},
+                    {"relation", why.relation},
+                    {"lives", why.lives},
+                    {"named", why.named},
+                    {"self", self}};
         }
 
         nlohmann::json Options(const std::vector<PlotCandidates::Candidate>& list)
         {
             nlohmann::json out = nlohmann::json::array();
             for (const auto& c : list) {
-                out.push_back({{"key", c.key}, {"line", c.line}});
+                out.push_back(OptionOf(c.key, c.value.text, c.why));
             }
             return out;
+        }
+
+        // What the step a slot is asked for is for in the plan. The templates
+        // word each `kind`.
+        nlohmann::json Purpose(std::string_view kind)
+        {
+            return {{"kind", kind}};
+        }
+
+        nlohmann::json Purpose(std::string_view kind, std::size_t before, const Step& step, std::string item = {})
+        {
+            return {{"kind", kind},
+                    {"before", before + 1},
+                    {"step", StepRecord(step, Form::Planned)},
+                    {"item", std::move(item)}};
         }
 
         std::string_view KindId(PlotVerbs::SlotKind kind)
@@ -258,8 +268,8 @@ namespace NarrativeEngine::PlotPlanning
             nlohmann::json PlanText() const
             {
                 nlohmann::json out = nlohmann::json::array();
-                for (std::size_t i = 0; i < plan_.size(); ++i) {
-                    out.push_back(std::format("{}. {}", i + 1, Sketch(plan_[i])));
+                for (const auto& step : plan_) {
+                    out.push_back(StepRecord(step, Form::Planned));
                 }
                 return out;
             }
@@ -474,7 +484,7 @@ namespace NarrativeEngine::PlotPlanning
                            const std::vector<SlotValue>& preset,
                            const std::unordered_set<RE::FormID>& excluded,
                            std::size_t index,
-                           const std::string& purpose,
+                           const nlohmann::json& purpose,
                            Step& step)
             {
                 step = Partial(verb, preset);
@@ -535,7 +545,7 @@ namespace NarrativeEngine::PlotPlanning
                         ctx["mastermind"] = {{"name", input_.mastermindName}};
                         ctx["scheme"] = input_.scheme;
                         ctx["finish"] = input_.finish;
-                        ctx["step"] = Sketch(step);
+                        ctx["step"] = StepRecord(step, Form::Planned);
                         ctx["purpose"] = purpose;
                         ctx["slot"] = slot.name;
                         ctx["kind"] = KindId(slot.kind);
@@ -681,11 +691,13 @@ namespace NarrativeEngine::PlotPlanning
                 if (ways.size() > 1) {
                     nlohmann::json options = nlohmann::json::array();
                     for (const auto& w : ways) {
-                        options.push_back({{"key", w.verb->id}, {"line", Sketch(Partial(*w.verb, w.preset))}});
+                        options.push_back(
+                            {{"key", w.verb->id}, {"step", StepRecord(Partial(*w.verb, w.preset), Form::Planned)}});
                     }
                     auto ctx = Base();
                     ctx["plan"] = PlanText();
-                    ctx["need"] = {{"step", index + 1}, {"sketch", Sketch(needing)}, {"item", item->text}};
+                    ctx["need"] = {
+                        {"step", index + 1}, {"sketch", StepRecord(needing, Form::Planned)}, {"item", item->text}};
                     ctx["options"] = std::move(options);
 
                     const auto result = Decide(kObtainTemplate, ctx);
@@ -708,7 +720,7 @@ namespace NarrativeEngine::PlotPlanning
                 }
 
                 Step step;
-                const auto purpose = std::format("It gets {} for step {}: {}", item->text, index + 1, Sketch(needing));
+                const auto purpose = Purpose("gets", index, needing, item->text);
                 const auto filled = FillSlots(*way->verb, way->preset, way->excluded, index, purpose, step);
                 if (filled != Fill::Done) {
                     return filled;
@@ -749,7 +761,7 @@ namespace NarrativeEngine::PlotPlanning
                     }
                     if (kept != nullptr && kept->finishes && Fillable(*kept, preset, {}, 0)) {
                         Step goal;
-                        const auto filled = FillSlots(*kept, preset, {}, 0, "This step accomplishes the scheme.", goal);
+                        const auto filled = FillSlots(*kept, preset, {}, 0, Purpose("goal"), goal);
                         if (filled != Fill::Done) {
                             return filled;
                         }
@@ -765,8 +777,7 @@ namespace NarrativeEngine::PlotPlanning
                     const auto* named = PlotVerbs::Find(input_.goal);
                     if (named != nullptr && named->finishes && Fillable(*named, input_.goalRoles, {}, 0)) {
                         Step goal;
-                        const auto filled =
-                            FillSlots(*named, input_.goalRoles, {}, 0, "This step accomplishes the scheme.", goal);
+                        const auto filled = FillSlots(*named, input_.goalRoles, {}, 0, Purpose("goal"), goal);
                         if (filled != Fill::Done) {
                             return filled;
                         }
@@ -788,7 +799,7 @@ namespace NarrativeEngine::PlotPlanning
                     }
                     if (Fillable(verb, {}, {}, 0)) {
                         offered.push_back(&verb);
-                        options.push_back({{"key", verb.id}, {"line", PlotVerbs::Generic(verb)}});
+                        options.push_back({{"key", verb.id}, {"step", StepRecord(Partial(verb, {}), Form::Menu)}});
                     }
                 }
                 if (offered.empty()) {
@@ -828,7 +839,7 @@ namespace NarrativeEngine::PlotPlanning
                 }
 
                 Step goal;
-                const auto filled = FillSlots(*verb, {}, {}, 0, "This step accomplishes the scheme.", goal);
+                const auto filled = FillSlots(*verb, {}, {}, 0, Purpose("goal"), goal);
                 if (filled != Fill::Done) {
                     return filled;
                 }
@@ -890,10 +901,9 @@ namespace NarrativeEngine::PlotPlanning
                             if (Repeats(*verb, option.preset) || !Fillable(*verb, option.preset, option.excluded, k)) {
                                 continue;
                             }
-                            options.push_back(
-                                {{"key", std::format("p{}", offered.size() + 1)},
-                                 {"line",
-                                  std::format("Before step {}: {}", k + 1, Sketch(Partial(*verb, option.preset)))}});
+                            options.push_back({{"key", std::format("p{}", offered.size() + 1)},
+                                               {"before", k + 1},
+                                               {"step", StepRecord(Partial(*verb, option.preset), Form::Planned)}});
                             offered.push_back(std::move(option));
                         }
                     }
@@ -931,8 +941,7 @@ namespace NarrativeEngine::PlotPlanning
                     }
 
                     Step step;
-                    const auto purpose =
-                        std::format("It prepares for step {}: {}", chosen->before + 1, Sketch(plan_[chosen->before]));
+                    const auto purpose = Purpose("prepares", chosen->before, plan_[chosen->before]);
                     const auto filled =
                         FillSlots(*chosen->verb, chosen->preset, chosen->excluded, chosen->before, purpose, step);
                     if (filled == Fill::Failed) {
@@ -979,25 +988,30 @@ namespace NarrativeEngine::PlotPlanning
         });
     }
 
-    std::string Sketch(const Step& step, bool agentOpen)
+    nlohmann::json StepRecord(const Step& step, Form form, bool agentOpen)
     {
-        const auto* verb = PlotVerbs::Find(step.verb);
-        if (verb == nullptr) {
-            return PlotModel::Label(step);
-        }
-        return Capitalised(PlotVerbs::Render(
-            verb->Text(PlotVerbs::Template::Dashboard),
-            [&step, agentOpen](std::string_view name) -> std::optional<std::string> {
-                if (name == "agent") {
-                    if (!step.actorName.empty()) {
-                        return step.actorName;
-                    }
-                    return agentOpen ? std::nullopt : std::optional<std::string>{"someone"};
+        nlohmann::json fill = nlohmann::json::object();
+        if (form != Form::Menu) {
+            if (!step.actorName.empty()) {
+                fill["agent"] = step.actorName;
+            }
+            // A planned step shows each slot it has, even one left empty; a
+            // step that has happened reads an empty slot as unfilled.
+            for (const auto& value : step.slots) {
+                if ((form == Form::Planned || !value.text.empty()) && !fill.contains(value.name)) {
+                    fill[value.name] = value.text;
                 }
-                const auto* value = step.FindSlot(name);
-                return value != nullptr ? std::optional<std::string>{value->text} : std::nullopt;
-            },
-            [](std::string_view name) { return std::format("[{}]", name); }));
+            }
+        }
+        nlohmann::json record{{"verb", step.verb},
+                              {"fill", std::move(fill)},
+                              {"open", form == Form::Planned},
+                              {"agent_open", form == Form::Planned && agentOpen}};
+        // A step no verb names is read as the model was once given it.
+        if (PlotVerbs::Find(step.verb) == nullptr) {
+            record["text"] = PlotModel::Label(step);
+        }
+        return record;
     }
 
     bool FinishFailed(const PlotModel::Plot& plot) noexcept
@@ -1099,12 +1113,10 @@ namespace NarrativeEngine::PlotPlanning
         ++plot.adaptations;
         const Step failed = plot.history.back();
 
+        // plot_adapt.prompt words each choice by its key.
         nlohmann::json options = nlohmann::json::array();
-        options.push_back({{"key", kSubstitute},
-                           {"line",
-                            "Find another way to the same end, leaving behind what failed and everything it was "
-                            "there to make possible."}});
-        options.push_back({{"key", kConcede}, {"line", "Give the scheme up."}});
+        options.push_back({{"key", kSubstitute}});
+        options.push_back({{"key", kConcede}});
 
         std::vector<const Step*> history;
         for (const auto& past : plot.history) {
@@ -1115,7 +1127,7 @@ namespace NarrativeEngine::PlotPlanning
         ctx["ambition"] = plot.ambition;
         ctx["scheme"] = plot.scheme;
         ctx["steps"] = StepsSoFar(history);
-        ctx["failed"] = std::format("{} ({})", PlotModel::Label(failed), OutcomePhrase(failed.outcome));
+        ctx["failed"] = DoneRecord(failed);
         ctx["attempt"] = plot.adaptations;
         ctx["max_attempts"] = cap;
         ctx["options"] = std::move(options);
@@ -1201,14 +1213,14 @@ namespace NarrativeEngine::PlotPlanning
 
         nlohmann::json list = nlohmann::json::array();
         for (std::size_t i = 0; i < options.size(); ++i) {
-            list.push_back({{"key", std::format("c{}", i + 1)}, {"line", options[i].line}});
+            list.push_back(OptionOf(std::format("c{}", i + 1), options[i].name, options[i].why, options[i].self));
         }
         nlohmann::json ctx;
         ctx["mastermind"] = {{"name", plot.mastermindName}};
         ctx["scheme"] = plot.scheme;
         ctx["finish"] = plot.finish;
-        ctx["step"] = Sketch(step, true);
-        ctx["purpose"] = "Whoever is chosen carries this step out.";
+        ctx["step"] = StepRecord(step, Form::Planned, true);
+        ctx["purpose"] = Purpose("carries");
         ctx["slot"] = "agent";
         ctx["kind"] = "person";
         ctx["options"] = std::move(list);
