@@ -4,8 +4,9 @@ Plots need every schemer's character profile, and many schemers are people Skyri
 milestone replaces `CharacterBios`' guesswork with a resolver that picks the profile SkyrimNet itself would render for
 an NPC, registered or not: the same bio name, the same layer, the same fallbacks.
 
-> **Doc status: complete.** Steps 1–7 are done. Step 7 found and fixed one defect, members whose reference does not
-> resolve, and a second session confirmed the fix. Nothing here touches the co-save or the settings.
+> **Doc status: complete.** Steps 1–8 are done. Step 7 found and fixed one defect, members whose reference does not
+> resolve, and a second session confirmed the fix. Step 8 tells the people in a plot what they know of it, in their
+> own prompts, and adds two Plots-tab settings for testing it. Nothing here touches the co-save.
 
 The rules this implements were decoded from SkyrimNet's DLL and are written up as engine findings. They are the
 contract for every step below, and where this document and they disagree, they win:
@@ -561,3 +562,67 @@ In the second session, NPCs from the 185 were masterminds of 5 plots and agents 
 SkyrimNet refuses an unregistered actor's memory, and what would register them, is not established.
 
 `GossipSim`'s availability check makes the same assumption, and is gossip's to decide.
+
+### Step 8 — The people in a plot know about it
+
+- [x] Complete
+
+**[CLAUDE]**
+
+The profile is who a schemer is; nothing yet told them what they are doing. Plot memories record each event as it
+happens, but SkyrimNet surfaces a memory only when it judges one relevant, so a mastermind asked about their scheme
+could know nothing of it. This step puts where a plot stands into the closing instructions of every prompt rendered
+for a mastermind, or for the agent of its live step, and nobody else.
+
+- **The prompt.** `prompts/submodules/user_final_instructions/0300_ne_plot_awareness.prompt`, after SkyrimNet's
+  combat status (0200) and before its response format (0500), renders a `## Your Plot` section from a new
+  `ne_plot_awareness` decorator, and nothing at all when the decorator answers empty. It closes with one line for
+  both roles: *"This is a secret. You only discuss it with people you trust, or with those already involved in it."*
+- **The decorator** reads the published plot snapshot, the one piece of plot state any thread may read, so
+  SkyrimNet's render thread needs no lock and no token. It keys on the actor's base form, like the rest of the plot
+  code.
+- **The text** is `PlotAwareness::Describe`, a pure function over a `PlotState`. A mastermind is told the scheme and
+  every step of it in chain order: what was done and how it went, what is under way and by whom, and what is still to
+  do. An agent is told only their errand and who sent them, never the scheme, as their dispatch memory already is.
+- **The wording comes from the verb table.** Every verb gains two templates, `mastermind_task` and `agent_task`: the
+  work as a phrase, told from either end, so a mastermind wins someone "over to your side" and their agent "over to
+  their side". The suite pins each phrase to the dispatch memory it restates, so the prompt and the memory cannot
+  word one errand two ways. `RenderPhrase` fills them without capitalising, since they go mid-sentence.
+
+Two things the steps cannot know are decided by rule:
+
+- **A failure reads "it went wrong", not "was caught".** For many verbs being caught is the wrong word: a bribe is
+  refused, a forging is spoiled. A timeout reads "ran out of time". Either way the mastermind "had to regroup", since
+  every failure in a plot still running was one it went on from.
+- **Who does a future step is not decided until dispatch.** It reads "You need to …" when the mastermind has done
+  every step so far themselves, since they are cast as their own agent only when nobody else can be, and "You need
+  to send someone to …" otherwise.
+
+**Testing it needs a plot with people the player can stand next to**, so the Plots tab gained two buttons, shown
+only with `bPlotDebugButtons` on and off by default. `PlotTestPlots` seeds one of two premade plots at the College
+of Winterhold: Brelyna Maryon's against J'zargo, carried out by other members of the College, or Tolfdir's against
+Ancano with Brelyna as the agent of the step under way. Seeding either removes the other first, so the two switch.
+The same setting now hides the forced-tick buttons, and a **Simulation Enabled** checkbox, `bPlotTicksEnabled`,
+switches scheduled plot ticks off without touching the rest of the subsystem; forced ticks run either way, and the
+hours it is off are skipped rather than fired as a backlog when it comes back on.
+
+**Checked in game, over two sessions:**
+
+- Every dialogue prompt for Brelyna and for Colette Marence, the live agent of Brelyna's plot, carried the section
+  exactly as the suite renders it. Those for Bjornen, J'zargo, Phinis Gestor and Arniel Gane carried none. It
+  appeared only in dialogue requests, never in decisions, memory queries or action evaluation.
+- **Without the secrecy line**, Brelyna told the player her whole scheme the moment she was asked. With it, she
+  opened with a cover story, weighed in her own thoughts whether she could trust the player, and gave it up a piece
+  at a time; Colette never confirmed hers at all, even when told Brelyna had shared it.
+- As an agent, Brelyna deflected, then named her errand when pressed and went to search Ancano's room for the
+  journal of her own accord.
+- SkyrimNet strips the blank lines from the whole prompt, ours included. The section still reads as intended.
+
+Not seen in game: Tolfdir as a mastermind, whose text the suite pins.
+
+**The test suite's real state.** Running the engine-mock binary as one process reported 58 failing cases. Run as it
+is meant to be, through `ctest`, with each case in its own process, all but one passed; the 58 were state left
+behind by one case for the next, which `ctest` never shares. The one real failure was `GossipDispatch`'s
+`OutstandingCount`, which crashed once in every one or two hundred runs. Its `WorkerBlocker` released the blocked
+job and was destroyed while the worker was still leaving its wait on the blocker's own future. The job now waits on
+its own copy of that future, and the case ran 1000 times without a failure.

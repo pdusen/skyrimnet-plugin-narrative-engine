@@ -5,20 +5,19 @@ delegate the steps to people who owe them something, and adapt when a step goes 
 in-world days whether or not the player is anywhere nearby, and what they produce is memory — on the
 mastermind, on whoever did the work, and on whoever it was done to.
 
-This phase covers **Phases A, B and C** of the feature's implementation staging: the headless simulation, the
-LLM authoring that replaces its stub content, and the memory and world-effect output that makes it worth
-playing. **Player delegation (Phase D) is not in this document** — no offer pool, no errand beat, no quest, no
-ESP surface. Everything here is C++ plus prompts, observable from the log and the dashboard.
+This phase covers **Phases A and B** of the feature's implementation staging: the headless simulation and the
+LLM authoring that replaces its stub content. The memories that make it worth playing were built by the milestone
+documents that followed it. **Player delegation (Phase D) is not in this document** — no offer pool, no errand
+beat, no quest, no ESP surface. Everything here is C++ plus prompts, observable from the log and the dashboard.
 
-> **Doc status: Steps 1–17 complete; Steps 18 and 19 superseded.** How a step is chosen, described and
-> remembered is being rebuilt by [Milestone 2](PHASE_17_MILESTONE_2_RIGID_STEPS.md), which replaces Step 18's
-> validation and Step 19's memory calls, and [Milestone 3](PHASE_17_MILESTONE_3_PLOT_MEMORIES.md) completes the
-> memories. [Milestone 4](PHASE_17_MILESTONE_4_PROFILE_RESOLUTION.md) makes the character profiles plots read the
-> ones SkyrimNet itself would render, including for NPCs SkyrimNet has not registered. Steps 20–22 still apply
-> after both. Step 9 replaced the settings table's proposed numbers with figures from an offline harness, and
-> Step 22 checks those against real play. Two design-level questions (the conspicuousness split, and how a step
-> gets caught) are still open in the design doc and are deliberately built behind switches here rather than blocked
-> on.
+> **Doc status: complete, Steps 1–17.** The steps that followed them were removed rather than carried: how a step
+> is chosen, described and remembered was rebuilt by [Milestone 2](PHASE_17_MILESTONE_2_RIGID_STEPS.md), and
+> [Milestone 3](PHASE_17_MILESTONE_3_PLOT_MEMORIES.md) wrote the memories.
+> [Milestone 4](PHASE_17_MILESTONE_4_PROFILE_RESOLUTION.md) makes the character profiles plots read the ones
+> SkyrimNet itself would render, including for NPCs SkyrimNet has not registered, and tells the people in a plot
+> what they know of it. Step 9 replaced the settings table's proposed numbers with figures from an offline harness.
+> Two design-level questions (the conspicuousness split, and how a step gets caught) are still open in the design
+> doc and are deliberately built behind switches here rather than blocked on.
 >
 > Every step is owned by either `[CLAUDE]` or `[USER]` and carries its own standalone verification; see
 > **How steps are verified** at the head of the implementation plan.
@@ -2067,142 +2066,14 @@ dead target from being silently replaced by whoever inherited its number.
 
 ---
 
-#### Step 18 — Phase B in-game validation
-
-- [ ] Complete
-
-> **Superseded** by [Milestone 2](PHASE_17_MILESTONE_2_RIGID_STEPS.md) Step 9. The step content it was to judge
-> is being replaced.
-
-**[USER]**
-
-**Goal:** Judge whether the authored content is worth attaching output to.
-
-Run with authoring live and memory writes still off, on a save with an established memory corpus — plots are
-generated *from the mastermind's memories*, so a thin corpus cannot show what this step is asking about.
-
-1. **Do plots read as things that specific NPC would want,** given who they are and what they know? Read a
-   dozen from the Plots tab.
-2. **Do different masterminds produce different plots,** or has the prompt collapsed into one shape?
-3. **Does the memory grounding show?** A mastermind who heard a rumor should sometimes be scheming about it.
-4. **Does adaptation concede when it should,** or does it spiral until the cap catches it every time?
-5. **Has anything off-menu ever been accepted?** The log answers this; it should be silent.
-
-Record findings under this step.
-
----
-
-### Phase C — memories and world effects
-
-#### Step 19 — The memory calls
-
-- [ ] Complete
-
-> **Superseded** by [Milestone 2](PHASE_17_MILESTONE_2_RIGID_STEPS.md) Step 8. Memories are filled from per-verb
-> templates rather than composed by an LLM call.
-
-**[CLAUDE]**
-
-**Goal:** The feature starts producing its actual product.
-
-1. `narrative_engine_plot_memory.prompt`: **one call composing every party's memory together**, not a call per
-   person. The accounts have to be consistent with each other to be worth anything.
-2. At **dispatch**, for the mastermind and the step actor. At **resolution**, for the same two plus the
-   **target** conditionally on the outcome type.
-3. The prompt is told it may let the two accounts diverge — a subordinate who failed has reason to shade the
-   report.
-4. Written via `SkyrimNetAPI::AddMemory` with a plot-output tag of their own — the
-   `GossipHarvest::kOwnOutputTag` precedent.
-5. `LLMTextSanitizer::Sanitize` on every string before it is written or stored.
-
-**Verification:** `build.ps1 build` is clean. Fixture-driven probes over the response parser assert: a dispatch
-response yields exactly two memories, addressed to the mastermind and the actor; a resolution response with an
-outcome type saying the target noticed yields three, and one saying they did not yields two; every emitted
-memory carries the plot tag; every emitted string is ASCII after the sanitizer; and a response naming a party
-who is not in the step is rejected rather than written to whoever it named.
-
----
-
-#### Step 20 — World effects
-
-- [ ] Complete
-
-**[CLAUDE]**
-
-**Goal:** The two mutations the design allows, and provably nothing else.
-
-1. `PlotEffects`, with every mutation marshalled through `MainThread::Run` / `FireAndForget`.
-2. A successful `Acquire` puts an item from the curated pool into the actor's inventory.
-3. A relationship-rank change between two NPCs, clamped by **named level**.
-   `RE::BGSRelationship::RELATIONSHIP_LEVEL` runs **worst-is-highest** (`kLover = 0` through
-   `kArchnemesis = 8`), the inverse of the CK's -4..+4 scale — clamping by sign would invert floor and ceiling.
-   There is **no C++ setter**: `level` lives on a relationship *record* and `SetRelationshipRank` is a
-   condition/Papyrus function, so budget for a boundary crossing here.
-4. Establish what happens when no `BGSRelationship` record exists between the pair — the common case for two
-   arbitrary NPCs. Either skip the rank half and write only the memory, or create the record. Decide before
-   building, because "silently did nothing" is the default failure.
-5. An explicit allow-list, asserted in code. `Discredit` and `Sabotage` resolve entirely in the memory layer.
-
-**Verification:** `build.ps1 build` is clean. A probe drives the clamp over the full enum range and asserts it
-saturates at the named floor and ceiling and never crosses into `kEnemy` / `kArchnemesis`, in both directions,
-including when handed an already-out-of-range starting value. A probe asserts the allow-list rejects a
-mutation kind not on it. A negative-compile probe confirms `PlotEffects`' mutating entry points cannot be
-called with a `PlotThread::Token` — they require main — then is deleted.
-
----
-
-#### Step 21 — Gossip seeding
-
-- [ ] Complete
-
-**[CLAUDE]**
-
-**Goal:** Close the loop the feature was justified by.
-
-1. Plot memories become eligible for `GossipHarvest`'s candidate set, with caught failures weighted as the
-   high-notability events they are.
-2. Confirm the tag interaction: plot output seeds gossip, gossip output does not seed plots, and plot output
-   does not re-seed itself.
-
-**Verification:** `build.ps1 build` is clean. A probe over synthetic memory rows asserts a plot-tagged memory
-passes the harvest filter, a gossip-tagged one does not reach plot birth, and a plot-tagged memory is excluded
-from the plot subsystem's own candidate set. The tag predicates are pure and this needs no game.
-
----
-
-#### Step 22 — Phase C in-game validation and call-volume measurement
-
-- [ ] Complete
-
-**[USER]**
-
-**Goal:** Confirm the feature is worth playing on its own, and find out what it actually costs.
-
-Real play, subsystem fully live, over enough hours to see plots run end to end.
-
-1. **Talk to an NPC who was cast in a plot.** Can they discuss it coherently — what they were asked, by whom,
-   how it went? This is the whole feature; if it fails here nothing else matters.
-2. **Check the two accounts diverge** where they should: find a subordinate who failed and ask both them and
-   their mastermind about it.
-3. **Confirm the target's memory is conditional.** Someone cleanly surveilled should not know; someone
-   surveilled badly should.
-4. **Watch a caught failure become a rumor** and reach another hold.
-5. **Measure the real LLM call rate** over a session and compare against Step 9's harness figure and the
-   design doc's Part 3 estimate. Record the measurement.
-6. **Confirm nothing outside the allow-list moved.** Inventories and relationships changed as expected; no
-   other world state did.
-
-If the call rate is too high, the lever is step duration — lengthening steps costs nothing narratively — not
-fewer memories. Record findings and any tuning under this step.
-
 ---
 
 ## Done condition
 
 This phase is complete when:
 
-- All 20 steps are checked off. The three `[USER]` steps — 12, 16 and 20 — have their findings recorded in this
-  document, and Step 9's validation log is committed.
+- All 17 steps are checked off. The one `[USER]` step, 12, has its findings recorded in this document, and Step 9's
+  validation log is committed.
 - A plot can be born, dispatch steps, adapt around a failure, and reach a terminal state without any
   intervention, over a normal play session.
 - No LLM call happens on a per-tick basis; the junctions are exactly the five the design doc's Part 3 lists,
@@ -2216,8 +2087,6 @@ This phase is complete when:
 - A failed step stays in its position in the chain with the plot continuing past it, and an adaptation does not
   renumber the nodes behind the cursor.
 - Every free-form LLM string reaching state, a memory, or the log has passed through `LLMTextSanitizer`.
-- No engine state outside Step 20's allow-list is mutated.
-- A caught failure is observed propagating as a rumor.
 
 ---
 

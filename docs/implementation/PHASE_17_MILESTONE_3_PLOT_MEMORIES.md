@@ -374,7 +374,7 @@ and the plugin builds with no warnings. As with Step 2, the gathering in `PlotTi
 
 ### Step 8 — In-game check of combined memories
 
-- [ ] Complete
+- [x] Complete
 
 **[USER]**
 
