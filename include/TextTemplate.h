@@ -73,8 +73,9 @@ namespace NarrativeEngine::TextTemplate
     enum class PluralRule
     {
         None,     // Japanese, Chinese: everything is `other`
-        OneOther, // English, German, Italian, Spanish: 1 is `one`
-        French,   // 0 and 1 are `one`
+        OneOther, // English, German: 1 is `one`
+        Spanish,  // Spanish, Italian: 1 is `one`, an exact million `many`
+        French,   // 0 and 1 are `one`, an exact million `many`
         Russian,  // one / few / many by the last two digits
         Polish,   // 1 is `one`; few / many by the last two digits
     };

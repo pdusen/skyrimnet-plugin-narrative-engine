@@ -1,0 +1,1035 @@
+{
+  "about": "The template formatter, as both of its implementations must render it: TextTemplate.cpp (through src/TextTemplate.fixture.test.cpp) and the dashboard's src/i18n/textTemplate.ts (through npm test). plurals gives CLDR's category for each number, by language, with the C++ family that language file names. renders gives a template, its arguments (a string is text, a number a number, an array a list, and {name, sex} a person), any grammar settings that differ from English's, the language whose plural rules apply (English when absent), fallbacks for missing arguments, whether it renders as a sentence, and the expected text. rejects gives templates both must refuse to parse.",
+  "plurals": [
+    {
+      "language": "en",
+      "family": "one_other",
+      "categories": {
+        "0": "other",
+        "1": "one",
+        "2": "other",
+        "3": "other",
+        "4": "other",
+        "5": "other",
+        "11": "other",
+        "12": "other",
+        "14": "other",
+        "21": "other",
+        "22": "other",
+        "25": "other",
+        "100": "other",
+        "101": "other",
+        "102": "other",
+        "111": "other",
+        "112": "other",
+        "1000": "other",
+        "1000000": "other",
+        "1000001": "other",
+        "2000000": "other",
+        "-1": "one",
+        "-2": "other",
+        "-5": "other"
+      }
+    },
+    {
+      "language": "de",
+      "family": "one_other",
+      "categories": {
+        "0": "other",
+        "1": "one",
+        "2": "other",
+        "3": "other",
+        "4": "other",
+        "5": "other",
+        "11": "other",
+        "12": "other",
+        "14": "other",
+        "21": "other",
+        "22": "other",
+        "25": "other",
+        "100": "other",
+        "101": "other",
+        "102": "other",
+        "111": "other",
+        "112": "other",
+        "1000": "other",
+        "1000000": "other",
+        "1000001": "other",
+        "2000000": "other",
+        "-1": "one",
+        "-2": "other",
+        "-5": "other"
+      }
+    },
+    {
+      "language": "es",
+      "family": "spanish",
+      "categories": {
+        "0": "other",
+        "1": "one",
+        "2": "other",
+        "3": "other",
+        "4": "other",
+        "5": "other",
+        "11": "other",
+        "12": "other",
+        "14": "other",
+        "21": "other",
+        "22": "other",
+        "25": "other",
+        "100": "other",
+        "101": "other",
+        "102": "other",
+        "111": "other",
+        "112": "other",
+        "1000": "other",
+        "1000000": "many",
+        "1000001": "other",
+        "2000000": "many",
+        "-1": "one",
+        "-2": "other",
+        "-5": "other"
+      }
+    },
+    {
+      "language": "it",
+      "family": "spanish",
+      "categories": {
+        "0": "other",
+        "1": "one",
+        "2": "other",
+        "3": "other",
+        "4": "other",
+        "5": "other",
+        "11": "other",
+        "12": "other",
+        "14": "other",
+        "21": "other",
+        "22": "other",
+        "25": "other",
+        "100": "other",
+        "101": "other",
+        "102": "other",
+        "111": "other",
+        "112": "other",
+        "1000": "other",
+        "1000000": "many",
+        "1000001": "other",
+        "2000000": "many",
+        "-1": "one",
+        "-2": "other",
+        "-5": "other"
+      }
+    },
+    {
+      "language": "fr",
+      "family": "french",
+      "categories": {
+        "0": "one",
+        "1": "one",
+        "2": "other",
+        "3": "other",
+        "4": "other",
+        "5": "other",
+        "11": "other",
+        "12": "other",
+        "14": "other",
+        "21": "other",
+        "22": "other",
+        "25": "other",
+        "100": "other",
+        "101": "other",
+        "102": "other",
+        "111": "other",
+        "112": "other",
+        "1000": "other",
+        "1000000": "many",
+        "1000001": "other",
+        "2000000": "many",
+        "-1": "one",
+        "-2": "other",
+        "-5": "other"
+      }
+    },
+    {
+      "language": "pt",
+      "family": "french",
+      "categories": {
+        "0": "one",
+        "1": "one",
+        "2": "other",
+        "3": "other",
+        "4": "other",
+        "5": "other",
+        "11": "other",
+        "12": "other",
+        "14": "other",
+        "21": "other",
+        "22": "other",
+        "25": "other",
+        "100": "other",
+        "101": "other",
+        "102": "other",
+        "111": "other",
+        "112": "other",
+        "1000": "other",
+        "1000000": "many",
+        "1000001": "other",
+        "2000000": "many",
+        "-1": "one",
+        "-2": "other",
+        "-5": "other"
+      }
+    },
+    {
+      "language": "ru",
+      "family": "russian",
+      "categories": {
+        "0": "many",
+        "1": "one",
+        "2": "few",
+        "3": "few",
+        "4": "few",
+        "5": "many",
+        "11": "many",
+        "12": "many",
+        "14": "many",
+        "21": "one",
+        "22": "few",
+        "25": "many",
+        "100": "many",
+        "101": "one",
+        "102": "few",
+        "111": "many",
+        "112": "many",
+        "1000": "many",
+        "1000000": "many",
+        "1000001": "one",
+        "2000000": "many",
+        "-1": "one",
+        "-2": "few",
+        "-5": "many"
+      }
+    },
+    {
+      "language": "pl",
+      "family": "polish",
+      "categories": {
+        "0": "many",
+        "1": "one",
+        "2": "few",
+        "3": "few",
+        "4": "few",
+        "5": "many",
+        "11": "many",
+        "12": "many",
+        "14": "many",
+        "21": "many",
+        "22": "few",
+        "25": "many",
+        "100": "many",
+        "101": "many",
+        "102": "few",
+        "111": "many",
+        "112": "many",
+        "1000": "many",
+        "1000000": "many",
+        "1000001": "many",
+        "2000000": "many",
+        "-1": "one",
+        "-2": "few",
+        "-5": "many"
+      }
+    },
+    {
+      "language": "ja",
+      "family": "none",
+      "categories": {
+        "0": "other",
+        "1": "other",
+        "2": "other",
+        "3": "other",
+        "4": "other",
+        "5": "other",
+        "11": "other",
+        "12": "other",
+        "14": "other",
+        "21": "other",
+        "22": "other",
+        "25": "other",
+        "100": "other",
+        "101": "other",
+        "102": "other",
+        "111": "other",
+        "112": "other",
+        "1000": "other",
+        "1000000": "other",
+        "1000001": "other",
+        "2000000": "other",
+        "-1": "other",
+        "-2": "other",
+        "-5": "other"
+      }
+    },
+    {
+      "language": "zh",
+      "family": "none",
+      "categories": {
+        "0": "other",
+        "1": "other",
+        "2": "other",
+        "3": "other",
+        "4": "other",
+        "5": "other",
+        "11": "other",
+        "12": "other",
+        "14": "other",
+        "21": "other",
+        "22": "other",
+        "25": "other",
+        "100": "other",
+        "101": "other",
+        "102": "other",
+        "111": "other",
+        "112": "other",
+        "1000": "other",
+        "1000000": "other",
+        "1000001": "other",
+        "2000000": "other",
+        "-1": "other",
+        "-2": "other",
+        "-5": "other"
+      }
+    }
+  ],
+  "renders": [
+    {
+      "name": "plain text",
+      "template": "Veleth's mead.",
+      "expected": "Veleth's mead."
+    },
+    {
+      "name": "text argument",
+      "template": "Hello, {who}.",
+      "arguments": {
+        "who": "Ysolda"
+      },
+      "expected": "Hello, Ysolda."
+    },
+    {
+      "name": "person argument renders its name",
+      "template": "Hello, {who}.",
+      "arguments": {
+        "who": {
+          "name": "Hulda",
+          "sex": "female"
+        }
+      },
+      "expected": "Hello, Hulda."
+    },
+    {
+      "name": "number argument",
+      "template": "{n} coins",
+      "arguments": {
+        "n": 25
+      },
+      "expected": "25 coins"
+    },
+    {
+      "name": "list argument without the list format still joins",
+      "template": "{names}",
+      "arguments": {
+        "names": ["Hulda", "Amren"]
+      },
+      "expected": "Hulda and Amren"
+    },
+    {
+      "name": "spaces inside a placeholder",
+      "template": "{ who }!",
+      "arguments": {
+        "who": "Ysolda"
+      },
+      "expected": "Ysolda!"
+    },
+    {
+      "name": "non-ASCII text around a placeholder",
+      "template": "Привет, {who}!",
+      "arguments": {
+        "who": "Ульфрик"
+      },
+      "expected": "Привет, Ульфрик!"
+    },
+    {
+      "name": "missing argument renders the fallback",
+      "template": "{agent} watched.",
+      "missing": {
+        "agent": "someone"
+      },
+      "expected": "someone watched."
+    },
+    {
+      "name": "missing argument with no fallback renders nothing",
+      "template": "[{agent}]",
+      "expected": "[]"
+    },
+    {
+      "name": "select on a female person",
+      "template": "{who, select, female {her} male {his} other {their}} way",
+      "arguments": {
+        "who": {
+          "name": "Hulda",
+          "sex": "female"
+        }
+      },
+      "expected": "her way"
+    },
+    {
+      "name": "select on a male person",
+      "template": "{who, select, female {her} male {his} other {their}} way",
+      "arguments": {
+        "who": {
+          "name": "Amren",
+          "sex": "male"
+        }
+      },
+      "expected": "his way"
+    },
+    {
+      "name": "select on a person of other sex",
+      "template": "{who, select, female {her} male {his} other {their}} way",
+      "arguments": {
+        "who": {
+          "name": "Lydia",
+          "sex": "other"
+        }
+      },
+      "expected": "their way"
+    },
+    {
+      "name": "select on text, by its value",
+      "template": "{mood, select, wet {soaked} dry {parched} other {fine}}",
+      "arguments": {
+        "mood": "dry"
+      },
+      "expected": "parched"
+    },
+    {
+      "name": "select on text with no branch for it takes other",
+      "template": "{mood, select, wet {soaked} other {fine}}",
+      "arguments": {
+        "mood": "windy"
+      },
+      "expected": "fine"
+    },
+    {
+      "name": "select with no value takes other, not the fallback",
+      "template": "{who, select, female {her} male {his} other {their}} way",
+      "missing": {
+        "who": "someone"
+      },
+      "expected": "their way"
+    },
+    {
+      "name": "select branches may hold placeholders",
+      "template": "{who, select, female {{who} herself} other {{who}}}",
+      "arguments": {
+        "who": {
+          "name": "Hulda",
+          "sex": "female"
+        }
+      },
+      "expected": "Hulda herself"
+    },
+    {
+      "name": "spaces around select parts",
+      "template": "{ who , select , female {her} other {their} }",
+      "arguments": {
+        "who": {
+          "name": "Hulda",
+          "sex": "female"
+        }
+      },
+      "expected": "her"
+    },
+    {
+      "name": "English plural, 0",
+      "template": "{n, plural, one {# day} other {# days}}",
+      "arguments": {
+        "n": 0
+      },
+      "expected": "0 days"
+    },
+    {
+      "name": "English plural, 1",
+      "template": "{n, plural, one {# day} other {# days}}",
+      "arguments": {
+        "n": 1
+      },
+      "expected": "1 day"
+    },
+    {
+      "name": "English plural, 2",
+      "template": "{n, plural, one {# day} other {# days}}",
+      "arguments": {
+        "n": 2
+      },
+      "expected": "2 days"
+    },
+    {
+      "name": "English plural, 21",
+      "template": "{n, plural, one {# day} other {# days}}",
+      "arguments": {
+        "n": 21
+      },
+      "expected": "21 days"
+    },
+    {
+      "name": "plural with no value takes other, and # is empty",
+      "template": "{n, plural, one {# day} other {# days}}",
+      "expected": " days"
+    },
+    {
+      "name": "Russian plural, 1",
+      "template": "{n, plural, one {# день} few {# дня} many {# дней} other {# дня}}",
+      "language": "ru",
+      "arguments": {
+        "n": 1
+      },
+      "expected": "1 день"
+    },
+    {
+      "name": "Russian plural, 2",
+      "template": "{n, plural, one {# день} few {# дня} many {# дней} other {# дня}}",
+      "language": "ru",
+      "arguments": {
+        "n": 2
+      },
+      "expected": "2 дня"
+    },
+    {
+      "name": "Russian plural, 5",
+      "template": "{n, plural, one {# день} few {# дня} many {# дней} other {# дня}}",
+      "language": "ru",
+      "arguments": {
+        "n": 5
+      },
+      "expected": "5 дней"
+    },
+    {
+      "name": "Russian plural, 11",
+      "template": "{n, plural, one {# день} few {# дня} many {# дней} other {# дня}}",
+      "language": "ru",
+      "arguments": {
+        "n": 11
+      },
+      "expected": "11 дней"
+    },
+    {
+      "name": "Russian plural, 21",
+      "template": "{n, plural, one {# день} few {# дня} many {# дней} other {# дня}}",
+      "language": "ru",
+      "arguments": {
+        "n": 21
+      },
+      "expected": "21 день"
+    },
+    {
+      "name": "Russian plural, 22",
+      "template": "{n, plural, one {# день} few {# дня} many {# дней} other {# дня}}",
+      "language": "ru",
+      "arguments": {
+        "n": 22
+      },
+      "expected": "22 дня"
+    },
+    {
+      "name": "Russian plural, 0",
+      "template": "{n, plural, one {# день} few {# дня} many {# дней} other {# дня}}",
+      "language": "ru",
+      "arguments": {
+        "n": 0
+      },
+      "expected": "0 дней"
+    },
+    {
+      "name": "every category, pl 22",
+      "template": "{n, plural, zero {zero} one {one} two {two} few {few} many {many} other {other}}",
+      "language": "pl",
+      "arguments": {
+        "n": 22
+      },
+      "expected": "few"
+    },
+    {
+      "name": "every category, pl 21",
+      "template": "{n, plural, zero {zero} one {one} two {two} few {few} many {many} other {other}}",
+      "language": "pl",
+      "arguments": {
+        "n": 21
+      },
+      "expected": "many"
+    },
+    {
+      "name": "every category, fr 0",
+      "template": "{n, plural, zero {zero} one {one} two {two} few {few} many {many} other {other}}",
+      "language": "fr",
+      "arguments": {
+        "n": 0
+      },
+      "expected": "one"
+    },
+    {
+      "name": "every category, fr 1000000",
+      "template": "{n, plural, zero {zero} one {one} two {two} few {few} many {many} other {other}}",
+      "language": "fr",
+      "arguments": {
+        "n": 1000000
+      },
+      "expected": "many"
+    },
+    {
+      "name": "every category, es 1000000",
+      "template": "{n, plural, zero {zero} one {one} two {two} few {few} many {many} other {other}}",
+      "language": "es",
+      "arguments": {
+        "n": 1000000
+      },
+      "expected": "many"
+    },
+    {
+      "name": "every category, it 1",
+      "template": "{n, plural, zero {zero} one {one} two {two} few {few} many {many} other {other}}",
+      "language": "it",
+      "arguments": {
+        "n": 1
+      },
+      "expected": "one"
+    },
+    {
+      "name": "every category, de 1",
+      "template": "{n, plural, zero {zero} one {one} two {two} few {few} many {many} other {other}}",
+      "language": "de",
+      "arguments": {
+        "n": 1
+      },
+      "expected": "one"
+    },
+    {
+      "name": "every category, ja 1",
+      "template": "{n, plural, zero {zero} one {one} two {two} few {few} many {many} other {other}}",
+      "language": "ja",
+      "arguments": {
+        "n": 1
+      },
+      "expected": "other"
+    },
+    {
+      "name": "every category, zh 2",
+      "template": "{n, plural, zero {zero} one {one} two {two} few {few} many {many} other {other}}",
+      "language": "zh",
+      "arguments": {
+        "n": 2
+      },
+      "expected": "other"
+    },
+    {
+      "name": "a category the template lacks falls back to other",
+      "template": "{n, plural, one {a} other {b}}",
+      "language": "ru",
+      "arguments": {
+        "n": 3
+      },
+      "expected": "b"
+    },
+    {
+      "name": "# outside a plural is literal",
+      "template": "#1 {n}",
+      "arguments": {
+        "n": 4
+      },
+      "expected": "#1 4"
+    },
+    {
+      "name": "# inside a select nested in a plural is literal",
+      "template": "{n, plural, other {{who, select, other {# {n} for {who}}}}}",
+      "arguments": {
+        "n": 4,
+        "who": {
+          "name": "Hulda",
+          "sex": "female"
+        }
+      },
+      "expected": "# 4 for Hulda"
+    },
+    {
+      "name": "each # is its own plural's number",
+      "template": "{n, plural, other {# and {m, plural, other {#}}}}",
+      "arguments": {
+        "n": 4,
+        "m": 2
+      },
+      "expected": "4 and 2"
+    },
+    {
+      "name": "a plural number is not grouped",
+      "template": "{n, plural, other {# Tage}}",
+      "language": "de",
+      "arguments": {
+        "n": 1000000
+      },
+      "expected": "1000000 Tage"
+    },
+    {
+      "name": "a negative number",
+      "template": "{n, plural, one {# day} other {# days}}",
+      "arguments": {
+        "n": -1
+      },
+      "expected": "-1 day"
+    },
+    {
+      "name": "English list of 0",
+      "template": "{names, list}",
+      "arguments": {
+        "names": []
+      },
+      "expected": ""
+    },
+    {
+      "name": "English list of 1",
+      "template": "{names, list}",
+      "arguments": {
+        "names": ["Hulda"]
+      },
+      "expected": "Hulda"
+    },
+    {
+      "name": "English list of 2",
+      "template": "{names, list}",
+      "arguments": {
+        "names": ["Hulda", "Amren"]
+      },
+      "expected": "Hulda and Amren"
+    },
+    {
+      "name": "English list of 3",
+      "template": "{names, list}",
+      "arguments": {
+        "names": ["Hulda", "Amren", "Lydia"]
+      },
+      "expected": "Hulda, Amren, and Lydia"
+    },
+    {
+      "name": "English list of 4",
+      "template": "{names, list}",
+      "arguments": {
+        "names": ["Hulda", "Amren", "Lydia", "Ysolda"]
+      },
+      "expected": "Hulda, Amren, Lydia, and Ysolda"
+    },
+    {
+      "name": "German list of 3",
+      "template": "{names, list}",
+      "language": "de",
+      "grammar": {
+        "listPairSeparator": " und ",
+        "listFinalSeparator": " und ",
+        "phraseLowercaseFirst": false
+      },
+      "arguments": {
+        "names": ["Hulda", "Amren", "Lydia"]
+      },
+      "expected": "Hulda, Amren und Lydia"
+    },
+    {
+      "name": "Japanese list of 3",
+      "template": "{names, list}",
+      "language": "ja",
+      "grammar": {
+        "listSeparator": "、",
+        "listPairSeparator": "と",
+        "listFinalSeparator": "と",
+        "phraseTrailingPunctuation": "。、.!?",
+        "phraseLowercaseFirst": false
+      },
+      "arguments": {
+        "names": ["フルダ", "アムレン", "リディア"]
+      },
+      "expected": "フルダ、アムレンとリディア"
+    },
+    {
+      "name": "missing list renders the fallback",
+      "template": "{names, list}",
+      "missing": {
+        "names": "nobody"
+      },
+      "expected": "nobody"
+    },
+    {
+      "name": "phrase trims and lowercases the first letter",
+      "template": "my plan to {scheme, phrase}",
+      "arguments": {
+        "scheme": "  Steal the amulet. "
+      },
+      "expected": "my plan to steal the amulet"
+    },
+    {
+      "name": "phrase trims every trailing mark in the set",
+      "template": "[{scheme, phrase}]",
+      "arguments": {
+        "scheme": "Ruin Hulda!?;"
+      },
+      "expected": "[ruin Hulda]"
+    },
+    {
+      "name": "phrase keeps leading punctuation",
+      "template": "[{scheme, phrase}]",
+      "arguments": {
+        "scheme": "\"ruin\" Hulda."
+      },
+      "expected": "[\"ruin\" Hulda]"
+    },
+    {
+      "name": "phrase trims non-ASCII spaces",
+      "template": "[{scheme, phrase}]",
+      "arguments": {
+        "scheme": " 　Ruin Hulda. "
+      },
+      "expected": "[ruin Hulda]"
+    },
+    {
+      "name": "phrase lowercases Cyrillic",
+      "template": "план: {scheme, phrase}",
+      "arguments": {
+        "scheme": "Украсть амулет."
+      },
+      "expected": "план: украсть амулет"
+    },
+    {
+      "name": "phrase keeps German capitals",
+      "template": "mein Plan, {scheme, phrase}",
+      "language": "de",
+      "grammar": {
+        "listPairSeparator": " und ",
+        "listFinalSeparator": " und ",
+        "phraseLowercaseFirst": false
+      },
+      "arguments": {
+        "scheme": "Das Amulett zu stehlen."
+      },
+      "expected": "mein Plan, Das Amulett zu stehlen"
+    },
+    {
+      "name": "phrase trims an ideographic full stop",
+      "template": "「{scheme, phrase}」",
+      "language": "ja",
+      "grammar": {
+        "listSeparator": "、",
+        "listPairSeparator": "と",
+        "listFinalSeparator": "と",
+        "phraseTrailingPunctuation": "。、.!?",
+        "phraseLowercaseFirst": false
+      },
+      "arguments": {
+        "scheme": "アミュレットを盗む。"
+      },
+      "expected": "「アミュレットを盗む」"
+    },
+    {
+      "name": "phrase on a person renders the name untouched",
+      "template": "[{who, phrase}]",
+      "arguments": {
+        "who": {
+          "name": "Hulda",
+          "sex": "female"
+        }
+      },
+      "expected": "[Hulda]"
+    },
+    {
+      "name": "missing phrase renders the fallback",
+      "template": "[{scheme, phrase}]",
+      "missing": {
+        "scheme": "something"
+      },
+      "expected": "[something]"
+    },
+    {
+      "name": "a phrase that is all punctuation is empty",
+      "template": "[{scheme, phrase}]",
+      "arguments": {
+        "scheme": " ..."
+      },
+      "expected": "[]"
+    },
+    {
+      "name": "a sentence opens with a capital",
+      "template": "{agent} watched.",
+      "sentence": true,
+      "missing": {
+        "agent": "someone"
+      },
+      "expected": "Someone watched."
+    },
+    {
+      "name": "a sentence capitalizes Cyrillic",
+      "template": "{agent} смотрел.",
+      "sentence": true,
+      "arguments": {
+        "agent": "ульфрик"
+      },
+      "expected": "Ульфрик смотрел."
+    },
+    {
+      "name": "a sentence capitalizes an accented letter",
+      "template": "{agent} regardait.",
+      "language": "fr",
+      "sentence": true,
+      "arguments": {
+        "agent": "ébène"
+      },
+      "expected": "Ébène regardait."
+    },
+    {
+      "name": "only the first code point is looked at",
+      "template": "\"{agent}\" watched.",
+      "sentence": true,
+      "missing": {
+        "agent": "someone"
+      },
+      "expected": "\"someone\" watched."
+    },
+    {
+      "name": "a letter takes its simple capital, not its full one",
+      "template": "{agent}",
+      "sentence": true,
+      "arguments": {
+        "agent": "ßtraße"
+      },
+      "expected": "ẞtraße"
+    },
+    {
+      "name": "a Greek letter with a subscript takes its simple capital",
+      "template": "{agent}",
+      "sentence": true,
+      "arguments": {
+        "agent": "ᾳι"
+      },
+      "expected": "ᾼι"
+    },
+    {
+      "name": "a phrase takes the simple lower case",
+      "template": "[{scheme, phrase}]",
+      "grammar": {},
+      "arguments": {
+        "scheme": "İstanbul."
+      },
+      "expected": "[istanbul]"
+    },
+    {
+      "name": "a letter with no capital stays",
+      "template": "{agent}",
+      "sentence": true,
+      "arguments": {
+        "agent": "ŉa"
+      },
+      "expected": "ŉa"
+    },
+    {
+      "name": "a caseless script is untouched",
+      "template": "{agent}が見た。",
+      "language": "ja",
+      "grammar": {
+        "listSeparator": "、",
+        "listPairSeparator": "と",
+        "listFinalSeparator": "と",
+        "phraseTrailingPunctuation": "。、.!?",
+        "phraseLowercaseFirst": false
+      },
+      "sentence": true,
+      "arguments": {
+        "agent": "フルダ"
+      },
+      "expected": "フルダが見た。"
+    },
+    {
+      "name": "a character outside the BMP is untouched",
+      "template": "{agent}",
+      "sentence": true,
+      "arguments": {
+        "agent": "𠀋a"
+      },
+      "expected": "𠀋a"
+    },
+    {
+      "name": "capitalizing can be turned off",
+      "template": "{agent} watched.",
+      "sentence": true,
+      "grammar": {
+        "capitalizeSentenceStart": false
+      },
+      "missing": {
+        "agent": "someone"
+      },
+      "expected": "someone watched."
+    },
+    {
+      "name": "a fragment is not capitalized",
+      "template": "{agent} watched.",
+      "missing": {
+        "agent": "someone"
+      },
+      "expected": "someone watched."
+    }
+  ],
+  "rejects": [
+    {
+      "name": "an unclosed placeholder",
+      "template": "{who"
+    },
+    {
+      "name": "a brace that opens nothing",
+      "template": "a { b"
+    },
+    {
+      "name": "a brace that closes nothing",
+      "template": "a } b"
+    },
+    {
+      "name": "an empty placeholder",
+      "template": "{ }"
+    },
+    {
+      "name": "a name that starts with a digit",
+      "template": "{1who}"
+    },
+    {
+      "name": "a format that does not exist",
+      "template": "{who, upper}"
+    },
+    {
+      "name": "a list with branches",
+      "template": "{who, list, x}"
+    },
+    {
+      "name": "a select with no branches",
+      "template": "{who, select,}"
+    },
+    {
+      "name": "a select with no comma before its branches",
+      "template": "{who, select}"
+    },
+    {
+      "name": "a branch key with no branch",
+      "template": "{who, select, other}"
+    },
+    {
+      "name": "a branch that is never closed",
+      "template": "{who, select, other {x}"
+    },
+    {
+      "name": "a stray brace after a valid template",
+      "template": "{n, plural, other {#}} }"
+    }
+  ]
+}

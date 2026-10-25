@@ -211,11 +211,22 @@ TEST_CASE("TextTemplate::Plural families at their boundaries", "[TextTemplate]")
         CHECK(Plural(PluralRule::OneOther, 2) == Other);
         CHECK(Plural(PluralRule::OneOther, 21) == Other);
     }
-    SECTION("French: zero and one are one")
+    SECTION("Spanish: one is one, and an exact million is many")
+    {
+        CHECK(Plural(PluralRule::Spanish, 0) == Other);
+        CHECK(Plural(PluralRule::Spanish, 1) == One);
+        CHECK(Plural(PluralRule::Spanish, 2) == Other);
+        CHECK(Plural(PluralRule::Spanish, 1'000'000) == Many);
+        CHECK(Plural(PluralRule::Spanish, 1'000'001) == Other);
+        CHECK(Plural(PluralRule::Spanish, 3'000'000) == Many);
+    }
+    SECTION("French: zero and one are one, and an exact million is many")
     {
         CHECK(Plural(PluralRule::French, 0) == One);
         CHECK(Plural(PluralRule::French, 1) == One);
         CHECK(Plural(PluralRule::French, 2) == Other);
+        CHECK(Plural(PluralRule::French, 1'000'000) == Many);
+        CHECK(Plural(PluralRule::French, 1'000'001) == Other);
     }
     SECTION("Russian")
     {

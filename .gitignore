@@ -10,6 +10,7 @@ compile_commands.json
 # Dashboard build artifacts + npm dependency tree (Step 15).
 dashboard/node_modules/
 dashboard/dist/
+dashboard/.test-build/
 
 # Papyrus compile output (deployed directly to the mod folder; never tracked).
 *.pex

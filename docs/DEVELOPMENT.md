@@ -249,10 +249,10 @@ pwsh -File build.ps1 test
 ```
 
 That builds only the `NarrativeEngineTests` target — no ESP sync, no Papyrus compile, no dashboard bundle —
-and then runs `ctest --output-on-failure`. `catch_discover_tests` registers every `TEST_CASE` with CTest
-individually, so `ctest -R LLMTextSanitizer` selects one and a failure names the case rather than "the test
-binary". You can also run `build/local-release/NarrativeEngineTests.exe` directly for Catch2's own CLI
-(`--list-tests`, tag filters like `[LLMTextSanitizer]`, `-s` for passing assertions).
+and then runs `ctest --output-on-failure`, then the dashboard's `npm test`. `catch_discover_tests` registers
+every `TEST_CASE` with CTest individually, so `ctest -R LLMTextSanitizer` selects one and a failure names the case
+rather than "the test binary". You can also run `build/local-release/NarrativeEngineTests.exe` directly for
+Catch2's own CLI (`--list-tests`, tag filters like `[LLMTextSanitizer]`, `-s` for passing assertions).
 
 ### Two test executables
 
@@ -382,6 +382,15 @@ What this does **not** justify is inventing a port for everything. A module that
 decide something is better served by gathering a plain snapshot and testing the decision — cheaper, and it
 leaves no interface to maintain. Ports are for behaviour you have to stand in for, not for data you can
 simply hand over.
+
+### Dashboard tests and shared fixtures
+
+The dashboard has a port of the template formatter, `dashboard/src/i18n/textTemplate.ts`, which has to render
+exactly as `TextTemplate.cpp` does. Both read the same fixture, `testsupport/fixtures/text_template.json`: the C++
+through `src/TextTemplate.fixture.test.cpp`, and the TypeScript through `npm test` in `dashboard/`, which compiles
+the formatter with `tsc` (`tsconfig.test.json`) and runs `dashboard/test/*.test.mjs` under `node --test`. A change
+to either formatter's behaviour is a change to the fixture, and both runs must pass it. The fixture's plural
+categories are CLDR's, so it also holds the C++'s hand-written plural families to CLDR.
 
 ### Test style
 

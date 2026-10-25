@@ -459,13 +459,16 @@ namespace NarrativeEngine::TextTemplate
         const auto abs = n < 0 ? -n : n;
         const auto mod10 = abs % 10;
         const auto mod100 = abs % 100;
+        const bool million = abs != 0 && abs % 1'000'000 == 0;
         switch (rule) {
         case PluralRule::None:
             return PluralCategory::Other;
         case PluralRule::OneOther:
             return abs == 1 ? PluralCategory::One : PluralCategory::Other;
+        case PluralRule::Spanish:
+            return abs == 1 ? PluralCategory::One : million ? PluralCategory::Many : PluralCategory::Other;
         case PluralRule::French:
-            return abs == 0 || abs == 1 ? PluralCategory::One : PluralCategory::Other;
+            return abs == 0 || abs == 1 ? PluralCategory::One : million ? PluralCategory::Many : PluralCategory::Other;
         case PluralRule::Russian:
             if (mod10 == 1 && mod100 != 11) {
                 return PluralCategory::One;

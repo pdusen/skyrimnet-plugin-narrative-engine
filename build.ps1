@@ -8,7 +8,7 @@
 #   pwsh -File build.ps1 configure              # cmake --preset local-release
 #   pwsh -File build.ps1 build                  # cmake --build build/local-release
 #   pwsh -File build.ps1 rebuild                # configure + build (no clean)
-#   pwsh -File build.ps1 test                   # build + run the Catch2 unit tests
+#   pwsh -File build.ps1 test                   # build + run the C++ and dashboard unit tests
 #   pwsh -File build.ps1 clean                  # remove build/<preset>
 #   pwsh -File build.ps1 build -Preset local-debug
 #
@@ -142,7 +142,8 @@ function Invoke-PapyrusPrune {
     }
 }
 
-# Build and run the Catch2 unit tests.
+# Build and run the Catch2 unit tests, then the dashboard's `npm test`, which
+# runs the formatter fixture the C++ runs too.
 #
 # Builds only the two test executables rather than the whole project, so the
 # test loop doesn't pay for the ESP sync, the Papyrus compile, or the Rollup
@@ -162,6 +163,16 @@ function Invoke-Test {
     Write-Host "==> ctest --test-dir $buildDir" -ForegroundColor Cyan
     ctest --test-dir $buildDir --output-on-failure
     if ($LASTEXITCODE -ne 0) { throw "Tests failed (exit $LASTEXITCODE)." }
+
+    $dashboardDir = Join-Path $PSScriptRoot 'dashboard'
+    if (-not (Test-Path (Join-Path $dashboardDir 'node_modules'))) {
+        Write-Host "==> npm ci (dashboard)" -ForegroundColor Cyan
+        npm ci --prefix $dashboardDir
+        if ($LASTEXITCODE -ne 0) { throw "npm ci failed (exit $LASTEXITCODE)." }
+    }
+    Write-Host "==> npm test (dashboard)" -ForegroundColor Cyan
+    npm test --prefix $dashboardDir
+    if ($LASTEXITCODE -ne 0) { throw "Dashboard tests failed (exit $LASTEXITCODE)." }
 }
 
 function Invoke-Clean {

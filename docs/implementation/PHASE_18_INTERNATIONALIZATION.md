@@ -190,8 +190,10 @@ themselves.
 
 **Plural rules are code, not text.** CLDR's cardinal rules are arithmetic, and a file should not have to express
 them. The formatter carries the rule families the shipped languages need: none for Japanese and Chinese,
-one/other for English, German, Italian and Spanish, the French 0-or-1 rule, and the Russian and Polish
-one/few/many rules. A language file selects one by name. A new language picks the family that matches it.
+one/other for English and German, Spanish's 1-is-one rule for Spanish and Italian, the French 0-or-1 rule, and the
+Russian and Polish one/few/many rules. In CLDR, Spanish, Italian and French also call an exact million (1,000,000,
+2,000,000 and so on) `many`, so those two families do too. A language file selects one by name. A new language picks
+the family that matches it.
 
 **Character handling comes from utf8proc.** Sentence capitalization and `PhraseLowercaseFirst` currently use
 byte-level `toupper`/`tolower`. Those silently do nothing to `é` or `ж`. Case mapping, case folding, UTF-8
@@ -1851,7 +1853,7 @@ and `Add` (English with no forms; German with a form only for the prompt's own f
 
 #### Step 20 — The dashboard formatter, and the shared fixture
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1866,6 +1868,42 @@ and `Add` (English with no forms; German with a form only for the prompt's own f
 **Verification:** both test runs pass on the same fixture. The fixture covers every form and every plural family.
 Because the TypeScript side takes its categories from Node's CLDR data, the shared fixture also checks the C++
 hand-written families against CLDR.
+
+Done.
+
+- **`dashboard/src/i18n/textTemplate.ts`** ports `Parse`, `Render`, `Phrase` and `JoinList` line for line. Its
+  options take the language's `Code` instead of a family. `pluralCategory` reads `Intl.PluralRules` and gives
+  `other` when it is missing, and `pluralsAvailable` reports whether it is there. Nothing imports the port yet;
+  Step 21 does.
+- **`testsupport/fixtures/text_template.json`** holds three lists:
+  - `plurals`: CLDR's category for 24 numbers, from 0 to 2,000,000 and some negatives, in ten languages (the nine,
+    plus Portuguese), each with the family its language file names;
+  - `renders`: 74 cases covering every form, select on a person and on text, nesting, `#`, missing arguments,
+    lists of 0 to 4 items, phrase trimming over non-ASCII spaces and an ideographic full stop, and sentence
+    capitals in Cyrillic, accented Latin, a caseless script and a character outside the BMP;
+  - `rejects`: 12 templates both must refuse.
+- **`src/TextTemplate.fixture.test.cpp`** runs the fixture through the C++, and finds it through a new
+  `NARRATIVEENGINE_FIXTURES_DIR`. **`npm test`** compiles the port with `tsc -p tsconfig.test.json` and runs
+  `dashboard/test/textTemplate.test.mjs` under `node --test`, including a case with `Intl.PluralRules` removed.
+  `build.ps1 test` now runs `npm test` after `ctest`, so neither side can be skipped.
+
+The fixture found two disagreements, and both are fixed.
+
+**CLDR's `many` for exact millions.** Node said Italian, Spanish and French call 1,000,000 `many`, and Portuguese
+too. The C++ called it `other`. A new `spanish` family (one for 1, `many` for an exact million) now serves Spanish
+and Italian, which had shared `one_other` with English. `french` gains the same `many`. The design's paragraph on
+plural rules says so. No count the plugin shows comes near a million, and a template without a `many` branch takes
+`other`. But a translator who writes one would have seen it on the dashboard and never in C++.
+
+**Case mapping.** C++ capitalizes through utf8proc's simple one-letter mapping. A browser's `toUpperCase` is the full
+mapping, which makes `ß` "SS". A scratch probe compared every code point's two mappings. The port keeps a letter
+whose full mapping is several letters, except where a simple mapping exists: `ß` to `ẞ`, the 27 Greek letters with
+an iota subscript, and `İ` to `i`. Those 29 sit in a small table. The probe's only other differences were letters
+added in Unicode 17, which utf8proc has and Node 22's ICU does not yet. Every browser lags Unicode somewhere, and the
+port leaves such letters alone.
+
+`pwsh -File build.ps1 test`: 582 of 582 C++ tests and 4 of 4 dashboard tests passed. Each side fails when one
+fixture expectation is changed. `build.ps1 build`, including the Rollup bundle, is clean.
 
 #### Step 21 — Dashboard strings
 

@@ -118,6 +118,9 @@ namespace NarrativeEngine::LanguageTable
             if (lowered == "one_other") {
                 return OneOther;
             }
+            if (lowered == "spanish") {
+                return Spanish;
+            }
             if (lowered == "french") {
                 return French;
             }

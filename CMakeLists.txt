@@ -785,10 +785,13 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         PRIVATE NarrativeEngineCore Catch2::Catch2WithMain
     )
     # Where the shipped data files live, for tests that check every file
-    # statics/ ships (LanguageTable's shipped-files case).
+    # statics/ ships (LanguageTable's shipped-files case), and the fixtures
+    # the C++ and the dashboard both run (TextTemplate's).
     target_compile_definitions(
         NarrativeEngineTests
-        PRIVATE NARRATIVEENGINE_STATICS_DIR="${STATICS_SOURCE_DIR}"
+        PRIVATE
+            NARRATIVEENGINE_STATICS_DIR="${STATICS_SOURCE_DIR}"
+            NARRATIVEENGINE_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/testsupport/fixtures"
     )
 
     # Register each TEST_CASE with CTest individually, so `ctest -R` can
