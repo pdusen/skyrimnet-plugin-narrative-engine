@@ -1,5 +1,7 @@
 #include <DecisionLog.h>
 
+#include <ShippedLanguage.h>
+
 #include <EngineMock.h>
 
 #include <SKSE/Interfaces.h>
@@ -116,6 +118,10 @@ namespace
         AppendString(out, R"({"sender":"Ysolda"})");
         AppendString(out, note);
         Append(out, static_cast<std::uint32_t>(0x5u));
+        // Version 2: no failure, no detail, the model's own note.
+        Append(out, static_cast<std::uint8_t>(0));
+        AppendString(out, "");
+        Append(out, static_cast<std::uint8_t>(0));
     }
 
     // A one-record payload with the count header in front.
@@ -325,7 +331,7 @@ TEST_CASE("DecisionLog::OnSave", "[DecisionLog][engine]")
             // payload already on disk. The version gates the loader's layout.
             REQUIRE(engine.cosave.opened.size() == 1);
             REQUIRE(engine.cosave.opened[0].type == DecisionLog::kRecordTypeId);
-            REQUIRE(engine.cosave.opened[0].version == 1);
+            REQUIRE(engine.cosave.opened[0].version == 2);
         }
 
         SECTION("should lead with the entry count")
@@ -379,7 +385,7 @@ TEST_CASE("DecisionLog survives a save and load", "[DecisionLog][engine]")
         engine.cosave.readable = engine.cosave.written;
         engine.cosave.readCursor = 0;
         DecisionLog::Clear();
-        DecisionLog::OnLoad(FakeInterface(), 1, 0);
+        DecisionLog::OnLoad(FakeInterface(), 2, 0);
         const auto tail = DecisionLog::Tail(100);
         REQUIRE(tail.size() == 1);
 
@@ -405,6 +411,69 @@ TEST_CASE("DecisionLog survives a save and load", "[DecisionLog][engine]")
         }
     }
 
+    SECTION("when a failed decision is written and read back")
+    {
+        // Phase 18 Step 8: the record keeps why it failed as a code and the
+        // detail as it came, not as a sentence; the words are rendered.
+        auto record = SampleRecord(42);
+        record.beatSelected.clear();
+        record.failure = DecisionLog::DecisionRecord::Failure::NotOffered;
+        record.failureDetail = "unknown beat 'fake_not_offered'";
+        record.narrativeNote.clear();
+        record.note = DecisionLog::DecisionRecord::Note::ForcedDispatch;
+        DecisionLog::Append(record);
+        DecisionLog::OnSave(FakeInterface());
+        engine.cosave.readable = engine.cosave.written;
+        engine.cosave.readCursor = 0;
+        DecisionLog::Clear();
+        DecisionLog::OnLoad(FakeInterface(), 2, 0);
+        const auto tail = DecisionLog::Tail(100);
+        REQUIRE(tail.size() == 1);
+
+        SECTION("should restore the codes and the detail")
+        {
+            REQUIRE(tail[0].failure == DecisionLog::DecisionRecord::Failure::NotOffered);
+            REQUIRE(tail[0].failureDetail == "unknown beat 'fake_not_offered'");
+            REQUIRE(tail[0].note == DecisionLog::DecisionRecord::Note::ForcedDispatch);
+        }
+
+        SECTION("should render what the record used to hold")
+        {
+            const auto& english = NarrativeEngine::Testing::ShippedEnglish();
+            REQUIRE(DecisionLog::ActionText(tail[0], english)
+                    == "(failed: LLM picked an option it was not offered on every attempt (last: unknown beat "
+                       "'fake_not_offered'))");
+            REQUIRE(DecisionLog::NoteText(tail[0], english) == "forced dispatch via debug UI");
+        }
+    }
+
+    SECTION("when every failure and note is rendered")
+    {
+        // Each reads as the sentence the co-save used to keep.
+        using Failure = DecisionLog::DecisionRecord::Failure;
+        using Note = DecisionLog::DecisionRecord::Note;
+        const auto& english = NarrativeEngine::Testing::ShippedEnglish();
+        const auto action = [&](Failure f, std::string detail) {
+            DecisionLog::DecisionRecord r;
+            r.failure = f;
+            r.failureDetail = std::move(detail);
+            return DecisionLog::ActionText(r, english);
+        };
+        const auto note = [&](Note n) {
+            DecisionLog::DecisionRecord r;
+            r.note = n;
+            return DecisionLog::NoteText(r, english);
+        };
+        REQUIRE(action(Failure::BeatMissing, "npc_visit")
+                == "(failed: LLM-chosen beat 'npc_visit' missing from registry)");
+        REQUIRE(action(Failure::LlmError, "timeout") == "(failed: LLM error: timeout)");
+        REQUIRE(action(Failure::NotJson, "{oops") == "(failed: LLM response was not a JSON object: {oops)");
+        REQUIRE(action(Failure::None, "") == "");
+        REQUIRE(note(Note::InvalidJson) == "parse_failure: invalid JSON");
+        REQUIRE(note(Note::NotAnObject) == "parse_failure: response was not a JSON object");
+        REQUIRE(note(Note::ForcedDispatch) == "forced dispatch via debug UI");
+    }
+
     SECTION("when the decision recorded no advancement")
     {
         auto record = SampleRecord(42);
@@ -421,7 +490,7 @@ TEST_CASE("DecisionLog survives a save and load", "[DecisionLog][engine]")
             // header fixed-width, so only the flag distinguishes "stayed put"
             // from "advanced to Exposition" — which is a real transition out of
             // Resolution.
-            DecisionLog::OnLoad(FakeInterface(), 1, 0);
+            DecisionLog::OnLoad(FakeInterface(), 2, 0);
             REQUIRE_FALSE(DecisionLog::Tail(1)[0].advancedToPhase.has_value());
         }
     }
@@ -437,7 +506,7 @@ TEST_CASE("DecisionLog survives a save and load", "[DecisionLog][engine]")
 
         SECTION("should restore them in order")
         {
-            DecisionLog::OnLoad(FakeInterface(), 1, 0);
+            DecisionLog::OnLoad(FakeInterface(), 2, 0);
             const auto tail = DecisionLog::Tail(100);
             REQUIRE(tail.size() == 4);
             REQUIRE(tail[0].tensionScore == 0u);
@@ -456,7 +525,7 @@ TEST_CASE("DecisionLog survives a save and load", "[DecisionLog][engine]")
         {
             // A zero count is a valid payload, not a short read, so loading it
             // has to replace the live log rather than leave it alone.
-            DecisionLog::OnLoad(FakeInterface(), 1, 0);
+            DecisionLog::OnLoad(FakeInterface(), 2, 0);
             REQUIRE(DecisionLog::Tail(100).empty());
         }
     }
@@ -482,7 +551,7 @@ TEST_CASE("DecisionLog::OnLoad repairs what it can", "[DecisionLog][engine]")
             // both of which degrade quietly, so a bad value would go unnoticed
             // rather than crash. Clamping keeps the rest of the record, which
             // is still worth having.
-            DecisionLog::OnLoad(FakeInterface(), 1, 0);
+            DecisionLog::OnLoad(FakeInterface(), 2, 0);
             const auto tail = DecisionLog::Tail(100);
             REQUIRE(tail.size() == 1);
             REQUIRE(tail[0].currentPhase == Phase::Exposition);
@@ -500,7 +569,7 @@ TEST_CASE("DecisionLog::OnLoad repairs what it can", "[DecisionLog][engine]")
             // Dropping to nullopt rather than clamping to Exposition: an
             // advancement that cannot be trusted is better recorded as none
             // than as a transition that never happened.
-            DecisionLog::OnLoad(FakeInterface(), 1, 0);
+            DecisionLog::OnLoad(FakeInterface(), 2, 0);
             const auto tail = DecisionLog::Tail(100);
             REQUIRE(tail.size() == 1);
             REQUIRE_FALSE(tail[0].advancedToPhase.has_value());
@@ -521,7 +590,7 @@ TEST_CASE("DecisionLog::OnLoad repairs what it can", "[DecisionLog][engine]")
             // unrepaired note throws out of every dump() that touches the log —
             // every Director tick and every dashboard push — leaving the save
             // broken even on a build that has the writer fix.
-            DecisionLog::OnLoad(FakeInterface(), 1, 0);
+            DecisionLog::OnLoad(FakeInterface(), 2, 0);
             REQUIRE(DecisionLog::Tail(1)[0].narrativeNote == "caf");
         }
     }
@@ -540,7 +609,7 @@ TEST_CASE("DecisionLog::OnLoad repairs what it can", "[DecisionLog][engine]")
         {
             // A save written before the cap was lowered still has to come back
             // within it, and the newest records are the ones to keep.
-            DecisionLog::OnLoad(FakeInterface(), 1, 0);
+            DecisionLog::OnLoad(FakeInterface(), 2, 0);
             const auto tail = DecisionLog::Tail(100);
             REQUIRE(tail.size() == 2);
             REQUIRE(tail.front().tensionScore == 2u);
@@ -575,7 +644,7 @@ TEST_CASE("DecisionLog::OnLoad rejects a payload it cannot trust", "[DecisionLog
     {
         SECTION("should discard the whole payload")
         {
-            DecisionLog::OnLoad(FakeInterface(), 1, 0);
+            DecisionLog::OnLoad(FakeInterface(), 2, 0);
             REQUIRE(DecisionLog::Tail(100).empty());
         }
     }
@@ -588,7 +657,7 @@ TEST_CASE("DecisionLog::OnLoad rejects a payload it cannot trust", "[DecisionLog
 
         SECTION("should discard the whole payload")
         {
-            DecisionLog::OnLoad(FakeInterface(), 1, 0);
+            DecisionLog::OnLoad(FakeInterface(), 2, 0);
             REQUIRE(DecisionLog::Tail(100).empty());
         }
     }
@@ -606,7 +675,7 @@ TEST_CASE("DecisionLog::OnLoad rejects a payload it cannot trust", "[DecisionLog
             // carry on at an offset the writer never wrote to, and every later
             // length prefix would be read out of the middle of some other
             // field.
-            DecisionLog::OnLoad(FakeInterface(), 1, 0);
+            DecisionLog::OnLoad(FakeInterface(), 2, 0);
             REQUIRE(DecisionLog::Tail(100).empty());
         }
     }
@@ -619,7 +688,7 @@ TEST_CASE("DecisionLog::OnLoad rejects a payload it cannot trust", "[DecisionLog
 
         SECTION("should discard the whole payload")
         {
-            DecisionLog::OnLoad(FakeInterface(), 1, 0);
+            DecisionLog::OnLoad(FakeInterface(), 2, 0);
             REQUIRE(DecisionLog::Tail(100).empty());
         }
     }
@@ -638,7 +707,7 @@ TEST_CASE("DecisionLog::OnLoad rejects a payload it cannot trust", "[DecisionLog
             // right trade: a count that disagrees with the bytes means the
             // record boundaries are not where the reader thinks they are, so
             // the first record is no more trustworthy than the missing ones.
-            DecisionLog::OnLoad(FakeInterface(), 1, 0);
+            DecisionLog::OnLoad(FakeInterface(), 2, 0);
             REQUIRE(DecisionLog::Tail(100).empty());
         }
     }

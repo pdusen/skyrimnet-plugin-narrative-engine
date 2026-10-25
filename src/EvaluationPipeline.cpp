@@ -6,6 +6,7 @@
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
 #include <LLMTextSanitizer.h>
+#include <Localization.h>
 #include <logger.h>
 #include <PhaseTracker.h>
 #include <Settings.h>
@@ -316,8 +317,10 @@ namespace NarrativeEngine::EvaluationPipeline
                     {"t", r.realTimeSec},
                     {"tension_score", r.tensionScore},
                     {"phase", PhaseTracker::PhaseName(r.currentPhase)},
-                    {"action", r.beatSelected},
-                    {"narrative_note", r.narrativeNote},
+                    // The prompt is English, so its words are English's
+                    // whatever the session's language.
+                    {"action", DecisionLog::ActionText(r, Localization::English())},
+                    {"narrative_note", DecisionLog::NoteText(r, Localization::English())},
                 };
                 if (r.advancedToPhase) {
                     entry["advanced_to"] = PhaseTracker::PhaseName(*r.advancedToPhase);
@@ -362,12 +365,12 @@ namespace NarrativeEngine::EvaluationPipeline
                                                   /*cb=*/nullptr,
                                                   /*allow_exceptions=*/false);
         if (parsed.is_discarded()) {
-            r.narrativeNote = "parse_failure: invalid JSON";
+            r.note = DecisionLog::DecisionRecord::Note::InvalidJson;
             logger::warn("ParseDecision: invalid JSON response: {}", jsonResponse);
             return r;
         }
         if (!parsed.is_object()) {
-            r.narrativeNote = "parse_failure: response was not a JSON object";
+            r.note = DecisionLog::DecisionRecord::Note::NotAnObject;
             logger::warn("ParseDecision: response wasn't an object: {}", jsonResponse);
             return r;
         }
@@ -413,7 +416,7 @@ namespace NarrativeEngine::EvaluationPipeline
             logger::debug("ApplyDecision: tension={} advance={} note=\"{}\"",
                           record.tensionScore,
                           record.advancedToPhase ? PhaseTracker::PhaseName(*record.advancedToPhase) : "(no)",
-                          record.narrativeNote);
+                          DecisionLog::NoteText(record, Localization::English()));
         }
     }
 

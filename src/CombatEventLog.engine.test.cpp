@@ -403,7 +403,7 @@ TEST_CASE("CombatEventLog survives a save and load", "[CombatEventLog][engine]")
         engine.cosave.readCursor = 0;
         CombatEventLog::OnRevert();
         REQUIRE(TailSize() == 0);
-        CombatEventLog::OnLoad(FakeInterface(), 1, 0);
+        CombatEventLog::OnLoad(FakeInterface(), 2, 0);
 
         SECTION("should restore the events")
         {

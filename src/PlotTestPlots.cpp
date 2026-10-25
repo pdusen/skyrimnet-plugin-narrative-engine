@@ -1,7 +1,9 @@
 #include <PlotTestPlots.h>
 
+#include <Localization.h>
 #include <logger.h>
 #include <PlotState.h>
+#include <PlotText.h>
 #include <PlotVerbs.h>
 #include <Settings.h>
 
@@ -37,8 +39,20 @@ namespace NarrativeEngine::PlotTestPlots
 
         // WinterholdCollegeLocation, and dunHarmugstahlJournal01 as the item
         // pool names it.
-        const PlotModel::SlotValue kCollege{"place", 0x00076F3A, "the College of Winterhold"};
-        const PlotModel::SlotValue kJournal{"item", 0x0008E5DF, "a private journal"};
+        PlotModel::SlotValue College()
+        {
+            return {"place", 0x00076F3A, PlotText::TestText(Localization::Get(), PlotText::TestLine::College)};
+        }
+
+        PlotModel::SlotValue Journal()
+        {
+            return {"item", 0x0008E5DF, PlotText::TestText(Localization::Get(), PlotText::TestLine::Journal)};
+        }
+
+        std::string Line(PlotText::TestLine line)
+        {
+            return PlotText::TestText(Localization::Get(), line);
+        }
 
         PlotModel::SlotValue Person(const char* slot, const Npc& npc)
         {
@@ -101,13 +115,13 @@ namespace NarrativeEngine::PlotTestPlots
             PlotModel::Plot plot;
             plot.mastermind = b.form;
             plot.mastermindName = b.name;
-            plot.ambition = "Be known as the most promising apprentice the College has.";
-            plot.scheme = "Have J'zargo lose his place as Tolfdir's favoured apprentice.";
-            plot.finish = "Denounce J'zargo to Mirabelle Ervine.";
+            plot.ambition = Line(PlotText::TestLine::BrelynaAmbition);
+            plot.scheme = Line(PlotText::TestLine::BrelynaScheme);
+            plot.finish = Line(PlotText::TestLine::BrelynaFinish);
             plot.history.push_back(
-                Ended(Step("ask_around", b, j, &kOnmund, {Person("mark", j), kCollege}), StepOutcome::FailedCaught));
+                Ended(Step("ask_around", b, j, &kOnmund, {Person("mark", j), College()}), StepOutcome::FailedCaught));
             plot.history.push_back(Ended(Step("watch", b, j, &kNirya, {Person("mark", j)}), StepOutcome::Succeeded));
-            plot.plan.push_back(Live(Step("spread_rumors", b, j, &kColette, {Person("mark", j), kCollege})));
+            plot.plan.push_back(Live(Step("spread_rumors", b, j, &kColette, {Person("mark", j), College()})));
             plot.plan.push_back(Step("denounce", b, j, nullptr, {Person("mark", j), Person("authority", kMirabelle)}));
             return plot;
         }
@@ -122,13 +136,13 @@ namespace NarrativeEngine::PlotTestPlots
             PlotModel::Plot plot;
             plot.mastermind = t.form;
             plot.mastermindName = t.name;
-            plot.ambition = "Keep the College safe from those who would use it for their own ends.";
-            plot.scheme = "Prove to Savos Aren that Ancano has been prying into the College's secrets.";
-            plot.finish = "Show the proof against Ancano to Savos Aren.";
+            plot.ambition = Line(PlotText::TestLine::TolfdirAmbition);
+            plot.scheme = Line(PlotText::TestLine::TolfdirScheme);
+            plot.finish = Line(PlotText::TestLine::TolfdirFinish);
             plot.history.push_back(Ended(Step("watch", t, a, &kJzargo, {Person("mark", a)}), StepOutcome::Succeeded));
-            plot.plan.push_back(Live(Step("dig_up", t, a, &kBrelyna, {kJournal, Person("mark", a)})));
+            plot.plan.push_back(Live(Step("dig_up", t, a, &kBrelyna, {Journal(), Person("mark", a)})));
             plot.plan.push_back(
-                Step("expose", t, a, nullptr, {kJournal, Person("mark", a), Person("authority", kSavos)}));
+                Step("expose", t, a, nullptr, {Journal(), Person("mark", a), Person("authority", kSavos)}));
             return plot;
         }
 

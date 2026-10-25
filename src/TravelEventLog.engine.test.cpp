@@ -619,7 +619,7 @@ TEST_CASE("TravelEventLog survives a save and load", "[TravelEventLog][engine]")
         engine.cosave.readCursor = 0;
         TravelEventLog::OnRevert();
         REQUIRE(TailSize() == 0);
-        TravelEventLog::OnLoad(FakeInterface(), 1, 0);
+        TravelEventLog::OnLoad(FakeInterface(), 2, 0);
 
         SECTION("should restore the events")
         {
@@ -681,6 +681,30 @@ TEST_CASE("TravelEventLog survives a save and load", "[TravelEventLog][engine]")
             REQUIRE(TailSize() == before);
         }
     }
+}
+
+TEST_CASE("TravelEventLog saves an unnamed player as no name", "[TravelEventLog][engine]")
+{
+    // Phase 18 Step 8: the co-save keeps an unnamed player as an empty name,
+    // and the words for them are the renderer's, before and after a load.
+    EngineMock engine;
+    engine.world.actorDisplayName.clear();
+    const ConfiguredSettings settings{kSettings};
+    const FreshLog fresh;
+    PhaseTracker::Reset();
+    auto* whiterun = HoldNamed(engine, kWhiterunHold, "Whiterun Hold", "WhiterunHoldLocation");
+    StandIn(engine, kRiverwood, "Riverwood", whiterun, /*interior=*/false);
+    Poll();
+    StandIn(engine, kWhiterunCity, "Whiterun", whiterun, /*interior=*/false);
+    Poll();
+    REQUIRE(FirstText().find("The Player") != std::string::npos);
+
+    TravelEventLog::OnSave(FakeInterface());
+    engine.cosave.readable = engine.cosave.written;
+    engine.cosave.readCursor = 0;
+    TravelEventLog::OnRevert();
+    TravelEventLog::OnLoad(FakeInterface(), 2, 0);
+    REQUIRE(FirstText().find("The Player") != std::string::npos);
 }
 
 TEST_CASE("TravelEventLog feeds the history writer", "[TravelEventLog][engine]")

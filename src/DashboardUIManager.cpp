@@ -1194,8 +1194,11 @@ namespace NarrativeEngine::DashboardUIManager
                 {"timestamp", r.realTimeSec},
                 {"tension_score", r.tensionScore},
                 {"phase", PhaseTracker::PhaseName(r.currentPhase)},
-                {"action", r.beatSelected.empty() ? nlohmann::json(nullptr) : nlohmann::json(r.beatSelected)},
-                {"narrative_note", r.narrativeNote},
+                {"action",
+                 DecisionLog::ActionText(r, Localization::Get()).empty()
+                     ? nlohmann::json(nullptr)
+                     : nlohmann::json(DecisionLog::ActionText(r, Localization::Get()))},
+                {"narrative_note", DecisionLog::NoteText(r, Localization::Get())},
             });
         }
         j["recent_decisions"] = std::move(decisions);
@@ -1618,7 +1621,12 @@ namespace NarrativeEngine::DashboardUIManager
                     {"title", PlotModel::Title(plot)},
                     {"mastermind", plot.mastermindName},
                     {"ambition", plot.ambition},
-                    {"concession", plot.concession},
+                    // Rendered from the scheme, not saved: the words are
+                    // the language file's.
+                    {"concession",
+                     plot.outcome == PlotModel::PlotOutcome::Conceded
+                         ? PlotText::PlotOutcome(Localization::Get(), PlotText::Outcome::Conceded, plot.scheme)
+                         : std::string{}},
                     {"status", PlotModel::PlotStatusId(plot.status)},
                     {"outcome", PlotModel::PlotOutcomeId(plot.outcome)},
                     {"adaptations", plot.adaptations},

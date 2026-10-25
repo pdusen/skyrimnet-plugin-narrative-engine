@@ -1,4 +1,5 @@
 #include <EvaluationPipeline.h>
+#include <Localization.h>
 
 #include <ConfiguredSettings.h>
 #include <DecisionLog.h>
@@ -235,7 +236,8 @@ TEST_CASE("EvaluationPipeline reads what the model said", "[EvaluationPipeline][
             // The record still reaches the log and the dashboard, so a failure
             // that left the note empty would be indistinguishable from a model
             // that had nothing to say.
-            REQUIRE(record.narrativeNote.starts_with("parse_failure"));
+            REQUIRE(DecisionLog::NoteText(record, NarrativeEngine::Localization::Get())
+                    == "parse_failure: invalid JSON");
         }
 
         SECTION("should still be usable")
@@ -250,7 +252,8 @@ TEST_CASE("EvaluationPipeline reads what the model said", "[EvaluationPipeline][
         SECTION("should say so in the record")
         {
             const auto record = EvaluationPipeline::ParseDecision("[1, 2, 3]", snapshot);
-            REQUIRE(record.narrativeNote.starts_with("parse_failure"));
+            REQUIRE(DecisionLog::NoteText(record, NarrativeEngine::Localization::Get())
+                    == "parse_failure: response was not a JSON object");
         }
     }
 

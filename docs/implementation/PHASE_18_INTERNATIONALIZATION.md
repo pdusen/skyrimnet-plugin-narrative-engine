@@ -1059,7 +1059,7 @@ double-encoded Latin-1 and passed one check by coincidence. Escapes are now writ
 
 #### Step 8 — The co-save stores structure, not sentences
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1077,6 +1077,41 @@ double-encoded Latin-1 and passed one check by coincidence. Escapes are now writ
 - Round-trip `*.engine.test.cpp` cases for each changed record.
 - A characterization test showing every re-rendered string (concession, failure reason, damage phrase, party name)
   matches what the old code saved, for the same inputs.
+
+Done. Record versions: `NEPL` 14 → 15, `DCLG` 1 → 2, `NECE` 1 → 2, `NETR` 1 → 2.
+
+- **Concession.** `Plot::concession` is gone from the struct and the co-save. The dashboard renders
+  `PlotText::PlotOutcome(Conceded)` for any plot whose outcome is `Conceded`, which is exactly when the field used to
+  be non-empty.
+- **Decision log.** `DecisionRecord` gained `failure` (none, beat missing, LLM error, not JSON, not offered),
+  `failureDetail`, and `note` (the model's own, invalid JSON, not an object, forced dispatch). `beatSelected` now holds
+  only a beat id, and `narrativeNote` only the model's words. `DecisionLog::ActionText` and `NoteText` render the rest
+  from English's `[Decision]`. The dashboard renders through the session table. `story_eval`'s `decision_log_tail`
+  renders through English, so that prompt is unchanged byte for byte; Step 15 now also covers moving those words into
+  the prompt.
+- **Combat.** A hit's environmental source is a `Source` enum (actor, poison, spell trap, trap, a named activator,
+  unknown). Only an activator keeps a name. The words ("poison", "a spell trap", "a trap", the activator's name
+  lowercased) are `SourceWords`, in the renderer, until Step 11 moves the timeline's wording into a prompt.
+- **Travel.** An unnamed player is saved as an empty name, and `RenderParty` calls them "The Player".
+- **Seeded plots.** The two test plots' ambitions, schemes, finishes, place and item, and every line of the debug plot,
+  are `[Plot.Test]` keys rendered at seed time.
+
+**How the characterization was done, and where it could not be.** Before anything changed, the two decision-log
+tests that only checked `starts_with("(failed")` were tightened to the exact strings the old code saved, captured by
+running them. So were the two parse-failure notes, which were checked by prefix. Those four exact checks passed
+against the unmodified code, and pass unchanged through `ActionText` and `NoteText` now. A new test renders every
+failure and note code and pins each against the sentence the old code composed, and round-trips a failed record
+through the co-save. A new travel test saves an unnamed player and finds "The Player" both before and after a load.
+The concession sentence was already pinned by `PlotVerbs`' rendering test.
+
+The combat source words could not be pinned before the change. Raising a hit from a trap or a poison in a test needs
+hit events, magic items and activators modelled in `EngineMock`, and building that harness to move four words within
+one function was out of proportion. They moved verbatim from `ResolveHitSource` to `SourceWords`, and the existing
+save-and-load test passes on the new source byte.
+
+The failure detail stays verbatim, beat validators' English messages included ("sender 0x1A6FF was not offered for
+this beat"). It is diagnostic data, the same class as a log line, not something composed for a player.
+`pwsh -File build.ps1 test`: 554 of 554 passed.
 
 #### Step 9 — Data INI text, overridable by id
 
@@ -1206,6 +1241,8 @@ disassembly. Step 29 confirms it in the running game.
 
 - `GossipContent::BandLengthSpec` passes `lo`/`hi`, and `gossip_seed` words the range.
 - `DecisionProbe`'s sentences move to its prompt.
+- `story_eval`'s `decision_log_tail` passes each record's failure and note *codes*, and the prompt words them. Step 8
+  left them rendered through the English table's `[Decision]`, so the prompt stayed byte-identical meanwhile.
 - Then audit: every string literal in `src/` and `include/` that reaches a prompt context, a decorator return or a
   memory.
 

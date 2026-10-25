@@ -22,7 +22,7 @@ namespace NarrativeEngine::TravelEventLog
 {
     namespace
     {
-        constexpr std::uint32_t kRecordVersion = 1;
+        constexpr std::uint32_t kRecordVersion = 2;
         constexpr std::size_t kDefaultMaxStored = 128;
 
         enum class Kind : std::uint8_t
@@ -181,11 +181,9 @@ namespace NarrativeEngine::TravelEventLog
         std::vector<std::string> CollectParty(RE::PlayerCharacter* pc, float radius)
         {
             std::vector<std::string> out;
-            std::string playerName = ActorDisplayName(pc);
-            if (playerName.empty()) {
-                playerName = "The Player";
-            }
-            out.push_back(std::move(playerName));
+            // An unnamed player is saved as an empty name, not as words for
+            // them: RenderParty says it.
+            out.push_back(ActorDisplayName(pc));
 
             if (!pc) {
                 return out;
@@ -531,10 +529,16 @@ namespace NarrativeEngine::TravelEventLog
     namespace
     {
         // "Varian" / "Varian and Jenassa" / "Varian, Jenassa, and Marcurio"
-        std::string RenderParty(const std::vector<std::string>& names)
+        std::string RenderParty(const std::vector<std::string>& saved)
         {
-            if (names.empty())
-                return "The Player";
+            // The player is first, and saved empty when unnamed.
+            std::vector<std::string> names = saved;
+            if (names.empty() || names[0].empty()) {
+                if (names.empty()) {
+                    names.emplace_back();
+                }
+                names[0] = "The Player";
+            }
             if (names.size() == 1)
                 return names[0];
             if (names.size() == 2)

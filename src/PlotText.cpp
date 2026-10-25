@@ -53,6 +53,21 @@ namespace NarrativeEngine::PlotText
         constexpr TextKeys::Key kItemMade{"Plot.Item", "made", kItemMadeParams};
         constexpr TextKeys::Key kItemAmmo{"Plot.Item", "ammo", kItemAmmoParams};
 
+        constexpr std::array kTestKeys{TextKeys::Key{"Plot.Test", "brelyna.ambition", {}},
+                                       TextKeys::Key{"Plot.Test", "brelyna.scheme", {}},
+                                       TextKeys::Key{"Plot.Test", "brelyna.finish", {}},
+                                       TextKeys::Key{"Plot.Test", "tolfdir.ambition", {}},
+                                       TextKeys::Key{"Plot.Test", "tolfdir.scheme", {}},
+                                       TextKeys::Key{"Plot.Test", "tolfdir.finish", {}},
+                                       TextKeys::Key{"Plot.Test", "college", {}},
+                                       TextKeys::Key{"Plot.Test", "journal", {}},
+                                       TextKeys::Key{"Plot.Test", "debug.mastermind", {}},
+                                       TextKeys::Key{"Plot.Test", "debug.ambition", {}},
+                                       TextKeys::Key{"Plot.Test", "debug.scheme", {}},
+                                       TextKeys::Key{"Plot.Test", "debug.step.locate", {}},
+                                       TextKeys::Key{"Plot.Test", "debug.step.surveil", {}},
+                                       TextKeys::Key{"Plot.Test", "debug.step.acquire", {}}};
+
         const TextKeys::Key kNoKey{"", "", {}};
 
         // Keys generated from the verb table. The deques keep every name and
@@ -110,6 +125,9 @@ namespace NarrativeEngine::PlotText
                 }
             }
             for (const auto& key : kOutcomeKeys) {
+                s.keys.push_back(key);
+            }
+            for (const auto& key : kTestKeys) {
                 s.keys.push_back(key);
             }
             for (const auto* key :
@@ -291,6 +309,11 @@ namespace NarrativeEngine::PlotText
     {
         const auto* verb = PlotVerbs::Find(step.verb);
         return verb != nullptr ? table.Render(CaptionKey(*verb), {}) : PlotVerbs::Caption(step);
+    }
+
+    std::string TestText(const LanguageTable::Table& table, TestLine line)
+    {
+        return table.Render(kTestKeys[static_cast<std::size_t>(line)], {});
     }
 
     std::string ItemPhrase(const LanguageTable::Table& table, std::string_view name, bool ammo)

@@ -1,5 +1,7 @@
 #include <DecisionLog.h>
 
+#include <array>
+
 #include <LLMTextSanitizer.h>
 #include <logger.h>
 
@@ -12,7 +14,7 @@ namespace NarrativeEngine::DecisionLog
 {
     namespace
     {
-        constexpr std::uint32_t kRecordVersion = 1;
+        constexpr std::uint32_t kRecordVersion = 2;
 
         std::shared_mutex g_mutex;
         std::deque<DecisionRecord> g_records;
@@ -132,6 +134,10 @@ namespace NarrativeEngine::DecisionLog
             WriteString(intfc, r.narrativeNote);
 
             intfc->WriteRecordData(r.alphaCanonActiveSignals);
+
+            intfc->WriteRecordData(static_cast<std::uint8_t>(r.failure));
+            WriteString(intfc, r.failureDetail);
+            intfc->WriteRecordData(static_cast<std::uint8_t>(r.note));
         }
     }
 
@@ -182,6 +188,20 @@ namespace NarrativeEngine::DecisionLog
                 Clear();
                 return;
             }
+            std::uint8_t failureByte = 0;
+            std::uint8_t noteByte = 0;
+            if (intfc->ReadRecordData(failureByte) != sizeof(failureByte) || !ReadString(intfc, r.failureDetail)
+                || intfc->ReadRecordData(noteByte) != sizeof(noteByte)) {
+                logger::error("DecisionLog::OnLoad: failed to read the failure and note on record {}/{}", i, count);
+                Clear();
+                return;
+            }
+            r.failure = failureByte <= static_cast<std::uint8_t>(DecisionRecord::Failure::NotOffered)
+                            ? static_cast<DecisionRecord::Failure>(failureByte)
+                            : DecisionRecord::Failure::None;
+            r.note = noteByte <= static_cast<std::uint8_t>(DecisionRecord::Note::ForcedDispatch)
+                         ? static_cast<DecisionRecord::Note>(noteByte)
+                         : DecisionRecord::Note::Model;
 
             // Repair the note's UTF-8. Builds before the byte-boundary fix
             // in LLMTextSanitizer::TruncateUTF8 clamped this field with a
@@ -225,5 +245,51 @@ namespace NarrativeEngine::DecisionLog
     void OnRevert()
     {
         Clear();
+    }
+
+    namespace
+    {
+        using TextKeys::Key;
+        using TextKeys::Param;
+
+        constexpr std::array kReasonParams{Param{"reason", TextTemplate::Kind::Text}};
+        constexpr std::array kDetailParams{Param{"detail", TextTemplate::Kind::Text}};
+        constexpr Key kFailed{"Decision", "failed", kReasonParams};
+        constexpr std::array kReasonKeys{Key{"Decision", "reason.beat_missing", kDetailParams},
+                                         Key{"Decision", "reason.llm_error", kDetailParams},
+                                         Key{"Decision", "reason.not_json", kDetailParams},
+                                         Key{"Decision", "reason.not_offered", kDetailParams}};
+        constexpr std::array kNoteKeys{Key{"Decision", "note.invalid_json", {}},
+                                       Key{"Decision", "note.not_an_object", {}},
+                                       Key{"Decision", "note.forced_dispatch", {}}};
+    } // namespace
+
+    const std::vector<TextKeys::Key>& Keys()
+    {
+        static const std::vector<Key> keys = [] {
+            std::vector<Key> out{kFailed};
+            out.insert(out.end(), kReasonKeys.begin(), kReasonKeys.end());
+            out.insert(out.end(), kNoteKeys.begin(), kNoteKeys.end());
+            return out;
+        }();
+        return keys;
+    }
+
+    std::string ActionText(const DecisionRecord& record, const LanguageTable::Table& table)
+    {
+        if (record.failure == DecisionRecord::Failure::None) {
+            return record.beatSelected;
+        }
+        const auto& reasonKey = kReasonKeys[static_cast<std::size_t>(record.failure) - 1];
+        const auto reason = table.Render(reasonKey, TextTemplate::Arguments{}.Set("detail", record.failureDetail));
+        return table.Render(kFailed, TextTemplate::Arguments{}.Set("reason", reason));
+    }
+
+    std::string NoteText(const DecisionRecord& record, const LanguageTable::Table& table)
+    {
+        if (record.note == DecisionRecord::Note::Model) {
+            return record.narrativeNote;
+        }
+        return table.Render(kNoteKeys[static_cast<std::size_t>(record.note) - 1], {});
     }
 } // namespace NarrativeEngine::DecisionLog

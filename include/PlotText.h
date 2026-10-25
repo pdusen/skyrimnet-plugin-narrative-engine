@@ -79,6 +79,29 @@ namespace NarrativeEngine::PlotText
     [[nodiscard]] std::string DashboardLine(const LanguageTable::Table& table, const PlotModel::Step& step);
     [[nodiscard]] std::string DashboardCaption(const LanguageTable::Table& table, const PlotModel::Step& step);
 
+    // The words of the plots the dashboard seeds for testing, and of the
+    // hand-seeded debug plot. They are saved and written to memories like
+    // any other plot's, so they are the language file's too.
+    enum class TestLine
+    {
+        BrelynaAmbition,
+        BrelynaScheme,
+        BrelynaFinish,
+        TolfdirAmbition,
+        TolfdirScheme,
+        TolfdirFinish,
+        College,
+        Journal,
+        DebugMastermind,
+        DebugAmbition,
+        DebugScheme,
+        DebugLocate,
+        DebugSurveil,
+        DebugAcquire,
+    };
+
+    [[nodiscard]] std::string TestText(const LanguageTable::Table& table, TestLine line);
+
     // What a made item is called in a step: "an Iron Sword", "a sheaf of
     // Elven Arrows". Empty for an empty name.
     [[nodiscard]] std::string ItemPhrase(const LanguageTable::Table& table, std::string_view name, bool ammo);

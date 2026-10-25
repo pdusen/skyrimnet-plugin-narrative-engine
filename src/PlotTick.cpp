@@ -507,9 +507,6 @@ namespace NarrativeEngine::PlotTick
                 return false;
             case PlotPlanning::Revision::Conceded:
                 PlotLog::Concede(plot, adaptation.reason);
-                // The mastermind's own words for it, which is what the
-                // dashboard shows beside a conceded plot.
-                plot.concession = PlotText::PlotOutcome(Localization::Get(), PlotText::Outcome::Conceded, plot.scheme);
                 EndPlot(state, plot, PlotModel::PlotStatus::Failed, PlotModel::PlotOutcome::Conceded, gameDay);
                 return false;
             case PlotPlanning::Revision::Substituted:
