@@ -27,17 +27,19 @@ namespace NarrativeEngine::LanguageTable
         constexpr std::string_view kLanguageSection = "Language";
         constexpr std::string_view kGrammarSection = "Grammar";
         constexpr std::string_view kDataPrefix = "data.";
+        constexpr std::string_view kMatchingSection = "Matching";
 
         constexpr std::array<std::string_view, 6> kHeaderKeys =
             {"Name", "NativeName", "Code", "Status", "PluralRule", "Fonts"};
-        constexpr std::array<std::string_view, 8> kGrammarKeys = {"ListSeparator",
+        constexpr std::array<std::string_view, 9> kGrammarKeys = {"ListSeparator",
                                                                   "ListPairSeparator",
                                                                   "ListFinalSeparator",
                                                                   "CapitalizeSentenceStart",
                                                                   "PhraseTrailingPunctuation",
                                                                   "PhraseLowercaseFirst",
                                                                   "IndefiniteArticle",
-                                                                  "IndefiniteArticleBeforeVowel"};
+                                                                  "IndefiniteArticleBeforeVowel",
+                                                                  "WordSeparated"};
 
         [[nodiscard]] char AsciiLower(char c) noexcept
         {
@@ -308,6 +310,51 @@ namespace NarrativeEngine::LanguageTable
         if (auto v = grammarValue("PhraseLowercaseFirst", ParseBool)) {
             grammar.phraseLowercaseFirst = *v;
         }
+        if (auto v = grammarValue("WordSeparated", ParseBool)) {
+            grammar.wordSeparated = *v;
+        }
+
+        // [Matching]: open-ended, since which keys a check needs depends on
+        // the language -- English rejects at the start, German requires at the
+        // end. A check (or a plain list) is one unit, taken from the overlay
+        // and the language's file when either says anything of it, and from
+        // English only when neither does.
+        {
+            auto& rules = table.matching_;
+            rules.options.wordSeparated = grammar.wordSeparated;
+            const auto unitOf = [](std::string_view key) {
+                const auto name = TextMatch::CheckName(key);
+                return std::string{name.empty() ? key : name};
+            };
+            std::unordered_set<std::string> local;
+            for (const auto* source : {&overlay, &shipped}) {
+                for (const auto& [section, name] : Entries(*source)) {
+                    if (SameName(section, kMatchingSection)) {
+                        local.insert(unitOf(name));
+                    }
+                }
+            }
+            std::unordered_set<std::string> set;
+            for (const auto* source : order) {
+                for (const auto& [section, name] : Entries(*source)) {
+                    if (!SameName(section, kMatchingSection) || set.contains(name)) {
+                        continue;
+                    }
+                    if (source == &english && local.contains(unitOf(name))) {
+                        continue;
+                    }
+                    if (const auto value = source->Value(section, name)) {
+                        rules.Set(name, *value);
+                        set.insert(name);
+                    }
+                }
+            }
+            for (const auto& [name, check] : rules.checks) {
+                if (!check.disabled.empty()) {
+                    census.disabled.push_back(std::format("{}: {}", name, check.disabled));
+                }
+            }
+        }
 
         // Every declared key, from the first source that has it right.
         std::unordered_set<std::string> declared;
@@ -376,7 +423,7 @@ namespace NarrativeEngine::LanguageTable
 
         // Lines nothing reads.
         const auto known = [&](std::string_view section, std::string_view name) {
-            if (isData(section)) {
+            if (isData(section) || SameName(section, kMatchingSection)) {
                 return true;
             }
             if (SameName(section, kLanguageSection)) {

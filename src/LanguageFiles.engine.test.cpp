@@ -53,4 +53,25 @@ TEST_CASE("Every shipped language file", "[LanguageFiles][engine]")
             CHECK_FALSE(table.GetHeader().code.empty());
         }
     }
+    SECTION("every language says something of every content check English has: rules, or why it has none")
+    {
+        // A check another language leaves out would quietly run on
+        // English's rules against that language's text. Saying why it is off
+        // (`<Check>.Disabled = <reason>`) is the only way to have no rules.
+        const auto& checks = Testing::ShippedEnglish().Matching().checks;
+        for (const auto& entry : std::filesystem::directory_iterator(folder)) {
+            const auto name = entry.path().filename().string();
+            if (entry.path().extension() != ".ini" || name.ends_with(".custom.ini")) {
+                continue;
+            }
+            const auto shipped = Testing::ShippedLanguageFile(entry.path().stem().string());
+            // Built from the file alone, so nothing it lacks is filled in.
+            const auto own = LanguageTable::Table::Build({shipped, std::nullopt, std::nullopt}, {});
+            for (const auto& [check, rules] : checks) {
+                INFO(name << ": " << check);
+                const auto* theirs = own.Matching().Find(check);
+                CHECK((theirs != nullptr && theirs->Defined()));
+            }
+        }
+    }
 }

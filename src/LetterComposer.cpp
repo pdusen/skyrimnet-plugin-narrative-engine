@@ -583,38 +583,10 @@ namespace NarrativeEngine::LetterComposer
         constexpr Key kFallbackTitle{"Letter", "fallback_title", kTitleParams};
         constexpr Key kItemCard{"Letter", "item_card", {}};
         // A name's leading titles ("Jarl", "Housecarl"), and the words a
-        // trailing epithet follows ("the" in "Balgruuf the Greater").
-        constexpr Key kTitleStart{"Matching", "Title.Strip.Start", {}};
-        constexpr Key kTitleAfter{"Matching", "Title.Strip.After", {}};
-
-        // A comma-separated list from the table, trimmed.
-        std::vector<std::string> ListOf(const LanguageTable::Table& table, const Key& key)
-        {
-            std::vector<std::string> out;
-            const auto* source = table.Source(key);
-            if (source == nullptr) {
-                return out;
-            }
-            std::string_view rest{*source};
-            while (!rest.empty()) {
-                const auto comma = rest.find(',');
-                auto item = rest.substr(0, comma);
-                while (!item.empty() && (item.front() == ' ' || item.front() == '\t')) {
-                    item.remove_prefix(1);
-                }
-                while (!item.empty() && (item.back() == ' ' || item.back() == '\t')) {
-                    item.remove_suffix(1);
-                }
-                if (!item.empty()) {
-                    out.emplace_back(item);
-                }
-                if (comma == std::string_view::npos) {
-                    break;
-                }
-                rest.remove_prefix(comma + 1);
-            }
-            return out;
-        }
+        // trailing epithet follows ("the" in "Balgruuf the Greater"): plain
+        // [Matching] lists.
+        constexpr std::string_view kTitleStart = "Title.Strip.Start";
+        constexpr std::string_view kTitleAfter = "Title.Strip.After";
 
         std::string AsciiLowered(std::string_view text)
         {
@@ -664,7 +636,7 @@ namespace NarrativeEngine::LetterComposer
 
     const std::vector<TextKeys::Key>& LabelKeys()
     {
-        static const std::vector<Key> keys{kFallbackTitle, kItemCard, kTitleStart, kTitleAfter};
+        static const std::vector<Key> keys{kFallbackTitle, kItemCard};
         return keys;
     }
 
@@ -709,14 +681,14 @@ namespace NarrativeEngine::LetterComposer
         // a known omission. If/when SkyrimNet exposes it, plumb here.
 
         // Candidate 3: strip a trailing epithet.
-        const auto suffixStripped = StripSuffixTitle(senderFullName, ListOf(table, kTitleAfter));
+        const auto suffixStripped = StripSuffixTitle(senderFullName, table.Matching().List(kTitleAfter));
         if (suffixStripped != senderFullName) {
             if (auto r = tryName(suffixStripped))
                 return *r;
         }
 
         // Candidate 4: also strip a leading title.
-        const auto bothStripped = StripPrefixTitle(suffixStripped, ListOf(table, kTitleStart));
+        const auto bothStripped = StripPrefixTitle(suffixStripped, table.Matching().List(kTitleStart));
         if (bothStripped != suffixStripped) {
             if (auto r = tryName(bothStripped))
                 return *r;

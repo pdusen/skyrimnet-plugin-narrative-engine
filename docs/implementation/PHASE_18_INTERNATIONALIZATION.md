@@ -1578,7 +1578,7 @@ The count of LLM-bound sentences left in C++ is zero.
 
 #### Step 16 — The matching engine
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1600,6 +1600,43 @@ The count of LLM-bound sentences left in C++ is zero.
 - *Drachenbluts* against `drachenblut*`.
 
 The shipped-files test gains the rule that every check has rules or a `Disabled` entry.
+
+Done. The new core module `TextMatch` evaluates the design's vocabulary.
+
+- A `[Matching]` key ending `.Reject.Start`, `.Reject.End`, `.Require.Start`, `.Require.End`, `.Match.Start`,
+  `.Match.End` or `.Match.Anywhere` sets one list of its check, and `.Disabled` gives the reason the check is off.
+- Any other key, such as `Title.Strip.Start` or `Name.Suffixes`, is a plain list read by name.
+- An entry is a sequence of word patterns, and `*` in a pattern matches any run of letters, the empty run included.
+  The text is folded with Step 1's case folding and split with its Unicode word splitter.
+- With `[Grammar] WordSeparated = false`, which the grammar block now reads, each entry is a run of characters. It is
+  matched at its position in the text, with the punctuation and spaces at either end set aside, so a closing `。`
+  does not hide the verb's ending.
+- A gate passes when nothing it rejects matches and every non-empty require list does. A detector fires when any of
+  its match lists matches. A disabled check passes everything and fires on nothing.
+
+`LanguageTable` reads `[Matching]` as an open-ended section, like `[Data.*]`, since which keys a check needs depends
+on the language. Fallback is **per check, not per key**, which the plan did not spell out. A check, or a plain list,
+is taken from the overlay and the language's own file when either says anything of it, and from English only when
+neither does. Falling back key by key would have run English's `Scheme.Reject.Start` against German text beside
+German's own `Scheme.Require.End`. The census gains a `disabled` list, naming each check and its reason.
+`LetterComposer`'s two title lists are now read through `Matching()` instead of as declared template keys.
+
+**Verification.** `TextMatch.test.cpp` is built from the design's own examples:
+
+- the English scheme list, including "Heal" and "Theft", whose first letters spell rejected words but are not them;
+- German's `zu *` and `*zu*`, with *zurück* passing as the false positive the design admits;
+- the Japanese rules, plain form against polite and past, with and without a closing `。`;
+- the ghost tests for English (last word), French (first word) and German (anywhere, compounded);
+- *Drachenbluts* against `drachenblut*`;
+- a disabled check, and plain lists.
+
+Further cases build tables to show that a language's own check takes no English rules and that an overlay changes a
+check without bringing them back. They also check the census names a disabled check, that `WordSeparated = false`
+reaches the rules, and that `[Matching]` keys are never reported unknown. The shipped-files test gains the rule: for
+every check English defines, each shipped file, read alone, must give rules or a `Disabled` reason. English defines
+no checks yet, since its two lists are plain ones, so the rule starts biting in Step 17.
+
+`pwsh -File build.ps1 test`: 566 of 566 passed. `build.ps1 build` is clean.
 
 #### Step 17 — Content validators on `[Matching]`
 

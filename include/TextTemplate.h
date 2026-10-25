@@ -111,6 +111,11 @@ namespace NarrativeEngine::TextTemplate
         // reads these.
         std::string indefiniteArticle = "a";
         std::string indefiniteArticleBeforeVowel = "an";
+
+        // Whether the script puts spaces between words. Japanese and Chinese
+        // do not, and [Matching] then matches each entry as a run of
+        // characters rather than as words.
+        bool wordSeparated = true;
     };
 
     struct Node;

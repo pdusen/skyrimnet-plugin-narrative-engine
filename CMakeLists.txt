@@ -97,6 +97,7 @@ set(NARRATIVEENGINE_CORE_SOURCES
     "${CMAKE_SOURCE_DIR}/src/SenderCooldownTable.cpp"
     "${CMAKE_SOURCE_DIR}/src/SkyrimNetEvents.cpp"
     "${CMAKE_SOURCE_DIR}/src/TextKeys.cpp"
+    "${CMAKE_SOURCE_DIR}/src/TextMatch.cpp"
     "${CMAKE_SOURCE_DIR}/src/TextTemplate.cpp"
     "${CMAKE_SOURCE_DIR}/src/TextUtf8.cpp"
     "${CMAKE_SOURCE_DIR}/src/ThreadRole.cpp"

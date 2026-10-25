@@ -1,6 +1,7 @@
 #pragma once
 
 #include <TextKeys.h>
+#include <TextMatch.h>
 #include <TextTemplate.h>
 
 #include <functional>
@@ -68,6 +69,11 @@ namespace NarrativeEngine::LanguageTable
 
         // Declared keys not even English can supply. Should never happen.
         std::vector<std::string> unavailable;
+
+        // [Matching] checks the language turns off, each with the file's
+        // reason: a check that cannot be said in this language is off on
+        // purpose, never by omission.
+        std::vector<std::string> disabled;
     };
 
     struct Sources
@@ -95,6 +101,16 @@ namespace NarrativeEngine::LanguageTable
         [[nodiscard]] const Census& GetCensus() const noexcept
         {
             return census_;
+        }
+
+        // The content checks and word lists of [Matching], in this language.
+        // A check, or a plain list, is taken whole from the first of overlay
+        // and shipped file that says anything of it, else from English: a
+        // language's own rules are never mixed with English's for the same
+        // check.
+        [[nodiscard]] const TextMatch::Rules& Matching() const noexcept
+        {
+            return matching_;
         }
 
         // The parsed template for `key`, or null when it has none.
@@ -127,6 +143,7 @@ namespace NarrativeEngine::LanguageTable
     private:
         Header header_;
         TextTemplate::Grammar grammar_;
+        TextMatch::Rules matching_;
         Census census_;
         std::unordered_map<std::string, TextTemplate::Message> messages_;
         std::unordered_map<std::string, std::string> sources_;
