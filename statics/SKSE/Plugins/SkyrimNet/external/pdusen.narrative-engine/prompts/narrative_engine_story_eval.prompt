@@ -71,7 +71,7 @@ fades when nothing fresh is sustaining it.
 {% if length(decision_log_tail) > 0 %}
 ## Your own recent decisions (oldest first)
 
-{% for d in decision_log_tail %}- t={{ d.t }} phase={{ d.phase }} tension={{ d.tension_score }} — {{ d.narrative_note }}{% if existsIn(d, "advanced_to") %} (then advanced to {{ d.advanced_to }}){% endif %}
+{% for d in decision_log_tail %}- t={{ d.t }} phase={{ d.phase }} tension={{ d.tension_score }} — {% if d.note == "invalid_json" %}parse_failure: invalid JSON{% else if d.note == "not_an_object" %}parse_failure: response was not a JSON object{% else if d.note == "forced_dispatch" %}forced dispatch via debug UI{% else %}{{ d.narrative_note }}{% endif %}{% if existsIn(d, "advanced_to") %} (then advanced to {{ d.advanced_to }}){% endif %}
 {% endfor %}
 {% endif %}
 [ end system ]

@@ -33,7 +33,7 @@ telling in its own right, at its own length.
 Each version has its own length, and these are requirements rather than
 suggestions:
 
-{% for b in band_specs %}- Version {{ b.index }}: {{ b.length }}.
+{% for b in band_specs %}- Version {{ b.index }}: {% if b.length.lo == 0 %}no more than {{ b.length.hi }} sentences{% else %}{{ b.length.lo }} to {{ b.length.hi }} sentences{% endif %}.
 {% endfor %}
 ## Output Format
 Return a JSON object. No markdown fences. No prose before or after the object.

@@ -1,17 +1,42 @@
 {# narrative_engine/probe — one question of the decision API probe.
    Sent once per question and order by the Plots tab's "Probe decisions"
    button; DecisionProbe logs what came back. Not part of any feature.
-   Receives: sentence, question,
-     options [{ key, text }] — keys c1 onward: every run of consecutive
-     words in the sentence, and one saying the sentence does not name it.
+   Receives: sentence, round and question (the ids of the round and of the
+     question asked of it, which this file words),
+     options [{ key, text, none }] — keys c1 onward: every run of
+     consecutive words in the sentence, and one, `none`, for the sentence
+     not naming it.
    NOTE: no fenced blocks and no literal braces anywhere in this file. #}
 [ state sentence ]
 {{ sentence }}
 [ end state ]
 
 [ question pick choice ]
-{{ question }} Choose the words of the sentence that answer it: all of the words that name the answer, and no others. If the sentence does not say, choose that it is not named.
+{% if round == "purchase" and question == "what" -%}
+    What was purchased?{% else if round == "purchase" and question == "seller" -%}
+    Who was the seller?{% else if round == "purchase" and question == "buyer" -%}
+    Who was the buyer?{% else if round == "purchase" and question == "where" -%}
+    Where did the purchase happen?{% else if round == "expose" and question == "what" -%}
+    What is shown as proof?{% else if round == "expose" and question == "shown_to" -%}
+    Who is the proof shown to?{% else if round == "expose" and question == "against" -%}
+    Who is the proof against?{% else if round == "expose_unnamed" and question == "against" -%}
+    Who is the proof against?{% else if round == "expose_unnamed" and question == "shown_to" -%}
+    Who is the proof shown to?{% else if round == "denounce" and question == "who" -%}
+    Who is denounced?{% else if round == "denounce" and question == "to" -%}
+    Who are they denounced to?{% else if round == "denounce" and question == "where" -%}
+    Where is the gold hidden?{% else if round == "plant" and question == "what" -%}
+    What is hidden?{% else if round == "plant" and question == "whose" -%}
+    Whose belongings is it hidden among?{% else if round == "plant" and question == "where" -%}
+    Where are those belongings?{% else if round == "steal" and question == "what" -%}
+    What is stolen?{% else if round == "steal" and question == "from" -%}
+    Who is it stolen from?{% else if round == "steal" and question == "where" -%}
+    Where does the theft happen?{% else if round == "gift" and question == "what" -%}
+    What is brought?{% else if round == "gift" and question == "to" -%}
+    Who receives it?{% else if round == "follow" and question == "followed" -%}
+    Who is followed?{% else if round == "follow" and question == "follower" -%}
+    Who does the following?{% else if round == "follow" and question == "end" -%}
+    Where does the following end?{% endif %} Choose the words of the sentence that answer it: all of the words that name the answer, and no others. If the sentence does not say, choose that it is not named.
 [ criteria ]
-{% for o in options %}{{ o.key }}: {{ o.text }}
+{% for o in options %}{{ o.key }}: {% if o.none %}(not named in the sentence){% else %}{{ o.text }}{% endif %}
 {% endfor %}[ end criteria ]
 [ end question ]

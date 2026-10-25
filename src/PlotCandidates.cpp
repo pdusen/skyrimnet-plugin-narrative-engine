@@ -1,5 +1,8 @@
 #include <PlotCandidates.h>
 
+#include <Localization.h>
+#include <PlotText.h>
+
 #include <algorithm>
 #include <cctype>
 #include <format>
@@ -1024,11 +1027,12 @@ namespace NarrativeEngine::PlotCandidates
                         audience = option.name;
                     }
                 }
+                // In the session's language, as it is kept with the step and
+                // remembered by everyone the step reaches.
                 if (audience.empty()) {
-                    const auto where = SettlementName(request, mark->settlement);
-                    audience = where.empty() ? std::string{"the people they lead"} : "the people of " + where;
+                    audience = PlotText::Audience(Localization::Get(), SettlementName(request, mark->settlement));
                 }
-                return Keyed({{{}, {std::string{slot.name}, 0, audience}, audience}}, limits.people);
+                return Keyed({{{}, {std::string{slot.name}, 0, audience}, {}}}, limits.people);
             }
 
             if (boss != nullptr && boss != subject) {

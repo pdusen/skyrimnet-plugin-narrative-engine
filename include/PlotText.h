@@ -102,6 +102,11 @@ namespace NarrativeEngine::PlotText
 
     [[nodiscard]] std::string TestText(const LanguageTable::Table& table, TestLine line);
 
+    // Whom a step is done before when it is done before a whole community
+    // rather than a person: "the people of Whiterun", or, with no settlement,
+    // "the people they lead". What an exposure of a top official is shown to.
+    [[nodiscard]] std::string Audience(const LanguageTable::Table& table, std::string_view settlement);
+
     // What a made item is called in a step: "an Iron Sword", "a sheaf of
     // Elven Arrows". Empty for an empty name.
     [[nodiscard]] std::string ItemPhrase(const LanguageTable::Table& table, std::string_view name, bool ammo);

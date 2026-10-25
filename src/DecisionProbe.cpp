@@ -105,58 +105,58 @@ namespace NarrativeEngine::DecisionProbe
             {"purchase",
              "Bob ran to Whiterun to purchase 9 red claws from Alan Grimes",
              {
-                 {"what", "What was purchased?", {"9 red claws", "red claws"}},
-                 {"seller", "Who was the seller?", {"Alan Grimes"}},
-                 {"buyer", "Who was the buyer?", {"Bob"}},
-                 {"where", "Where did the purchase happen?", {"Whiterun"}},
+                 {"what", {"9 red claws", "red claws"}},
+                 {"seller", {"Alan Grimes"}},
+                 {"buyer", {"Bob"}},
+                 {"where", {"Whiterun"}},
              }},
             {"expose",
              "Show a merchant's ledger to Jarl Elisif as proof against Erikur",
              {
-                 {"what", "What is shown as proof?", {"a merchant's ledger", "merchant's ledger"}},
-                 {"shown_to", "Who is the proof shown to?", {"Jarl Elisif", "Elisif"}},
-                 {"against", "Who is the proof against?", {"Erikur"}},
+                 {"what", {"a merchant's ledger", "merchant's ledger"}},
+                 {"shown_to", {"Jarl Elisif", "Elisif"}},
+                 {"against", {"Erikur"}},
              }},
             {"expose_unnamed",
              "Expose a merchant's ledger to Jarl Elisif",
              {
-                 {"against", "Who is the proof against?", {}},
-                 {"shown_to", "Who is the proof shown to?", {"Jarl Elisif", "Elisif"}},
+                 {"against", {}},
+                 {"shown_to", {"Jarl Elisif", "Elisif"}},
              }},
             {"denounce",
              "Denounce Vignar Gray-Mane to Jarl Balgruuf for hiding stolen gold in Whiterun",
              {
-                 {"who", "Who is denounced?", {"Vignar Gray-Mane"}},
-                 {"to", "Who are they denounced to?", {"Jarl Balgruuf", "Balgruuf"}},
-                 {"where", "Where is the gold hidden?", {"Whiterun"}},
+                 {"who", {"Vignar Gray-Mane"}},
+                 {"to", {"Jarl Balgruuf", "Balgruuf"}},
+                 {"where", {"Whiterun"}},
              }},
             {"plant",
              "Hide a bottle of skooma among Hulda's belongings at the Bannered Mare",
              {
-                 {"what", "What is hidden?", {"a bottle of skooma", "bottle of skooma"}},
-                 {"whose", "Whose belongings is it hidden among?", {"Hulda's"}},
-                 {"where", "Where are those belongings?", {"the Bannered Mare", "Bannered Mare"}},
+                 {"what", {"a bottle of skooma", "bottle of skooma"}},
+                 {"whose", {"Hulda's"}},
+                 {"where", {"the Bannered Mare", "Bannered Mare"}},
              }},
             {"steal",
              "Steal a deed to a property from Maven Black-Briar in Riften",
              {
-                 {"what", "What is stolen?", {"a deed to a property", "deed to a property"}},
-                 {"from", "Who is it stolen from?", {"Maven Black-Briar"}},
-                 {"where", "Where does the theft happen?", {"Riften"}},
+                 {"what", {"a deed to a property", "deed to a property"}},
+                 {"from", {"Maven Black-Briar"}},
+                 {"where", {"Riften"}},
              }},
             {"gift",
              "Bring a gold diamond necklace to Elisif the Fair in Solitude",
              {
-                 {"what", "What is brought?", {"a gold diamond necklace", "gold diamond necklace"}},
-                 {"to", "Who receives it?", {"Elisif the Fair"}},
+                 {"what", {"a gold diamond necklace", "gold diamond necklace"}},
+                 {"to", {"Elisif the Fair"}},
              }},
             // As long as a round may be, for the longest list of choices.
             {"follow",
              "Hrolfdir asked Sorli to follow the merchant Fenja from the Riften docks to the Ragged Flagon and report back",
              {
-                 {"followed", "Who is followed?", {"Fenja", "the merchant Fenja", "merchant Fenja"}},
-                 {"follower", "Who does the following?", {"Sorli"}},
-                 {"end", "Where does the following end?", {"the Ragged Flagon", "Ragged Flagon"}},
+                 {"followed", {"Fenja", "the merchant Fenja", "merchant Fenja"}},
+                 {"follower", {"Sorli"}},
+                 {"end", {"the Ragged Flagon", "Ragged Flagon"}},
              }},
         };
         return rounds;
@@ -191,14 +191,19 @@ namespace NarrativeEngine::DecisionProbe
 
     std::string Context(const Round& round, const Question& question, bool reversed)
     {
+        // The choice that the sentence does not say goes as a flag, for
+        // probe.prompt to word; every other choice is words of the sentence.
         nlohmann::json options = nlohmann::json::array();
         const auto choices = Choices(round, reversed);
         for (std::size_t i = 0; i < choices.size(); ++i) {
-            options.push_back({{"key", KeyAt(i)}, {"text", choices[i]}});
+            const bool none = choices[i] == kNotNamed;
+            options.push_back({{"key", KeyAt(i)}, {"text", none ? std::string{} : choices[i]}, {"none", none}});
         }
+        // The question is worded by probe.prompt, by its round and its id.
         nlohmann::json ctx;
         ctx["sentence"] = round.sentence;
-        ctx["question"] = question.text;
+        ctx["round"] = round.id;
+        ctx["question"] = question.id;
         ctx["options"] = std::move(options);
         return ctx.dump();
     }

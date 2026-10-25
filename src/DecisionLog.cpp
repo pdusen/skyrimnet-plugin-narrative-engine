@@ -285,6 +285,38 @@ namespace NarrativeEngine::DecisionLog
         return table.Render(kFailed, TextTemplate::Arguments{}.Set("reason", reason));
     }
 
+    std::string_view FailureId(DecisionRecord::Failure failure) noexcept
+    {
+        switch (failure) {
+        case DecisionRecord::Failure::BeatMissing:
+            return "beat_missing";
+        case DecisionRecord::Failure::LlmError:
+            return "llm_error";
+        case DecisionRecord::Failure::NotJson:
+            return "not_json";
+        case DecisionRecord::Failure::NotOffered:
+            return "not_offered";
+        case DecisionRecord::Failure::None:
+            break;
+        }
+        return {};
+    }
+
+    std::string_view NoteId(DecisionRecord::Note note) noexcept
+    {
+        switch (note) {
+        case DecisionRecord::Note::InvalidJson:
+            return "invalid_json";
+        case DecisionRecord::Note::NotAnObject:
+            return "not_an_object";
+        case DecisionRecord::Note::ForcedDispatch:
+            return "forced_dispatch";
+        case DecisionRecord::Note::Model:
+            break;
+        }
+        return "model";
+    }
+
     std::string NoteText(const DecisionRecord& record, const LanguageTable::Table& table)
     {
         if (record.note == DecisionRecord::Note::Model) {

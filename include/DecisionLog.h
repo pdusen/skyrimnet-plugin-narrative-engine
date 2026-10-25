@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace SKSE
@@ -74,6 +75,12 @@ namespace NarrativeEngine::DecisionLog
     // The record's note: the model's own words, or the stand-in for why
     // there were none.
     [[nodiscard]] std::string NoteText(const DecisionRecord& record, const LanguageTable::Table& table);
+
+    // The failure and the note as tokens, for the Director's own prompt to
+    // word: beat_missing, llm_error, not_json, not_offered, or empty for none;
+    // model, invalid_json, not_an_object or forced_dispatch.
+    [[nodiscard]] std::string_view FailureId(DecisionRecord::Failure failure) noexcept;
+    [[nodiscard]] std::string_view NoteId(DecisionRecord::Note note) noexcept;
 
     // SKSE co-save record type ID for the decision log. Frozen.
     inline constexpr std::uint32_t kRecordTypeId = 'DCLG';

@@ -1495,7 +1495,7 @@ build.
 
 #### Step 15 — Remaining prompt prose, and the audit
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1513,6 +1513,66 @@ build.
 - Offline render comparison of `gossip_seed` and `probe`.
 - The audit's result is recorded in this document: each remaining literal and why it may stay (a token, a log line,
   a key name). The expected count of LLM-bound sentences is zero.
+
+Done.
+
+- `GossipContent` passes each band's length as `{lo, hi}`, and `gossip_seed` words "4 to 6 sentences", or "no more
+  than 2" once `lo` reaches nothing.
+- `DecisionProbe` sends its round and question ids, and `probe.prompt` words each of its 23 questions. The choice
+  that the sentence does not name goes as a `none` flag.
+- `story_eval`'s `decision_log_tail` carries the beat, the failure and the note as `DecisionLog::FailureId` and
+  `NoteId` tokens, and the model's own note only when there is one. The prompt words the three stand-in notes.
+
+The probe's eight round sentences, and the answers each question is judged against, stay in C++. They are the
+fixtures under test: the choices are cut from the sentence, and the answer is judged against them, so they must live
+where the cutting and the judging happen. The probe is a developer tool behind the Plots tab, part of no feature.
+
+**The comparison.** Every one of 50 renders is byte-identical:
+
+- `gossip_seed` with one, three and six bands, with and without a location;
+- the probe for every round, question and order;
+- `story_eval` with a decision tail holding every note and failure.
+
+**The audit.** It covered every way C++ text can reach a model:
+
+- the nine call sites of `SendCustomPromptToLLM` and `SendCustomDecision`, and the contexts each builds;
+- the three decorators;
+- the four writers of memories;
+- the Papyrus scripts that pass text to SkyrimNet.
+
+A script listed every string literal holding a space in the 39 files that build or feed those, and each was
+classified by hand. The Papyrus scripts only forward what C++ hands them, which is language-file text or the model's
+own sanitized prose.
+
+**One finding, fixed here.** When an exposure of a community's leader is shown to the community rather than a
+person, `PlotCandidates` composed the slot's text in C++: "the people of Whiterun", or "the people they lead". That
+text is kept with the step and remembered by everyone it reaches. It is now `[Plot.Audience]` in `english.ini`,
+rendered with the session's language as the step is planned, which is how made items are named. The existing tests
+pin "the people of Whiterun" unchanged. The same line had also put the phrase into the candidate's `Why` by brace
+elision. That was a Step 12 slip with no effect, since a list of one is never asked about, and it is fixed too.
+
+**What stays, and why.** None of it is a sentence a model reads:
+
+- **Log and diagnostic lines.** Planning and adaptation rejections, gossip verdict reasons, why a visit cannot start
+  here, the probe's verdicts, the arrival-point traces, and `DecisionRecord::failureDetail`. They go to the logs.
+  `failureDetail` also rides in `decision_log_tail`, which no template renders.
+- **Tokens and ids.** Verb, beat, phase, relation, standing, outcome, rejection and urgency codes; `AlphaCanon`'s
+  signal names; and `"Diary Entry:"`, the prefix SkyrimNet itself writes on diary memories, which the memory readers
+  match.
+- **Decorator descriptions.** What SkyrimNet lists beside each decorator when it is registered. They are never
+  rendered into a prompt.
+- **The probe's fixtures**, above, and `DecisionProbe::kNotNamed`, which is now only an internal sentinel and a word
+  in its log.
+- **Matching rules, which are Phase D's subject.** None of these is a sentence, but each is English:
+  - `TravelEventLog::FormatHoldName`'s " Hold" suffix;
+  - `CombatEventLog`'s lowercasing of an activator's name;
+  - `PlotCandidates::Says`'s list of articles to strip ("a sheaf of ", "an ", "a ");
+  - `PlotVerbs::Plain`, which writes a verb id the model put into prose as its English caption;
+  - `PlotVerbs::SchemePhrase`, which lowercases a scheme's first letter to set it inside a sentence.
+
+The count of LLM-bound sentences left in C++ is zero.
+
+`pwsh -File build.ps1 test`: 559 of 559 passed. `build.ps1 build` is clean.
 
 ### Phase D — Language-aware matching
 

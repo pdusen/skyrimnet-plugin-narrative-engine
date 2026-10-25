@@ -134,14 +134,12 @@ namespace NarrativeEngine::GossipContent
         // Computed here rather than in the template because the shape is
         // arithmetic over band_count, and this project has lost two test
         // runs to Inja constructs that looked fine and did not render.
-        std::string BandLengthSpec(int index)
+        // How many sentences band `index` runs to: {lo, hi}, shorter with each
+        // band. gossip_seed words it, "4 to 6 sentences", or "no more than 2"
+        // once `lo` reaches nothing.
+        nlohmann::json BandLength(int index)
         {
-            const int lo = std::max(0, 4 - index);
-            const int hi = std::max(2, 6 - index);
-            if (lo == 0) {
-                return "no more than 2 sentences";
-            }
-            return std::format("{} to {} sentences", lo, hi);
+            return {{"lo", std::max(0, 4 - index)}, {"hi", std::max(2, 6 - index)}};
         }
 
         std::string HoldName(RE::FormID npc)
@@ -214,7 +212,7 @@ namespace NarrativeEngine::GossipContent
             for (int i = 0; i < bandCount; ++i) {
                 nlohmann::json entry = nlohmann::json::object();
                 entry["index"] = i;
-                entry["length"] = BandLengthSpec(i);
+                entry["length"] = BandLength(i);
                 bandSpecs.push_back(std::move(entry));
             }
             ctx["band_specs"] = std::move(bandSpecs);

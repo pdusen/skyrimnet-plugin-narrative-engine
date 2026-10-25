@@ -52,6 +52,9 @@ namespace NarrativeEngine::PlotText
         constexpr std::array kItemAmmoParams{TextKeys::Param{"name", Kind::Text}};
         constexpr TextKeys::Key kItemMade{"Plot.Item", "made", kItemMadeParams};
         constexpr TextKeys::Key kItemAmmo{"Plot.Item", "ammo", kItemAmmoParams};
+        constexpr std::array kAudienceParams{TextKeys::Param{"settlement", Kind::Text}};
+        constexpr TextKeys::Key kAudienceLed{"Plot.Audience", "led", {}};
+        constexpr TextKeys::Key kAudienceSettlement{"Plot.Audience", "settlement", kAudienceParams};
 
         constexpr std::array kTestKeys{TextKeys::Key{"Plot.Test", "brelyna.ambition", {}},
                                        TextKeys::Key{"Plot.Test", "brelyna.scheme", {}},
@@ -130,8 +133,14 @@ namespace NarrativeEngine::PlotText
             for (const auto& key : kTestKeys) {
                 s.keys.push_back(key);
             }
-            for (const auto* key :
-                 {&kUnfilledPerson, &kUnfilledPlace, &kUnfilledThing, &kUnfilledScheme, &kItemMade, &kItemAmmo}) {
+            for (const auto* key : {&kUnfilledPerson,
+                                    &kUnfilledPlace,
+                                    &kUnfilledThing,
+                                    &kUnfilledScheme,
+                                    &kItemMade,
+                                    &kItemAmmo,
+                                    &kAudienceLed,
+                                    &kAudienceSettlement}) {
                 s.keys.push_back(*key);
             }
             return s;
@@ -314,6 +323,16 @@ namespace NarrativeEngine::PlotText
     std::string TestText(const LanguageTable::Table& table, TestLine line)
     {
         return table.Render(kTestKeys[static_cast<std::size_t>(line)], {});
+    }
+
+    std::string Audience(const LanguageTable::Table& table, std::string_view settlement)
+    {
+        if (settlement.empty()) {
+            return table.Render(kAudienceLed, {});
+        }
+        TextTemplate::Arguments args;
+        args.Set("settlement", std::string{settlement});
+        return table.Render(kAudienceSettlement, args);
     }
 
     std::string ItemPhrase(const LanguageTable::Table& table, std::string_view name, bool ammo)

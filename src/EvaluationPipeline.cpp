@@ -309,14 +309,18 @@ namespace NarrativeEngine::EvaluationPipeline
         {
             nlohmann::json tail = nlohmann::json::array();
             for (const auto& r : snapshot.decisionLogTail) {
+                // What went wrong, and what the note is, go as codes for
+                // story_eval to word; the model's own note goes as it wrote it.
                 nlohmann::json entry = {
                     {"t", r.realTimeSec},
                     {"tension_score", r.tensionScore},
                     {"phase", PhaseTracker::PhaseName(r.currentPhase)},
-                    // The prompt is English, so its words are English's
-                    // whatever the session's language.
-                    {"action", DecisionLog::ActionText(r, Localization::English())},
-                    {"narrative_note", DecisionLog::NoteText(r, Localization::English())},
+                    {"beat", r.beatSelected},
+                    {"failure", DecisionLog::FailureId(r.failure)},
+                    {"failure_detail", r.failureDetail},
+                    {"note", DecisionLog::NoteId(r.note)},
+                    {"narrative_note",
+                     r.note == DecisionLog::DecisionRecord::Note::Model ? r.narrativeNote : std::string{}},
                 };
                 if (r.advancedToPhase) {
                     entry["advanced_to"] = PhaseTracker::PhaseName(*r.advancedToPhase);

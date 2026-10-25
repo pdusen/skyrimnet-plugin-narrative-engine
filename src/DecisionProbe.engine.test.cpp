@@ -157,13 +157,16 @@ TEST_CASE("DecisionProbe rounds", "[DecisionProbe][engine]")
             REQUIRE(choices.back() == "Bob");
         }
 
-        SECTION("should key them c1 onward and carry the sentence and the question")
+        SECTION("should key them c1 onward and carry the sentence and which question it is")
         {
             const auto ctx = nlohmann::json::parse(DecisionProbe::Context(round, QuestionOf(round, "seller"), false));
             REQUIRE(ctx["sentence"] == round.sentence);
-            REQUIRE(ctx["question"] == "Who was the seller?");
+            REQUIRE(ctx["round"] == round.id);
+            REQUIRE(ctx["question"] == "seller");
             REQUIRE(ctx["options"][0]["key"] == "c1");
             REQUIRE(ctx["options"][0]["text"] == "Bob");
+            REQUIRE(ctx["options"][0]["none"] == false);
+            REQUIRE(ctx["options"].back()["none"] == true);
         }
     }
 }
