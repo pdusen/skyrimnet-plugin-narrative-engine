@@ -112,6 +112,9 @@ namespace NarrativeEngine::Testing
         char dialogueJson[kAnswerCapacity] = "[]";
         char engagementJson[kAnswerCapacity] = "[]";
         char promptResponse[1024] = "the response";
+        // What every prompt call after the first answers with, when not empty.
+        // Lets a case answer a retry differently from the call it retries.
+        char laterPromptResponse[1024] = "";
 
         // --- Decision requests (v12) ---------------------------------------
         //
@@ -227,6 +230,7 @@ namespace NarrativeEngine::Testing
             scriptedCursor = 0;
             for (auto& name : decisionTemplates)
                 name[0] = '\0';
+            laterPromptResponse[0] = '\0';
         }
 
     private:

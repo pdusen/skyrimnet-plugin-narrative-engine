@@ -168,7 +168,14 @@ namespace NarrativeEngine::Settings
         // player's current Location and every ancestor reached via
         // BGSLocation::parentLoc is tested, so naming a parent covers
         // its whole subtree. Whitespace around commas is allowed.
-        std::string blacklistedLocationEDIDsCSV = "SovngardeLocation";
+        //
+        // The defaults are places a beat cannot plausibly reach: other
+        // planes, sealed-off places on Nirn, and Castle Volkihar.
+        std::string blacklistedLocationEDIDsCSV =
+            "SovngardeLocation,DLC1SoulCairnLocation,DLC2ApocryphaLocation,BluePalaceWingLocation,"
+            "AzurasStarInteriorLocation,DLC1FalmerValleyLocation,DLC1DarkfallPassageLocation,"
+            "DLC1_AncestorsGladeLocation,ThroatoftheWorldLocation,DLC2ThroatoftheWorldPath,GiantsGroveLocation,"
+            "JaphetsFollyLocation,BrinewaterGrottoLocation,DLC1ForebearsHoldhoutLocation,DLC1VampireCastleLocation";
 
         // [Dashboard]
         int dashboardHotkeyDXSC = 65;              // DirectX scan code; 65 == DIK_F7; -1 disables

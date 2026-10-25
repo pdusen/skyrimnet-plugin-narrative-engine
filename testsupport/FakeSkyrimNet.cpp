@@ -184,7 +184,8 @@ extern "C"
             std::this_thread::sleep_for(std::chrono::milliseconds{1});
         }
         if (callback) {
-            callback(s.promptResponse, s.sendPromptSucceeds ? 1 : 0);
+            const bool later = s.sendPromptCalls > 1 && s.laterPromptResponse[0] != '\0';
+            callback(later ? s.laterPromptResponse : s.promptResponse, s.sendPromptSucceeds ? 1 : 0);
         }
         return true;
     }

@@ -34,6 +34,7 @@
 #include <chrono>
 #include <cstdint>
 #include <deque>
+#include <format>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -897,15 +898,14 @@ namespace NarrativeEngine::BeatSystem
                                const nlohmann::json& parameters);
 
         // Plugin thread. Called from FireBeatSelectLLM after a
-        // structurally-valid LLM response. Runs the whole finalize
-        // chain off main except for the single MainThread::Run hop
-        // that re-checks preconditions and calls StartBeatInternal
-        // (which must be main because beat->OnStart is main-thread
-        // per IBeat contract).
+        // response whose selection ValidateSelection accepted. Runs the
+        // whole finalize chain off main except for the single
+        // MainThread::Run hop that re-checks preconditions and calls
+        // StartBeatInternal (which must be main because beat->OnStart is
+        // main-thread per IBeat contract).
         void FinalizeWithLLMResponse(const PluginThread::Token& pt,
                                      Snapshot snapshot,
                                      DecisionLog::DecisionRecord rec,
-                                     std::vector<std::string> candidateNames,
                                      std::string chosenBeat,
                                      nlohmann::json parameters,
                                      std::string narrativeNote,
@@ -914,16 +914,8 @@ namespace NarrativeEngine::BeatSystem
                                      int tensionDelta,
                                      FinalizedCallback onFinalized)
         {
-            // Registry lookup + validation — thread-safe (BeatRegistry
-            // is mutex-guarded internally).
-            const bool isValidCandidate =
-                std::find(candidateNames.begin(), candidateNames.end(), chosenBeat) != candidateNames.end();
-            if (!isValidCandidate) {
-                FinalizeWithFailure(
-                    pt, std::move(rec), "LLM returned unknown beat '" + chosenBeat + "'", std::move(onFinalized));
-                return;
-            }
-
+            // Registry lookup — thread-safe (BeatRegistry is
+            // mutex-guarded internally).
             IBeat* beat = BeatRegistry::Find(chosenBeat);
             if (!beat) {
                 FinalizeWithFailure(pt,
@@ -984,37 +976,84 @@ namespace NarrativeEngine::BeatSystem
                 onFinalized();
         }
 
-        // Looks the Director's `motivating_memory` number up in the
-        // memory list the beat-select prompt showed for the sender it
-        // chose. Resolved here, against the candidates the prompt was
-        // built from, because a fresh fetch at compose time can return
-        // a differently-ordered or differently-capped list. Nullopt —
-        // and a warning — when the sender isn't among the candidates or
-        // the number doesn't name one of their memories; the compose
-        // step then picks its own topic from the sender's memories.
+        // Checks the Director's sender and `motivating_memory` against
+        // the sender list the prompt offered for THIS beat — a letter
+        // sender is not a valid visitor. The memory number is resolved
+        // here, against the list the prompt showed, because a fresh
+        // fetch at compose time can return a differently-ordered or
+        // differently-capped list. Empty on success, with the memory in
+        // memoryOut; otherwise the reason the pick is invalid.
         template <typename SenderCandidate>
-        std::optional<nlohmann::json> ResolveMotivatingMemory(const nlohmann::json& parameters,
-                                                              const std::vector<SenderCandidate>& candidates,
-                                                              const std::string& beatName)
+        std::string ValidateSenderSelection(const nlohmann::json& parameters,
+                                            const std::vector<SenderCandidate>& candidates,
+                                            std::optional<nlohmann::json>& memoryOut)
         {
-            const auto senderId = BeatParamHelpers::ParseSenderFormID(parameters, nullptr);
-            const auto sender = std::find_if(candidates.begin(), candidates.end(), [&](const SenderCandidate& c) {
-                return senderId && c.formId == *senderId;
-            });
-            if (sender == candidates.end()) {
-                logger::warn("BeatSystem: '{}' sender is not among the candidates offered; no motivating memory",
-                             beatName);
-                return std::nullopt;
-            }
             std::string reason;
+            const auto senderId = BeatParamHelpers::ParseSenderFormID(parameters, &reason);
+            if (!senderId) {
+                return reason;
+            }
+            const auto sender = std::find_if(
+                candidates.begin(), candidates.end(), [&](const SenderCandidate& c) { return c.formId == *senderId; });
+            if (sender == candidates.end()) {
+                return std::format("sender 0x{:X} was not offered for this beat", *senderId);
+            }
             auto memory = BeatParamHelpers::ResolveMotivatingMemory(parameters, sender->memories, &reason);
             if (!memory) {
-                logger::warn("BeatSystem: '{}' motivating memory unresolved ({}); the composer will pick a topic",
-                             beatName,
-                             reason);
+                return reason;
             }
-            return memory;
+            memoryOut = std::move(memory);
+            return {};
         }
+
+        // Checks the Director's `attacker_group` against the groups the
+        // prompt offered. Empty on success, otherwise the reason.
+        std::string ValidateAmbushSelection(const nlohmann::json& parameters,
+                                            const std::vector<AmbushAttackerGroups::GroupSummary>& groups)
+        {
+            const auto it = parameters.find("attacker_group");
+            if (it == parameters.end() || !it->is_string()) {
+                return "attacker_group_missing";
+            }
+            const auto id = LLMTextSanitizer::Sanitize(it->get<std::string>());
+            const bool offered = std::any_of(groups.begin(), groups.end(), [&](const auto& g) { return g.id == id; });
+            if (!offered) {
+                return "attacker group '" + id + "' was not offered";
+            }
+            return {};
+        }
+
+        // Every value the Director picks from a list in the prompt —
+        // the beat name, and the per-beat sender / memory / attacker
+        // group — must be one that list actually offered. Empty on
+        // success, otherwise the reason the selection is invalid.
+        std::string ValidateSelection(const std::string& chosenBeat,
+                                      const nlohmann::json& parameters,
+                                      const std::vector<std::string>& candidateNames,
+                                      const std::vector<LetterComposer::SenderCandidate>& letterSenderCandidates,
+                                      const std::vector<VisitComposer::SenderCandidate>& visitSenderCandidates,
+                                      const std::vector<AmbushAttackerGroups::GroupSummary>& ambushAttackerCandidates,
+                                      std::optional<nlohmann::json>& motivatingMemoryOut)
+        {
+            if (std::find(candidateNames.begin(), candidateNames.end(), chosenBeat) == candidateNames.end()) {
+                return "unknown beat '" + chosenBeat + "'";
+            }
+            if (chosenBeat == "npc_letter") {
+                return ValidateSenderSelection(parameters, letterSenderCandidates, motivatingMemoryOut);
+            }
+            if (chosenBeat == "npc_visit") {
+                return ValidateSenderSelection(parameters, visitSenderCandidates, motivatingMemoryOut);
+            }
+            if (chosenBeat == "ambush") {
+                return ValidateAmbushSelection(parameters, ambushAttackerCandidates);
+            }
+            return {};
+        }
+
+        // One retry: an invalid pick is usually a one-off hallucination
+        // that a second sample gets right, and a model that misses twice
+        // is not worth a third round trip this tick.
+        constexpr int kBeatSelectAttempts = 2;
 
         // The shared body invoked by both ConsiderBeat and
         // ForceDispatchBeat. Runs entirely on the plugin thread:
@@ -1072,71 +1111,91 @@ namespace NarrativeEngine::BeatSystem
                     candidateNames.push_back(b->Name());
             }
 
-            // Sync LLM round-trip. Blocks the plugin thread. See
-            // SkyrimNetAPI.h for the rationale — the caller is
-            // single-flighted (EvaluationPipeline::g_inFlight for
-            // ConsiderBeat, top-level BEAT_RUNNING slot for
-            // ForceDispatchBeat) so no plugin-thread work is idle-
-            // starving during the wait.
-            const auto result = SkyrimNetAPI::SendCustomPromptToLLM(
-                pt, "narrative_engine_action_select", "narrative_engine_director", promptCtx);
+            for (int attempt = 1;; ++attempt) {
+                // Sync LLM round-trip. Blocks the plugin thread. See
+                // SkyrimNetAPI.h for the rationale — the caller is
+                // single-flighted (EvaluationPipeline::g_inFlight for
+                // ConsiderBeat, top-level BEAT_RUNNING slot for
+                // ForceDispatchBeat) so no plugin-thread work is idle-
+                // starving during the wait.
+                const auto result = SkyrimNetAPI::SendCustomPromptToLLM(
+                    pt, "narrative_engine_action_select", "narrative_engine_director", promptCtx);
 
-            if (!result.ok) {
-                logger::warn("BeatSystem: {}beat-select LLM call failed: {}", logPrefix, result.response);
-                FinalizeWithFailure(
-                    pt, std::move(rec), std::string("LLM error: ") + result.response, std::move(onFinalized));
-                return;
-            }
-
-            if (Settings::Get().debugMode) {
-                logger::debug("BeatSystem: beat-select LLM callback: body={}B", result.response.size());
-                if (!result.response.empty()) {
-                    logger::debug("BeatSystem: beat-select LLM response: {}", result.response);
+                if (!result.ok) {
+                    logger::warn("BeatSystem: {}beat-select LLM call failed: {}", logPrefix, result.response);
+                    FinalizeWithFailure(
+                        pt, std::move(rec), std::string("LLM error: ") + result.response, std::move(onFinalized));
+                    return;
                 }
-            }
 
-            const std::string body = EvaluationPipeline::StripMarkdownFences(result.response);
-            auto parsed = nlohmann::json::parse(body, nullptr, false);
+                if (Settings::Get().debugMode) {
+                    logger::debug("BeatSystem: beat-select LLM callback: body={}B", result.response.size());
+                    if (!result.response.empty()) {
+                        logger::debug("BeatSystem: beat-select LLM response: {}", result.response);
+                    }
+                }
 
-            if (parsed.is_discarded() || !parsed.is_object()) {
-                FinalizeWithFailure(pt,
-                                    std::move(rec),
-                                    std::string("LLM response was not a JSON object: ") + result.response,
-                                    std::move(onFinalized));
+                const std::string body = EvaluationPipeline::StripMarkdownFences(result.response);
+                auto parsed = nlohmann::json::parse(body, nullptr, false);
+
+                if (parsed.is_discarded() || !parsed.is_object()) {
+                    FinalizeWithFailure(pt,
+                                        std::move(rec),
+                                        std::string("LLM response was not a JSON object: ") + result.response,
+                                        std::move(onFinalized));
+                    return;
+                }
+
+                std::string chosenBeat;
+                if (auto it = parsed.find("action"); it != parsed.end() && it->is_string()) {
+                    chosenBeat = LLMTextSanitizer::Sanitize(it->get<std::string>());
+                }
+                nlohmann::json parameters = nlohmann::json::object();
+                if (auto it = parsed.find("parameters"); it != parsed.end() && it->is_object()) {
+                    parameters = *it;
+                }
+
+                std::optional<nlohmann::json> motivatingMemory;
+                const std::string invalidReason = ValidateSelection(chosenBeat,
+                                                                    parameters,
+                                                                    candidateNames,
+                                                                    letterSenderCandidates,
+                                                                    visitSenderCandidates,
+                                                                    ambushAttackerCandidates,
+                                                                    motivatingMemory);
+                if (!invalidReason.empty()) {
+                    if (attempt < kBeatSelectAttempts) {
+                        logger::warn("BeatSystem: {}beat-select picked an option it was not offered ({}); retrying",
+                                     logPrefix,
+                                     invalidReason);
+                        continue;
+                    }
+                    FinalizeWithFailure(
+                        pt,
+                        std::move(rec),
+                        "LLM picked an option it was not offered on every attempt (last: " + invalidReason + ")",
+                        std::move(onFinalized));
+                    return;
+                }
+
+                std::string narrativeNote;
+                if (auto it = parsed.find("narrative_note"); it != parsed.end() && it->is_string()) {
+                    narrativeNote = LLMTextSanitizer::Sanitize(it->get<std::string>());
+                    LLMTextSanitizer::TruncateUTF8(narrativeNote, 200);
+                }
+
+                FinalizeWithLLMResponse(pt,
+                                        std::move(snapshot),
+                                        std::move(rec),
+                                        std::move(chosenBeat),
+                                        std::move(parameters),
+                                        std::move(narrativeNote),
+                                        std::move(motivatingMemory),
+                                        direction,
+                                        tensionDelta,
+                                        std::move(onFinalized));
                 return;
             }
-
-            std::string chosenBeat;
-            if (auto it = parsed.find("action"); it != parsed.end() && it->is_string()) {
-                chosenBeat = it->get<std::string>();
-            }
-            nlohmann::json parameters = nlohmann::json::object();
-            if (auto it = parsed.find("parameters"); it != parsed.end() && it->is_object()) {
-                parameters = *it;
-            }
-            std::string narrativeNote;
-            if (auto it = parsed.find("narrative_note"); it != parsed.end() && it->is_string()) {
-                narrativeNote = LLMTextSanitizer::Sanitize(it->get<std::string>());
-                LLMTextSanitizer::TruncateUTF8(narrativeNote, 200);
-            }
-            std::optional<nlohmann::json> motivatingMemory;
-            if (chosenBeat == "npc_letter") {
-                motivatingMemory = ResolveMotivatingMemory(parameters, letterSenderCandidates, chosenBeat);
-            } else if (chosenBeat == "npc_visit") {
-                motivatingMemory = ResolveMotivatingMemory(parameters, visitSenderCandidates, chosenBeat);
-            }
-
-            FinalizeWithLLMResponse(pt,
-                                    std::move(snapshot),
-                                    std::move(rec),
-                                    std::move(candidateNames),
-                                    std::move(chosenBeat),
-                                    std::move(parameters),
-                                    std::move(narrativeNote),
-                                    std::move(motivatingMemory),
-                                    direction,
-                                    tensionDelta,
-                                    std::move(onFinalized));
         }
     } // namespace
 
