@@ -1,5 +1,6 @@
 #include <LetterComposer.h>
 
+#include <EngineUtils.h>
 #include <EvaluationPipeline.h>
 #include <EventLogUtil.h>
 #include <LLMTextSanitizer.h>
@@ -80,6 +81,7 @@ namespace NarrativeEngine::LetterComposer
             MissingActor,
             Dead,
             Disabled,
+            Ghost,
             SenderCooldown,
             CurrentlyLoaded,
             WalkingDistance,
@@ -136,8 +138,8 @@ namespace NarrativeEngine::LetterComposer
         }
 
         // Test whether a single actor is viable as a letter sender right
-        // now: form resolves, actor exists, not dead, not disabled, not
-        // on the per-sender cooldown, not currently loaded (present in a
+        // now: form resolves, actor exists, not dead, not disabled, not a
+        // ghost, not on the per-sender cooldown, not currently loaded (present in a
         // loaded cell — see below), and not within walking distance of
         // the player (same location hub — see IsWithinWalkingDistanceOfPlayer).
         // Shared between the pool build and the compose-time
@@ -163,6 +165,8 @@ namespace NarrativeEngine::LetterComposer
                 return SenderViability::Dead;
             if (actor->IsDisabled())
                 return SenderViability::Disabled;
+            if (EngineUtils::IsGhost(actor))
+                return SenderViability::Ghost;
             if (actor->Is3DLoaded())
                 return SenderViability::CurrentlyLoaded;
             if (IsWithinWalkingDistanceOfPlayer(actor))
@@ -183,6 +187,8 @@ namespace NarrativeEngine::LetterComposer
                 return "dead";
             case SenderViability::Disabled:
                 return "disabled";
+            case SenderViability::Ghost:
+                return "ghost";
             case SenderViability::SenderCooldown:
                 return "sender-cooldown";
             case SenderViability::CurrentlyLoaded:

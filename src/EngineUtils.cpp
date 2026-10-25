@@ -2,6 +2,9 @@
 
 #include <RE/Skyrim.h>
 
+#include <cctype>
+#include <string_view>
+
 namespace NarrativeEngine::EngineUtils
 {
     double GetCurrentGameHours()
@@ -48,6 +51,45 @@ namespace NarrativeEngine::EngineUtils
     bool IsPlayerInDialogue(const MainThread::Token&)
     {
         return IsPlayerInDialogue();
+    }
+
+    bool IsGhostRecord(const RE::TESNPC* npc)
+    {
+        if (npc == nullptr) {
+            return false;
+        }
+        if (npc->IsGhost()) {
+            return true;
+        }
+        // The ones the flag misses, usually because their spectral quality
+        // comes from an ability or a race instead.
+        const char* name = npc->GetName();
+        if (name == nullptr) {
+            return false;
+        }
+        constexpr std::string_view kGhost = "ghost";
+        const std::string_view display{name};
+        if (display.size() < kGhost.size()) {
+            return false;
+        }
+        const auto start = display.size() - kGhost.size();
+        if (start > 0 && std::isalpha(static_cast<unsigned char>(display[start - 1]))) {
+            return false;
+        }
+        for (std::size_t i = 0; i < kGhost.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(display[start + i])) != kGhost[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool IsGhost(const RE::Actor* actor)
+    {
+        if (actor == nullptr) {
+            return false;
+        }
+        return actor->IsGhost() || IsGhostRecord(const_cast<RE::Actor*>(actor)->GetActorBase());
     }
 
     namespace

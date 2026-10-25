@@ -1,5 +1,7 @@
 #include <GossipGraph.h>
 
+#include <EngineUtils.h>
+
 #include <logger.h>
 #include <Settings.h>
 
@@ -408,10 +410,10 @@ namespace NarrativeEngine::GossipGraph
             if (!race || !actorTypeNpc || !race->HasKeyword(actorTypeNpc)) {
                 return false;
             }
-            // NOT THE DEAD. The ACBS IsGhost flag, which vanilla sets on
-            // about seventy records: Savos Aren's Ghost, Kodlak's,
-            // Sinding's, the barrow shades, and the Daedric princes'
-            // avatars.
+            // NOT THE DEAD. Savos Aren's Ghost, Kodlak's, Sinding's, the
+            // barrow shades, the Daedric princes' avatars, and the
+            // apparitions built without the ACBS flag; the rule is
+            // EngineUtils::IsGhostRecord, shared with every beat.
             //
             // They pass every other test -- unique, named, ActorTypeNPC,
             // resident somewhere -- and several carry the display name
@@ -426,29 +428,12 @@ namespace NarrativeEngine::GossipGraph
             // A shade also cannot do the things a scheme asks of a
             // person. It has no household to be bribed in and nothing
             // to gain.
-            if (npc->IsGhost()) {
-                return false;
-            }
-            // And the ones the flag misses. "Dunmer Ghost", "Helgi's
-            // Ghost", the Sovngarde heroes: apparitions built without
-            // the ACBS bit, usually because their spectral quality comes
-            // from an ability or a race instead. Sixty-eight records
-            // carry the flag and several more plainly do not.
             //
-            // Matched as the final WORD of the display name, so a
-            // Ghostblade's owner or a Ghost Sea fisherman is untouched.
-            if (name != nullptr) {
-                const std::string_view display{name};
-                constexpr std::string_view kGhost = "Ghost";
-                if (display.size() >= kGhost.size()) {
-                    const auto tail = display.substr(display.size() - kGhost.size());
-                    const bool standalone =
-                        display.size() == kGhost.size()
-                        || !std::isalpha(static_cast<unsigned char>(display[display.size() - kGhost.size() - 1]));
-                    if (standalone && ToLower(std::string{tail}) == "ghost") {
-                        return false;
-                    }
-                }
+            // Only the base record can be asked here, at data load. A
+            // reference made a ghost later by script is turned away by
+            // the availability checks that read the live actor.
+            if (EngineUtils::IsGhostRecord(npc)) {
+                return false;
             }
             if (const char* eid = npc->GetFormEditorID(); eid && *eid) {
                 const auto lowered = ToLower(eid);
@@ -621,7 +606,7 @@ namespace NarrativeEngine::GossipGraph
                     }
                 };
                 if (!IsGossipEligiblePerson(npc, actorTypeNpc)) {
-                    if (npc->IsGhost()) {
+                    if (EngineUtils::IsGhostRecord(npc)) {
                         ++g_census.rejectedGhost;
                         leaveOut("a ghost");
                     } else {

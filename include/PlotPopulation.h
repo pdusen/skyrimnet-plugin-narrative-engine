@@ -55,8 +55,8 @@ namespace NarrativeEngine::PlotPopulation
     // with no lock. Empty until Build runs.
     [[nodiscard]] const PlotCasting::Population& Get();
 
-    // Alive-and-enabled check for one participant, safe off the main
-    // thread.
+    // Alive, enabled and not a ghost: the check for one participant, safe
+    // off the main thread.
     //
     // A member's reference does not always resolve: on the first in-game
     // run of profile resolution, LookupByID<RE::Actor> returned null for
@@ -64,11 +64,11 @@ namespace NarrativeEngine::PlotPopulation
     // established. All 185 are non-persistent placements in vanilla, but
     // so are 173 that did resolve.
     //
-    // A resolved actor is judged by its life state and disabled flag.
-    // One that does not resolve is judged by the engine's per-base dead
+    // A resolved actor is judged by its life state, its disabled flag and
+    // its ghost state. One that does not resolve is judged by the engine's per-base dead
     // count, which is kept without the reference: alive unless the count
-    // records a death. Whether such a reference is disabled cannot be
-    // asked, so it is taken as enabled.
+    // records a death. Whether such a reference is disabled or a ghost
+    // cannot be asked, so it is taken as neither.
     [[nodiscard]] bool IsAlive(RE::FormID npc);
 
     // Main thread. Re-reads the engine's per-base dead counts that

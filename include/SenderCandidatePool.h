@@ -21,7 +21,7 @@
 // The helper handles:
 //   - Engagement fetch via SkyrimNetAPI::GetActorEngagement.
 //   - The universal viability walk (form resolves / actor exists / not
-//     dead / not disabled / has a name).
+//     dead / not disabled / not a ghost / has a name).
 //   - A caller-supplied extra viability filter for stricter gates.
 //   - Per-candidate memory fetch via SkyrimNetAPI::GetMemoriesForActor
 //     with importance-threshold and diary-entry filtering, then a
@@ -49,7 +49,7 @@ namespace NarrativeEngine::SenderCandidatePool
 
     // Callback returning true if the actor is a viable sender per the
     // caller's rules. Called AFTER the universal walk (missing / dead /
-    // disabled / no-name), so callback body only needs to check caller-
+    // disabled / ghost / no-name), so callback body only needs to check caller-
     // specific gates (e.g. letter's "currently-loaded" rejection or
     // visit's "unique NPC" requirement).
     //

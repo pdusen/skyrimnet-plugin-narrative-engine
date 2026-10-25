@@ -7,6 +7,7 @@
 #include <GossipState.h>
 
 #include <DebugNotify.h>
+#include <EngineUtils.h>
 #include <EventLogUtil.h>
 #include <GossipClaims.h>
 #include <GossipContent.h>
@@ -254,7 +255,7 @@ namespace NarrativeEngine::GossipSim
         enum class Availability : std::uint8_t
         {
             Available,      // kAlive
-            TemporarilyOut, // down, restrained, disabled — will be back
+            TemporarilyOut, // down, restrained, disabled, made a ghost — will be back
             Gone,           // dead, or the form no longer resolves
         };
 
@@ -278,8 +279,12 @@ namespace NarrativeEngine::GossipSim
             }
             switch (state->GetLifeState()) {
             case RE::ACTOR_LIFE_STATE::kAlive:
-                // Disabled is transient: a quest can re-enable them.
-                return actor->IsDisabled() ? Availability::TemporarilyOut : Availability::Available;
+                // Disabled is transient: a quest can re-enable them. So is
+                // a ghost here. A ghost RECORD never became a participant,
+                // so this is a reference a script made a ghost, and a
+                // script can undo it.
+                return actor->IsDisabled() || EngineUtils::IsGhost(actor) ? Availability::TemporarilyOut
+                                                                          : Availability::Available;
             case RE::ACTOR_LIFE_STATE::kDead:
                 return Availability::Gone;
             default:

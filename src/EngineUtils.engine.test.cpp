@@ -266,3 +266,109 @@ TEST_CASE("EngineUtils::AddFastTravelEndSink", "[EngineUtils][engine]")
         }
     }
 }
+
+TEST_CASE("EngineUtils::IsGhostRecord", "[EngineUtils][engine]")
+{
+    // Ghosts take part in nothing, and this is the one rule every beat and
+    // simulation asks. Each case is a base record a test names.
+    EngineMock engine;
+
+    SECTION("when the record carries the ACBS ghost flag")
+    {
+        auto* npc = engine.AddNPC(0x0002C6C8u, "Kodlak Whitemane");
+        npc->actorData.actorBaseFlags.set(RE::ACTOR_BASE_DATA::Flag::kIsGhost);
+
+        SECTION("should call it a ghost, whatever its name")
+        {
+            // The specific harm: a shade with the display name of somebody
+            // who is still alive, or who was, passes for that person.
+            REQUIRE(EngineUtils::IsGhostRecord(npc));
+        }
+    }
+
+    SECTION("when the record has no flag but its name ends in the word Ghost")
+    {
+        SECTION("should call it a ghost")
+        {
+            // Apparitions built without the bit, whose spectral look comes
+            // from an ability or a race instead.
+            REQUIRE(EngineUtils::IsGhostRecord(engine.AddNPC(0x01u, "Helgi's Ghost")));
+            REQUIRE(EngineUtils::IsGhostRecord(engine.AddNPC(0x02u, "Dunmer Ghost")));
+            REQUIRE(EngineUtils::IsGhostRecord(engine.AddNPC(0x03u, "Ghost")));
+            REQUIRE(EngineUtils::IsGhostRecord(engine.AddNPC(0x04u, "Restless GHOST")));
+        }
+    }
+
+    SECTION("when Ghost is only part of a word, or not the last one")
+    {
+        SECTION("should leave them alone")
+        {
+            REQUIRE_FALSE(EngineUtils::IsGhostRecord(engine.AddNPC(0x05u, "Ghost Sea Fisherman")));
+            REQUIRE_FALSE(EngineUtils::IsGhostRecord(engine.AddNPC(0x06u, "Wielder of the Ghostblade")));
+            REQUIRE_FALSE(EngineUtils::IsGhostRecord(engine.AddNPC(0x07u, "Vile Hostghost")));
+        }
+    }
+
+    SECTION("when the record is an ordinary person")
+    {
+        SECTION("should not call it a ghost")
+        {
+            REQUIRE_FALSE(EngineUtils::IsGhostRecord(engine.AddNPC(0x08u, "Ysolda")));
+            REQUIRE_FALSE(EngineUtils::IsGhostRecord(engine.AddNPC(0x09u)));
+        }
+    }
+
+    SECTION("when there is no record")
+    {
+        SECTION("should not call it a ghost")
+        {
+            REQUIRE_FALSE(EngineUtils::IsGhostRecord(nullptr));
+        }
+    }
+}
+
+TEST_CASE("EngineUtils::IsGhost", "[EngineUtils][engine]")
+{
+    // Happy path, re-run per leaf: a living person whose reference and base
+    // record are both ordinary. Each case below makes one of them a ghost.
+    EngineMock engine;
+    auto* actor = engine.AddActor(0xFF000801u);
+    auto* base = engine.AddNPC(0x00013BBDu, "Ysolda");
+    engine.SetActorBase(actor, base);
+
+    SECTION("when neither the reference nor its record is a ghost")
+    {
+        SECTION("should not call them a ghost")
+        {
+            REQUIRE_FALSE(EngineUtils::IsGhost(actor));
+        }
+    }
+
+    SECTION("when a script has made the reference a ghost")
+    {
+        engine.SetActorGhost(actor, true);
+
+        SECTION("should call them a ghost though the record carries no flag")
+        {
+            REQUIRE(EngineUtils::IsGhost(actor));
+        }
+    }
+
+    SECTION("when the base record is a ghost")
+    {
+        base->actorData.actorBaseFlags.set(RE::ACTOR_BASE_DATA::Flag::kIsGhost);
+
+        SECTION("should call them a ghost")
+        {
+            REQUIRE(EngineUtils::IsGhost(actor));
+        }
+    }
+
+    SECTION("when there is no actor")
+    {
+        SECTION("should not call it a ghost")
+        {
+            REQUIRE_FALSE(EngineUtils::IsGhost(nullptr));
+        }
+    }
+}

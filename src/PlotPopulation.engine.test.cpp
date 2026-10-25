@@ -74,3 +74,47 @@ TEST_CASE("PlotPopulation seats whoever the running game ranks", "[PlotPopulatio
     REQUIRE(OfficeOf(world.hulda) == PlotCasting::Office::Jarl);
     REQUIRE(OfficeOf(world.ysolda) == PlotCasting::Office::Jarl);
 }
+
+TEST_CASE("PlotPopulation::IsAlive", "[PlotPopulation][engine]")
+{
+    // Happy path, re-run per leaf: everybody in the gossip world is alive,
+    // enabled and solid. Casting asks this of every mastermind, agent and
+    // memory keeper, so each case below is somebody who must not be cast.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    const GossipWorld world = BuildGossipWorld(engine);
+    GossipGraph::Initialize();
+
+    SECTION("when somebody is alive and well")
+    {
+        SECTION("should say so")
+        {
+            REQUIRE(PlotPopulation::IsAlive(world.hulda));
+        }
+    }
+
+    SECTION("when a script has made somebody a ghost")
+    {
+        // A ghost record never joins the population, so this is the live
+        // reference turned spectral after it was built.
+        engine.SetActorGhost(engine.PlacedActorFor(world.hulda), true);
+
+        SECTION("should not count them among the living")
+        {
+            REQUIRE_FALSE(PlotPopulation::IsAlive(world.hulda));
+        }
+
+        SECTION("should leave everybody else alone")
+        {
+            REQUIRE(PlotPopulation::IsAlive(world.ysolda));
+        }
+    }
+
+    SECTION("when somebody is not in the graph")
+    {
+        SECTION("should not count them")
+        {
+            REQUIRE_FALSE(PlotPopulation::IsAlive(0x00E91005u));
+        }
+    }
+}

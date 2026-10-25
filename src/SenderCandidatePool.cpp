@@ -182,8 +182,8 @@ namespace NarrativeEngine::SenderCandidatePool
         }
 
         // Common walker: fetches engagement, then for each entry runs the
-        // universal viability walk (form / actor / dead / disabled /
-        // name) plus the optional extra filter. Calls `onViable(actor,
+        // universal viability walk (form / actor / dead / disabled / ghost
+        // / name) plus the optional extra filter. Calls `onViable(actor,
         // entryJson)` for each survivor. Stops when `stopWhen` returns
         // true after a survivor (allows early-exit for CountViable).
         template <typename OnViable, typename StopWhen>
@@ -211,6 +211,7 @@ namespace NarrativeEngine::SenderCandidatePool
             int skippedNoActor = 0;
             int skippedDead = 0;
             int skippedDisabled = 0;
+            int skippedGhost = 0;
             int skippedNoName = 0;
             int skippedBlacklisted = 0;
             int skippedStoryActive = 0;
@@ -242,6 +243,14 @@ namespace NarrativeEngine::SenderCandidatePool
                 }
                 if (actor->IsDisabled()) {
                     ++skippedDisabled;
+                    continue;
+                }
+                // Engagement is whoever the player has been talking to,
+                // and that includes the dead who still speak: Kodlak's
+                // ghost, a barrow shade, Sovngarde. None of them writes a
+                // letter or walks into town.
+                if (EngineUtils::IsGhost(actor)) {
+                    ++skippedGhost;
                     continue;
                 }
 
@@ -328,13 +337,14 @@ namespace NarrativeEngine::SenderCandidatePool
                     if (debug) {
                         logger::debug("SenderCandidatePool: walk early-exit (cap reached) "
                                       "— skips: story-active={}, extra-filter={}, blacklisted={}, "
-                                      "no-actor={}, dead={}, disabled={}, no-name={}",
+                                      "no-actor={}, dead={}, disabled={}, ghost={}, no-name={}",
                                       skippedStoryActive,
                                       skippedExtraFilter,
                                       skippedBlacklisted,
                                       skippedNoActor,
                                       skippedDead,
                                       skippedDisabled,
+                                      skippedGhost,
                                       skippedNoName);
                     }
                     return;
@@ -350,7 +360,7 @@ namespace NarrativeEngine::SenderCandidatePool
                     firstBlacklistedReason.empty() ? std::string{} : " (e.g. " + firstBlacklistedReason + ")";
                 logger::debug("SenderCandidatePool: walk complete — skips: "
                               "story-active={}{}, extra-filter={}{}, blacklisted={}{}, "
-                              "no-actor={}, dead={}, disabled={}, no-name={}",
+                              "no-actor={}, dead={}, disabled={}, ghost={}, no-name={}",
                               skippedStoryActive,
                               storyExample,
                               skippedExtraFilter,
@@ -360,6 +370,7 @@ namespace NarrativeEngine::SenderCandidatePool
                               skippedNoActor,
                               skippedDead,
                               skippedDisabled,
+                              skippedGhost,
                               skippedNoName);
             }
         }

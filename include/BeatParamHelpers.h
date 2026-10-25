@@ -59,8 +59,8 @@ namespace NarrativeEngine::BeatParamHelpers
 
     // Main thread only. Look up an Actor by FormID and enforce the
     // dispatch-time liveness gates: form resolves, form is an Actor,
-    // actor is not dead, actor is not disabled. On any failure sets
-    // `*failureReason` to a stable snake_case literal and returns
-    // nullptr.
+    // actor is not dead, actor is not disabled, actor is not a ghost. On
+    // any failure sets `*failureReason` to a stable snake_case literal and
+    // returns nullptr.
     RE::Actor* ResolveLiveSenderActor(RE::FormID senderFormID, std::string* failureReason);
 } // namespace NarrativeEngine::BeatParamHelpers

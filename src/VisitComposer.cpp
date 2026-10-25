@@ -1,5 +1,6 @@
 #include <VisitComposer.h>
 
+#include <EngineUtils.h>
 #include <EvaluationPipeline.h>
 #include <EventLogUtil.h>
 #include <LLMTextSanitizer.h>
@@ -291,6 +292,11 @@ namespace NarrativeEngine::VisitComposer
         }
         if (actor->IsDead()) {
             logger::warn("VisitComposer: sender 0x{:X} is dead — declining to compose", senderNpcFormID);
+            callback(std::nullopt);
+            return;
+        }
+        if (EngineUtils::IsGhost(actor)) {
+            logger::warn("VisitComposer: sender 0x{:X} is a ghost — declining to compose", senderNpcFormID);
             callback(std::nullopt);
             return;
         }

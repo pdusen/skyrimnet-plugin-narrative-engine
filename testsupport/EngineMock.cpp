@@ -442,6 +442,18 @@ RE::PlayerCharacter* RE::PlayerCharacter::GetSingleton()
     return NarrativeEngine::Testing::BuildFakePlayer();
 }
 
+// The reference's own ghost state, which SetActorGhost records. Whatever the
+// engine's body makes of the base record's ACBS flag besides, nothing under
+// test relies on it: the base is asked separately, through its own slot.
+bool RE::Actor::IsGhost() const
+{
+    auto* mock = EngineMock::Current();
+    if (mock == nullptr)
+        return false;
+    const auto& ghosts = mock->forms.ghostActors;
+    return std::find(ghosts.begin(), ghosts.end(), this) != ghosts.end();
+}
+
 bool RE::Actor::IsInCombat() const
 {
     auto* mock = EngineMock::Current();
@@ -936,6 +948,14 @@ namespace NarrativeEngine::Testing
             return;
         actor->AsActorState()->actorState1.lifeState =
             bleedingOut ? RE::ACTOR_LIFE_STATE::kBleedout : RE::ACTOR_LIFE_STATE::kAlive;
+    }
+
+    void EngineMock::SetActorGhost(const RE::Actor* actor, bool ghost)
+    {
+        auto& ghosts = forms.ghostActors;
+        std::erase(ghosts, actor);
+        if (ghost && actor != nullptr)
+            ghosts.push_back(actor);
     }
 
     RE::TESWorldSpace* EngineMock::AddWorldSpace(std::uint32_t formID, std::string editorID)

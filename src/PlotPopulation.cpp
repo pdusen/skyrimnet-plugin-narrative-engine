@@ -1,5 +1,6 @@
 #include <PlotPopulation.h>
 
+#include <EngineUtils.h>
 #include <GossipGraph.h>
 #include <logger.h>
 #include <PlotFactionRoster.h>
@@ -996,7 +997,12 @@ namespace NarrativeEngine::PlotPopulation
         // Disabled is transient — a quest can re-enable them — but an
         // NPC who is not in the world cannot be carrying out a step, so
         // they are not castable while it lasts.
-        return !actor->IsDisabled();
+        if (actor->IsDisabled()) {
+            return false;
+        }
+        // Nor is a ghost. A ghost record never joined the population, so
+        // this is a reference a script made a ghost after the fact.
+        return !EngineUtils::IsGhost(actor);
     }
 
     bool IsNearPlayer(RE::FormID npc)
