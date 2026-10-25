@@ -20,6 +20,7 @@
 #include <PlotDispatch.h>
 #include <PlotFactionRoster.h>
 #include <PlotState.h>
+#include <PlotTestPlots.h>
 #include <PlotTick.h>
 #include <PlotVerbs.h>
 #include <PrismaUI.h>
@@ -677,6 +678,24 @@ namespace NarrativeEngine::DashboardUIManager
             PlotTick::ForceTicks(static_cast<std::size_t>(count));
         }
 
+        // Backs the Plots tab's tick checkbox: scheduled plot ticks on or
+        // off, saved to the MCM override so it survives a restart, as the
+        // director's switch is.
+        void OnSetPlotTicksEnabled(const char* argument)
+        {
+            const bool enabled = ParseBoolArg(argument);
+            logger::info("DashboardUIManager: ne_setPlotTicksEnabled({})", enabled ? "true" : "false");
+            PlotTick::SetTicksEnabled(enabled);
+            AsyncDispatch::EnqueueWork([enabled](const PluginThread::Token& pt) {
+                MainThread::FireAndForget(pt, [enabled](const MainThread::Token&) {
+                    Settings::McmOverride mut;
+                    mut.plotTicksEnabled = enabled;
+                    Settings::WriteMcmOverride(mut);
+                    PushFullState();
+                });
+            });
+        }
+
         // Seeds one hand-built plot, for looking at the chain widget
         // before plot birth is authored.
         void OnSeedDebugPlot(const char*)
@@ -684,6 +703,20 @@ namespace NarrativeEngine::DashboardUIManager
             logger::info("DashboardUIManager: ne_seedDebugPlot");
             PlotDispatch::EnqueueWork([](const PlotThread::Token& pt) {
                 Plots::SeedDebugPlot(pt, Plots::MutableState(pt).simGameDay);
+                Plots::PublishSnapshot(pt);
+                PushFullState();
+            });
+        }
+
+        // Seeds one of the premade College plots, "brelyna" or "tolfdir",
+        // for checking plots against a known one in game. See
+        // PlotTestPlots.h.
+        void OnSeedTestPlot(const char* argument)
+        {
+            const std::string which = argument != nullptr ? argument : "";
+            logger::info("DashboardUIManager: ne_seedTestPlot('{}')", which);
+            PlotDispatch::EnqueueWork([which](const PlotThread::Token& pt) {
+                PlotTestPlots::Seed(pt, which);
                 Plots::PublishSnapshot(pt);
                 PushFullState();
             });
@@ -1029,7 +1062,9 @@ namespace NarrativeEngine::DashboardUIManager
         PrismaUI_API::RegisterJSListener(g_view, "ne_dispatchAction", &OnDispatchAction);
         PrismaUI_API::RegisterJSListener(g_view, "ne_abortRunningBeat", &OnAbortRunningBeat);
         PrismaUI_API::RegisterJSListener(g_view, "ne_forcePlotTicks", &OnForcePlotTicks);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setPlotTicksEnabled", &OnSetPlotTicksEnabled);
         PrismaUI_API::RegisterJSListener(g_view, "ne_seedDebugPlot", &OnSeedDebugPlot);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_seedTestPlot", &OnSeedTestPlot);
         PrismaUI_API::RegisterJSListener(g_view, "ne_probeDecisions", &OnProbeDecisions);
         // Phase 08 Settings tab listeners.
         PrismaUI_API::RegisterJSListener(g_view, "ne_setDebugMode", &OnSetDebugMode);
@@ -1618,6 +1653,8 @@ namespace NarrativeEngine::DashboardUIManager
                 // there making LLM calls, which is what the Plots tab
                 // locks its debug buttons on.
                 {"ticks_pending", PlotTick::OutstandingTicks()},
+                {"debug_buttons", cfg2.plotDebugButtons},
+                {"ticks_enabled", PlotTick::TicksEnabled()},
                 {"factions", std::move(factionsJson)},
                 {"list", std::move(plotsJson)},
             };

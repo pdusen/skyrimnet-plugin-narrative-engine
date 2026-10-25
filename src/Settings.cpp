@@ -297,6 +297,8 @@ namespace NarrativeEngine::Settings
 
             dst.plotsEnabled = ini.GetBoolValue("Plots", "bPlotsEnabled", dst.plotsEnabled);
             dst.plotLogEnabled = ini.GetBoolValue("Plots", "bPlotLogEnabled", dst.plotLogEnabled);
+            dst.plotDebugButtons = ini.GetBoolValue("Plots", "bPlotDebugButtons", dst.plotDebugButtons);
+            dst.plotTicksEnabled = ini.GetBoolValue("Plots", "bPlotTicksEnabled", dst.plotTicksEnabled);
             dst.plotTickIntervalGameHours = static_cast<float>(
                 ini.GetDoubleValue("Plots", "fPlotTickIntervalGameHours", dst.plotTickIntervalGameHours));
             dst.plotMaxOutstandingTicks =
@@ -901,6 +903,11 @@ namespace NarrativeEngine::Settings
             ini.SetBoolValue("Director", "bTickEnabled", *mutations.tickEnabled);
             g_config.tickEnabled = *mutations.tickEnabled;
             logger::info("Settings: MCM override write: bTickEnabled={}", *mutations.tickEnabled ? 1 : 0);
+        }
+        if (mutations.plotTicksEnabled) {
+            ini.SetBoolValue("Plots", "bPlotTicksEnabled", *mutations.plotTicksEnabled);
+            g_config.plotTicksEnabled = *mutations.plotTicksEnabled;
+            logger::info("Settings: MCM override write: bPlotTicksEnabled={}", *mutations.plotTicksEnabled ? 1 : 0);
         }
         if (mutations.tickIntervalSeconds) {
             ini.SetLongValue("Director", "iTickIntervalSeconds", *mutations.tickIntervalSeconds);

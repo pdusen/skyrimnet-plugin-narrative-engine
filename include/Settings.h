@@ -1066,6 +1066,15 @@ namespace NarrativeEngine::Settings
         // independent footing as the gossip trace: a quiet main log and
         // a complete plot trace at the same time.
         bool plotLogEnabled = true;
+        // Whether the Plots tab shows its debug buttons: the forced ticks
+        // and the seeded test plots. Off by default, because each one
+        // changes the simulation rather than looking at it.
+        bool plotDebugButtons = false;
+        // Whether the simulation's scheduled ticks fire. The dashboard's
+        // Plots tab toggles it at runtime and writes it back here; forced
+        // ticks run either way. Distinct from plotsEnabled, which leaves
+        // the whole subsystem unloaded.
+        bool plotTicksEnabled = true;
 
         // In-world hours between simulation ticks. Two ticks a day is
         // slow enough that a plot takes in-world weeks and fast enough
@@ -1266,6 +1275,7 @@ namespace NarrativeEngine::Settings
         std::optional<int> visitComposeMemoryRenderCap;
         std::optional<int> visitComposeDialogueRenderCap;
         std::optional<int> visitConclusionPollRecentLinesRenderCap;
+        std::optional<bool> plotTicksEnabled;
     };
 
     // Read the plugin INI, then apply any MCM-managed override, and

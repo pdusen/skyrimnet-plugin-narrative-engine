@@ -438,6 +438,13 @@ export interface PlotsTabState {
     // plot born and per plot adapted, so this stays non-zero for tens of
     // seconds at a time; the tab locks its debug buttons while it is.
     ticks_pending: number;
+    // bPlotDebugButtons: whether the tab shows its forced-tick and
+    // seeded-plot buttons at all.
+    debug_buttons: boolean;
+    // Whether scheduled ticks fire; the tab's checkbox, which calls
+    // `window.ne_setPlotTicksEnabled('true'|'false')`. Forced ticks run
+    // either way.
+    ticks_enabled: boolean;
     factions: PlotFactionInfo[];
     // Active plots and terminal ones awaiting reaping alike.
     list: PlotEntry[];

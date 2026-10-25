@@ -65,6 +65,15 @@ namespace NarrativeEngine::PlotTick
     // Safe from any thread. Wired to dashboard bridge actions in step 8.
     void ForceTicks(std::size_t count);
 
+    // Whether scheduled ticks fire: the Plots tab's checkbox, seeded from
+    // bPlotTicksEnabled at Initialize. While off, the schedule re-anchors
+    // to the clock on every poll, so turning it back on does not fire the
+    // hours it was off as a backlog -- the director's switch drops its
+    // disabled time the same way. Forced ticks run either way. Safe from
+    // any thread.
+    void SetTicksEnabled(bool enabled);
+    [[nodiscard]] bool TicksEnabled();
+
     // How many ticks are queued or currently running.
     //
     // Kept here rather than read off PlotDispatch::OutstandingCount()

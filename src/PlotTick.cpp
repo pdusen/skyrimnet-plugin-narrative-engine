@@ -59,6 +59,7 @@ namespace NarrativeEngine::PlotTick
         // needs no synchronisation of its own.
         double g_lastFiredGameHours = 0.0;
         bool g_needsRebase = true;
+        std::atomic<bool> g_ticksEnabled{true};
 
         // Queued + running ticks. Written from any thread; see
         // PlotTick::OutstandingTicks for why this is not just
@@ -865,6 +866,7 @@ namespace NarrativeEngine::PlotTick
         g_lastFiredGameHours = 0.0;
         g_forcedAheadGameHours = 0.0;
         g_needsRebase = true;
+        g_ticksEnabled.store(Settings::Get().plotTicksEnabled, std::memory_order_release);
     }
 
     void OnSessionStart()
@@ -898,6 +900,15 @@ namespace NarrativeEngine::PlotTick
         // the name changes at character creation and with showracemenu,
         // so it is read every poll rather than once a session.
         PlotBirth::SetPlayerName(SenderCandidatePool::GetPlayerDisplayName());
+
+        // Switched off from the Plots tab. Re-anchored every poll rather
+        // than on the switch, so the hours it was off are dropped, not
+        // fired as a backlog when it comes back on. Below the player's
+        // name, which a forced tick's birth still reads.
+        if (!g_ticksEnabled.load(std::memory_order_acquire)) {
+            g_needsRebase = true;
+            return;
+        }
 
         const double nowGameHours = EngineUtils::GetCurrentGameHours();
 
@@ -977,6 +988,18 @@ namespace NarrativeEngine::PlotTick
         // all the only thing the button told you was that you had
         // clicked it.
         DashboardUIManager::PushFullState();
+    }
+
+    void SetTicksEnabled(bool enabled)
+    {
+        if (g_ticksEnabled.exchange(enabled, std::memory_order_acq_rel) != enabled) {
+            logger::info("PlotTick: scheduled ticks {}", enabled ? "enabled" : "disabled");
+        }
+    }
+
+    bool TicksEnabled()
+    {
+        return g_ticksEnabled.load(std::memory_order_acquire);
     }
 
     std::size_t OutstandingTicks()

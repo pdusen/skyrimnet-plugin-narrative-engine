@@ -1049,6 +1049,9 @@ body {
 /* --- Plots tab ---------------------------------------------------------- */
 
 .plot-header { margin-bottom: 10px; }
+/* The budget on the left, the tick switch pushed to the right by its own
+   margin-left: auto. */
+.plot-header-top { display: flex; align-items: center; }
 .plot-budget { font-size: 15px; }
 .plot-budget strong { font-size: 20px; }
 .plot-counters { display: flex; flex-wrap: wrap; gap: 14px; color: #98a0ab; font-size: 12px; margin-top: 4px; }
@@ -1162,6 +1165,13 @@ body {
 
 .plot-section-heading { margin: 20px 0 10px; font-size: 13px; color: #98a0ab; text-transform: uppercase; }
 .plot-empty { color: #98a0ab; font-size: 13px; }
+/* A section heading that is also its section's toggle: a button reset that
+   keeps the heading's own size, colour and margins. */
+.plot-section-toggle {
+    display: block; background: none; border: none; padding: 0;
+    font-family: inherit; text-align: left; cursor: pointer;
+}
+.plot-section-toggle:hover { color: #d6dbe2; }
 .plot-factions ul { list-style: none; padding: 0; margin: 0; font-size: 12px; }
 .plot-factions li { padding: 2px 0; }
 .plot-factions span { color: #98a0ab; }
