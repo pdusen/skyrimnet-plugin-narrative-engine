@@ -295,6 +295,50 @@ namespace NarrativeEngine::Settings
             dst.eventHistoryFlushIntervalSeconds = static_cast<int>(ini.GetLongValue(
                 "EventHistory", "iEventHistoryFlushIntervalSeconds", dst.eventHistoryFlushIntervalSeconds));
 
+            dst.plotsEnabled = ini.GetBoolValue("Plots", "bPlotsEnabled", dst.plotsEnabled);
+            dst.plotLogEnabled = ini.GetBoolValue("Plots", "bPlotLogEnabled", dst.plotLogEnabled);
+            dst.plotDebugButtons = ini.GetBoolValue("Plots", "bPlotDebugButtons", dst.plotDebugButtons);
+            dst.plotTicksEnabled = ini.GetBoolValue("Plots", "bPlotTicksEnabled", dst.plotTicksEnabled);
+            dst.plotTickIntervalGameHours = static_cast<float>(
+                ini.GetDoubleValue("Plots", "fPlotTickIntervalGameHours", dst.plotTickIntervalGameHours));
+            dst.plotMaxOutstandingTicks =
+                static_cast<int>(ini.GetLongValue("Plots", "iPlotMaxOutstandingTicks", dst.plotMaxOutstandingTicks));
+            dst.plotMaxConcurrent =
+                static_cast<int>(ini.GetLongValue("Plots", "iPlotMaxConcurrent", dst.plotMaxConcurrent));
+            dst.plotMastermindCooldownDays = static_cast<float>(
+                ini.GetDoubleValue("Plots", "fPlotMastermindCooldownDays", dst.plotMastermindCooldownDays));
+            dst.plotActorCooldownDays =
+                static_cast<float>(ini.GetDoubleValue("Plots", "fPlotActorCooldownDays", dst.plotActorCooldownDays));
+            dst.plotMaxAdaptations =
+                static_cast<int>(ini.GetLongValue("Plots", "iPlotMaxAdaptations", dst.plotMaxAdaptations));
+            dst.plotStepHistoryCap =
+                static_cast<int>(ini.GetLongValue("Plots", "iPlotStepHistoryCap", dst.plotStepHistoryCap));
+            dst.plotTerminalRetentionDays = static_cast<float>(
+                ini.GetDoubleValue("Plots", "fPlotTerminalRetentionDays", dst.plotTerminalRetentionDays));
+            dst.plotProgressRateMin =
+                static_cast<float>(ini.GetDoubleValue("Plots", "fPlotProgressRateMin", dst.plotProgressRateMin));
+            dst.plotProgressRateMax =
+                static_cast<float>(ini.GetDoubleValue("Plots", "fPlotProgressRateMax", dst.plotProgressRateMax));
+            dst.plotProgressMaxFraction = static_cast<float>(
+                ini.GetDoubleValue("Plots", "fPlotProgressMaxFraction", dst.plotProgressMaxFraction));
+            dst.plotPreparationEase =
+                static_cast<float>(ini.GetDoubleValue("Plots", "fPlotPreparationEase", dst.plotPreparationEase));
+            dst.plotPlanOdds = static_cast<float>(ini.GetDoubleValue("Plots", "fPlotPlanOdds", dst.plotPlanOdds));
+            dst.plotBudgetScale =
+                static_cast<float>(ini.GetDoubleValue("Plots", "fPlotBudgetScale", dst.plotBudgetScale));
+            dst.plotConcedeOdds =
+                static_cast<float>(ini.GetDoubleValue("Plots", "fPlotConcedeOdds", dst.plotConcedeOdds));
+            dst.plotAlertHardening =
+                static_cast<float>(ini.GetDoubleValue("Plots", "fPlotAlertHardening", dst.plotAlertHardening));
+            dst.plotBirthMemoryCount =
+                static_cast<int>(ini.GetLongValue("Plots", "iPlotBirthMemoryCount", dst.plotBirthMemoryCount));
+            dst.plotBirthMinMemoryImportance = static_cast<float>(
+                ini.GetDoubleValue("Plots", "fPlotBirthMinMemoryImportance", dst.plotBirthMinMemoryImportance));
+            dst.plotMishapEnabled = ini.GetBoolValue("Plots", "bPlotMishapEnabled", dst.plotMishapEnabled);
+            dst.plotMishapChanceBase =
+                static_cast<float>(ini.GetDoubleValue("Plots", "fPlotMishapChanceBase", dst.plotMishapChanceBase));
+            dst.plotRandomSeed = static_cast<int>(ini.GetLongValue("Plots", "iPlotRandomSeed", dst.plotRandomSeed));
+
             dst.gossipEnabled = ini.GetBoolValue("Gossip", "bGossipEnabled", dst.gossipEnabled);
             dst.gossipLogEnabled = ini.GetBoolValue("Gossip", "bGossipLogEnabled", dst.gossipLogEnabled);
             dst.gossipTickIntervalSeconds = static_cast<int>(
@@ -859,6 +903,11 @@ namespace NarrativeEngine::Settings
             ini.SetBoolValue("Director", "bTickEnabled", *mutations.tickEnabled);
             g_config.tickEnabled = *mutations.tickEnabled;
             logger::info("Settings: MCM override write: bTickEnabled={}", *mutations.tickEnabled ? 1 : 0);
+        }
+        if (mutations.plotTicksEnabled) {
+            ini.SetBoolValue("Plots", "bPlotTicksEnabled", *mutations.plotTicksEnabled);
+            g_config.plotTicksEnabled = *mutations.plotTicksEnabled;
+            logger::info("Settings: MCM override write: bPlotTicksEnabled={}", *mutations.plotTicksEnabled ? 1 : 0);
         }
         if (mutations.tickIntervalSeconds) {
             ini.SetLongValue("Director", "iTickIntervalSeconds", *mutations.tickIntervalSeconds);

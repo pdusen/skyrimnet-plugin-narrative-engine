@@ -1,0 +1,244 @@
+#pragma once
+
+#include <cstdint>
+
+#include <PlotModel.h>
+
+// PlotResolution — the progress race, as free functions over plain
+// numbers.
+//
+// A step is not a coin flipped at a deadline. It is a race between
+// accumulating progress and a running clock, and both sides of that race
+// are fixed when the step is dispatched:
+//
+//   BUDGET    how many ticks the actor gets. From CIRCUMSTANCE: how far
+//             they must travel, plus the step type's inherent scale.
+//             Deliberately NOT a competence figure — a capable actor and
+//             a hopeless one sent on the same errand to the same place
+//             get the same budget; what differs is what they do with it.
+//
+//   THRESHOLD how much work the step represents. From the step type and
+//             the target's importance.
+//
+// The two are computed by separate functions taking disjoint inputs, and
+// that is load-bearing rather than tidy. If the budget were derived from
+// the threshold, every step would carry identical odds and the race
+// would be theatre. `SizeBudget` cannot see `targetImportance` and
+// `SizeThreshold` cannot see `travelDistance`, so the independence is a
+// property of the signatures rather than a promise in a comment.
+//
+// Nothing here reads the engine, Settings or plot state. The caller
+// supplies distances, competences and the tuning values; a probe
+// supplies whatever it likes.
+//
+// See docs/design/FACTION_PLOTS.md Part 6 and
+// docs/implementation/PHASE_17_FACTION_PLOTS.md step 6.
+namespace NarrativeEngine::PlotResolution
+{
+    // How many ticks a step of this type gets before the mastermind's
+    // window closes.
+    //
+    // The deadline reads the step type's inherent scale and how big the
+    // job looks - a more important target is worth waiting longer for -
+    // and NOTHING ELSE. In particular it does not read travel.
+    //
+    // That is the correction this signature exists to record. Travel used
+    // to scale the budget, which handed a distant actor extra ticks to do
+    // an unchanged amount of work: a far errand came out strictly EASIER
+    // than a near one, and steps against near targets came out unwinnable
+    // because their budget shrank while their threshold did not. Travel
+    // is a cost, so it belongs on the threshold; see SizeThreshold below
+    // and Part 6 of docs/design/FACTION_PLOTS.md.
+    //
+    // `targetImportance` is 0 (a nobody, a trinket) to 1 (a jarl, an
+    // artefact) - the same figure SizeThreshold reads. Both sides scaling
+    // with it is deliberate: importance makes a step LONGER rather than
+    // less likely to succeed, and a longer step is more exposed to the
+    // mishap roll. Travel is what moves the odds.
+    //
+    // `scale` multiplies the whole of it, fPlotBudgetScale: lower makes a
+    // weak agent run out of time rather than finish late.
+    [[nodiscard]] int SizeBudget(PlotModel::StepType type, double targetImportance, double scale = 1.0);
+
+    // The fewest ticks in which this threshold can be reached at all, by
+    // ANY actor, on a perfect roll every tick.
+    //
+    // Two things can make a step arithmetically impossible rather than
+    // merely hard, and a floor is only honest if it accounts for both:
+    // the per-tick ceiling (no tick may add more than `maxFractionPerTick`
+    // of the threshold) and the progress rate itself (no tick may add more
+    // than the top of the rate band). The previous version knew only about
+    // the first, so it returned ceil(1 / maxFractionPerTick) and called
+    // that winnable - which it is not, for any threshold the rate cannot
+    // cover in that many ticks. Step 12's first run dispatched six steps
+    // that could not be completed on a perfect roll; all six timed out,
+    // looking exactly like ordinary bad luck.
+    //
+    // The rate used is the best a WORST-CASE actor could roll, so the
+    // guarantee holds for every actor rather than the one being cast.
+    // Where the ceiling binds this reduces to ceil(1 / maxFractionPerTick)
+    // exactly, so the old guarantee is kept rather than traded away.
+    [[nodiscard]] int MinimumViableBudget(float threshold, double rateMin, double rateMax, double maxFractionPerTick);
+
+    // How much work a step of this type is: its base cost, scaled by how
+    // important the target is and by how far the actor has to go to reach
+    // them. Crossing the province is part of the job, not an extension of
+    // the deadline.
+    //
+    // `targetImportance` is 0 (a nobody, a trinket) to 1 (a jarl, an
+    // artefact). `travelDistanceNorm` is 0 (the actor is already there) to
+    // 1 (the far side of the province); the caller normalises, and this
+    // function has no opinion about map units.
+    [[nodiscard]] float SizeThreshold(PlotModel::StepType type, double targetImportance, double travelDistanceNorm);
+
+    // The share of a step's work, and of its chance of a mishap, that
+    // `preparations` preparations that succeeded leave, each leaving `ease`:
+    // ease^preparations, never less than a quarter. However well prepared,
+    // a step is still work, and an agent can still be seen.
+    [[nodiscard]] double EaseFactor(int preparations, double ease) noexcept;
+
+    // A threshold eased by its preparations: threshold * EaseFactor.
+    [[nodiscard]] float EaseThreshold(float threshold, int preparations, double ease);
+
+    // What a step's circumstances do to its chance of a mishap: what its
+    // preparations leave, raised by `hardening` when the person it is done
+    // to is on guard -- they caught one of the plot's agents before. Below 1
+    // an agent is less likely to be seen, above it more. Being on guard
+    // does not touch the work, which is EaseFactor alone: a mark who is
+    // watching for somebody is harder to slip past, not a bigger job, and
+    // more work against a budget that did not grow made the step's timing
+    // out a certainty rather than a risk.
+    [[nodiscard]] double Pressure(int preparations, double ease, bool onGuard, double hardening) noexcept;
+
+    // The settings a step's race is run with, gathered so a planner can run
+    // it without reading Settings.
+    struct Tuning
+    {
+        float rateMin = 1.5f;
+        float rateMax = 5.0f;
+        float maxFractionPerTick = 0.45f;
+        bool mishapEnabled = true;
+        double mishapChance = 0.012;
+        double preparationEase = 0.8;
+        double alertHardening = 1.25;
+        double budgetScale = 1.0;
+    };
+
+    // A step as planning knows it: no agent yet and no trip, so an ordinary
+    // agent and a middling trip stand in for them.
+    struct Estimate
+    {
+        PlotModel::StepType type = PlotModel::StepType::Locate;
+        double importance = 0.25;
+        double travel = 0.5;
+        int preparations = 0;
+        // The person it is done to caught one of the plot's agents before.
+        bool onGuard = false;
+        double competence = 0.5;
+        double suitability = 0.5;
+    };
+
+    // The chance a step succeeds, 0 to 1: its race played `trials` times
+    // from a fixed seed, sized and eased exactly as dispatch sizes it and
+    // rolled exactly as a tick rolls it. The same inputs always give the
+    // same answer.
+    [[nodiscard]] double EstimateSuccess(const Estimate& step, const Tuning& tuning, int trials = 300);
+
+    // How well an actor suits a KIND of step.
+    //
+    // A thief sent to steal, a courtier sent to discredit. Derived from
+    // the authored skills the population already caches, so it costs
+    // nothing per tick and is stable for a given NPC.
+    //
+    // The mapping is deliberately coarse — three skills across eight
+    // step types — because the point is that actors DIFFER, not that the
+    // model is a faithful simulation of Skyrim's skill tree. Step 7's
+    // harness is where the spread this produces gets judged.
+    [[nodiscard]] double Suitability(PlotModel::StepType type, double speech, double sneak, double pickpocket);
+
+    // What one tick of an actor's effort is worth.
+    struct RollInputs
+    {
+        // 0..1. Level and relevant skills, normalised by the caller.
+        double competence = 0.5;
+        // 0..1. How well this actor suits this KIND of step — a thief
+        // sent to steal, a courtier sent to discredit.
+        double suitability = 0.5;
+
+        // The step's own threshold, in the same absolute work units the
+        // rates below are in.
+        float threshold = 1.0f;
+
+        // ABSOLUTE work per tick, not a fraction of the threshold.
+        //
+        // This distinction is the whole of the model and it was wrong in
+        // the first implementation. When the per-tick roll is a fraction
+        // OF the threshold, ticks-to-finish is 1 / mean(fraction) and the
+        // threshold cancels out completely — a step worth 5 and a step
+        // worth 500 both take 4.5 ticks, and `SizeThreshold`, target
+        // importance and half the design do nothing at all. Measured, not
+        // reasoned: the Step 9 harness found it.
+        //
+        // With absolute rates, ticks ≈ threshold / rate, so a harder
+        // target genuinely takes longer.
+        float rateMin = 1.5f;
+        float rateMax = 5.0f;
+
+        // The one thing that DOES stay relative: no single tick may clear
+        // more than this share of the threshold, so a trivially small
+        // step still cannot be finished in one go. This is what
+        // MinimumViableBudget is derived from.
+        float maxFractionPerTick = 0.45f;
+    };
+
+    // Progress for one unblocked tick. Always strictly positive and
+    // always short of the threshold — see the clamps in RollInputs.
+    [[nodiscard]] float RollProgress(const RollInputs& inputs, std::uint64_t& rng);
+
+    struct MishapInputs
+    {
+        bool enabled = true;
+        double chanceBase = 0.04;
+        // Conspicuous steps are likelier to go wrong in a way somebody
+        // notices; capable actors are less likely to be the ones it
+        // happens to.
+        bool conspicuous = false;
+        double competence = 0.5;
+        // What the step's circumstances do to the chance, from Pressure:
+        // below 1 when it was prepared -- an agent who watched the mark
+        // first is less likely to be seen -- above it when the mark is on
+        // guard.
+        double easing = 1.0;
+    };
+
+    // Did the actor get caught this tick?
+    //
+    // Typed failure is load-bearing — it decides whether the target ends
+    // up with a memory and whether the plot leaks into gossip — and
+    // progress alone cannot express it, because being caught is
+    // orthogonal to how far along the work is. This is the second roll
+    // that carries that distinction. Its SHAPE is an open design
+    // question, which is why the caller can switch it off.
+    [[nodiscard]] bool RollMishap(const MishapInputs& inputs, std::uint64_t& rng);
+
+    // One tick's worth of everything that can happen to a live step.
+    struct TickInputs
+    {
+        // A conspicuous step whose actor or target is loaded near the
+        // player makes no progress this tick. `elapsed` advances anyway,
+        // which is the whole mechanism: a step blocked long enough fails
+        // by running out of time like any other, with no separate
+        // "overtaken by events" path and no risk of a held step living
+        // forever.
+        bool blockedByPresence = false;
+        RollInputs roll;
+        MishapInputs mishap;
+    };
+
+    // Advance one live step by a tick, mutating it.
+    //
+    // Appends to the step's own roll history, and sets `state` and
+    // `outcome` when the step reaches a terminal result. Returns what
+    // happened, for the trace.
+    PlotModel::TickRecord AdvanceStep(PlotModel::Step& step, const TickInputs& inputs, std::uint64_t& rng);
+} // namespace NarrativeEngine::PlotResolution

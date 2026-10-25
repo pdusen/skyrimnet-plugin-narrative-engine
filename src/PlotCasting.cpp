@@ -1,0 +1,721 @@
+#include <PlotCasting.h>
+
+#include <unordered_set>
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <string_view>
+
+namespace NarrativeEngine::PlotCasting
+{
+    namespace
+    {
+        // splitmix64, matching Plots::NextRandom. Duplicated rather than
+        // shared because that one lives in an engine-bound translation
+        // unit and this one must stay probeable; it is six lines and a
+        // named constant, and the alternative is dragging Settings and
+        // the logger into every casting probe.
+        std::uint64_t NextRandom(std::uint64_t& state) noexcept
+        {
+            std::uint64_t z = (state += 0x9E3779B97F4A7C15ULL);
+            z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+            z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+            return z ^ (z >> 31);
+        }
+
+        double NextUniform(std::uint64_t& state) noexcept
+        {
+            return static_cast<double>(NextRandom(state) >> 11) * (1.0 / 9007199254740992.0);
+        }
+
+        // Draw one candidate in proportion to weight. Returns 0 when
+        // nothing is eligible.
+        RE::FormID WeightedDraw(const std::vector<Candidate>& candidates, std::uint64_t& rng)
+        {
+            double total = 0.0;
+            for (const auto& c : candidates) {
+                if (c.reject == Reject::None) {
+                    total += c.weight;
+                }
+            }
+            if (!(total > 0.0)) {
+                return 0;
+            }
+
+            double roll = NextUniform(rng) * total;
+            for (const auto& c : candidates) {
+                if (c.reject != Reject::None) {
+                    continue;
+                }
+                roll -= c.weight;
+                if (roll <= 0.0) {
+                    return c.npc;
+                }
+            }
+            // Floating-point drift only; fall back to the last eligible.
+            for (auto it = candidates.rbegin(); it != candidates.rend(); ++it) {
+                if (it->reject == Reject::None) {
+                    return it->npc;
+                }
+            }
+            return 0;
+        }
+
+        // Does this membership count right now?
+        //
+        // One function so the three places that read standing cannot
+        // drift apart: the weighting, the mastermind's own standings,
+        // and the subordinate scan. An empty predicate means yes, which
+        // keeps every probe that drives the pure arithmetic working
+        // unchanged.
+        bool Counts(const SeatedPredicate& seated, RE::FormID npc, const FactionStanding& f)
+        {
+            return !seated || seated(npc, f.faction);
+        }
+
+        // How much weight an NPC's standing earns them as a mastermind.
+        //
+        //   base            everyone, including independents
+        //   + membership    belonging to any organisation at all
+        //   + standing      how far up a ROSTERED one you are
+        //
+        // THE STANDING TERM IS EXPONENTIAL, doubling kStandingDoublings
+        // times across the ladder. That is a reversal: it was linear,
+        // on the argument that a jarl should be likelier than a guard
+        // and not a hundred times likelier, or the same few NPCs would
+        // scheme continuously with only the cooldown spreading the work.
+        //
+        // What that argument missed is what a mastermind NEEDS. A plot
+        // is a person with something to hide and SOMEBODY TO SEND, and
+        // the second half is not evenly distributed: a jarl has a court,
+        // a guild master has a guild, a cook has herself. Casting
+        // measured that correctly and the log said so -- once the agent
+        // ladder stopped handing Elisif to the kitchen, nearly every
+        // mastermind was executing their own steps, because nearly every
+        // mastermind drawn had nobody to send. The draw was producing
+        // schemers who could not scheme.
+        //
+        // Weighting the people with resources far more heavily is the
+        // fix at source. The concentration risk the old comment named is
+        // real and unchanged -- watch the CASTING line in the offline
+        // harness for distinct-mastermind count, and the mastermind
+        // cooldown is what has to absorb it.
+        //
+        // The standing term takes the MAXIMUM across factions, never the
+        // sum: someone's weight should reflect the most authority they
+        // hold anywhere, and summing would let a well-connected nobody
+        // outrank a guild master. Note the deliberate asymmetry with
+        // QualifyAgent, which takes the UNION across factions — "how much
+        // can this person command" and "who can they command" are
+        // different questions and must not be collapsed into one rule.
+        double MastermindWeight(const Member& member, const SeatedPredicate& seated)
+        {
+            // Independents are eligible. This is the floor everyone
+            // starts from, and it is what makes a Riverwood farmer's
+            // plot possible at all.
+            constexpr double kBase = 1.0;
+            constexpr double kMembershipBonus = 0.5;
+            // Doublings of the standing term across the full 0..1
+            // ladder. 6.24 gives 2^(6.24s) - 1, so the term doubles
+            // about every sixth of the ladder climbed:
+            //
+            //   standing  0     0.25  0.5   0.75  1.0
+            //   term      0     1.9   7.7   24.6  74.6
+            //   weight    1.5   3.4   9.2   26.1  76.1
+            //
+            // An independent stays at 1.0, a bottom-rung member at 1.5,
+            // and a jarl is three times the thane and seventy-six times
+            // the farmer.
+            //
+            // 6.24 IS SOLVED FOR, not chosen. Every BORN line records
+            // the chosen mastermind's weight, and those weights land on
+            // this ladder cleanly enough to invert -- so 67 plots born
+            // across six runs recover the pool's shape: 43% independent,
+            // 34% bottom-rung, and 3.3% at the top of some ladder.
+            //
+            // Against that pool the constant sets who schemes:
+            //
+            //                    d=4     d=6.24
+            //   independent     16.4%      6.8%
+            //   bottom rung     19.4%      8.1%
+            //   s=0.50          17.9%     15.2%
+            //   s=0.75          11.9%     15.3%
+            //   LEADER          20.9%     40.0%
+            //
+            // Four in ten plots run by somebody who leads an
+            // organisation is the wanted shape, and 6.24 is the value
+            // that produces it. The bottom of the ladder pays for it:
+            // the farmer's plot drops to roughly a third of what it was,
+            // which is the deliberate cost of the top taking a share
+            // that size.
+            //
+            // EXPECT THE FIRST RUN TO LAND UNDER 40%. Leaders are about
+            // 3% of the pool, so drawing them twice as often runs them
+            // into the mastermind cooldown far more, and that feedback
+            // is not in the arithmetic above -- the pool was inferred
+            // from draws the cooldown had already thinned. If a run
+            // settles nearer a third, 6.5 is the next value to try.
+            constexpr double kStandingDoublings = 6.24;
+
+            double weight = kBase;
+            double best = 0.0;
+            bool belongs = false;
+            for (const auto& f : member.factions) {
+                if (!Counts(seated, member.npc, f)) {
+                    continue;
+                }
+                belongs = true;
+                best = std::max(best, f.standing);
+            }
+            if (belongs) {
+                weight += kMembershipBonus;
+            }
+            return weight + std::exp2(kStandingDoublings * std::clamp(best, 0.0, 1.0)) - 1.0;
+        }
+
+        // How far above the mastermind a rung-3 candidate may stand
+        // before they are simply not someone this person could ask.
+        //
+        // Standings are normalised 0..1, so a quarter is roughly one
+        // rung of a four-or-five rung ladder: a thane may ask a fellow
+        // thane a favour, and may not ask the housecarl. Deliberately
+        // not zero -- "never ask anyone above you" would forbid a
+        // steward leaning on a jarl, which is a thing that happens.
+        constexpr double kOutrankMargin = 0.25;
+
+        // An ABSOLUTE ceiling, on top of the relative kOutrankMargin.
+        //
+        // That margin is measured against the mastermind, which makes it
+        // inert for the people at the top of a ladder: Elenwen stands at
+        // 1.0, so nothing can exceed her by a quarter and every jarl in
+        // Skyrim sat inside her guard. That is exactly the mastermind
+        // the exponential weighting now draws most often, so the
+        // relative test failed where it was needed most.
+        //
+        // Strictly above 0.75 is the top rung of any ladder the roster
+        // declares: a jarl, a guild master, the head of a great family.
+        // Those people do not run errands for an acquaintance, whoever
+        // is asking. Rungs 1 and 2 are unaffected -- being someone's
+        // actual subordinate says more than this does, and a 1.0
+        // standing makes that nearly impossible anyway.
+        constexpr double kRung3StandingCeiling = 0.75;
+
+        // The highest standing this member holds anywhere that counts.
+        //
+        // The same quantity MastermindWeight uses, and for the same
+        // reason: the MAXIMUM across factions, never the sum, because it
+        // answers "how much authority does this person hold anywhere".
+        double BestStanding(const Member& member, const SeatedPredicate& seated)
+        {
+            double best = 0.0;
+            for (const auto& f : member.factions) {
+                if (Counts(seated, member.npc, f)) {
+                    best = std::max(best, f.standing);
+                }
+            }
+            return best;
+        }
+
+        // The mastermind's standing in each faction they belong to,
+        // for the subordinate test.
+        std::unordered_map<RE::FormID, double> StandingsOf(const Member& member, const SeatedPredicate& seated)
+        {
+            std::unordered_map<RE::FormID, double> standings;
+            for (const auto& f : member.factions) {
+                if (!Counts(seated, member.npc, f)) {
+                    continue;
+                }
+                auto& slot = standings[f.faction];
+                slot = std::max(slot, f.standing);
+            }
+            return standings;
+        }
+
+        // Is this token a word in its own right at `at`, rather than a
+        // fragment of a longer one? Hyphens and apostrophes count as
+        // word characters so "Snow-Shod" and "Ri'saad" are single words.
+        bool IsWordChar(char c)
+        {
+            const auto u = static_cast<unsigned char>(c);
+            return std::isalnum(u) != 0 || c == '-' || c == '\'';
+        }
+
+        bool WholeWordAt(std::string_view text, std::size_t at, std::size_t len)
+        {
+            const bool leftOk = at == 0 || !IsWordChar(text[at - 1]);
+
+            // An apostrophe ENDS a name and does not begin one, so the
+            // two boundaries are not symmetric.
+            //
+            // This was symmetric, and possessives were the commonest way
+            // a step names its subject -- "Erikur's quarters", "Captain
+            // Veleth's movements", "the guard captain's footlocker". The
+            // trailing apostrophe counted as a word character, so the
+            // match was rejected, so the exclusion never fired, so the
+            // person the step was ABOUT was eligible to carry it out.
+            // Captain Veleth was duly cast to shadow Captain Veleth.
+            //
+            // The left side keeps the apostrophe, because there it is
+            // genuinely part of the word: an O'Ryan is not a Ryan.
+            const auto after = at + len;
+            const bool rightOk = after >= text.size() || !IsWordChar(text[after]) || text[after] == '\'';
+            return leftOk && rightOk;
+        }
+
+        bool ContainsWord(std::string_view text, std::string_view word)
+        {
+            if (word.empty() || word.size() > text.size()) {
+                return false;
+            }
+            for (std::size_t at = 0; at + word.size() <= text.size(); ++at) {
+                bool same = true;
+                for (std::size_t i = 0; i < word.size() && same; ++i) {
+                    same = std::tolower(static_cast<unsigned char>(text[at + i]))
+                           == std::tolower(static_cast<unsigned char>(word[i]));
+                }
+                if (same && WholeWordAt(text, at, word.size())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Does this step's description NAME this person?
+        //
+        // The step that made this necessary read "Watch Asgeir and
+        // Vittoria at the Bee and Barb to learn wedding plans", and
+        // casting handed it to Asgeir Snow-Shod -- the groom, spying on
+        // his own wedding for the father sabotaging it. Casting cannot
+        // see what a step is about: targets are unresolved, so all it
+        // has is this sentence, and it was not reading it.
+        //
+        // TOKEN-WISE, because the model writes "Asgeir", not "Asgeir
+        // Snow-Shod". Tokens under four characters are ignored as too
+        // collision-prone to be evidence, and bare honorifics are
+        // ignored because "Elder Othreloth" would otherwise exclude
+        // everyone from a step mentioning any elder.
+        //
+        // This is NOT name resolution. It never turns a string into an
+        // entity -- it asks whether a KNOWN entity's name occurs in one,
+        // which has no ambiguity to get wrong. A false positive costs
+        // nothing: casting draws somebody else. See
+        // docs/prior-art/NAME_RESOLUTION_FAILURE_MODES.md for the thing
+        // this is deliberately not.
+        bool NamesPerson(std::string_view text, std::string_view name)
+        {
+            if (text.empty() || name.empty()) {
+                return false;
+            }
+            static constexpr std::string_view kTitles[] = {
+                "elder",
+                "captain",
+                "commander",
+                "general",
+                "legate",
+                "jarl",
+                "chief",
+                "thane",
+                "brother",
+                "sister",
+                "mother",
+                "father",
+                "master",
+                "lady",
+            };
+
+            std::size_t at = 0;
+            while (at < name.size()) {
+                const auto end = name.find(' ', at);
+                const auto token = name.substr(at, end == std::string_view::npos ? std::string_view::npos : end - at);
+                at = end == std::string_view::npos ? name.size() : end + 1;
+
+                if (token.size() < 4) {
+                    continue;
+                }
+                bool isTitle = false;
+                for (const auto title : kTitles) {
+                    if (title.size() == token.size() && ContainsWord(title, token)) {
+                        isTitle = true;
+                        break;
+                    }
+                }
+                if (!isTitle && ContainsWord(text, token)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // The tie from `member` to `other`, or null. Returns the whole
+        // Tie rather than a bool and an out-param, because callers need
+        // more of it than "does one exist" -- whether it is collegial,
+        // and now whether it is hostile.
+        const Tie* FindTie(const Member& member, RE::FormID other)
+        {
+            for (const auto& tie : member.ties) {
+                if (tie.other == other) {
+                    return &tie;
+                }
+            }
+            return nullptr;
+        }
+
+        // Rejection reason for a candidate, or None if they may be cast.
+        Reject Screen(const OccupancyTable& occupancy,
+                      RE::FormID npc,
+                      PlotModel::Role role,
+                      double gameDay,
+                      const AlivePredicate& alive)
+        {
+            if (alive && !alive(npc)) {
+                return Reject::Dead;
+            }
+            const auto it = occupancy.find(npc);
+            if (it == occupancy.end()) {
+                return Reject::None;
+            }
+            if (it->second.IsEngaged()) {
+                return Reject::Occupied;
+            }
+            const double availableAt = role == PlotModel::Role::Mastermind ? it->second.mastermindAvailableAtGameDay
+                                                                           : it->second.actorAvailableAtGameDay;
+            return gameDay < availableAt ? Reject::OnCooldown : Reject::None;
+        }
+    } // namespace
+
+    const Member* Population::Find(RE::FormID npc) const
+    {
+        const auto it = std::find_if(members.begin(), members.end(), [npc](const Member& m) { return m.npc == npc; });
+        return it == members.end() ? nullptr : &*it;
+    }
+
+    std::string_view RejectId(Reject r) noexcept
+    {
+        switch (r) {
+        case Reject::None:
+            return "eligible";
+        case Reject::Occupied:
+            return "occupied";
+        case Reject::OnCooldown:
+            return "on_cooldown";
+        case Reject::Dead:
+            return "dead";
+        case Reject::NoTie:
+            return "no_tie";
+        case Reject::NotViable:
+            return "not_viable";
+        case Reject::IsMastermind:
+            return "is_mastermind";
+        }
+        return "unknown";
+    }
+
+    bool IsAvailable(const OccupancyTable& occupancy, RE::FormID npc, PlotModel::Role role, double gameDay)
+    {
+        return Screen(occupancy, npc, role, gameDay, nullptr) == Reject::None;
+    }
+
+    void Engage(OccupancyTable& occupancy, RE::FormID npc, PlotModel::Role role, std::uint32_t plotId)
+    {
+        auto& row = occupancy[npc];
+        row.plotId = plotId;
+        row.role = role;
+    }
+
+    std::size_t PruneExpired(OccupancyTable& occupancy, double gameDay)
+    {
+        const auto before = occupancy.size();
+        std::erase_if(occupancy, [gameDay](const auto& entry) {
+            const auto& row = entry.second;
+            // Mirrors Screen's test deliberately, including the
+            // direction of the comparison: Screen rejects while
+            // `gameDay < availableAt`, so a stamp is spent once the day
+            // has reached it, not after it has passed it.
+            return !row.IsEngaged() && !(gameDay < row.mastermindAvailableAtGameDay)
+                   && !(gameDay < row.actorAvailableAtGameDay);
+        });
+        return before - occupancy.size();
+    }
+
+    void Release(OccupancyTable& occupancy, RE::FormID npc, double gameDay, const Cooldowns& cooldowns)
+    {
+        const auto it = occupancy.find(npc);
+        if (it == occupancy.end()) {
+            return;
+        }
+        auto& row = it->second;
+        // The cooldown that starts is the one for the role they were
+        // actually holding. Starting both would bench an NPC from
+        // masterminding because they ran an errand, which is precisely
+        // the conflation the two separate stamps exist to avoid.
+        if (row.role == PlotModel::Role::Mastermind) {
+            row.mastermindAvailableAtGameDay = gameDay + cooldowns.mastermindDays;
+        } else {
+            row.actorAvailableAtGameDay = gameDay + cooldowns.actorDays;
+        }
+        row.plotId = 0;
+    }
+
+    Result SelectMastermind(const Population& population,
+                            const OccupancyTable& occupancy,
+                            double gameDay,
+                            const AlivePredicate& alive,
+                            const SeatedPredicate& seated,
+                            std::uint64_t& rng)
+    {
+        Result result;
+        result.considered.reserve(population.members.size());
+
+        for (const auto& member : population.members) {
+            Candidate candidate;
+            candidate.npc = member.npc;
+            candidate.reject = Screen(occupancy, member.npc, PlotModel::Role::Mastermind, gameDay, alive);
+            candidate.weight = candidate.reject == Reject::None ? MastermindWeight(member, seated) : 0.0;
+            result.considered.push_back(candidate);
+        }
+
+        result.chosen = WeightedDraw(result.considered, rng);
+        return result;
+    }
+
+    Result SelectMastermindShortlist(const Population& population,
+                                     const OccupancyTable& occupancy,
+                                     double gameDay,
+                                     const AlivePredicate& alive,
+                                     const AlivePredicate& viable,
+                                     const SeatedPredicate& seated,
+                                     std::size_t count,
+                                     std::uint64_t& rng)
+    {
+        Result result;
+        result.considered.reserve(population.members.size());
+
+        for (const auto& member : population.members) {
+            Candidate candidate;
+            candidate.npc = member.npc;
+            candidate.reject = Screen(occupancy, member.npc, PlotModel::Role::Mastermind, gameDay, alive);
+            // Viability is checked AFTER the cheap screens and only for
+            // survivors, because it is the one that touches an Actor.
+            if (candidate.reject == Reject::None && viable && !viable(member.npc)) {
+                candidate.reject = Reject::NotViable;
+            }
+            candidate.weight = candidate.reject == Reject::None ? MastermindWeight(member, seated) : 0.0;
+            result.considered.push_back(candidate);
+        }
+
+        // Without replacement: a drawn candidate is struck out by
+        // marking it rejected, so the next draw renormalises over what
+        // is left. Drawing with replacement would hand the same person
+        // to the model twice and quietly shrink the shortlist.
+        //
+        // The strike-outs are undone afterwards. `considered` is the
+        // diagnostic record of who was ELIGIBLE, and a candidate that
+        // was eligible enough to be drawn must not read as rejected in
+        // the log.
+        std::vector<std::size_t> drawnAt;
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto npc = WeightedDraw(result.considered, rng);
+            if (npc == 0) {
+                break;
+            }
+            result.shortlist.push_back(npc);
+            for (std::size_t j = 0; j < result.considered.size(); ++j) {
+                if (result.considered[j].npc == npc) {
+                    result.considered[j].reject = Reject::Occupied;
+                    drawnAt.push_back(j);
+                    break;
+                }
+            }
+        }
+        for (const auto j : drawnAt) {
+            result.considered[j].reject = Reject::None;
+        }
+
+        if (!result.shortlist.empty()) {
+            result.chosen = result.shortlist.front();
+        }
+        return result;
+    }
+
+    Qualification QualifyAgent(const Population& population,
+                               RE::FormID mastermind,
+                               RE::FormID candidate,
+                               std::string_view stepText,
+                               RE::FormID subject,
+                               const OccupancyTable& occupancy,
+                               double gameDay,
+                               const AlivePredicate& alive,
+                               const SeatedPredicate& seated)
+    {
+        Qualification out;
+
+        const Member* boss = population.Find(mastermind);
+        const Member* member = population.Find(candidate);
+        if (boss == nullptr || member == nullptr || candidate == mastermind) {
+            return out;
+        }
+
+        // The subject of a step does not carry it out.
+        //
+        // Twice over, because reading it out of the prose is best-effort
+        // and the resolved target is not. The text test catches people
+        // the step mentions without targeting; `subject` catches the one
+        // it is actually aimed at, whether or not the sentence spells
+        // their name the way this parser expects.
+        if (subject != 0 && candidate == subject) {
+            return out;
+        }
+        if (NamesPerson(stepText, member->name)) {
+            return out;
+        }
+
+        // Either direction: the graph writes both, but a tie recorded
+        // only one way still connects two people.
+        const Tie* tie = FindTie(*boss, member->npc);
+        if (tie == nullptr) {
+            tie = FindTie(*member, mastermind);
+        }
+        const bool tied = tie != nullptr;
+        const bool sharedFaction = tied && tie->sharedFaction;
+
+        // A Foe is not an agent. The graph knows the difference and plot
+        // casting used to throw it away, which is how the Thalmor
+        // ambassador came to send Ulfric Stormcloak on an errand.
+        const bool hostile = tied && tie->tierDelta > 0;
+
+        // A subordinate is someone whose standing is LOWER than the
+        // mastermind's in a faction they share. Equal standing is not
+        // subordinate: a fellow Circle member is a colleague, and
+        // ordering them about is a different social act.
+        const auto bossStandings = StandingsOf(*boss, seated);
+        bool subordinate = false;
+        for (const auto& f : member->factions) {
+            if (!Counts(seated, member->npc, f)) {
+                continue;
+            }
+            const auto it = bossStandings.find(f.faction);
+            if (it != bossStandings.end() && f.standing < it->second) {
+                subordinate = true;
+                break;
+            }
+        }
+
+        const double bossBest = BestStanding(*boss, seated);
+        const double memberBest = BestStanding(*member, seated);
+        const bool outranks = memberBest > bossBest + kOutrankMargin || memberBest > kRung3StandingCeiling;
+
+        if (subordinate && tied) {
+            out.rung = 1;
+        } else if (subordinate) {
+            out.rung = 2;
+        } else if (tied && !sharedFaction && !hostile && !outranks) {
+            out.rung = 3;
+        } else {
+            return out;
+        }
+
+        out.reject = Screen(occupancy, member->npc, PlotModel::Role::Actor, gameDay, alive);
+        return out;
+    }
+
+    double Importance(const Member* target) noexcept
+    {
+        if (target == nullptr || target->factions.empty()) {
+            return 0.25;
+        }
+        double best = 0.0;
+        for (const auto& f : target->factions) {
+            best = std::max(best, f.standing);
+        }
+        return std::clamp(0.3 + 0.7 * best, 0.0, 1.0);
+    }
+
+    double CraftSkill(const Member& member, PlotRecipes::Craft craft) noexcept
+    {
+        switch (PlotRecipes::SkillOf(craft)) {
+        case RE::ActorValue::kAlchemy:
+            return member.skills.alchemy;
+        case RE::ActorValue::kEnchanting:
+            return member.skills.enchanting;
+        default:
+            return member.skills.smithing;
+        }
+    }
+
+    bool CanMake(const Member& member, const PlotRecipes::Recipe& recipe) noexcept
+    {
+        // Skills are cached 0 to 1 and recipes ask 0 to 100.
+        return member.Practises(recipe.craft) && CraftSkill(member, recipe.craft) * 100.0 + 1e-9 >= recipe.skill;
+    }
+
+    Result EligibleAgents(const Population& population,
+                          RE::FormID mastermind,
+                          std::string_view stepText,
+                          const OccupancyTable& occupancy,
+                          double gameDay,
+                          const AlivePredicate& alive,
+                          RE::FormID subject,
+                          const SeatedPredicate& seated,
+                          const std::unordered_set<RE::FormID>& cooldownExempt,
+                          const Admit& admit)
+    {
+        Result result;
+        const Member* boss = population.Find(mastermind);
+        if (boss == nullptr) {
+            return result;
+        }
+        const bool selfAvailable = (!alive || alive(mastermind)) && (!admit || admit(*boss));
+
+        // Walk the ladder rung by rung and stop at the first rung with
+        // anyone available on it. Offering every rung at once would let a
+        // crowd of distant acquaintances drown out the one subordinate who
+        // is the obvious choice -- and it is the rung order, not the
+        // choice within a rung, that makes the powerful delegate.
+        for (int rung = 1; rung <= 3; ++rung) {
+            std::vector<RE::FormID> available;
+            for (const auto& member : population.members) {
+                if (admit && !admit(member)) {
+                    continue;
+                }
+                const auto qualified = QualifyAgent(
+                    population, mastermind, member.npc, stepText, subject, occupancy, gameDay, alive, seated);
+                if (qualified.rung != rung) {
+                    continue;
+                }
+                Candidate candidate;
+                candidate.npc = member.npc;
+                candidate.rung = rung;
+                candidate.reject = qualified.reject;
+                // A plot's own earlier agents may be sent again straight
+                // away: the hunter who found the mark is the one to send
+                // after them. Busy elsewhere still rules them out.
+                if (candidate.reject == Reject::OnCooldown && cooldownExempt.contains(member.npc)) {
+                    candidate.reject = Reject::None;
+                }
+                candidate.weight = candidate.reject == Reject::None ? 1.0 : 0.0;
+                result.considered.push_back(candidate);
+                if (candidate.reject == Reject::None) {
+                    available.push_back(member.npc);
+                }
+            }
+            if (!available.empty()) {
+                result.shortlist = std::move(available);
+                // By the time a scheme is down to acquaintances, doing it
+                // yourself is a live option rather than a last resort.
+                if (rung == 3 && selfAvailable) {
+                    result.shortlist.push_back(mastermind);
+                }
+                return result;
+            }
+        }
+
+        // Nobody on any rung: the mastermind does it themselves, which is
+        // how independents operate. Their own occupancy is ignored -- they
+        // are engaged in this very plot as its mastermind.
+        if (selfAvailable) {
+            result.shortlist.push_back(mastermind);
+        }
+        return result;
+    }
+} // namespace NarrativeEngine::PlotCasting

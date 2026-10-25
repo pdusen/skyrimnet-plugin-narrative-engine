@@ -7,9 +7,10 @@ configured LLM. Our SKSE side invokes a named template with
 `<our plugin folder>/prompts/<name>.prompt` (no manifest registration needed), renders it with the JSON we passed,
 and ships the result.
 
-That folder is our **SkyrimNet Beta 25 (0.25.0) plugin folder**, and Beta 25 is a hard floor — it does not read the
+That folder is our **SkyrimNet plugin folder**, the layout Beta 25 (0.25.0) introduced. Beta 25 does not read the
 loose `Data/SKSE/Plugins/SkyrimNet/prompts/` directory that earlier betas did, and earlier betas cannot read the
-plugin folder. See [`DEVELOPMENT.md`](DEVELOPMENT.md#the-skyrimnet-plugin-folder) for the whole folder layout.
+plugin folder. The plugin's floor is now Beta 26 (0.26.0), for the decision API plots are built on. See
+[`DEVELOPMENT.md`](DEVELOPMENT.md#the-skyrimnet-plugin-folder) for the whole folder layout.
 
 The build's `statics/` deploy mirrors the tree straight into the mod folder, so new prompts are picked up on the
 next build.

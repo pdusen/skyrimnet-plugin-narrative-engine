@@ -126,6 +126,7 @@ namespace NarrativeEngine::GossipGraph
 
         std::unordered_map<RE::FormID, Participant> g_participants;
         std::vector<RE::FormID> g_participantIds;
+        std::vector<LeftOut> g_leftOut;
 
         std::unordered_map<RE::FormID, std::vector<RE::FormID>> g_household;
         std::unordered_map<RE::FormID, std::vector<RE::FormID>> g_settlement;
@@ -407,6 +408,48 @@ namespace NarrativeEngine::GossipGraph
             if (!race || !actorTypeNpc || !race->HasKeyword(actorTypeNpc)) {
                 return false;
             }
+            // NOT THE DEAD. The ACBS IsGhost flag, which vanilla sets on
+            // about seventy records: Savos Aren's Ghost, Kodlak's,
+            // Sinding's, the barrow shades, and the Daedric princes'
+            // avatars.
+            //
+            // They pass every other test -- unique, named, ActorTypeNPC,
+            // resident somewhere -- and several carry the display name
+            // of somebody still alive, which is the specific harm. The
+            // population held "Savos Aren" the apparition rather than
+            // Savos Aren the Arch-Mage, and everything downstream took
+            // it at face value: his reference id belongs to the ghost
+            // record, so it addressed a stranger's biography, and the
+            // living Arch-Mage was in no plot at all because he was
+            // never a participant.
+            //
+            // A shade also cannot do the things a scheme asks of a
+            // person. It has no household to be bribed in and nothing
+            // to gain.
+            if (npc->IsGhost()) {
+                return false;
+            }
+            // And the ones the flag misses. "Dunmer Ghost", "Helgi's
+            // Ghost", the Sovngarde heroes: apparitions built without
+            // the ACBS bit, usually because their spectral quality comes
+            // from an ability or a race instead. Sixty-eight records
+            // carry the flag and several more plainly do not.
+            //
+            // Matched as the final WORD of the display name, so a
+            // Ghostblade's owner or a Ghost Sea fisherman is untouched.
+            if (name != nullptr) {
+                const std::string_view display{name};
+                constexpr std::string_view kGhost = "Ghost";
+                if (display.size() >= kGhost.size()) {
+                    const auto tail = display.substr(display.size() - kGhost.size());
+                    const bool standalone =
+                        display.size() == kGhost.size()
+                        || !std::isalpha(static_cast<unsigned char>(display[display.size() - kGhost.size() - 1]));
+                    if (standalone && ToLower(std::string{tail}) == "ghost") {
+                        return false;
+                    }
+                }
+            }
             if (const char* eid = npc->GetFormEditorID(); eid && *eid) {
                 const auto lowered = ToLower(eid);
                 if (lowered.find("preset") != std::string::npos || lowered.rfind("test", 0) == 0
@@ -572,14 +615,26 @@ namespace NarrativeEngine::GossipGraph
                     continue;
                 }
                 ++g_census.uniqueNpcsScanned;
+                const auto leaveOut = [npc](const char* reason) {
+                    if (const char* name = npc->GetName(); name != nullptr && *name != '\0') {
+                        g_leftOut.push_back({name, reason});
+                    }
+                };
                 if (!IsGossipEligiblePerson(npc, actorTypeNpc)) {
-                    ++g_census.rejectedNotPerson;
+                    if (npc->IsGhost()) {
+                        ++g_census.rejectedGhost;
+                        leaveOut("a ghost");
+                    } else {
+                        ++g_census.rejectedNotPerson;
+                        leaveOut("not a person");
+                    }
                     continue;
                 }
                 const auto id = npc->GetFormID();
                 const auto it = residence.find(id);
                 if (it == residence.end()) {
                     ++g_census.rejectedNoLocation;
+                    leaveOut("no home location");
                     continue;
                 }
 
@@ -594,6 +649,7 @@ namespace NarrativeEngine::GossipGraph
                     // Daedric princes, and quest actors staged in
                     // holding cells.
                     ++g_census.rejectedNoLocation;
+                    leaveOut("no home in any hold");
                     continue;
                 }
 
@@ -760,10 +816,12 @@ namespace NarrativeEngine::GossipGraph
                          c.factionsAdmitted,
                          c.factionPairs,
                          c.participantsWithPersonalEdge);
-            logger::info("GossipGraph: census -- uniqueScanned={} rejectedNotPerson={} rejectedNoLocation={}",
-                         c.uniqueNpcsScanned,
-                         c.rejectedNotPerson,
-                         c.rejectedNoLocation);
+            logger::info(
+                "GossipGraph: census -- uniqueScanned={} rejectedNotPerson={} rejectedGhost={} rejectedNoLocation={}",
+                c.uniqueNpcsScanned,
+                c.rejectedNotPerson,
+                c.rejectedGhost,
+                c.rejectedNoLocation);
             // The bridge into SkyrimNet's id space. A participant with no
             // placed reference cannot be matched against an engagement row
             // or be written a memory without an engine lookup, so a large
@@ -902,6 +960,11 @@ namespace NarrativeEngine::GossipGraph
         logger::info("GossipGraph: relationships refreshed ({} edges, {} participants with a personal edge)",
                      g_census.relationshipEdges,
                      g_census.participantsWithPersonalEdge);
+    }
+
+    const std::vector<LeftOut>& LeftOutNpcs()
+    {
+        return g_leftOut;
     }
 
     std::size_t ParticipantCount()

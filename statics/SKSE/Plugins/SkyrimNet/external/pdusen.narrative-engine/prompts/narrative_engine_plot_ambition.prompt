@@ -1,0 +1,279 @@
+{# narrative_engine_plot_ambition.prompt — call 2 of 3. The mastermind is
+   already chosen; this call decides what they are ultimately after, what
+   one concrete scheme they are starting now, and the step it ends in.
+   Receives the JSON object produced by PlotBirth::AmbitionContext:
+     mastermind { name, hold, standing }, memories [string],
+     retry — empty on the first attempt; on the second it is why the
+       first answer was refused,
+     bio { summary, background, personality, aspirations, relationships,
+       occupation } — the mastermind's biography, read straight from their
+       bio file by CharacterBios. Plain text, already rendered; no
+       character-profile decorator is involved.
+     verbs [{ id, line, roles [{ name, says }] }] — every kind of step a
+       scheme can end in, each as its generic sentence, with the roles its
+       step has and what each is for. The finishing step is one of them.
+     items [string] — every object a step can involve, as it is said.
+     made [string] — a few things the mastermind's own craftsmen can make,
+       as they are said; empty when nobody they can send makes anything.
+     player — the player character's name; empty before it is known.
+     accomplished [string] — schemes this person has already brought off.
+     failed [string] — schemes this person tried and failed at, or gave up.
+   NOTE: no fenced blocks and no literal braces anywhere in this file; both
+   break the render. See docs/CUSTOM_PROMPTS.md. #}
+[ system ]
+## Task
+One person in Skyrim is working toward something they cannot pursue
+openly. You write down three things: what they are ultimately after, the
+concrete move they are making toward it now, and the act that move ends
+in.
+
+The decision that this person is scheming has ALREADY BEEN MADE. Do not
+second-guess it, do not refuse, and do not decide they are too decent or
+too minor for it. Ordinary people scheme, and most schemes are small.
+
+## The three things you decide
+
+**First, the ambition.** The larger thing this person is ultimately
+after. It is nebulous, it is the work of a lifetime, and nothing they do
+in one scheme will finish it — a Thalmor officer means to see Talos
+worship gone from Skyrim; a Riften brewer means to own everyone who
+matters in the hold. It comes out of who they are: their station, their
+temperament, what they command and what they resent. This is what makes
+two different people scheme differently, so it must be theirs and nobody
+else's.
+
+**Second, the scheme.** One concrete thing that, once done, plausibly
+moves them along that ambition — and that a handful of people could
+actually finish within a season. It is a step toward the ambition, not a
+measure of it, and it does not have to be an obvious one.
+
+The test that separates them: **if finishing the scheme would finish the
+ambition, one of the two is wrong.** The ambition should still be out of
+reach the morning after the scheme succeeds.
+
+**The scheme serves THIS ambition.** A biography holds several threads --
+an old grudge, a post somebody wants, a thing somebody covets. Take the
+ambition from one of them and the scheme must move that same ambition
+along; a scheme drawn from a different thread, however true to the
+person, is two unrelated stories. Your reasoning must say how finishing
+the scheme brings the ambition nearer.
+
+A scheme does not have to be a theft. Putting someone in your debt,
+ruining what people think of a rival, wrecking an arrangement that is
+holding you back, quietly learning something you are not supposed to
+know — all of these are things a scheme can be for, and for most people
+they fit better than stealing an object does.
+
+**Third, how the scheme ends.** A scheme is carried out as a few steps,
+and every step is one of the kinds below. Its last step -- the one that,
+once done, means the scheme is done -- must be one of them:
+
+{% for v in verbs %}- {{ v.id }}: {{ v.line }} Roles:{% for r in v.roles %} {{ r.name }} = {{ r.says }};{% endfor %}
+{% endfor %}
+The scheme itself is written however suits it. "Expose the bribes a thane
+takes" is a fine scheme; nothing here exposes anything, so it would end
+in a denunciation of the thane to the jarl, and that denunciation is its
+finish. Write the finish as that act, naming every person it involves:
+whom it is done to, and for a delivery or a denunciation, to whom. Choose
+them as this person would: a denunciation goes to someone with authority
+over the person denounced, and a thing is delivered to whoever will make
+use of it, never to the person it is meant to be used against.
+
+If the finish turns on an object, it must be one of these, named as it is
+written here:
+
+{% for i in items %}- {{ i }}
+{% endfor %}
+{% if length(made) > 0 %}
+{{ mastermind.name }}'s own people can also make things, and a delivery or a
+hiding of one may be how the scheme ends -- a gift made for somebody, or
+something made to be found among somebody's belongings. If the finish turns
+on one of these, name it as it is written here:
+
+{% for m in made %}- {{ m }}
+{% endfor %}
+{% endif %}
+## Not a quest that already exists
+
+The scheme must be something this person is doing OF THEIR OWN ACCORD,
+not a retelling of a story the game already tells. Skyrim's own quests
+are already happening; a scheme that restages one produces a plot that
+either duplicates events the player has seen or contradicts them, and
+either way it reads as the world repeating itself.
+
+So: no civil war turning points, no Dark Brotherhood contract that is
+already written, no Thieves Guild job from the Guild's own ledger, no
+retrieval of an artefact somebody is already sent to retrieve. If the
+scheme could be summarised as "the events of a quest I know", pick a
+different one.
+
+What is wanted is smaller and unwritten: the grudge nobody has acted on
+yet, the debt coming due, the position somebody wants and has not been
+given.
+
+## Not about the player
+
+The player is not part of this. Whoever they are in this game -- the
+Dragonborn, the Listener, the Guild Master -- they are not somebody
+these people scheme against, for, or around. A scheme that turns on them
+cannot run, because the simulation has nobody to point it at.
+{% if length(player) > 0 %}
+The player is called **{{ player }}**. Memories and biographies name
+{{ player }} like anybody else, whatever post they hold -- if a memory says
+{{ player }} leads something, somebody else will have to be the one a
+scheme turns to. Never name {{ player }} in the ambition, the scheme or
+its finish.
+{% endif %}
+
+## Output Format
+Return a JSON object. No markdown fences. No prose before or after the
+object.
+
+- `reasoning` — a short explanation of how finishing this scheme brings
+  the ambition nearer, in one or two sentences. Write it FIRST: it is
+  where you check that the scheme and the ambition are one story.
+- `ambition` — one sentence, third person, about twenty words. The
+  lifetime thing, written as a complete sentence with a pronoun subject:
+  "She means to own everyone in the Rift who matters."
+- `scheme` — **not** a sentence about them. One short line naming the
+  concrete thing to be done, in the same voice an instruction is written
+  in, and no more than fifteen words. The shape, which is a grammar and
+  not a vocabulary:
+
+  > <verb> <the thing> <the qualifier that makes it specific>
+
+  The test is the opening word: a plain verb, never a name and never
+  "She is" or "He is". This line is shown as the plot's title, directly
+  beneath the schemer's name, so a subject in front of it is a word
+  repeated and a word wasted. It is also quoted in what the schemer later
+  remembers, after the words "as part of my plan to", so it has to read
+  as the end of that sentence.
+
+  Take the verb from what this person is actually doing, rather than
+  from these instructions: the scheme says what the plot is FOR.
+
+  Concrete enough that you could tell whether it had worked: name the
+  person, the place or the thing it turns on. This is what the scheme
+  IS, not how it is done.
+- `goal` — the id, exactly as listed under "how the scheme ends", of the
+  kind of step it ends in.
+- `finish` — that last step as an act, in the same instruction voice and
+  no more than fifteen words, naming its people and any object from the
+  list: "steal the logbook from the bookkeeper", with the bookkeeper
+  named. It opens with a verb that says the same thing as `goal`.
+- `roles` — an object with one key for every role listed for `goal`,
+  each holding who or what fills that role, named as they are known: a
+  person by their name, a place by its settlement, an object as it is
+  written in the list. For `expose`, the keys are item, mark and
+  authority, holding say "a merchant's ledger", "Erikur" and "Elisif the
+  Fair". The finish says it as a sentence; `roles` says which name is
+  which, and nothing in the finish may be left out of it. A person in a
+  role is somebody this person could reach -- someone they know, work
+  with or live near -- and a denunciation, an exposure or a petition goes
+  to whoever has authority over the person it is about. Authority runs
+  only upward: a steward answers to the jarl, never to the guard captain.
+  A person's role holds ONE person's name -- never a company, a family, a
+  business or a guild, which are not people and cannot be found. The one
+  exception follows.
+  A jarl, or an orc chief, has nobody above them: denouncing or exposing
+  one is done before the whole of what they lead, so name that as the
+  authority, such as their court. A jarl has nobody to petition.
+
+Write plainly. No markdown, no headings, no bullet points inside either
+line. Name only people and places that exist in Skyrim, and prefer ones
+this person would actually know.
+
+## Hard Constraints
+- Output strict JSON. No markdown code fences. No prose before or after
+  the JSON object.
+- The scheme MUST NOT restage a quest that already exists in the game.
+- Neither the ambition nor the scheme may involve the player{% if length(player) > 0 %}, {{ player }}{% endif %}.
+  One that names them is thrown away.
+- Return only the keys `reasoning`, `ambition`, `scheme`, `goal`,
+  `finish` and `roles`.
+- `roles` MUST name every role listed for `goal`, each a name that
+  exists in Skyrim. A role left out, or a name nobody has, is thrown
+  away. A person's role is one person's name, never a group or a place,
+  save for the exposure of a jarl or a chief.
+- The scheme MUST NOT be one this person has already accomplished.
+- `goal` MUST be one of the ids listed under "how the scheme ends". Any
+  other word is thrown away.
+- `finish` MUST open with a plain verb, and must name the people its step
+  involves rather than describe them.
+- `scheme` must not be a restatement of `ambition`. Identical sentences
+  are thrown away.
+- `scheme` MUST open with a plain verb. One that opens with a name, a
+  pronoun or an article is thrown away.
+[ end system ]
+
+[ user ]
+{% if length(retry) > 0 %}
+## Your last answer was thrown away
+
+{{ retry }}
+
+Do not repeat that mistake. Everything else about the task is unchanged.
+If correcting it changes who or what fills a role, rewrite the scheme and
+the finish to match: all three must tell the same story, about the same
+people.
+{% endif %}
+
+## Who is scheming
+
+**{{ mastermind.name }}**{% if length(mastermind.standing) > 0 %}, {{ mastermind.standing }}{% endif %}.
+{% if length(mastermind.hold) > 0 %}They live in {{ mastermind.hold }}.{% endif %}
+
+### Summary
+{{ bio.summary }}
+
+### Background
+{{ bio.background }}
+
+### Occupation
+{{ bio.occupation }}
+
+### Personality
+{{ bio.personality }}
+
+### Aspirations
+{{ bio.aspirations }}
+
+### Relationships
+{{ bio.relationships }}
+
+{% if length(memories) > 0 %}
+## What is also on their mind
+
+Recent memories, newest first. Use them where they fit, but they are
+extra detail rather than the point. A scheme that ignores them is fine if
+it fits the person; a scheme that fits a memory but not the person is
+not.
+
+{% for m in memories %}- {{ m }}
+{% endfor %}
+{% endif %}
+
+{% if length(accomplished) > 0 %}
+## Already done
+
+{{ mastermind.name }} has already brought off these schemes. They are
+finished: the new scheme must be something else, a further step rather
+than the same one again.
+
+{% for s in accomplished %}- {{ s }}
+{% endfor %}
+{% endif %}
+{% if length(failed) > 0 %}
+## Tried and failed
+
+{{ mastermind.name }} tried these and failed, or gave them up. They may
+come back to one, but the people it touched are wary now; another way
+toward the same ambition is often the wiser one.
+
+{% for s in failed %}- {{ s }}
+{% endfor %}
+{% endif %}
+
+What is {{ mastermind.name }} ultimately after, and what is the one
+concrete thing they are doing about it now? Answer with the object.
+[ end user ]

@@ -253,16 +253,24 @@ namespace NarrativeEngine::Settings
         // Builds a road graph at kDataLoaded from the NAVI record's
         // precomputed preferred-path chains — the same data the engine
         // uses to move actors travelling outside the loaded cell grid.
-        // The long-distance skeleton of a visit's approach chain: with
-        // this off, an arriving visitor has no roads to cross the map on
-        // and the chain collapses to the direct line.
+        //
+        // On by default because two features consume it. It is the
+        // long-distance skeleton of a visit's approach chain: with it
+        // off, an arriving visitor has no roads to cross the map on and
+        // the chain collapses to the direct line. And the plot
+        // simulation reads travel distance from it, which is what makes
+        // one step harder than another: without the graph plots fall
+        // back to a same-hold / different-hold comparison that Step 12
+        // measured as almost constant. Costs a few ms at load and a few
+        // hundred nodes.
         bool travelGraphEnabled = true;
         // Debug: after the graph builds, dump one 24-bit BMP per
         // worldspace to the SKSE log directory. Nodes are black, edges
         // gray, empty space white. Worldspaces with no nodes are
         // skipped. Overwrites existing files each session. Off by
         // default now that the graph itself is on by default — an
-        // install with no INI should not be writing images.
+        // install with no INI should not be writing multi-megabyte
+        // images on every load.
         bool travelGraphDebugBitmap = false;
         // World units per bitmap pixel. Lower = larger, more detailed
         // image. 256 puts a 4096-unit cell at 16 pixels and renders
@@ -1049,6 +1057,195 @@ namespace NarrativeEngine::Settings
         int gossipContentBands = 3;
 
         int gossipRandomSeed = 1337;
+
+        // [Plots]
+        //
+        // The faction-plot background simulation. See
+        // docs/design/FACTION_PLOTS.md for the model and
+        // docs/implementation/PHASE_17_FACTION_PLOTS.md for the phase.
+        //
+        // On by default, like gossip. The simulation is the feature;
+        // a background sim nobody has switched on generates nothing to
+        // remember, and the whole point of tier 3 is that the world is
+        // scheming whether or not the player is looking.
+        bool plotsEnabled = true;
+        // The dedicated trace at NarrativeEngine_Plots.log, on the same
+        // independent footing as the gossip trace: a quiet main log and
+        // a complete plot trace at the same time.
+        bool plotLogEnabled = true;
+        // Whether the Plots tab shows its debug buttons: the forced ticks
+        // and the seeded test plots. Off by default, because each one
+        // changes the simulation rather than looking at it.
+        bool plotDebugButtons = false;
+        // Whether the simulation's scheduled ticks fire. The dashboard's
+        // Plots tab toggles it at runtime and writes it back here; forced
+        // ticks run either way. Distinct from plotsEnabled, which leaves
+        // the whole subsystem unloaded.
+        bool plotTicksEnabled = true;
+
+        // In-world hours between simulation ticks. Two ticks a day is
+        // slow enough that a plot takes in-world weeks and fast enough
+        // that a player who travels and sleeps normally sees it move.
+        //
+        // NOT a real-time interval and NOT an accumulator: the plugin
+        // thread samples the game clock and enqueues one stamped job per
+        // boundary crossed. A paused game does not advance the clock, so
+        // there is nothing to pause-correct.
+        float plotTickIntervalGameHours = 12.0f;
+        // Ticks that may be queued or running before the scheduler stops
+        // enqueuing and starts advancing the schedule without work.
+        // Mirrors GossipTick::kMaxOutstandingTicks: a console time jump
+        // must not be able to queue a year of simulation.
+        int plotMaxOutstandingTicks = 4;
+
+        // The plot budget. A plot holds a slot from birth until it
+        // reaches a terminal state; births happen opportunistically on
+        // any tick with a slot free, so this is the hard ceiling on both
+        // concurrency and LLM call volume.
+        int plotMaxConcurrent = 10;
+
+        // Per-role cooldowns, in in-world days, before an NPC may be
+        // cast again. Separate values because the roles recur at
+        // completely different rates -- a plot ends every week or two, a
+        // step every day or two -- and one cooldown covering both would
+        // either bench masterminds far too long or fail to spread step
+        // work at all.
+        float plotMastermindCooldownDays = 5.0f;
+        float plotActorCooldownDays = 1.5f;
+
+        // Hard cap on re-plans per plot, regardless of what the LLM
+        // returns. The adaptation prompt is given an explicit concede
+        // option; this is the backstop for when it will not take it.
+        int plotMaxAdaptations = 3;
+        // Steps retained in a plot's history. Also bounds how many nodes
+        // the dashboard's chain widget can render, since the chain is
+        // history ++ live ++ remaining plan.
+        int plotStepHistoryCap = 12;
+        // How long a terminal plot is retained before reaping. Its
+        // memories persist in SkyrimNet regardless; this is only the
+        // plot record, kept so the dashboard can still answer "why did
+        // that one fail".
+        float plotTerminalRetentionDays = 7.0f;
+
+        // How much work one tick of an actor's effort is worth, in the
+        // same ABSOLUTE units as a step's threshold.
+        //
+        // Absolute, not a fraction of the threshold, and the distinction
+        // is the whole model. When the per-tick roll was a fraction OF
+        // the threshold, ticks-to-finish came out as 1 / mean(fraction)
+        // and the threshold cancelled entirely -- a step worth 5 and a
+        // step worth 500 both took 4.5 ticks, so target importance did
+        // nothing. The Step 9 harness measured that; it is not visible
+        // from reading the code.
+        //
+        // rateMin is what a hopeless actor manages, rateMax what an ideal
+        // one does. Base thresholds run 6-18 before the target's
+        // importance multiplies them by up to 2.5.
+        float plotProgressRateMin = 1.5f;
+        float plotProgressRateMax = 5.0f;
+
+        // The one relative clamp: no single tick may clear more than this
+        // share of a step's threshold. Keeps a trivially small step from
+        // being one-shot, and is what MinimumViableBudget is derived
+        // from. For any threshold large enough to matter it never binds.
+        float plotProgressMaxFraction = 0.45f;
+
+        // What each preparation that succeeded leaves of the step it
+        // prepared: its threshold and its per-tick chance of a mishap are
+        // both multiplied by this once per preparation, so two at 0.9
+        // leave 81% of each. The budget is not touched, so preparing
+        // raises the odds.
+        //
+        // Raised from 0.8 after Step 53: one preparation raised a finish's
+        // odds by about fifteen points, so plans overshot their target and
+        // the target barely steered how often plots succeed.
+        float plotPreparationEase = 0.9f;
+
+        // The odds, 0 to 1, a plan prepares each preparable step to -- the
+        // goal and what gets its items -- before it is done. Higher makes
+        // longer plans; 0 prepares only what a lone goal needs.
+        //
+        // Plots succeed about as often as their finish's planned odds say:
+        // a run planned to an average of 71% succeeded 19 times in 26. A
+        // plot fails only when its finish does, so this is close to the
+        // plot success rate. Lowered from 0.75 after Step 53 to aim at half,
+        // which with the mishap chance doubled left plans unable to reach it
+        // and plots succeeding 13 times in 35; 0.55 since Step 54.
+        float plotPlanOdds = 0.55f;
+
+        // How long a step is given, as a share of the ticks its kind and
+        // its target's importance call for. Never below the fewest ticks
+        // the work could be done in. At 1.0 an agent finished in about two
+        // thirds of the time and 1 step in 150 ran out of it; at 0.7 a weak
+        // agent on a big job runs out of time, which fails the step without
+        // putting anybody on guard.
+        float plotBudgetScale = 0.7f;
+
+        // A mastermind gives a scheme up when the best way a re-plan finds
+        // has less than this chance of its finish succeeding, rather than
+        // spending agents on a plot that cannot work. 0 never gives up.
+        float plotConcedeOdds = 0.1f;
+
+        // What being on guard does to every later step of a plot done to
+        // somebody who caught one of its agents: the step's chance of a
+        // mishap is multiplied by this. Until Step 55 its work was too,
+        // which against a budget that did not grow made a weak agent's
+        // timing out certain: such steps succeeded one time in five.
+        float plotAlertHardening = 1.25f;
+
+        // The caught-in-the-act roll. Typed failure is load-bearing --
+        // it decides whether the target gets a memory and whether the
+        // plot leaks into gossip -- but progress alone cannot express
+        // it, so this is a second small per-tick roll weighted up by the
+        // step's conspicuousness and down by the actor's competence.
+        //
+        // Behind a switch because its SHAPE is still an open design
+        // question (see the phase doc), not because it is optional.
+        // How many of the mastermind's own memories the birth prompt
+        // is given, and how important one has to be to qualify.
+        //
+        // The memories are what a motive comes out of: without them the
+        // model builds a scheme from a name and a faction, and every
+        // plot reads the same. Ten is enough for a pattern to show and
+        // few enough to leave room for the menus.
+        int plotBirthMemoryCount = 10;
+        // Set level with the gossip floor on purpose. Both are asking
+        // the same question -- is this worth building a story on -- and
+        // an NPC whose memories clear one bar should clear the other.
+        float plotBirthMinMemoryImportance = 0.45f;
+
+        bool plotMishapEnabled = true;
+        // Retuned from 0.015 in Step 14. This is a PER-TICK chance, so it
+        // is only meaningful relative to how many ticks a step lives, and
+        // Step 13 roughly doubled that by re-deriving the base budgets.
+        // The rate the Step 9 harness settled on therefore stopped
+        // describing the model the moment those budgets changed: catches
+        // went from 12% of resolutions to 23% with no change to this
+        // number at all.
+        //
+        // Raised to 0.02 after Step 44, when preparations began easing it:
+        // at 0.012 an unprepared step already succeeded about four times in
+        // five, preparing to 85% made nearly every plot succeed, and
+        // preparation had little ground to make up.
+        //
+        // Raised to 0.04 after Step 53, with the plan odds lowered to 0.5:
+        // at 0.02 most finishes were above even odds unprepared, so no
+        // target below that could bring plots down to succeeding half the
+        // time, and plans aimed at 0.5 would not have prepared at all.
+        //
+        // Lowered to 0.025 in Step 54: at 0.04 half of all steps were
+        // caught, every catch put somebody on guard, and steps against
+        // somebody on guard succeeded one time in five. Running out of
+        // time took over part of the failing, through fPlotBudgetScale.
+        //
+        // Lowered to 0.02 in Step 55, with plots succeeding 22 times in 58
+        // and a third of all steps caught.
+        float plotMishapChanceBase = 0.02f;
+
+        // Seeds the plot RNG stream. 0 means nondeterministic; any other
+        // value makes a run reproducible, which is what the offline
+        // harness and any bug report both want.
+        int plotRandomSeed = 0;
     };
 
     // Narrow mutation surface for WriteMcmOverride. One optional per
@@ -1085,6 +1282,7 @@ namespace NarrativeEngine::Settings
         std::optional<int> visitComposeMemoryRenderCap;
         std::optional<int> visitComposeDialogueRenderCap;
         std::optional<int> visitConclusionPollRecentLinesRenderCap;
+        std::optional<bool> plotTicksEnabled;
     };
 
     // Read the plugin INI, then apply any MCM-managed override, and

@@ -48,6 +48,10 @@ buffer, save-scum recovery, single source of truth.
 ## Working directory conventions
 
 - The repo lives at `C:\Projects\NarrativeEngine\`.
+- `docs/design/` holds **feature design** docs: what a feature is and how it behaves, for features large enough
+  to span several phases. A design doc is a living contract that outlives the phases implementing it, and it
+  names the phases it breaks into. `docs/implementation/PHASE_NN_*.md` holds the point-in-time work plans that
+  are written against it. A feature small enough to land in one phase needs no design doc.
 - `docs/prior-art/` is the IntelEngine reference library — extend it (don't rewrite it) if new learnings come in about IntelEngine.
 - The IntelEngine repos at `C:\Projects\IntelEngine-NativePlugin\` and `C:\Projects\IntelEngine-GamePlugin\` are
   **read-only reference**.
@@ -143,6 +147,9 @@ has it:
 Because every candidate is probed for the header rather than just the directory, a `SKYRIMNET_DIR`
 left over from a pre-Beta-25 install falls through to the devkit instead of breaking the build.
 CMake `FATAL_ERROR`s if none of the four resolves.
+
+The devkit has to be **Beta 26's or later**. `src/SkyrimNetAPI.cpp` calls `PublicSendCustomDecisionToLLM`,
+which only a public API v12 header declares, so an older devkit fails to compile there rather than at runtime.
 
 `SKYRIMNET_DIR` still means the SkyrimNet **mod** folder everywhere else — `setup-mod-folder.ps1`
 reads it to find `Source/Scripts/SkyrimNetApi.psc`, which Beta 25 did not move. Don't repoint it at
@@ -655,8 +662,9 @@ laid out the way **SkyrimNet Beta 25 (0.25.0)** expects:
 | `settings/NarrativeEngine.yaml` | The LLM variants and the settings schema SkyrimNet's UI exposes   |
 
 There is nothing special about these files in the build: the `statics/` deploy mirrors the tree verbatim, so what is
-in the source tree is what SkyrimNet reads. **Beta 25 is a hard floor.** Up to v0.6.1 the build also deployed a second
-copy of each file to the pre-Beta-25 paths — loose `SkyrimNet/prompts/` and
+in the source tree is what SkyrimNet reads. **Beta 26 (0.26.0) is the hard floor**: Beta 25 introduced this
+layout, and Beta 26 added the decision API (public API v12) that plots are built on. Up to v0.6.1 the build also
+deployed a second copy of each file to the pre-Beta-25 paths — loose `SkyrimNet/prompts/` and
 `SkyrimNet/config/plugins/NarrativeEngine/manifest.yaml` — so one build served either SkyrimNet. That mapping is gone,
 and so is support for Beta 24 and earlier; those versions cannot see a plugin folder at all.
 
