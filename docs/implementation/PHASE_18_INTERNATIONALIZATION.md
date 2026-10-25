@@ -1005,7 +1005,7 @@ Choices the step made:
 
 #### Step 7 — Notifications and letters
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1025,6 +1025,37 @@ Choices the step made:
 - New cases: a 20-letter Cyrillic name is no longer cut at 12 letters, and a 25-character label is rejected however
   few bytes it has.
 - The build, for the hook and the notifications.
+
+Done. The four notices live in English's `[Notify]` and render through `DebugNotify::Text`. The fallback title and
+the item card live in `[Letter]`, and the title lists in `[Matching] Title.Strip.Start` and `Title.Strip.After`.
+`LetterComposer::FitsTitle` and `SynthesizeFallbackLabel` count `kTitleCharacters` (24) in code points. The
+description hook serves the item card from the session table.
+
+**Two passes again.** The notices were format strings at their call sites, with nothing to pin. Pass (a) moved each
+into a `DebugNotify::Text` function with its literal unchanged, and changed `PostActorNamed` to take a function that
+composes the notice from the resolved name, in place of a `vformat` pattern. It then added exact pins for all four
+notices and their fallbacks. It also pinned nine fallback labels exactly; the existing tests only checked loosely
+for three of them. 552 tests passed against pass (a). Pass (b) moved the words; the same pins passed, and 553 tests
+passed with the new character-count case.
+
+What came out differently from the plan:
+
+- **The fitting rule measures the rendered title, not the name.** The title is now a template, and a language may put
+  the name first (`{sender}からの手紙`), so "the room left after the prefix" no longer exists. The last candidate
+  shortens the name a code point at a time until the whole title fits. For English it lands exactly where the byte
+  arithmetic did: every pinned label is unchanged.
+- **The Cyrillic figure in the plan was wrong.** A twenty-letter Cyrillic name used to keep *seven* of its letters,
+  because fourteen bytes is seven Cyrillic letters, not twelve. It now keeps fourteen. The new test asserts the exact
+  title, and that a 24-letter, 48-byte title fits while a 25-letter ASCII one does not.
+- **`[Matching]` holds plain comma lists for now.** The title lists are declared keys with no placeholders, read
+  through `Table::Source` and split on commas. Step 16 gives `[Matching]` its own parser and rule vocabulary, and
+  Step 17 moves title stripping onto it, along with its still-ASCII case folding.
+- **The ambush notice keeps "(1 attackers)".** The step moves words; it does not fix them. A translator can use
+  `{attackers, plural, ...}`, and English could adopt it too.
+
+A process note, recorded because it cost a failing test: writing C++ escape sequences through a Python string turns
+`"Ð"` into the character U+00D0 rather than the four characters of an escape. The test's first draft held
+double-encoded Latin-1 and passed one check by coincidence. Escapes are now written from raw strings.
 
 #### Step 8 — The co-save stores structure, not sentences
 

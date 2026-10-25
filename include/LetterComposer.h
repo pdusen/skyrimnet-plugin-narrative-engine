@@ -2,6 +2,8 @@
 
 #include <BeatParamHelpers.h>
 #include <IBeat.h>
+#include <LanguageTable.h>
+#include <TextKeys.h>
 
 #include <nlohmann/json.hpp>
 
@@ -9,6 +11,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <RE/Skyrim.h>
@@ -114,14 +117,30 @@ namespace NarrativeEngine::LetterComposer
     // Sender-label fallback (exposed for testing)
     // -----------------------------------------------------------------
     //
-    // Picked when the LLM's `letter_label` is missing, empty, or
-    // exceeds the 24-byte engine cap. See the
-    // "Sender-label fallback" section of the phase plan for the
-    // algorithm. Returns a label ≤ 24 bytes, never empty.
+    // The longest title a book can carry, in characters. Longer, and the
+    // engine cuts the name in the player's inventory mid-word.
+    inline constexpr std::size_t kTitleCharacters = 24;
+
+    // The keys the label and the letter's item card render from:
+    // [Letter] fallback_title and item_card, and the title lists in
+    // [Matching].
+    [[nodiscard]] const std::vector<TextKeys::Key>& LabelKeys();
+
+    // Whether `label` fits on a book: kTitleCharacters characters or fewer,
+    // and not empty.
+    [[nodiscard]] bool FitsTitle(std::string_view label);
+
+    // What the letter's item card says, under its name in the inventory.
+    [[nodiscard]] std::string ItemCard(const LanguageTable::Table& table);
+
+    // Picked when the LLM's `letter_label` is missing, empty, or longer
+    // than kTitleCharacters. See the "Sender-label fallback" section of
+    // the Phase 4 plan for the algorithm. Returns a label of at most
+    // kTitleCharacters characters, never empty.
     //
     // Takes a plain string so the callback (which runs on a SkyrimNet
     // worker thread) doesn't need to touch the engine. The sender's
     // full name is captured up-front when LetterComposer assembles its
     // candidate context on the main thread.
-    std::string SynthesizeFallbackLabel(const std::string& senderFullName);
+    std::string SynthesizeFallbackLabel(const LanguageTable::Table& table, const std::string& senderFullName);
 } // namespace NarrativeEngine::LetterComposer

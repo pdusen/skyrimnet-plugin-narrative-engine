@@ -7,6 +7,7 @@
 #include <EngineUtils.h>
 #include <JsonUtils.h>
 #include <LLMTextSanitizer.h>
+#include <Localization.h>
 #include <LocationKeywords.h>
 #include <logger.h>
 #include <MainThread.h>
@@ -941,8 +942,8 @@ namespace NarrativeEngine
                         std::scoped_lock lock(g_stateMutex);
                         groupId = g_activeGroupId;
                     }
-                    DebugNotify::Post(std::format(
-                        "[NE] Ambush spawned: {} ({} attackers)", groupId.empty() ? "unknown group" : groupId, armed));
+                    DebugNotify::Post(
+                        DebugNotify::Text::AmbushSpawned(Localization::Get(), groupId, static_cast<int>(armed)));
                 }
 
                 // Put this group on its cooldown. Stamped here rather

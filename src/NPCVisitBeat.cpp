@@ -1703,7 +1703,7 @@ namespace NarrativeEngine
                 // is an actor, and has a package bound -- so a notice
                 // here means somebody really is walking over.
                 const char* name = senderRef->GetDisplayFullName();
-                DebugNotify::Post(std::format("[NE] {} is coming to see you", (name && *name) ? name : "Someone"));
+                DebugNotify::Post(DebugNotify::Text::VisitorComing(Localization::Get(), (name && *name) ? name : ""));
                 return true;
             });
 

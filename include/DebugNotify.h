@@ -1,8 +1,13 @@
 #pragma once
 
+#include <LanguageTable.h>
+#include <TextKeys.h>
+
 #include <RE/Skyrim.h>
 
+#include <functional>
 #include <string>
+#include <string_view>
 
 // DebugNotify — corner-of-the-screen notices for the handful of moments
 // worth knowing about while testing.
@@ -37,8 +42,8 @@ namespace NarrativeEngine::DebugNotify
     // in flight.
     void Post(std::string text);
 
-    // Post a notice that names an actor, with `pattern` a format string
-    // carrying exactly one `{}` for the name.
+    // Post a notice that names an actor: `compose` is given the actor's
+    // name, empty when it does not resolve, and returns the notice.
     //
     // Takes a FormID rather than a name because the callers that need
     // this are not on the main thread -- the gossip simulation seeds
@@ -47,5 +52,19 @@ namespace NarrativeEngine::DebugNotify
     //
     // `actor` may be a placed reference or a base NPC record; the
     // gossip graph is keyed by the latter.
-    void PostActorNamed(RE::FormID actor, std::string pattern);
+    void PostActorNamed(RE::FormID actor, std::function<std::string(const std::string& name)> compose);
+
+    // The notices themselves, from the language table's [Notify].
+    namespace Text
+    {
+        [[nodiscard]] const std::vector<TextKeys::Key>& Keys();
+
+        [[nodiscard]] std::string CourierHasLetter(const LanguageTable::Table& table);
+        // `name` empty reads as a fallback, as it does in each of these.
+        [[nodiscard]] std::string VisitorComing(const LanguageTable::Table& table, std::string_view name);
+        [[nodiscard]] std::string RumorSpreading(const LanguageTable::Table& table, std::string_view origin);
+        [[nodiscard]] std::string AmbushSpawned(const LanguageTable::Table& table,
+                                                std::string_view group,
+                                                int attackers);
+    } // namespace Text
 } // namespace NarrativeEngine::DebugNotify

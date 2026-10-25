@@ -9,6 +9,7 @@
 #include <FactionDesignationUtils.h>
 #include <LetterComposer.h>
 #include <LetterPool.h>
+#include <Localization.h>
 #include <LocationKeywords.h>
 #include <logger.h>
 #include <MainThread.h>
@@ -792,7 +793,7 @@ namespace NarrativeEngine
                     // delivery AI decides when he finds the player, which
                     // can be a long while -- so this is the moment worth
                     // announcing, not the eventual handover.
-                    DebugNotify::Post("[NE] The courier has a letter for you");
+                    DebugNotify::Post(DebugNotify::Text::CourierHasLetter(Localization::Get()));
                     g_cleanupWasSuccess.store(true, std::memory_order_release);
                     return {BeatState::CLEANUP};
                 }

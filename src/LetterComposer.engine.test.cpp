@@ -1,5 +1,8 @@
 #include <LetterComposer.h>
 
+#include <ShippedLanguage.h>
+#include <TextUtf8.h>
+
 #include <AsyncDispatch.h>
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
@@ -43,6 +46,7 @@
 namespace
 {
     namespace LetterComposer = NarrativeEngine::LetterComposer;
+    using NarrativeEngine::Testing::ShippedEnglish;
     namespace AsyncDispatch = NarrativeEngine::AsyncDispatch;
     namespace SkyrimNet = NarrativeEngine::SkyrimNetAPI;
     using NarrativeEngine::BeatContext;
@@ -150,7 +154,7 @@ TEST_CASE("LetterComposer fits a label in the space the engine gives it", "[Lett
     {
         SECTION("should use it whole")
         {
-            REQUIRE(LetterComposer::SynthesizeFallbackLabel("Ysolda") == "Note from Ysolda");
+            REQUIRE(LetterComposer::SynthesizeFallbackLabel(ShippedEnglish(), "Ysolda") == "Note from Ysolda");
         }
     }
 
@@ -160,7 +164,8 @@ TEST_CASE("LetterComposer fits a label in the space the engine gives it", "[Lett
         {
             // "Note from " leaves fourteen bytes. The name alone fits inside
             // them once the epithet is off.
-            REQUIRE(LetterComposer::SynthesizeFallbackLabel("Balgruuf the Greater") == "Note from Balgruuf");
+            REQUIRE(LetterComposer::SynthesizeFallbackLabel(ShippedEnglish(), "Balgruuf the Greater")
+                    == "Note from Balgruuf");
         }
     }
 
@@ -170,13 +175,15 @@ TEST_CASE("LetterComposer fits a label in the space the engine gives it", "[Lett
         {
             // The suffix alone is not enough here: "Housecarl Lydia" is
             // fifteen bytes against fourteen of room.
-            REQUIRE(LetterComposer::SynthesizeFallbackLabel("Housecarl Lydia the Faithful") == "Note from Lydia");
+            REQUIRE(LetterComposer::SynthesizeFallbackLabel(ShippedEnglish(), "Housecarl Lydia the Faithful")
+                    == "Note from Lydia");
         }
     }
 
     SECTION("when no shortening is enough")
     {
-        const auto label = LetterComposer::SynthesizeFallbackLabel("Ahtar the Executioner of Solitude");
+        const auto label =
+            LetterComposer::SynthesizeFallbackLabel(ShippedEnglish(), "Ahtar the Executioner of Solitude");
 
         SECTION("should cut it to the cap")
         {
@@ -196,8 +203,48 @@ TEST_CASE("LetterComposer fits a label in the space the engine gives it", "[Lett
             // An unnamed item in the player's pack is worse than a vague one,
             // and this path is reached whenever a sender's name fails to
             // resolve.
-            REQUIRE_FALSE(LetterComposer::SynthesizeFallbackLabel("").empty());
+            REQUIRE_FALSE(LetterComposer::SynthesizeFallbackLabel(ShippedEnglish(), "").empty());
         }
+    }
+}
+
+TEST_CASE("LetterComposer's fallback labels, exactly", "[LetterComposer][engine]")
+{
+    // Characterization: pinned against the English as SynthesizeFallbackLabel
+    // composed it before Phase 18 Step 7 moved "Note from" and the title lists
+    // into english.ini.
+    const auto label = [](std::string_view name) {
+        return LetterComposer::SynthesizeFallbackLabel(ShippedEnglish(), std::string{name});
+    };
+    CHECK(label("Ysolda") == "Note from Ysolda");
+    CHECK(label("Captain Aldis") == "Note from Captain Aldis");
+    CHECK(label("Balgruuf the Greater") == "Note from Balgruuf");
+    CHECK(label("Jarl Elisif the Fair") == "Note from Jarl Elisif");
+    CHECK(label("Housecarl Lydia the Faithful") == "Note from Lydia");
+    CHECK(label("Ahtar the Executioner of Solitude") == "Note from Ahtar");
+    CHECK(label("Brynjolf Thieves Guild Master") == "Note from Brynjolf Thiev");
+    CHECK(label("Thane Proventus Avenicci") == "Note from Proventus Aven");
+    CHECK(label("") == "Note from ");
+}
+
+TEST_CASE("LetterComposer counts a title in characters, not bytes", "[LetterComposer][engine]")
+{
+    // A twenty-letter Cyrillic name is forty bytes. Counted in bytes, the
+    // fourteen left after "Note from " held seven of its letters; counted in
+    // characters, they hold fourteen.
+    const std::string cyrillic =
+        "\xD0\x90\xD0\x91\xD0\x92\xD0\x93\xD0\x94\xD0\x95\xD0\x96\xD0\x97\xD0\x98\xD0\x99"
+        "\xD0\x9A\xD0\x9B\xD0\x9C\xD0\x9D\xD0\x9E\xD0\x9F\xD0\xA0\xD0\xA1\xD0\xA2\xD0\xA3"; // twenty Cyrillic capitals
+    const auto title = LetterComposer::SynthesizeFallbackLabel(ShippedEnglish(), cyrillic);
+    CHECK(title == "Note from " + cyrillic.substr(0, 28));
+    CHECK(NarrativeEngine::TextUtf8::CodePointCount(title) == 24);
+
+    SECTION("and so does the check on the model's own title")
+    {
+        CHECK_FALSE(LetterComposer::FitsTitle("A letter from your friend")); // 25 characters
+        // 24 characters, 48 bytes: the name and four more letters.
+        CHECK(LetterComposer::FitsTitle(cyrillic + "\xD0\xA4\xD0\xA5\xD0\xA6\xD0\xA7"));
+        CHECK_FALSE(LetterComposer::FitsTitle(""));
     }
 }
 

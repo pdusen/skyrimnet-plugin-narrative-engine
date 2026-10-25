@@ -1,5 +1,7 @@
 #include <DebugNotify.h>
 
+#include <ShippedLanguage.h>
+
 #include <AsyncDispatch.h>
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
@@ -29,6 +31,7 @@
 namespace
 {
     namespace DebugNotify = NarrativeEngine::DebugNotify;
+    using NarrativeEngine::Testing::ShippedEnglish;
     namespace AsyncDispatch = NarrativeEngine::AsyncDispatch;
     using NarrativeEngine::Testing::ConfiguredSettings;
     using NarrativeEngine::Testing::EngineMock;
@@ -123,7 +126,7 @@ TEST_CASE("DebugNotify names an actor it was only given the id of", "[DebugNotif
     SECTION("when the id resolves")
     {
         engine.AddNPC(kNpc, "Faralda");
-        DebugNotify::PostActorNamed(kNpc, "New rumor spreading from {}");
+        DebugNotify::PostActorNamed(kNpc, [](const std::string& name) { return "New rumor spreading from " + name; });
         DrainAsyncQueue();
 
         SECTION("should look the name up and fill it in")
@@ -138,7 +141,9 @@ TEST_CASE("DebugNotify names an actor it was only given the id of", "[DebugNotif
 
     SECTION("when the id resolves to nothing")
     {
-        DebugNotify::PostActorNamed(0xDEADBEEF, "New rumor spreading from {}");
+        DebugNotify::PostActorNamed(0xDEADBEEF, [](const std::string& name) {
+            return "New rumor spreading from " + (name.empty() ? std::string{"someone"} : name);
+        });
         DrainAsyncQueue();
 
         SECTION("should still say something rather than drop the notice")
@@ -147,4 +152,19 @@ TEST_CASE("DebugNotify names an actor it was only given the id of", "[DebugNotif
             REQUIRE(engine.notifications.shown.front() == "New rumor spreading from someone");
         }
     }
+}
+
+TEST_CASE("DebugNotify words each notice the way it always has", "[DebugNotify][engine]")
+{
+    // Characterization: pinned against the English as the call sites composed
+    // it before Phase 18 Step 7 moved the words into english.ini.
+    CHECK(DebugNotify::Text::CourierHasLetter(ShippedEnglish()) == "[NE] The courier has a letter for you");
+    CHECK(DebugNotify::Text::VisitorComing(ShippedEnglish(), "Ysolda") == "[NE] Ysolda is coming to see you");
+    CHECK(DebugNotify::Text::VisitorComing(ShippedEnglish(), "") == "[NE] Someone is coming to see you");
+    CHECK(DebugNotify::Text::RumorSpreading(ShippedEnglish(), "Faralda") == "[NE] New rumor spreading from Faralda");
+    CHECK(DebugNotify::Text::RumorSpreading(ShippedEnglish(), "") == "[NE] New rumor spreading from someone");
+    CHECK(DebugNotify::Text::AmbushSpawned(ShippedEnglish(), "bandits", 4)
+          == "[NE] Ambush spawned: bandits (4 attackers)");
+    CHECK(DebugNotify::Text::AmbushSpawned(ShippedEnglish(), "", 1)
+          == "[NE] Ambush spawned: unknown group (1 attackers)");
 }

@@ -2,6 +2,7 @@
 
 #include <CourierUtils.h>
 #include <EngineUtils.h>
+#include <LetterComposer.h>
 #include <Localization.h>
 #include <logger.h>
 #include <MainThread.h>
@@ -785,9 +786,11 @@ namespace NarrativeEngine::LetterPool
         //
         // TESObjectBOOK inherits two TESDescription instances — DESC
         // (book body, fieldType 'CSED') and CNAM (item-card tooltip,
-        // fieldType 'MANC'). We only substitute on the body read.
+        // fieldType 'MANC'). The body is the letter's own; the item card
+        // is the language file's, so it reads in the player's language.
 
         constexpr std::uint32_t kFieldType_DESC = 'CSED';
+        constexpr std::uint32_t kFieldType_CNAM = 'MANC';
 
         using GetDescription_t = void (*)(RE::TESDescription*, RE::BSString&, RE::TESForm*, std::uint32_t);
 
@@ -813,6 +816,12 @@ namespace NarrativeEngine::LetterPool
                 // ResetSlotToFreeLocked) precisely so stale REFRs
                 // don't hit this fall-through. Falls through to the
                 // ESP placeholder as a last resort.
+            }
+            if (a_fieldType == kFieldType_CNAM && a_parent && IsManagedForm(a_parent->GetFormID())) {
+                if (const auto card = LetterComposer::ItemCard(Localization::Get()); !card.empty()) {
+                    a_out = card.c_str();
+                    return;
+                }
             }
             g_origGetDescription(self, a_out, a_parent, a_fieldType);
         }
