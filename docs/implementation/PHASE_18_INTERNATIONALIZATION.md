@@ -1383,7 +1383,7 @@ a verb or a role has no branch in `plot_step.prompt` or `plot_role.prompt`.
 
 #### Step 13 — Retry and rejection codes
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1400,6 +1400,46 @@ a verb or a role has no branch in `plot_step.prompt` or `plot_role.prompt`.
 - Offline render comparison of both prompts under every code.
 - A `*.test.cpp` asserting that every code the parsers can return is one the receiving prompt handles, so a new code
   without wording fails the build's tests rather than reaching the model as nothing.
+
+Done. A refusal is now a `PlotRejection::Rejection`, a code and its arguments. The new core module `PlotRejection`
+holds the closed set of 31 codes and the arguments each carries. Every refusal in `ParseCast`, `ParseAmbition` and
+`ReadText` builds one, and so do the two the retry loop adds: a failed call and a parser that threw.
+`PlotCandidates::ResolveRoles` returns a list of them, one per role that did not resolve, instead of a joined string.
+
+- `ctx["retry"]` is an empty list on the first attempt, and the one refusal on the second.
+- Both birth prompts word it through `components/narrative_engine/plot_rejection.prompt`, which they share, with
+  `plot_admitted.prompt` for the "it can be …" tail.
+- A role is said through Step 12's `plot_role.prompt`.
+- `PlotLog` records the code and arguments as JSON.
+
+The reasons the population leaves somebody out are tokens: `ghost`, `not_person`, `no_location`, `no_hold`, `child`.
+`kVerbs`' slot `says` is gone, as the step's own bullet planned, since these messages were its last reader.
+
+**Why one include, not one per prompt.** The plan had each prompt word the codes it can receive. A cast refusal and
+an ambition refusal share most of their wording ("response was not a JSON object", a missing field, a field naming
+the player). One file keeps that in one place, and the test reads one file. The new `PlotRejection.test.cpp` checks
+that every code has a branch there.
+
+**The comparison.** The same method as Step 12. `ParseCast`, `ParseAmbition` and `ResolveRoles` were instrumented
+for the comparison only, and the probes removed before the commit. They dumped every refusal the plot test suites
+produce: 37, from the old code and from the new. A script turns each new record back into the old sentence by the
+old C++'s rules, and it agreed on all 37. One of them is the parse test's fake resolver, which used to return the
+bare string "Balgruuf cannot be the authority". The test now hands back a `role_not_admitted` record with no role,
+and the script maps that one case to the fake's old text.
+
+Both prompts were then rendered under 40 refusals covering all 31 codes, and with no refusal at all:
+
+- every field a text check names;
+- every left-out reason;
+- an admitted list that is empty, short, and cut;
+- two- and three-way ambiguous names;
+- a `roles_unfit` carrying every role problem at once.
+
+The old tree took the old sentence as `retry`, and the new tree took the record. **All 82 renders are
+byte-identical.**
+
+`pwsh -File build.ps1 test`: 559 of 559 passed. `build.ps1 build` is clean, and the two includes deploy with the
+build.
 
 #### Step 14 — `ne_plot_awareness` returns structure
 

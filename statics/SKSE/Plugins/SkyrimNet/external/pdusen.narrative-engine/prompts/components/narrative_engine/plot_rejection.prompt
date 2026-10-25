@@ -1,0 +1,45 @@
+{# plot_rejection.prompt — why plot birth threw away the model's last answer,
+   for the retry. Included by narrative_engine_plot_cast and
+   narrative_engine_plot_ambition inside `{% for rejection in retry %}`.
+   `rejection` is { code, ...arguments }; include/PlotRejection.h in the
+   source lists every code and what it carries. A test fails the build when a
+   code has no branch here.
+
+   A role's arguments are { verb, name }, said as "the mark (whom it is stolen
+   from)" through plot_role. No trailing newline. #}{% if rejection.code == "call_failed" -%}
+    the call failed{% else if rejection.code == "parse_threw" -%}
+    parsing threw: {{ rejection.detail }}{% else if rejection.code == "no_shortlist" -%}
+    there was nobody on the shortlist to choose from{% else if rejection.code == "not_json" -%}
+    response was not a JSON object{% else if rejection.code == "missing_choice" -%}
+    response carried no 'choice'{% else if rejection.code == "empty_choice" -%}
+    'choice' was empty{% else if rejection.code == "choice_not_form_id" -%}
+    'choice' was '{{ rejection.text }}', which is not a form id{% else if rejection.code == "choice_wrong_type" -%}
+    'choice' was neither a form id string nor a number{% else if rejection.code == "choice_not_listed" -%}
+    'choice' named form 0x{{ rejection.form }}, which is not one of the {{ rejection.count }} candidates{% else if rejection.code == "missing_text" -%}
+    response carried no '{{ rejection.key }}' string{% else if rejection.code == "empty_text" -%}
+    '{{ rejection.key }}' was empty after sanitizing{% else if rejection.code == "names_player" -%}
+    the '{{ rejection.key }}' named the player; these plots run among the people of Skyrim and cannot involve the player{% else if rejection.code == "too_long" -%}
+    '{{ rejection.key }}' was {{ rejection.length }} characters, over the limit of {{ rejection.limit }}{% else if rejection.code == "scheme_accomplished" -%}
+    the scheme '{{ rejection.scheme }}' is one this person has already accomplished; choose a different one{% else if rejection.code == "goal_unknown" -%}
+    the goal '{{ rejection.goal }}' is not one of the kinds of step listed; give one of their ids{% else if rejection.code == "goal_not_finishing" -%}
+    the goal '{{ rejection.goal }}' only prepares for a later step and cannot end a scheme; end it in what that step was for, from the ids listed{% else if rejection.code == "finish_not_verb" -%}
+    the finish must open with a plain verb, as an instruction: '{{ rejection.finish }}'{% else if rejection.code == "role_names_player" -%}
+    the role '{{ rejection.role.name }}' named the player; these plots run among the people of Skyrim and cannot involve the player{% else if rejection.code == "roles_missing" -%}
+    'roles' must name every role of '{{ rejection.goal }}'; it did not name: {% for m in rejection.missing %}{% if not loop.is_first %}, {% endif %}{% set verb = m.verb %}{% set role = m.name %}{{ role }} ({% include "components/narrative_engine/plot_role.prompt" %}){% endfor %}{% else if rejection.code == "scheme_not_verb" -%}
+    the scheme must open with a plain verb, as an instruction -- not a name, a pronoun or an article: '{{ rejection.scheme }}'{% else if rejection.code == "scheme_is_ambition" -%}
+    the scheme is word for word the ambition; a scheme is a step toward the agenda, not a restatement of it{% else if rejection.code == "roles_unfit" -%}
+    the roles do not fit: {% for problem in rejection.problems -%}
+        {% if not loop.is_first %}; {% endif -%}
+        {% if existsIn(problem, "role") %}{% set verb = problem.role.verb %}{% set role = problem.role.name %}{% endif -%}
+        {% if existsIn(problem, "admitted") %}{% set admitted = problem.admitted %}{% endif -%}
+        {% if problem.code == "role_unnamed" -%}
+            nothing was named as the {{ role }} ({% include "components/narrative_engine/plot_role.prompt" %}){% else if problem.code == "role_is_mastermind" -%}
+            {{ problem.who }} is the one scheming and cannot be in their own scheme, for the {{ role }} ({% include "components/narrative_engine/plot_role.prompt" %}){% include "components/narrative_engine/plot_admitted.prompt" %}{% else if problem.code == "role_dead" -%}
+            {{ problem.who }} is dead or not in the world, for the {{ role }} ({% include "components/narrative_engine/plot_role.prompt" %}){% include "components/narrative_engine/plot_admitted.prompt" %}{% else if problem.code == "role_left_out" -%}
+            {{ problem.who }} cannot take part in these plots ({% if problem.why == "ghost" %}a ghost{% else if problem.why == "not_person" %}not a person{% else if problem.why == "no_location" %}no home location{% else if problem.why == "no_hold" %}no home in any hold{% else if problem.why == "child" %}a child{% else %}{{ problem.why }}{% endif %}), for the {{ role }} ({% include "components/narrative_engine/plot_role.prompt" %}){% include "components/narrative_engine/plot_admitted.prompt" %}{% else if problem.code == "role_names_nobody" -%}
+            '{{ problem.text }}' names nobody in Skyrim, for the {{ role }} ({% include "components/narrative_engine/plot_role.prompt" %}){% include "components/narrative_engine/plot_admitted.prompt" %}; a person's role takes one person's name, never a group's or a place's{% else if problem.code == "role_ambiguous" -%}
+            '{{ problem.text }}' could be {% for p in problem.people %}{% if not loop.is_first %}{% if loop.is_last %} or {% else %}, {% endif %}{% endif %}{{ p }}{% endfor %}; give the whole name, for the {{ role }} ({% include "components/narrative_engine/plot_role.prompt" %}){% else if problem.code == "role_not_admitted" -%}
+            {{ problem.who }} cannot be the {{ role }} ({% include "components/narrative_engine/plot_role.prompt" %}){% include "components/narrative_engine/plot_admitted.prompt" %}{% else if problem.code == "place_unknown" -%}
+            '{{ problem.text }}' names no settlement, for the {{ role }} ({% include "components/narrative_engine/plot_role.prompt" %}){% include "components/narrative_engine/plot_admitted.prompt" %}{% else if problem.code == "thing_unknown" -%}
+            '{{ problem.text }}' names nothing that can be the {{ role }} ({% include "components/narrative_engine/plot_role.prompt" %}); it must be one of: {{ join(problem.pool, "; ") }}{% endif -%}
+    {% endfor %}{% endif -%}

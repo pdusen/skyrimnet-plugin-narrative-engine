@@ -3,6 +3,7 @@
 #include <PlotCasting.h>
 #include <PlotMenus.h>
 #include <PlotModel.h>
+#include <PlotRejection.h>
 #include <PlotVerbs.h>
 
 #include <cstddef>
@@ -126,9 +127,9 @@ namespace NarrativeEngine::PlotCandidates
     {
         // In the goal's slot order, each naming its form and how it is said.
         std::vector<PlotModel::SlotValue> values;
-        // Empty when every role resolved; otherwise a sentence for each that
-        // did not, joined, for the scheme call's retry to act on.
-        std::string problem;
+        // Empty when every role resolved; otherwise why each that did not
+        // failed, for the scheme call's retry to act on.
+        std::vector<PlotRejection::Rejection> problems;
     };
 
     // Resolve the roles `named` gives a goal -- each a slot's name and the

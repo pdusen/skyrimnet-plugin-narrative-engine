@@ -608,10 +608,10 @@ namespace NarrativeEngine::GossipGraph
                 if (!IsGossipEligiblePerson(npc, actorTypeNpc)) {
                     if (EngineUtils::IsGhostRecord(npc)) {
                         ++g_census.rejectedGhost;
-                        leaveOut("a ghost");
+                        leaveOut("ghost");
                     } else {
                         ++g_census.rejectedNotPerson;
-                        leaveOut("not a person");
+                        leaveOut("not_person");
                     }
                     continue;
                 }
@@ -619,7 +619,7 @@ namespace NarrativeEngine::GossipGraph
                 const auto it = residence.find(id);
                 if (it == residence.end()) {
                     ++g_census.rejectedNoLocation;
-                    leaveOut("no home location");
+                    leaveOut("no_location");
                     continue;
                 }
 
@@ -634,7 +634,7 @@ namespace NarrativeEngine::GossipGraph
                     // Daedric princes, and quest actors staged in
                     // holding cells.
                     ++g_census.rejectedNoLocation;
-                    leaveOut("no home in any hold");
+                    leaveOut("no_hold");
                     continue;
                 }
 

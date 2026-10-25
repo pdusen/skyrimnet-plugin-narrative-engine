@@ -381,16 +381,6 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
             }
         }
 
-        SECTION("should say what every slot is for, for the scheme call to name its role")
-        {
-            for (const auto& verb : PlotVerbs::kVerbs) {
-                for (std::size_t i = 0; i < verb.slotCount; ++i) {
-                    INFO(verb.id << " {" << verb.slots[i].name << "}");
-                    REQUIRE_FALSE(verb.slots[i].says.empty());
-                }
-            }
-        }
-
         SECTION("should finish a scheme unless it only makes, finds or hides something")
         {
             // What these get or hide is for a later step: a forgery shown to

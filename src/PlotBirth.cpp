@@ -350,6 +350,12 @@ namespace NarrativeEngine::PlotBirth
             logger::warn("PlotBirth: rejected a plot for {} at the {} stage: {}", who, stage, why);
         }
 
+        // A refusal's code and arguments as the log records them.
+        std::string Logged(const PlotRejection::Rejection& rejection)
+        {
+            return rejection.ToJson().dump();
+        }
+
         // Ask one question, and ask it a second time if the first answer
         // was refused -- handing back the reason it was refused.
         //
@@ -379,11 +385,13 @@ namespace NarrativeEngine::PlotBirth
                          const char* stage)
         {
             Outcome outcome;
-            std::string retryNote;
+            // Why the last answer was refused, as plot_rejection.prompt words
+            // it; empty on the first attempt.
+            nlohmann::json retry = nlohmann::json::array();
 
             for (int attempt = 0; attempt < 2; ++attempt) {
                 auto ctx = build();
-                ctx["retry"] = retryNote;
+                ctx["retry"] = retry;
 
                 const auto call = SkyrimNetAPI::SendCustomPromptToLLM(pt, promptName, kVariant, ctx.dump());
                 if (!call.ok) {
@@ -392,7 +400,7 @@ namespace NarrativeEngine::PlotBirth
                     // most likely cause is that the endpoint is down,
                     // so a second attempt would just wait again.
                     outcome = Outcome{};
-                    outcome.rejection = "the call failed";
+                    outcome.rejection = PlotRejection::Make(PlotRejection::Code::CallFailed);
                     return outcome;
                 }
 
@@ -400,7 +408,7 @@ namespace NarrativeEngine::PlotBirth
                     outcome = parse(call.response);
                 } catch (const std::exception& e) {
                     outcome = Outcome{};
-                    outcome.rejection = std::string("parsing threw: ") + e.what();
+                    outcome.rejection = PlotRejection::Make(PlotRejection::Code::ParseThrew, {{"detail", e.what()}});
                 }
                 if (outcome.ok) {
                     if (attempt > 0) {
@@ -408,8 +416,8 @@ namespace NarrativeEngine::PlotBirth
                     }
                     return outcome;
                 }
-                retryNote = outcome.rejection;
-                logger::info("PlotBirth[{}]: retrying for {} after: {}", stage, who, retryNote);
+                retry = nlohmann::json::array({outcome.rejection.ToJson()});
+                logger::info("PlotBirth[{}]: retrying for {} after: {}", stage, who, Logged(outcome.rejection));
             }
             return outcome;
         }
@@ -546,7 +554,7 @@ namespace NarrativeEngine::PlotBirth
             shortlistName,
             "cast");
         if (!cast.ok) {
-            Rejected(shortlistName, "cast", cast.rejection);
+            Rejected(shortlistName, "cast", Logged(cast.rejection));
             return false;
         }
 
@@ -581,14 +589,14 @@ namespace NarrativeEngine::PlotBirth
                                                           {}};
                     auto resolution = PlotCandidates::ResolveRoles(goal, named, request);
                     resolved = std::move(resolution.values);
-                    return resolution.problem;
+                    return std::move(resolution.problems);
                 };
                 return ParseAmbition(response, TextLimits{}, player, resolveRoles, accomplished);
             },
             boss->name,
             "ambition");
         if (!ambition.ok) {
-            Rejected(boss->name, "ambition", ambition.rejection);
+            Rejected(boss->name, "ambition", Logged(ambition.rejection));
             return false;
         }
 

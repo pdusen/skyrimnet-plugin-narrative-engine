@@ -769,7 +769,7 @@ namespace NarrativeEngine::PlotPopulation
             // sends a child to watch a house, or aims one at them.
             if (IsChild(RE::TESForm::LookupByID<RE::TESNPC>(npcId))) {
                 ++children;
-                g_population.absent.push_back({GossipGraph::NpcName(npcId), "a child"});
+                g_population.absent.push_back({GossipGraph::NpcName(npcId), "child"});
                 continue;
             }
 

@@ -178,8 +178,9 @@ namespace NarrativeEngine::PlotCasting
         }
     };
 
-    // Somebody named in the game who is in no plot, and why: "no home
-    // location", "a child". What a scheme naming them is told.
+    // Somebody named in the game who is in no plot, and why, as a token:
+    // GossipGraph::LeftOut's, or child. What a scheme naming them is told,
+    // through plot_rejection.prompt's role_left_out.
     struct Absent
     {
         std::string name;

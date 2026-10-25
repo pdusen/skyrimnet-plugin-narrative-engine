@@ -8,6 +8,7 @@
 #include <PlotCasting.h>
 #include <PlotModel.h>
 #include <PlotPlanning.h>
+#include <PlotRejection.h>
 #include <PlotState.h>
 #include <PlotThread.h>
 #include <PlotVerbs.h>
@@ -70,7 +71,7 @@ namespace NarrativeEngine::PlotBirth
     struct CastOutcome
     {
         bool ok = false;
-        std::string rejection;
+        PlotRejection::Rejection rejection;
         // Index into the shortlist the prompt was rendered from,
         // recovered from the `form_id` the model named. A membership
         // test against a small closed list, which is the one piece of
@@ -114,7 +115,7 @@ namespace NarrativeEngine::PlotBirth
     struct AmbitionOutcome
     {
         bool ok = false;
-        std::string rejection;
+        PlotRejection::Rejection rejection;
 
         // The AGENDA: the larger thing this person is ultimately after,
         // and deliberately not something this system can ever finish.
@@ -141,10 +142,11 @@ namespace NarrativeEngine::PlotBirth
 
     // Resolves the roles a scheme call named for its goal: `named` holds each
     // slot's name and the words written for it. Fills `resolved` and returns
-    // nothing when every role fits, else why not, for the retry.
-    using RoleResolver = std::function<std::string(const PlotVerbs::Verb& goal,
-                                                   const std::vector<PlotModel::SlotValue>& named,
-                                                   std::vector<PlotModel::SlotValue>& resolved)>;
+    // nothing when every role fits, else why each does not, for the retry.
+    using RoleResolver =
+        std::function<std::vector<PlotRejection::Rejection>(const PlotVerbs::Verb& goal,
+                                                            const std::vector<PlotModel::SlotValue>& named,
+                                                            std::vector<PlotModel::SlotValue>& resolved)>;
 
     struct TextLimits
     {

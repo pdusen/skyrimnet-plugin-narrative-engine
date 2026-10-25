@@ -4,8 +4,8 @@
    Receives the JSON object produced by PlotBirth::CastContext:
      candidates [{ form_id, name, hold, standing (a plot_standing token),
                    bio { summary, occupation, aspirations, ... } }],
-     retry — empty on the first attempt; on the second it is why the
-       first answer was refused
+     retry — empty on the first attempt; on the second, why the first
+       answer was refused: [{ code, ... }], worded by plot_rejection
    The plugin draws twenty-five, keeps the first five with a biography on
    file, and shuffles them: a candidate with no biography renders as a
    name and a hold beside others with a paragraph each, which is not a
@@ -76,7 +76,7 @@ object.
 {% if length(retry) > 0 %}
 ## Your last answer was thrown away
 
-{{ retry }}
+{% for rejection in retry %}{% include "components/narrative_engine/plot_rejection.prompt" %}{% endfor %}
 
 Do not repeat that mistake. Everything else about the task is unchanged.
 {% endif %}

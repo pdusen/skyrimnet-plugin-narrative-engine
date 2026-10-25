@@ -1202,7 +1202,8 @@ TEST_CASE("PlotBirth::ParseAmbition reads the goal", "[PlotBirth][engine]")
         {
             const auto unknown = parse("document");
             REQUIRE_FALSE(unknown.ok);
-            REQUIRE(unknown.rejection.find("document") != std::string::npos);
+            REQUIRE(unknown.rejection.code == NarrativeEngine::PlotRejection::Code::GoalUnknown);
+            REQUIRE(unknown.rejection.args["goal"] == "document");
             REQUIRE(unknown.scheme.empty());
             REQUIRE_FALSE(parse("").ok);
         }
@@ -1264,7 +1265,8 @@ TEST_CASE("PlotBirth::ParseAmbition refuses the player by name", "[PlotBirth][en
         SECTION("should refuse it, saying why")
         {
             REQUIRE_FALSE(out.ok);
-            REQUIRE(out.rejection.find("player") != std::string::npos);
+            REQUIRE(out.rejection.code == NarrativeEngine::PlotRejection::Code::NamesPlayer);
+            REQUIRE(out.rejection.args["key"] == "finish");
         }
     }
 
@@ -1322,7 +1324,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
         SECTION("should refuse it, saying it cannot end a scheme")
         {
             REQUIRE_FALSE(out.ok);
-            REQUIRE(out.rejection.find("cannot end a scheme") != std::string::npos);
+            REQUIRE(out.rejection.code == NarrativeEngine::PlotRejection::Code::GoalNotFinishing);
         }
     }
 
@@ -1348,7 +1350,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
         SECTION("should refuse it, whatever its case or period, saying why")
         {
             REQUIRE_FALSE(out.ok);
-            REQUIRE(out.rejection.find("already accomplished") != std::string::npos);
+            REQUIRE(out.rejection.code == NarrativeEngine::PlotRejection::Code::SchemeAccomplished);
         }
 
         SECTION("should accept one they have not")
@@ -1365,7 +1367,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the finish", "[PlotBirth][engine]")
         {
             const auto out = ParseAmbition(j.dump(), TextLimits{});
             REQUIRE_FALSE(out.ok);
-            REQUIRE(out.rejection.find("finish") != std::string::npos);
+            REQUIRE(out.rejection.code == NarrativeEngine::PlotRejection::Code::FinishNotVerb);
         }
     }
 }
@@ -1390,7 +1392,9 @@ TEST_CASE("PlotBirth::ParseAmbition reads the roles", "[PlotBirth][engine]")
         SECTION("should refuse the answer, saying which role and what it is for")
         {
             REQUIRE_FALSE(out.ok);
-            REQUIRE(out.rejection.find("authority (whom they are denounced to)") != std::string::npos);
+            REQUIRE(out.rejection.code == NarrativeEngine::PlotRejection::Code::RolesMissing);
+            REQUIRE(out.rejection.args["missing"]
+                    == nlohmann::json::array({{{"verb", "denounce"}, {"name", "authority"}}}));
         }
     }
 
@@ -1412,7 +1416,7 @@ TEST_CASE("PlotBirth::ParseAmbition reads the roles", "[PlotBirth][engine]")
             ParseAmbition(j.dump(), TextLimits{}, {}, [&asked](const auto&, const auto& named, auto& resolved) {
                 asked = named;
                 resolved = {{"mark", kTrader, "Hulda"}, {"authority", kJarl, "Laila"}};
-                return std::string{};
+                return std::vector<NarrativeEngine::PlotRejection::Rejection>{};
             });
 
         SECTION("should hand the resolver each role in the goal's slot order, and keep what it resolved")
@@ -1431,13 +1435,16 @@ TEST_CASE("PlotBirth::ParseAmbition reads the roles", "[PlotBirth][engine]")
     {
         j["roles"] = {{"mark", "Hulda"}, {"authority", "Balgruuf"}};
         const auto out = ParseAmbition(j.dump(), TextLimits{}, {}, [](const auto&, const auto&, auto&) {
-            return std::string{"Balgruuf cannot be the authority"};
+            using NarrativeEngine::PlotRejection::Code;
+            return std::vector{NarrativeEngine::PlotRejection::Make(Code::RoleNotAdmitted, {{"who", "Balgruuf"}})};
         });
 
         SECTION("should refuse the answer with the resolver's reason")
         {
             REQUIRE_FALSE(out.ok);
-            REQUIRE(out.rejection == "the roles do not fit: Balgruuf cannot be the authority");
+            REQUIRE(out.rejection.code == NarrativeEngine::PlotRejection::Code::RolesUnfit);
+            REQUIRE(out.rejection.args["problems"]
+                    == nlohmann::json::array({{{"code", "role_not_admitted"}, {"who", "Balgruuf"}}}));
             REQUIRE(out.roles.empty());
         }
     }

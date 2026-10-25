@@ -4,8 +4,8 @@
    Receives the JSON object produced by PlotBirth::AmbitionContext:
      mastermind { name, hold, standing (a plot_standing token) },
      memories [string],
-     retry — empty on the first attempt; on the second it is why the
-       first answer was refused,
+     retry — empty on the first attempt; on the second, why the first
+       answer was refused: [{ code, ... }], worded by plot_rejection,
      bio { summary, background, personality, aspirations, relationships,
        occupation } — the mastermind's biography, read straight from their
        bio file by CharacterBios. Plain text, already rendered; no
@@ -212,7 +212,7 @@ this person would actually know.
 {% if length(retry) > 0 %}
 ## Your last answer was thrown away
 
-{{ retry }}
+{% for rejection in retry %}{% include "components/narrative_engine/plot_rejection.prompt" %}{% endfor %}
 
 Do not repeat that mistake. Everything else about the task is unchanged.
 If correcting it changes who or what fills a role, rewrite the scheme and
