@@ -1279,6 +1279,86 @@ TEST_CASE("NPCVisitBeat calls off a visit the player has walked away from", "[NP
             }
         }
 
+        SECTION("and the player walks into a barrow with the visitor close and in view")
+        {
+            // Rolling back is a MoveTo home, and in plain view that is
+            // somebody vanishing in front of the player. Short of the
+            // approach distance, so the visitor does not arrive meanwhile.
+            PlaceSenderAway(engine, world.sender, 1500.0f);
+            engine.visibility.engineLineOfSight = true;
+            engine.visibility.pickHitFraction = 1.0f;
+            enterBarrow();
+            StageTick(beat);
+
+            SECTION("should wait")
+            {
+                REQUIRE_FALSE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+                REQUIRE(engine.questControl.teleports.empty());
+            }
+
+            SECTION("and the visitor then drops out of sight")
+            {
+                engine.visibility.engineLineOfSight = false;
+                engine.visibility.target3DPresent = false;
+                StageTick(beat);
+
+                SECTION("should roll back")
+                {
+                    REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+                    REQUIRE(engine.questControl.teleports.back().destinationFormID == kReturnAnchor);
+                }
+            }
+
+            SECTION("and the visitor then falls far enough behind")
+            {
+                PlaceSenderAway(engine, world.sender, 3500.0f);
+                StageTick(beat);
+
+                SECTION("should roll back")
+                {
+                    REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+                }
+            }
+
+            SECTION("and the player walks back out before the visitor is out of sight")
+            {
+                // The reason for the rollback is gone, so it is withdrawn
+                // rather than left to fire later on a visit that can stand.
+                engine.world.cellFormID = 0x0E010C03u;
+                engine.world.playerLocationOverride = nullptr;
+                StageTick(beat);
+                engine.visibility.engineLineOfSight = false;
+                engine.visibility.target3DPresent = false;
+                StageTick(beat);
+
+                SECTION("should leave the visitor to it")
+                {
+                    REQUIRE_FALSE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+                    REQUIRE(engine.questControl.teleports.empty());
+                }
+            }
+        }
+
+        SECTION("and the player goes indoors somewhere blocked, with the visitor in view")
+        {
+            // Through a door the visit rolls back at once: sight and distance
+            // only hold back a change of cell on the same side of one. The
+            // visitor is put in the same interior, close and visible, which
+            // is the case that would otherwise wait.
+            enterBarrow();
+            engine.world.cellIsInterior = true;
+            world.sender->parentCell = RE::PlayerCharacter::GetSingleton()->GetParentCell();
+            PlaceSenderAway(engine, world.sender, 1500.0f);
+            engine.visibility.engineLineOfSight = true;
+            engine.visibility.pickHitFraction = 1.0f;
+            StageTick(beat);
+
+            SECTION("should roll back")
+            {
+                REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+            }
+        }
+
         SECTION("and the player walks somewhere ordinary")
         {
             engine.world.cellFormID = 0x0E010C03u;

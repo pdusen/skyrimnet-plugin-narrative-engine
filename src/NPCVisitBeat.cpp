@@ -284,6 +284,7 @@ namespace NarrativeEngine
         // The player's cell when the beat last looked, so it can tell when
         // they have moved. 0 until the first look of a visit.
         std::atomic<RE::FormID> g_lastPlayerCellFormID = 0;
+        std::atomic<bool> g_lastPlayerCellInterior = false;
 
         // True from OnStart until the beat is back at NOT_RUNNING. The event
         // sinks fire whether or not anybody is visiting, and this is how
@@ -295,6 +296,19 @@ namespace NarrativeEngine
         // been moved, or once RUNNING can send them home. A string literal,
         // or null when nothing is pending.
         std::atomic<const char*> g_pendingRollbackReason = nullptr;
+
+        // The two reasons the player's movements give, compared by address.
+        // Through a door, indoors or out, the visit rolls back at once. A
+        // change of cell on the same side of one waits until the visitor is
+        // out of view, rather than vanishing them in front of the player.
+        constexpr const char* kRollbackInOrOut = "player_went_in_or_out_to_blocked_area";
+        constexpr const char* kRollbackCellChange = "player_entered_blocked_area";
+
+        // Rolling a visitor back MoveTos them home, which in plain view is
+        // somebody vanishing. Within this distance and in sight of the
+        // camera a same-side cell change waits.
+        constexpr float kRollbackOutOfViewUnits = 3000.0f;
+        std::atomic<bool> g_rollbackDeferralLogged = false;
 
         // Discuss sub-state machine. Cyclic and mostly one-directional:
         //   Discussing --(hold trigger tripped)--------------> OnHold
@@ -387,7 +401,9 @@ namespace NarrativeEngine
             g_salutationDiscussLatch.Reset();
             g_salutationNarrationFired.store(false, std::memory_order_release);
             g_lastPlayerCellFormID.store(0, std::memory_order_release);
+            g_lastPlayerCellInterior.store(false, std::memory_order_release);
             g_pendingRollbackReason.store(nullptr, std::memory_order_release);
+            g_rollbackDeferralLogged.store(false, std::memory_order_release);
             g_discussSubPhase.store(DiscussSubPhase::Discussing, std::memory_order_release);
             {
                 std::scoped_lock lock(g_hardAbortReasonMutex);
@@ -811,13 +827,22 @@ namespace NarrativeEngine
             g_terminalCleanupDone.store(true);
         }
 
-        // Ask for the visit to be rolled back. The first reason wins; a
-        // second request while one is pending changes nothing.
+        // Ask for the visit to be rolled back. The first reason wins, with
+        // one exception: a rollback that would wait for the visitor to be
+        // out of view gives way to one that would not.
         void RequestRollback(const char* reason)
         {
-            const char* expected = nullptr;
-            if (g_pendingRollbackReason.compare_exchange_strong(expected, reason, std::memory_order_acq_rel)) {
-                logger::info("NPCVisitBeat: rollback requested ({})", reason);
+            const char* current = g_pendingRollbackReason.load(std::memory_order_acquire);
+            for (;;) {
+                const bool replaceable =
+                    current == nullptr || (current == kRollbackCellChange && reason != kRollbackCellChange);
+                if (!replaceable) {
+                    return;
+                }
+                if (g_pendingRollbackReason.compare_exchange_weak(current, reason, std::memory_order_acq_rel)) {
+                    logger::info("NPCVisitBeat: rollback requested ({})", reason);
+                    return;
+                }
             }
         }
 
@@ -839,19 +864,23 @@ namespace NarrativeEngine
         // Roll the visit back if the player has moved somewhere it could
         // not have started, before the visitor has reached them.
         //
-        // Asked only when the player's cell changes, which covers walking
-        // through a door either way as well as crossing exterior cells. The
-        // gates are the ones that kept the beat from being offered in the
-        // first place, so the question is whether the Director would still
-        // have chosen this visit here. Once the opening line has been
-        // spoken the answer no longer matters: the player has met them.
+        // Asked only when the player's cell changes. The gates are the ones
+        // that kept the beat from being offered in the first place, so the
+        // question is whether the Director would still have chosen this
+        // visit here. Once the opening line has been spoken the answer no
+        // longer matters: the player has met them.
+        //
+        // Going indoors or out rolls back at once. A change of cell that
+        // keeps the player on the same side of a door rolls back only once
+        // the visitor is out of view; see VisitorInPlainView. Moving on to
+        // somewhere a visit could start again withdraws that second kind,
+        // since the reason for it is gone.
         //
         // The reads are the same off-main-thread ones the beat-select
         // preconditions make.
         void WatchPlayerArea()
         {
-            if (g_salutationNarrationFired.load(std::memory_order_acquire)
-                || g_pendingRollbackReason.load(std::memory_order_acquire) != nullptr) {
+            if (g_salutationNarrationFired.load(std::memory_order_acquire)) {
                 return;
             }
             auto* player = RE::PlayerCharacter::GetSingleton();
@@ -860,18 +889,30 @@ namespace NarrativeEngine
                 return;
             }
             const auto cellID = cell->GetFormID();
+            const bool interior = cell->IsInteriorCell();
             const auto previous = g_lastPlayerCellFormID.exchange(cellID, std::memory_order_acq_rel);
+            const bool wasInterior = g_lastPlayerCellInterior.exchange(interior, std::memory_order_acq_rel);
             if (previous == 0 || previous == cellID) {
                 return;
             }
-            if (const char* why = WhyNoVisitHere()) {
-                logger::info("NPCVisitBeat: the player moved from cell 0x{:08X} to 0x{:08X}, a {} -- a visit could "
-                             "not start here",
-                             previous,
-                             cellID,
-                             why);
-                RequestRollback("player_entered_blocked_area");
+            const char* why = WhyNoVisitHere();
+            if (!why) {
+                const char* expected = kRollbackCellChange;
+                if (g_pendingRollbackReason.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel)) {
+                    logger::info("NPCVisitBeat: the player moved on to cell 0x{:08X}, where a visit could start -- "
+                                 "rollback withdrawn",
+                                 cellID);
+                }
+                return;
             }
+            const bool throughDoor = interior != wasInterior;
+            logger::info("NPCVisitBeat: the player moved from cell 0x{:08X} to 0x{:08X}{}, a {} -- a visit could "
+                         "not start here",
+                         previous,
+                         cellID,
+                         throughDoor ? (interior ? " indoors" : " outdoors") : "",
+                         why);
+            RequestRollback(throughDoor ? kRollbackInOrOut : kRollbackCellChange);
         }
 
         void HardAbortVisit(const char* reason)
@@ -1222,6 +1263,24 @@ namespace NarrativeEngine
             const auto senderWs = WorldSpaceOf(senderRef);
             const auto playerWs = WorldSpaceOf(player);
             return senderWs != 0 && senderWs == playerWs;
+        }
+
+        // Whether rolling the visitor back now would mean the player
+        // watching them vanish: within kRollbackOutOfViewUnits and visible
+        // from the camera. Somewhere the two positions cannot be compared
+        // counts as far, which is what an unrelated worldspace or another
+        // interior is. Main thread.
+        bool VisitorInPlainView()
+        {
+            auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (!senderRef || !player || !DistancesAreComparable(senderRef, player)) {
+                return false;
+            }
+            if (senderRef->GetPosition().GetDistance(player->GetPosition()) >= kRollbackOutOfViewUnits) {
+                return false;
+            }
+            return CameraVisibility::IsAnyPartVisibleFromCamera(senderRef);
         }
 
         // ---- COMPOSE sub-phases ------------------------------------
@@ -1786,13 +1845,28 @@ namespace NarrativeEngine
                     return;
                 if (CheckHardAbortConditions())
                     return;
-                if (const char* reason = g_pendingRollbackReason.exchange(nullptr, std::memory_order_acq_rel)) {
+                if (const char* reason = g_pendingRollbackReason.load(std::memory_order_acquire)) {
                     // Asked for on another thread, so the opening line may
                     // have gone out in between. Then the player has met the
                     // visitor and there is nothing left to undo.
                     if (g_salutationNarrationFired.load(std::memory_order_acquire)) {
-                        logger::info("NPCVisitBeat: rollback ({}) arrived after the opening line -- ignored", reason);
-                    } else {
+                        if (g_pendingRollbackReason.compare_exchange_strong(
+                                reason, nullptr, std::memory_order_acq_rel)) {
+                            logger::info("NPCVisitBeat: rollback ({}) arrived after the opening line -- ignored",
+                                         reason);
+                        }
+                    } else if (reason == kRollbackCellChange && VisitorInPlainView()) {
+                        // Left pending, and asked again next time. The
+                        // visitor may yet reach the player first, and then
+                        // the line above drops it.
+                        if (!g_rollbackDeferralLogged.exchange(true, std::memory_order_acq_rel)) {
+                            logger::info("NPCVisitBeat: rollback ({}) waits -- the visitor is within {:.0f}u and in "
+                                         "view",
+                                         reason,
+                                         kRollbackOutOfViewUnits);
+                        }
+                    } else if (g_pendingRollbackReason.compare_exchange_strong(
+                                   reason, nullptr, std::memory_order_acq_rel)) {
                         logger::warn("NPCVisitBeat: rolling the visit back ({})", reason);
                         RollBackVisit("ROLLBACK");
                         return;

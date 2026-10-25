@@ -34,7 +34,10 @@
 //               Stage 10 (Salutation) — approach-distance / timeout, and a
 //                                       rollback if the player changes cell
 //                                       into somewhere a visit could not
-//                                       start (also watched during COMPOSE)
+//                                       start (also watched during COMPOSE).
+//                                       Through a door it is immediate; on
+//                                       the same side of one it waits while
+//                                       the visitor is near and in view.
 //               Stage 20 (Discuss)    — internal three-way substate cycle
 //                                       (Discussing / OnHold / ReEngage) that
 //                                       drives the speech sampler + conclusion
