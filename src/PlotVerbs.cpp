@@ -76,6 +76,10 @@ namespace NarrativeEngine::PlotVerbs
             return "mastermind_told_timed_out";
         case Template::MastermindToldSucceeded:
             return "mastermind_told_succeeded";
+        case Template::MastermindTask:
+            return "mastermind_task";
+        case Template::AgentTask:
+            return "agent_task";
         case Template::Count:
             break;
         }
@@ -220,7 +224,8 @@ namespace NarrativeEngine::PlotVerbs
         std::string RenderOf(const PlotModel::Step& step,
                              const Verb* verb,
                              std::string_view text,
-                             std::string_view scheme)
+                             std::string_view scheme,
+                             bool sentence = true)
         {
             const auto lookup = [&](std::string_view name) -> std::optional<std::string> {
                 if (name == "agent") {
@@ -245,8 +250,9 @@ namespace NarrativeEngine::PlotVerbs
             auto out = Render(text, lookup, missing);
             // A sentence can open with a slot -- "{agent} watches..." -- and an
             // unfilled one reads as "someone", so the first letter is not the
-            // template's to guarantee.
-            if (!out.empty()) {
+            // template's to guarantee. A phrase opens with its own lowercase
+            // word, and goes in the middle of somebody else's sentence.
+            if (sentence && !out.empty()) {
                 out[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(out[0])));
             }
             return out;
@@ -257,6 +263,12 @@ namespace NarrativeEngine::PlotVerbs
     {
         const Verb* verb = Find(step.verb);
         return verb != nullptr ? RenderOf(step, verb, verb->Text(t), scheme) : std::string{};
+    }
+
+    std::string RenderPhrase(const PlotModel::Step& step, Template t)
+    {
+        const Verb* verb = Find(step.verb);
+        return verb != nullptr ? RenderOf(step, verb, verb->Text(t), {}, false) : std::string{};
     }
 
     std::string RenderTarget(const PlotModel::Step& step, std::string_view slot, TargetTemplate t)

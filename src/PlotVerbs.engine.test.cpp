@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <set>
 #include <string>
 #include <string_view>
@@ -35,7 +36,32 @@ namespace
                                  Template::AgentTimedOut,
                                  Template::MastermindToldFailed,
                                  Template::MastermindToldTimedOut,
-                                 Template::MastermindToldSucceeded};
+                                 Template::MastermindToldSucceeded,
+                                 Template::MastermindTask,
+                                 Template::AgentTask};
+
+    // `text` with "your" and "you" written as "my" and "me", where each
+    // stands as a word: a mastermind's task phrase, in the voice of their
+    // own memory of it.
+    std::string InFirstPerson(std::string_view text)
+    {
+        std::string out;
+        std::size_t at = 0;
+        while (at < text.size()) {
+            if (std::isalpha(static_cast<unsigned char>(text[at])) == 0) {
+                out.push_back(text[at++]);
+                continue;
+            }
+            auto end = at;
+            while (end < text.size() && std::isalpha(static_cast<unsigned char>(text[end])) != 0) {
+                ++end;
+            }
+            const auto word = text.substr(at, end - at);
+            out += word == "your" ? "my" : word == "you" ? "me" : std::string{word};
+            at = end;
+        }
+        return out;
+    }
 
     constexpr Template kAgentOutcomes[] = {Template::AgentSucceeded, Template::AgentFailed, Template::AgentTimedOut};
 
@@ -102,7 +128,7 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
             }
         }
 
-        SECTION("should carry all ten templates")
+        SECTION("should carry all twelve templates")
         {
             for (const auto& verb : PlotVerbs::kVerbs) {
                 for (const auto t : kAll) {
@@ -168,6 +194,40 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
                 REQUIRE(Names(verb.Text(Template::MastermindToldTimedOut), "agent"));
                 REQUIRE(Names(verb.Text(Template::MastermindToldSucceeded), "agent"));
                 REQUIRE(Names(verb.Text(Template::Dashboard), "agent"));
+            }
+        }
+
+        SECTION("should give the work alone as a phrase that names only its slots")
+        {
+            // Each goes mid-sentence after "You sent Aeta to" or "You need
+            // to", so it opens on its own lowercase word and ends without a
+            // stop; and who sent whom is the sentence's to say, not the task's.
+            for (const auto& verb : PlotVerbs::kVerbs) {
+                for (const auto t : {Template::MastermindTask, Template::AgentTask}) {
+                    INFO(verb.id << " " << PlotVerbs::TemplateId(t));
+                    const auto text = verb.Text(t);
+                    REQUIRE(std::islower(static_cast<unsigned char>(text.front())) != 0);
+                    REQUIRE(text.back() != '.');
+                    REQUIRE_FALSE(Names(text, "agent"));
+                    REQUIRE_FALSE(Names(text, "mastermind"));
+                }
+            }
+        }
+
+        SECTION("should word the work as each of them remembers being given it")
+        {
+            // What a person is told of their plot and what they remember of
+            // it are the same errand, so they are in the same words: the
+            // agent's as they were asked, the mastermind's as they sent
+            // somebody or set out themselves.
+            for (const auto& verb : PlotVerbs::kVerbs) {
+                INFO(verb.id);
+                const auto agent = verb.Text(Template::AgentTask);
+                REQUIRE(verb.Text(Template::AgentDispatched).find(agent) != std::string_view::npos);
+                const auto mastermind = InFirstPerson(verb.Text(Template::MastermindTask));
+                const bool sent = verb.Text(Template::MastermindDispatched).find(mastermind) != std::string_view::npos;
+                const bool self = verb.Text(Template::SelfDispatched).find(mastermind) != std::string_view::npos;
+                REQUIRE((sent || self));
             }
         }
 
@@ -439,6 +499,12 @@ TEST_CASE("PlotVerbs rendering", "[PlotVerbs][engine]")
         SECTION("should name the mastermind from the step's own record")
         {
             REQUIRE(PlotVerbs::RenderStep(step, Template::AgentDispatched).starts_with("Fanari Strong-Voice asked me"));
+        }
+
+        SECTION("should leave a phrase uncapitalised, to go mid-sentence")
+        {
+            REQUIRE(PlotVerbs::RenderPhrase(step, Template::MastermindTask)
+                    == "keep watch on Hulda and learn their habits");
         }
     }
 

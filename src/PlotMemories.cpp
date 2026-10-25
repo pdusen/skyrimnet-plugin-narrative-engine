@@ -44,6 +44,8 @@ namespace NarrativeEngine::PlotMemories
             case Template::MastermindToldSucceeded:
                 return {0.5f, "KNOWLEDGE"};
             case Template::Dashboard:
+            case Template::MastermindTask:
+            case Template::AgentTask:
             case Template::Count:
                 break;
             }

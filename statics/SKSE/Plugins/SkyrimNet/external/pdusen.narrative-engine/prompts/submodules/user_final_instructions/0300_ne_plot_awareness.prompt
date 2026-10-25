@@ -1,0 +1,28 @@
+{# 0300_ne_plot_awareness.prompt — the plot this NPC is part of, if any.
+
+   SkyrimNet assembles every `.prompt` under
+   `prompts/submodules/user_final_instructions/` into the closing
+   instructions of the prompt, in numeric order. 0300 puts this after the
+   combat status (0200) and ahead of the response format (0500), so it is
+   read as part of the situation rather than as a rule about the reply.
+
+   `ne_plot_awareness` is registered by NarrativeEngine's SKSE plugin (see
+   Decorators.cpp and PlotAwareness.cpp). It answers in the second person:
+   a mastermind gets their scheme and each step of it, an agent the errand
+   they were sent on. For anybody in no plot it answers empty, and this
+   renders nothing. Custom decorators bind as `(uuid) -> string`, so it is
+   called with `npc.UUID`.
+
+   The closing line is the template's rather than the decorator's because
+   it is the same for both roles: without it, a mastermind asked "are you
+   plotting anything?" told the player the whole scheme. #}
+{% if exists("npc") and existsIn(npc, "UUID") and not is_player(npc.UUID) %}
+{% set plot_awareness = ne_plot_awareness(npc.UUID) %}
+{% if plot_awareness != "" %}
+## Your Plot
+
+{{ plot_awareness }}
+
+This is a secret. You only discuss it with people you trust, or with those already involved in it.
+{% endif %}
+{% endif %}

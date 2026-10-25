@@ -111,9 +111,10 @@ namespace NarrativeEngine::PlotVerbs
         }
     };
 
-    // The ten sentences every verb carries, in this order. The first is
-    // the dashboard's present-tense line; the rest are first-person, past
-    // tense memories. The last was added after the rest, by Milestone 3.
+    // The twelve templates every verb carries, in this order. The first is
+    // the dashboard's present-tense line; the next nine are first-person,
+    // past tense memories, the last of them added by Milestone 3; the final
+    // two are the work alone, for the plot each person in it is told of.
     enum class Template : std::uint8_t
     {
         Dashboard,
@@ -126,6 +127,12 @@ namespace NarrativeEngine::PlotVerbs
         MastermindToldFailed,
         MastermindToldTimedOut,
         MastermindToldSucceeded,
+        // The work itself, as a phrase rather than a sentence: "steal {item}
+        // from {mark}", to follow "You sent Aeta to" or "You need to". The
+        // mastermind's says "your side" and the agent's "their side", because
+        // the two are told it from either end. See PlotAwareness.
+        MastermindTask,
+        AgentTask,
 
         Count
     };
@@ -204,6 +211,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that {mark} had spotted them watching.",
                 "{agent} reported back that they had run out of time before learning {mark}'s habits.",
                 "{agent} reported back that they had learned {mark}'s habits.",
+                "keep watch on {mark} and learn their habits",
+                "keep watch on {mark} and learn their habits",
             }},
         },
         Verb{
@@ -231,6 +240,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that {mark} had heard they were asking questions around {place}.",
                 "{agent} reported back that they had run out of time before learning anything useful about {mark}.",
                 "{agent} reported back that they had learned what I needed to know about {mark} around {place}.",
+                "ask around {place} about {mark}",
+                "go around {place} asking questions about {mark}",
             }},
         },
         Verb{
@@ -258,6 +269,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that {mark} had caught them trying to steal {item}.",
                 "{agent} reported back that they had run out of time before they could steal {item} from {mark}.",
                 "{agent} reported back that they had stolen {item} from {mark}.",
+                "steal {item} from {mark}",
+                "steal {item} from {mark}",
             }},
         },
         Verb{
@@ -287,6 +300,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that the deal with {seller} for {item} had gone sour.",
                 "{agent} reported back that they had run out of time before striking a deal with {seller} for {item}.",
                 "{agent} reported back that they had bought {item} from {seller}.",
+                "buy {item} from {seller}",
+                "buy {item} from {seller}",
             }},
         },
         Verb{
@@ -314,6 +329,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that they had been stopped on the way to bring {item} to {recipient}.",
                 "{agent} reported back that they had run out of time before bringing {item} to {recipient}.",
                 "{agent} reported back that they had brought {item} to {recipient}.",
+                "bring {item} to {recipient}",
+                "bring {item} to {recipient}",
             }},
         },
         Verb{
@@ -341,6 +358,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that {mark} had caught them trying to hide {item} among their belongings.",
                 "{agent} reported back that they had run out of time before hiding {item} among {mark}'s belongings.",
                 "{agent} reported back that they had hidden {item} among {mark}'s belongings.",
+                "hide {item} among {mark}'s belongings",
+                "hide {item} among {mark}'s belongings",
             }},
             false,
         },
@@ -370,6 +389,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that {mark} had refused the bribe.",
                 "{agent} reported back that they had run out of time before they could offer {mark} the bribe.",
                 "{agent} reported back that {mark} had taken the coin and would look the other way.",
+                "pay {mark} to look the other way",
+                "pay {mark} to look the other way",
             }},
         },
         Verb{
@@ -398,6 +419,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that {mark} would not be won over.",
                 "{agent} reported back that they had run out of time before winning {mark} over.",
                 "{agent} reported back that they had won {mark} over to my side.",
+                "win {mark} over to your side",
+                "win {mark} over to their side",
             }},
         },
         Verb{
@@ -426,6 +449,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that {mark} would not be warned off.",
                 "{agent} reported back that they had run out of time before warning {mark} off.",
                 "{agent} reported back that {mark} had taken the warning to heart.",
+                "warn {mark} to stay out of your affairs",
+                "warn {mark} to stay out of their affairs",
             }},
         },
         Verb{
@@ -459,6 +484,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that the talk about {mark} around {place} had been traced back to them.",
                 "{agent} reported back that they had run out of time before the talk about {mark} took hold around {place}.",
                 "{agent} reported back that people around {place} had started repeating the talk about {mark}.",
+                "spread ugly talk about {mark} around {place}",
+                "spread ugly talk about {mark} around {place}",
             }},
         },
         Verb{
@@ -493,6 +520,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that {authority} would not hear a word against {mark}.",
                 "{agent} reported back that they had run out of time before getting an audience with {authority}.",
                 "{agent} reported back that they had denounced {mark} to {authority}, and {authority} had listened.",
+                "denounce {mark} to {authority}",
+                "denounce {mark} to {authority}",
             }},
         },
         Verb{
@@ -521,6 +550,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that {mark} had caught them trying to sabotage their livelihood.",
                 "{agent} reported back that they had run out of time before doing {mark}'s livelihood any real harm.",
                 "{agent} reported back that they had sabotaged {mark}'s livelihood.",
+                "sabotage {mark}'s livelihood",
+                "sabotage {mark}'s livelihood",
             }},
         },
         Verb{
@@ -548,6 +579,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that {witness} would not be paid to keep quiet.",
                 "{agent} reported back that they had run out of time before paying {witness} to keep quiet.",
                 "{agent} reported back that {witness} had taken the coin and would keep quiet.",
+                "pay {witness} to keep quiet",
+                "pay {witness} to keep quiet",
             }},
         },
         // Falsify, not forge: a model reads "forge" as smithing often enough
@@ -577,6 +610,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that their attempt to falsify {item} in {subject}'s name had been found out.",
                 "{agent} reported back that they had run out of time before falsifying {item} in {subject}'s name.",
                 "{agent} reported back that they had falsified {item} in {subject}'s name, good enough to pass.",
+                "falsify {item} in {subject}'s name",
+                "falsify {item} in {subject}'s name",
             }},
             false,
         },
@@ -605,6 +640,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that {mark} had found out they were digging into their affairs.",
                 "{agent} reported back that they had run out of time before finding proof against {mark}.",
                 "{agent} reported back that they had dug up {item} proving {mark}'s wrongdoing.",
+                "dig up {item} proving {mark}'s wrongdoing",
+                "dig up {item} proving {mark}'s wrongdoing",
             }},
             false,
         },
@@ -634,6 +671,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that {mark} had called their bluff.",
                 "{agent} reported back that they had run out of time before blackmailing {mark}.",
                 "{agent} reported back that {mark} had given in to the blackmail.",
+                "blackmail {mark} into serving you",
+                "blackmail {mark} into serving them",
             }},
         },
         Verb{
@@ -661,6 +700,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that {mark} had caught them trying to destroy {item}.",
                 "{agent} reported back that they had run out of time before destroying {item} belonging to {mark}.",
                 "{agent} reported back that they had destroyed {item} belonging to {mark}.",
+                "destroy {item} belonging to {mark}",
+                "destroy {item} belonging to {mark}",
             }},
         },
         Verb{
@@ -689,6 +730,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that {authority} had turned them away.",
                 "{agent} reported back that they had run out of time before getting an audience with {authority}.",
                 "{agent} reported back that {authority} had granted the petition.",
+                "petition {authority} on your behalf",
+                "petition {authority} on their behalf",
             }},
         },
         Verb{
@@ -725,6 +768,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that {authority} would not take {item} as proof against {mark}.",
                 "{agent} reported back that they had run out of time before showing {item} to {authority}.",
                 "{agent} reported back that {authority} had taken {item} as proof against {mark}.",
+                "show {item} to {authority} as proof against {mark}",
+                "show {item} to {authority} as proof against {mark}",
             }},
         },
         Verb{
@@ -746,6 +791,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that they had ruined the work on {item}.",
                 "{agent} reported back that they had run out of time before finishing {item}.",
                 "{agent} reported back that they had smithed {item}.",
+                "smith {item}",
+                "smith {item} for them",
             }},
             false,
         },
@@ -768,6 +815,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that they had spoiled the mixture for {item}.",
                 "{agent} reported back that they had run out of time before finishing {item}.",
                 "{agent} reported back that they had concocted {item}.",
+                "concoct {item}",
+                "concoct {item} for them",
             }},
             false,
         },
@@ -790,6 +839,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that the enchantment had slipped and ruined {item}.",
                 "{agent} reported back that they had run out of time before finishing {item}.",
                 "{agent} reported back that they had made {item}.",
+                "make {item} at an arcane enchanter",
+                "make {item} for them at an arcane enchanter",
             }},
             false,
         },
@@ -812,6 +863,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that they had spoiled the work on {item}.",
                 "{agent} reported back that they had run out of time before finishing {item}.",
                 "{agent} reported back that they had made {item}.",
+                "make {item}",
+                "make {item} for them",
             }},
             false,
         },
@@ -834,6 +887,8 @@ namespace NarrativeEngine::PlotVerbs
                 "{agent} reported back that they had spoiled the work on {item}.",
                 "{agent} reported back that they had run out of time before finishing {item}.",
                 "{agent} reported back that they had fletched {item}.",
+                "fletch {item}",
+                "fletch {item} for them",
             }},
             false,
         },
@@ -974,6 +1029,10 @@ namespace NarrativeEngine::PlotVerbs
     // other name from its slots. Anything not yet filled reads as Unfilled
     // of its kind. Empty for a step with no verb.
     [[nodiscard]] std::string RenderStep(const PlotModel::Step& step, Template t, std::string_view scheme = {});
+
+    // RenderStep for a template that is a phrase rather than a sentence, so
+    // it is not capitalised: "steal a ruby from Hulda", to go mid-sentence.
+    [[nodiscard]] std::string RenderPhrase(const PlotModel::Step& step, Template t);
 
     // What the person in slot `slot` of a step remembers, filled the same
     // way. Empty for a step with no verb, a slot it does not have, or a
