@@ -78,9 +78,11 @@ namespace NarrativeEngine::TravelEventLog
     // mutex-guarded state.
     void Poll(const PluginThread::Token&, double unpausedElapsedSeconds);
 
-    // JSON array of currently-retained events, oldest-first. Step 6
-    // ships this as an empty-array stub; Step 8 fills in the rendering
-    // vocabulary and the run-collapsing condensation pass.
+    // JSON array of currently-retained events, oldest-first, shaped like
+    // SkyrimNet events with the same `age` and `line` records
+    // DescribeEvents gives them (EventText.h lists them). A run of events
+    // close together is condensed into one journey or visit line, or
+    // dropped when it ends where it began.
     nlohmann::json GetRenderedTail(double currentGameTimeSeconds);
 
     // SKSE co-save persistence. OnSave prunes-then-writes so on-disk

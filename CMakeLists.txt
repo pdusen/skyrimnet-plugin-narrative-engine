@@ -87,6 +87,7 @@ endif()
 set(NARRATIVEENGINE_CORE_SOURCES
     "${CMAKE_SOURCE_DIR}/src/BookTextRenderer.cpp"
     "${CMAKE_SOURCE_DIR}/src/CharacterBioResolver.cpp"
+    "${CMAKE_SOURCE_DIR}/src/EventText.cpp"
     "${CMAKE_SOURCE_DIR}/src/JsonUtils.cpp"
     "${CMAKE_SOURCE_DIR}/src/LanguageTable.cpp"
     "${CMAKE_SOURCE_DIR}/src/LLMTextSanitizer.cpp"

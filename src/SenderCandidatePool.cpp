@@ -128,7 +128,7 @@ namespace NarrativeEngine::SenderCandidatePool
                     out["content"] = LLMTextSanitizer::Sanitize(it->get<std::string>());
                 }
                 if (ageSeconds >= 0.0) {
-                    out["age"] = SkyrimNetEvents::FormatRelativeGameTime(ageSeconds);
+                    out["age"] = SkyrimNetEvents::RelativeGameTime(ageSeconds);
                     out["age_seconds"] = ageSeconds;
                 }
                 std::string emotion;

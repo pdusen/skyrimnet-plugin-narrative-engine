@@ -335,7 +335,7 @@ namespace NarrativeEngine::LetterComposer
                 // `age_hours`.
                 if (const double ageSeconds = SkyrimNetEvents::MemoryAgeGameSeconds(m, nowGameSeconds);
                     ageSeconds >= 0.0) {
-                    out["age"] = SkyrimNetEvents::FormatRelativeGameTime(ageSeconds);
+                    out["age"] = SkyrimNetEvents::RelativeGameTime(ageSeconds);
                     out["age_seconds"] = ageSeconds;
                 }
                 // `emotion` and `location` are optional on the memory

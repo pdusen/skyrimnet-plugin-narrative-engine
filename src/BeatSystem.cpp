@@ -836,7 +836,7 @@ namespace NarrativeEngine::BeatSystem
                     // drops them — beat selection reasons about what the
                     // world is doing, not about a book's contents, and a
                     // single illustrated book outweighs the whole timeline.
-                    SkyrimNetEvents::FormatEventsText(
+                    SkyrimNetEvents::DescribeEvents(
                         filtered, snapshot.player.gameTimeSeconds, SkyrimNetEvents::BookTextPolicy::Omit, playerName);
                     skyrimSide = std::move(filtered);
                 }

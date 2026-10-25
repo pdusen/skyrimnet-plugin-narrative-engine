@@ -1205,7 +1205,7 @@ beat descriptions, and only the beat-select context read them.
 
 #### Step 11 — The event timeline as structured events
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1227,6 +1227,67 @@ include, `components/narrative_engine/event_line.prompt`, words each kind. The s
   kind, both condensation shapes, an idle gap, and ages in every bucket.
 - A characterization test over the `[Event.*]` rendering against today's rendered tail, for the dashboard and the
   log.
+
+Done. Every timeline entry now carries a `line` record (a `kind` and that kind's fields) and, when it has a time, an
+`age` bucket such as `{"value": 5, "unit": "minute"}`, in place of the `text` sentence. `include/EventText.h` lists
+every kind, its fields and the age units; it is the contract between the C++ that builds the records and the two
+places that word them. `SkyrimNetEvents::FormatEventsText` became `DescribeEvents`, and `FormatRelativeGameTime` and
+`FormatRelativeGameDuration` became one `RelativeGameTime` that returns the bucket. `CombatEventLog`,
+`WeatherEventLog` and `TravelEventLog` emit records, and so do the merge's condensed combat entry and idle marker.
+Condensation stays in C++: a run of hits becomes a `combat_summary` record of fights and damage, and a run of moves a
+`journey` or `visit` record.
+
+**Who words the records.** The Director's prompts word them in English through the new
+`components/narrative_engine/event_timeline.prompt`. The dashboard words them in the player's language through the
+new core module `EventText`, which renders the `[Event]`, `[Event.Age]`, `[Event.Duration]`, `[Event.SkyrimNet]`,
+`[Event.Combat]`, `[Event.Weather]` and `[Event.Travel]` sections of `english.ini`. The event history log uses the
+same module with the English table. A line another plugin wrote (an unknown event type whose data is a sentence)
+stays as it came.
+
+**Two departures from the plan, both forced by `render_template` taking no arguments.** An included file renders
+against its caller's whole context, so it cannot be handed one event to word.
+
+- The include is `event_timeline.prompt`, not `event_line.prompt`. It renders the whole `recent_events` list, which
+  both prompts already pass by that name, so each prompt replaced its own loop with one `render_template` call.
+- Memory and dialogue ages are worded inline in each prompt that shows them: `action_select`'s two sender lists,
+  and both compose prompts' memory and dialogue lists. The plan had the include word them, which no file can do for
+  a row it is not given. The rows' `age` is now the same bucket. Sender dialogue's `age_str` became `age`, with the
+  unit `unknown` where today's code wrote "recent".
+
+**Verification, in two passes.** Pass 1 moved every renderer's wording, still as C++ literals, into `EventText`
+reading the new records. The existing assertions on rendered text kept their expected strings unchanged, and they
+passed. That covers every SkyrimNet kind, every condensation rule, the idle marker and every age bucket. A new pin
+table was then added in `src/EventText.test.cpp`: 65 records, covering every kind, every shape a kind's fields can
+take, both condensation shapes (fights and damage, alone and mixed) and every age bucket, each beside its line.
+Pass 2 replaced the literals with the `[Event.*]` templates. The table then failed in exactly two cases, the named
+difference: a list of three or more names (a travel party, or the places a visit took in) is joined as `[Grammar]`
+joins every list, without a comma before "and". The two cases now hold the new line, plus a `prompt` field with the
+old one, which the prompts keep.
+
+**The render comparison.** The scratchpad harness rendered six prompts, before and after. `story_eval` and
+`action_select` each received all 65 records as their timeline. `action_select` and both compose prompts, with and
+without a motivating memory, received memory rows in every age bucket and dialogue rows in every bucket plus
+`unknown`. The "before" side rendered the snapshotted prompt tree against the old sentences, taken from the pin
+table's lines (or the `prompt` field where it has one). **All six renders are byte-identical**, so there is no
+whitespace difference to name. The include's layout depends on two Inja rules, read from its lexer:
+
+- `-%}` eats every space and newline after it.
+- `{%-` clears only an all-blank final line, and keeps the newline before it.
+
+So each branch's words sit on one line, and that line's newline ends the entry. Older Inja may evaluate both sides of
+an `and`, so a field only some kinds carry is read under an `if` on the kind. `CUSTOM_PROMPTS.md` records both.
+
+**Left for later, and why.**
+
+- `TravelEventLog::FormatHoldName` still appends " Hold" to a hold's name unless the name already ends with it.
+- `CombatEventLog` still lowercases an activator's name.
+
+Both shape a name, not a sentence, and both are English matching rules, which is Phase D's subject. The Director
+pipeline's drop of empty events now keys on the `no_data` kind instead of on text ending in "(no data)". The one
+behaviour change is that a third-party sentence which merely ends with those words is no longer dropped.
+
+`pwsh -File build.ps1 test`: 557 of 557 passed. `build.ps1 build` is clean, and the new include deploys with the
+build.
 
 #### Step 12 — Plot menus, plans and verb phrasing in prompts
 

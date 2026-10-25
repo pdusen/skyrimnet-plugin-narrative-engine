@@ -66,12 +66,12 @@ namespace NarrativeEngine::CombatEventLog
     // Returns a JSON array of currently-retained internal events shaped
     // like SkyrimNet events:
     //   { type, localTime, gameTime, originatingActorName, targetActorName,
-    //     text, ne_kind }
-    // Oldest-first. `text` is pre-rendered with the same "[N ago]"
-    // relative-game-time prefix FormatEventsText produces so the merger can
-    // interleave with SkyrimNet events transparently. The `ne_kind` string
-    // ("hit", "collapse", etc.) lets the merger tell internal events apart
-    // from SkyrimNet's without re-parsing `type`.
+    //     age, line, ne_kind }
+    // Oldest-first. `age` and `line` are the same records DescribeEvents
+    // gives SkyrimNet's events (EventText.h lists them), so the merger can
+    // interleave the two transparently. The `ne_kind` string ("hit",
+    // "collapse", etc.) lets the merger tell internal events apart from
+    // SkyrimNet's without re-parsing `type`.
     nlohmann::json GetRenderedTail(double currentGameTimeSeconds);
 
     // After a save loads, rebuild the in-memory bleedingOut set by scanning

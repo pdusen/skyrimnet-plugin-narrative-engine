@@ -3,8 +3,10 @@
 #include <ConfiguredSettings.h>
 #include <EngineMock.h>
 #include <EventLogUtil.h>
+#include <EventText.h>
 #include <PhaseTracker.h>
 #include <PluginThread.h>
+#include <ShippedLanguage.h>
 #include <ThreadRole.h>
 
 #include <SKSE/Interfaces.h>
@@ -126,7 +128,8 @@ namespace
     std::string FirstText()
     {
         const auto tail = Tail();
-        return tail.empty() ? std::string{} : tail[0].value("text", std::string{});
+        return tail.empty() ? std::string{}
+                            : NarrativeEngine::EventText::Line(NarrativeEngine::Testing::ShippedEnglish(), tail[0]);
     }
 
     // The hold a location belongs to is derived by walking its parent chain to

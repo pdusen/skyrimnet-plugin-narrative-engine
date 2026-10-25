@@ -5,6 +5,7 @@
 #include <CombatEventLog.h>
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
+#include <JsonUtils.h>
 #include <LLMTextSanitizer.h>
 #include <Localization.h>
 #include <logger.h>
@@ -108,7 +109,7 @@ namespace NarrativeEngine::EvaluationPipeline
                 e.player.gameDaysPassed = cal->GetDaysPassed();
                 e.player.timeOfDayHours = cal->GetHour();
                 // Seconds-since-epoch matches SkyrimNet's per-event
-                // gameTime field; FormatEventsText uses it for "N ago".
+                // gameTime field; DescribeEvents measures each `age` from it.
                 e.player.gameTimeSeconds = static_cast<double>(cal->GetDaysPassed()) * 86400.0;
             }
 
@@ -254,28 +255,23 @@ namespace NarrativeEngine::EvaluationPipeline
                 // what a book said has never moved that needle — but one
                 // illustrated book is tens of kilobytes and has blown a
                 // request on its own.
-                SkyrimNetEvents::FormatEventsText(parsed,
-                                                  snapshot.player.gameTimeSeconds,
-                                                  SkyrimNetEvents::BookTextPolicy::Omit,
-                                                  snapshot.player.name);
+                SkyrimNetEvents::DescribeEvents(parsed,
+                                                snapshot.player.gameTimeSeconds,
+                                                SkyrimNetEvents::BookTextPolicy::Omit,
+                                                snapshot.player.name);
 
-                // Drop unrecognized event types (FormatEventsText's
-                // "(no data)" last-resort case). Log each so the type
-                // surfaces and we can add a renderer if needed.
+                // Drop unrecognized event types that carried nothing
+                // (DescribeEvents' no_data last-resort case). Log each so
+                // the type surfaces and we can add a kind if needed.
                 {
-                    static constexpr std::string_view kNoData = "(no data)";
                     nlohmann::json kept = nlohmann::json::array();
                     for (auto& evt : parsed) {
                         if (!evt.is_object())
                             continue;
-                        auto it = evt.find("text");
-                        if (it != evt.end() && it->is_string()) {
-                            const auto& s = it->get_ref<const std::string&>();
-                            if (s.size() >= kNoData.size()
-                                && s.compare(s.size() - kNoData.size(), kNoData.size(), kNoData) == 0) {
-                                logger::warn("BuildPromptContext: dropping event with no usable text: {}", evt.dump());
-                                continue;
-                            }
+                        if (const auto line = evt.find("line");
+                            line != evt.end() && JsonUtils::StringOr(*line, "kind") == "no_data") {
+                            logger::warn("BuildPromptContext: dropping event with no usable data: {}", evt.dump());
+                            continue;
                         }
                         kept.push_back(std::move(evt));
                     }

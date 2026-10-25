@@ -69,9 +69,7 @@ before or after the object.
 {% if length(recent_events) > 0 -%}
 ## Recent events (newest last)
 
-{% for evt in recent_events -%}
-- [{{ evt.type }}] {{ evt.text }}
-{% endfor %}
+{{ render_template("components\\narrative_engine\\event_timeline") }}
 {% endif -%}
 
 ## Available actions
@@ -99,7 +97,7 @@ the topic you intend must be one the chosen memory carries.
 ##### {{ s.name }} (form_id: {{ s.form_id }})
 
             {%- for mem in s.memories %}
-{{ loop.index1 }}. [{{ mem.type }}, {{ mem.age }}{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
+{{ loop.index1 }}. [{{ mem.type }}, {% if mem.age.unit == "moment" %}just now{% else %}{{ mem.age.value }} {{ mem.age.unit }}{% if mem.age.value != 1 %}s{% endif %} ago{% endif %}{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
             {%- endfor %}
         {% endfor -%}
     {% endif %}
@@ -123,7 +121,7 @@ topic you intend must be one the chosen memory carries.
 ##### {{ s.name }} (form_id: {{ s.form_id }})
 
             {%- for mem in s.memories %}
-{{ loop.index1 }}. [{{ mem.type }}, {{ mem.age }}{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
+{{ loop.index1 }}. [{{ mem.type }}, {% if mem.age.unit == "moment" %}just now{% else %}{{ mem.age.value }} {{ mem.age.unit }}{% if mem.age.value != 1 %}s{% endif %} ago{% endif %}{% if length(mem.emotion) > 0 %}, felt {{ mem.emotion }}{% endif %}{% if length(mem.location) > 0 %}, at {{ mem.location }}{% endif %}] {{ mem.content }}
             {%- endfor %}
         {% endfor -%}
     {% endif %}

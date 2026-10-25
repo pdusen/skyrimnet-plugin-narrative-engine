@@ -1,6 +1,8 @@
 #include <CombatEventLog.h>
 
 #include <EventLogUtil.h>
+#include <EventText.h>
+#include <Localization.h>
 #include <logger.h>
 #include <Settings.h>
 #include <SkyrimNetEvents.h>
@@ -328,59 +330,44 @@ namespace NarrativeEngine::CombatEventLog
             PushLocked(std::move(e));
         }
 
-        // ----------- rendered text --------------------------------------
+        // ----------- timeline records -----------------------------------
 
-        // The words for what dealt an environmental hit. Words, not saved:
-        // the co-save keeps the Source. Prompt-facing, like the rest of this
-        // file's rendering, until the event timeline moves into a prompt.
-        std::string SourceWords(const InternalEvent& e)
+        // The token for what dealt a hit. The co-save keeps the Source; the
+        // record says it in a word EventText and the prompts both read.
+        const char* SourceToken(InternalEvent::Source source)
         {
-            switch (e.source) {
+            switch (source) {
+            case InternalEvent::Source::Actor:
+                return "actor";
             case InternalEvent::Source::Poison:
                 return "poison";
             case InternalEvent::Source::SpellTrap:
-                return "a spell trap";
+                return "spell_trap";
             case InternalEvent::Source::Trap:
-                return "a trap";
+                return "trap";
             case InternalEvent::Source::Activator:
-                return LowercaseActivatorLabel(e.actorName);
-            case InternalEvent::Source::Actor:
+                return "activator";
             case InternalEvent::Source::Unknown:
                 break;
             }
-            return {};
+            return "unknown";
         }
 
-        // Body-only rendering — same output as RenderText but without
-        // the "[N ago]" prefix. Used by the history-writer drain path,
-        // which prepends an absolute in-game timestamp instead.
-        std::string RenderBody(const InternalEvent& e)
+        // The event's `line` record (see EventText.h). A hit names its
+        // attacker, or the activator that dealt it, lowercased as it reads
+        // inside a sentence; the other sources name no one.
+        nlohmann::json LineOf(const InternalEvent& e)
         {
-            switch (e.kind) {
-            case Kind::CombatStart:
-                return e.actorName + " enters combat";
-            case Kind::CombatEnd:
-                return e.actorName + " leaves combat";
-            case Kind::Hit:
-                if (e.source == InternalEvent::Source::Actor) {
-                    return e.actorName + " strikes " + e.targetName;
-                }
-                if (const auto from = SourceWords(e); !from.empty()) {
-                    return e.targetName + " took damage from " + from;
-                }
-                return e.targetName + " took damage";
-            case Kind::Collapse:
-                return e.actorName + " collapses";
-            case Kind::RegainFooting:
-                return e.actorName + " regains their footing";
+            if (e.kind != Kind::Hit) {
+                return {{"kind", KindName(e.kind)}, {"actor", e.actorName}};
             }
-            return {};
-        }
-
-        std::string RenderText(const InternalEvent& e, double currentGameTimeSeconds)
-        {
-            const double delta = currentGameTimeSeconds - e.gameTime;
-            return "[" + SkyrimNetEvents::FormatRelativeGameTime(delta < 0.0 ? 0.0 : delta) + "] " + RenderBody(e);
+            std::string actor;
+            if (e.source == InternalEvent::Source::Actor) {
+                actor = e.actorName;
+            } else if (e.source == InternalEvent::Source::Activator) {
+                actor = LowercaseActivatorLabel(e.actorName);
+            }
+            return {{"kind", "hit"}, {"actor", actor}, {"target", e.targetName}, {"source", SourceToken(e.source)}};
         }
 
         // ----------- sinks ----------------------------------------------
@@ -822,10 +809,11 @@ namespace NarrativeEngine::CombatEventLog
             j["ne_kind"] = KindName(e.kind);
             j["localTime"] = e.localTime;
             j["gameTime"] = e.gameTime;
-            j["originatingActorName"] = e.source == InternalEvent::Source::Actor ? e.actorName : SourceWords(e);
+            j["originatingActorName"] = e.source == InternalEvent::Source::Actor ? e.actorName : std::string{};
             j["targetActorName"] = e.targetName;
-            j["ne_actor_is_named"] = e.source == InternalEvent::Source::Actor;
-            j["text"] = RenderText(e, currentGameTimeSeconds);
+            const double delta = currentGameTimeSeconds - e.gameTime;
+            j["age"] = SkyrimNetEvents::RelativeGameTime(delta < 0.0 ? 0.0 : delta);
+            j["line"] = LineOf(e);
             arr.push_back(std::move(j));
         }
         return arr;
@@ -1014,7 +1002,7 @@ namespace NarrativeEngine::CombatEventLog
             h.localTime = item.event.localTime;
             h.inGameTimestamp = item.inGameTimestamp;
             h.sourceKind = std::string("internal/combat_event/") + KindName(item.event.kind);
-            h.body = RenderBody(item.event);
+            h.body = EventText::Body(Localization::English(), LineOf(item.event));
             out.push_back(std::move(h));
         }
         return out;

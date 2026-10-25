@@ -8,6 +8,7 @@
 #include <DashboardTimers.h>
 #include <DecisionLog.h>
 #include <DecisionProbe.h>
+#include <EventText.h>
 #include <GossipClaims.h>
 #include <GossipGraph.h>
 #include <GossipHarvest.h>
@@ -1257,16 +1258,21 @@ namespace NarrativeEngine::DashboardUIManager
             // tens of kilobytes of prose that would bury the timeline it's
             // listed in. The full rendered text still lands in the event
             // history log.
-            SkyrimNetEvents::FormatEventsText(
+            SkyrimNetEvents::DescribeEvents(
                 parsed, currentGameTimeSeconds, SkyrimNetEvents::BookTextPolicy::Omit, reads.playerName);
             skyrimSide = std::move(parsed);
         }
-        j["recent_events"] =
-            SkyrimNetEvents::BuildMergedTimeline(std::move(skyrimSide),
-                                                 CombatEventLog::GetRenderedTail(currentGameTimeSeconds),
-                                                 WeatherEventLog::GetRenderedTail(currentGameTimeSeconds),
-                                                 TravelEventLog::GetRenderedTail(currentGameTimeSeconds),
-                                                 currentGameTimeSeconds);
+        auto timeline = SkyrimNetEvents::BuildMergedTimeline(std::move(skyrimSide),
+                                                             CombatEventLog::GetRenderedTail(currentGameTimeSeconds),
+                                                             WeatherEventLog::GetRenderedTail(currentGameTimeSeconds),
+                                                             TravelEventLog::GetRenderedTail(currentGameTimeSeconds),
+                                                             currentGameTimeSeconds);
+        // The timeline carries records, not sentences; the list shows each
+        // one worded.
+        for (auto& evt : timeline) {
+            evt["text"] = EventText::Line(Localization::Get(), evt);
+        }
+        j["recent_events"] = std::move(timeline);
 
         // letter_pool — full per-slot snapshot for the Letters tab, plus
         // the most-recent-dispatch index so the client doesn't have to

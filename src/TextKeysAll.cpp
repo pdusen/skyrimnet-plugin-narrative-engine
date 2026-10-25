@@ -5,6 +5,7 @@
 
 #include <DebugNotify.h>
 #include <DecisionLog.h>
+#include <EventText.h>
 #include <LetterComposer.h>
 #include <NarrativeText.h>
 #include <PlotText.h>
@@ -20,6 +21,7 @@ namespace NarrativeEngine::TextKeys
             add(NarrativeText::Keys());
             add(DebugNotify::Text::Keys());
             add(DecisionLog::Keys());
+            add(EventText::Keys());
             add(LetterComposer::LabelKeys());
             return out;
         }();

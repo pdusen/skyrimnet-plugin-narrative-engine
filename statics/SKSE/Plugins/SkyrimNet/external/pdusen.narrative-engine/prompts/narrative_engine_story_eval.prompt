@@ -65,8 +65,7 @@ fades when nothing fresh is sustaining it.
 {% if length(recent_events) > 0 %}
 ## Events since entering current phase (newest last)
 
-{% for evt in recent_events %}- [{{ evt.type }}] {{ evt.text }}
-{% endfor %}
+{{ render_template("components\\narrative_engine\\event_timeline") }}
 {% endif %}
 
 {% if length(decision_log_tail) > 0 %}
