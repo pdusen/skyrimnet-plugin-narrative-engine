@@ -1168,3 +1168,35 @@ TEST_CASE("PlotCandidates ranks authority", "[PlotCandidates][engine]")
         }
     }
 }
+
+TEST_CASE("PlotCandidates reads a role's name as it is written", "[PlotCandidates][engine]")
+{
+    Fixture f;
+    const auto resolve = [&f](std::string_view text) {
+        return PlotCandidates::ResolveRoles(
+            *PlotVerbs::Find("steal"), {{"item", 0, "a ruby"}, {"mark", 0, std::string{text}}}, f.Request());
+    };
+
+    SECTION("a possessive is the person")
+    {
+        const auto out = resolve("Hulda's");
+        REQUIRE(out.problems.empty());
+        CHECK(out.values[1].form == kNeighbour);
+    }
+
+    SECTION("a name with a hyphen is one word of it")
+    {
+        // Brand-Shei is somebody the mastermind does not know, so he is
+        // refused; but refused as Brand-Shei, not as nobody.
+        const auto out = resolve("Brand-Shei");
+        REQUIRE(out.problems.size() == 1);
+        CHECK(out.problems.front().ToJson()["who"] == "Brand-Shei");
+    }
+
+    SECTION("a name written in lowercase names nobody")
+    {
+        const auto out = resolve("hulda");
+        REQUIRE(out.problems.size() == 1);
+        CHECK(out.problems.front().ToJson()["code"] == "role_names_nobody");
+    }
+}

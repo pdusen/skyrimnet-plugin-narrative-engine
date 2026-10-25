@@ -19,4 +19,12 @@ namespace NarrativeEngine::Testing
     // English as the plugin loads it, built once: the shipped english.ini
     // against every key the plugin declares, with no overlay.
     [[nodiscard]] const LanguageTable::Table& ShippedEnglish();
+
+    // A language a test writes: `matching` as its [Matching] lines, `grammar`
+    // as its [Grammar] lines, and anything else in `rest`, over the shipped
+    // English, with a header saying it is `code`.
+    [[nodiscard]] LanguageTable::Table Synthetic(std::string_view code,
+                                                 std::string_view matching,
+                                                 std::string_view grammar = {},
+                                                 std::string_view rest = {});
 } // namespace NarrativeEngine::Testing

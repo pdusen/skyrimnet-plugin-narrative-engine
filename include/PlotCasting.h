@@ -8,6 +8,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include <LanguageTable.h>
+#include <Localization.h>
 #include <PlotRecipes.h>
 #include <PlotState.h>
 
@@ -443,7 +445,8 @@ namespace NarrativeEngine::PlotCasting
                                              const OccupancyTable& occupancy,
                                              double gameDay,
                                              const AlivePredicate& alive,
-                                             const SeatedPredicate& seated);
+                                             const SeatedPredicate& seated,
+                                             const LanguageTable::Table& table = Localization::Get());
 
     // The agents a step may be given, for a decision to choose among.
     //
@@ -454,7 +457,9 @@ namespace NarrativeEngine::PlotCasting
     // unset: choosing is the caller's, by decision.
     //
     // `stepText` is the step's own sentence, and anyone it NAMES is
-    // excluded, as is `subject`. `cooldownExempt` lifts the actor cooldown
+    // excluded, as is `subject`. Whether it names somebody is read by
+    // `table`'s rules: Name.Suffixes and Name.Titles, and whether its script
+    // separates words. `cooldownExempt` lifts the actor cooldown
     // -- never occupancy -- for the plot's own earlier agents.
     //
     // `admit` narrows every rung, and the mastermind with them: somebody it
@@ -471,5 +476,6 @@ namespace NarrativeEngine::PlotCasting
                                         RE::FormID subject,
                                         const SeatedPredicate& seated,
                                         const std::unordered_set<RE::FormID>& cooldownExempt,
-                                        const Admit& admit = {});
+                                        const Admit& admit = {},
+                                        const LanguageTable::Table& table = Localization::Get());
 } // namespace NarrativeEngine::PlotCasting

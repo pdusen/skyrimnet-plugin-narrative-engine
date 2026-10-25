@@ -91,6 +91,10 @@ namespace NarrativeEngine::PlotCandidates
         // the people of the step a preparation or a theft serves, so the
         // bribe before a theft never pays the person being robbed.
         std::unordered_set<RE::FormID> excluded{};
+
+        // Whose rules read the names a text gives: the session's when null.
+        // The language trial gives its own.
+        const LanguageTable::Table* table = nullptr;
     };
 
     struct Limits
@@ -168,7 +172,8 @@ namespace NarrativeEngine::PlotCandidates
     // Black-Briar, while "Black-Briar", her whole family's, names nobody.
     // Case matters, so "Hulda" is a name and "hulda" is not.
     [[nodiscard]] std::unordered_set<RE::FormID> NamedIn(const PlotCasting::Population& population,
-                                                         std::string_view text);
+                                                         std::string_view text,
+                                                         const LanguageTable::Table& table = Localization::Get());
 
     // The step whose people a later step treats as aware of this one, and
     // how: whether each person slot's awareness fired for the outcome the

@@ -257,6 +257,38 @@ namespace NarrativeEngine::TextMatch
                || AnyMatch(folded, matchAnywhere, Position::Anywhere, options);
     }
 
+    bool IsNameWord(std::string_view word,
+                    std::string_view name,
+                    const std::vector<std::string>& suffixes,
+                    bool foldCase)
+    {
+        const auto same = [foldCase](std::string_view a, std::string_view b) {
+            return foldCase ? TextUtf8::EqualsFolded(a, b) : a == b;
+        };
+        if (name.empty()) {
+            return false;
+        }
+        if (same(word, name)) {
+            return true;
+        }
+        for (const auto& suffix : suffixes) {
+            if (!suffix.empty() && word.size() > suffix.size() && same(word.substr(word.size() - suffix.size()), suffix)
+                && same(word.substr(0, word.size() - suffix.size()), name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool StartsName(std::string_view word)
+    {
+        if (word.empty()) {
+            return false;
+        }
+        const auto first = TextUtf8::DecodeAt(word, 0).codePoint;
+        return TextUtf8::IsUpper(first) || (TextUtf8::IsLetter(first) && !TextUtf8::IsLower(first));
+    }
+
     std::string_view CheckName(std::string_view key) noexcept
     {
         for (const auto& [suffix, member] : kLists) {

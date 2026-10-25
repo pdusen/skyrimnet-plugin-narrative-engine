@@ -96,6 +96,18 @@ namespace NarrativeEngine::TextMatch
     // name, or an empty name for a plain list key.
     [[nodiscard]] std::string_view CheckName(std::string_view key) noexcept;
 
+    // Whether `word`, a word of some text, is `name`: bare, or carrying one
+    // of `suffixes`, a language's Name.Suffixes ("Varian's", "Ульфрика").
+    // With `foldCase`, case does not matter.
+    [[nodiscard]] bool IsNameWord(std::string_view word,
+                                  std::string_view name,
+                                  const std::vector<std::string>& suffixes,
+                                  bool foldCase = false);
+
+    // Whether `word` reads as the start of a name: a capital, in a script
+    // with case; any letter, in one without.
+    [[nodiscard]] bool StartsName(std::string_view word);
+
     struct Rules
     {
         Options options;

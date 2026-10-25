@@ -10,20 +10,6 @@ namespace NarrativeEngine::PlotStepParse
         // sentences that are not about anyone.
         constexpr std::size_t kShortestName = 3;
 
-        // Whether `said`, a word of the text, is `name`, bare or with one of
-        // the language's name suffixes.
-        bool IsName(std::string_view said, std::string_view name, const std::vector<std::string>& suffixes)
-        {
-            if (said == name) {
-                return true;
-            }
-            for (const auto& suffix : suffixes) {
-                if (said.size() == name.size() + suffix.size() && said.starts_with(name) && said.ends_with(suffix)) {
-                    return true;
-                }
-            }
-            return false;
-        }
     } // namespace
 
     bool NamesThePlayer(std::string_view text, std::string_view playerName, const LanguageTable::Table& table)
@@ -45,7 +31,7 @@ namespace NarrativeEngine::PlotStepParse
                 continue;
             }
             for (const auto word : said) {
-                if (IsName(word, name, suffixes)) {
+                if (TextMatch::IsNameWord(word, name, suffixes)) {
                     return true;
                 }
             }

@@ -33,6 +33,19 @@ namespace NarrativeEngine::Testing
         return table;
     }
 
+    LanguageTable::Table Synthetic(std::string_view code,
+                                   std::string_view matching,
+                                   std::string_view grammar,
+                                   std::string_view rest)
+    {
+        static const std::string english = ShippedLanguageFile("english");
+        const std::string file = "[Language]\nName = " + std::string{code} + "\nNativeName = " + std::string{code}
+                                 + "\nCode = " + std::string{code} + "\nStatus = draft\nPluralRule = one_other\n"
+                                 + "Fonts = en, pl, ru, ja, cn\n[Grammar]\n" + std::string{grammar} + "\n"
+                                 + std::string{rest} + "\n[Matching]\n" + std::string{matching} + "\n";
+        return LanguageTable::Table::Build({english, std::string_view{file}, std::nullopt}, TextKeys::All());
+    }
+
     namespace
     {
         // Production code renders through Localization::Get(), which is empty

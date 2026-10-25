@@ -1709,7 +1709,7 @@ Every English input behaves exactly as before.
 
 #### Step 18 — Name matchers in the player's script
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1726,6 +1726,51 @@ Every English input behaves exactly as before.
 - New cases use real localized names taken from the Spriggit export's Russian, Japanese, Chinese, Polish and German
   strings. For each, a role naming the person resolves to them. A genitive (*Veleths*, *Ульфрика*) counts as naming
   them. A name inside a longer word does not.
+
+Done. A shared helper in `TextMatch`, `IsNameWord`, says whether a word of some text is a name word, bare or carrying
+one of the table's `Name.Suffixes`. `StartsName` says a word reads as the start of a name: a capital in a cased
+script, any letter in a caseless one. On those, three matchers moved to Step 1's splitter.
+
+- **`PlotCandidates::Closest`**, whom a role's words name. Every word of a name counts in a caseless script. Where
+  words are not separated, a name's words are found inside the text.
+- **`PlotCandidates::NamedIn`**, whom a scheme names. The plan did not list it, but it shared `Closest`'s splitter,
+  and its three-*byte* minimum became three code points.
+- **`PlotCasting`'s `NamesPerson`**, whom a step's sentence names. Its four-byte minimum became four code points.
+  `ContainsWord` and its hand-written word boundaries are gone, since the splitter's boundaries and the suffixes now
+  give the same answers.
+
+`PlotCandidates::Request` gains a `table`, null for the session's, and `ResolveRoles` passes it on to the request it
+builds per slot. `QualifyAgent`, `EligibleAgents` and `NamedIn` take one, defaulting to the session's.
+
+Two English lists moved into `[Matching]` along with them. The plan did not name them, and each matcher read one:
+
+- `Name.Titles`, the honorifics `NamesPerson` ignores ("Captain" alone is no particular captain);
+- `Item.Articles`, the articles a thing's name may open with, which the item matcher sets aside.
+
+The settlement matcher now reads the text with the same splitter and endings. The item matcher folds case with Step 1.
+
+**Verification.** First, characterization cases over today's English, passed against the unmodified code and then
+unchanged:
+
+- a possessive, a hyphenated name and a lowercase name as a role;
+- in step sentences: possessives, case, a bare title, a name inside a longer word, a short word of a name, and an
+  *O'Ryan* who is not *Ryan*.
+
+The existing `NamedIn` and role-resolution tests already pinned the rest. Then `NameMatchers.engine.test.cpp` used
+Ulfric Stormcloak, Balgruuf the Greater and Hulda as the game names them in five languages, over synthetic language
+files built by a new `testsupport` helper, `Synthetic`:
+
+- in Russian, a role in the genitive and the instrumental resolves, and a name inside a longer word or in lowercase
+  does not;
+- in Japanese and Chinese, written without spaces, a role resolves by a name's own part inside the sentence;
+- in Polish and German, genitives resolve, *Huldastraße* does not, and *Ulfricssons* does not name Ulfric.
+
+For each language, a scheme naming the person names them, and a step naming them is not given to them.
+
+**One English behaviour change, and it is a fix.** The settlement matcher used to drop "'s" from the text's words
+but not from the settlement's own name, so *Shor's Stone* could never be named. It now reads both the same way.
+
+`pwsh -File build.ps1 test`: 577 of 577 passed. `build.ps1 build` is clean.
 
 ### Phase E — Output language
 

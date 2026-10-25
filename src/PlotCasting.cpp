@@ -1,5 +1,8 @@
 #include <PlotCasting.h>
 
+#include <TextMatch.h>
+#include <TextUtf8.h>
+
 #include <unordered_set>
 
 #include <algorithm>
@@ -232,55 +235,6 @@ namespace NarrativeEngine::PlotCasting
             return standings;
         }
 
-        // Is this token a word in its own right at `at`, rather than a
-        // fragment of a longer one? Hyphens and apostrophes count as
-        // word characters so "Snow-Shod" and "Ri'saad" are single words.
-        bool IsWordChar(char c)
-        {
-            const auto u = static_cast<unsigned char>(c);
-            return std::isalnum(u) != 0 || c == '-' || c == '\'';
-        }
-
-        bool WholeWordAt(std::string_view text, std::size_t at, std::size_t len)
-        {
-            const bool leftOk = at == 0 || !IsWordChar(text[at - 1]);
-
-            // An apostrophe ENDS a name and does not begin one, so the
-            // two boundaries are not symmetric.
-            //
-            // This was symmetric, and possessives were the commonest way
-            // a step names its subject -- "Erikur's quarters", "Captain
-            // Veleth's movements", "the guard captain's footlocker". The
-            // trailing apostrophe counted as a word character, so the
-            // match was rejected, so the exclusion never fired, so the
-            // person the step was ABOUT was eligible to carry it out.
-            // Captain Veleth was duly cast to shadow Captain Veleth.
-            //
-            // The left side keeps the apostrophe, because there it is
-            // genuinely part of the word: an O'Ryan is not a Ryan.
-            const auto after = at + len;
-            const bool rightOk = after >= text.size() || !IsWordChar(text[after]) || text[after] == '\'';
-            return leftOk && rightOk;
-        }
-
-        bool ContainsWord(std::string_view text, std::string_view word)
-        {
-            if (word.empty() || word.size() > text.size()) {
-                return false;
-            }
-            for (std::size_t at = 0; at + word.size() <= text.size(); ++at) {
-                bool same = true;
-                for (std::size_t i = 0; i < word.size() && same; ++i) {
-                    same = std::tolower(static_cast<unsigned char>(text[at + i]))
-                           == std::tolower(static_cast<unsigned char>(word[i]));
-                }
-                if (same && WholeWordAt(text, at, word.size())) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
         // Does this step's description NAME this person?
         //
         // The step that made this necessary read "Watch Asgeir and
@@ -302,46 +256,38 @@ namespace NarrativeEngine::PlotCasting
         // nothing: casting draws somebody else. See
         // docs/prior-art/NAME_RESOLUTION_FAILURE_MODES.md for the thing
         // this is deliberately not.
-        bool NamesPerson(std::string_view text, std::string_view name)
+        bool NamesPerson(std::string_view text, std::string_view name, const LanguageTable::Table& table)
         {
             if (text.empty() || name.empty()) {
                 return false;
             }
-            static constexpr std::string_view kTitles[] = {
-                "elder",
-                "captain",
-                "commander",
-                "general",
-                "legate",
-                "jarl",
-                "chief",
-                "thane",
-                "brother",
-                "sister",
-                "mother",
-                "father",
-                "master",
-                "lady",
-            };
+            const auto& rules = table.Matching();
+            const auto titles = rules.List("Name.Titles");
+            const auto suffixes = rules.List("Name.Suffixes");
+            const auto said = TextUtf8::Words(text);
+            const auto folded = rules.options.wordSeparated ? std::string{} : TextUtf8::Fold(text);
 
-            std::size_t at = 0;
-            while (at < name.size()) {
-                const auto end = name.find(' ', at);
-                const auto token = name.substr(at, end == std::string_view::npos ? std::string_view::npos : end - at);
-                at = end == std::string_view::npos ? name.size() : end + 1;
-
-                if (token.size() < 4) {
+            // Too short to be evidence of anybody.
+            constexpr std::size_t kShortest = 4;
+            for (const auto token : TextUtf8::Words(name)) {
+                if (TextUtf8::CodePointCount(token) < kShortest) {
                     continue;
                 }
-                bool isTitle = false;
-                for (const auto title : kTitles) {
-                    if (title.size() == token.size() && ContainsWord(title, token)) {
-                        isTitle = true;
-                        break;
-                    }
+                const bool isTitle = std::ranges::any_of(
+                    titles, [token](const std::string& title) { return TextUtf8::EqualsFolded(title, token); });
+                if (isTitle) {
+                    continue;
                 }
-                if (!isTitle && ContainsWord(text, token)) {
-                    return true;
+                if (!rules.options.wordSeparated) {
+                    if (folded.find(TextUtf8::Fold(token)) != std::string::npos) {
+                        return true;
+                    }
+                    continue;
+                }
+                for (const auto word : said) {
+                    if (TextMatch::IsNameWord(word, token, suffixes, true)) {
+                        return true;
+                    }
                 }
             }
             return false;
@@ -546,7 +492,8 @@ namespace NarrativeEngine::PlotCasting
                                const OccupancyTable& occupancy,
                                double gameDay,
                                const AlivePredicate& alive,
-                               const SeatedPredicate& seated)
+                               const SeatedPredicate& seated,
+                               const LanguageTable::Table& table)
     {
         Qualification out;
 
@@ -566,7 +513,7 @@ namespace NarrativeEngine::PlotCasting
         if (subject != 0 && candidate == subject) {
             return out;
         }
-        if (NamesPerson(stepText, member->name)) {
+        if (NamesPerson(stepText, member->name, table)) {
             return out;
         }
 
@@ -658,7 +605,8 @@ namespace NarrativeEngine::PlotCasting
                           RE::FormID subject,
                           const SeatedPredicate& seated,
                           const std::unordered_set<RE::FormID>& cooldownExempt,
-                          const Admit& admit)
+                          const Admit& admit,
+                          const LanguageTable::Table& table)
     {
         Result result;
         const Member* boss = population.Find(mastermind);
@@ -679,7 +627,7 @@ namespace NarrativeEngine::PlotCasting
                     continue;
                 }
                 const auto qualified = QualifyAgent(
-                    population, mastermind, member.npc, stepText, subject, occupancy, gameDay, alive, seated);
+                    population, mastermind, member.npc, stepText, subject, occupancy, gameDay, alive, seated, table);
                 if (qualified.rung != rung) {
                     continue;
                 }
