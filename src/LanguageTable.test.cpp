@@ -268,3 +268,53 @@ TEST_CASE("LanguageTable: a multi-line template", "[LanguageTable]")
     const auto table = Table::Build({english, std::nullopt, std::nullopt}, std::array{kFarewell});
     CHECK(Rendered(table, kFarewell) == "First line.\n\nSecond line.");
 }
+
+TEST_CASE("LanguageTable: data-file overrides", "[LanguageTable]")
+{
+    constexpr std::string_view shipped = "[Language]\nName = German\nNativeName = Deutsch\nCode = de\nStatus = draft\n"
+                                         "PluralRule = one_other\nFonts = en\n"
+                                         "[Data.Faction]\ncollege = das College von Winterfeste\n"
+                                         "companions = die Gefaehrten\n"
+                                         "[Data.Item]\nTG04GoldenglowDeed = eine Besitzurkunde\n";
+    // "die Gef\xC3\xA4hrten": the overlay's spelling, with the umlaut.
+    constexpr std::string_view overlay =
+        "[Data.Faction]\ncompanions = die Gef\xC3\xA4hrten\n[Data.AttackerGroup]\nbandits = Banditen\n";
+
+    SECTION("an override replaces the data file's text, by the row's id")
+    {
+        const auto table = Table::Build({kEnglish, shipped, std::nullopt}, kKeys);
+        REQUIRE(table.DataText("Data.Faction", "college") != nullptr);
+        CHECK(*table.DataText("Data.Faction", "college") == "das College von Winterfeste");
+        CHECK(*table.DataText("Data.Item", "TG04GoldenglowDeed") == "eine Besitzurkunde");
+        SECTION("and ids compare without regard to case, as the files' own keys do")
+        {
+            CHECK(table.DataText("data.faction", "COLLEGE") != nullptr);
+        }
+    }
+    SECTION("the overlay wins over the shipped file")
+    {
+        const auto table = Table::Build({kEnglish, shipped, overlay}, kKeys);
+        CHECK(*table.DataText("Data.Faction", "companions") == "die Gef\xC3\xA4hrten");
+        CHECK(*table.DataText("Data.AttackerGroup", "bandits") == "Banditen");
+        CHECK(*table.DataText("Data.Faction", "college") == "das College von Winterfeste");
+    }
+    SECTION("no override leaves the data file's own text standing")
+    {
+        const auto table = Table::Build({kEnglish, shipped, std::nullopt}, kKeys);
+        CHECK(table.DataText("Data.Faction", "skaal") == nullptr);
+        CHECK(table.DataText("Data.AttackerGroup", "bandits") == nullptr);
+    }
+    SECTION("an override for a row nobody loaded is reported, by the loader that knows the rows")
+    {
+        const auto table = Table::Build({kEnglish, shipped, overlay}, kKeys);
+        const std::vector<std::string> loaded{"college", "skaal"};
+        CHECK(table.UnmatchedData("Data.Faction", loaded) == std::vector<std::string>{"[Data.Faction] companions"});
+        CHECK(table.UnmatchedData("Data.Item", std::vector<std::string>{"TG04GoldenglowDeed"}).empty());
+    }
+    SECTION("data sections are not unknown keys")
+    {
+        const auto table = Table::Build({kEnglish, shipped, overlay}, kKeys);
+        CHECK(table.GetCensus().rejected.empty());
+        CHECK(table.GetCensus().overlayUnmatched.empty());
+    }
+}

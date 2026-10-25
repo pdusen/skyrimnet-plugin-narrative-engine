@@ -1,6 +1,7 @@
 #include <PlotFactionRoster.h>
 
 #include <GossipGraph.h>
+#include <Localization.h>
 #include <logger.h>
 #include <Settings.h>
 
@@ -20,6 +21,10 @@ namespace NarrativeEngine::PlotFactionRoster
 {
     namespace
     {
+        // Where a language file rewords a faction's display name, by the
+        // section's own id: [Data.Faction] college = ...
+        constexpr std::string_view kDataSection = "Data.Faction";
+
         constexpr const char* kIniPath = "Data/SKSE/Plugins/NarrativeEngine/PlotFactions.ini";
 
         std::vector<Entry> g_entries;
@@ -66,6 +71,10 @@ namespace NarrativeEngine::PlotFactionRoster
         {
             out.id = raw.id;
             out.displayName = raw.displayName;
+            // A language file may reword it, by the section's own id.
+            if (const auto* text = Localization::Get().DataText(kDataSection, raw.id)) {
+                out.displayName = *text;
+            }
             out.method = raw.method;
             out.membership = raw.membership;
             out.maxRank = raw.maxRank;
@@ -166,6 +175,19 @@ namespace NarrativeEngine::PlotFactionRoster
                 continue;
             }
             g_entries.push_back(std::move(entry));
+        }
+
+        {
+            std::vector<std::string> ids;
+            for (const auto& raw : report.entries) {
+                ids.push_back(raw.id);
+            }
+
+            // Overrides that reword nothing: a typo, or a row from a mod that is
+            // not installed.
+            for (const auto& line : Localization::Get().UnmatchedData(kDataSection, ids)) {
+                logger::warn("PlotFactions: the language file's {} matches no faction section here", line);
+            }
         }
 
         logger::info("PlotFactions: loaded {} faction(s); {} rejected by the parse, {} by resolution.",

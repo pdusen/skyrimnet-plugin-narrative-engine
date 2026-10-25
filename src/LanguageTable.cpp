@@ -26,6 +26,7 @@ namespace NarrativeEngine::LanguageTable
     {
         constexpr std::string_view kLanguageSection = "Language";
         constexpr std::string_view kGrammarSection = "Grammar";
+        constexpr std::string_view kDataPrefix = "data.";
 
         constexpr std::array<std::string_view, 6> kHeaderKeys =
             {"Name", "NativeName", "Code", "Status", "PluralRule", "Fonts"};
@@ -353,8 +354,31 @@ namespace NarrativeEngine::LanguageTable
             }
         }
 
+        // [Data.*]: open-ended, so not checked against any key list. Each
+        // key is taken from the first of overlay, shipped file and English
+        // that has it.
+        const auto isData = [](std::string_view section) { return Lowered(section).starts_with(kDataPrefix); };
+        for (const auto* source : order) {
+            for (const auto& [section, name] : Entries(*source)) {
+                if (!isData(section)) {
+                    continue;
+                }
+                const auto id = Id(section, name);
+                if (table.data_.contains(id)) {
+                    continue;
+                }
+                if (const auto value = source->Value(section, name)) {
+                    table.data_.emplace(id, std::string{Trimmed(*value)});
+                    table.dataKeys_.emplace_back(section, name);
+                }
+            }
+        }
+
         // Lines nothing reads.
         const auto known = [&](std::string_view section, std::string_view name) {
+            if (isData(section)) {
+                return true;
+            }
             if (SameName(section, kLanguageSection)) {
                 return Contains(kHeaderKeys, name);
             }
@@ -390,6 +414,27 @@ namespace NarrativeEngine::LanguageTable
     {
         const auto it = sources_.find(Id(key.section, key.name));
         return it != sources_.end() ? &it->second : nullptr;
+    }
+
+    const std::string* Table::DataText(std::string_view section, std::string_view id) const
+    {
+        const auto it = data_.find(Id(section, id));
+        return it != data_.end() ? &it->second : nullptr;
+    }
+
+    std::vector<std::string> Table::UnmatchedData(std::string_view section, std::span<const std::string> ids) const
+    {
+        std::unordered_set<std::string> loaded;
+        for (const auto& id : ids) {
+            loaded.insert(Id(section, id));
+        }
+        std::vector<std::string> out;
+        for (const auto& [keySection, name] : dataKeys_) {
+            if (SameName(keySection, section) && !loaded.contains(Id(keySection, name))) {
+                out.push_back(Where(keySection, name));
+            }
+        }
+        return out;
     }
 
     std::string Table::Render(const TextKeys::Key& key,

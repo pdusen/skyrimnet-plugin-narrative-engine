@@ -1115,7 +1115,7 @@ this beat"). It is diagnostic data, the same class as a log line, not something 
 
 #### Step 9 — Data INI text, overridable by id
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1128,6 +1128,27 @@ this beat"). It is diagnostic data, the same class as a log line, not something 
 
 **Verification:** `*.test.cpp` over an override, a missing override, and an unmatched override. With no overrides
 present, each data file's loaded display text is identical to before the change.
+
+Done. `LanguageTable` reads every `[Data.*]` section as open-ended raw text: never parsed as a template, never
+rejected as an unknown key, and taken key by key from the first of overlay, shipped file and English that has it.
+`Table::DataText(section, id)` returns an override or null, and `Table::UnmatchedData(section, ids)` lists the ones
+that match no loaded row. Each loader applies overrides where it adopts its display text, and reports the unmatched
+ones after loading:
+
+| Section               | Id                                | Loader                                        |
+| --------------------- | --------------------------------- | --------------------------------------------- |
+| `[Data.Faction]`      | the section id (`college`)        | `PlotFactionRoster::Resolve`                  |
+| `[Data.Item]`         | the line's EditorID               | `PlotItemPool::Load`                          |
+| `[Data.AttackerGroup]`| the section id (`bandits`)        | `AmbushAttackerGroups`' `ParseGroup`          |
+
+Only display text is overridable. An attacker group's `Flavor` stays in its data file, because it is read only by the
+Director's prompt.
+
+`pwsh -File build.ps1 test`: 555 of 555 passed, one new. The new case covers an override by id, case-insensitive ids,
+the overlay winning over the shipped file, no override leaving the data file's text standing, an unmatched override
+reported against the loaded ids, and `[Data.*]` keys raising neither a rejection nor an overlay complaint. English
+ships no `[Data.*]` sections, so every loader's existing tests (rosters, items, attacker groups) ran unchanged. That
+is the "identical with no overrides" half of the verification.
 
 ### Phase C — Prompt prose out of C++
 

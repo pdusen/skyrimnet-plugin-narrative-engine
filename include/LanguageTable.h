@@ -104,6 +104,19 @@ namespace NarrativeEngine::LanguageTable
         // words rather than render them.
         [[nodiscard]] const std::string* Source(const TextKeys::Key& key) const;
 
+        // Display text for a row of one of the plugin's data files, from the
+        // open-ended [Data.*] sections ([Data.Faction], [Data.Item],
+        // [Data.AttackerGroup]), keyed by the row's own id. Null when no file
+        // overrides it, and the data file's own text stands. Open-ended
+        // because modded rows are first-class: no key list could name them.
+        [[nodiscard]] const std::string* DataText(std::string_view section, std::string_view id) const;
+
+        // Every override in `section` whose id is none of `ids`, as written:
+        // a typo, or a row from a mod that is not installed. The loader that
+        // knows the ids reports these, since the table cannot.
+        [[nodiscard]] std::vector<std::string> UnmatchedData(std::string_view section,
+                                                             std::span<const std::string> ids) const;
+
         // `key` rendered with this language's grammar. A key with no text
         // renders empty.
         [[nodiscard]] std::string Render(const TextKeys::Key& key,
@@ -117,5 +130,8 @@ namespace NarrativeEngine::LanguageTable
         Census census_;
         std::unordered_map<std::string, TextTemplate::Message> messages_;
         std::unordered_map<std::string, std::string> sources_;
+        // [Data.*] overrides by Id(section, key), and each key as written.
+        std::unordered_map<std::string, std::string> data_;
+        std::vector<std::pair<std::string, std::string>> dataKeys_;
     };
 } // namespace NarrativeEngine::LanguageTable
