@@ -741,7 +741,7 @@ other caller was touched.
 
 #### Step 2 — The `TextTemplate` formatter
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -759,6 +759,22 @@ other caller was touched.
 Today's `PlotVerbs::Render` behaviour, including the unfilled-slot fallbacks and first-letter capitalization, is
 reproduced by the English grammar settings. That last point is what lets Step 5 replace `Render` without changing a
 byte.
+
+Done. `include/TextTemplate.h`, `src/TextTemplate.cpp` (a core source) and `src/TextTemplate.test.cpp`.
+
+**The `PlotVerbs` reproduction was checked exhaustively, not sampled.** A throwaway engine test, compiled into the
+mocked-engine target against the real `PlotVerbs` and then deleted, ran every verb's every template through today's
+`RenderStep`, `RenderPhrase`, `RenderTarget`, `Generic` and `RenderPlotLine`. It covered three slot fills (none, the
+first slot only, all) and a scheme both present (with trailing punctuation and space) and missing. It rendered the
+same templates through `TextTemplate`, with `{scheme}` written as `{scheme, phrase}` and the same unfilled-slot
+fallbacks. **2,729 comparisons, 0 mismatches.** Step 5 can therefore replace `Render` by rewriting `{scheme}` and
+nothing else.
+
+`pwsh -File build.ps1 test`: 535 of 535 passed, eight of them new. One thing turned out differently from what the
+step assumed. A first test expected `#` inside a `select` nested in a `plural` to be the plural's number. ICU says
+otherwise: `#` is the number only directly inside a plural's own branch. The formatter follows ICU, since that is
+what a translator who knows it will expect, and the test now writes `{n}` there and asserts the literal `#`. A plural
+nested in a plural gets its own `#`.
 
 #### Step 3 — Language tables: keys, loading, fallback and overlay
 
