@@ -120,9 +120,9 @@ namespace NarrativeEngine::PlotVerbs
     // are the work alone, for the plot each person in it is told of.
     //
     // The line and the memories are in the language files and rendered by
-    // PlotText; the prompts word the line themselves, in
-    // components/narrative_engine/plot_step.prompt. Verb::Text holds only
-    // the two task phrases, which plot awareness still reads.
+    // PlotText. The prompts word the line themselves, in
+    // components/narrative_engine/plot_step.prompt, and the two task phrases
+    // in plot_task.prompt.
     enum class Template : std::uint8_t
     {
         Dashboard,
@@ -166,28 +166,11 @@ namespace NarrativeEngine::PlotVerbs
         bool agentBoundToItem = false;
         // A later BoundItem slot can bind to what this verb obtains.
         bool obtainsItem = false;
-        // What plot awareness tells each person in a plot of their part.
-        std::string_view mastermindTask;
-        std::string_view agentTask;
         // Whether a scheme can end in it. A verb that only makes, finds or
         // hides something cannot: what it got is for a later step, and a
         // forgery nobody is shown, or a ledger nobody reads, finishes
         // nothing.
         bool finishes = true;
-
-        // MastermindTask or AgentTask; empty for the line or a memory, whose
-        // words are not in C++.
-        [[nodiscard]] constexpr std::string_view Text(Template t) const noexcept
-        {
-            switch (t) {
-            case Template::MastermindTask:
-                return mastermindTask;
-            case Template::AgentTask:
-                return agentTask;
-            default:
-                return {};
-            }
-        }
     };
 
     inline constexpr std::array<Verb, 24> kVerbs{{
@@ -199,8 +182,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             false,
-            "keep watch on {mark} and learn their habits",
-            "keep watch on {mark} and learn their habits",
         },
         Verb{
             "ask_around",
@@ -211,8 +192,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             false,
             false,
-            "ask around {place} about {mark}",
-            "go around {place} asking questions about {mark}",
         },
         Verb{
             "steal",
@@ -223,8 +202,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             false,
             true,
-            "steal {item} from {mark}",
-            "steal {item} from {mark}",
         },
         Verb{
             "buy",
@@ -235,8 +212,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             false,
             true,
-            "buy {item} from {seller}",
-            "buy {item} from {seller}",
         },
         Verb{
             "deliver",
@@ -247,8 +222,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             true,
             false,
-            "bring {item} to {recipient}",
-            "bring {item} to {recipient}",
         },
         Verb{
             "plant",
@@ -259,8 +232,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             true,
             false,
-            "hide {item} among {mark}'s belongings",
-            "hide {item} among {mark}'s belongings",
             false,
         },
         Verb{
@@ -271,8 +242,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             false,
-            "pay {mark} to look the other way",
-            "pay {mark} to look the other way",
         },
         Verb{
             "win_over",
@@ -282,8 +251,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             false,
-            "win {mark} over to your side",
-            "win {mark} over to their side",
         },
         Verb{
             "threaten",
@@ -293,8 +260,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             false,
-            "warn {mark} to stay out of your affairs",
-            "warn {mark} to stay out of their affairs",
         },
         Verb{
             "spread_rumors",
@@ -305,8 +270,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             false,
             false,
-            "spread ugly talk about {mark} around {place}",
-            "spread ugly talk about {mark} around {place}",
         },
         Verb{
             "denounce",
@@ -317,8 +280,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             false,
             false,
-            "denounce {mark} to {authority}",
-            "denounce {mark} to {authority}",
         },
         Verb{
             "sabotage",
@@ -328,8 +289,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             false,
-            "sabotage {mark}'s livelihood",
-            "sabotage {mark}'s livelihood",
         },
         Verb{
             "silence",
@@ -339,8 +298,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             false,
-            "pay {witness} to keep quiet",
-            "pay {witness} to keep quiet",
         },
         // Falsify, not forge: a model reads "forge" as smithing often enough
         // to plan a plot around a sword.
@@ -353,8 +310,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             false,
             true,
-            "falsify {item} in {subject}'s name",
-            "falsify {item} in {subject}'s name",
             false,
         },
         Verb{
@@ -366,8 +321,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             false,
             true,
-            "dig up {item} proving {mark}'s wrongdoing",
-            "dig up {item} proving {mark}'s wrongdoing",
             false,
         },
         Verb{
@@ -378,8 +331,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             false,
-            "blackmail {mark} into serving you",
-            "blackmail {mark} into serving them",
         },
         Verb{
             "destroy",
@@ -390,8 +341,6 @@ namespace NarrativeEngine::PlotVerbs
             2,
             false,
             false,
-            "destroy {item} belonging to {mark}",
-            "destroy {item} belonging to {mark}",
         },
         Verb{
             "petition",
@@ -401,8 +350,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             false,
-            "petition {authority} on your behalf",
-            "petition {authority} on their behalf",
         },
         Verb{
             "expose",
@@ -414,8 +361,6 @@ namespace NarrativeEngine::PlotVerbs
             3,
             true,
             false,
-            "show {item} to {authority} as proof against {mark}",
-            "show {item} to {authority} as proof against {mark}",
         },
         Verb{
             "smith",
@@ -425,8 +370,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             true,
-            "smith {item}",
-            "smith {item} for them",
             false,
         },
         Verb{
@@ -437,8 +380,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             true,
-            "concoct {item}",
-            "concoct {item} for them",
             false,
         },
         Verb{
@@ -449,8 +390,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             true,
-            "make {item} at an arcane enchanter",
-            "make {item} for them at an arcane enchanter",
             false,
         },
         Verb{
@@ -461,8 +400,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             true,
-            "make {item}",
-            "make {item} for them",
             false,
         },
         Verb{
@@ -473,8 +410,6 @@ namespace NarrativeEngine::PlotVerbs
             1,
             false,
             true,
-            "fletch {item}",
-            "fletch {item} for them",
             false,
         },
     }};
@@ -597,19 +532,9 @@ namespace NarrativeEngine::PlotVerbs
     // prose is otherwise right, so it is mended rather than refused.
     [[nodiscard]] std::string Plain(std::string_view text);
 
-    // What an unfilled slot of each kind reads as.
-    [[nodiscard]] std::string_view Unfilled(SlotKind kind) noexcept;
-
     // The slot of this name in a verb, or nullptr. `agent`, `mastermind` and
     // `scheme` are not slots: every verb has them implicitly.
     [[nodiscard]] const Slot* FindSlot(const Verb& verb, std::string_view name) noexcept;
-
-    // One of a step's task phrases -- MastermindTask or AgentTask -- filled
-    // from what the step holds: `{agent}` from its actor and every other name
-    // from its slots, anything not yet filled reading as Unfilled of its
-    // kind. Not capitalised, to go mid-sentence: "steal a ruby from Hulda".
-    // Empty for a step with no verb, and for any other template.
-    [[nodiscard]] std::string RenderPhrase(const PlotModel::Step& step, Template t);
 
     // The caption under a step's node: its verb's, the model's own for a
     // prose step that wrote one, or the resolution profile's verb.

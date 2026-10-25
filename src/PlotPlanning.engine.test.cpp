@@ -122,8 +122,11 @@ namespace
                     return std::format("[{}]", name);
                 }
                 const auto* slot = NarrativeEngine::PlotVerbs::FindSlot(*verb, name);
-                return std::string{NarrativeEngine::PlotVerbs::Unfilled(
-                    slot != nullptr ? slot->kind : NarrativeEngine::PlotVerbs::SlotKind::Person)};
+                using NarrativeEngine::PlotVerbs::SlotKind;
+                const auto kind = slot != nullptr ? slot->kind : SlotKind::Person;
+                return std::string{kind == SlotKind::Place   ? "somewhere"
+                                   : kind == SlotKind::Thing ? "something"
+                                                             : "someone"};
             });
         out[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(out[0])));
         return out;

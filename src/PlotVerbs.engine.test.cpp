@@ -11,6 +11,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <format>
+#include <regex>
 #include <set>
 #include <string>
 #include <string_view>
@@ -39,12 +41,33 @@ namespace
     using PlotVerbs::TargetTemplate;
     using PlotVerbs::Template;
 
-    // A template's words: the prompt-facing ones from the table, a memory's
-    // from the shipped english.ini.
+    // A task phrase as plot_task.prompt words it, each `{{ words.x }}` read
+    // back as `{x}`, so the checks below hold the prompt's phrases to the rules
+    // they held the verb table's to.
+    std::string TaskPhrase(const PlotVerbs::Verb& verb, std::string_view side)
+    {
+        static const std::string prompt =
+            NarrativeEngine::Testing::ShippedPrompt("components/narrative_engine/plot_task");
+        const auto tag = std::format("task.verb == \"{}\" and side == \"{}\" -%}}", verb.id, side);
+        auto at = prompt.find(tag);
+        if (at == std::string::npos) {
+            return {};
+        }
+        at = prompt.find_first_not_of(" \n", at + tag.size());
+        const auto text = prompt.substr(at, prompt.find("{%", at) - at);
+        static const std::regex kWord{R"(\{\{ words\.(\w+) \}\})"};
+        return std::regex_replace(text, kWord, "{$1}");
+    }
+
+    // A template's words: a task phrase from the prompt, the line or a
+    // memory from the shipped english.ini.
     std::string Text(const PlotVerbs::Verb& verb, Template t)
     {
-        if (t == Template::MastermindTask || t == Template::AgentTask) {
-            return std::string{verb.Text(t)};
+        if (t == Template::MastermindTask) {
+            return TaskPhrase(verb, "mastermind");
+        }
+        if (t == Template::AgentTask) {
+            return TaskPhrase(verb, "agent");
         }
         if (t == Template::Dashboard) {
             const auto* line = ShippedEnglish().Source(PlotText::LineKey(verb));
@@ -539,12 +562,6 @@ TEST_CASE("PlotVerbs rendering", "[PlotVerbs][engine]")
         {
             REQUIRE(PlotText::Memory(ShippedEnglish(), step, Template::AgentDispatched, {})
                         .starts_with("Fanari Strong-Voice asked me"));
-        }
-
-        SECTION("should leave a phrase uncapitalised, to go mid-sentence")
-        {
-            REQUIRE(PlotVerbs::RenderPhrase(step, Template::MastermindTask)
-                    == "keep watch on Hulda and learn their habits");
         }
     }
 

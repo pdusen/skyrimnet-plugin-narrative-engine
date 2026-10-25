@@ -7,11 +7,12 @@
    read as part of the situation rather than as a rule about the reply.
 
    `ne_plot_awareness` is registered by NarrativeEngine's SKSE plugin (see
-   Decorators.cpp and PlotAwareness.cpp). It answers in the second person:
-   a mastermind gets their scheme and each step of it, an agent the errand
-   they were sent on. For anybody in no plot it answers empty, and this
-   renders nothing. Custom decorators bind as `(uuid) -> string`, so it is
-   called with `npc.UUID`.
+   Decorators.cpp and PlotAwareness.cpp). It answers with a record, as JSON
+   that SkyrimNet parses into an object: a mastermind's scheme and each step
+   of it, or an agent's errand. components/narrative_engine/plot_awareness
+   .prompt words it in the second person. For anybody in no plot it answers
+   empty, and this renders nothing. Custom decorators bind as
+   `(uuid) -> string`, so it is called with `npc.UUID`.
 
    The closing line is the template's rather than the decorator's because
    it is the same for both roles: without it, a mastermind asked "are you
@@ -21,7 +22,7 @@
 {% if plot_awareness != "" %}
 ## Your Plot
 
-{{ plot_awareness }}
+{% include "components/narrative_engine/plot_awareness.prompt" %}
 
 This is a secret. You only discuss it with people you trust, or with those already involved in it.
 {% endif %}

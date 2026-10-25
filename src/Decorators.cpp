@@ -27,7 +27,7 @@ namespace NarrativeEngine::Decorators
                                                   "Ignores the actor argument.";
 
         constexpr const char* kPlotAwarenessDescription =
-            "NarrativeEngine: the plot this actor is in, in the second person: as its mastermind, "
+            "NarrativeEngine: the plot this actor is in, as a JSON record: as its mastermind, "
             "the scheme and every step of it; as an agent, the errand they were sent on. "
             "Empty for an actor in no plot.";
 
@@ -50,10 +50,18 @@ namespace NarrativeEngine::Decorators
         // published snapshot is the one piece of plot state any thread may
         // read. The actor's base is a field read, the same one SkyrimNet makes
         // to render the rest of their prompt.
+        //
+        // The record goes out as JSON text, which SkyrimNet parses back into
+        // an object for the template; an empty answer stays the empty string
+        // the template tests for.
         std::string PlotAwarenessCallback(RE::Actor* actor)
         {
             const auto* base = actor != nullptr ? actor->GetActorBase() : nullptr;
-            return base != nullptr ? PlotAwareness::Describe(*Plots::Snapshot(), base->GetFormID()) : std::string{};
+            if (base == nullptr) {
+                return {};
+            }
+            const auto record = PlotAwareness::Describe(*Plots::Snapshot(), base->GetFormID());
+            return record.is_null() ? std::string{} : record.dump();
         }
 
         void RegisterOne(const std::string& name,

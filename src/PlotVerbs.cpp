@@ -147,19 +147,6 @@ namespace NarrativeEngine::PlotVerbs
         return out;
     }
 
-    std::string_view Unfilled(SlotKind kind) noexcept
-    {
-        switch (kind) {
-        case SlotKind::Person:
-            return "someone";
-        case SlotKind::Place:
-            return "somewhere";
-        case SlotKind::Thing:
-            return "something";
-        }
-        return "someone";
-    }
-
     std::string Words(const Verb& verb)
     {
         std::string out{verb.caption};
@@ -201,53 +188,6 @@ namespace NarrativeEngine::PlotVerbs
             }
         }
         return nullptr;
-    }
-
-    namespace
-    {
-        // A sentence of `verb`, filled from `step`.
-        std::string RenderOf(const PlotModel::Step& step,
-                             const Verb* verb,
-                             std::string_view text,
-                             std::string_view scheme,
-                             bool sentence = true)
-        {
-            const auto lookup = [&](std::string_view name) -> std::optional<std::string> {
-                if (name == "agent") {
-                    return step.actorName.empty() ? std::nullopt : std::optional<std::string>{step.actorName};
-                }
-                if (name == "scheme") {
-                    return scheme.empty() ? std::nullopt : std::optional<std::string>{SchemePhrase(scheme)};
-                }
-                const auto* value = step.FindSlot(name);
-                return value != nullptr && !value->text.empty() ? std::optional<std::string>{value->text}
-                                                                : std::nullopt;
-            };
-            const auto missing = [verb](std::string_view name) {
-                if (const auto* slot = FindSlot(*verb, name)) {
-                    return std::string{Unfilled(slot->kind)};
-                }
-                // `agent` and `mastermind` are people; `scheme` only goes
-                // missing on a plot with no scheme, which reads least badly as
-                // this.
-                return std::string{name == "scheme" ? "it" : "someone"};
-            };
-            auto out = Render(text, lookup, missing);
-            // A sentence can open with a slot -- "{agent} watches..." -- and an
-            // unfilled one reads as "someone", so the first letter is not the
-            // template's to guarantee. A phrase opens with its own lowercase
-            // word, and goes in the middle of somebody else's sentence.
-            if (sentence && !out.empty()) {
-                out[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(out[0])));
-            }
-            return out;
-        }
-    } // namespace
-
-    std::string RenderPhrase(const PlotModel::Step& step, Template t)
-    {
-        const Verb* verb = Find(step.verb);
-        return verb != nullptr ? RenderOf(step, verb, verb->Text(t), {}, false) : std::string{};
     }
 
     std::string Caption(const PlotModel::Step& step)

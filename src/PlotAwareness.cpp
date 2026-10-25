@@ -4,7 +4,6 @@
 
 #include <string>
 #include <string_view>
-#include <vector>
 
 namespace NarrativeEngine::PlotAwareness
 {
@@ -12,31 +11,45 @@ namespace NarrativeEngine::PlotAwareness
     {
         using PlotModel::StepOutcome;
         using PlotModel::StepState;
-        using PlotVerbs::Template;
 
-        std::string AgentOf(const PlotModel::Step& step)
+        // The work of `step`, as plot_task.prompt reads it: its verb and what
+        // fills it. An unfilled slot is left out, and reads as someone,
+        // somewhere or something.
+        nlohmann::json TaskOf(const PlotModel::Step& step)
         {
-            return step.actorName.empty() ? std::string{"someone"} : step.actorName;
+            nlohmann::json fill = nlohmann::json::object();
+            for (const auto& value : step.slots) {
+                if (!value.text.empty() && !fill.contains(value.name)) {
+                    fill[value.name] = value.text;
+                }
+            }
+            return {{"verb", step.verb}, {"fill", std::move(fill)}};
         }
 
-        // A step that has ended, as the mastermind heard of it. Every failure
-        // in a plot still running was one it went on from, so it says so.
-        std::string Ended(const PlotModel::Plot& plot, const PlotModel::Step& step, const std::string& task)
+        // How a step stands, as the mastermind is told it: done, under way,
+        // or still to do.
+        std::string_view StateOf(const PlotModel::Step& step)
         {
-            const bool self = step.actor == plot.mastermind;
-            const std::string opening = self ? "You set out to " + task : "You sent " + AgentOf(step) + " to " + task;
+            if (step.IsTerminal()) {
+                return "done";
+            }
+            return step.state == StepState::InProgress ? "in_progress" : "todo";
+        }
+
+        // How a step that has ended went, as plot_awareness.prompt words it.
+        // Every failure in a plot still running was one it went on from.
+        std::string_view OutcomeOf(const PlotModel::Step& step)
+        {
             switch (step.outcome) {
             case StepOutcome::Succeeded:
-                return opening + (self ? ", and succeeded." : ", and they succeeded.");
+                return "succeeded";
             case StepOutcome::FailedTimeout:
-                return opening
-                       + (self ? ", but ran out of time and had to regroup."
-                               : ", but they ran out of time and you had to regroup.");
+                return "failed_timeout";
             case StepOutcome::FailedCaught:
             case StepOutcome::None:
                 break;
             }
-            return opening + ", but it went wrong and you had to regroup.";
+            return "failed_caught";
         }
 
         // Whether the mastermind has carried out every step so far
@@ -66,24 +79,19 @@ namespace NarrativeEngine::PlotAwareness
             return any;
         }
 
-        std::string ForMastermind(const PlotModel::Plot& plot)
+        nlohmann::json ForMastermind(const PlotModel::Plot& plot)
         {
-            const bool alone = WorksAlone(plot);
-            std::vector<std::string> lines;
+            nlohmann::json steps = nlohmann::json::array();
             const auto add = [&](const PlotModel::Step& step) {
-                const auto task = PlotVerbs::RenderPhrase(step, Template::MastermindTask);
-                if (task.empty()) {
+                // A step with no verb has no task to tell.
+                if (PlotVerbs::Find(step.verb) == nullptr) {
                     return;
                 }
-                if (step.IsTerminal()) {
-                    lines.push_back(Ended(plot, step, task));
-                } else if (step.state == StepState::InProgress) {
-                    lines.push_back(step.actor == plot.mastermind ? "You are currently trying to " + task + "."
-                                                                  : "You have sent " + AgentOf(step) + " to " + task
-                                                                        + ". This is currently in progress.");
-                } else {
-                    lines.push_back(alone ? "You need to " + task + "." : "You need to send someone to " + task + ".");
-                }
+                steps.push_back({{"state", StateOf(step)},
+                                 {"outcome", step.IsTerminal() ? OutcomeOf(step) : std::string_view{}},
+                                 {"self", step.actor == plot.mastermind},
+                                 {"agent", step.actorName},
+                                 {"task", TaskOf(step)}});
             };
             for (const auto& step : plot.history) {
                 add(step);
@@ -91,52 +99,40 @@ namespace NarrativeEngine::PlotAwareness
             for (std::size_t i = plot.cursor; i < plot.plan.size(); ++i) {
                 add(plot.plan[i]);
             }
-            if (lines.empty()) {
-                return {};
+            if (steps.empty()) {
+                return nullptr;
             }
-
-            const auto scheme = PlotVerbs::SchemePhrase(plot.scheme);
-            std::string out = scheme.empty() ? "You currently have a plot in motion."
-                                             : "You currently have a plot in motion to " + scheme + ".";
-            out += " The plot has the following steps:\n";
-            for (std::size_t i = 0; i < lines.size(); ++i) {
-                out += "\n" + std::to_string(i + 1) + ". " + lines[i];
-            }
-            return out;
+            return {{"role", "mastermind"},
+                    {"scheme", PlotVerbs::SchemePhrase(plot.scheme)},
+                    {"alone", WorksAlone(plot)},
+                    {"steps", std::move(steps)}};
         }
 
-        std::string ForAgent(const PlotModel::Plot& plot, RE::FormID npc)
+        nlohmann::json ForAgent(const PlotModel::Plot& plot, RE::FormID npc)
         {
             const auto* step = plot.LiveStep();
-            if (step == nullptr || step->actor != npc) {
-                return {};
+            if (step == nullptr || step->actor != npc || PlotVerbs::Find(step->verb) == nullptr) {
+                return nullptr;
             }
-            const auto task = PlotVerbs::RenderPhrase(*step, Template::AgentTask);
-            if (task.empty()) {
-                return {};
-            }
-            const std::string_view sender =
-                plot.mastermindName.empty() ? std::string_view{"someone"} : std::string_view{plot.mastermindName};
-            return "You have been sent by " + std::string{sender} + " to " + task
-                   + ". You're in the process of doing that now.";
+            return {{"role", "agent"}, {"sender", plot.mastermindName}, {"task", TaskOf(*step)}};
         }
     } // namespace
 
-    std::string Describe(const PlotState& state, RE::FormID npc)
+    nlohmann::json Describe(const PlotState& state, RE::FormID npc)
     {
         if (npc == 0) {
-            return {};
+            return nullptr;
         }
         const auto row = state.occupancy.find(npc);
         if (row == state.occupancy.end() || !row->second.IsEngaged()) {
-            return {};
+            return nullptr;
         }
         const auto* plot = state.FindPlot(row->second.plotId);
         if (plot == nullptr || plot->IsTerminal()) {
-            return {};
+            return nullptr;
         }
         if (row->second.role == PlotModel::Role::Mastermind) {
-            return plot->mastermind == npc ? ForMastermind(*plot) : std::string{};
+            return plot->mastermind == npc ? ForMastermind(*plot) : nullptr;
         }
         return ForAgent(*plot, npc);
     }

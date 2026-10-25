@@ -1443,7 +1443,7 @@ build.
 
 #### Step 14 — `ne_plot_awareness` returns structure
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1459,6 +1459,39 @@ build.
 **Verification:** offline render comparison of the submodule for a mastermind at each step state, an agent, and an
 NPC in no plot. The harness applies SkyrimNet's parse-as-JSON rule, which is the behaviour established by
 disassembly. Step 29 confirms it in the running game.
+
+Done. `PlotAwareness::Describe` returns a record, and the decorator hands it to SkyrimNet as JSON, or the empty
+string for somebody in no plot. `include/PlotAwareness.h` lists the record's fields:
+
+- for a mastermind, the scheme as a phrase, whether they have had nobody to send, and each step's state, outcome,
+  whether they did it themselves, whom they sent, and its task;
+- for an agent, who sent them and their task.
+
+The submodule now includes `components/narrative_engine/plot_awareness.prompt`, which words the record. Each step's
+work is worded by `plot_task.prompt`, which holds both sides of every verb's task phrase. A scratchpad script
+generated it once from `kVerbs`.
+
+The two task phrases are gone from `kVerbs`, as the step's own bullet planned, and so are `Verb::Text`,
+`PlotVerbs::RenderPhrase` and `Unfilled`. `kVerbs` now holds only ids, captions, slots and traits. The caption stays
+for the dashboard's fallback and `PlotVerbs::Plain`. The manifest tests that held each task phrase to its slots now
+read the phrases out of `plot_task.prompt`, so they hold the prompt file to the same rules. Their "carries all twelve
+templates" case fails the build when a verb has no task branch.
+
+**The comparison.** `told`, a script rule giving the old C++'s sentence for a record, was checked against every
+sentence the old `PlotAwareness` tests asserted: four whole and three in part. Each was checked for the record the
+new tests now assert of the same scenario, and none disagreed. The submodule was then rendered for 36 scenarios:
+
+- those scenarios;
+- an NPC in no plot;
+- an agent for every verb, with and without a sender, and with every slot unfilled;
+- four masterminds, alone or not and with or without a scheme, whose steps run through every verb in every state,
+  outcome and side, some unnamed.
+
+The old tree was rendered with the decorator answering the old sentence. The new tree was rendered with it answering
+the record as JSON, which the harness parses as SkyrimNet does. **All 36 renders are byte-identical.**
+
+`pwsh -File build.ps1 test`: 559 of 559 passed. `build.ps1 build` is clean, and the two includes deploy with the
+build.
 
 #### Step 15 — Remaining prompt prose, and the audit
 
