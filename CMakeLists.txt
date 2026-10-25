@@ -88,9 +88,11 @@ set(NARRATIVEENGINE_CORE_SOURCES
     "${CMAKE_SOURCE_DIR}/src/BookTextRenderer.cpp"
     "${CMAKE_SOURCE_DIR}/src/CharacterBioResolver.cpp"
     "${CMAKE_SOURCE_DIR}/src/JsonUtils.cpp"
+    "${CMAKE_SOURCE_DIR}/src/LanguageTable.cpp"
     "${CMAKE_SOURCE_DIR}/src/LLMTextSanitizer.cpp"
     "${CMAKE_SOURCE_DIR}/src/SenderCooldownTable.cpp"
     "${CMAKE_SOURCE_DIR}/src/SkyrimNetEvents.cpp"
+    "${CMAKE_SOURCE_DIR}/src/TextKeys.cpp"
     "${CMAKE_SOURCE_DIR}/src/TextTemplate.cpp"
     "${CMAKE_SOURCE_DIR}/src/TextUtf8.cpp"
     "${CMAKE_SOURCE_DIR}/src/ThreadRole.cpp"
@@ -181,6 +183,12 @@ set(CMAKE_COMPILE_WARNING_AS_ERROR ${NARRATIVEENGINE_WARNINGS_AS_ERRORS})
 add_library(NarrativeEngineCore STATIC ${NARRATIVEENGINE_CORE_SOURCES})
 target_compile_features(NarrativeEngineCore PUBLIC cxx_std_23)
 target_include_directories(NarrativeEngineCore PUBLIC include)
+# SimpleIni is header-only and engine-free; LanguageTable parses language files
+# with it. Private: no public header includes it.
+target_include_directories(
+    NarrativeEngineCore
+    PRIVATE "${SIMPLEINI_INCLUDE_DIRS}"
+)
 # nlohmann_json is header-only and carries nothing engine-specific, so a core
 # source may parse JSON without breaking the "runs with no Skyrim" rule.
 target_link_libraries(NarrativeEngineCore PUBLIC nlohmann_json::nlohmann_json)
@@ -769,6 +777,12 @@ if(NARRATIVEENGINE_BUILD_TESTS)
     target_link_libraries(
         NarrativeEngineTests
         PRIVATE NarrativeEngineCore Catch2::Catch2WithMain
+    )
+    # Where the shipped data files live, for tests that check every file
+    # statics/ ships (LanguageTable's shipped-files case).
+    target_compile_definitions(
+        NarrativeEngineTests
+        PRIVATE NARRATIVEENGINE_STATICS_DIR="${STATICS_SOURCE_DIR}"
     )
 
     # Register each TEST_CASE with CTest individually, so `ctest -R` can

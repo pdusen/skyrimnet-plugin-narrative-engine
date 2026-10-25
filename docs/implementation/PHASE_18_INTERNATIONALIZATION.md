@@ -574,7 +574,8 @@ the trial. The session's own table never changes.
 | `TextUtf8`                | **New, pure.** utf8proc wrapped: validation, repair, case, folding, code points, word splitting.     |
 | `TextTemplate`            | **New, pure.** The ICU subset and the plural families.                                               |
 | `TextKeys`                | **New, pure.** The declared key table and each key's placeholder signature.                          |
-| `Localization`            | **New.** Detection, override, font check; loads file and overlay; validation, fallback, census.      |
+| `LanguageTable`           | **New, pure.** One language's table from INI text: header, grammar, per-key fallback, overlay, census. |
+| `Localization`            | **New.** Detection, override and font check; reads the files and publishes the session's table.      |
 | `PlotVerbs`               | Loses its templates and `Render`; keeps ids, slots and traits.                                       |
 | Event renderers           | Emit structured events; keep condensation logic.                                                     |
 | `DashboardUIManager`      | Sends the string table; sends ids where the dashboard labels things itself.                          |
@@ -778,7 +779,7 @@ nested in a plural gets its own `#`.
 
 #### Step 3 — Language tables: keys, loading, fallback and overlay
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -804,6 +805,31 @@ nested in a plural gets its own `#`.
 
 A committed shipped-files test loads every file under `Languages/`. It asserts that English defines every declared
 key and that every file loads with zero rejections. It is the test every later step's new keys must keep passing.
+
+Done. `TextKeys` (`include/TextKeys.h`, `src/TextKeys.cpp`) declares keys. `LanguageTable` (`include/LanguageTable.h`,
+`src/LanguageTable.cpp`) builds a table from INI text. `statics/SKSE/Plugins/NarrativeEngine/Languages/english.ini`
+ships with its header and grammar. All three sources are core, and SimpleIni's include path joins the core library.
+The tests get `NARRATIVEENGINE_STATICS_DIR`, so the shipped-files case reads the real files.
+
+**One difference from the plan:** the pure loader is its own module, `LanguageTable`, not part of `Localization`.
+`Localization` (Step 4) keeps what touches the engine and the disk. The module table above is updated to match.
+
+Three choices the step had to make, now part of the contract:
+
+- **What counts as a rejection.** A template that fails to parse or validate, a header or grammar value that means
+  nothing, a header field the language's own file lacks, and any key no part of the plugin declares. Missing keys
+  are *not* rejections, because a draft is allowed to be incomplete. They are fallbacks, listed separately. The
+  shipped-files test asserts zero rejections for every file, and zero unavailable keys for English.
+- **Quoting.** SimpleIni trims values and has no inline comments. So a `[Grammar]` value wrapped in double quotes
+  keeps its spaces (`ListSeparator = ", "`), and `english.ini`'s own comment says a `;` after a value is part of it.
+  Templates are never unquoted: a sentence that is a quotation should stay one.
+- **The overlay changes words, not identity.** `[Grammar]` and any declared key may be overridden. `[Language]`
+  lines in an overlay are reported as unmatched and ignored.
+
+`pwsh -File build.ps1 test`: 542 of 542 passed, seven of them new. The cases cover English alone; a shipped language
+with its own grammar and a missing key; three kinds of bad translation, each falling back to English; the overlay
+over the shipped file, over English, with a rejected line falling back to the *shipped* text, with grammar, and with
+typos; header and UTF-8 rejections; a multi-line heredoc template; and the real shipped files.
 
 #### Step 4 — Detection, override, font check, and session wiring
 
