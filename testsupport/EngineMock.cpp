@@ -3865,3 +3865,35 @@ namespace NarrativeEngine::Testing
         }
     } // namespace
 } // namespace NarrativeEngine::Testing
+
+// ---------------------------------------------------------------------------
+// RE::INISettingCollection
+// ---------------------------------------------------------------------------
+//
+// The game's INI settings are not modelled: there is no collection, so every
+// lookup through it reads as "not set", which is what Localization::Load does
+// with a missing sLanguage. The three functions below are reachable only
+// through a collection, so reaching one means somebody modelled half of it.
+
+RE::INISettingCollection* RE::INISettingCollection::GetSingleton()
+{
+    return nullptr;
+}
+
+RE::Setting* RE::INISettingCollection::GetSetting(std::string_view)
+{
+    std::fprintf(stderr, "[EngineMock] FATAL: INISettingCollection::GetSetting reached with no collection modelled.\n");
+    std::abort();
+}
+
+RE::Setting::Type RE::Setting::GetType() const
+{
+    std::fprintf(stderr, "[EngineMock] FATAL: Setting::GetType reached with no INI settings modelled.\n");
+    std::abort();
+}
+
+const char* RE::Setting::GetString() const
+{
+    std::fprintf(stderr, "[EngineMock] FATAL: Setting::GetString reached with no INI settings modelled.\n");
+    std::abort();
+}

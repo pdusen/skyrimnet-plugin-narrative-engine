@@ -1246,6 +1246,13 @@ namespace NarrativeEngine::Settings
         // value makes a run reproducible, which is what the offline
         // harness and any bug report both want.
         int plotRandomSeed = 0;
+
+        // [Localization]
+        // The language file to use instead of the game's own language: a
+        // file stem under Data/SKSE/Plugins/NarrativeEngine/Languages/, such
+        // as "german" or "portuguese". Empty follows the game's sLanguage.
+        // Read once at kDataLoaded; a change takes effect at the next launch.
+        std::string localizationLanguage;
     };
 
     // Narrow mutation surface for WriteMcmOverride. One optional per

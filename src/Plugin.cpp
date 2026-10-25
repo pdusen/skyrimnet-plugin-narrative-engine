@@ -25,6 +25,7 @@
 #include <GossipTick.h>
 #include <HoldGrid.h>
 #include <LetterPool.h>
+#include <Localization.h>
 #include <logger.h>
 #include <MCMEventSink.h>
 #include <NPCLetterBeat.h>
@@ -157,6 +158,10 @@ namespace NarrativeEngine
                 // Settings::Load() runs FIRST so later subsystems can
                 // consult the populated Config when they initialize.
                 Settings::Load();
+                // Localization reads its [Localization] override from
+                // Settings, and must publish the session's language table
+                // before any subsystem below can render a sentence.
+                Localization::Load();
                 // MCMEventSink listens for _ne_MCM.psc's ModEvent so the
                 // MCM-rebound hotkey can overwrite the INI-loaded default
                 // once a save fires OnGameReload. Register before any

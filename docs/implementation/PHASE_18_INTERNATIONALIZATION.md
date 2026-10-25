@@ -833,7 +833,7 @@ typos; header and UTF-8 rejections; a multi-line heredoc template; and the real 
 
 #### Step 4 — Detection, override, font check, and session wiring
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -856,6 +856,34 @@ typos; header and UTF-8 rejections; a multi-line heredoc template; and the real 
   an unofficial language.
 - `*.test.cpp` for `FontsCover`, over the five vanilla font configurations.
 - The build. The engine glue is a handful of lines with no logic of its own.
+
+Done. `include/Localization.h` declares both halves. `src/LocalizationRules.cpp` (core) holds `Resolve` and
+`FontsCover`, and `src/Localization.cpp` holds the glue: it reads `sLanguage:General` and `sFontConfigFile:Fonts`,
+lists the language files, reads the chosen file and its overlay, builds the session table and English, logs, and
+publishes. `Plugin.cpp` calls `Localization::Load()` straight after `Settings::Load()` at `kDataLoaded`.
+`[Localization] sLanguage` joins `Settings` and the shipped `NarrativeEngine.ini`. It is read by `ReadIniInto`, so the
+MCM overlay file can set it too, ahead of Step 22's dropdown.
+
+Three things the step settled that the plan did not spell out:
+
+- **`Load` takes no token.** No dispatcher mints one inside SKSE's message handler. Every other `kDataLoaded` loader
+  (`Settings::Load`, `AmbushAttackerGroups::Load`, `GossipGraph::Initialize`) is token-free for the same reason, and
+  `Localization::Load` follows them. The accessors are token-free by design, like `Settings::Get`. Publication goes
+  through release/acquire atomics, so a reader on any thread sees a complete table or the empty one, never half of
+  one.
+- **The English table carries no overlay.** It exists for output that stays English whatever the session's
+  language, such as our logs, so a player's rewording should not reach it. When the session itself is English, the
+  session table does include `english.custom.ini`.
+- **The mocked-engine target compiles `Plugin.cpp`, so it now compiles `Localization.cpp` too.** That needed four
+  mocks in `testsupport/EngineMock.cpp`. The game's INI collection is not modelled, so `GetSingleton` returns null,
+  which reads as "not set". `GetSetting`, `Setting::GetType` and `Setting::GetString` are only reachable through a
+  collection, so they abort by name, following that file's existing rule for engine calls nothing stands in for.
+
+`pwsh -File build.ps1 test`: 544 of 544 passed, two of them new. `Resolve` was tested with all nine launcher tokens
+in upper and lower case, an override winning, an unofficial language (`portuguese`), an override with no file
+falling through and saying so, no language at all, and mixed-case file names. `FontsCover` was tested over all five
+vanilla configurations, the empty default, forward and back slashes, Polish on an English install (`NotCovered`),
+and a font mod's own file (`Unknown`).
 
 ### Phase B — Content out of C++
 
