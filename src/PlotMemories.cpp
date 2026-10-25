@@ -4,6 +4,7 @@
 #include <logger.h>
 #include <PlotCandidates.h>
 #include <PlotPopulation.h>
+#include <PlotText.h>
 #include <SkyrimNetAPI.h>
 
 #include <algorithm>
@@ -58,13 +59,28 @@ namespace NarrativeEngine::PlotMemories
         constexpr float kSucceededImportance = 0.7f;
         constexpr float kFailedImportance = 0.65f;
 
+        // A person's sex, for templates that agree with it: what the plot
+        // population read off their base record at session start.
+        TextTemplate::Sex SexOf(RE::FormID npc)
+        {
+            const auto* member = PlotPopulation::Get().Find(npc);
+            if (member == nullptr) {
+                return TextTemplate::Sex::Other;
+            }
+            return member->female ? TextTemplate::Sex::Female : TextTemplate::Sex::Male;
+        }
+
         // The mastermind's memory of the plot as a whole: theirs alone,
         // relating nobody, since the step memories before it say who.
-        Memory PlotLine(const PlotModel::Plot& plot, std::string_view text, float importance, std::string_view source)
+        Memory PlotLine(const LanguageTable::Table& table,
+                        const PlotModel::Plot& plot,
+                        PlotText::Outcome outcome,
+                        float importance,
+                        std::string_view source)
         {
             Memory m;
             m.npc = plot.mastermind;
-            m.text = PlotVerbs::RenderPlotLine(text, plot.scheme);
+            m.text = PlotText::PlotOutcome(table, outcome, plot.scheme);
             m.importance = importance;
             m.type = "EXPERIENCE";
             m.source = source;
@@ -109,12 +125,16 @@ namespace NarrativeEngine::PlotMemories
             return {};
         }
 
-        Memory Make(const PlotModel::Plot& plot, const PlotModel::Step& step, RE::FormID keeper, Template t)
+        Memory Make(const LanguageTable::Table& table,
+                    const PlotModel::Plot& plot,
+                    const PlotModel::Step& step,
+                    RE::FormID keeper,
+                    Template t)
         {
             const auto weight = WeightOf(t);
             Memory m;
             m.npc = keeper;
-            m.text = PlotVerbs::RenderStep(step, t, plot.scheme);
+            m.text = PlotText::Memory(table, step, t, plot.scheme, SexOf);
             m.importance = weight.importance;
             m.type = weight.type;
             for (const auto npc : PeopleIn(plot, step)) {
@@ -144,13 +164,15 @@ namespace NarrativeEngine::PlotMemories
         // agent, the mastermind where the verb's sentence puts them, and
         // anybody else in the step it mentions. Somebody remembers who they
         // dealt with, and nobody they did not.
-        std::vector<RE::FormID> NamedIn(const PlotModel::Plot& plot,
+        std::vector<RE::FormID> NamedIn(const LanguageTable::Table& table,
+                                        const PlotModel::Plot& plot,
                                         const PlotModel::Step& step,
-                                        std::string_view text,
+                                        std::string_view slotName,
+                                        PlotVerbs::TargetTemplate t,
                                         RE::FormID keeper)
         {
             std::vector<RE::FormID> out;
-            for (const auto name : PlotVerbs::PlaceholdersIn(text)) {
+            for (const auto& name : PlotText::RememberedNames(table, step, slotName, t)) {
                 RE::FormID npc = 0;
                 if (name == "agent") {
                     npc = step.actor;
@@ -173,7 +195,10 @@ namespace NarrativeEngine::PlotMemories
         // and on a success anybody it was done to quietly who would notice
         // what it left behind -- without knowing who. A timeout reaches
         // nobody.
-        void Targets(const PlotModel::Plot& plot, const PlotModel::Step& step, std::vector<Memory>& out)
+        void Targets(const LanguageTable::Table& table,
+                     const PlotModel::Plot& plot,
+                     const PlotModel::Step& step,
+                     std::vector<Memory>& out)
         {
             const auto* verb = PlotVerbs::Find(step.verb);
             const bool succeeded = step.outcome == PlotModel::StepOutcome::Succeeded;
@@ -187,7 +212,7 @@ namespace NarrativeEngine::PlotMemories
                     continue;
                 }
                 if (succeeded && !PlotCandidates::AwarenessFired(slot.awareness, step.outcome)
-                    && !slot.Text(PlotVerbs::TargetTemplate::Noticed).empty()) {
+                    && slot.Remembers(PlotVerbs::TargetTemplate::Noticed)) {
                     const auto* value = step.FindSlot(slot.name);
                     if (value != nullptr && value->form != 0 && value->form != step.actor
                         && value->form != plot.mastermind) {
@@ -195,7 +220,8 @@ namespace NarrativeEngine::PlotMemories
                         // tell them exactly who they do not know did it.
                         Memory m;
                         m.npc = value->form;
-                        m.text = PlotVerbs::RenderTarget(step, slot.name, PlotVerbs::TargetTemplate::Noticed);
+                        m.text =
+                            PlotText::Remembered(table, step, slot.name, PlotVerbs::TargetTemplate::Noticed, SexOf);
                         m.importance = kTargetNoticedImportance;
                         m.type = "EXPERIENCE";
                         m.location = PlaceOf(step);
@@ -204,7 +230,7 @@ namespace NarrativeEngine::PlotMemories
                     }
                     continue;
                 }
-                if (slot.Text(t).empty() || !PlotCandidates::AwarenessFired(slot.awareness, step.outcome)) {
+                if (!slot.Remembers(t) || !PlotCandidates::AwarenessFired(slot.awareness, step.outcome)) {
                     continue;
                 }
                 const auto* value = step.FindSlot(slot.name);
@@ -214,10 +240,10 @@ namespace NarrativeEngine::PlotMemories
                 }
                 Memory m;
                 m.npc = value->form;
-                m.text = PlotVerbs::RenderTarget(step, slot.name, t);
+                m.text = PlotText::Remembered(table, step, slot.name, t, SexOf);
                 m.importance = succeeded ? kTargetSucceededImportance : kTargetFailedImportance;
                 m.type = "EXPERIENCE";
-                m.related = NamedIn(plot, step, slot.Text(t), m.npc);
+                m.related = NamedIn(table, plot, step, slot.name, t, m.npc);
                 m.location = PlaceOf(step);
                 m.source = succeeded ? "target_succeeded" : "target_failed";
                 out.push_back(std::move(m));
@@ -234,30 +260,34 @@ namespace NarrativeEngine::PlotMemories
         }
     } // namespace
 
-    std::vector<Memory> OnDispatch(const PlotModel::Plot& plot, const PlotModel::Step& step)
+    std::vector<Memory> OnDispatch(const LanguageTable::Table& table,
+                                   const PlotModel::Plot& plot,
+                                   const PlotModel::Step& step)
     {
         if (step.verb.empty() || step.actor == 0) {
             return {};
         }
         if (ByOwnHand(plot, step)) {
-            return {Make(plot, step, plot.mastermind, Template::SelfDispatched)};
+            return {Make(table, plot, step, plot.mastermind, Template::SelfDispatched)};
         }
-        return {Make(plot, step, step.actor, Template::AgentDispatched),
-                Make(plot, step, plot.mastermind, Template::MastermindDispatched)};
+        return {Make(table, plot, step, step.actor, Template::AgentDispatched),
+                Make(table, plot, step, plot.mastermind, Template::MastermindDispatched)};
     }
 
-    std::vector<Memory> OnResolve(const PlotModel::Plot& plot, const PlotModel::Step& step)
+    std::vector<Memory> OnResolve(const LanguageTable::Table& table,
+                                  const PlotModel::Plot& plot,
+                                  const PlotModel::Step& step)
     {
         if (step.verb.empty() || step.actor == 0) {
             return {};
         }
         switch (step.outcome) {
         case PlotModel::StepOutcome::Succeeded: {
-            std::vector<Memory> out{Make(plot, step, step.actor, Template::AgentSucceeded)};
+            std::vector<Memory> out{Make(table, plot, step, step.actor, Template::AgentSucceeded)};
             if (!ByOwnHand(plot, step)) {
-                out.push_back(Make(plot, step, plot.mastermind, Template::MastermindToldSucceeded));
+                out.push_back(Make(table, plot, step, plot.mastermind, Template::MastermindToldSucceeded));
             }
-            Targets(plot, step, out);
+            Targets(table, plot, step, out);
             return out;
         }
         case PlotModel::StepOutcome::FailedCaught:
@@ -266,13 +296,14 @@ namespace NarrativeEngine::PlotMemories
             // is the agent, and keeps theirs until the plot answers it.
             std::vector<Memory> out;
             if (!ByOwnHand(plot, step)) {
-                out.push_back(Make(plot,
+                out.push_back(Make(table,
+                                   plot,
                                    step,
                                    step.actor,
                                    step.outcome == PlotModel::StepOutcome::FailedCaught ? Template::AgentFailed
                                                                                         : Template::AgentTimedOut));
             }
-            Targets(plot, step, out);
+            Targets(table, plot, step, out);
             return out;
         }
         case PlotModel::StepOutcome::None:
@@ -281,7 +312,10 @@ namespace NarrativeEngine::PlotMemories
         return {};
     }
 
-    std::vector<Memory> OnFailureAnswered(const PlotModel::Plot& plot, const PlotModel::Step& step, bool wentOn)
+    std::vector<Memory> OnFailureAnswered(const LanguageTable::Table& table,
+                                          const PlotModel::Plot& plot,
+                                          const PlotModel::Step& step,
+                                          bool wentOn)
     {
         if (step.verb.empty() || step.actor == 0 || plot.mastermind == 0) {
             return {};
@@ -293,41 +327,41 @@ namespace NarrativeEngine::PlotMemories
         const auto t = ByOwnHand(plot, step)
                            ? (caught ? Template::AgentFailed : Template::AgentTimedOut)
                            : (caught ? Template::MastermindToldFailed : Template::MastermindToldTimedOut);
-        auto m = Make(plot, step, plot.mastermind, t);
+        auto m = Make(table, plot, step, plot.mastermind, t);
         if (wentOn) {
             // The failure's own full stop gives way to the clause's.
             while (!m.text.empty() && (m.text.back() == '.' || m.text.back() == ' ')) {
                 m.text.pop_back();
             }
-            m.text += PlotVerbs::RenderPlotLine(PlotVerbs::kWentOnClause, plot.scheme);
+            m.text += PlotText::PlotOutcome(table, PlotText::Outcome::WentOn, plot.scheme);
         }
         return {m};
     }
 
-    std::vector<Memory> OnSucceeded(const PlotModel::Plot& plot)
+    std::vector<Memory> OnSucceeded(const LanguageTable::Table& table, const PlotModel::Plot& plot)
     {
         if (plot.mastermind == 0) {
             return {};
         }
-        return {PlotLine(plot, PlotVerbs::kSucceededTemplate, kSucceededImportance, "mastermind_succeeded")};
+        return {PlotLine(table, plot, PlotText::Outcome::Succeeded, kSucceededImportance, "mastermind_succeeded")};
     }
 
-    std::vector<Memory> OnFinishFailed(const PlotModel::Plot& plot)
+    std::vector<Memory> OnFinishFailed(const LanguageTable::Table& table, const PlotModel::Plot& plot)
     {
         if (plot.mastermind == 0) {
             return {};
         }
-        return {PlotLine(plot, PlotVerbs::kFailedTemplate, kFailedImportance, "mastermind_failed")};
+        return {PlotLine(table, plot, PlotText::Outcome::Failed, kFailedImportance, "mastermind_failed")};
     }
 
-    std::vector<Memory> OnConceded(const PlotModel::Plot& plot)
+    std::vector<Memory> OnConceded(const LanguageTable::Table& table, const PlotModel::Plot& plot)
     {
         if (plot.mastermind == 0) {
             return {};
         }
         Memory m;
         m.npc = plot.mastermind;
-        m.text = PlotVerbs::RenderConceded(plot.scheme);
+        m.text = PlotText::PlotOutcome(table, PlotText::Outcome::Conceded, plot.scheme);
         m.importance = kConcededImportance;
         m.type = "EXPERIENCE";
         m.source = "mastermind_conceded";

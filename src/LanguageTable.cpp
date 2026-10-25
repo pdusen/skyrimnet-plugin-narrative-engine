@@ -29,12 +29,14 @@ namespace NarrativeEngine::LanguageTable
 
         constexpr std::array<std::string_view, 6> kHeaderKeys =
             {"Name", "NativeName", "Code", "Status", "PluralRule", "Fonts"};
-        constexpr std::array<std::string_view, 6> kGrammarKeys = {"ListSeparator",
+        constexpr std::array<std::string_view, 8> kGrammarKeys = {"ListSeparator",
                                                                   "ListPairSeparator",
                                                                   "ListFinalSeparator",
                                                                   "CapitalizeSentenceStart",
                                                                   "PhraseTrailingPunctuation",
-                                                                  "PhraseLowercaseFirst"};
+                                                                  "PhraseLowercaseFirst",
+                                                                  "IndefiniteArticle",
+                                                                  "IndefiniteArticleBeforeVowel"};
 
         [[nodiscard]] char AsciiLower(char c) noexcept
         {
@@ -155,7 +157,7 @@ namespace NarrativeEngine::LanguageTable
         }
 
         // One loaded INI text, labelled for the census.
-        struct Source
+        struct LoadedIni
         {
             std::string_view label;
             std::unique_ptr<CSimpleIniA> ini;
@@ -170,9 +172,9 @@ namespace NarrativeEngine::LanguageTable
             }
         };
 
-        [[nodiscard]] Source Load(std::string_view label, std::optional<std::string_view> text, Census& census)
+        [[nodiscard]] LoadedIni Load(std::string_view label, std::optional<std::string_view> text, Census& census)
         {
-            Source out{label, nullptr};
+            LoadedIni out{label, nullptr};
             if (!text) {
                 return out;
             }
@@ -192,7 +194,7 @@ namespace NarrativeEngine::LanguageTable
         }
 
         // Every (section, key) a source holds, in file order.
-        [[nodiscard]] std::vector<std::pair<std::string, std::string>> Entries(const Source& source)
+        [[nodiscard]] std::vector<std::pair<std::string, std::string>> Entries(const LoadedIni& source)
         {
             std::vector<std::pair<std::string, std::string>> out;
             if (!source.ini) {
@@ -226,7 +228,7 @@ namespace NarrativeEngine::LanguageTable
         // The header is the language's identity, so it comes from the
         // language's own file. A field that file lacks is a rejection, and
         // English stands in for it so the table still works.
-        const Source& identity = hasShipped ? shipped : english;
+        const LoadedIni& identity = hasShipped ? shipped : english;
         const auto headerValue = [&](std::string_view name) -> std::string {
             if (auto value = identity.Value(kLanguageSection, name)) {
                 return std::string{Trimmed(*value)};
@@ -264,7 +266,7 @@ namespace NarrativeEngine::LanguageTable
 
         // Grammar values fall back key by key, like templates: overlay, then
         // the language's file, then English.
-        const std::array<const Source*, 3> order = {&overlay, &shipped, &english};
+        const std::array<const LoadedIni*, 3> order = {&overlay, &shipped, &english};
         const auto grammarValue = [&]<typename Parse>(std::string_view name, Parse parse) {
             for (const auto* source : order) {
                 const auto value = source->Value(kGrammarSection, name);
@@ -292,6 +294,12 @@ namespace NarrativeEngine::LanguageTable
         }
         if (auto v = grammarValue("PhraseTrailingPunctuation", text)) {
             grammar.phraseTrailingPunctuation = *v;
+        }
+        if (auto v = grammarValue("IndefiniteArticle", text)) {
+            grammar.indefiniteArticle = *v;
+        }
+        if (auto v = grammarValue("IndefiniteArticleBeforeVowel", text)) {
+            grammar.indefiniteArticleBeforeVowel = *v;
         }
         if (auto v = grammarValue("CapitalizeSentenceStart", ParseBool)) {
             grammar.capitalizeSentenceStart = *v;
@@ -328,6 +336,7 @@ namespace NarrativeEngine::LanguageTable
                     continue;
                 }
                 table.messages_.emplace(Id(key.section, key.name), std::move(parsed.message));
+                table.sources_.emplace(Id(key.section, key.name), *value);
                 ++census.keys;
                 if (source == &overlay) {
                     ++census.fromOverlay;
@@ -375,6 +384,12 @@ namespace NarrativeEngine::LanguageTable
     {
         const auto it = messages_.find(Id(key.section, key.name));
         return it != messages_.end() ? &it->second : nullptr;
+    }
+
+    const std::string* Table::Source(const TextKeys::Key& key) const
+    {
+        const auto it = sources_.find(Id(key.section, key.name));
+        return it != sources_.end() ? &it->second : nullptr;
     }
 
     std::string Table::Render(const TextKeys::Key& key,

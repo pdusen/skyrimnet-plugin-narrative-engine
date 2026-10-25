@@ -14,6 +14,7 @@
 #include <GossipSim.h>
 #include <LetterPool.h>
 #include <LLMTextSanitizer.h>
+#include <Localization.h>
 #include <logger.h>
 #include <MainThread.h>
 #include <PhaseTracker.h>
@@ -21,6 +22,7 @@
 #include <PlotFactionRoster.h>
 #include <PlotState.h>
 #include <PlotTestPlots.h>
+#include <PlotText.h>
 #include <PlotTick.h>
 #include <PlotVerbs.h>
 #include <PrismaUI.h>
@@ -1560,15 +1562,16 @@ namespace NarrativeEngine::DashboardUIManager
                     // eight nodes each captioned with fifteen words of
                     // prose is unreadable at a glance, and the glance is
                     // what the chain is for.
-                    {"label", PlotModel::Label(step)},
+                    {"label", PlotText::DashboardLine(Localization::Get(), step)},
                     // A verb step's own caption; otherwise the model's
                     // caption when it wrote one, and the type verb when
                     // it did not -- an older plan, or an answer that
                     // omitted it.
-                    {"type", PlotVerbs::Caption(step)},
+                    {"type", PlotText::DashboardCaption(Localization::Get(), step)},
                     // A verb step's sentence is its label; there is no
                     // prose behind it to show instead.
-                    {"description", step.verb.empty() ? step.description : PlotModel::Label(step)},
+                    {"description",
+                     step.verb.empty() ? step.description : PlotText::DashboardLine(Localization::Get(), step)},
                     {"state", state},
                     {"outcome", PlotModel::StepOutcomeId(step.outcome)},
                     {"actor", step.actorName},

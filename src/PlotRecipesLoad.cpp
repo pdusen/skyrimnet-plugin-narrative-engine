@@ -1,6 +1,8 @@
 #include <PlotRecipes.h>
 
+#include <Localization.h>
 #include <logger.h>
+#include <PlotText.h>
 
 #include <algorithm>
 #include <array>
@@ -105,7 +107,7 @@ namespace NarrativeEngine::PlotRecipes
 
                 Recipe r;
                 r.form = recipe->createdItem->GetFormID();
-                r.displayName = Phrase(name, made == Made::Ammo);
+                r.displayName = PlotText::ItemPhrase(Localization::Get(), name, made == Made::Ammo);
                 r.craft = *craft;
                 r.skill = SkillAsked(*recipe);
                 recipe->requiredItems.ForEachContainerObject([&r](RE::ContainerObject& entry) {
@@ -166,7 +168,7 @@ namespace NarrativeEngine::PlotRecipes
 
                 Recipe r;
                 r.form = potion->GetFormID();
-                r.displayName = Phrase(name, false);
+                r.displayName = PlotText::ItemPhrase(Localization::Get(), name, false);
                 r.craft = Craft::Concoct;
                 r.ingredientValue = prices[0] + prices[1];
                 r.ingredientCount = 2;
@@ -200,7 +202,7 @@ namespace NarrativeEngine::PlotRecipes
 
                 Recipe r;
                 r.form = item->GetFormID();
-                r.displayName = Phrase(name, false);
+                r.displayName = PlotText::ItemPhrase(Localization::Get(), name, false);
                 r.craft = Craft::Enchant;
                 r.ingredientValue = baseValue + soul;
                 r.ingredientCount = 2;

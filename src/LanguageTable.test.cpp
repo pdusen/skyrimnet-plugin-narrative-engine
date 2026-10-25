@@ -4,17 +4,14 @@
 
 #include <algorithm>
 #include <array>
-#include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <string>
 
 // Unit tests for building a language table: where each key's text comes from,
 // and what the census says about what could not be used.
 //
 // The INI texts are written inline, so each case shows the whole input. The
-// last case loads the real files from statics/, so a broken shipped language
-// file fails the build's tests rather than a player's session.
+// real shipped files are checked by LanguageFiles.engine.test.cpp, which can
+// see every key the plugin declares.
 
 namespace
 {
@@ -270,39 +267,4 @@ TEST_CASE("LanguageTable: a multi-line template", "[LanguageTable]")
         "PluralRule = one_other\nFonts = en\n[Test]\nfarewell = <<<END\nFirst line.\n\nSecond line.\nEND\n";
     const auto table = Table::Build({english, std::nullopt, std::nullopt}, std::array{kFarewell});
     CHECK(Rendered(table, kFarewell) == "First line.\n\nSecond line.");
-}
-
-TEST_CASE("LanguageTable: every shipped language file", "[LanguageTable][Shipped]")
-{
-    const auto folder = std::filesystem::path{NARRATIVEENGINE_STATICS_DIR} / "SKSE/Plugins/NarrativeEngine/Languages";
-    const auto read = [](const std::filesystem::path& path) {
-        std::ifstream in(path, std::ios::binary);
-        return std::string{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
-    };
-
-    REQUIRE(std::filesystem::exists(folder / "english.ini"));
-    const auto english = read(folder / "english.ini");
-    const auto& keys = TextKeys::All();
-
-    SECTION("English defines every declared key, and rejects nothing")
-    {
-        const auto table = Table::Build({english, std::nullopt, std::nullopt}, keys);
-        CHECK(table.GetCensus().unavailable.empty());
-        CHECK(table.GetCensus().rejected.empty());
-        CHECK(table.GetHeader().code == "en");
-    }
-    SECTION("every other language loads with no rejections")
-    {
-        for (const auto& entry : std::filesystem::directory_iterator(folder)) {
-            const auto name = entry.path().filename().string();
-            if (entry.path().extension() != ".ini" || name == "english.ini" || name.ends_with(".custom.ini")) {
-                continue;
-            }
-            const auto shipped = read(entry.path());
-            const auto table = Table::Build({english, std::string_view{shipped}, std::nullopt}, keys);
-            INFO(name);
-            CHECK(table.GetCensus().rejected.empty());
-            CHECK_FALSE(table.GetHeader().code.empty());
-        }
-    }
 }

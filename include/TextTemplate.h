@@ -102,6 +102,15 @@ namespace NarrativeEngine::TextTemplate
         // to a clause it moves into the middle of a sentence.
         std::string phraseTrailingPunctuation = ".!?;,";
         bool phraseLowercaseFirst = true;
+
+        // The indefinite article a caller puts before a noun it names, as an
+        // `{article}` argument: `indefiniteArticleBeforeVowel` when the noun
+        // opens with a, e, i, o or u, else `indefiniteArticle`. A language
+        // whose article depends on a noun's gender leaves both empty, and its
+        // templates say the noun without one. The formatter itself never
+        // reads these.
+        std::string indefiniteArticle = "a";
+        std::string indefiniteArticleBeforeVowel = "an";
     };
 
     struct Node;

@@ -100,6 +100,10 @@ namespace NarrativeEngine::LanguageTable
         // The parsed template for `key`, or null when it has none.
         [[nodiscard]] const TextTemplate::Message* Find(const TextKeys::Key& key) const;
 
+        // The same template as its file wrote it, for checks that read the
+        // words rather than render them.
+        [[nodiscard]] const std::string* Source(const TextKeys::Key& key) const;
+
         // `key` rendered with this language's grammar. A key with no text
         // renders empty.
         [[nodiscard]] std::string Render(const TextKeys::Key& key,
@@ -112,5 +116,6 @@ namespace NarrativeEngine::LanguageTable
         TextTemplate::Grammar grammar_;
         Census census_;
         std::unordered_map<std::string, TextTemplate::Message> messages_;
+        std::unordered_map<std::string, std::string> sources_;
     };
 } // namespace NarrativeEngine::LanguageTable

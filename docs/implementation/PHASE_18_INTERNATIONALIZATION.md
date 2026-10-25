@@ -889,7 +889,7 @@ and a font mod's own file (`Unknown`).
 
 #### Step 5 — Plot memory and dashboard templates
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -909,6 +909,46 @@ and a font mod's own file (`Unknown`).
 verb's every template under three slot sets: all filled, some unfilled, and a scheme needing `SchemePhrase`'s
 lowercasing and trimming. It also pins every plot-level line and a spread of recipe phrases. It passes unchanged
 after the move. The shipped-files test passes with the new keys.
+
+Done. English's `[Plot.Dashboard]`, `[Plot.Memory]`, `[Plot.Remembered]`, `[Plot.Outcome]`, `[Plot.Unfilled]` and
+`[Plot.Item]` hold 290 keys. The new `PlotText` module (`include/PlotText.h`, `src/PlotText.cpp`) generates their
+keys from the verb table and renders them. `kVerbs` keeps only what was never text, plus the prompt-facing strings:
+each verb's three-string block went from twelve strings to three, and each slot's remembers strings became flags.
+
+**The characterization test was written and passed first.** `src/PlotText.engine.test.cpp` drives the real
+consumers: `PlotMemories`' six entry points, for every verb under three slot fills, delegated and by the
+mastermind's own hand, all three outcomes, with and without going on, and with and without a scheme. It also covers
+the dashboard's line and caption, and eight recipe phrases. That is **3,110 renderings**, including each memory's
+keeper, source, importance, type, location and related actors, so the move could not quietly change who remembers
+what. Their digest, `0xc2fc18bbda4005bc`, was pinned and passed against the unmodified code at `ec54730`. After the
+move it passes unchanged, and a line-by-line diff of the transcript it writes is identical.
+
+How the pieces moved, and the choices that went with them:
+
+- **The table is a parameter.** `PlotMemories::On*` take the table first; `PlotTick` passes `Localization::Get()`,
+  and so do the dashboard and recipe loading. The language trial (Step 28) needs this anyway.
+- **Who a memory relates is who the rendered template names.** `NamedIn` used to scan the C++ template's braces.
+  It now asks the table's parsed template, so a translation that drops a person from a sentence also drops them
+  from the memory's related actors.
+- **Prompt-facing text stays in C++ until Step 12**, and two pieces of it are therefore in two places: each verb's
+  dashboard line and caption are in `kVerbs`, for the scheme call's menu, the plan sketch and `Words`, and also in
+  `[Plot.Dashboard]` for the dashboard. A new test asserts the English copies are identical, so they cannot drift
+  before Step 12 removes the C++ ones. `PlotModel::Label` keeps the C++ line for the log and the prompts.
+- **Recipe phrases render through `PlotText::ItemPhrase`.** `PlotRecipes::Phrase` is gone, and `[Grammar]` gained
+  `IndefiniteArticle` and `IndefiniteArticleBeforeVowel`. A language whose article follows the noun's gender leaves
+  both empty.
+- **People carry their sex.** `PlotCasting::Member` gained `female`, read off the base record at population build,
+  so the plot worker never asks the engine. English uses no `select`, so nothing it renders changed.
+- **`TextKeys::All()` left the core library** for `src/TextKeysAll.cpp`, because the list now includes keys generated
+  from an engine-coupled table. The shipped-files test went with it, to `src/LanguageFiles.engine.test.cpp`. That test
+  is what proves the remembers flags match the text: English must define every generated key and nothing else.
+  `testsupport/ShippedLanguage` builds the shipped English for any engine test, and `LanguageTable::Source` returns a
+  template as written.
+- **`PlotVerbs`' manifest tests now check `english.ini`.** Each of their English-language rules (which voice names
+  the mastermind, that a task phrase appears inside its dispatch, that a noticed memory names nobody, and the rest)
+  reads the memory text from the shipped file. That file is what an NPC will actually remember.
+
+`pwsh -File build.ps1 test`: 546 of 546 passed.
 
 #### Step 6 — Gossip, letter-memory and visit narration templates
 

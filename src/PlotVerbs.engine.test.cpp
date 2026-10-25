@@ -2,6 +2,10 @@
 
 #include <PlotSerialize.h>
 #include <PlotState.h>
+#include <PlotText.h>
+#include <TextTemplate.h>
+
+#include <ShippedLanguage.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -19,13 +23,53 @@
 // wrote it: a template naming a slot its verb does not fill, an agent's memory
 // naming the mastermind when the two are the same person, a bound item no verb
 // ever obtains.
+//
+// The memories' words live in the shipped english.ini now, not in the table,
+// so the rules about them are checked against that file: it is what an NPC
+// will actually remember.
 
 namespace
 {
     namespace PlotVerbs = NarrativeEngine::PlotVerbs;
     namespace PlotModel = NarrativeEngine::PlotModel;
     namespace PlotSerialize = NarrativeEngine::PlotSerialize;
+    namespace PlotText = NarrativeEngine::PlotText;
+    namespace TextTemplate = NarrativeEngine::TextTemplate;
+    using NarrativeEngine::Testing::ShippedEnglish;
+    using PlotVerbs::TargetTemplate;
     using PlotVerbs::Template;
+
+    // A template's words: the prompt-facing ones from the table, a memory's
+    // from the shipped english.ini.
+    std::string Text(const PlotVerbs::Verb& verb, Template t)
+    {
+        if (t == Template::Dashboard || t == Template::MastermindTask || t == Template::AgentTask) {
+            return std::string{verb.Text(t)};
+        }
+        const auto* source = ShippedEnglish().Source(PlotText::MemoryKey(verb, t));
+        return source != nullptr ? *source : std::string{};
+    }
+
+    // What a slot's person remembers, from the shipped english.ini; empty
+    // when the slot keeps no such memory.
+    std::string Remembered(const PlotVerbs::Verb& verb, const PlotVerbs::Slot& slot, TargetTemplate t)
+    {
+        if (!slot.Remembers(t)) {
+            return {};
+        }
+        const auto* source = ShippedEnglish().Source(PlotText::RememberedKey(verb, slot, t));
+        return source != nullptr ? *source : std::string{};
+    }
+
+    // The placeholders a template names, as the formatter reads them:
+    // "{scheme, phrase}" names `scheme`.
+    std::vector<std::string> PlaceholdersIn(std::string_view text)
+    {
+        const auto parsed = TextTemplate::Parse(text);
+        INFO(text);
+        REQUIRE(parsed.Ok());
+        return TextTemplate::PlaceholderNames(parsed.message);
+    }
 
     constexpr Template kAll[] = {Template::Dashboard,
                                  Template::AgentDispatched,
@@ -71,7 +115,7 @@ namespace
 
     bool Names(std::string_view text, std::string_view name)
     {
-        for (const auto found : PlotVerbs::PlaceholdersIn(text)) {
+        for (const auto found : PlaceholdersIn(text)) {
             if (found == name) {
                 return true;
             }
@@ -133,7 +177,7 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
             for (const auto& verb : PlotVerbs::kVerbs) {
                 for (const auto t : kAll) {
                     INFO(verb.id << " " << PlotVerbs::TemplateId(t));
-                    REQUIRE_FALSE(verb.Text(t).empty());
+                    REQUIRE_FALSE(Text(verb, t).empty());
                 }
             }
         }
@@ -142,7 +186,7 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
         {
             for (const auto& verb : PlotVerbs::kVerbs) {
                 for (const auto t : kAll) {
-                    for (const auto name : PlotVerbs::PlaceholdersIn(verb.Text(t))) {
+                    for (const auto name : PlaceholdersIn(Text(verb, t))) {
                         INFO(verb.id << " " << PlotVerbs::TemplateId(t) << " {" << name << "}");
                         const bool implicit = name == "agent" || name == "mastermind" || name == "scheme";
                         REQUIRE((implicit || PlotVerbs::FindSlot(verb, name) != nullptr));
@@ -159,7 +203,7 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
             for (const auto& verb : PlotVerbs::kVerbs) {
                 for (const auto t : kAgentOutcomes) {
                     INFO(verb.id << " " << PlotVerbs::TemplateId(t));
-                    REQUIRE_FALSE(Names(verb.Text(t), "mastermind"));
+                    REQUIRE_FALSE(Names(Text(verb, t), "mastermind"));
                 }
             }
         }
@@ -172,9 +216,9 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
                     if (t == Template::AgentDispatched) {
                         // The agent is told what to do, not why; the scheme
                         // is the mastermind's to know.
-                        REQUIRE_FALSE(Names(verb.Text(t), "scheme"));
+                        REQUIRE_FALSE(Names(Text(verb, t), "scheme"));
                     } else {
-                        REQUIRE(Names(verb.Text(t), "scheme") == IsDispatch(t));
+                        REQUIRE(Names(Text(verb, t), "scheme") == IsDispatch(t));
                     }
                 }
             }
@@ -186,14 +230,14 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
                 INFO(verb.id);
                 // The agent remembers who sent them; the mastermind who they
                 // sent; somebody acting for themselves names neither.
-                REQUIRE(Names(verb.Text(Template::AgentDispatched), "mastermind"));
-                REQUIRE(Names(verb.Text(Template::MastermindDispatched), "agent"));
-                REQUIRE_FALSE(Names(verb.Text(Template::SelfDispatched), "agent"));
-                REQUIRE_FALSE(Names(verb.Text(Template::SelfDispatched), "mastermind"));
-                REQUIRE(Names(verb.Text(Template::MastermindToldFailed), "agent"));
-                REQUIRE(Names(verb.Text(Template::MastermindToldTimedOut), "agent"));
-                REQUIRE(Names(verb.Text(Template::MastermindToldSucceeded), "agent"));
-                REQUIRE(Names(verb.Text(Template::Dashboard), "agent"));
+                REQUIRE(Names(Text(verb, Template::AgentDispatched), "mastermind"));
+                REQUIRE(Names(Text(verb, Template::MastermindDispatched), "agent"));
+                REQUIRE_FALSE(Names(Text(verb, Template::SelfDispatched), "agent"));
+                REQUIRE_FALSE(Names(Text(verb, Template::SelfDispatched), "mastermind"));
+                REQUIRE(Names(Text(verb, Template::MastermindToldFailed), "agent"));
+                REQUIRE(Names(Text(verb, Template::MastermindToldTimedOut), "agent"));
+                REQUIRE(Names(Text(verb, Template::MastermindToldSucceeded), "agent"));
+                REQUIRE(Names(Text(verb, Template::Dashboard), "agent"));
             }
         }
 
@@ -205,7 +249,7 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
             for (const auto& verb : PlotVerbs::kVerbs) {
                 for (const auto t : {Template::MastermindTask, Template::AgentTask}) {
                     INFO(verb.id << " " << PlotVerbs::TemplateId(t));
-                    const auto text = verb.Text(t);
+                    const auto text = Text(verb, t);
                     REQUIRE(std::islower(static_cast<unsigned char>(text.front())) != 0);
                     REQUIRE(text.back() != '.');
                     REQUIRE_FALSE(Names(text, "agent"));
@@ -222,11 +266,11 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
             // somebody or set out themselves.
             for (const auto& verb : PlotVerbs::kVerbs) {
                 INFO(verb.id);
-                const auto agent = verb.Text(Template::AgentTask);
-                REQUIRE(verb.Text(Template::AgentDispatched).find(agent) != std::string_view::npos);
-                const auto mastermind = InFirstPerson(verb.Text(Template::MastermindTask));
-                const bool sent = verb.Text(Template::MastermindDispatched).find(mastermind) != std::string_view::npos;
-                const bool self = verb.Text(Template::SelfDispatched).find(mastermind) != std::string_view::npos;
+                const auto agent = Text(verb, Template::AgentTask);
+                REQUIRE(Text(verb, Template::AgentDispatched).find(agent) != std::string_view::npos);
+                const auto mastermind = InFirstPerson(Text(verb, Template::MastermindTask));
+                const bool sent = Text(verb, Template::MastermindDispatched).find(mastermind) != std::string_view::npos;
+                const bool self = Text(verb, Template::SelfDispatched).find(mastermind) != std::string_view::npos;
                 REQUIRE((sent || self));
             }
         }
@@ -245,16 +289,16 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
             using PlotVerbs::Awareness;
             using PlotVerbs::TargetTemplate;
             for (const auto& verb : PlotVerbs::kVerbs) {
-                const auto dashboard = verb.Text(Template::Dashboard);
+                const auto dashboard = Text(verb, Template::Dashboard);
                 for (std::size_t i = 0; i < verb.slotCount; ++i) {
                     const auto& slot = verb.slots[i];
                     INFO(verb.id << " {" << slot.name << "}");
                     const bool onFailure = slot.awareness == Awareness::Contact || slot.awareness == Awareness::Failure;
                     const bool onSuccess = slot.awareness == Awareness::Contact || slot.awareness == Awareness::Success;
-                    REQUIRE(slot.Text(TargetTemplate::Failed).empty() == !onFailure);
-                    REQUIRE(slot.Text(TargetTemplate::Succeeded).empty() == !onSuccess);
+                    REQUIRE(Remembered(verb, slot, TargetTemplate::Failed).empty() == !onFailure);
+                    REQUIRE(Remembered(verb, slot, TargetTemplate::Succeeded).empty() == !onSuccess);
                     for (const auto t : {TargetTemplate::Failed, TargetTemplate::Succeeded}) {
-                        const auto text = slot.Text(t);
+                        const auto text = Remembered(verb, slot, t);
                         if (text.empty()) {
                             continue;
                         }
@@ -265,7 +309,7 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
                         REQUIRE_FALSE(Names(text, slot.name));
                         REQUIRE_FALSE(Names(text, "scheme"));
                         REQUIRE((!Names(text, "mastermind") || Names(dashboard, "mastermind")));
-                        for (const auto name : PlotVerbs::PlaceholdersIn(text)) {
+                        for (const auto name : PlaceholdersIn(text)) {
                             INFO("{" << name << "}");
                             REQUIRE((name == "agent" || name == "mastermind" || PlotVerbs::FindSlot(verb, name)));
                         }
@@ -282,7 +326,7 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
                 for (std::size_t i = 0; i < verb.slotCount; ++i) {
                     const auto& slot = verb.slots[i];
                     INFO(verb.id << " {" << slot.name << "}");
-                    const auto text = slot.Text(TargetTemplate::Noticed);
+                    const auto text = Remembered(verb, slot, TargetTemplate::Noticed);
                     const bool expected = marking.contains(verb.id) && slot.awareness == PlotVerbs::Awareness::Failure;
                     REQUIRE(text.empty() == !expected);
                     REQUIRE_FALSE(Names(text, "agent"));
@@ -376,7 +420,8 @@ TEST_CASE("PlotVerbs manifest", "[PlotVerbs][engine]")
     {
         SECTION("should name the scheme and nothing else")
         {
-            const auto names = PlotVerbs::PlaceholdersIn(PlotVerbs::kConcededTemplate);
+            const auto names =
+                PlaceholdersIn(*ShippedEnglish().Source(PlotText::OutcomeKey(PlotText::Outcome::Conceded)));
             REQUIRE(names.size() == 1);
             REQUIRE(names.front() == "scheme");
         }
@@ -492,13 +537,14 @@ TEST_CASE("PlotVerbs rendering", "[PlotVerbs][engine]")
 
         SECTION("should render the scheme as a verb phrase where it is named")
         {
-            REQUIRE(PlotVerbs::RenderStep(step, Template::MastermindDispatched, "Ruin Hulda.")
+            REQUIRE(PlotText::Memory(ShippedEnglish(), step, Template::MastermindDispatched, "Ruin Hulda.")
                     == "I sent Aeta to keep watch on Hulda and learn their habits, as part of my plan to ruin Hulda.");
         }
 
         SECTION("should name the mastermind from the step's own record")
         {
-            REQUIRE(PlotVerbs::RenderStep(step, Template::AgentDispatched).starts_with("Fanari Strong-Voice asked me"));
+            REQUIRE(PlotText::Memory(ShippedEnglish(), step, Template::AgentDispatched, {})
+                        .starts_with("Fanari Strong-Voice asked me"));
         }
 
         SECTION("should leave a phrase uncapitalised, to go mid-sentence")
@@ -535,7 +581,7 @@ TEST_CASE("PlotVerbs rendering", "[PlotVerbs][engine]")
     {
         SECTION("should say what was given up")
         {
-            REQUIRE(PlotVerbs::RenderConceded("Steal Pantea's songbook.")
+            REQUIRE(PlotText::PlotOutcome(ShippedEnglish(), PlotText::Outcome::Conceded, "Steal Pantea's songbook.")
                     == "I gave up on my plan to steal Pantea's songbook.");
         }
     }

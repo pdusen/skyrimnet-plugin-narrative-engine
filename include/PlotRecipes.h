@@ -98,10 +98,6 @@ namespace NarrativeEngine::PlotRecipes
     // Which of the forge's three crafts makes this, or none.
     [[nodiscard]] std::optional<Craft> ForgeCraftOf(Made made) noexcept;
 
-    // A thing's name as it is said: "an Iron Sword", and for ammunition
-    // "a sheaf of Iron Arrows".
-    [[nodiscard]] std::string Phrase(std::string_view name, bool ammo);
-
     // One recipe per name within a craft, keeping the one that asks the
     // least skill, then the one whose ingredients are worth least. Order is
     // otherwise kept.

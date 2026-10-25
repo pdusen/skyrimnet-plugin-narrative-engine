@@ -271,13 +271,6 @@ namespace NarrativeEngine::PlotVerbs
         return verb != nullptr ? RenderOf(step, verb, verb->Text(t), {}, false) : std::string{};
     }
 
-    std::string RenderTarget(const PlotModel::Step& step, std::string_view slot, TargetTemplate t)
-    {
-        const Verb* verb = Find(step.verb);
-        const auto* found = verb != nullptr ? FindSlot(*verb, slot) : nullptr;
-        return found != nullptr && !found->Text(t).empty() ? RenderOf(step, verb, found->Text(t), {}) : std::string{};
-    }
-
     std::string Caption(const PlotModel::Step& step)
     {
         if (const auto* verb = Find(step.verb)) {
@@ -286,19 +279,4 @@ namespace NarrativeEngine::PlotVerbs
         return step.label.empty() ? std::string{PlotModel::Verb(step.type)} : step.label;
     }
 
-    std::string RenderPlotLine(std::string_view text, std::string_view scheme)
-    {
-        const auto phrase = SchemePhrase(scheme);
-        return Render(
-            text,
-            [&](std::string_view name) -> std::optional<std::string> {
-                return name == "scheme" && !phrase.empty() ? std::optional<std::string>{phrase} : std::nullopt;
-            },
-            [](std::string_view) { return std::string{"it"}; });
-    }
-
-    std::string RenderConceded(std::string_view scheme)
-    {
-        return RenderPlotLine(kConcededTemplate, scheme);
-    }
 } // namespace NarrativeEngine::PlotVerbs

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <LanguageTable.h>
 #include <PlotModel.h>
 #include <PlotVerbs.h>
 
@@ -11,7 +12,9 @@
 //
 // Every memory is one of a verb's own first-person templates filled from
 // the step, so no model writes any of it and the people in a step can never
-// disagree about what the step was. Written at these moments:
+// disagree about what the step was. The templates are the language table's
+// (see PlotText), so each function takes the table to write in. Written at
+// these moments:
 //
 //   dispatch     the agent, on being sent; the mastermind, on sending them
 //                -- or, when the mastermind is their own agent, one memory
@@ -58,29 +61,34 @@ namespace NarrativeEngine::PlotMemories
     };
 
     // Pure. What a step's dispatch writes.
-    [[nodiscard]] std::vector<Memory> OnDispatch(const PlotModel::Plot& plot, const PlotModel::Step& step);
+    [[nodiscard]] std::vector<Memory> OnDispatch(const LanguageTable::Table& table,
+                                                 const PlotModel::Plot& plot,
+                                                 const PlotModel::Step& step);
 
     // Pure. What a step's resolution writes, from its outcome. Nothing for a
     // step that has not ended. The mastermind's memory of a failure is not
     // among it: see OnFailureAnswered.
-    [[nodiscard]] std::vector<Memory> OnResolve(const PlotModel::Plot& plot, const PlotModel::Step& step);
+    [[nodiscard]] std::vector<Memory> OnResolve(const LanguageTable::Table& table,
+                                                const PlotModel::Plot& plot,
+                                                const PlotModel::Step& step);
 
     // Pure. The mastermind's one memory of a failed or timed-out step, once
     // the plot has answered it: the report of it, or their own failure when
-    // they did the step themselves, ending in kWentOnClause when the plot
-    // went on another way. Nothing for a step that did not fail.
-    [[nodiscard]] std::vector<Memory> OnFailureAnswered(const PlotModel::Plot& plot,
+    // they did the step themselves, ending in the went-on clause when the
+    // plot went on another way. Nothing for a step that did not fail.
+    [[nodiscard]] std::vector<Memory> OnFailureAnswered(const LanguageTable::Table& table,
+                                                        const PlotModel::Plot& plot,
                                                         const PlotModel::Step& step,
                                                         bool wentOn);
 
     // Pure. What bringing the scheme off writes.
-    [[nodiscard]] std::vector<Memory> OnSucceeded(const PlotModel::Plot& plot);
+    [[nodiscard]] std::vector<Memory> OnSucceeded(const LanguageTable::Table& table, const PlotModel::Plot& plot);
 
     // Pure. What the scheme failing at its finish writes.
-    [[nodiscard]] std::vector<Memory> OnFinishFailed(const PlotModel::Plot& plot);
+    [[nodiscard]] std::vector<Memory> OnFinishFailed(const LanguageTable::Table& table, const PlotModel::Plot& plot);
 
     // Pure. What giving a plot up writes.
-    [[nodiscard]] std::vector<Memory> OnConceded(const PlotModel::Plot& plot);
+    [[nodiscard]] std::vector<Memory> OnConceded(const LanguageTable::Table& table, const PlotModel::Plot& plot);
 
     // Pure. One memory per keeper, in the order keepers first appear: their
     // statements joined into a paragraph in the order they were made, the

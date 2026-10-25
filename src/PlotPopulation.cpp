@@ -781,6 +781,7 @@ namespace NarrativeEngine::PlotPopulation
 
             if (auto* npcForm = RE::TESForm::LookupByID<RE::TESNPC>(npcId)) {
                 member.skills = ReadSkills(npcForm);
+                member.female = npcForm->IsFemale();
                 member.tradesForLiving = InAnyOf(npcForm, tradeJobs);
                 for (const auto& [faction, office] : officeJobs) {
                     if (InAnyOf(npcForm, {faction})) {

@@ -1,4 +1,7 @@
 #include <PlotRecipes.h>
+#include <PlotText.h>
+
+#include <ShippedLanguage.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -13,6 +16,8 @@
 namespace
 {
     namespace PlotRecipes = NarrativeEngine::PlotRecipes;
+    namespace PlotText = NarrativeEngine::PlotText;
+    using NarrativeEngine::Testing::ShippedEnglish;
     using PlotRecipes::Craft;
     using PlotRecipes::Made;
 
@@ -90,20 +95,21 @@ TEST_CASE("PlotRecipes phrasing", "[PlotRecipes][engine]")
     {
         SECTION("should give it its article, keeping the game's capitals")
         {
-            REQUIRE(PlotRecipes::Phrase("Steel Sword", false) == "a Steel Sword");
-            REQUIRE(PlotRecipes::Phrase("Iron Sword of Burning", false) == "an Iron Sword of Burning");
-            REQUIRE(PlotRecipes::Phrase("Elven Bow", false) == "an Elven Bow");
+            REQUIRE(PlotText::ItemPhrase(ShippedEnglish(), "Steel Sword", false) == "a Steel Sword");
+            REQUIRE(PlotText::ItemPhrase(ShippedEnglish(), "Iron Sword of Burning", false)
+                    == "an Iron Sword of Burning");
+            REQUIRE(PlotText::ItemPhrase(ShippedEnglish(), "Elven Bow", false) == "an Elven Bow");
         }
 
         SECTION("should say ammunition as a sheaf")
         {
-            REQUIRE(PlotRecipes::Phrase("Elven Arrow", true) == "a sheaf of Elven Arrows");
-            REQUIRE(PlotRecipes::Phrase("Steel Bolt", true) == "a sheaf of Steel Bolts");
+            REQUIRE(PlotText::ItemPhrase(ShippedEnglish(), "Elven Arrow", true) == "a sheaf of Elven Arrows");
+            REQUIRE(PlotText::ItemPhrase(ShippedEnglish(), "Steel Bolt", true) == "a sheaf of Steel Bolts");
         }
 
         SECTION("should say nothing for a thing with no name")
         {
-            REQUIRE(PlotRecipes::Phrase("", false).empty());
+            REQUIRE(PlotText::ItemPhrase(ShippedEnglish(), "", false).empty());
         }
     }
 }

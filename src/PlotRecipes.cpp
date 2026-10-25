@@ -62,19 +62,6 @@ namespace NarrativeEngine::PlotRecipes
         return std::nullopt;
     }
 
-    std::string Phrase(std::string_view name, bool ammo)
-    {
-        if (name.empty()) {
-            return {};
-        }
-        if (ammo) {
-            return std::format("a sheaf of {}s", name);
-        }
-        const auto first = static_cast<char>(std::tolower(static_cast<unsigned char>(name.front())));
-        const bool vowel = first == 'a' || first == 'e' || first == 'i' || first == 'o' || first == 'u';
-        return std::format("{} {}", vowel ? "an" : "a", name);
-    }
-
     std::vector<Recipe> Deduplicated(std::vector<Recipe> recipes)
     {
         const auto better = [](const Recipe& a, const Recipe& b) {

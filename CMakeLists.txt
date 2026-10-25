@@ -906,6 +906,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/PlotCandidates.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotPlanning.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotMemories.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotText.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotAwareness.cpp"
         "${CMAKE_SOURCE_DIR}/src/PlotTestPlots.cpp"
         "${CMAKE_SOURCE_DIR}/src/EventHistoryWriter.cpp"
@@ -929,6 +930,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/DashboardUIManager.cpp"
         "${CMAKE_SOURCE_DIR}/src/Plugin.cpp"
         "${CMAKE_SOURCE_DIR}/src/Localization.cpp"
+        "${CMAKE_SOURCE_DIR}/src/TextKeysAll.cpp"
     )
 
     if(engine_test_sources)
@@ -939,6 +941,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
             ${engine_test_sources}
             ${NARRATIVEENGINE_MOCKED_SOURCES}
             testsupport/EngineMock.cpp
+            testsupport/ShippedLanguage.cpp
             testsupport/CommonLibSSERuntimeStubs.cpp
             testsupport/DispatcherContract.cpp
             testsupport/FakeVTable.cpp
@@ -983,6 +986,9 @@ if(NARRATIVEENGINE_BUILD_TESTS)
                 ENABLE_COMMONLIBSSE_TESTING
                 # This target compiles Plugin.cpp, whose startup line names it.
                 NARRATIVEENGINE_VERSION="${NARRATIVEENGINE_VERSION}"
+                # Where the shipped data files live, for tests that render the
+                # real language files (testsupport/ShippedLanguage).
+                NARRATIVEENGINE_STATICS_DIR="${STATICS_SOURCE_DIR}"
         )
         # Same forced PCH as the DLL, so these sources compile exactly as they
         # do in production rather than in some near-miss configuration.

@@ -38,7 +38,9 @@ namespace NarrativeEngine::TextKeys
         std::span<const Param> params;
     };
 
-    // Every key the plugin declares, from every subsystem.
+    // Every key the plugin declares, from every subsystem. Defined in
+    // TextKeysAll.cpp, outside the core library, because the list includes
+    // keys generated from engine-coupled tables such as PlotVerbs'.
     [[nodiscard]] const std::vector<Key>& All();
 
     [[nodiscard]] TextTemplate::Signature SignatureOf(const Key& key);

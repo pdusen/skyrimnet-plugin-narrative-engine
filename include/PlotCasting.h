@@ -163,6 +163,10 @@ namespace NarrativeEngine::PlotCasting
         bool tradesForLiving = false;
         Office office = Office::None;
 
+        // From the base record, for the language files' templates that agree
+        // with a person's sex. Read at population build, like the rest.
+        bool female = false;
+
         // The crafts they practise, one bit per PlotRecipes::Craft, from the
         // same Job factions and from vanilla's vendor classes. Only these
         // people are ever sent to make anything.

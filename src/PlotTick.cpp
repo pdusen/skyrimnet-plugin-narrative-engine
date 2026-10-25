@@ -3,6 +3,7 @@
 #include <CharacterBios.h>
 #include <DashboardUIManager.h>
 #include <EngineUtils.h>
+#include <Localization.h>
 #include <logger.h>
 #include <MainThread.h>
 #include <PlotBirth.h>
@@ -17,6 +18,7 @@
 #include <PlotResolution.h>
 #include <PlotSchedule.h>
 #include <PlotState.h>
+#include <PlotText.h>
 #include <PlotVerbs.h>
 #include <SenderCandidatePool.h>
 #include <Settings.h>
@@ -181,13 +183,13 @@ namespace NarrativeEngine::PlotTick
             switch (outcome) {
             case PlotModel::PlotOutcome::Conceded:
             case PlotModel::PlotOutcome::AdaptationCapHit:
-                Remember(PlotMemories::OnConceded(plot));
+                Remember(PlotMemories::OnConceded(Localization::Get(), plot));
                 break;
             case PlotModel::PlotOutcome::ObjectiveAchieved:
-                Remember(PlotMemories::OnSucceeded(plot));
+                Remember(PlotMemories::OnSucceeded(Localization::Get(), plot));
                 break;
             case PlotModel::PlotOutcome::FinishFailed:
-                Remember(PlotMemories::OnFinishFailed(plot));
+                Remember(PlotMemories::OnFinishFailed(Localization::Get(), plot));
                 break;
             default:
                 break;
@@ -461,7 +463,7 @@ namespace NarrativeEngine::PlotTick
                               prepared,
                               unprepared > 0.0f ? step.threshold / unprepared : 1.0f,
                               onGuard);
-            Remember(PlotMemories::OnDispatch(plot, step));
+            Remember(PlotMemories::OnDispatch(Localization::Get(), plot, step));
             return Dispatched::Yes;
         }
 
@@ -493,8 +495,10 @@ namespace NarrativeEngine::PlotTick
             // what they made of it -- written before a concession, which
             // follows from it.
             if (!plot.history.empty()) {
-                Remember(PlotMemories::OnFailureAnswered(
-                    plot, plot.history.back(), adaptation.revision == PlotPlanning::Revision::Substituted));
+                Remember(PlotMemories::OnFailureAnswered(Localization::Get(),
+                                                         plot,
+                                                         plot.history.back(),
+                                                         adaptation.revision == PlotPlanning::Revision::Substituted));
             }
 
             switch (adaptation.revision) {
@@ -505,7 +509,7 @@ namespace NarrativeEngine::PlotTick
                 PlotLog::Concede(plot, adaptation.reason);
                 // The mastermind's own words for it, which is what the
                 // dashboard shows beside a conceded plot.
-                plot.concession = PlotVerbs::RenderConceded(plot.scheme);
+                plot.concession = PlotText::PlotOutcome(Localization::Get(), PlotText::Outcome::Conceded, plot.scheme);
                 EndPlot(state, plot, PlotModel::PlotStatus::Failed, PlotModel::PlotOutcome::Conceded, gameDay);
                 return false;
             case PlotPlanning::Revision::Substituted:
@@ -678,7 +682,7 @@ namespace NarrativeEngine::PlotTick
                 return;
             }
             PlotLog::Resolve(plot, step);
-            Remember(PlotMemories::OnResolve(plot, step));
+            Remember(PlotMemories::OnResolve(Localization::Get(), plot, step));
 
             const bool succeeded = step.state == PlotModel::StepState::Succeeded;
             if (succeeded) {
@@ -715,7 +719,7 @@ namespace NarrativeEngine::PlotTick
             // mastermind remembers the failure, then the scheme lost; not a
             // concession, since they lost it rather than gave it up.
             if (PlotPlanning::FinishFailed(plot)) {
-                Remember(PlotMemories::OnFailureAnswered(plot, plot.history.back(), false));
+                Remember(PlotMemories::OnFailureAnswered(Localization::Get(), plot, plot.history.back(), false));
                 EndPlot(state, plot, PlotModel::PlotStatus::Failed, PlotModel::PlotOutcome::FinishFailed, gameDay);
                 return;
             }
