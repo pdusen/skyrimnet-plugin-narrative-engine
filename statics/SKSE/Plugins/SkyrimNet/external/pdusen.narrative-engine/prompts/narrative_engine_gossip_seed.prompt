@@ -78,5 +78,5 @@ Every entry in `bands` must be:
 {% endif -%}
 
 Write {{ band_count }} versions of this story, freshest first, each at the
-length listed for it.
+length listed for it.{% include "components/narrative_engine/output_language.prompt" %}
 [ end user ]

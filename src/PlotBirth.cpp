@@ -3,12 +3,14 @@
 #include <CharacterBios.h>
 #include <GossipGraph.h>
 #include <LLMTextSanitizer.h>
+#include <Localization.h>
 #include <logger.h>
 #include <PlotCandidates.h>
 #include <PlotLog.h>
 #include <PlotMenus.h>
 #include <PlotPlanning.h>
 #include <PlotPopulation.h>
+#include <PromptLanguage.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 
@@ -277,6 +279,7 @@ namespace NarrativeEngine::PlotBirth
             nlohmann::json ctx;
 
             ctx["bio"] = BioSections(boss.npc, boss.name, "ambition");
+            PromptLanguage::Add(ctx, {"ambition", "scheme", "finish"}, Localization::Get());
 
             nlohmann::json person = nlohmann::json::object();
             person["name"] = boss.name;

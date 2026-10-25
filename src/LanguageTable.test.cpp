@@ -318,3 +318,42 @@ TEST_CASE("LanguageTable: data-file overrides", "[LanguageTable]")
         CHECK(table.GetCensus().overlayUnmatched.empty());
     }
 }
+
+TEST_CASE("LanguageTable: prompt forms", "[LanguageTable]")
+{
+    constexpr std::string_view englishWithForm = "[Language]\nName = English\nNativeName = English\nCode = en\n"
+                                                 "Status = reviewed\nPluralRule = one_other\nFonts = en\n"
+                                                 "[Prompt.Form]\nscheme = a bare verb phrase\n";
+    constexpr std::string_view shipped = "[Language]\nName = German\nNativeName = Deutsch\nCode = de\nStatus = draft\n"
+                                         "PluralRule = one_other\nFonts = en\n"
+                                         "[Prompt.Form]\nscheme = a zu-clause\nfinish = a sentence\n";
+    constexpr std::string_view overlay = "[Prompt.Form]\nScheme = an infinitive clause ending in zu\n";
+
+    SECTION("a field's form comes from the language's own file")
+    {
+        const auto table = Table::Build({englishWithForm, shipped, std::nullopt}, kKeys);
+        REQUIRE(table.PromptForm("scheme") != nullptr);
+        CHECK(*table.PromptForm("scheme") == "a zu-clause");
+        CHECK(*table.PromptForm("finish") == "a sentence");
+        CHECK(table.PromptForm("ambition") == nullptr);
+    }
+    SECTION("the overlay wins, and field names compare without regard to case")
+    {
+        const auto table = Table::Build({englishWithForm, shipped, overlay}, kKeys);
+        CHECK(*table.PromptForm("scheme") == "an infinitive clause ending in zu");
+        CHECK(*table.PromptForm("finish") == "a sentence");
+    }
+    SECTION("never from English, whose form describes an English phrase")
+    {
+        constexpr std::string_view noForms = "[Language]\nName = German\nNativeName = Deutsch\nCode = de\n"
+                                             "Status = draft\nPluralRule = one_other\nFonts = en\n";
+        CHECK(Table::Build({englishWithForm, noForms, std::nullopt}, kKeys).PromptForm("scheme") == nullptr);
+        CHECK(Table::Build({englishWithForm, std::nullopt, std::nullopt}, kKeys).PromptForm("scheme") == nullptr);
+    }
+    SECTION("form sections are not unknown keys")
+    {
+        const auto table = Table::Build({englishWithForm, shipped, overlay}, kKeys);
+        CHECK(table.GetCensus().rejected.empty());
+        CHECK(table.GetCensus().overlayUnmatched.empty());
+    }
+}

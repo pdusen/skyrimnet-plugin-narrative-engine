@@ -277,5 +277,5 @@ toward the same ambition is often the wiser one.
 {% endif %}
 
 What is {{ mastermind.name }} ultimately after, and what is the one
-concrete thing they are doing about it now? Answer with the object.
+concrete thing they are doing about it now? Answer with the object.{% include "components/narrative_engine/output_language.prompt" %}
 [ end user ]

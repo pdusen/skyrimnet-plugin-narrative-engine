@@ -1,0 +1,10 @@
+{# output_language.prompt — the one line that asks for content in the player's
+   language. Included at the end of each prompt whose answer has content
+   fields: text the player reads, or that becomes a memory. Reads
+   `output_language` (the language's English name), `content_fields` (the
+   answer's fields to write in it) and `prompt_forms` ([{ field, form }]: the
+   shape the language file asks of a field one of its templates splices in),
+   which C++ sets (see PromptLanguage.h). Every other field is a token and
+   keeps its values. Renders nothing for English, so an English prompt is
+   unchanged. #}{% if output_language != "English" %}
+Write {% for f in content_fields %}{% if not loop.is_first %}{% if loop.is_last %} and {% else %}, {% endif %}{% endif %}`{{ f }}`{% endfor %} in {{ output_language }}.{% for p in prompt_forms %} Write `{{ p.field }}` as {{ p.form }}.{% endfor %} Every other field keeps the exact values described above.{% endif -%}

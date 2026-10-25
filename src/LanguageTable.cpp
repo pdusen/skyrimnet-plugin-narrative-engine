@@ -28,6 +28,7 @@ namespace NarrativeEngine::LanguageTable
         constexpr std::string_view kGrammarSection = "Grammar";
         constexpr std::string_view kDataPrefix = "data.";
         constexpr std::string_view kMatchingSection = "Matching";
+        constexpr std::string_view kPromptFormSection = "Prompt.Form";
 
         constexpr std::array<std::string_view, 6> kHeaderKeys =
             {"Name", "NativeName", "Code", "Status", "PluralRule", "Fonts"};
@@ -356,6 +357,18 @@ namespace NarrativeEngine::LanguageTable
             }
         }
 
+        // [Prompt.Form]: open-ended by field, and never from English.
+        for (const auto* source : {&overlay, &shipped}) {
+            for (const auto& [section, name] : Entries(*source)) {
+                if (!SameName(section, kPromptFormSection) || table.promptForms_.contains(Lowered(name))) {
+                    continue;
+                }
+                if (const auto value = source->Value(section, name)) {
+                    table.promptForms_.emplace(Lowered(name), std::string{Trimmed(*value)});
+                }
+            }
+        }
+
         // Every declared key, from the first source that has it right.
         std::unordered_set<std::string> declared;
         for (const auto& key : keys) {
@@ -423,7 +436,7 @@ namespace NarrativeEngine::LanguageTable
 
         // Lines nothing reads.
         const auto known = [&](std::string_view section, std::string_view name) {
-            if (isData(section) || SameName(section, kMatchingSection)) {
+            if (isData(section) || SameName(section, kMatchingSection) || SameName(section, kPromptFormSection)) {
                 return true;
             }
             if (SameName(section, kLanguageSection)) {
@@ -449,6 +462,12 @@ namespace NarrativeEngine::LanguageTable
             }
         }
         return table;
+    }
+
+    const std::string* Table::PromptForm(std::string_view field) const
+    {
+        const auto it = promptForms_.find(Lowered(field));
+        return it != promptForms_.end() ? &it->second : nullptr;
     }
 
     const TextTemplate::Message* Table::Find(const TextKeys::Key& key) const

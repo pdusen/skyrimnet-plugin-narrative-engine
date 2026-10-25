@@ -4,8 +4,10 @@
 #include <EvaluationPipeline.h>
 #include <EventLogUtil.h>
 #include <LLMTextSanitizer.h>
+#include <Localization.h>
 #include <logger.h>
 #include <NPCVisitBeat.h>
+#include <PromptLanguage.h>
 #include <SenderCandidatePool.h>
 #include <SenderDialogue.h>
 #include <Settings.h>
@@ -171,6 +173,7 @@ namespace NarrativeEngine::VisitComposer
             std::snprintf(idBuf, sizeof(idBuf), "0x%X", senderFormID);
 
             nlohmann::json root = nlohmann::json::object();
+            PromptLanguage::Add(root, {"narration"}, Localization::Get());
             root["desired_direction"] = (ctx.desiredDirection == PhaseTracker::Direction::Raise) ? "raise" : "lower";
             root["tension_delta"] = ctx.tensionDelta;
             root["urgency_hint"] = (urgencyHint == UrgencyHint::High)  ? "high"

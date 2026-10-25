@@ -10,6 +10,7 @@
 #include <Localization.h>
 #include <logger.h>
 #include <PhaseTracker.h>
+#include <PromptLanguage.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
@@ -345,6 +346,7 @@ namespace NarrativeEngine::EvaluationPipeline
         }
 
         ctx["alpha_canon_signals"] = snapshot.alphaCanonSignals;
+        PromptLanguage::Add(ctx, {"narrative_note"}, Localization::Get());
 
         return ctx.dump();
     }

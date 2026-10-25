@@ -7,6 +7,7 @@
 #include <Localization.h>
 #include <logger.h>
 #include <NPCLetterBeat.h>
+#include <PromptLanguage.h>
 #include <SenderCandidatePool.h>
 #include <SenderDialogue.h>
 #include <Settings.h>
@@ -504,6 +505,7 @@ namespace NarrativeEngine::LetterComposer
             root["max_words"] = cfg.letterContentMaxWords;
 
             root["player_name"] = playerName;
+            PromptLanguage::Add(root, {"body", "letter_label"}, Localization::Get());
             root["has_motivating_memory"] = motivatingMemory.is_object();
             root["motivating_memory"] = motivatingMemory.is_object() ? motivatingMemory : nlohmann::json::object();
 

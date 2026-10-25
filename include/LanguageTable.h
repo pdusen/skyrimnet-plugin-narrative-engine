@@ -113,6 +113,12 @@ namespace NarrativeEngine::LanguageTable
             return matching_;
         }
 
+        // The shape [Prompt.Form] asks of a content field spliced into one of
+        // this language's templates ("an infinitive clause ending in zu ..."),
+        // or null. Read from the language's own file and overlay only:
+        // English's would describe an English phrase.
+        [[nodiscard]] const std::string* PromptForm(std::string_view field) const;
+
         // The parsed template for `key`, or null when it has none.
         [[nodiscard]] const TextTemplate::Message* Find(const TextKeys::Key& key) const;
 
@@ -144,6 +150,7 @@ namespace NarrativeEngine::LanguageTable
         Header header_;
         TextTemplate::Grammar grammar_;
         TextMatch::Rules matching_;
+        std::unordered_map<std::string, std::string> promptForms_;
         Census census_;
         std::unordered_map<std::string, TextTemplate::Message> messages_;
         std::unordered_map<std::string, std::string> sources_;

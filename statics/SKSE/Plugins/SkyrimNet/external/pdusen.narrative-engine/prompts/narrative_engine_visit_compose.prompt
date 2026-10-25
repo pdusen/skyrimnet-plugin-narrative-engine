@@ -173,5 +173,5 @@ from the same person {{ player_name }} has been talking to.
 [ end system ]
 
 [ user ]
-Compose the visit brief. Return the JSON object exactly.
+Compose the visit brief. Return the JSON object exactly.{% include "components/narrative_engine/output_language.prompt" %}
 [ end user ]

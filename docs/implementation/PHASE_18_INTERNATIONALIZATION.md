@@ -273,18 +273,23 @@ English, so English prompts stay byte-identical to today's and need no re-tuning
 unchanged matters as much as naming the content fields. A model told only "write in German" will translate `mood`
 too.
 
-Provisional map of prompts to content fields. The first implementation step confirms each field against where it
-actually ends up:
+The map of prompts to content fields, confirmed in Step 19 by tracing each field to where it ends up:
 
-| Prompt                    | Content fields                                       | Token fields stay                    |
-| ------------------------- | ---------------------------------------------------- | ------------------------------------ |
-| `letter_compose`          | `body`, `letter_label`                               | `mood`, `topic_tag`, `tags`          |
-| `visit_compose`           | `narration_text` (spoken via `DirectNarration`)      | `mood`, `topic_tag`                  |
-| `gossip_seed`             | every band                                           | —                                    |
-| `plot_ambition`           | `ambition`, `scheme`, `finish`                       | `goal`, every `roles` key            |
-| `action_select`           | ambush `narration_prose`                             | beat name, every id parameter        |
-| `story_eval`              | `narrative_note` (shown on the dashboard)            | phase, scores                        |
-| Decisions, `plot_cast`, `gossip_eval`, `visit_conclusion_poll` | none                    | all                                  |
+| Prompt                    | Content fields                                                  | Token fields stay                                                        |
+| ------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `letter_compose`          | `body` (the letter), `letter_label` (its title)                 | `mood`, `topic_tag`, `tags` (memory tags)                                |
+| `visit_compose`           | `narration` (spoken via `DirectNarration`)                      | `briefing` (the visitor's instructions, which only SkyrimNet's model reads), `mood`, `topic_tag` |
+| `gossip_seed`             | `bands` (each becomes a memory)                                 | —                                                                        |
+| `plot_ambition`           | `ambition`, `scheme`, `finish`                                  | `reasoning`, `goal`, every `roles` key, and its values (menu names)      |
+| `action_select`           | `narrative_note` (the dashboard's decision log), the ambush's `narration_prose` | `action`, every id parameter                             |
+| `story_eval`              | `narrative_note` (the dashboard's decision log)                 | `tension_score`                                                          |
+| Decisions, `plot_cast`, `gossip_eval`, `visit_conclusion_poll` | none                       | all                                                                      |
+
+Two corrections came out of the tracing. `action_select`'s `narrative_note` is content, because it is kept in the
+decision log and shown on the dashboard, like `story_eval`'s. And the visit's spoken field is `narration`, while
+`briefing`, which the provisional table did not list, is a token-side field: it goes only to the visitor's SkyrimNet
+action, as instructions its own model reads, and the dashboard previews it for debugging. `topic_tag` also shows on
+the dashboard's letter and visit cards, but it is a memory tag, and tags stay English.
 
 **Memory tags are tokens, LLM-written or not.** SkyrimNet embeds only a memory's `content` for retrieval. Its
 keyword score reads `content` too. Tags are used for exact include/exclude filtering and are printed verbatim beside
@@ -310,6 +315,12 @@ scheme = a verb phrase ending in the plain dictionary form, e.g. "アミュレ�
 This is the one place language-file text reaches a prompt. It belongs in the language file because the template it
 has to fit is in the language file. A translator who rewrites the template is the person who knows what shape its
 slot needs.
+
+`[Prompt.Form]` is read only from the language's own file and its overlay, never from English, for the same reason
+`[Matching]` falls back per check: English's form describes an English phrase, and asking for that shape in German
+would be wrong. A language with no form for a field gives the model none. English, whose line is never rendered,
+needs none at all. Of today's content fields only `scheme` is spliced into the middle of a template; the others are
+quoted whole after a colon, where any sentence fits.
 
 ### Validators that read content
 
@@ -1776,7 +1787,7 @@ but not from the settlement's own name, so *Shor's Stone* could never be named. 
 
 #### Step 19 — The output-language line and `[Prompt.Form]`
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -1792,6 +1803,49 @@ but not from the settlement's own name, so *Shor's Stone* could never be named. 
 - Offline render comparison of every affected prompt under English: identical to before.
 - A German-table rendering of each, recorded in the write-up, showing the line names exactly the content fields and
   carries the German form.
+
+Done. The tracing corrected the table above in two places, `action_select`'s `narrative_note` and the visit's
+`narration`, as its note says.
+
+- **`LanguageTable::Table::PromptForm(field)`** returns the shape the language's `[Prompt.Form]` asks of a field, or
+  null. The section is open-ended by field name, compares names without regard to case, takes the overlay over the
+  shipped file, and never reads English. The census treats it as known, like `[Matching]`.
+- **`PromptLanguage::Add(ctx, fields, table)`** sets `output_language` (the table's English `Name`),
+  `content_fields`, and `prompt_forms`: a `{field, form}` for each content field the file gives a form for. Each of
+  the six context builders calls it with the session's table and its prompt's fields from the table above.
+- **`components/narrative_engine/output_language.prompt`** renders nothing when `output_language` is English.
+  Otherwise it renders one line, which each of the six prompts includes as the last line of its user turn:
+
+  ```text
+  Write `ambition`, `scheme` and `finish` in German. Write `scheme` as an infinitive clause ending in "zu" plus the
+  verb, e.g. "das Amulett zu stehlen". Every other field keeps the exact values described above.
+  ```
+
+  (It is one line in the prompt; it is wrapped here for width.)
+
+No language file ships a `[Prompt.Form]` yet. The drafts in Step 26 carry them.
+
+**Verification.** The six prompts were rendered offline through the Inja harness, eight contexts in all: plain and
+memory-motivated letters and visits, a gossip seed, an ambition, an action selection and a story evaluation.
+
+- **English.** For each context, HEAD's tree with no new fields and the working tree with what `Add` sets under
+  English. All 8 renders are byte-identical.
+- **German.** Each context under a German table, with the form above for `scheme`. Each render differs from the
+  English one by exactly one added line, before `[ end user ]`:
+
+  | Prompt           | The line                                                                                   |
+  | ---------------- | ------------------------------------------------------------------------------------------ |
+  | `letter_compose` | Write `body` and `letter_label` in German. Every other field keeps the exact values …      |
+  | `visit_compose`  | Write `narration` in German. Every other field keeps …                                     |
+  | `gossip_seed`    | Write `bands` in German. Every other field keeps …                                         |
+  | `plot_ambition`  | Write `ambition`, `scheme` and `finish` in German. Write `scheme` as an infinitive clause … |
+  | `action_select`  | Write `narrative_note` and `narration_prose` in German. Every other field keeps …          |
+  | `story_eval`     | Write `narrative_note` in German. Every other field keeps …                                |
+
+Unit tests cover `PromptForm` (the language's own file, the overlay and case, never English, no census complaint)
+and `Add` (English with no forms; German with a form only for the prompt's own fields).
+
+`pwsh -File build.ps1 test`: 579 of 579 passed. `build.ps1 build` is clean.
 
 ### Phase F — Surfaces
 

@@ -18,6 +18,7 @@
 #include <logger.h>
 #include <MainThread.h>
 #include <PhaseTracker.h>
+#include <PromptLanguage.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
@@ -807,6 +808,7 @@ namespace NarrativeEngine::BeatSystem
                 candArr.push_back(std::move(cj));
             }
             ctx["candidates"] = std::move(candArr);
+            PromptLanguage::Add(ctx, {"narrative_note", "narration_prose"}, Localization::Get());
 
             ctx["player_context"] = {
                 {"player_name", playerName},

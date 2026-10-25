@@ -14,6 +14,7 @@
 #include <Localization.h>
 #include <logger.h>
 #include <NarrativeText.h>
+#include <PromptLanguage.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 
@@ -200,6 +201,7 @@ namespace NarrativeEngine::GossipContent
 
             nlohmann::json ctx;
             ctx["band_count"] = bandCount;
+            PromptLanguage::Add(ctx, {"bands"}, Localization::Get());
             ctx["source_text"] = c.text;
             ctx["source_owner"] = NameOf(owner);
             ctx["source_location"] = c.locationName;

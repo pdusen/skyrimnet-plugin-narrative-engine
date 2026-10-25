@@ -147,5 +147,5 @@ story than generic opportunists.
 
 [ user ]
 Pick the action that best fits this moment and return the JSON object.
-Return exactly the JSON object — no other text.
+Return exactly the JSON object — no other text.{% include "components/narrative_engine/output_language.prompt" %}
 [ end user ]
