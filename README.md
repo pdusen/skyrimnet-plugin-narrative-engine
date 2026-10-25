@@ -143,8 +143,17 @@ this plugin generates to weave seamlessly into your ongoing gameplay.
 
 No, not currently. IntelEngine provides a lot of features and event types that this plugin has no answer for.
 That said, as development continues, the hope is for this plugin to grow feature-rich enough to fill many of the
-same needs. As new features land that overlap with IntelEngine's, this README will be updated with guidance on
-running the two plugins side by side.
+same needs.
+
+### Can I run IntelEngine alongside NarrativeEngine?
+
+You can, but I softly recommend against it. Several of IntelEngine's features now overlap with this plugin's, and
+running both can make for an inconsistent experience: two systems each deciding what happens next, without knowing
+about each other.
+
+If you do want to run both, change this setting in IntelEngine's dashboard:
+
+- **Story Engine: OFF**
 
 ### Was AI used to write this plugin?
 
@@ -202,10 +211,12 @@ current scene's narrative tension, but it won't generate new events while they'r
 There are also safeguards in place to prevent the plugin from taking any action at all while you're in a menu
 or in vanilla dialogue.
 
-### Does the plugin work in non-English Skyrim installations?
+### Does the plugin work in other languages?
 
-It depends. If your SkyrimNet installation is already generating dialogue and other content correctly in your
-preferred language, that should carry over here. I haven't tested it myself, though, so no guarantees.
+For now, I strongly recommend **not** modifying this plugin's prompts to make the LLM write in a language other
+than English. The simulations behind gossip, plots, and the beats read the model's
+output back and act on it, and output in another language can have unintended side effects there. Better support
+for other languages is planned for an upcoming release.
 
 Static content — the PrismaUI dashboard, and certain events the plugin writes to SkyrimNet's event log — is
 currently English-only.
