@@ -1188,6 +1188,144 @@ TEST_CASE("NPCVisitBeat waits for the sender to walk over", "[NPCVisitBeat][engi
     }
 }
 
+TEST_CASE("NPCVisitBeat calls off a visit the player has walked away from", "[NPCVisitBeat][engine]")
+{
+    // A visit is offered only where a stranger walking up would not be
+    // absurd. The player can walk into a barrow while the visitor is still on
+    // the road, and a visit that would never have been offered there should
+    // not arrive there either -- until the visitor has spoken, when the player
+    // has met them and there is nothing left to take back.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    PrimeModel();
+    const auto world = BuildWorld(engine);
+    Init::Initialize();
+    const RunningDispatch dispatch;
+    NPCVisitBeat beat;
+    FillAliases(engine, world);
+    engine.calendar.hoursPassed = 100.0f;
+    PlaceSenderAway(engine, world.sender, 3000.0f);
+    auto* barrow = engine.AddLocation(0x0E010C01u, "Bleak Falls Barrow", {"LocTypeBanditCamp"});
+    const auto enterBarrow = [&] {
+        engine.world.cellFormID = 0x0E010C02u;
+        engine.world.playerLocationOverride = barrow;
+    };
+
+    SECTION("when the visitor is still on the road")
+    {
+        beat.OnStart(BeatContext{}, SenderParams());
+        REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageSalutation);
+        engine.papyrus.dispatches.clear();
+        engine.papyrus.packedInts.clear();
+        engine.papyrus.packedStrings.clear();
+        engine.questControl.teleports.clear();
+
+        SECTION("and the player walks into a barrow")
+        {
+            enterBarrow();
+            StageTick(beat);
+
+            SECTION("should send the visitor back where they came from")
+            {
+                REQUIRE_FALSE(engine.questControl.teleports.empty());
+                REQUIRE(engine.questControl.teleports.back().moverFormID == kSender);
+                REQUIRE(engine.questControl.teleports.back().destinationFormID == kReturnAnchor);
+            }
+
+            SECTION("should roll the quest back")
+            {
+                REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+            }
+
+            SECTION("should record the visit as rolled back")
+            {
+                const auto history = VisitState::GetHistory();
+                REQUIRE_FALSE(history.empty());
+                REQUIRE(history.front().outcome == VisitState::Outcome::RolledBack);
+            }
+
+            SECTION("should leave both cooldowns unstamped")
+            {
+                // Nothing happened as far as the player is concerned.
+                REQUIRE_FALSE(Cooldowns::IsSenderOnCooldown(kSender));
+                REQUIRE(beat.RemainingCooldownGameHours() == 0.0);
+            }
+
+            SECTION("should hand the beat to cleanup")
+            {
+                REQUIRE(Tick(beat, BeatState::RUNNING).transitionTo == BeatState::CLEANUP);
+            }
+        }
+
+        SECTION("and the player walks somewhere ordinary")
+        {
+            engine.world.cellFormID = 0x0E010C03u;
+            StageTick(beat);
+
+            SECTION("should leave the visitor to it")
+            {
+                REQUIRE(engine.papyrus.dispatches.empty());
+                REQUIRE(engine.questControl.teleports.empty());
+            }
+        }
+
+        SECTION("and the place turns hostile without the player moving")
+        {
+            // Only a change of cell is a reason to look again. The beat was
+            // offered here, so whatever this place is, it was fine then.
+            engine.world.playerLocationOverride = barrow;
+            StageTick(beat);
+
+            SECTION("should leave the visitor to it")
+            {
+                REQUIRE(engine.papyrus.dispatches.empty());
+            }
+        }
+    }
+
+    SECTION("when the visitor has already spoken")
+    {
+        beat.OnStart(BeatContext{}, SenderParams());
+        REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageSalutation);
+        PlaceSenderAway(engine, world.sender, 100.0f);
+        StageTick(beat);
+        REQUIRE(DispatchedMethod(engine, "RunSenderNarration"));
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageDiscuss);
+        engine.papyrus.dispatches.clear();
+        engine.papyrus.packedInts.clear();
+
+        SECTION("and the player then walks into a barrow")
+        {
+            enterBarrow();
+            StageTick(beat);
+
+            SECTION("should not roll anything back")
+            {
+                REQUIRE_FALSE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+            }
+        }
+    }
+
+    SECTION("when the player moves before the visitor has set out")
+    {
+        // The first tick takes the player's bearings and asks for the
+        // briefing; the move lands while the model is still writing it.
+        beat.OnStart(BeatContext{}, SenderParams());
+        Tick(beat, BeatState::COMPOSE);
+        enterBarrow();
+
+        SECTION("should give up without moving anybody")
+        {
+            REQUIRE(RunCompose(beat) == BeatState::CLEANUP);
+            REQUIRE(engine.questControl.teleports.empty());
+        }
+    }
+}
+
 TEST_CASE("NPCVisitBeat holds the conversation while the world interrupts", "[NPCVisitBeat][engine]")
 {
     // The Discuss stage runs a three-way cycle inside one quest stage. A

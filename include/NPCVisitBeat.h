@@ -31,7 +31,10 @@
 //             → RUNNING (quest already at Stage 10 = Salutation); on any
 //             failure → CLEANUP with failure_reason.
 //   RUNNING — dispatches on quest stage each Normal-mode Tick:
-//               Stage 10 (Salutation) — approach-distance / timeout
+//               Stage 10 (Salutation) — approach-distance / timeout, and a
+//                                       rollback if the player changes cell
+//                                       into somewhere a visit could not
+//                                       start (also watched during COMPOSE)
 //               Stage 20 (Discuss)    — internal three-way substate cycle
 //                                       (Discussing / OnHold / ReEngage) that
 //                                       drives the speech sampler + conclusion

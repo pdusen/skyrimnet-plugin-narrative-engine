@@ -1,5 +1,6 @@
 #include <NPCVisitBeat.h>
 
+#include <AlphaCanon.h>
 #include <AsyncDispatch.h>
 #include <BeatParamHelpers.h>
 #include <BeatUtils.h>
@@ -273,6 +274,23 @@ namespace NarrativeEngine
 
         StageTransitionLatch g_salutationDiscussLatch;
 
+        // Set when the opening line is dispatched, and never cleared until
+        // the next visit. Unlike the latch above it survives the stage
+        // moving on, because what it answers is whether the player has met
+        // the visitor yet. Until then the visit can be undone without a
+        // trace; after it, the player knows somebody came.
+        std::atomic<bool> g_salutationNarrationFired = false;
+
+        // The player's cell when the beat last looked, so it can tell when
+        // they have moved. 0 until the first look of a visit.
+        std::atomic<RE::FormID> g_lastPlayerCellFormID = 0;
+
+        // Why the visit has to be rolled back, held until the beat reaches
+        // a point where that can be done cleanly: before the sender has
+        // been moved, or once RUNNING can send them home. A string literal,
+        // or null when nothing is pending.
+        std::atomic<const char*> g_pendingRollbackReason = nullptr;
+
         // Discuss sub-state machine. Cyclic and mostly one-directional:
         //   Discussing --(hold trigger tripped)--------------> OnHold
         //   OnHold     --(all hold triggers cleared)---------> ReEngage
@@ -362,6 +380,9 @@ namespace NarrativeEngine
                 g_arrival = {};
             }
             g_salutationDiscussLatch.Reset();
+            g_salutationNarrationFired.store(false, std::memory_order_release);
+            g_lastPlayerCellFormID.store(0, std::memory_order_release);
+            g_pendingRollbackReason.store(nullptr, std::memory_order_release);
             g_discussSubPhase.store(DiscussSubPhase::Discussing, std::memory_order_release);
             {
                 std::scoped_lock lock(g_hardAbortReasonMutex);
@@ -672,6 +693,85 @@ namespace NarrativeEngine
                     entry.senderName = n;
             }
             VisitState::PushHistory(std::move(entry));
+        }
+
+        // Undo a visit the player has not yet seen arrive: the sender goes
+        // back where the beat found them, the quest rolls back, and neither
+        // cooldown is stamped. Runs on the main thread.
+        void RollBackVisit(const char* tag)
+        {
+            auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
+            auto* senderActor = senderRef ? senderRef->As<RE::Actor>() : nullptr;
+            if (senderActor) {
+                SendSenderHome(senderActor, tag);
+            }
+            QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
+            VisitConclusionPoll::Disarm();
+            PushRolledBackHistory(senderActor);
+            g_terminalCleanupDone.store(true);
+        }
+
+        // Ask for the visit to be rolled back. The first reason wins; a
+        // second request while one is pending changes nothing.
+        void RequestRollback(const char* reason)
+        {
+            const char* expected = nullptr;
+            if (g_pendingRollbackReason.compare_exchange_strong(expected, reason, std::memory_order_acq_rel)) {
+                logger::info("NPCVisitBeat: rollback requested ({})", reason);
+            }
+        }
+
+        // Why a visit could not start where the player is standing now, or
+        // null if one could. The location gates the beat is offered behind:
+        // the two every beat shares and the visit's own.
+        const char* WhyNoVisitHere()
+        {
+            if (AlphaCanon::IsInDoNotDisturbCell())
+                return "do-not-disturb cell";
+            if (AlphaCanon::IsInBlacklistedLocation())
+                return "blacklisted location";
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (player && LocationKeywords::IsVisitHostile(player->GetCurrentLocation()))
+                return "visit-hostile location";
+            return nullptr;
+        }
+
+        // Roll the visit back if the player has moved somewhere it could
+        // not have started, before the visitor has reached them.
+        //
+        // Asked only when the player's cell changes, which covers walking
+        // through a door either way as well as crossing exterior cells. The
+        // gates are the ones that kept the beat from being offered in the
+        // first place, so the question is whether the Director would still
+        // have chosen this visit here. Once the opening line has been
+        // spoken the answer no longer matters: the player has met them.
+        //
+        // The reads are the same off-main-thread ones the beat-select
+        // preconditions make.
+        void WatchPlayerArea()
+        {
+            if (g_salutationNarrationFired.load(std::memory_order_acquire)
+                || g_pendingRollbackReason.load(std::memory_order_acquire) != nullptr) {
+                return;
+            }
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            auto* cell = player ? player->GetParentCell() : nullptr;
+            if (!cell) {
+                return;
+            }
+            const auto cellID = cell->GetFormID();
+            const auto previous = g_lastPlayerCellFormID.exchange(cellID, std::memory_order_acq_rel);
+            if (previous == 0 || previous == cellID) {
+                return;
+            }
+            if (const char* why = WhyNoVisitHere()) {
+                logger::info("NPCVisitBeat: the player moved from cell 0x{:08X} to 0x{:08X}, a {} -- a visit could "
+                             "not start here",
+                             previous,
+                             cellID,
+                             why);
+                RequestRollback("player_entered_blocked_area");
+            }
         }
 
         void HardAbortVisit(const char* reason)
@@ -1586,6 +1686,18 @@ namespace NarrativeEngine
                     return;
                 if (CheckHardAbortConditions())
                     return;
+                if (const char* reason = g_pendingRollbackReason.exchange(nullptr, std::memory_order_acq_rel)) {
+                    // Asked for on another thread, so the opening line may
+                    // have gone out in between. Then the player has met the
+                    // visitor and there is nothing left to undo.
+                    if (g_salutationNarrationFired.load(std::memory_order_acquire)) {
+                        logger::info("NPCVisitBeat: rollback ({}) arrived after the opening line -- ignored", reason);
+                    } else {
+                        logger::warn("NPCVisitBeat: rolling the visit back ({})", reason);
+                        RollBackVisit("ROLLBACK");
+                        return;
+                    }
+                }
 
                 const auto stage = g_visitQuest->GetCurrentStageID();
                 const auto& cfg = Settings::Get();
@@ -1633,6 +1745,7 @@ namespace NarrativeEngine
                                      dist);
                         const auto snap = VisitState::GetSnapshot();
                         VMDispatchRunSenderNarration(g_visitQuest, snap.narrationText);
+                        g_salutationNarrationFired.store(true, std::memory_order_release);
                         QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageDiscuss);
                         g_salutationDiscussLatch.MarkDispatched(now);
                         VisitConclusionPoll::Arm(snap);
@@ -1650,14 +1763,7 @@ namespace NarrativeEngine
                                      "{}s) — rolling back",
                                      elapsed,
                                      timeoutSec);
-                        auto* senderActor = senderRef->As<RE::Actor>();
-                        if (senderActor) {
-                            SendSenderHome(senderActor, "SALUTATION");
-                        }
-                        QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
-                        VisitConclusionPoll::Disarm();
-                        PushRolledBackHistory(senderActor);
-                        g_terminalCleanupDone.store(true);
+                        RollBackVisit("SALUTATION");
                     }
                     return;
                 }
@@ -2152,11 +2258,36 @@ namespace NarrativeEngine
         if (mode == TickMode::Paused || mode == TickMode::Dialogue)
             return {};
 
+        if (state == BeatState::COMPOSE || state == BeatState::RUNNING) {
+            WatchPlayerArea();
+        }
+
         switch (state) {
         case BeatState::COMPOSE: {
             if (mode != TickMode::Normal)
                 return {};
             const auto sub = g_subPhase.Get();
+            // A rollback asked for during COMPOSE is honoured here only
+            // while nothing is in flight and the sender has not been moved:
+            // failing then leaves nothing behind but a quest the cleanup
+            // already knows how to stop. Mid-LLM-call it waits for the
+            // answer, which would otherwise land on a beat that has moved
+            // on; once the sender is warped it waits for RUNNING, which can
+            // send them home.
+            if (const char* reason = g_pendingRollbackReason.load(std::memory_order_acquire)) {
+                switch (sub) {
+                case ComposeSubPhase::Start:
+                case ComposeSubPhase::LLMResultReady:
+                case ComposeSubPhase::SelectingPoint:
+                case ComposeSubPhase::StartingQuest:
+                case ComposeSubPhase::Warping:
+                    g_pendingRollbackReason.store(nullptr, std::memory_order_release);
+                    SetSubPhase(ComposeSubPhase::Failed, reason);
+                    return {};
+                default:
+                    break;
+                }
+            }
             switch (sub) {
             case ComposeSubPhase::Start:
                 SetSubPhase(ComposeSubPhase::ComposingLLM);
