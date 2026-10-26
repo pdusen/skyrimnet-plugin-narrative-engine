@@ -213,13 +213,86 @@ or in vanilla dialogue.
 
 ### Does the plugin work in other languages?
 
-For now, I strongly recommend **not** modifying this plugin's prompts to make the LLM write in a language other
-than English. The simulations behind gossip, plots, and the beats read the model's
-output back and act on it, and output in another language can have unintended side effects there. Better support
-for other languages is planned for an upcoming release.
+Yes. NarrativeEngine writes in the language your game is set to: the letters, the memories NPCs keep, the rumors
+they pass around, the plot steps, and the dashboard. It ships all nine languages Skyrim SE does: English, French,
+German, Italian, Spanish, Polish, Russian, Japanese and Chinese (Traditional, as Skyrim's own Chinese is).
 
-Static content — the PrismaUI dashboard, and certain events the plugin writes to SkyrimNet's event log — is
-currently English-only.
+English is the reference. The other eight are **drafts**: machine-written and not yet checked by native speakers.
+Each says `Status = draft` at the top of its file. Expect the odd clumsy sentence, and see below if you can help.
+
+The LLM writes in your language because each prompt that produces something you will read asks for it. The
+prompts themselves stay in English, and **you should not edit them to change the language**. The plugin reads some
+of what the model writes back, and the prompts already tell it which parts to write in your language and which to
+leave as they are.
+
+### How does it pick the language, and can I choose a different one?
+
+It follows the game: the language you picked in the launcher (`sLanguage` in `Skyrim.ini`). To use another one, open
+NarrativeEngine's MCM page and set **Language**. *Auto* follows the game. The choice takes effect the next time the
+game starts, because the language is chosen once, when the game loads.
+
+The menu writes `sLanguage` under `[Localization]` in `Data/MCM/Settings/NarrativeEngine.ini`. You can also set it
+there by hand, as the name of a language file without its `.ini`: `sLanguage=german`. That name can be a language
+Skyrim does not ship. Copy `english.ini` in `Data/SKSE/Plugins/NarrativeEngine/Languages/` to `portuguese.ini`,
+translate it, set `sLanguage=portuguese`, and NarrativeEngine writes Portuguese. A key your file lacks or gets wrong
+falls back to English, line by line, and the log names each one.
+
+### Some letters show up as blanks. What happened?
+
+Skyrim draws text with the font set that matches the language you installed it in, and each set has only its own
+alphabet's letters. If you choose a language whose letters your game's fonts lack — Polish, Russian, Japanese or
+Chinese on an English, French, German, Italian or Spanish game — those letters render as blanks. The dashboard's
+status bar warns you when this is the case, and so does the log.
+
+The fix is one line in `Skyrim.ini` (with Mod Organizer 2, edit it through the profile's INI editor). Under `[Fonts]`,
+point the game at the font set for your language:
+
+| Language | Line under `[Fonts]`                              |
+| -------- | ------------------------------------------------- |
+| Polish   | `sFontConfigFile=Interface\FontConfig_pl.txt`     |
+| Russian  | `sFontConfigFile=Interface\FontConfig_ru.txt`     |
+| Japanese | `sFontConfigFile=Interface\FontConfig_ja.txt`     |
+| Chinese  | `sFontConfigFile=Interface\FontConfig_cn.txt`     |
+
+Every one of these sets also has the letters English uses, so the game's own English text keeps working. To undo it,
+set the line back to `sFontConfigFile=Interface\FontConfig.txt`.
+
+### Can I change how a sentence reads?
+
+Yes, without editing the shipped file. Next to your language's file in `Data/SKSE/Plugins/NarrativeEngine/Languages/`,
+create one with `.custom` in its name: `german.custom.ini` beside `german.ini`. Copy into it only the lines you want to
+change, under the same `[section]` headings, and reword them. Your lines win, key by key. NarrativeEngine never ships
+a `.custom.ini`, so updates leave yours alone while still bringing every other fix. If a line in it does not match
+anything, the log says so, since that is almost always a typo.
+
+### I speak one of the draft languages. How can I help?
+
+Read your language's file in `Data/SKSE/Plugins/NarrativeEngine/Languages/` and tell me what reads wrong. Look first
+at two sections near the end:
+
+- `[Prompt.Form]` describes, to the model, the shape a plot's scheme has to take to fit your language's sentences.
+- `[Matching]` lists the words the plugin uses to check what the model wrote, such as your language's word for
+  "Dragonborn", or how a ghost's name reads.
+
+Those two are where a machine draft is most likely to be wrong in ways that matter. Each `[Matching]` word cites the
+game record it was taken from, so you can see where it came from.
+
+### What still shows in English?
+
+- **SkyrimNet's own screens.** SkyrimNet shows NarrativeEngine's name, description and settings in its own interface
+  exactly as written, and it has no way for a plugin to translate them.
+- **The MCM page follows the game's language, not your choice.** Skyrim picks a mod's MCM translation by the game's
+  language. If you choose German on an English game, NarrativeEngine writes German, but its MCM page stays English.
+- **Some names from NarrativeEngine's own data files.** The factions, items and ambushing groups the plugin defines
+  itself (in `PlotFactions.ini`, `PlotItems.ini` and `AttackerGroups.ini`) keep their English names until a language
+  file translates them.
+- **The word for a family tie in a rumor** ("my sister"). It comes from the game's relationship data, which Skyrim
+  stores only in English.
+- **NarrativeEngine's logs.** They are diagnostics, and stay English.
+
+One gap is not about text you read: SkyrimNet finds an NPC's relevant memories with an English-only language model,
+so in other languages it recalls the right memory less reliably than in English. That is SkyrimNet's to improve, and
+nothing NarrativeEngine does changes it.
 
 ## Contributing
 

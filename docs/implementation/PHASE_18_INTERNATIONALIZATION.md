@@ -2258,7 +2258,7 @@ and the German table's „…“ became »…«, as `german.ini`'s had.
 
 #### Step 26 — The README
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2270,6 +2270,33 @@ and the German table's „…“ became »…«, as `german.ini`'s had.
 - The advice not to edit our prompts for another language is replaced.
 
 **Verification:** `format.ps1`. Every setting, path and file name the README gives is checked against the repo.
+
+Done. The README's one language answer, which told players not to edit the prompts, became six Q&As:
+
+- which languages ship, and that eight are unreviewed drafts;
+- how the language is chosen (the game's own, or the MCM's *Language* menu, from the next launch), and how to add a
+  language Skyrim does not ship;
+- the one-line `[Fonts] sFontConfigFile` fix, per script;
+- the `.custom.ini` overlay;
+- how a native speaker can help, starting with `[Prompt.Form]` and `[Matching]`;
+- what still shows in English: SkyrimNet's screens, the MCM under an override, the data files' own names, the kin
+  word, and the logs. The English-only memory retrieval is stated as SkyrimNet's to improve.
+
+The advice not to edit the prompts now has a reason that holds: the prompts already ask for the player's language,
+field by field.
+
+**Verification.** `format.ps1` is clean. Every setting, path and file name was checked against the repo:
+
+- `sLanguage` under `[Localization]`, the key the MCM menu writes (`sLanguage:Localization`), in
+  `Data/MCM/Settings/NarrativeEngine.ini`;
+- the `Languages/` folder and its nine files, eight of them `Status = draft`, and the `.custom.ini` suffix
+  (`kOverlaySuffix`);
+- `PlotFactions.ini`, `PlotItems.ini` and `AttackerGroups.ini`;
+- `sFontConfigFile` under `[Fonts]`, which `Localization` reads;
+- the four `FontConfig_*.txt` names and the default `FontConfig.txt`, which are the files in the game's Interface
+  archive. That each set also draws English was measured in Step 24.
+
+The claims that a fallen-back or unmatched line is logged rest on the census lines `Localization::Load` writes.
 
 ### Phase H — In-game checks
 
