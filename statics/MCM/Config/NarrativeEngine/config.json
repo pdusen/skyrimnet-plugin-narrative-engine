@@ -85,7 +85,10 @@
           "$NE_Language_german",
           "$NE_Language_italian",
           "$NE_Language_spanish",
-          "$NE_Language_polish"
+          "$NE_Language_polish",
+          "$NE_Language_russian",
+          "$NE_Language_japanese",
+          "$NE_Language_chinese"
         ],
         "defaultValue": "$NE_Language_Auto"
       }

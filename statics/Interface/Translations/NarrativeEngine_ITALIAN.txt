@@ -18,3 +18,6 @@ $NE_Language_german	Deutsch
 $NE_Language_italian	Italiano
 $NE_Language_spanish	Español
 $NE_Language_polish	Polski
+$NE_Language_russian	Russo
+$NE_Language_japanese	Giapponese
+$NE_Language_chinese	Cinese

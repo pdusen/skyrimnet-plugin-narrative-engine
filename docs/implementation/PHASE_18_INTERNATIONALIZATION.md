@@ -2191,7 +2191,7 @@ it deploys all six language files and MCM tables.
 
 #### Step 25 — Russian, Japanese and Chinese drafts
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2204,6 +2204,57 @@ As Step 24, for the three scripts that most test the design:
 - Chinese's empty plural family.
 
 **Verification:** as Step 24.
+
+Done. `russian.ini`, `japanese.ini` and `chinese.ini` (Traditional, as Skyrim ships it) join the other six as drafts,
+each with its MCM table. The Language menu offers all nine, and `manifest.json` lists every code, `zh` among them.
+They were written as Step 24's were, from the same brief plus an addendum on the three scripts.
+
+| Language | Scheme spliced as                              | Scheme check                                                                                       |
+| -------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Russian  | "Все это — часть моего плана: {scheme}."       | requires an infinitive first (`*ть`, `*ться`, `*ти`, `*чь`, with "не"); rejects nouns ending like one |
+| Japanese | "{scheme}という計画の一環として"               | requires a plain-form ending (う, く, … る); rejects polite and past endings and a stated subject     |
+| Chinese  | "為了{scheme}，…"                              | rejects a stated subject or purpose word first, and an aspect or question particle last             |
+
+- **Russian** uses one, few, many and other throughout, and selects on the person for every past tense. It keeps
+  names in the nominative, as Polish does. Its `Name.Suffixes` holds the case endings a name takes after its last
+  letter (а, у, ом, е). The `ru` font set has no ё or №, so the draft writes е, as the game does.
+- **Japanese and Chinese** set `WordSeparated = false`, so each `[Matching]` entry is a run of characters at its
+  position. The family is `none`, so every count has only `other`. The player's title is ドラゴンボーン and 龍裔, and
+  the ghost word ends the name: 亡霊 and 鬼魂.
+
+**Fonts, measured.** Japanese is drawn only by `ja`, and Chinese only by `cn`. Russian is drawn by `ru`, `ja` and
+`cn`, since both CJK sets carry Cyrillic. Each header says so.
+
+**MCM language names, fixed for all nine tables.** The MCM is drawn in the game's font, and the game picks the table
+by its language, so every name in a table must be drawable by that language's font set. Writing each language in its
+own script failed that. "Русский", "日本語" and "中文" are blanks in the `en` and `pl` sets, and the CJK names are blanks
+in `ru`. Where a table's font set cannot draw a language's own name, the table now gives the name in its own
+language ("Russisch", "Японский"). A throwaway script checked every string in all nine tables against its font set,
+and the German table's „…“ became »…«, as `german.ini`'s had.
+
+**Found while drafting, and not changed.** These are code, not language files:
+
+- **Name parts are too short in CJK.** `PlotCasting`'s `NamesPerson` skips name parts shorter than four code points,
+  and `PlotStepParse`'s player-name check skips those shorter than three. Most Chinese and Japanese name parts are two
+  or three characters (紮格, 安卡諾), so in those languages a step naming a person will seldom be noticed. The minimum
+  guards Latin text against short words, and a caseless script needs a smaller one.
+- **The full stop in `went_on`.** `PlotMemories` strips only an ASCII `.` from a failed step's memory before it
+  appends `went_on`, so a sentence ending 。 keeps it. Japanese writes `went_on` as a sentence of its own to fit.
+- **Space-delimited lists.** `Title.Strip.Start` and `Item.Articles` strip a prefix only when a space follows it, and
+  Chinese never writes one. Japanese matched the game's own spaced `首長 <name>`; Chinese leaves them empty, with the
+  reason in the file.
+- **`{kin}` is English** in these three as in the other five (see Step 24).
+
+**Verification.** As Step 24:
+
+- **Plugin validator.** The shipped-files test loads all nine files and passes, with zero rejections and rules for
+  every content check.
+- **Lint.** It reports 0 problems for each new draft, citations included.
+- **Fonts.** Each draft's characters are covered by its own font set.
+- **MCM tables.** All nine match the known-working table's form and define exactly the keys `config.json` uses.
+- **Configure.** It passes the manifest check with nine codes.
+
+`pwsh -File build.ps1 test`: 584 of 584 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
 
 #### Step 26 — The README
 
