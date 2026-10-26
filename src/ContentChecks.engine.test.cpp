@@ -233,6 +233,17 @@ namespace
         return table;
     }
 
+    // Written without spaces: a title runs straight into the name.
+    const auto& Chinese()
+    {
+        static const auto table = Language(Header("Chinese", "zh", "none") + "[Grammar]\nWordSeparated = false\n"
+                                           + "[Letter]\nfallback_title = {sender}\xE7\x9A\x84\xE4\xBF\xA1\n"
+                                             "[Matching]\nTitle.Strip.Start = \xE9\xA0\x98\xE4\xB8\xBB\n"
+                                             "Scheme.Disabled = not under test\nPlayerTitle.Disabled = not under test\n"
+                                             "Ghost.Disabled = not under test\n");
+        return table;
+    }
+
     const auto& Japanese()
     {
         static const auto table = Language(Header("Japanese", "ja", "none") + "[Grammar]\nWordSeparated = false\n"
@@ -315,6 +326,17 @@ TEST_CASE("Content checks: under other languages' rules", "[ContentChecks][engin
         CHECK(IsGhostRecord(engine.AddNPC(0x21u, "Sturmgeist"), German()));
         CHECK_FALSE(IsGhostRecord(engine.AddNPC(0x22u, "Dunmer Ghost"), German()));
         CHECK_FALSE(IsGhostRecord(engine.AddNPC(0x23u, "Dunmer Ghost"), Russian()));
+    }
+
+    SECTION("a Chinese fallback label strips a title that has no space after it")
+    {
+        // The jarl's title, then a name long enough that the whole will not
+        // fit the 24-character book title.
+        const std::string label = NarrativeEngine::LetterComposer::SynthesizeFallbackLabel(
+            Chinese(),
+            "\xE9\xA0\x98\xE4\xB8\xBB\xE7\x83\x8F\xE5\xBC\x97\xE7\x91\x9E\xE5\x85\x8B\xE7\x83\x8F\xE5\xBC\x97\xE7\x91\x9E\xE5\x85\x8B\xE7\x83\x8F\xE5\xBC\x97\xE7\x91\x9E\xE5\x85\x8B\xE7\x83\x8F\xE5\xBC\x97\xE7\x91\x9E\xE5\x85\x8B\xE7\x83\x8F\xE5\xBC\x97\xE7\x91\x9E\xE5\x85\x8B\xE7\x83\x8F\xE5\xBC\x97\xE7\x91\x9E\xE5\x85\x8B");
+        CHECK_FALSE(label.starts_with("\xE9\xA0\x98\xE4\xB8\xBB"));
+        CHECK(label.ends_with("\xE7\x9A\x84\xE4\xBF\xA1"));
     }
 
     SECTION("a German fallback label strips an epithet after 'der'")

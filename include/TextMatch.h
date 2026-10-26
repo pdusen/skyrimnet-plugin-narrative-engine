@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <map>
 #include <string>
 #include <string_view>
@@ -57,6 +58,19 @@ namespace NarrativeEngine::TextMatch
     {
         bool wordSeparated = true;
     };
+
+    // The fewest code points a part of a person's name needs before a
+    // matcher counts it as naming them. In a script written with spaces that
+    // is the matcher's own floor, `separated`, set against the short words
+    // that recur in sentences about nobody ("Al", "of"). In one written
+    // without (Japanese, Chinese) a part is found as a run of characters, and
+    // two already make a whole given name (紮格, フルダ) and a run too
+    // particular to occur by chance; one character is a syllable or an
+    // everyday word, and is evidence of nobody.
+    [[nodiscard]] constexpr std::size_t ShortestNamePart(const Options& options, std::size_t separated) noexcept
+    {
+        return options.wordSeparated ? separated : 2;
+    }
 
     // A [Matching] value, split on commas and trimmed: what a plain list holds.
     [[nodiscard]] std::vector<std::string> Items(std::string_view value);

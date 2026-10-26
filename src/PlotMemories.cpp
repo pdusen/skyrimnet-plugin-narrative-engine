@@ -329,10 +329,9 @@ namespace NarrativeEngine::PlotMemories
                            : (caught ? Template::MastermindToldFailed : Template::MastermindToldTimedOut);
         auto m = Make(table, plot, step, plot.mastermind, t);
         if (wentOn) {
-            // The failure's own full stop gives way to the clause's.
-            while (!m.text.empty() && (m.text.back() == '.' || m.text.back() == ' ')) {
-                m.text.pop_back();
-            }
+            // The failure's own full stop, in the language's own script,
+            // gives way to the clause's.
+            m.text = TextTemplate::TrimEnd(m.text, table.Grammar());
             m.text += PlotText::PlotOutcome(table, PlotText::Outcome::WentOn, plot.scheme);
         }
         return {m};

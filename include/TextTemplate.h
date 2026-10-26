@@ -117,6 +117,13 @@ namespace NarrativeEngine::TextTemplate
         // do not, and [Matching] then matches each entry as a run of
         // characters rather than as words.
         bool wordSeparated = true;
+
+        // Words that elide before a value opening with a vowel: French "de"
+        // before "Aela" reads "d'Aela". When a placeholder's value opens with
+        // a vowel and the text before it ends in one of these, as a word of
+        // its own, the word loses its last letter and joins the value with an
+        // apostrophe. A template's own words are its author's to write.
+        std::vector<std::string> elideBeforeVowel;
     };
 
     struct Node;
@@ -217,6 +224,11 @@ namespace NarrativeEngine::TextTemplate
 
     // `phrase` on its own: what `{x, phrase}` makes of `text`.
     [[nodiscard]] std::string Phrase(std::string_view text, const Grammar& grammar);
+
+    // `text` with what ends a sentence taken off its end: whitespace, and the
+    // grammar's phraseTrailingPunctuation ("." in English, "。" in Japanese).
+    // For a sentence a clause is about to be appended to.
+    [[nodiscard]] std::string TrimEnd(std::string_view text, const Grammar& grammar);
 
     // `list` on its own: what `{x, list}` makes of `items`.
     [[nodiscard]] std::string JoinList(const List& items, const Grammar& grammar);

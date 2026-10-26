@@ -430,21 +430,69 @@ namespace NarrativeEngine::TextTemplate
                 return JoinList(std::get<List>(value), options_.grammar);
             }
 
+            // A value's text, after what `out` already holds, with any eliding
+            // word before it joined to it (see Grammar::elideBeforeVowel).
+            void Insert(std::string& out, const std::string& text) const
+            {
+                if (!options_.grammar.elideBeforeVowel.empty() && OpensWithVowel(text)) {
+                    Elide(out);
+                }
+                out.append(text);
+            }
+
+            [[nodiscard]] static bool OpensWithVowel(std::string_view text)
+            {
+                if (text.empty()) {
+                    return false;
+                }
+                const auto first = TextUtf8::LowercaseFirst(text.substr(0, TextUtf8::DecodeAt(text, 0).length));
+                constexpr std::array<std::string_view, 25> kVowels = {
+                    "a",        "e",        "i",        "o",        "u",        "y",        "\xC3\xA0",
+                    "\xC3\xA2", "\xC3\xA4", "\xC3\xA9", "\xC3\xA8", "\xC3\xAA", "\xC3\xAB", "\xC3\xAE",
+                    "\xC3\xAF", "\xC3\xB4", "\xC3\xB6", "\xC3\xB9", "\xC3\xBB", "\xC3\xBC", "\xC3\xBF",
+                    "\xC3\xA6", "\xC5\x93", "\xC3\xA1", "\xC3\xAD"};
+                return std::ranges::find(kVowels, std::string_view{first}) != kVowels.end();
+            }
+
+            // Turn a trailing "<word> " into "<wor>'", when the word is one the
+            // grammar elides. The word keeps its own case ("De" -> "D'").
+            void Elide(std::string& out) const
+            {
+                if (out.size() < 2 || out.back() != ' ') {
+                    return;
+                }
+                const auto end = out.size() - 1;
+                auto start = end;
+                while (start > 0 && out[start - 1] != ' ' && out[start - 1] != '\n' && out[start - 1] != '(') {
+                    --start;
+                }
+                const std::string_view word{out.data() + start, end - start};
+                const bool elides =
+                    std::ranges::any_of(options_.grammar.elideBeforeVowel,
+                                        [word](const std::string& w) { return TextUtf8::EqualsFolded(w, word); });
+                if (!elides || word.empty()) {
+                    return;
+                }
+                // The word's last letter, which ASCII elision words always end in.
+                out.resize(end - 1);
+                out.push_back('\'');
+            }
+
             void RenderPlaceholder(const Placeholder& placeholder, std::string& out, const std::int64_t* number)
             {
                 const auto* value = arguments_.Find(placeholder.name);
                 switch (placeholder.format) {
                 case Placeholder::Format::Simple:
                 case Placeholder::Format::List:
-                    out.append(value != nullptr ? AsText(*value) : Missing(placeholder.name));
+                    Insert(out, value != nullptr ? AsText(*value) : Missing(placeholder.name));
                     return;
                 case Placeholder::Format::Phrase:
                     if (value == nullptr) {
-                        out.append(Missing(placeholder.name));
+                        Insert(out, Missing(placeholder.name));
                     } else if (const auto* text = std::get_if<std::string>(value)) {
-                        out.append(Phrase(*text, options_.grammar));
+                        Insert(out, Phrase(*text, options_.grammar));
                     } else {
-                        out.append(AsText(*value));
+                        Insert(out, AsText(*value));
                     }
                     return;
                 case Placeholder::Format::Select: {
@@ -571,25 +619,42 @@ namespace NarrativeEngine::TextTemplate
         return out;
     }
 
-    std::string Phrase(std::string_view text, const Grammar& grammar)
+    namespace
     {
-        const auto trims = [&](char32_t c) {
-            if (IsSpace(c)) {
-                return true;
-            }
-            const std::string_view set = grammar.phraseTrailingPunctuation;
-            for (std::size_t at = 0; at < set.size();) {
-                const auto decoded = TextUtf8::DecodeAt(set, at);
-                if (decoded.codePoint == c) {
+        // Where `text` ends once whitespace and the grammar's trailing
+        // punctuation are taken off its end, scanning from `start`: walk
+        // forward, remembering where the last code point that stays ends.
+        std::size_t KeptEnd(std::string_view text, std::size_t start, const Grammar& grammar)
+        {
+            const auto trims = [&](char32_t c) {
+                if (IsSpace(c)) {
                     return true;
                 }
+                const std::string_view set = grammar.phraseTrailingPunctuation;
+                for (std::size_t at = 0; at < set.size();) {
+                    const auto decoded = TextUtf8::DecodeAt(set, at);
+                    if (decoded.codePoint == c) {
+                        return true;
+                    }
+                    at += decoded.length;
+                }
+                return false;
+            };
+            std::size_t end = start;
+            for (std::size_t at = start; at < text.size();) {
+                const auto decoded = TextUtf8::DecodeAt(text, at);
                 at += decoded.length;
+                if (!trims(decoded.codePoint)) {
+                    end = at;
+                }
             }
-            return false;
-        };
+            return end;
+        }
+    } // namespace
 
-        // Trailing: walk forward, remembering where the last code point that
-        // stays ends. Leading: whitespace only.
+    std::string Phrase(std::string_view text, const Grammar& grammar)
+    {
+        // Leading: whitespace only.
         std::size_t start = 0;
         while (start < text.size()) {
             const auto decoded = TextUtf8::DecodeAt(text, start);
@@ -598,16 +663,13 @@ namespace NarrativeEngine::TextTemplate
             }
             start += decoded.length;
         }
-        std::size_t end = start;
-        for (std::size_t at = start; at < text.size();) {
-            const auto decoded = TextUtf8::DecodeAt(text, at);
-            at += decoded.length;
-            if (!trims(decoded.codePoint)) {
-                end = at;
-            }
-        }
-        const auto trimmed = text.substr(start, end - start);
+        const auto trimmed = text.substr(start, KeptEnd(text, start, grammar) - start);
         return grammar.phraseLowercaseFirst ? TextUtf8::LowercaseFirst(trimmed) : std::string{trimmed};
+    }
+
+    std::string TrimEnd(std::string_view text, const Grammar& grammar)
+    {
+        return std::string{text.substr(0, KeptEnd(text, 0, grammar))};
     }
 
     std::string JoinList(const List& items, const Grammar& grammar)

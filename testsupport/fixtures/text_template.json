@@ -980,6 +980,197 @@
         "agent": "someone"
       },
       "expected": "someone watched."
+    },
+    {
+      "name": "a French \"de\" elides before a vowel",
+      "template": "Lettre de {sender}",
+      "language": "fr",
+      "grammar": {
+        "elideBeforeVowel": [
+          "de",
+          "que",
+          "le",
+          "la",
+          "je",
+          "me",
+          "te",
+          "se",
+          "ne"
+        ]
+      },
+      "arguments": {
+        "sender": "Aela"
+      },
+      "expected": "Lettre d'Aela"
+    },
+    {
+      "name": "and before an accented vowel",
+      "template": "Lettre de {sender}",
+      "language": "fr",
+      "grammar": {
+        "elideBeforeVowel": [
+          "de",
+          "que",
+          "le",
+          "la",
+          "je",
+          "me",
+          "te",
+          "se",
+          "ne"
+        ]
+      },
+      "arguments": {
+        "sender": "Élisif"
+      },
+      "expected": "Lettre d'Élisif"
+    },
+    {
+      "name": "and not before a consonant",
+      "template": "Lettre de {sender}",
+      "language": "fr",
+      "grammar": {
+        "elideBeforeVowel": [
+          "de",
+          "que",
+          "le",
+          "la",
+          "je",
+          "me",
+          "te",
+          "se",
+          "ne"
+        ]
+      },
+      "arguments": {
+        "sender": "Hulda"
+      },
+      "expected": "Lettre de Hulda"
+    },
+    {
+      "name": "\"que\" elides too, keeping its case",
+      "template": "Que {who} vienne",
+      "language": "fr",
+      "grammar": {
+        "elideBeforeVowel": [
+          "de",
+          "que",
+          "le",
+          "la",
+          "je",
+          "me",
+          "te",
+          "se",
+          "ne"
+        ]
+      },
+      "arguments": {
+        "who": "Ulfric"
+      },
+      "expected": "Qu'Ulfric vienne"
+    },
+    {
+      "name": "a word not in the list stays",
+      "template": "pour {who}",
+      "language": "fr",
+      "grammar": {
+        "elideBeforeVowel": [
+          "de",
+          "que",
+          "le",
+          "la",
+          "je",
+          "me",
+          "te",
+          "se",
+          "ne"
+        ]
+      },
+      "arguments": {
+        "who": "Aela"
+      },
+      "expected": "pour Aela"
+    },
+    {
+      "name": "only a whole word elides",
+      "template": "Ide {who}",
+      "language": "fr",
+      "grammar": {
+        "elideBeforeVowel": [
+          "de",
+          "que",
+          "le",
+          "la",
+          "je",
+          "me",
+          "te",
+          "se",
+          "ne"
+        ]
+      },
+      "arguments": {
+        "who": "Aela"
+      },
+      "expected": "Ide Aela"
+    },
+    {
+      "name": "inside a branch, after text outside it",
+      "template": "le plan de {who, select, other {{who}}}",
+      "language": "fr",
+      "grammar": {
+        "elideBeforeVowel": [
+          "de",
+          "que",
+          "le",
+          "la",
+          "je",
+          "me",
+          "te",
+          "se",
+          "ne"
+        ]
+      },
+      "arguments": {
+        "who": {
+          "name": "Aela",
+          "sex": "female"
+        }
+      },
+      "expected": "le plan d'Aela"
+    },
+    {
+      "name": "a person argument elides by their name",
+      "template": "Lettre de {who}",
+      "language": "fr",
+      "grammar": {
+        "elideBeforeVowel": [
+          "de",
+          "que",
+          "le",
+          "la",
+          "je",
+          "me",
+          "te",
+          "se",
+          "ne"
+        ]
+      },
+      "arguments": {
+        "who": {
+          "name": "Ulfric",
+          "sex": "male"
+        }
+      },
+      "expected": "Lettre d'Ulfric"
+    },
+    {
+      "name": "a language with no elision list elides nothing",
+      "template": "de {who}",
+      "language": "en",
+      "arguments": {
+        "who": "Aela"
+      },
+      "expected": "de Aela"
     }
   ],
   "rejects": [

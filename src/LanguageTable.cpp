@@ -35,15 +35,16 @@ namespace NarrativeEngine::LanguageTable
 
         constexpr std::array<std::string_view, 6> kHeaderKeys =
             {"Name", "NativeName", "Code", "Status", "PluralRule", "Fonts"};
-        constexpr std::array<std::string_view, 9> kGrammarKeys = {"ListSeparator",
-                                                                  "ListPairSeparator",
-                                                                  "ListFinalSeparator",
-                                                                  "CapitalizeSentenceStart",
-                                                                  "PhraseTrailingPunctuation",
-                                                                  "PhraseLowercaseFirst",
-                                                                  "IndefiniteArticle",
-                                                                  "IndefiniteArticleBeforeVowel",
-                                                                  "WordSeparated"};
+        constexpr std::array<std::string_view, 10> kGrammarKeys = {"ListSeparator",
+                                                                   "ListPairSeparator",
+                                                                   "ListFinalSeparator",
+                                                                   "CapitalizeSentenceStart",
+                                                                   "PhraseTrailingPunctuation",
+                                                                   "PhraseLowercaseFirst",
+                                                                   "IndefiniteArticle",
+                                                                   "IndefiniteArticleBeforeVowel",
+                                                                   "WordSeparated",
+                                                                   "ElideBeforeVowel"};
 
         [[nodiscard]] char AsciiLower(char c) noexcept
         {
@@ -319,6 +320,11 @@ namespace NarrativeEngine::LanguageTable
         }
         if (auto v = grammarValue("WordSeparated", ParseBool)) {
             grammar.wordSeparated = *v;
+        }
+        if (auto v = grammarValue("ElideBeforeVowel", [](const std::string& value) {
+                return std::optional<std::vector<std::string>>{SplitList(value)};
+            })) {
+            grammar.elideBeforeVowel = *v;
         }
 
         // [Matching]: open-ended, since which keys a check needs depends on

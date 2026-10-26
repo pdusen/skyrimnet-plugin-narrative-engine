@@ -1,5 +1,6 @@
 #include <PlotCandidates.h>
 #include <PlotCasting.h>
+#include <PlotStepParse.h>
 #include <PlotVerbs.h>
 
 #include <ShippedLanguage.h>
@@ -200,6 +201,41 @@ TEST_CASE("Name matchers: Japanese and Chinese, written without spaces", "[NameM
         const char* step = "\xE7\x9B\xA3\xE8\xA6\x96\xE7\x83\x8F\xE5\xBC\x97\xE7\x91\x9E\xE5\x85\x8B";
         CHECK_FALSE(May(people, chinese, kUlfric, step));
         CHECK(May(people, chinese, kHulda, step));
+    }
+}
+
+TEST_CASE("Name matchers: a two-character name in a script without spaces", "[NameMatchers][engine]")
+{
+    // Most Chinese and Japanese name parts are two or three characters, under
+    // the floor a spaced script needs: J'zargo is 紮格. Two characters count
+    // there; one does not.
+    const auto chinese = Synthetic("zh", "", "WordSeparated = false");
+    // 紮格, 強者巴爾古夫, 龍
+    constexpr Names kShort{"\xE7\xB4\xAE\xE6\xA0\xBC", kChinese.balgruuf, "\xE9\xBE\x8D"};
+    const auto people = People(kShort);
+    // "監視紮格": watch J'zargo.
+    const char* watchJzargo = "\xE7\x9B\xA3\xE8\xA6\x96\xE7\xB4\xAE\xE6\xA0\xBC";
+    // "監視龍裔": watch the Dragonborn. It holds the one-character name 龍.
+    const char* watchDragonborn = "\xE7\x9B\xA3\xE8\xA6\x96\xE9\xBE\x8D\xE8\xA3\x94";
+
+    SECTION("a step naming the two-character name is not given to its bearer")
+    {
+        CHECK_FALSE(May(people, chinese, kUlfric, watchJzargo));
+        CHECK(May(people, chinese, kHulda, watchJzargo));
+    }
+    SECTION("a scheme naming it names them")
+    {
+        CHECK(PlotCandidates::NamedIn(people, watchJzargo, chinese).contains(kUlfric));
+    }
+    SECTION("a one-character name inside another word is nobody")
+    {
+        CHECK(May(people, chinese, kHulda, watchDragonborn));
+        CHECK_FALSE(PlotCandidates::NamedIn(people, watchDragonborn, chinese).contains(kHulda));
+    }
+    SECTION("a two-character player name is found too")
+    {
+        CHECK(NarrativeEngine::PlotStepParse::NamesThePlayer(watchJzargo, "\xE7\xB4\xAE\xE6\xA0\xBC", chinese));
+        CHECK_FALSE(NarrativeEngine::PlotStepParse::NamesThePlayer(watchDragonborn, "\xE9\xBE\x8D", chinese));
     }
 }
 

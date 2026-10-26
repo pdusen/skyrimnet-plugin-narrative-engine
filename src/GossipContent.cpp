@@ -91,15 +91,35 @@ namespace NarrativeEngine::GossipContent
             if (!rel || !rel->assocType) {
                 return tie;
             }
-            // associationLabels[Members][Sexes]. Which row applies depends on
-            // which side of the relationship the LISTENER sits — the label
-            // is what the teller calls them.
+            // associationLabels[Members][Sexes]: the parent row names the
+            // record's first NPC ("Father", "Mother"), the child row its
+            // second ("Son", "Daughter"), each by their own sex. The memory
+            // is the listener's -- "my sister Hulda told me" -- so the word
+            // is the TELLER's: their side of the record, their sex.
+            const bool parent = rel->npc1 == na;
+            const bool female = na->GetSex() == RE::SEX::kFemale;
             const auto member =
-                (rel->npc1 == nb) ? RE::BGSAssociationType::Members::kParent : RE::BGSAssociationType::Members::kChild;
-            const auto sex = (nb->GetSex() == RE::SEX::kFemale) ? RE::BGSAssociationType::Sexes::kFemale
-                                                                : RE::BGSAssociationType::Sexes::kMale;
+                parent ? RE::BGSAssociationType::Members::kParent : RE::BGSAssociationType::Members::kChild;
+            const auto sex = female ? RE::BGSAssociationType::Sexes::kFemale : RE::BGSAssociationType::Sexes::kMale;
             if (const auto& label = rel->assocType->associationLabels[member][sex]; !label.empty()) {
                 tie.kinship = label.c_str();
+            }
+            // The record's words are plain English strings, never localized,
+            // so the language file words them: [Data.Kin], by the association
+            // type's EditorID, side and sex. Some languages also word a tie by
+            // who speaks of it -- a father-in-law is a woman's gonggong and a
+            // man's yuefu in Chinese -- so a row may be refined by the
+            // listener's sex, and that one is tried first. A type no row
+            // names, a modded one say, keeps its record's word.
+            if (const char* id = rel->assocType->GetFormEditorID(); id != nullptr && *id != '\0') {
+                const auto key = std::format("{}.{}.{}", id, parent ? "parent" : "child", female ? "female" : "male");
+                const auto refined = key + (nb->GetSex() == RE::SEX::kFemale ? ".listener_female" : ".listener_male");
+                const auto& table = Localization::Get();
+                if (const auto* text = table.DataText("Data.Kin", refined)) {
+                    tie.kinship = *text;
+                } else if (const auto* plain = table.DataText("Data.Kin", key)) {
+                    tie.kinship = *plain;
+                }
             }
             return tie;
         }

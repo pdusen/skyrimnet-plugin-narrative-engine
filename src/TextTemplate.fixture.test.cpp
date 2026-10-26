@@ -8,6 +8,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
 // The formatter against testsupport/fixtures/text_template.json, which the
 // dashboard's TypeScript port (dashboard/src/i18n/textTemplate.ts) runs too,
@@ -105,6 +106,8 @@ namespace
                 grammar.phraseTrailingPunctuation = value.get<std::string>();
             } else if (key == "phraseLowercaseFirst") {
                 grammar.phraseLowercaseFirst = value.get<bool>();
+            } else if (key == "elideBeforeVowel") {
+                grammar.elideBeforeVowel = value.get<std::vector<std::string>>();
             } else {
                 FAIL("the fixture sets a grammar field the formatter does not have: " << key);
             }

@@ -43,6 +43,9 @@ export interface Grammar {
     capitalizeSentenceStart: boolean;
     phraseTrailingPunctuation: string;
     phraseLowercaseFirst: boolean;
+    // Words that elide before a value opening with a vowel (French "de" ->
+    // "d'Aela"); see TextTemplate.h's Grammar.
+    elideBeforeVowel: string[];
 }
 
 export const englishGrammar: Grammar = {
@@ -52,6 +55,7 @@ export const englishGrammar: Grammar = {
     capitalizeSentenceStart: true,
     phraseTrailingPunctuation: '.!?;,',
     phraseLowercaseFirst: true,
+    elideBeforeVowel: [],
 };
 
 export interface RenderOptions {
@@ -388,6 +392,28 @@ function branchFor(placeholder: Placeholder, key: string): Message | null {
     return other;
 }
 
+const kVowels = new Set([...'aeiouyàâäéèêëîïôöùûüÿæœáí']);
+
+const fold = (s: string): string => s.toLowerCase();
+
+// A trailing "<word> " turned into "<wor>'" when the grammar elides the word,
+// which keeps its own case. As TextTemplate.cpp's Elide.
+function elide(out: string, grammar: Grammar): string {
+    if (out.length < 2 || !out.endsWith(' ')) {
+        return out;
+    }
+    const end = out.length - 1;
+    let start = end;
+    while (start > 0 && out[start - 1] !== ' ' && out[start - 1] !== '\n' && out[start - 1] !== '(') {
+        --start;
+    }
+    const word = out.slice(start, end);
+    if (!word || !grammar.elideBeforeVowel.some(w => fold(w) === fold(word))) {
+        return out;
+    }
+    return out.slice(0, end - 1) + "'";
+}
+
 export function render(message: Message, args: Arguments, options: RenderOptions): string {
     const missing = (name: string): string => (options.missing ? options.missing(name) : '');
     const asText = (value: Value): string => {
@@ -402,8 +428,18 @@ export function render(message: Message, args: Arguments, options: RenderOptions
         }
         return value.name;
     };
-    const into = (nodes: Message, number: number | null): string => {
-        let out = '';
+    // One buffer through every branch, as the C++ renders: elision reads what
+    // came before a value, wherever it was written.
+    let out = '';
+    const insert = (text: string): void => {
+        const first = text.codePointAt(0);
+        if (options.grammar.elideBeforeVowel.length > 0 && first !== undefined
+            && kVowels.has(String.fromCodePoint(first).toLowerCase())) {
+            out = elide(out, options.grammar);
+        }
+        out += text;
+    };
+    const into = (nodes: Message, number: number | null): void => {
         for (const node of nodes) {
             if (typeof node === 'string') {
                 out += node;
@@ -412,37 +448,45 @@ export function render(message: Message, args: Arguments, options: RenderOptions
                     out += String(number);
                 }
             } else {
-                out += placeholder(node, number);
+                placeholder(node, number);
             }
         }
-        return out;
     };
-    const placeholder = (p: Placeholder, number: number | null): string => {
+    const placeholder = (p: Placeholder, number: number | null): void => {
         const value = Object.prototype.hasOwnProperty.call(args, p.name) ? args[p.name] : undefined;
         switch (p.format) {
             case 'simple':
             case 'list':
-                return value !== undefined ? asText(value) : missing(p.name);
+                insert(value !== undefined ? asText(value) : missing(p.name));
+                return;
             case 'phrase':
                 if (value === undefined) {
-                    return missing(p.name);
+                    insert(missing(p.name));
+                    return;
                 }
-                return typeof value === 'string' ? phrase(value, options.grammar) : asText(value);
+                insert(typeof value === 'string' ? phrase(value, options.grammar) : asText(value));
+                return;
             case 'select': {
                 let key = 'other';
                 if (value !== undefined) {
                     key = isPerson(value) ? value.sex : asText(value);
                 }
                 const branch = branchFor(p, key);
-                return branch ? into(branch, number) : '';
+                if (branch) {
+                    into(branch, number);
+                }
+                return;
             }
             case 'plural': {
                 const n = typeof value === 'number' ? value : null;
                 const branch = branchFor(p, n !== null ? pluralCategory(options.language, n) : 'other');
-                return branch ? into(branch, n) : '';
+                if (branch) {
+                    into(branch, n);
+                }
+                return;
             }
         }
     };
-    const out = into(message, null);
+    into(message, null);
     return options.sentence && options.grammar.capitalizeSentenceStart ? uppercaseFirst(out) : out;
 }

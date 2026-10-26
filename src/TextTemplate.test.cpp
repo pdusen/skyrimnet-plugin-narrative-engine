@@ -332,3 +332,23 @@ TEST_CASE("TextTemplate::ImpliedSignature", "[TextTemplate]")
         CHECK_FALSE(Validate(MustParse("{n} {whom}"), signature).empty());
     }
 }
+
+TEST_CASE("TextTemplate::TrimEnd", "[TextTemplate]")
+{
+    SECTION("English drops its full stop and the spaces after it")
+    {
+        CHECK(TrimEnd("I failed. ", Grammar{}) == "I failed");
+        CHECK(TrimEnd("I failed", Grammar{}) == "I failed");
+    }
+    SECTION("a language's own stops go too, and only its ends are touched")
+    {
+        Grammar japanese;
+        japanese.phraseTrailingPunctuation = "ãã.!?";
+        CHECK(TrimEnd("å¤±æã", japanese) == "å¤±æ");
+        CHECK(TrimEnd("A. B.", Grammar{}) == "A. B");
+    }
+    SECTION("nothing left is nothing")
+    {
+        CHECK(TrimEnd(" ...", Grammar{}).empty());
+    }
+}

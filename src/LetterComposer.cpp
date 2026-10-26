@@ -559,14 +559,17 @@ namespace NarrativeEngine::LetterComposer
         // Helper: case-insensitive whole-word prefix match. Returns
         // index past the prefix (and any following whitespace) if the
         // string begins with `prefix`+whitespace, else 0.
-        std::size_t PrefixSkip(const std::string& s, std::string_view prefix)
+        // Where `s` goes on after an opening `prefix`, or 0. In a script that
+        // separates words the prefix must be a word of its own; in one that
+        // does not, it may run straight into the name.
+        std::size_t PrefixSkip(const std::string& s, std::string_view prefix, bool wordSeparated)
         {
             if (s.size() <= prefix.size())
                 return 0;
             if (!TextUtf8::EqualsFolded(std::string_view{s}.substr(0, prefix.size()), prefix))
                 return 0;
             const char nextCh = s[prefix.size()];
-            if (nextCh != ' ' && nextCh != '\t')
+            if (wordSeparated && nextCh != ' ' && nextCh != '\t')
                 return 0;
             std::size_t i = prefix.size();
             while (i < s.size() && (s[i] == ' ' || s[i] == '\t'))
@@ -623,10 +626,12 @@ namespace NarrativeEngine::LetterComposer
         }
 
         // Strip a leading title. Returns the original name if no match.
-        std::string StripPrefixTitle(const std::string& name, const std::vector<std::string>& titles)
+        std::string StripPrefixTitle(const std::string& name,
+                                     const std::vector<std::string>& titles,
+                                     bool wordSeparated)
         {
             for (const auto& title : titles) {
-                const auto skip = PrefixSkip(name, title);
+                const auto skip = PrefixSkip(name, title, wordSeparated);
                 if (skip > 0) {
                     return name.substr(skip);
                 }
@@ -689,7 +694,8 @@ namespace NarrativeEngine::LetterComposer
         }
 
         // Candidate 4: also strip a leading title.
-        const auto bothStripped = StripPrefixTitle(suffixStripped, table.Matching().List(kTitleStart));
+        const auto bothStripped = StripPrefixTitle(
+            suffixStripped, table.Matching().List(kTitleStart), table.Matching().options.wordSeparated);
         if (bothStripped != suffixStripped) {
             if (auto r = tryName(bothStripped))
                 return *r;

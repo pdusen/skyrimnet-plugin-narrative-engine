@@ -268,9 +268,9 @@ namespace NarrativeEngine::PlotCasting
             const auto folded = rules.options.wordSeparated ? std::string{} : TextUtf8::Fold(text);
 
             // Too short to be evidence of anybody.
-            constexpr std::size_t kShortest = 4;
+            const auto shortest = TextMatch::ShortestNamePart(rules.options, 4);
             for (const auto token : TextUtf8::Words(name)) {
-                if (TextUtf8::CodePointCount(token) < kShortest) {
+                if (TextUtf8::CodePointCount(token) < shortest) {
                     continue;
                 }
                 const bool isTitle = std::ranges::any_of(

@@ -1,13 +1,15 @@
 #include <PlotStepParse.h>
 
+#include <TextMatch.h>
 #include <TextUtf8.h>
 
 namespace NarrativeEngine::PlotStepParse
 {
     namespace
     {
-        // A name word too short to count: "Al" is a word in too many
-        // sentences that are not about anyone.
+        // A name word too short to count, where words are separated: "Al" is
+        // a word in too many sentences that are not about anyone. See
+        // TextMatch::ShortestNamePart for scripts written without spaces.
         constexpr std::size_t kShortestName = 3;
 
     } // namespace
@@ -20,8 +22,9 @@ namespace NarrativeEngine::PlotStepParse
         }
         const auto suffixes = rules.List("Name.Suffixes");
         const auto said = TextUtf8::Words(text);
+        const auto shortest = TextMatch::ShortestNamePart(rules.options, kShortestName);
         for (const auto name : TextUtf8::Words(playerName)) {
-            if (TextUtf8::CodePointCount(name) < kShortestName) {
+            if (TextUtf8::CodePointCount(name) < shortest) {
                 continue;
             }
             if (!rules.options.wordSeparated) {

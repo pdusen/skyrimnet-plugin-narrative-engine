@@ -633,7 +633,20 @@ namespace NarrativeEngine::Testing
         // Directional, as the engine's own record is: relationships name a
         // first and a second party, and which label applies depends on which
         // side the person being described sits.
-        void AddRelationship(RE::TESNPC* a, RE::TESNPC* b, const char* labelForMale, const char* labelForFemale);
+        RE::BGSAssociationType* AddRelationship(RE::TESNPC* a,
+                                                RE::TESNPC* b,
+                                                const char* labelForMale,
+                                                const char* labelForFemale);
+        // A relationship whose two sides are worded differently, as the
+        // game's own are: `a` is its parent side ("father"), `b` its child
+        // side ("daughter"). Returns its association type, which
+        // SetEditorIDOf can name.
+        RE::BGSAssociationType* AddRelationship(RE::TESNPC* a,
+                                                RE::TESNPC* b,
+                                                const char* parentMale,
+                                                const char* parentFemale,
+                                                const char* childMale,
+                                                const char* childFemale);
 
         // Put these cells in the loaded exterior grid, in row-major order over
         // the smallest square that fits them. Slots past the end stay null,

@@ -564,6 +564,7 @@ namespace NarrativeEngine::DashboardUIManager
                          {"capitalizeSentenceStart", grammar.capitalizeSentenceStart},
                          {"phraseTrailingPunctuation", grammar.phraseTrailingPunctuation},
                          {"phraseLowercaseFirst", grammar.phraseLowercaseFirst},
+                         {"elideBeforeVowel", grammar.elideBeforeVowel},
                      }},
                     {"fonts", {{"verdict", verdict}, {"font_set", fonts.fontSet}}},
                     {"strings", std::move(strings)},

@@ -2156,18 +2156,17 @@ test plots' schemes in `[Plot.Test]` are written in that shape, so they pass the
 - **German's quotes.** German's „…“ opening mark (U+201E) is not in the `en` font set, which a German game uses, so it
   became »…«.
 
-**Found while drafting, and not changed.** Both concern code, not language files:
+**Found while drafting.** Both concern code, not language files, and both are fixed in Step 28a:
 
-- **`{kin}` is English in every language.** `[Gossip.Memory]`'s kin word is an association type's title ("Sister"),
-  and those are plain, unlocalized strings in the game's data, so a German memory reads "Meine Sister Hulda". The
-  drafts write around it where they can.
-- **`{kin}` may describe the wrong person.** `GossipContent.cpp` picks the label by the listener's side and sex,
-  which names what the teller calls the listener. The template uses it for the teller: "My {kin} {teller} told me".
+- **`{kin}` was English in every language.** `[Gossip.Memory]`'s kin word is an association type's title ("Sister"),
+  and those are plain, unlocalized strings in the game's data, so a German memory read "Meine Sister Hulda".
+- **`{kin}` described the wrong person.** `GossipContent.cpp` picked the label by the listener's side and sex, which
+  names what the teller calls the listener. The template uses it for the teller: "My {kin} {teller} told me".
 - **Reviewers' list.** Each draft's report named the places a native speaker should look first:
   - French and Italian cannot elide or contract before a name ("de Aela", "in La Giumenta Bardata").
   - Made items read bare, without an article.
   - Ammunition names are singular after a measure word ("ein Bündel Eisenpfeil").
-  - The data files' names (factions, items) stay English until a `[Data.*]` override is written.
+  - The data files' names (factions, items) stayed English until Step 28a wrote their `[Data.*]` overrides.
 
 **Verification.**
 
@@ -2232,18 +2231,18 @@ in `ru`. Where a table's font set cannot draw a language's own name, the table n
 language ("Russisch", "Японский"). A throwaway script checked every string in all nine tables against its font set,
 and the German table's „…“ became »…«, as `german.ini`'s had.
 
-**Found while drafting, and not changed.** These are code, not language files:
+**Found while drafting.** These are code, not language files, and all are fixed in Step 28a:
 
-- **Name parts are too short in CJK.** `PlotCasting`'s `NamesPerson` skips name parts shorter than four code points,
-  and `PlotStepParse`'s player-name check skips those shorter than three. Most Chinese and Japanese name parts are two
-  or three characters (紮格, 安卡諾), so in those languages a step naming a person will seldom be noticed. The minimum
-  guards Latin text against short words, and a caseless script needs a smaller one.
-- **The full stop in `went_on`.** `PlotMemories` strips only an ASCII `.` from a failed step's memory before it
-  appends `went_on`, so a sentence ending 。 keeps it. Japanese writes `went_on` as a sentence of its own to fit.
-- **Space-delimited lists.** `Title.Strip.Start` and `Item.Articles` strip a prefix only when a space follows it, and
-  Chinese never writes one. Japanese matched the game's own spaced `首長 <name>`; Chinese leaves them empty, with the
-  reason in the file.
-- **`{kin}` is English** in these three as in the other five (see Step 24).
+- **Name parts were too short in CJK.** `PlotCasting`'s `NamesPerson` skipped name parts shorter than four code
+  points, `PlotCandidates::NamedIn` those shorter than three, and `PlotStepParse`'s player-name check those shorter
+  than three. Most Chinese and Japanese name parts are two or three characters (紮格, 安卡諾), so in those languages
+  the guard against casting a step's subject to carry it out was off for most people, and the bug it was written for
+  (Captain Veleth sent to shadow Captain Veleth) came back.
+- **The full stop in `went_on`.** `PlotMemories` stripped only an ASCII `.` from a failed step's memory before it
+  appended `went_on`, so a sentence ending 。 kept it.
+- **Space-delimited lists.** `Title.Strip.Start` and `Item.Articles` stripped a prefix only when a space followed it,
+  and Chinese never writes one.
+- **`{kin}` was English** in these three as in the other five (see Step 24).
 
 **Verification.** As Step 24:
 
@@ -2429,6 +2428,93 @@ plot ticks wait behind it.
   loads alone, and a language with no file loads nothing.
 
 `pwsh -File build.ps1 test`: 588 of 588 C++ tests and 4 of 4 dashboard tests passed.
+
+#### Step 28a — Gaps the drafts found, closed
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** Every user-visible string the drafts found still in English is in the player's language, and every defect
+they found in the code is fixed.
+
+Done.
+
+**The kin word.**
+
+- **Its direction.** `GossipContent`'s `DescribeTie` now reads the teller's side of the relationship and the teller's
+  sex. That is the word the listener's memory needs ("my daughter Hulda"), where before it read the listener's ("my
+  mother Hulda").
+- **Its language.** A new open-ended `[Data.Kin]` section words it, keyed by the association type's EditorID, the
+  teller's side and the teller's sex, as in `ParentChild.child.female`. An optional `.listener_male` /
+  `.listener_female` refinement is tried first, because some languages word a tie by who speaks of it (a woman's 公公
+  is a man's 岳父). An association type no row names, a modded one for instance, keeps its record's own word.
+- **English's rows.** English has rows for the 20 vanilla types, lowercased, because the record's capitalized "Sister"
+  sits mid-sentence. Two rows correct the game's own data: its grandparent words are swapped, and it gives the second
+  of a courting couple or of business partners no word at all.
+
+**The data files' names.** Every language file has `[Data.Faction]` (37 rows), `[Data.Item]` (25),
+`[Data.AttackerGroup]` (15) and `[Data.Kin]` (80) for every vanilla row. Each name uses the game's own term in that
+language where one exists, in the form and case that language's templates put the slot in. Where a template could not
+take a name's form, the template or the row was reworded:
+
+- articles that would have to contract ("de Aela", "a el Colegio");
+- plural factions under singular verbs;
+- the case of `{item}` in German.
+
+Rewording `{kin}`'s lines, French and Italian now carry the possessive in the row, and the others agree on the
+teller's sex.
+
+**Names written without spaces.** A new `TextMatch::ShortestNamePart` gives the fewest code points a name part needs
+before a matcher counts it as naming someone:
+
+- in a script with spaces, the matcher's own floor as before (`NamesPerson` 4, `NamedIn` and the player-name check 3);
+- in one without, two.
+
+There, a part is found as a run of characters. Two characters already make a whole given name (紮格) and too
+particular a run to occur by chance, while one is a syllable or an everyday word. All three matchers use it.
+`Title.Strip.Start` and `Item.Articles` likewise drop an opening that runs straight into the name in such a script,
+so Chinese's `一袋金幣` matches 金幣.
+
+**Elision.** French elides "de" and "que" before a vowel ("d'Aela", "Lettre d'Ulfric"), and no template can know
+whether the name it is given starts with one. A new `[Grammar] ElideBeforeVowel` lists the words that elide. When a
+placeholder's value opens with a vowel, accented ones included, and the text before it ends in one of those words as
+a word of its own, the word loses its last letter and joins the value with an apostrophe, keeping its case ("De" ->
+"D'"). French lists de, que, le, la, je, me, te, se, ne, jusque, lorsque and puisque; English lists none. Both
+formatters implement it, the TypeScript port now rendering through one shared buffer as the C++ does, and the shared
+fixture holds them to the same nine cases. Spanish needs none: it does not contract an article that belongs to a
+proper name ("de El Palacio Azul" is correct), and the lower-case articles of its faction rows were reworded away.
+
+**Templates reworded while filling them.**
+
+- Spanish's petition and expose lines put `{authority}` after "ante", not "a".
+- Italian's `[Plot.Audience]` became singular, to agree with the singular verbs of `{authority}`'s lines.
+- German's `expose.mastermind_told_succeeded` puts `{item}` in the accusative, as every other `{item}` already was.
+
+**The full stop.** A new `TextTemplate::TrimEnd` takes whitespace and the language's own
+`PhraseTrailingPunctuation` off a sentence's end, and `PlotMemories` uses it before appending `went_on`. Japanese's
+`went_on` is a clause again ("…失敗したが、別の手で…").
+
+**The sanitizer note.** CLAUDE.md said the sanitizer maps accented Latin letters to ASCII. It never has; it passes
+them, and every other script, through. The note now says so, as `docs/LLM_RESPONSE_HANDLING.md` always did.
+
+**Verification.**
+
+- **New tests:**
+  - **Kin direction.** A parent-and-child record whose two sides are worded differently names the teller's side.
+  - **Kin wording.** A record with the game's capitalized words and an EditorID takes English's `[Data.Kin]` word.
+  - **Listener refinement.** A row refined by the listener's sex wins over the plain row.
+  - **Names written without spaces.** In Chinese, a two-character name in a step keeps its bearer off it, and a scheme
+    naming it names them. A one-character name inside another word is nobody. A two-character player name is found.
+  - **Titles.** A Chinese title with no space after it comes off a fallback letter title.
+  - **`TrimEnd`.** It takes English's and Japanese's stops off, and only at the end.
+  - **Elision.** Nine new fixture cases cover it in both formatters: before a plain and an accented vowel, not before
+    a consonant, "que" keeping its case, a word not in the list, only a whole word, a placeholder inside a branch
+    after text outside it, a person argument, and a language with no list.
+- **Throwaway checks.** For every language, all four `[Data.*]` sections have every row and no stray one, and every
+  file is still covered by the font sets its header names.
+
+`pwsh -File build.ps1 test`: 590 of 590 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
 
 #### Step 29 — Run checks
 

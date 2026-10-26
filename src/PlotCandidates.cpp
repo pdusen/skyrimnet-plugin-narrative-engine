@@ -391,11 +391,14 @@ namespace NarrativeEngine::PlotCandidates
         // Whether `text` says this thing, its article aside and in any case:
         // a finish that brings "a gold diamond necklace" names "a Gold
         // Diamond Necklace". The articles are the language's [Matching]
-        // Item.Articles, the words a thing's name may open with.
+        // Item.Articles, the words a thing's name may open with: followed by
+        // a space, in a script that separates words, and straight on in one
+        // that does not (Chinese "一袋金幣").
         bool Says(std::string_view text, std::string_view displayName, const LanguageTable::Table& table)
         {
-            for (const auto& article : table.Matching().List("Item.Articles")) {
-                const auto opening = article + " ";
+            const auto& rules = table.Matching();
+            for (const auto& article : rules.List("Item.Articles")) {
+                const auto opening = rules.options.wordSeparated ? article + " " : article;
                 if (displayName.size() > opening.size() && displayName.starts_with(opening)) {
                     displayName.remove_prefix(opening.size());
                     break;
@@ -882,12 +885,12 @@ namespace NarrativeEngine::PlotCandidates
 
         // Who carries each word the text says, among the words of anybody's
         // name. Short words ("of", "the") never name anybody.
-        constexpr std::size_t kShortest = 3;
+        const auto shortest = TextMatch::ShortestNamePart(table.Matching().options, 3);
         std::unordered_map<std::string, std::vector<RE::FormID>> carriers;
         for (const auto& member : population.members) {
             std::unordered_set<std::string> own;
             for (const auto word : TextUtf8::Words(member.name)) {
-                if (TextUtf8::CodePointCount(word) >= kShortest && says(word) && own.emplace(word).second) {
+                if (TextUtf8::CodePointCount(word) >= shortest && says(word) && own.emplace(word).second) {
                     carriers[std::string{word}].push_back(member.npc);
                 }
             }

@@ -283,11 +283,10 @@ game record it was taken from, so you can see where it came from.
   exactly as written, and it has no way for a plugin to translate them.
 - **The MCM page follows the game's language, not your choice.** Skyrim picks a mod's MCM translation by the game's
   language. If you choose German on an English game, NarrativeEngine writes German, but its MCM page stays English.
-- **Some names from NarrativeEngine's own data files.** The factions, items and ambushing groups the plugin defines
-  itself (in `PlotFactions.ini`, `PlotItems.ini` and `AttackerGroups.ini`) keep their English names until a language
-  file translates them.
-- **The word for a family tie in a rumor** ("my sister"). It comes from the game's relationship data, which Skyrim
-  stores only in English.
+- **Names a mod adds.** The factions, items and ambushing groups NarrativeEngine defines (in `PlotFactions.ini`,
+  `PlotItems.ini` and `AttackerGroups.ini`) are translated in every language file, and so are the game's family and
+  working ties ("my sister", "my jarl"). A row or a relationship type another mod adds shows in its own words until a
+  language file names it, under `[Data.Faction]`, `[Data.Item]`, `[Data.AttackerGroup]` or `[Data.Kin]`.
 - **NarrativeEngine's logs.** They are diagnostics, and stay English.
 
 One gap is not about text you read: SkyrimNet finds an NPC's relevant memories with an English-only language model,

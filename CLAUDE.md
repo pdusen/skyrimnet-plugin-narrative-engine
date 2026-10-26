@@ -30,11 +30,13 @@ co-save, written to any `RE::TESForm` field, displayed in UI, fed into
 another LLM call, or used in any other downstream way.
 
 The reason: LLMs routinely return smart quotes, em-dashes, ellipses,
-NBSPs, accented Latin letters, and zero-width formatting characters
-that look fine in chat but break visible-text use in Skyrim (missing
-glyphs, silent truncation in ASCII-only engine fields, garbled co-save
+NBSPs, and zero-width formatting characters that look fine in chat but
+break visible-text use in Skyrim (missing glyphs, garbled co-save
 payloads). The sanitizer is a single canonical pass that maps these to
-ASCII equivalents or drops them, and trims surrounding whitespace.
+ASCII equivalents or drops them, drops invalid UTF-8, and trims
+surrounding whitespace. Everything else passes through verbatim:
+accented letters, ligatures and every other script, so a player's own
+language keeps its letters.
 
 When adding a new LLM-driven feature, wrap every `get<std::string>()`
 call for a free-form field in `LLMTextSanitizer::Sanitize(...)` — do
