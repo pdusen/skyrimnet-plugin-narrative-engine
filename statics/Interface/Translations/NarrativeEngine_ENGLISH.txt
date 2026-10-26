@@ -13,3 +13,8 @@ $NE_Language	Language
 $NE_Language_Help	The language NarrativeEngine writes in: letters, memories, rumors and the dashboard. Auto follows the game's own language. Takes effect the next time the game starts.
 $NE_Language_Auto	Auto
 $NE_Language_english	English
+$NE_Language_french	Français
+$NE_Language_german	Deutsch
+$NE_Language_italian	Italiano
+$NE_Language_spanish	Español
+$NE_Language_polish	Polski

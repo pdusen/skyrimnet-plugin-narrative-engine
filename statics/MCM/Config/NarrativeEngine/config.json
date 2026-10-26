@@ -78,7 +78,15 @@
       "type": "menu",
       "valueOptions": {
         "sourceType": "ModSettingString",
-        "options": ["$NE_Language_Auto", "$NE_Language_english"],
+        "options": [
+          "$NE_Language_Auto",
+          "$NE_Language_english",
+          "$NE_Language_french",
+          "$NE_Language_german",
+          "$NE_Language_italian",
+          "$NE_Language_spanish",
+          "$NE_Language_polish"
+        ],
         "defaultValue": "$NE_Language_Auto"
       }
     }

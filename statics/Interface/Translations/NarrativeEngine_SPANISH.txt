@@ -1,0 +1,20 @@
+$NE_About	Acerca de
+$NE_Author	Autor
+$NE_Description	Descripción
+$NE_DescriptionText	Director narrativo para SkyrimNet
+$NE_Controls	Controles
+$NE_DashboardHotkey	Tecla del panel
+$NE_DashboardHotkey_Help	Pulsa una tecla para asignarla. Usa las opciones Requerir Mayús / Ctrl / Alt de abajo para exigir que se mantenga pulsado un modificador al activarla.
+$NE_RequireShift	Requerir Mayús
+$NE_RequireCtrl	Requerir Ctrl
+$NE_RequireAlt	Requerir Alt
+$NE_LanguageHeader	Idioma
+$NE_Language	Idioma
+$NE_Language_Help	El idioma en el que escribe NarrativeEngine: cartas, recuerdos, rumores y el panel. Automático sigue el idioma del propio juego. Se aplica la próxima vez que se inicie el juego.
+$NE_Language_Auto	Automático
+$NE_Language_english	English
+$NE_Language_french	Français
+$NE_Language_german	Deutsch
+$NE_Language_italian	Italiano
+$NE_Language_spanish	Español
+$NE_Language_polish	Polski

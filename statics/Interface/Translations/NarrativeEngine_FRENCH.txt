@@ -1,0 +1,20 @@
+$NE_About	À propos
+$NE_Author	Auteur
+$NE_Description	Description
+$NE_DescriptionText	Directeur narratif pour SkyrimNet
+$NE_Controls	Commandes
+$NE_DashboardHotkey	Raccourci du tableau de bord
+$NE_DashboardHotkey_Help	Appuyez sur une touche pour l'assigner. Utilisez les options Exiger Maj / Ctrl / Alt ci-dessous pour exiger un modificateur maintenu à l'activation.
+$NE_RequireShift	Exiger Maj
+$NE_RequireCtrl	Exiger Ctrl
+$NE_RequireAlt	Exiger Alt
+$NE_LanguageHeader	Langue
+$NE_Language	Langue
+$NE_Language_Help	La langue dans laquelle NarrativeEngine écrit : lettres, souvenirs, rumeurs et tableau de bord. Auto suit la langue du jeu. Prend effet au prochain lancement du jeu.
+$NE_Language_Auto	Auto
+$NE_Language_english	English
+$NE_Language_french	Français
+$NE_Language_german	Deutsch
+$NE_Language_italian	Italiano
+$NE_Language_spanish	Español
+$NE_Language_polish	Polski

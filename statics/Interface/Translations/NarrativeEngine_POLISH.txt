@@ -1,0 +1,20 @@
+$NE_About	O modzie
+$NE_Author	Autor
+$NE_Description	Opis
+$NE_DescriptionText	Reżyser narracji dla SkyrimNet
+$NE_Controls	Sterowanie
+$NE_DashboardHotkey	Skrót panelu
+$NE_DashboardHotkey_Help	Naciśnij klawisz, aby go przypisać. Przełącznikami Wymagaj Shift / Ctrl / Alt poniżej ustawisz modyfikator, który trzeba przytrzymać przy aktywacji.
+$NE_RequireShift	Wymagaj Shift
+$NE_RequireCtrl	Wymagaj Ctrl
+$NE_RequireAlt	Wymagaj Alt
+$NE_LanguageHeader	Język
+$NE_Language	Język
+$NE_Language_Help	Język, w którym pisze NarrativeEngine: listy, wspomnienia, plotki i panel. Auto oznacza język samej gry. Zmiana działa od następnego uruchomienia gry.
+$NE_Language_Auto	Auto
+$NE_Language_english	English
+$NE_Language_french	Français
+$NE_Language_german	Deutsch
+$NE_Language_italian	Italiano
+$NE_Language_spanish	Español
+$NE_Language_polish	Polski

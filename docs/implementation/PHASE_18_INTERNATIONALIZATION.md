@@ -2094,7 +2094,7 @@ was then clean:
 
 #### Step 24 — French, German, Italian, Spanish and Polish drafts
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2116,6 +2116,78 @@ For each language:
 - A throwaway script confirms every cited record exists in the export and that its string in that language contains
   the cited term.
 - Configure passes the manifest check.
+
+Done. `french.ini`, `german.ini`, `italian.ini`, `spanish.ini` and `polish.ini` ship as drafts, each with an MCM table
+(`NarrativeEngine_<LANGUAGE>.txt`, in the same UTF-16 form as English's). The Language menu offers the five, and
+`manifest.json` lists `en, fr, de, it, es, pl`. Each draft was written by one agent from one brief, and each agent
+checked its own file with the two checkers below before handing it back.
+
+**How each language fits the templates.**
+
+| Language | Scheme spliced as                              | Scheme check                                                                                    |
+| -------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| French   | "dans le cadre de mon plan pour {scheme}"      | rejects a subject, article or preposition first, or a conjugated verb second                      |
+| German   | "als Teil meines Plans, {scheme}"              | requires a zu-infinitive at the end (`zu *, *zu*`), and rejects "um", a subject, or a verb second |
+| Italian  | "come parte del mio piano per {scheme}"        | requires an infinitive first (`*re`, with clitics), and rejects pronouns, articles and verbs     |
+| Spanish  | "mi plan para {scheme}"                        | requires an infinitive first (`*ar`, `*er`, `*ir`, with enclitics), and rejects as Italian does   |
+| Polish   | "w ramach mojego planu, by {scheme}"           | requires an infinitive first (`*ć` and the irregulars), and rejects nouns in `-ość`                |
+
+Each `[Prompt.Form] scheme` asks for exactly that shape, with an example, and sits directly above `[Matching]`. The
+test plots' schemes in `[Plot.Test]` are written in that shape, so they pass their own language's check.
+
+- **Grammar.** Every draft leaves `IndefiniteArticle` empty, because each language's article follows the noun's
+  gender, so a made item is named bare. German sets `PhraseLowercaseFirst = false`. Polish names keep the nominative
+  by the game's own devices: a noun that carries the case ("w okolicy miejsca {place}"), or a colon
+  ("List od: {sender}").
+- **Gender and plurals.** Gender agreement selects on the person wherever the grammar needs it (participles,
+  pronouns, Polish past tenses), with the masculine as `other`. Counts use every category of their family: Polish
+  writes one, few, many and other throughout.
+- **`[Matching]` terms are the game's own.** The player's title is *Enfant de dragon*, *Drachenblut*, *sangue di
+  drago*, *Sangre de Dragón* and *Smocze Dziecię*. The ghost word sits where each language puts it: German compounds
+  it (`*geist`), and the others match it at either end. Every literal word carries a `; cite <term>: <record>`
+  comment.
+
+**Found while drafting, and fixed here.**
+
+- **English's dashboard counts are now plurals.** Sixteen `[Dashboard]` lines wrote a count as a bare `{n}`, so
+  their signature said text, and no translation could make a word agree with it. Polish needs that for nearly every
+  count. They now read `{n, plural, other {# born}}`, so English is unchanged and the count is a number. The section's
+  comment says why.
+- **German's quotes.** German's „…“ opening mark (U+201E) is not in the `en` font set, which a German game uses, so it
+  became »…«.
+
+**Found while drafting, and not changed.** Both concern code, not language files:
+
+- **`{kin}` is English in every language.** `[Gossip.Memory]`'s kin word is an association type's title ("Sister"),
+  and those are plain, unlocalized strings in the game's data, so a German memory reads "Meine Sister Hulda". The
+  drafts write around it where they can.
+- **`{kin}` may describe the wrong person.** `GossipContent.cpp` picks the label by the listener's side and sex,
+  which names what the teller calls the listener. The template uses it for the teller: "My {kin} {teller} told me".
+- **Reviewers' list.** Each draft's report named the places a native speaker should look first:
+  - French and Italian cannot elide or contract before a name ("de Aela", "in La Giumenta Bardata").
+  - Made items read bare, without an article.
+  - Ammunition names are singular after a measure word ("ein Bündel Eisenpfeil").
+  - The data files' names (factions, items) stay English until a `[Data.*]` override is written.
+
+**Verification.**
+
+- **Plugin validator.** The shipped-files test loads all six files and passes: every draft has zero rejections, and
+  rules for all three content checks.
+- **Lint.** A throwaway lint compared each draft with English and reported 0 problems for each. It checked that the
+  draft has all 713 keys and no others, and that placeholders are used only as their signatures allow (plural on
+  numbers, select on people, an `other` everywhere). It found every cited record in the export, holding a string in
+  that language that contains the cited term, and found every MCM key translated.
+- **Fonts, measured.** A throwaway script read each vanilla font set's glyphs, keeping only those that all four fonts
+  the game writes our text in can draw. It then checked every character each draft shows in game:
+  - French, German, Italian and Spanish are covered by all five sets.
+  - Polish is covered by `pl` and `ru`, as **Encoding** predicted.
+  - Each header's `Fonts` says so.
+- **MCM tables.** All six match the known-working table's form (BOM, CRLF, no final newline, `$KEY<TAB>text`), and
+  each defines exactly the keys `config.json` uses.
+- **Configure.** It passes the manifest check with the six codes.
+
+`pwsh -File build.ps1 test`: 584 of 584 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean, and
+it deploys all six language files and MCM tables.
 
 #### Step 25 — Russian, Japanese and Chinese drafts
 

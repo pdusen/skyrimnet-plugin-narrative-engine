@@ -1,0 +1,20 @@
+$NE_About	Über
+$NE_Author	Autor
+$NE_Description	Beschreibung
+$NE_DescriptionText	Erzählregie für SkyrimNet
+$NE_Controls	Steuerung
+$NE_DashboardHotkey	Dashboard-Taste
+$NE_DashboardHotkey_Help	Drücke eine Taste, um sie zu belegen. Mit den Schaltern „Umschalt / Strg / Alt erforderlich“ darunter legst du fest, dass beim Auslösen eine Zusatztaste gedrückt sein muss.
+$NE_RequireShift	Umschalt erforderlich
+$NE_RequireCtrl	Strg erforderlich
+$NE_RequireAlt	Alt erforderlich
+$NE_LanguageHeader	Sprache
+$NE_Language	Sprache
+$NE_Language_Help	Die Sprache, in der NarrativeEngine schreibt: Briefe, Erinnerungen, Gerüchte und das Dashboard. „Automatisch“ folgt der Sprache des Spiels. Wirkt ab dem nächsten Spielstart.
+$NE_Language_Auto	Automatisch
+$NE_Language_english	English
+$NE_Language_french	Français
+$NE_Language_german	Deutsch
+$NE_Language_italian	Italiano
+$NE_Language_spanish	Español
+$NE_Language_polish	Polski

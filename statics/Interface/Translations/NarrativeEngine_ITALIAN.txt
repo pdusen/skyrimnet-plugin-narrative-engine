@@ -1,0 +1,20 @@
+$NE_About	Informazioni
+$NE_Author	Autore
+$NE_Description	Descrizione
+$NE_DescriptionText	Regista narrativo per SkyrimNet
+$NE_Controls	Controlli
+$NE_DashboardHotkey	Tasto rapido del pannello
+$NE_DashboardHotkey_Help	Premi un tasto da assegnare. Usa le opzioni Richiedi Maiusc / Ctrl / Alt qui sotto per richiedere un modificatore premuto al momento dell'attivazione.
+$NE_RequireShift	Richiedi Maiusc
+$NE_RequireCtrl	Richiedi Ctrl
+$NE_RequireAlt	Richiedi Alt
+$NE_LanguageHeader	Lingua
+$NE_Language	Lingua
+$NE_Language_Help	La lingua in cui scrive NarrativeEngine: lettere, ricordi, voci e pannello. Automatica segue la lingua del gioco. Ha effetto dal prossimo avvio del gioco.
+$NE_Language_Auto	Automatica
+$NE_Language_english	English
+$NE_Language_french	Français
+$NE_Language_german	Deutsch
+$NE_Language_italian	Italiano
+$NE_Language_spanish	Español
+$NE_Language_polish	Polski
