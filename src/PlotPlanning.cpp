@@ -249,6 +249,7 @@ namespace NarrativeEngine::PlotPlanning
                                                 input_.occupation,
                                                 naming_};
                 request.excluded = excluded;
+                request.table = input_.table;
                 return request;
             }
 
@@ -320,7 +321,8 @@ namespace NarrativeEngine::PlotPlanning
                                                              kNobodyBusy,
                                                              0.0,
                                                              input_.alive,
-                                                             {});
+                                                             {},
+                                                             input_.table ? *input_.table : Localization::Get());
                     if (!q.Eligible() || q.rung > best) {
                         continue;
                     }

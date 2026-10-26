@@ -274,12 +274,13 @@ namespace NarrativeEngine::PlotBirth
 
         nlohmann::json AmbitionContext(const PlotCasting::Member& boss,
                                        const std::vector<std::string>& made,
-                                       const std::vector<PlotModel::PastScheme>& past)
+                                       const std::vector<PlotModel::PastScheme>& past,
+                                       const LanguageTable::Table& table)
         {
             nlohmann::json ctx;
 
             ctx["bio"] = BioSections(boss.npc, boss.name, "ambition");
-            PromptLanguage::Add(ctx, {"ambition", "scheme", "finish"}, Localization::Get());
+            PromptLanguage::Add(ctx, {"ambition", "scheme", "finish"}, table);
 
             nlohmann::json person = nlohmann::json::object();
             person["name"] = boss.name;
@@ -385,7 +386,8 @@ namespace NarrativeEngine::PlotBirth
                          const Build& build,
                          const Parse& parse,
                          const std::string& who,
-                         const char* stage)
+                         const char* stage,
+                         std::vector<Refusal>* refusals)
         {
             Outcome outcome;
             // Why the last answer was refused, as plot_rejection.prompt words
@@ -404,6 +406,9 @@ namespace NarrativeEngine::PlotBirth
                     // so a second attempt would just wait again.
                     outcome = Outcome{};
                     outcome.rejection = PlotRejection::Make(PlotRejection::Code::CallFailed);
+                    if (refusals != nullptr) {
+                        refusals->push_back({stage, outcome.rejection.code});
+                    }
                     return outcome;
                 }
 
@@ -418,6 +423,9 @@ namespace NarrativeEngine::PlotBirth
                         logger::info("PlotBirth[{}]: {} answered correctly on the retry", stage, who);
                     }
                     return outcome;
+                }
+                if (refusals != nullptr) {
+                    refusals->push_back({stage, outcome.rejection.code});
                 }
                 retry = nlohmann::json::array({outcome.rejection.ToJson()});
                 logger::info("PlotBirth[{}]: retrying for {} after: {}", stage, who, Logged(outcome.rejection));
@@ -526,7 +534,9 @@ namespace NarrativeEngine::PlotBirth
                  const std::vector<RE::FormID>& shortlist,
                  const std::vector<PlotModel::PastScheme>& past,
                  PlotModel::Plot& plot,
-                 std::size_t& decisions)
+                 std::size_t& decisions,
+                 const LanguageTable::Table& table,
+                 std::vector<Refusal>* refusals)
     {
         decisions = 0;
         // Nothing to choose between is not an LLM's problem. This is the
@@ -555,7 +565,8 @@ namespace NarrativeEngine::PlotBirth
             [&] { return CastContext(population, shortlist); },
             [&](const std::string& response) { return ParseCast(response, shortlist); },
             shortlistName,
-            "cast");
+            "cast",
+            refusals);
         if (!cast.ok) {
             Rejected(shortlistName, "cast", Logged(cast.rejection));
             return false;
@@ -576,28 +587,30 @@ namespace NarrativeEngine::PlotBirth
         const auto ambition = AskTwice<AmbitionOutcome>(
             pt,
             kAmbitionPrompt,
-            [&] { return AmbitionContext(*boss, made, past); },
-            [player = PlayerName(), &population, boss, &accomplished](const std::string& response) {
-                const auto resolveRoles = [&population, boss](const PlotVerbs::Verb& goal,
-                                                              const std::vector<PlotModel::SlotValue>& named,
-                                                              std::vector<PlotModel::SlotValue>& resolved) {
+            [&] { return AmbitionContext(*boss, made, past, table); },
+            [player = PlayerName(), &population, boss, &accomplished, &table](const std::string& response) {
+                const auto resolveRoles = [&population, boss, &table](const PlotVerbs::Verb& goal,
+                                                                      const std::vector<PlotModel::SlotValue>& named,
+                                                                      std::vector<PlotModel::SlotValue>& resolved) {
                     const std::vector<PlotModel::SlotValue> none;
                     const std::vector<const PlotModel::Step*> earlier;
-                    const PlotCandidates::Request request{population,
-                                                          boss->npc,
-                                                          PlotMenus::CurrentWorld(),
-                                                          none,
-                                                          earlier,
-                                                          PlotPopulation::AlivePredicate(),
-                                                          {}};
+                    PlotCandidates::Request request{population,
+                                                    boss->npc,
+                                                    PlotMenus::CurrentWorld(),
+                                                    none,
+                                                    earlier,
+                                                    PlotPopulation::AlivePredicate(),
+                                                    {}};
+                    request.table = &table;
                     auto resolution = PlotCandidates::ResolveRoles(goal, named, request);
                     resolved = std::move(resolution.values);
                     return std::move(resolution.problems);
                 };
-                return ParseAmbition(response, TextLimits{}, player, resolveRoles, accomplished);
+                return ParseAmbition(response, TextLimits{}, player, resolveRoles, accomplished, table);
             },
             boss->name,
-            "ambition");
+            "ambition",
+            refusals);
         if (!ambition.ok) {
             Rejected(boss->name, "ambition", Logged(ambition.rejection));
             return false;
@@ -621,6 +634,7 @@ namespace NarrativeEngine::PlotBirth
         TuneFromSettings(input);
         input.alive = PlotPopulation::AlivePredicate();
         input.occupation = ShortOccupation;
+        input.table = &table;
 
         const auto steps = PlotPlanning::Plan(input, [&pt](std::string_view name, const nlohmann::json& ctx) {
             return SkyrimNetAPI::SendCustomDecision(pt, std::string{name}, ctx.dump());
@@ -637,6 +651,9 @@ namespace NarrativeEngine::PlotBirth
                              steps.error);
             }
             Rejected(boss->name, "steps", !steps.error.empty() ? "decision failed: " + steps.error : steps.rejection);
+            if (refusals != nullptr) {
+                refusals->push_back({"steps", PlotRejection::Code::None});
+            }
             return false;
         }
 

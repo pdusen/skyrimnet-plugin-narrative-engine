@@ -16,7 +16,6 @@ namespace NarrativeEngine::Localization
 {
     namespace
     {
-        constexpr std::string_view kFolder = "Data/SKSE/Plugins/NarrativeEngine/Languages";
         constexpr std::string_view kOverlaySuffix = ".custom.ini";
 
         // Built once at Load and never touched again; published through the
@@ -97,6 +96,26 @@ namespace NarrativeEngine::Localization
             }
         }
     } // namespace
+
+    std::optional<LanguageTable::Table> LoadShipped(std::string_view stem, const std::filesystem::path& folder)
+    {
+        const auto english = ReadFile(folder / "english.ini");
+        if (!english) {
+            return std::nullopt;
+        }
+        std::optional<std::string> shipped;
+        if (stem != "english") {
+            shipped = ReadFile(folder / (std::string{stem} + ".ini"));
+            if (!shipped) {
+                return std::nullopt;
+            }
+        }
+        return LanguageTable::Table::Build(
+            {*english,
+             shipped ? std::optional<std::string_view>{*shipped} : std::optional<std::string_view>{},
+             std::nullopt},
+            TextKeys::All());
+    }
 
     void Load()
     {

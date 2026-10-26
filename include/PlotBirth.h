@@ -251,10 +251,25 @@ namespace NarrativeEngine::PlotBirth
     //
     // `decisions` is how many decisions planning asked, kept or not, for
     // the trace.
+    //
+    // `table` is the language the birth is asked and read in: the
+    // output-language line, [Prompt.Form], [Matching] and the name
+    // matchers. The session's, except for the language trial.
+    //
+    // `refusals`, when given, collects every answer refused along the way,
+    // a retried one included, by stage ("cast", "ambition", "steps") and
+    // code: what the language trial counts.
+    struct Refusal
+    {
+        std::string stage;
+        PlotRejection::Code code = PlotRejection::Code::None;
+    };
     [[nodiscard]] bool Compose(const PlotThread::Token& pt,
                                const PlotCasting::Population& population,
                                const std::vector<RE::FormID>& shortlist,
                                const std::vector<PlotModel::PastScheme>& past,
                                PlotModel::Plot& plot,
-                               std::size_t& decisions);
+                               std::size_t& decisions,
+                               const LanguageTable::Table& table = Localization::Get(),
+                               std::vector<Refusal>* refusals = nullptr);
 } // namespace NarrativeEngine::PlotBirth

@@ -912,6 +912,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/CourierUtils.cpp"
         "${CMAKE_SOURCE_DIR}/src/Decorators.cpp"
         "${CMAKE_SOURCE_DIR}/src/RunChecks.cpp"
+        "${CMAKE_SOURCE_DIR}/src/PlotTrial.cpp"
         "${CMAKE_SOURCE_DIR}/src/EvalDispatch.cpp"
         "${CMAKE_SOURCE_DIR}/src/FineRoads.cpp"
         "${CMAKE_SOURCE_DIR}/src/TravelGraph.cpp"

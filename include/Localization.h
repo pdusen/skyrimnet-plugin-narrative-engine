@@ -2,6 +2,8 @@
 
 #include <LanguageTable.h>
 
+#include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -83,4 +85,15 @@ namespace NarrativeEngine::Localization
     // What `sFontConfigFile` said at Load, judged against the session's
     // language, for the dashboard to report.
     [[nodiscard]] FontCheck Fonts();
+
+    // Where the language files live, relative to the game's folder.
+    inline constexpr std::string_view kFolder = "Data/SKSE/Plugins/NarrativeEngine/Languages";
+
+    // `stem`'s table as it ships: English, and that language's own file, with
+    // no player overlay. Built on demand and owned by the caller, for the
+    // language trial, which runs plot birth under languages other than the
+    // session's. The session's tables are never touched. Empty when either
+    // file cannot be read.
+    [[nodiscard]] std::optional<LanguageTable::Table> LoadShipped(std::string_view stem,
+                                                                  const std::filesystem::path& folder = kFolder);
 } // namespace NarrativeEngine::Localization

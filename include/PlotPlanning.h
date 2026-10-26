@@ -119,6 +119,11 @@ namespace NarrativeEngine::PlotPlanning
         // fillable, asks as before.
         std::vector<PlotModel::SlotValue> goalRoles;
 
+        // The language the plan's people are read in: what its matchers take
+        // a name or a title to be. Null for the session's; the language trial
+        // sets another.
+        const LanguageTable::Table* table = nullptr;
+
         // How a step's race is run, for estimating its odds, and the odds a
         // step planning may prepare must reach before planning stops. Below
         // it, the step is prepared further while anything can prepare it.

@@ -469,6 +469,35 @@ export interface PlotFactionInfo {
     overrides: number;
 }
 
+// The language trial (PlotTrial.h): plot birth run `births` times under
+// each of a few languages, nothing kept. `done` of `total` births have run.
+export interface TrialLanguage {
+    stem: string;
+    // The language's own name for itself.
+    name: string;
+    loaded: boolean;
+    attempted: number;
+    accepted: number;
+    // Every refused answer, a retried one included: by rejection code, and
+    // by the language check behind it ("Scheme", "PlayerTitle", "names").
+    by_code: Record<string, number>;
+    by_check: Record<string, number>;
+    masterminds: number;
+    // Up to three accepted plots' memories, in that language.
+    memories: string[];
+}
+
+export interface TrialState {
+    running: boolean;
+    ran: boolean;
+    done: number;
+    total: number;
+    // Roughly how many LLM calls a whole trial makes.
+    calls: number;
+    births: number;
+    languages: TrialLanguage[];
+}
+
 export interface PlotsTabState {
     enabled: boolean;
     active: number;
@@ -493,6 +522,7 @@ export interface PlotsTabState {
     // `window.ne_setPlotTicksEnabled('true'|'false')`. Forced ticks run
     // either way.
     ticks_enabled: boolean;
+    trial: TrialState;
     factions: PlotFactionInfo[];
     // Active plots and terminal ones awaiting reaping alike.
     list: PlotEntry[];

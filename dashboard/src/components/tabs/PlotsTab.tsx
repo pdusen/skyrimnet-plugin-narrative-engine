@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 
 import { Rich } from '../../i18n/Rich';
 import { label, t } from '../../i18n/strings';
-import type { PlotEntry, PlotsTabState } from '../../types';
+import type { PlotEntry, PlotsTabState, TrialState } from '../../types';
 import { PlotChain, PlotChainLegend } from '../PlotChain';
 
 // PlotsTab — a budget header above a vertically scrolling list of plot
@@ -22,7 +22,97 @@ declare global {
         ne_setPlotTicksEnabled?: (enabled: string) => void;
         // Seeds a premade College plot. See PlotTestPlots.h.
         ne_seedTestPlot?: (which: string) => void;
+        ne_runLanguageTrial?: (arg: string) => void;
     }
+}
+
+// What a map of counts reads as: "scheme_not_verb 2, names 1". The keys are
+// the plugin's own codes, shown as sent.
+function counts(map: Record<string, number>): string {
+    const entries = Object.entries(map);
+    return entries.length === 0 ? '—' : entries.map(([k, n]) => `${k} ${n}`).join(', ');
+}
+
+// The language trial: a button, its confirmation, and per language what the
+// births came to. See PlotTrial.h.
+function LanguageTrial({ trial, busy }: { trial: TrialState; busy: boolean }): ReactNode {
+    const [confirming, setConfirming] = useState(false);
+    return (
+        <div className="plot-trial">
+            {confirming && (
+                <div className="settings-rebind-overlay" role="dialog" aria-modal="true">
+                    <div className="settings-rebind-panel">
+                        <h3>{t('trial.confirm')}</h3>
+                        <p>{t('trial.confirm.body', { births: trial.births, calls: trial.calls })}</p>
+                        <div className="settings-rebind-buttons">
+                            <button type="button" className="bulk-button" onClick={() => setConfirming(false)}>
+                                {t('common.cancel')}
+                            </button>
+                            <button
+                                type="button"
+                                className="bulk-button"
+                                onClick={() => {
+                                    setConfirming(false);
+                                    window.ne_runLanguageTrial?.('');
+                                }}
+                            >
+                                {t('trial.run')}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            <button type="button" disabled={busy || trial.running} onClick={() => setConfirming(true)}>
+                {t('trial.button')}
+            </button>
+            {trial.running && (
+                <span className="plot-busy">
+                    <i className="plot-spinner" />
+                    {t('trial.running', { done: trial.done, total: trial.total })}
+                </span>
+            )}
+            {(trial.running || trial.ran) && (
+                <table className="pool-table">
+                    <thead>
+                        <tr>
+                            <th>{t('trial.column.language')}</th>
+                            <th>{t('trial.column.accepted')}</th>
+                            <th>{t('trial.column.masterminds')}</th>
+                            <th>{t('trial.column.refused')}</th>
+                            <th>{t('trial.column.checks')}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {trial.languages.map(l => (
+                            <tr key={l.stem}>
+                                <td>{l.name || l.stem}</td>
+                                <td>
+                                    {l.loaded
+                                        ? t('trial.accepted', { accepted: l.accepted, attempted: l.attempted })
+                                        : t('trial.not_loaded')}
+                                </td>
+                                <td>{l.masterminds}</td>
+                                <td>{counts(l.by_code)}</td>
+                                <td>{counts(l.by_check)}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+            {trial.languages
+                .filter(l => l.memories.length > 0)
+                .map(l => (
+                    <div key={l.stem} className="plot-trial-memories">
+                        <h4 className="plot-section-heading">{t('trial.memories', { language: l.name })}</h4>
+                        <ul>
+                            {l.memories.map((m, i) => (
+                                <li key={i}>{m}</li>
+                            ))}
+                        </ul>
+                    </div>
+                ))}
+        </div>
+    );
 }
 
 function forceTicks(count: number) {
@@ -116,6 +206,8 @@ export function PlotsTab({ plots }: { plots: PlotsTabState }): ReactNode {
                     </div>
                 )}
             </div>
+
+            <LanguageTrial trial={plots.trial} busy={busy} />
 
             <PlotChainLegend />
 

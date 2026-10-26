@@ -25,6 +25,7 @@
 #include <PlotTestPlots.h>
 #include <PlotText.h>
 #include <PlotTick.h>
+#include <PlotTrial.h>
 #include <PlotVerbs.h>
 #include <PrismaUI.h>
 #include <RunChecks.h>
@@ -501,6 +502,35 @@ namespace NarrativeEngine::DashboardUIManager
             };
         }
 
+        // The Plots tab's language trial: the running or last one.
+        nlohmann::json TrialJson()
+        {
+            const auto trial = PlotTrial::Get();
+            nlohmann::json languages = nlohmann::json::array();
+            for (const auto& l : trial.languages) {
+                languages.push_back({
+                    {"stem", l.stem},
+                    {"name", l.nativeName},
+                    {"loaded", l.loaded},
+                    {"attempted", l.attempted},
+                    {"accepted", l.accepted},
+                    {"by_code", l.byCode},
+                    {"by_check", l.byCheck},
+                    {"masterminds", l.masterminds},
+                    {"memories", l.memories},
+                });
+            }
+            return {
+                {"running", trial.running},
+                {"ran", trial.ran},
+                {"done", trial.done},
+                {"total", trial.total},
+                {"calls", PlotTrial::kApproximateCalls},
+                {"births", PlotTrial::kBirthsPerLanguage},
+                {"languages", std::move(languages)},
+            };
+        }
+
         // What the dashboard words for itself: the session's [Dashboard]
         // strings, the grammar its formatter needs, and the font check for
         // the status banner. The language is chosen once, at kDataLoaded,
@@ -718,6 +748,17 @@ namespace NarrativeEngine::DashboardUIManager
         {
             logger::info("DashboardUIManager: ne_probeDecisions");
             PlotDispatch::EnqueueWork([](const PlotThread::Token& pt) { (void)DecisionProbe::Run(pt); });
+        }
+
+        // The Plots tab's Language trial button, after its confirmation. See
+        // PlotTrial.h.
+        void OnRunLanguageTrial(const char* /*argument*/)
+        {
+            logger::info("DashboardUIManager: ne_runLanguageTrial");
+            AsyncDispatch::EnqueueWork([](const PluginThread::Token& pt) {
+                PlotTrial::Start(pt);
+                PushFullState();
+            });
         }
 
         // The Settings tab's Run checks button. See RunChecks.h.
@@ -1061,6 +1102,7 @@ namespace NarrativeEngine::DashboardUIManager
         PrismaUI_API::RegisterJSListener(g_view, "ne_dispatchAction", &OnDispatchAction);
         PrismaUI_API::RegisterJSListener(g_view, "ne_abortRunningBeat", &OnAbortRunningBeat);
         PrismaUI_API::RegisterJSListener(g_view, "ne_runChecks", &OnRunChecks);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_runLanguageTrial", &OnRunLanguageTrial);
         PrismaUI_API::RegisterJSListener(g_view, "ne_forcePlotTicks", &OnForcePlotTicks);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setPlotTicksEnabled", &OnSetPlotTicksEnabled);
         PrismaUI_API::RegisterJSListener(g_view, "ne_seedDebugPlot", &OnSeedDebugPlot);
@@ -1694,6 +1736,7 @@ namespace NarrativeEngine::DashboardUIManager
                 // locks its debug buttons on.
                 {"ticks_pending", PlotTick::OutstandingTicks()},
                 {"debug_buttons", cfg2.plotDebugButtons},
+                {"trial", TrialJson()},
                 {"ticks_enabled", PlotTick::TicksEnabled()},
                 {"factions", std::move(factionsJson)},
                 {"list", std::move(plotsJson)},

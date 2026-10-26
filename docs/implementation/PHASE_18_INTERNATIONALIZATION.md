@@ -2366,7 +2366,7 @@ Done. The Settings tab opens with a **Checks** panel and its *Run checks* button
 
 #### Step 28 — The *Language trial* button
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2389,6 +2389,46 @@ Done. The Settings tab opens with a **Checks** panel and its *Run checks* button
 - An `*.engine.test.cpp` showing a trial birth never mutates `PlotState`, the occupancy table, the plot budget or the
   RNG stream position.
 - An `*.engine.test.cpp` showing two tables can be read at once without touching the session's own.
+
+Done. The Plots tab has a *Language trial* button. Its confirmation states the cost, about 100 LLM calls, and that
+plot ticks wait behind it.
+
+- **`Localization::LoadShipped(stem)`** builds English plus that language's shipped file into a table the caller owns.
+  It reads no overlay, so the trial measures the draft as it ships, and it never touches the session's tables.
+- **Plot birth takes an explicit table.** `PlotBirth::Compose` gains `table` and an optional `refusals` list.
+  `refusals` records every refused answer, retried ones included, by stage and code. The table reaches all four places
+  birth read the session's: the ambition call's output-language line, `ParseAmbition`, the role resolver's request,
+  and planning. `PlotPlanning::Input::table` is what `RequestOf` and its agent check read. Steps 17 and 18 had already
+  given those functions the parameter.
+- **`PlotTrial`** runs on the plot worker. Each language gets eight births, and each birth draws its shortlist the way
+  `PlotTick` does. The draw is filtered and shuffled the same way too. Two things differ:
+  - It reads the live state through a `const PlotState&`, so by type it cannot add a plot, engage an occupancy row,
+    spend an id or the budget, or advance the live RNG.
+  - It draws from a random stream of its own.
+
+  The composed plot is then dropped. The draw's predicates are a parameter, the live game's by default.
+- **Results** go to the dashboard after every birth, and to `NarrativeEngine_Plots.log` as `Language trial:` lines.
+  For each language they hold:
+  - births attempted and accepted;
+  - every refusal by code, and by the check behind it (`Scheme`, `PlayerTitle`, or `names` for the name matchers);
+  - the number of distinct masterminds;
+  - up to three accepted plots' memories, each the mastermind's memory of doing the first step themselves, rendered in
+    that language.
+
+  A session that cannot answer decisions runs nothing and says so. The panel's 13 strings are in all nine files.
+
+**Verification.**
+
+- **The build** is clean.
+- **`PlotTrial.engine.test.cpp`, the live state.** A trial birth runs on a real plot worker under the fake SkyrimNet,
+  with a German table and a three-person population. It draws a shortlist, composes, and is refused at the cast call
+  twice, as a real birth would be. Its own stream moved. The live state did not: same plots, the same occupancy rows,
+  next id, born count, game day and RNG state.
+- **The same file, two tables.** German and Russian load side by side, each with zero rejections and different
+  `[Dashboard]` strings. The session's table is the same object, in the same language, before and after. English
+  loads alone, and a language with no file loads nothing.
+
+`pwsh -File build.ps1 test`: 588 of 588 C++ tests and 4 of 4 dashboard tests passed.
 
 #### Step 29 — Run checks
 
