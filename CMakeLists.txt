@@ -441,6 +441,59 @@ if(DEFINED OUTPUT_FOLDER)
         )
     endif()
 
+    # The manifest's `languages`, which SkyrimNet's hub filters on, must be
+    # exactly the `Code` of every language file that ships, draft or
+    # reviewed. Players' overlays (`<stem>.custom.ini`) are not shipped.
+    string(JSON json_language_count LENGTH "${json_manifest}" languages)
+    set(manifest_languages "")
+    if(json_language_count GREATER 0)
+        math(EXPR json_language_last "${json_language_count} - 1")
+        foreach(i RANGE ${json_language_last})
+            string(JSON code GET "${json_manifest}" languages ${i})
+            list(APPEND manifest_languages "${code}")
+        endforeach()
+    endif()
+    file(
+        GLOB LANGUAGE_FILES
+        CONFIGURE_DEPENDS
+        "${STATICS_SOURCE_DIR}/SKSE/Plugins/NarrativeEngine/Languages/*.ini"
+    )
+    set(shipped_languages "")
+    foreach(language_file IN LISTS LANGUAGE_FILES)
+        if(language_file MATCHES "\\.custom\\.ini$")
+            continue()
+        endif()
+        file(
+            STRINGS
+            "${language_file}"
+            code_line
+            REGEX "^[ \t]*Code[ \t]*="
+            LIMIT_COUNT 1
+        )
+        # A ';' would split the value into two list items; shown as ','.
+        string(REPLACE "\;" "," code_line "${code_line}")
+        string(
+            REGEX REPLACE
+            # The whole value, as the loader reads it: a ';' after a
+            # value is part of it.
+            "^[ \t]*Code[ \t]*=[ \t]*(.*[^ \t\r])[ \t\r]*$"
+            "\\1"
+            code
+            "${code_line}"
+        )
+        list(APPEND shipped_languages "${code}")
+    endforeach()
+    list(SORT manifest_languages)
+    list(SORT shipped_languages)
+    if(NOT manifest_languages STREQUAL shipped_languages)
+        string(REPLACE ";" ", " manifest_shown "${manifest_languages}")
+        string(REPLACE ";" ", " shipped_shown "${shipped_languages}")
+        message(
+            FATAL_ERROR
+            "manifest.json languages [${manifest_shown}] do not match the Code of the shipped language files [${shipped_shown}]"
+        )
+    endif()
+
     if(IS_DIRECTORY "${STATICS_SOURCE_DIR}")
         file(
             GLOB_RECURSE STATICS_FILES

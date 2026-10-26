@@ -2063,7 +2063,7 @@ it deploys the table with the rest of `statics/`.
 
 #### Step 23 — Manifest languages, and the configure check
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2074,6 +2074,21 @@ it deploys the table with the rest of `statics/`.
 
 **Verification:** configure succeeds with `["en"]`. A throwaway mismatch makes it fail with a message naming both
 sets, and is then reverted.
+
+Done. `manifest.json` gains `"languages": ["en"]`. Beside the id and version checks, configure now reads that array
+and the `Code` line of every `Languages/*.ini`, skipping players' `.custom.ini` overlays. If the two differ as sets,
+it fails. The `Languages/` glob is `CONFIGURE_DEPENDS`, so adding a file re-runs the check. `Code` is read whole, as
+the loader reads it, since a `;` after a value is part of the value.
+
+**Verification.** Configure succeeded with `["en"]`. Each throwaway case below was reverted at once, and configure
+was then clean:
+
+- The manifest said `["en", "de"]`. Configure failed with "manifest.json languages [de, en] do not match the Code of
+  the shipped language files [en]".
+- A `german.ini` with `Code = de` was added. Configure failed the other way, naming `[en]` against `[de, en]`, and a
+  `german.custom.ini` beside it was ignored.
+- A `Code = de` with CRLF line endings and trailing spaces matched a manifest of `["en", "de"]`.
+- A `Code = de ; iso` did not match, and was shown as the one item it is.
 
 ### Phase G — The other eight languages
 
