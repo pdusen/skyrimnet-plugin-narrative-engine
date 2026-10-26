@@ -66,5 +66,9 @@ namespace NarrativeEngine::DebugNotify
         [[nodiscard]] std::string AmbushSpawned(const LanguageTable::Table& table,
                                                 std::string_view group,
                                                 int attackers);
+        // The dashboard's font check: a line of the accented letters the
+        // game's own font set ought to draw, to read once the dashboard
+        // closes.
+        [[nodiscard]] std::string FontSample(const LanguageTable::Table& table);
     } // namespace Text
 } // namespace NarrativeEngine::DebugNotify

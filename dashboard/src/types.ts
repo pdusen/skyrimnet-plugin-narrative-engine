@@ -105,8 +105,26 @@ export interface LanguageState {
     strings: Record<string, string>;
 }
 
+// The Settings tab's Run checks panel: the last run of the render check
+// (RunChecks.h on the C++ side), and whether one is waiting on its reply.
+export interface ChecksState {
+    running: boolean;
+    ran: boolean;
+    // not_queued: SkyrimNet would not take the request; reported: it took it
+    // and reported an error, which `detail` holds as it said it.
+    failure: 'none' | 'not_queued' | 'reported';
+    detail: string;
+    // Whether each sentinel came back: a render_template name built in the
+    // template, a decorator's JSON field, and an include's loop and set
+    // variables.
+    file: boolean;
+    decorator: boolean;
+    include: boolean;
+}
+
 export interface DirectorState {
     language: LanguageState;
+    checks: ChecksState;
     status: {
         skyrim_net_available: boolean;
         skyrim_net_version: number;

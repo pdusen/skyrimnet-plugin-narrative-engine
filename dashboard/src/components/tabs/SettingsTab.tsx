@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
-import { t as tr } from '../../i18n/strings';
-import type { DirectorState, Hotkey, PhaseName } from '../../types';
+import { language, pluralsAvailable, t as tr } from '../../i18n/strings';
+import type { ChecksState, DirectorState, Hotkey, PhaseName } from '../../types';
 
 interface Props {
     state: DirectorState;
@@ -26,6 +26,7 @@ declare global {
         ne_setVisitComposeMemoryCap?: (arg: string) => void;
         ne_setVisitComposeDialogueCap?: (arg: string) => void;
         ne_setVisitConclusionPollRecentLinesCap?: (arg: string) => void;
+        ne_runChecks?: (arg: string) => void;
     }
 }
 
@@ -107,6 +108,62 @@ function LiveSlider({
     );
 }
 
+// What can only be checked in the running game: SkyrimNet's rendering of a
+// test prompt, the game's fonts, and this view's plural rules. See RunChecks.h.
+function ChecksPanel({ checks }: { checks: ChecksState }) {
+    const lang = language();
+    const verdict = (ok: boolean) => (ok ? tr('checks.pass') : tr('checks.fail'));
+    const fonts = lang?.fonts.verdict ?? 'unknown';
+    return (
+        <section className="panel">
+            <h2>{tr('checks.title')}</h2>
+            <p className="settings-panel-hint">{tr('checks.hint')}</p>
+            <div className="settings-row">
+                <button
+                    type="button"
+                    className="bulk-button"
+                    disabled={checks.running}
+                    onClick={() => window.ne_runChecks?.('')}
+                >
+                    {tr('checks.run')}
+                </button>
+                {checks.running && <span className="settings-row-label">{tr('checks.running')}</span>}
+            </div>
+            {(checks.running || checks.ran) && <p className="settings-panel-hint">{tr('checks.notification')}</p>}
+            {checks.ran && checks.failure === 'none' && (
+                <>
+                    <div className="settings-row">
+                        <span className="settings-row-label">{tr('checks.file')}</span>
+                        <span>{verdict(checks.file)}</span>
+                    </div>
+                    <div className="settings-row">
+                        <span className="settings-row-label">{tr('checks.decorator')}</span>
+                        <span>{verdict(checks.decorator)}</span>
+                    </div>
+                    <div className="settings-row">
+                        <span className="settings-row-label">{tr('checks.include')}</span>
+                        <span>{verdict(checks.include)}</span>
+                    </div>
+                </>
+            )}
+            {checks.ran && checks.failure === 'not_queued' && <p>{tr('checks.not_queued')}</p>}
+            {checks.ran && checks.failure === 'reported' && (
+                <p>{tr('checks.reported', { detail: checks.detail })}</p>
+            )}
+            <div className="settings-row">
+                <span className="settings-row-label">{tr('checks.fonts')}</span>
+                <span>
+                    {tr(`checks.fonts.${fonts}`, { font_set: lang?.fonts.font_set ?? '', language: lang?.native_name ?? '' })}
+                </span>
+            </div>
+            <div className="settings-row">
+                <span className="settings-row-label">{tr('checks.plurals')}</span>
+                <span>{pluralsAvailable() ? tr('checks.plurals.available') : tr('checks.plurals.missing')}</span>
+            </div>
+        </section>
+    );
+}
+
 function HotkeyRebindModal() {
     const onCancel = () => window.ne_cancelHotkeyRebind?.('');
     return (
@@ -155,6 +212,8 @@ export function SettingsTab({ state }: Props) {
     return (
         <div className="tab-content settings-tab">
             {s.dashboard_hotkey_capture_active && <HotkeyRebindModal />}
+
+            <ChecksPanel checks={state.checks} />
 
             <section className="panel">
                 <h2>{tr('settings.general')}</h2>

@@ -27,6 +27,7 @@
 #include <PlotTick.h>
 #include <PlotVerbs.h>
 #include <PrismaUI.h>
+#include <RunChecks.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
 #include <SkyrimNetEvents.h>
@@ -719,6 +720,16 @@ namespace NarrativeEngine::DashboardUIManager
             PlotDispatch::EnqueueWork([](const PlotThread::Token& pt) { (void)DecisionProbe::Run(pt); });
         }
 
+        // The Settings tab's Run checks button. See RunChecks.h.
+        void OnRunChecks(const char* /*argument*/)
+        {
+            logger::info("DashboardUIManager: ne_runChecks");
+            AsyncDispatch::EnqueueWork([](const PluginThread::Token& pt) {
+                RunChecks::Start(pt);
+                PushFullState();
+            });
+        }
+
         // Backs the Dispatch tab's Abort button (after confirmation).
         // No-ops backend-side if no beat is in flight.
         void OnAbortRunningBeat(const char* /*argument*/)
@@ -1049,6 +1060,7 @@ namespace NarrativeEngine::DashboardUIManager
         PrismaUI_API::RegisterJSListener(g_view, "ne_setAllActionsEnabled", &OnSetAllActionsEnabled);
         PrismaUI_API::RegisterJSListener(g_view, "ne_dispatchAction", &OnDispatchAction);
         PrismaUI_API::RegisterJSListener(g_view, "ne_abortRunningBeat", &OnAbortRunningBeat);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_runChecks", &OnRunChecks);
         PrismaUI_API::RegisterJSListener(g_view, "ne_forcePlotTicks", &OnForcePlotTicks);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setPlotTicksEnabled", &OnSetPlotTicksEnabled);
         PrismaUI_API::RegisterJSListener(g_view, "ne_seedDebugPlot", &OnSeedDebugPlot);
@@ -1116,6 +1128,27 @@ namespace NarrativeEngine::DashboardUIManager
         nlohmann::json j;
 
         j["language"] = LanguageJson();
+
+        // The Settings tab's Run checks panel: the last run, and whether one
+        // is waiting on its reply.
+        {
+            const auto checks = RunChecks::Get();
+            const char* failure = "none";
+            if (checks.failure == RunChecks::Snapshot::Failure::NotQueued) {
+                failure = "not_queued";
+            } else if (checks.failure == RunChecks::Snapshot::Failure::Reported) {
+                failure = "reported";
+            }
+            j["checks"] = {
+                {"running", checks.running},
+                {"ran", checks.ran},
+                {"failure", failure},
+                {"detail", checks.detail},
+                {"file", checks.result.file},
+                {"decorator", checks.result.decorator},
+                {"include", checks.result.include},
+            };
+        }
 
         // status
         j["status"] = {

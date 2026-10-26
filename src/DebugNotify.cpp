@@ -78,6 +78,7 @@ namespace NarrativeEngine::DebugNotify
             constexpr Key kUnknownVisitor{"Notify", "unknown.visitor", {}};
             constexpr Key kUnknownPerson{"Notify", "unknown.person", {}};
             constexpr Key kUnknownGroup{"Notify", "unknown.group", {}};
+            constexpr Key kFontSample{"Notify", "font_sample", {}};
 
             std::string Or(const LanguageTable::Table& table, std::string_view value, const Key& fallback)
             {
@@ -88,7 +89,7 @@ namespace NarrativeEngine::DebugNotify
         const std::vector<TextKeys::Key>& Keys()
         {
             static const std::vector<Key> keys{
-                kCourier, kVisitor, kRumor, kAmbush, kUnknownVisitor, kUnknownPerson, kUnknownGroup};
+                kCourier, kVisitor, kRumor, kAmbush, kUnknownVisitor, kUnknownPerson, kUnknownGroup, kFontSample};
             return keys;
         }
 
@@ -109,6 +110,11 @@ namespace NarrativeEngine::DebugNotify
             return table.Render(
                 kRumor,
                 TextTemplate::Arguments{}.Set("origin", TextTemplate::Person{Or(table, origin, kUnknownPerson)}));
+        }
+
+        std::string FontSample(const LanguageTable::Table& table)
+        {
+            return table.Render(kFontSample, {});
         }
 
         std::string AmbushSpawned(const LanguageTable::Table& table, std::string_view group, int attackers)

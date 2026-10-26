@@ -2302,7 +2302,7 @@ The claims that a fallen-back or unmatched line is logged rest on the census lin
 
 #### Step 27 — The *Run checks* button
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2321,6 +2321,48 @@ The button does three things:
 
 **Verification:** the build. Unit tests cover the response check: a response containing both sentinels passes, and
 one missing either fails. The prompt passes the offline render comparison with SkyrimNet's rules stubbed.
+
+Done. The Settings tab opens with a **Checks** panel and its *Run checks* button.
+
+- **`narrative_engine_render_check.prompt`** asks the model to repeat three numbered lines. Each line holds a sentinel
+  only if one rendering rule holds:
+  1. `render_template("components\\narrative_engine\\render_check_" + render_check.file)` reaches
+     `render_check_sentinel.prompt`, whose fixed text is `RenderCheck::kFileSentinel`.
+  2. `ne_render_check(player.UUID)`, a new decorator, answers `{"sentinel": …}`, and the template reads `.sentinel`.
+  3. Inside a `{% for %}`, after a `{% set %}`, `{% include "components/narrative_engine/render_check_include.prompt" %}`
+     words both the loop's item and the set value.
+
+  The decorator and include sentinels are fresh for each run, so a reply cannot pass from memory. The "both
+  sentinels" of the verification are the include's two, the loop's and the set's, which must both come back.
+- **`RenderCheck`** (core, pure) makes the sentinels, the context and the decorator's record, and judges a reply.
+  **`RunChecks`** sends the prompt on the Director's model. Its record is under its own lock, the one state the
+  decorator reads from SkyrimNet's render thread. It judges the sanitized reply, logs the verdict, and pushes the
+  dashboard. A request SkyrimNet would not queue, and a failure SkyrimNet reports, each show as such, with SkyrimNet's
+  own words for the second.
+- **The notification** is a new `[Notify] font_sample` key: "NarrativeEngine font check: Café · Jörgen · naïve · Ærø ·
+  Ölfrún", with the lead-in translated in every draft. It posts whatever the debug-notification setting says, since the
+  button asked for it.
+- **The panel** shows a pass or fail for each sentinel, the font check, and whether `Intl.PluralRules` exists. The font
+  check is the one sent with every state since Step 21. Its 19 strings are in all nine language files.
+
+**Verification.**
+
+- **Unit tests** (`RenderCheck.test.cpp`) cover the verdict:
+  - a reply with every sentinel passes all three;
+  - the include passes only with both of its sentinels;
+  - each part fails on its own;
+  - an empty reply passes nothing;
+  - another run's sentinels do not pass this one.
+
+  They also cover the shape of the context and the decorator's record.
+- **The decorator test** now counts four registrations, and checks that `ne_render_check` answers empty while no check
+  runs. The template tests for that empty answer.
+- **Offline render.** Through the Inja harness, with the decorator stubbed to answer JSON, the prompt renders
+  `1: NE-FILE-4QX7`, `2: <decorator sentinel>` and `3: <loop>+<set>`.
+- **Strings and fonts.** The Step 21 key check finds all 299 `[Dashboard]` keys the dashboard asks for, and the font
+  measurement still covers every file by its own set.
+
+`pwsh -File build.ps1 test`: 586 of 586 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
 
 #### Step 28 — The *Language trial* button
 
