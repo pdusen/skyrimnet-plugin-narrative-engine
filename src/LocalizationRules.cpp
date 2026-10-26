@@ -28,6 +28,23 @@ namespace NarrativeEngine::Localization
             return text.substr(first, text.find_last_not_of(kSpace) - first + 1);
         }
 
+        // The MCM's Language menu stores its option, which is a translation
+        // key: `$NE_Language_german`, or `$NE_Language_Auto` for the game's
+        // own language. Anything else is a stem as a player would write it.
+        constexpr std::string_view kMcmPrefix = "$ne_language_";
+
+        [[nodiscard]] std::string Wanted(std::string_view override)
+        {
+            auto wanted = Lowered(Trimmed(override));
+            if (wanted.starts_with(kMcmPrefix)) {
+                wanted.erase(0, kMcmPrefix.size());
+                if (wanted == "auto") {
+                    wanted.clear();
+                }
+            }
+            return wanted;
+        }
+
         [[nodiscard]] bool Has(std::span<const std::string> stems, std::string_view stem)
         {
             return std::ranges::any_of(stems, [stem](const std::string& s) { return Lowered(s) == stem; });
@@ -36,7 +53,7 @@ namespace NarrativeEngine::Localization
 
     Resolution Resolve(std::string_view detected, std::string_view override, std::span<const std::string> available)
     {
-        const auto wanted = Lowered(Trimmed(override));
+        const auto wanted = Wanted(override);
         const auto game = Lowered(Trimmed(detected));
         std::string skipped;
         if (!wanted.empty()) {

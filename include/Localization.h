@@ -29,6 +29,8 @@ namespace NarrativeEngine::Localization
     // The override when it names an available file, else the game's
     // language when that has one, else English. `available` is the stems of
     // the language files present, overlays excluded; comparisons ignore case.
+    // The override is a stem ("german"), or what the MCM's Language menu
+    // stores: `$NE_Language_<stem>`, or `$NE_Language_Auto` for none.
     [[nodiscard]] Resolution Resolve(std::string_view detected,
                                      std::string_view override,
                                      std::span<const std::string> available);

@@ -14,8 +14,11 @@ exclude: |
     build/.*|
     dashboard/node_modules/.*|
     external/.*|
-    docs/prior-art/.*
+    docs/prior-art/.*|
+    statics/Interface/Translations/.*
   )$
+# The MCM translation tables are UTF-16 in the working tree (see
+# .gitattributes), which every text hook here would read as bytes and mangle.
 
 default_language_version:
   python: python3

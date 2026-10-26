@@ -505,7 +505,14 @@ ESP's other book text is placeholder that never displays.
 `Interface/Translations/NarrativeEngine_<LANGUAGE>.txt` (UTF-16 LE, `$KEY<TAB>text`), which is the format it
 requires. Those files are the MCM's language files, shipped for every language. There are about fourteen strings
 in each, and nothing generates them. Skyrim picks that file by the *game's* language, not by our override, so a
-player who overrides Portuguese on an English install gets an English MCM. That is a documented limitation.
+player who overrides Portuguese on an English install gets an English MCM. That is a documented limitation. Nor
+does MCM Helper fall back to English: a game language with no file of ours shows the raw `$NE_…` keys, so every
+language we ship ships its MCM file too.
+
+The page's *Language* menu writes `[Localization] sLanguage`. An MCM Helper menu stores the option it shows, so each
+option is a translation key, `$NE_Language_<stem>`, which every language's MCM file words as the language's own name.
+*Auto* is `$NE_Language_Auto`. `Localization::Resolve` reads the stem out of that form and takes *Auto* as no
+setting, and a stem written by hand still works.
 
 **Dashboard.** The TSX holds keys, not English. C++ sends the `[Dashboard]` section as a string table with every
 state. The dashboard formats through a TypeScript port of the same formatter subset, and both
@@ -2006,7 +2013,7 @@ dialogue" where it showed `InDialogue`.
 
 #### Step 22 — MCM translation files and the language setting
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2019,6 +2026,40 @@ dialogue" where it showed `InDialogue`.
 **Verification:** a throwaway check that every `$` key in `config.json` is defined in the translation file. Its
 encoding, BOM and line format must match a translation file from another mod installed in the modlist that is known
 to work in game.
+
+Done.
+
+- **`config.json`** shows only `$NE_…` keys. The one exception is the mod's own name, which no language translates.
+- **`Interface/Translations/NarrativeEngine_ENGLISH.txt`** holds those 15 keys.
+- **The new *Language* section** holds a `menu` bound to `sLanguage:Localization`.
+
+**How the menu stores the language.** MCM Helper's source settled this; its documentation does not say. A `menu`
+stores the very option string its dropdown shows (`OnOptionMenuAccept` stores `options[index]`), and the field shows
+the stored string. So the options are translation keys, which SkyUI words as it draws them: `$NE_Language_Auto` and
+one `$NE_Language_<stem>` per shipped language. MCM Helper's own SkyUI page uses `$`-keyed options the same way.
+`Localization::Resolve` now reads that form, case-insensitively: `$NE_Language_german` names `german`, and
+`$NE_Language_Auto` counts as no setting, so the log does not call it a missing file. A stem written by hand still
+works. The MCM seed's `[Localization]` holds `sLanguage=$NE_Language_Auto`, so the field reads *Auto* before the
+player touches it. Today the menu offers *Auto* and English, the only shipped language; Step 26 adds an option and an
+MCM file per draft.
+
+**Keeping a UTF-16 file in the repository.** `.gitattributes` gives the translation tables
+`working-tree-encoding=UTF-16LE-BOM eol=crlf`. The working tree, and so the deployed file, is what the game reads,
+while the repository stores UTF-8, so diffs stay readable. The pre-commit hooks skip that folder, since every text
+hook would rewrite UTF-16 as bytes. A delete-and-checkout produced a UTF-16 LE file with a BOM, CRLF line endings and
+no final newline.
+
+**Verification.**
+
+- A throwaway check found all 15 `$` keys in `config.json` defined in the table, with none unused.
+- It compared the table against `Experience_ENGLISH.txt` from *Experience - MCM*, an MCM Helper translation table
+  installed in the modlist. The two matched on all five measures: the `FF FE` BOM, CRLF with no bare LF or CR, no
+  final newline, and every line `$KEY<TAB>text`.
+- New `Resolve` cases cover the stored form: a stem in either case, *Auto* with nothing reported skipped, and a
+  stored language with no file.
+
+`pwsh -File build.ps1 test`: 584 of 584 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean, and
+it deploys the table with the rest of `statics/`.
 
 #### Step 23 — Manifest languages, and the configure check
 

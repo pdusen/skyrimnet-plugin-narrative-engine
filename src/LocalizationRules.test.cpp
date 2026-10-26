@@ -30,6 +30,16 @@ TEST_CASE("Localization::Resolve", "[Localization]")
         }
         CHECK(Resolve("Polish", "", kShipped).stem == "polish");
     }
+    SECTION("the MCM's stored option names a language, or none")
+    {
+        CHECK(Resolve("ENGLISH", "$NE_Language_german", kShipped).stem == "german");
+        CHECK(Resolve("ENGLISH", "$ne_language_GERMAN", kShipped).stem == "german");
+        CHECK(Resolve("RUSSIAN", "$NE_Language_Auto", kShipped).stem == "russian");
+        const auto auto_ = Resolve("RUSSIAN", "$NE_Language_Auto", kShipped);
+        // Auto is no setting at all, so nothing was skipped.
+        CHECK_FALSE(auto_.reason.contains("no file"));
+        CHECK(Resolve("RUSSIAN", "$NE_Language_klingon", kShipped).stem == "russian");
+    }
     SECTION("the setting wins when it names a file, whatever the game says")
     {
         CHECK(Resolve("ENGLISH", "german", kShipped).stem == "german");

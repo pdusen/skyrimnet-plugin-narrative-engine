@@ -5,7 +5,7 @@
   "cursorFillMode": "topToBottom",
   "content": [
     {
-      "text": "About",
+      "text": "$NE_About",
       "type": "header"
     },
     {
@@ -16,28 +16,28 @@
       }
     },
     {
-      "text": "Author",
+      "text": "$NE_Author",
       "type": "text",
       "valueOptions": {
         "value": "pdusen"
       }
     },
     {
-      "text": "Description",
+      "text": "$NE_Description",
       "type": "text",
       "valueOptions": {
-        "value": "Narrative Director for SkyrimNet"
+        "value": "$NE_DescriptionText"
       }
     },
     {
-      "text": "Controls",
+      "text": "$NE_Controls",
       "type": "header",
       "position": 1
     },
     {
       "id": "iHotkeyDXSC:Dashboard",
-      "text": "Dashboard Hotkey",
-      "help": "Press a key to bind. Use the Require Shift / Ctrl / Alt toggles below to require a modifier held at activation.",
+      "text": "$NE_DashboardHotkey",
+      "help": "$NE_DashboardHotkey_Help",
       "type": "keymap",
       "valueOptions": {
         "sourceType": "ModSettingInt"
@@ -45,7 +45,7 @@
     },
     {
       "id": "bHotkeyShift:Dashboard",
-      "text": "Require Shift",
+      "text": "$NE_RequireShift",
       "type": "toggle",
       "valueOptions": {
         "sourceType": "ModSettingBool"
@@ -53,7 +53,7 @@
     },
     {
       "id": "bHotkeyCtrl:Dashboard",
-      "text": "Require Ctrl",
+      "text": "$NE_RequireCtrl",
       "type": "toggle",
       "valueOptions": {
         "sourceType": "ModSettingBool"
@@ -61,10 +61,25 @@
     },
     {
       "id": "bHotkeyAlt:Dashboard",
-      "text": "Require Alt",
+      "text": "$NE_RequireAlt",
       "type": "toggle",
       "valueOptions": {
         "sourceType": "ModSettingBool"
+      }
+    },
+    {
+      "text": "$NE_LanguageHeader",
+      "type": "header"
+    },
+    {
+      "id": "sLanguage:Localization",
+      "text": "$NE_Language",
+      "help": "$NE_Language_Help",
+      "type": "menu",
+      "valueOptions": {
+        "sourceType": "ModSettingString",
+        "options": ["$NE_Language_Auto", "$NE_Language_english"],
+        "defaultValue": "$NE_Language_Auto"
       }
     }
   ]
