@@ -31,7 +31,13 @@
 //             → RUNNING (quest already at Stage 10 = Salutation); on any
 //             failure → CLEANUP with failure_reason.
 //   RUNNING — dispatches on quest stage each Normal-mode Tick:
-//               Stage 10 (Salutation) — approach-distance / timeout
+//               Stage 10 (Salutation) — approach-distance / timeout, and a
+//                                       rollback if the player changes cell
+//                                       into somewhere a visit could not
+//                                       start (also watched during COMPOSE).
+//                                       Through a door it is immediate; on
+//                                       the same side of one it waits while
+//                                       the visitor is near and in view.
 //               Stage 20 (Discuss)    — internal three-way substate cycle
 //                                       (Discussing / OnHold / ReEngage) that
 //                                       drives the speech sampler + conclusion
@@ -43,6 +49,8 @@
 //               Stage 30 (Valediction)— closing narration + dwell
 //               Stage 50 (ReturnHome) — distance / LOS / cell / timeout
 //               Stage 60 / 200        — terminal → CLEANUP
+//             A fast travel rolls the visit back before the opening line,
+//             and after it records the walk-out silently and aborts.
 //   CLEANUP — send the sender home if alive (to the return anchor, or
 //             to the snapshotted position when there is none), dispatch
 //             the Shutdown fragment, wait for the quest to drop to
@@ -58,6 +66,7 @@ namespace NarrativeEngine
         bool IsAvailable(const BeatContext& ctx) const override;
         void OnStart(const BeatContext& ctx, const nlohmann::json& parameters) override;
         TickResult Tick(const PluginThread::Token& pt, TickMode mode, BeatState state) override;
+        double RemainingCooldownGameHours() const override;
         void Abort(const MainThread::Token& mt) override;
     };
 
@@ -86,6 +95,13 @@ namespace NarrativeEngine
         // Production never calls this and the pointer stays null there,
         // so the only cost on the real path is one atomic load per Tick.
         void SetClock(double (*clock)());
+
+        // Run what the fast-travel sink runs when the player arrives.
+        //
+        // The sink is registered on an event source the harness cannot
+        // fire, so this is the only way a test reaches the handler. It is
+        // the same call the sink makes, on the same thread.
+        void FastTravel(const MainThread::Token& mt);
     } // namespace NPCVisitBeat_Testing
 
     namespace NPCVisitBeat_Query
@@ -105,11 +121,11 @@ namespace NarrativeEngine
 
     namespace NPCVisitBeat_Cooldowns
     {
-        // Stamp the per-sender cooldown for `senderNpcFormID`. Called
-        // when the Salutation → Discuss transition fires — the moment
-        // we know the sender actually arrived and delivered their
-        // opening line. Rolled-back / hard-aborted visits deliberately
-        // do NOT stamp.
+        // Stamp the per-sender cooldown for `senderNpcFormID`, and the
+        // per-beat cooldown with it. Called when the Salutation →
+        // Discuss transition fires — the moment we know the sender
+        // actually arrived and delivered their opening line.
+        // Rolled-back / hard-aborted visits deliberately do NOT stamp.
         void OnVisitCompleted(RE::FormID senderNpcFormID);
 
         // Stamp the per-sender memory watermark at Valediction entry

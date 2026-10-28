@@ -738,6 +738,19 @@ TEST_CASE("GossipSim will not start a rumor with somebody who cannot spread one"
         }
     }
 
+    SECTION("when a script has made the origin a ghost")
+    {
+        // A ghost record never becomes a participant, so this is the live
+        // reference turned spectral after the graph was built.
+        engine.SetActorGhost(engine.PlacedActorFor(world.hulda), true);
+
+        SECTION("should refuse the seed")
+        {
+            REQUIRE(Seed(world.hulda) == 0);
+            REQUIRE(Rumors().empty());
+        }
+    }
+
     SECTION("when the origin can hold a conversation")
     {
         SECTION("should seed as normal")

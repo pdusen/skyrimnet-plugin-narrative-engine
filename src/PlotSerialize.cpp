@@ -1,0 +1,516 @@
+#include <PlotSerialize.h>
+
+#include <PlotVerbs.h>
+
+#include <cstring>
+#include <type_traits>
+
+namespace NarrativeEngine::PlotSerialize
+{
+    namespace
+    {
+        // Strings are length-prefixed with a 32-bit count. A cap is
+        // applied on read so a corrupt length cannot ask for a
+        // gigabyte before the read fails.
+        constexpr std::uint32_t kMaxStringBytes = 4096;
+        // Likewise for collection counts. Generous against
+        // iPlotMaxConcurrent and iPlotStepHistoryCap, tight enough that
+        // garbage is rejected rather than allocated.
+        constexpr std::uint32_t kMaxCollection = 100000;
+
+        template <typename T> bool WritePod(ByteSink& sink, const T& value)
+        {
+            static_assert(std::is_trivially_copyable_v<T>, "WritePod is for trivially copyable types only");
+            return sink.Write(&value, sizeof(T));
+        }
+
+        template <typename T> bool ReadPod(ByteSource& source, T& value)
+        {
+            static_assert(std::is_trivially_copyable_v<T>, "ReadPod is for trivially copyable types only");
+            return source.Read(&value, sizeof(T));
+        }
+
+        bool WriteString(ByteSink& sink, const std::string& value)
+        {
+            const auto size = static_cast<std::uint32_t>(value.size());
+            if (!WritePod(sink, size)) {
+                return false;
+            }
+            return size == 0 || sink.Write(value.data(), size);
+        }
+
+        bool ReadString(ByteSource& source, std::string& value)
+        {
+            std::uint32_t size{};
+            if (!ReadPod(source, size) || size > kMaxStringBytes) {
+                return false;
+            }
+            value.assign(size, '\0');
+            return size == 0 || source.Read(value.data(), size);
+        }
+
+        // Roll history. Capped on read so a corrupt count cannot ask for
+        // an unbounded allocation; a step that genuinely ran for
+        // thousands of ticks is already a bug worth failing on.
+        constexpr std::uint32_t kMaxRolls = 4096;
+
+        bool WriteRolls(ByteSink& sink, const std::vector<PlotModel::TickRecord>& rolls)
+        {
+            if (!WritePod(sink, static_cast<std::uint32_t>(rolls.size()))) {
+                return false;
+            }
+            for (const auto& r : rolls) {
+                if (!WritePod(sink, r.progressAdded) || !WritePod(sink, r.progressAfter)
+                    || !WritePod(sink, static_cast<std::uint8_t>(r.held))
+                    || !WritePod(sink, static_cast<std::uint8_t>(r.caught))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool ReadRolls(ByteSource& source, std::vector<PlotModel::TickRecord>& rolls)
+        {
+            std::uint32_t count{};
+            if (!ReadPod(source, count) || count > kMaxRolls) {
+                return false;
+            }
+            rolls.clear();
+            rolls.reserve(count);
+            for (std::uint32_t i = 0; i < count; ++i) {
+                PlotModel::TickRecord r;
+                std::uint8_t held{};
+                std::uint8_t caught{};
+                if (!ReadPod(source, r.progressAdded) || !ReadPod(source, r.progressAfter) || !ReadPod(source, held)
+                    || !ReadPod(source, caught)) {
+                    return false;
+                }
+                r.held = held != 0;
+                r.caught = caught != 0;
+                rolls.push_back(r);
+            }
+            return true;
+        }
+
+        // A verb has at most three slots of its own plus the implicit
+        // mastermind; anything far beyond that is corruption.
+        constexpr std::uint32_t kMaxSlotValues = 16;
+
+        bool WriteSlots(ByteSink& sink, const std::vector<PlotModel::SlotValue>& slots)
+        {
+            if (!WritePod(sink, static_cast<std::uint32_t>(slots.size()))) {
+                return false;
+            }
+            for (const auto& value : slots) {
+                if (!WriteString(sink, value.name) || !WritePod(sink, value.form) || !WriteString(sink, value.text)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // A slot whose form no longer resolves keeps its text, as a target
+        // does, and marks the plot unresolved.
+        bool ReadSlots(ByteSource& source, std::vector<PlotModel::SlotValue>& slots, bool& resolved)
+        {
+            std::uint32_t count{};
+            if (!ReadPod(source, count) || count > kMaxSlotValues) {
+                return false;
+            }
+            slots.clear();
+            slots.reserve(count);
+            for (std::uint32_t i = 0; i < count; ++i) {
+                PlotModel::SlotValue value;
+                RE::FormID saved{};
+                if (!ReadString(source, value.name) || !ReadPod(source, saved) || !ReadString(source, value.text)) {
+                    return false;
+                }
+                if (saved != 0 && !source.ResolveFormID(saved, value.form)) {
+                    value.form = 0;
+                    resolved = false;
+                }
+                slots.push_back(std::move(value));
+            }
+            return true;
+        }
+
+        bool WriteStep(ByteSink& sink, const PlotModel::Step& step)
+        {
+            // The step TYPE goes out as its manifest id, not as the
+            // enum's numeric value. Reordering the enum must not
+            // silently reinterpret every saved step.
+            const std::string typeId(PlotModel::TypeId(step.type));
+            return WriteString(sink, typeId) && WritePod(sink, step.target) && WriteString(sink, step.targetName)
+                   && WriteString(sink, step.description) && WriteString(sink, step.label) && WritePod(sink, step.actor)
+                   && WriteString(sink, step.actorName) && WritePod(sink, static_cast<std::uint8_t>(step.state))
+                   && WritePod(sink, static_cast<std::uint8_t>(step.outcome)) && WritePod(sink, step.budget)
+                   && WritePod(sink, step.elapsed) && WritePod(sink, step.threshold) && WritePod(sink, step.progress)
+                   && WritePod(sink, step.heldTicks) && WritePod(sink, step.sizingTravel)
+                   && WritePod(sink, step.sizingImportance) && WritePod(sink, step.sizingCompetence)
+                   && WritePod(sink, step.sizingSuitability) && WritePod(sink, step.sizingEase)
+                   && WriteRolls(sink, step.rolls) && WriteString(sink, step.verb) && WriteSlots(sink, step.slots);
+        }
+
+        // `ok` is set false when a FormID in this step no longer
+        // resolves. The step is still read (the stream must stay in
+        // sync) but the caller drops the plot it belongs to.
+        bool ReadStep(ByteSource& source, PlotModel::Step& step, bool& resolved)
+        {
+            std::string typeId;
+            if (!ReadString(source, typeId) || !PlotModel::ParseStepType(typeId, step.type)) {
+                return false;
+            }
+
+            // ORDER MUST MATCH WriteStep EXACTLY. It did not, until the
+            // roles below were added and forced a look: the writer put
+            // target and targetName ahead of description, the reader
+            // took description first. The stream stayed in sync purely
+            // because target was always 0 and targetName always empty,
+            // and a zeroed form id and a zero-length string are the same
+            // four bytes -- so a loaded step came back with an empty
+            // description and its text sitting in targetName, which is
+            // what the dashboard was rendering after a load.
+            //
+            // Once a target resolves to a real person that coincidence
+            // ends: a non-zero form id read as a string length asks for
+            // megabytes, fails the sanity check, and drops the plot.
+            RE::FormID savedTarget{};
+            if (!ReadPod(source, savedTarget)) {
+                return false;
+            }
+            if (savedTarget != 0 && !source.ResolveFormID(savedTarget, step.target)) {
+                // The person is gone -- an uninstalled mod, most often.
+                // The NAME survives, which turns the step into exactly
+                // the placeholder an unmatched role produces, so a plot
+                // outlives the disappearance of who it was aimed at.
+                step.target = 0;
+                resolved = false;
+            }
+
+            if (!ReadString(source, step.targetName) || !ReadString(source, step.description)
+                || !ReadString(source, step.label)) {
+                return false;
+            }
+
+            RE::FormID savedActor{};
+            if (!ReadPod(source, savedActor)) {
+                return false;
+            }
+            if (savedActor != 0 && !source.ResolveFormID(savedActor, step.actor)) {
+                step.actor = 0;
+                resolved = false;
+            }
+
+            std::uint8_t state{};
+            std::uint8_t outcome{};
+            if (!ReadString(source, step.actorName) || !ReadPod(source, state) || !ReadPod(source, outcome)
+                || !ReadPod(source, step.budget) || !ReadPod(source, step.elapsed) || !ReadPod(source, step.threshold)
+                || !ReadPod(source, step.progress) || !ReadPod(source, step.heldTicks)
+                || !ReadPod(source, step.sizingTravel) || !ReadPod(source, step.sizingImportance)
+                || !ReadPod(source, step.sizingCompetence) || !ReadPod(source, step.sizingSuitability)
+                || !ReadPod(source, step.sizingEase) || !ReadRolls(source, step.rolls)) {
+                return false;
+            }
+            step.state = static_cast<PlotModel::StepState>(state);
+            step.outcome = static_cast<PlotModel::StepOutcome>(outcome);
+
+            if (!ReadString(source, step.verb) || !ReadSlots(source, step.slots, resolved)) {
+                return false;
+            }
+            // A verb this build does not know -- renamed or removed since the
+            // save -- leaves a step nobody can render or resolve. The bytes
+            // are read either way, so the stream stays in step; the plot it
+            // belongs to is dropped.
+            if (!step.verb.empty() && PlotVerbs::Find(step.verb) == nullptr) {
+                resolved = false;
+            }
+            return true;
+        }
+
+        bool WriteStepVector(ByteSink& sink, const std::vector<PlotModel::Step>& steps)
+        {
+            if (!WritePod(sink, static_cast<std::uint32_t>(steps.size()))) {
+                return false;
+            }
+            for (const auto& step : steps) {
+                if (!WriteStep(sink, step)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool ReadStepVector(ByteSource& source, std::vector<PlotModel::Step>& steps, bool& resolved)
+        {
+            std::uint32_t count{};
+            if (!ReadPod(source, count) || count > kMaxCollection) {
+                return false;
+            }
+            steps.clear();
+            steps.reserve(count);
+            for (std::uint32_t i = 0; i < count; ++i) {
+                PlotModel::Step step;
+                if (!ReadStep(source, step, resolved)) {
+                    return false;
+                }
+                steps.push_back(std::move(step));
+            }
+            return true;
+        }
+    } // namespace
+
+    bool WriteState(const PlotState& state, ByteSink& sink)
+    {
+        if (!WritePod(sink, state.nextPlotId) || !WritePod(sink, state.simGameDay) || !WritePod(sink, state.rngState)) {
+            return false;
+        }
+
+        if (!WritePod(sink, static_cast<std::uint32_t>(state.plots.size()))) {
+            return false;
+        }
+        for (const auto& plot : state.plots) {
+            if (!WritePod(sink, plot.id) || !WritePod(sink, plot.mastermind) || !WriteString(sink, plot.mastermindName)
+                || !WriteString(sink, plot.ambition) || !WriteString(sink, plot.scheme)
+                || !WriteString(sink, plot.finish) || !WriteStepVector(sink, plot.plan)
+                || !WritePod(sink, static_cast<std::uint32_t>(plot.cursor)) || !WriteStepVector(sink, plot.history)
+                || !WritePod(sink, plot.adaptations) || !WritePod(sink, static_cast<std::uint8_t>(plot.status))
+                || !WritePod(sink, static_cast<std::uint8_t>(plot.outcome)) || !WritePod(sink, plot.bornOnGameDay)
+                || !WritePod(sink, plot.endedOnGameDay) || !WriteString(sink, plot.concession)
+                || !WritePod(sink, static_cast<std::uint32_t>(plot.abandoned.size()))) {
+                return false;
+            }
+            for (const auto& way : plot.abandoned) {
+                if (!WriteString(sink, way.verb) || !WritePod(sink, way.target) || !WriteString(sink, way.targetName)) {
+                    return false;
+                }
+            }
+            if (!WritePod(sink, static_cast<std::uint32_t>(plot.onGuard.size()))) {
+                return false;
+            }
+            for (const auto npc : plot.onGuard) {
+                if (!WritePod(sink, npc)) {
+                    return false;
+                }
+            }
+        }
+
+        if (!WritePod(sink, static_cast<std::uint32_t>(state.occupancy.size()))) {
+            return false;
+        }
+        for (const auto& [formId, row] : state.occupancy) {
+            if (!WritePod(sink, formId) || !WritePod(sink, row.plotId)
+                || !WritePod(sink, static_cast<std::uint8_t>(row.role))
+                || !WritePod(sink, row.mastermindAvailableAtGameDay) || !WritePod(sink, row.actorAvailableAtGameDay)) {
+                return false;
+            }
+        }
+
+        if (!WritePod(sink, static_cast<std::uint32_t>(state.past.size()))) {
+            return false;
+        }
+        for (const auto& p : state.past) {
+            if (!WritePod(sink, p.mastermind) || !WriteString(sink, p.scheme)
+                || !WritePod(sink, static_cast<std::uint8_t>(p.succeeded ? 1 : 0))) {
+                return false;
+            }
+        }
+
+        // Counters are session-scoped diagnostics, deliberately NOT
+        // saved: they describe what this session did, and carrying them
+        // across a load would make "plots born" a number nobody can
+        // reason about.
+        return true;
+    }
+
+    bool ReadState(PlotState& state, ByteSource& source, std::uint32_t version, std::size_t& droppedPlots)
+    {
+        state = PlotState{};
+        droppedPlots = 0;
+
+        // A record from a version this build does not understand is
+        // DISCARDED rather than guessed at. The caller logs it; this
+        // function stays free of anything that needs the plugin's
+        // logging plumbing, because that is what keeps it probeable.
+        if (version != kRecordVersion) {
+            return false;
+        }
+
+        const auto fail = [&state]() {
+            // Leave nothing behind. A truncated record must not
+            // resurrect half a world — the plots it did manage to read
+            // would go on to write memories about a scheme whose
+            // remaining steps were never loaded.
+            state = PlotState{};
+            return false;
+        };
+
+        if (!ReadPod(source, state.nextPlotId) || !ReadPod(source, state.simGameDay)
+            || !ReadPod(source, state.rngState)) {
+            return fail();
+        }
+
+        std::uint32_t plotCount{};
+        if (!ReadPod(source, plotCount) || plotCount > kMaxCollection) {
+            return fail();
+        }
+
+        for (std::uint32_t i = 0; i < plotCount; ++i) {
+            PlotModel::Plot plot;
+            bool resolved = true;
+
+            RE::FormID savedMastermind{};
+            if (!ReadPod(source, plot.id) || !ReadPod(source, savedMastermind)) {
+                return fail();
+            }
+            if (!source.ResolveFormID(savedMastermind, plot.mastermind)) {
+                plot.mastermind = 0;
+                resolved = false;
+            }
+
+            std::uint32_t cursor{};
+            std::uint8_t plotStatus{};
+            std::uint8_t plotOutcome{};
+            // The scheme is a sentence now, not a step type plus a
+            // FormID, so there is nothing here left to resolve or to
+            // drop a plot over.
+            if (!ReadString(source, plot.mastermindName) || !ReadString(source, plot.ambition)
+                || !ReadString(source, plot.scheme) || !ReadString(source, plot.finish)
+                || !ReadStepVector(source, plot.plan, resolved) || !ReadPod(source, cursor)
+                || !ReadStepVector(source, plot.history, resolved) || !ReadPod(source, plot.adaptations)
+                || !ReadPod(source, plotStatus) || !ReadPod(source, plotOutcome) || !ReadPod(source, plot.bornOnGameDay)
+                || !ReadPod(source, plot.endedOnGameDay) || !ReadString(source, plot.concession)) {
+                return fail();
+            }
+
+            // A way given up on whose person no longer resolves is dropped:
+            // nobody can be planned against them anyway.
+            std::uint32_t abandonedCount{};
+            if (!ReadPod(source, abandonedCount)) {
+                return fail();
+            }
+            for (std::uint32_t n = 0; n < abandonedCount; ++n) {
+                PlotModel::Abandoned way;
+                RE::FormID savedTarget{};
+                if (!ReadString(source, way.verb) || !ReadPod(source, savedTarget)
+                    || !ReadString(source, way.targetName)) {
+                    return fail();
+                }
+                if (savedTarget != 0 && source.ResolveFormID(savedTarget, way.target)) {
+                    plot.abandoned.push_back(std::move(way));
+                }
+            }
+            // Somebody on guard who no longer resolves is dropped: no step
+            // can be done to them anyway.
+            std::uint32_t guardCount{};
+            if (!ReadPod(source, guardCount)) {
+                return fail();
+            }
+            for (std::uint32_t n = 0; n < guardCount; ++n) {
+                RE::FormID saved{};
+                RE::FormID npc{};
+                if (!ReadPod(source, saved)) {
+                    return fail();
+                }
+                if (saved != 0 && source.ResolveFormID(saved, npc)) {
+                    plot.onGuard.push_back(npc);
+                }
+            }
+            plot.cursor = cursor;
+            plot.status = static_cast<PlotModel::PlotStatus>(plotStatus);
+            plot.outcome = static_cast<PlotModel::PlotOutcome>(plotOutcome);
+
+            // A plot whose mastermind is gone has no author. Dropping it
+            // is the honest outcome: there is nobody left to adapt the
+            // plan, and every memory it would go on to write would name
+            // someone who does not exist in this load order.
+            if (!resolved) {
+                ++droppedPlots;
+                continue;
+            }
+            state.plots.push_back(std::move(plot));
+        }
+
+        std::uint32_t occupancyCount{};
+        if (!ReadPod(source, occupancyCount) || occupancyCount > kMaxCollection) {
+            return fail();
+        }
+        for (std::uint32_t i = 0; i < occupancyCount; ++i) {
+            RE::FormID savedNpc{};
+            PlotModel::Occupancy row;
+            std::uint8_t role{};
+            if (!ReadPod(source, savedNpc) || !ReadPod(source, row.plotId) || !ReadPod(source, role)
+                || !ReadPod(source, row.mastermindAvailableAtGameDay)
+                || !ReadPod(source, row.actorAvailableAtGameDay)) {
+                return fail();
+            }
+            row.role = static_cast<PlotModel::Role>(role);
+
+            RE::FormID npc{};
+            if (!source.ResolveFormID(savedNpc, npc)) {
+                // The NPC is gone; so is any reason to hold their slot
+                // or their cooldown.
+                continue;
+            }
+            // An occupancy row pointing at a plot that was dropped above
+            // would keep an NPC engaged forever in a plot that no longer
+            // exists. Free it rather than carrying the leak forward.
+            if (row.plotId != 0 && state.FindPlot(row.plotId) == nullptr) {
+                row.plotId = 0;
+            }
+            state.occupancy[npc] = row;
+        }
+
+        // A past scheme whose mastermind no longer resolves is dropped: they
+        // will scheme no more.
+        std::uint32_t pastCount{};
+        if (!ReadPod(source, pastCount) || pastCount > kMaxCollection) {
+            return fail();
+        }
+        for (std::uint32_t i = 0; i < pastCount; ++i) {
+            RE::FormID saved{};
+            PlotModel::PastScheme p;
+            std::uint8_t succeeded{};
+            if (!ReadPod(source, saved) || !ReadString(source, p.scheme) || !ReadPod(source, succeeded)) {
+                return fail();
+            }
+            if (saved != 0 && source.ResolveFormID(saved, p.mastermind)) {
+                p.succeeded = succeeded != 0;
+                state.past.push_back(std::move(p));
+            }
+        }
+
+        return true;
+    }
+
+    // --- Adapters ----------------------------------------------------
+
+    bool VectorSink::Write(const void* data, std::size_t size)
+    {
+        const auto* bytes = static_cast<const std::uint8_t*>(data);
+        m_bytes.insert(m_bytes.end(), bytes, bytes + size);
+        return true;
+    }
+
+    VectorSource::VectorSource(std::vector<std::uint8_t> bytes, Resolver resolver)
+        : m_bytes(std::move(bytes)), m_resolver(resolver)
+    {}
+
+    bool VectorSource::Read(void* data, std::size_t size)
+    {
+        if (m_cursor + size > m_bytes.size()) {
+            return false;
+        }
+        std::memcpy(data, m_bytes.data() + m_cursor, size);
+        m_cursor += size;
+        return true;
+    }
+
+    bool VectorSource::ResolveFormID(RE::FormID saved, RE::FormID& out)
+    {
+        if (m_resolver != nullptr) {
+            return m_resolver(saved, out);
+        }
+        out = saved;
+        return true;
+    }
+} // namespace NarrativeEngine::PlotSerialize

@@ -3,6 +3,8 @@
 #include <DecisionLog.h>
 #include <logger.h>
 #include <PhaseTracker.h>
+#include <PlotAwareness.h>
+#include <PlotState.h>
 #include <SkyrimNetAPI.h>
 
 #include <functional>
@@ -14,6 +16,7 @@ namespace NarrativeEngine::Decorators
     {
         constexpr const char* kTensionName = "ne_narrative_tension";
         constexpr const char* kPhaseName = "ne_narrative_phase";
+        constexpr const char* kPlotAwarenessName = "ne_plot_awareness";
 
         constexpr const char* kTensionDescription = "NarrativeEngine: most recent Director tension score, "
                                                     "rendered as a decimal string in the range 0..100. "
@@ -22,6 +25,11 @@ namespace NarrativeEngine::Decorators
         constexpr const char* kPhaseDescription = "NarrativeEngine: current Freytag-pyramid phase name "
                                                   "(Exposition | RisingAction | Climax | FallingAction | Resolution). "
                                                   "Ignores the actor argument.";
+
+        constexpr const char* kPlotAwarenessDescription =
+            "NarrativeEngine: the plot this actor is in, in the second person: as its mastermind, "
+            "the scheme and every step of it; as an agent, the errand they were sent on. "
+            "Empty for an actor in no plot.";
 
         std::string TensionCallback(RE::Actor* /*ignored*/)
         {
@@ -36,6 +44,16 @@ namespace NarrativeEngine::Decorators
         std::string PhaseCallback(RE::Actor* /*ignored*/)
         {
             return std::string{PhaseTracker::PhaseName(PhaseTracker::Get())};
+        }
+
+        // Called on SkyrimNet's render thread, which owns nothing of ours: the
+        // published snapshot is the one piece of plot state any thread may
+        // read. The actor's base is a field read, the same one SkyrimNet makes
+        // to render the rest of their prompt.
+        std::string PlotAwarenessCallback(RE::Actor* actor)
+        {
+            const auto* base = actor != nullptr ? actor->GetActorBase() : nullptr;
+            return base != nullptr ? PlotAwareness::Describe(*Plots::Snapshot(), base->GetFormID()) : std::string{};
         }
 
         void RegisterOne(const std::string& name,
@@ -63,5 +81,6 @@ namespace NarrativeEngine::Decorators
     {
         RegisterOne(kTensionName, kTensionDescription, &TensionCallback);
         RegisterOne(kPhaseName, kPhaseDescription, &PhaseCallback);
+        RegisterOne(kPlotAwarenessName, kPlotAwarenessDescription, &PlotAwarenessCallback);
     }
 } // namespace NarrativeEngine::Decorators

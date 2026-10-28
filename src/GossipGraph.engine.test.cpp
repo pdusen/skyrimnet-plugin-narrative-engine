@@ -348,6 +348,18 @@ TEST_CASE("GossipGraph takes only people", "[GossipGraph][engine]")
     engine.SetEditorIDOf(dummy, "TestDummyGuy");
     engine.AddResident(town, dummy);
 
+    // A shade carrying the ACBS ghost flag and the name of the living, the
+    // way Savos Aren's ghost does.
+    auto* shade = engine.AddNPC(0x00E91005u, "Savos Aren");
+    shade->actorData.actorBaseFlags.set(RE::ACTOR_BASE_DATA::Flag::kUnique);
+    shade->actorData.actorBaseFlags.set(RE::ACTOR_BASE_DATA::Flag::kIsGhost);
+    engine.AddResident(town, shade);
+
+    // An apparition built without the flag, known only by its name.
+    auto* apparition = engine.AddNPC(0x00E91006u, "Helgi's Ghost");
+    apparition->actorData.actorBaseFlags.set(RE::ACTOR_BASE_DATA::Flag::kUnique);
+    engine.AddResident(town, apparition);
+
     GossipGraph::Initialize();
 
     SECTION("when the residence lists hold more than people")
@@ -367,6 +379,19 @@ TEST_CASE("GossipGraph takes only people", "[GossipGraph][engine]")
         SECTION("should leave the test records out")
         {
             REQUIRE_FALSE(IsParticipant(0x00E91004u));
+        }
+
+        SECTION("should leave the ghosts out, flagged or only named")
+        {
+            REQUIRE_FALSE(IsParticipant(0x00E91005u));
+            REQUIRE_FALSE(IsParticipant(0x00E91006u));
+        }
+
+        SECTION("should count both ghosts as ghosts")
+        {
+            // Not as "not a person": the census and the dashboard's left-out
+            // list are where somebody checks why a ghost is missing.
+            REQUIRE(GossipGraph::GetCensus().rejectedGhost == 2);
         }
 
         SECTION("should still take the people")

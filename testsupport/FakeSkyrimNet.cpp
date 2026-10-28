@@ -184,8 +184,44 @@ extern "C"
             std::this_thread::sleep_for(std::chrono::milliseconds{1});
         }
         if (callback) {
-            callback(s.promptResponse, s.sendPromptSucceeds ? 1 : 0);
+            const bool later = s.sendPromptCalls > 1 && s.laterPromptResponse[0] != '\0';
+            callback(later ? s.laterPromptResponse : s.promptResponse, s.sendPromptSucceeds ? 1 : 0);
         }
+        return true;
+    }
+
+    __declspec(dllexport) bool PublicSendCustomDecisionToLLM(
+        const char* templateName,
+        const char* contextJson,
+        int maxProbabilities,
+        std::function<void(const char* answer, const char* resultJson, int success)> callback)
+    {
+        auto& s = State();
+        if (s.decisionCalls < FakeSkyrimNetState::kMaxRecordedDecisionTemplates) {
+            CopyInto(s.decisionTemplates[s.decisionCalls], sizeof(s.decisionTemplates[0]), templateName);
+        }
+        ++s.decisionCalls;
+        s.lastMaxProbabilities = maxProbabilities;
+        CopyInto(s.lastDecisionTemplate, sizeof(s.lastDecisionTemplate), templateName);
+        CopyInto(s.lastDecisionContext, sizeof(s.lastDecisionContext), contextJson);
+        if (!s.decisionAccepts) {
+            return false;
+        }
+        if (s.decisionNeverAnswers || !callback) {
+            return true;
+        }
+
+        const char* json = s.decisionResultJson;
+        bool succeeds = s.decisionSucceeds;
+        if (s.scriptedCursor < s.scriptedDecisions) {
+            json = s.scriptedJson[s.scriptedCursor];
+            succeeds = s.scriptedSucceeds[s.scriptedCursor];
+            ++s.scriptedCursor;
+        }
+        // Inline, like the prompt export, and for the same reason: a wrapper
+        // that ran its caller's logic on the delivering thread would pass a
+        // test that answered from anywhere else.
+        callback("", json, succeeds ? 1 : 0);
         return true;
     }
 

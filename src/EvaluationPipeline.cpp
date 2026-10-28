@@ -176,45 +176,6 @@ namespace NarrativeEngine::EvaluationPipeline
         return g_inFlight.load();
     }
 
-    std::string StripMarkdownFences(const std::string& input)
-    {
-        // Trim leading/trailing whitespace. If the result begins with ```
-        // (optionally followed by a language tag and newline), skip past
-        // that opening fence and strip the closing fence too.
-        auto isSpace = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
-        std::size_t start = 0;
-        std::size_t end = input.size();
-        while (start < end && isSpace(input[start]))
-            ++start;
-        while (end > start && isSpace(input[end - 1]))
-            --end;
-        if (start == end) {
-            return {};
-        }
-
-        std::string trimmed = input.substr(start, end - start);
-        if (trimmed.size() < 6 || trimmed.substr(0, 3) != "```") {
-            return trimmed;
-        }
-
-        const std::size_t firstNewline = trimmed.find('\n');
-        if (firstNewline == std::string::npos) {
-            return trimmed;
-        }
-        std::string body = trimmed.substr(firstNewline + 1);
-
-        const std::size_t closing = body.rfind("```");
-        if (closing != std::string::npos) {
-            body = body.substr(0, closing);
-        }
-
-        std::size_t bodyEnd = body.size();
-        while (bodyEnd > 0 && isSpace(body[bodyEnd - 1]))
-            --bodyEnd;
-        body.resize(bodyEnd);
-        return body;
-    }
-
     Snapshot BuildSnapshot()
     {
         const bool debug = Settings::Get().debugMode;

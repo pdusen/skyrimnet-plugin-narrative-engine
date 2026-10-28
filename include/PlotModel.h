@@ -1,0 +1,489 @@
+#pragma once
+
+#include <array>
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include <RE/Skyrim.h>
+
+// PlotModel — the plot and step object model, plus the manifest that
+// gives both their vocabulary.
+//
+// Pure data and pure functions. Nothing here reads the engine, holds a
+// token, or knows a thread exists: it is the shape the simulation
+// operates on, so that the arithmetic in later steps can be probed
+// without a game. Every display string is derived here from cached
+// names, which is what lets the log and the dashboard render a plot
+// from a worker thread.
+//
+// See docs/design/FACTION_PLOTS.md Part 1 for the model and
+// docs/implementation/PHASE_17_FACTION_PLOTS.md step 2 for this step.
+namespace NarrativeEngine::PlotModel
+{
+    // THE MANIFEST.
+    //
+    // Fixed, small, and closed. Closed because every type needs a
+    // mechanical resolution, and because this list is handed to the LLM
+    // verbatim as the vocabulary it must plan in — a plan is a sequence
+    // of these against pre-resolved targets, so validating one is a
+    // membership test rather than a name-resolution problem.
+    //
+    // It is also the OBJECTIVE vocabulary. The last step of a plan is
+    // the one that accomplishes the objective, so an objective is just a
+    // step type at terminal difficulty against a high-value target.
+    // Adding a type here widens what plots can be about, with no
+    // separate objective taxonomy to keep in sync.
+    enum class StepType : std::uint8_t
+    {
+        Locate,    // find where a thing or person is
+        Acquire,   // obtain an object
+        Deliver,   // move an object or message to someone
+        Surveil,   // watch a person or place, report back
+        Recruit,   // get someone onto their side, by payment, favour or threat
+        Discredit, // damage a rival's standing or leverage
+        Sabotage,  // impair a thing, a shipment, an arrangement
+        Conceal,   // cover the tracks of a step already taken
+        Craft,     // make a thing at a workbench
+
+        Count
+    };
+
+    inline constexpr std::size_t kStepTypeCount = static_cast<std::size_t>(StepType::Count);
+
+    // Whether a step would unavoidably be noticed if the player were
+    // standing there. Gates when the step may make progress — see the
+    // design doc's Part 6.
+    //
+    // `Sometimes` is honest rather than lazy: lifting a ledger from an
+    // empty study is not the same act as lifting it off a belt, and
+    // whether the type or the individual step should decide is an open
+    // design question. It is treated as conspicuous for now; the day
+    // that becomes per-step, only this table and one predicate move.
+    enum class Conspicuousness : std::uint8_t
+    {
+        No,
+        Sometimes,
+        Yes
+    };
+
+    struct StepTypeTraits
+    {
+        // Stable snake_case identifier. What the LLM answers with and
+        // what the co-save and the trace record — never the enum's
+        // numeric value, which is free to change.
+        std::string_view id;
+        // The display verb. Composed with a cached target name to make
+        // step labels and plot titles; see Label() and Title().
+        std::string_view verb;
+        // What the step MEANS, in the words the model is given. Lives
+        // here rather than in the prompt template so there is exactly
+        // one list of step types in the project: a template that
+        // restates them is a second copy of this enum, and the day one
+        // gains a member the two disagree without anything noticing.
+        std::string_view description;
+        // Whether this type can currently be handed to the player. A
+        // STAGING decision rather than a property of the type: the
+        // `false` entries are the ones whose completion conditions are
+        // harder to detect, not the ones that would make bad errands.
+        bool playerDeliverable;
+        Conspicuousness conspicuous;
+    };
+
+    // Ordered exactly as StepType. Indexed by cast, so a reordering of
+    // the enum without a matching reordering here is caught by the
+    // static_assert below rather than by silently mislabelling steps.
+    inline constexpr std::array<StepTypeTraits, kStepTypeCount> kStepTypes{{
+        {"locate", "Locate", "find out where a person or thing actually is", true, Conspicuousness::No},
+        {"acquire", "Acquire", "get hold of an object, bought, taken or lifted", true, Conspicuousness::Sometimes},
+        {"deliver", "Deliver to", "get something into someone's hands quietly", true, Conspicuousness::No},
+        {"surveil", "Watch", "watch someone long enough to learn their habits", true, Conspicuousness::Yes},
+        // Named `recruit` rather than `suborn`, which is what this was
+        // called until it turned up in most of the plots on the
+        // dashboard and stopped reading as a word at all. The step is
+        // unchanged; nobody outside a courtroom says "suborn".
+        {"recruit",
+         "Recruit",
+         "get someone onto their side, by payment, favour or threat",
+         false,
+         Conspicuousness::Yes},
+        {"discredit", "Discredit", "damage what people think of someone", false, Conspicuousness::Yes},
+        {"sabotage", "Sabotage", "quietly ruin a thing, a shipment or an arrangement", false, Conspicuousness::Yes},
+        {"conceal", "Cover Tracks", "make sure nobody can tell who did it", false, Conspicuousness::Sometimes},
+        // Never conspicuous: work at your own bench is nothing to hide from
+        // the player.
+        {"craft", "Craft", "make a thing at a workbench", false, Conspicuousness::No},
+    }};
+
+    static_assert(kStepTypes.size() == kStepTypeCount, "kStepTypes must carry one row per StepType");
+
+    [[nodiscard]] constexpr const StepTypeTraits& Traits(StepType t) noexcept
+    {
+        return kStepTypes[static_cast<std::size_t>(t)];
+    }
+
+    [[nodiscard]] constexpr std::string_view TypeId(StepType t) noexcept
+    {
+        return Traits(t).id;
+    }
+
+    // The display verb on its own, without a target composed onto it.
+    // What the dashboard puts under a step node: the SHAPE of the work,
+    // where the sentence saying what the work actually is belongs behind
+    // the node rather than under it.
+    [[nodiscard]] constexpr std::string_view Verb(StepType t) noexcept
+    {
+        return Traits(t).verb;
+    }
+
+    [[nodiscard]] constexpr bool IsPlayerDeliverable(StepType t) noexcept
+    {
+        return Traits(t).playerDeliverable;
+    }
+
+    // Treated as conspicuous unless the manifest says plainly No. The
+    // conservative reading of `Sometimes`: a step that might be seen is
+    // held rather than resolved in front of the player, because the
+    // failure mode of getting this wrong is a scheme resolving
+    // implausibly under the player's nose.
+    [[nodiscard]] constexpr bool IsConspicuous(StepType t) noexcept
+    {
+        return Traits(t).conspicuous != Conspicuousness::No;
+    }
+
+    // Parse a manifest id back to its type. Returns false for anything
+    // not on the list — which is the whole point, and is what makes
+    // validating an LLM's answer a membership test.
+    [[nodiscard]] bool ParseStepType(std::string_view id, StepType& out) noexcept;
+
+    // Where a step sits in its life.
+    enum class StepState : std::uint8_t
+    {
+        Planned,        // in the plan, not yet dispatched
+        AwaitingPlayer, // reserved for Phase D; never set in this phase
+        InProgress,     // dispatched, accruing progress
+        Succeeded,
+        Failed
+    };
+
+    // How a step ended. Typed rather than boolean because "ran out of
+    // time" and "was caught in the act" feed adaptation differently and
+    // produce very different memories — and because only the second
+    // decides that the target learns anything.
+    enum class StepOutcome : std::uint8_t
+    {
+        None, // still running, or never dispatched
+        Succeeded,
+        FailedTimeout, // budget exhausted; how far they got is in `progress`
+        FailedCaught   // a mishap ended it early
+    };
+
+    [[nodiscard]] std::string_view StepStateId(StepState s) noexcept;
+    [[nodiscard]] std::string_view StepOutcomeId(StepOutcome o) noexcept;
+
+    // What one tick did to a step.
+    //
+    // Retained per step, failures included, because "it failed" is not a
+    // debuggable statement and "it failed at 0.62 of its threshold,
+    // having been held for four of its nine ticks" is. This is what the
+    // dashboard renders behind an expanded node.
+    struct TickRecord
+    {
+        float progressAdded = 0.0f;
+        float progressAfter = 0.0f;
+        bool held = false;
+        bool caught = false;
+    };
+
+    // One unit of work.
+    //
+    // Names are cached at dispatch rather than resolved on demand: the
+    // trace and the dashboard both render steps from the plot worker,
+    // where touching a TESForm is not available. This is the
+    // GossipGraph::Participant precedent.
+    // One filled slot of a verb: a person, a place or a thing.
+    //
+    // `form` is the TESForm it names -- an NPC base form, a location, an
+    // item -- and `text` is what it renders as. The same invariant as a
+    // step's target: anything with a side effect gates on `form != 0`, and
+    // display reads `text` whatever `form` is, so a slot whose form has gone
+    // with an uninstalled mod still reads correctly.
+    struct SlotValue
+    {
+        std::string name;
+        RE::FormID form = 0;
+        std::string text;
+    };
+
+    struct Step
+    {
+        StepType type = StepType::Locate;
+
+        // THE VERB, by its PlotVerbs id, and what fills its slots. Empty for
+        // a step written as prose by the Milestone 1 planner, which still
+        // reads its `description`.
+        //
+        // `slots` also carries `mastermind`, which every verb names
+        // implicitly; the agent is `actor` and `actorName` below.
+        std::string verb;
+        std::vector<SlotValue> slots;
+
+        [[nodiscard]] const SlotValue* FindSlot(std::string_view name) const noexcept;
+
+        // What this step IS, in the model's own words: "wait for the
+        // steward to leave the counting room". One line, free text,
+        // sanitized at extraction.
+        //
+        // Composition currently hands the model no menu of people,
+        // objects or factions, so a step has a type and this sentence
+        // and nothing else. Without it the whole plan renders as
+        // "Watch / Recruit / Acquire" and every plot looks like every
+        // other one, which is the failure this text exists to avoid.
+        std::string description;
+
+        // One to three words naming what this step IS, carrying no
+        // proper noun. The caption under its node on the chain.
+        //
+        // Not derivable from anything else the step holds. The TYPE is
+        // too coarse -- half a plan reads "Watch, Watch, Acquire" -- and
+        // the description is a sentence, which at chart scale is a wall
+        // of prose nobody reads. This is the middle the chain needed and
+        // neither end could give it.
+        //
+        // May be empty: plans predating this, and any the model answers
+        // without one, fall back to the type verb.
+        std::string label;
+
+        // THE RESOLVED TARGET, and the invariant the rest of the plugin
+        // depends on:
+        //
+        //   target != 0                        a real person
+        //   target == 0 && !targetName.empty() a PLACEHOLDER -- the role's
+        //                                      label, standing in for
+        //                                      somebody who does not exist
+        //   target == 0 && targetName.empty()  the step acts on no person
+        //
+        // Anything with a side effect -- a memory written to the target,
+        // an item planted on them, a relationship rank moved -- MUST gate
+        // on `target != 0`, never on `targetName` being non-empty. The
+        // two tests read identically at the call site and differ only
+        // for placeholders, which is exactly the case that would
+        // otherwise try to write a memory to nobody.
+        //
+        // Display is the opposite: render `targetName` whichever it is.
+        // That is what makes an unmatched role read as "a dock worker"
+        // rather than as a blank.
+        //
+        // PlotSerialize already produces the placeholder state on its
+        // own: a saved target whose form no longer resolves is zeroed
+        // while its name survives, so a plot outlives the uninstall of
+        // the mod its target came from.
+        RE::FormID target = 0;
+        std::string targetName;
+
+        // Who is doing it. 0 until the step is dispatched and cast.
+        // Always a real person -- an agent that cannot be found falls
+        // back to the mastermind rather than to a placeholder, because
+        // somebody has to actually carry the step out.
+        RE::FormID actor = 0;
+        std::string actorName;
+
+        StepState state = StepState::Planned;
+        StepOutcome outcome = StepOutcome::None;
+
+        // THE RACE. Both sides are fixed at dispatch and derived from
+        // independent inputs: the budget from how far the actor must
+        // travel plus the type's inherent scale, the threshold from the
+        // type and the target's importance. If one were computed from
+        // the other every step would carry identical odds.
+        int budget = 0;  // ticks allowed before the step times out
+        int elapsed = 0; // ticks spent, INCLUDING ones that made no progress
+        float threshold = 0.0f;
+        float progress = 0.0f;
+
+        // Ticks on which the presence gate held this step. Diagnostic
+        // only, but it is the difference between "this actor is hopeless"
+        // and "the player stood next to them for a week".
+        int heldTicks = 0;
+
+        // One entry per tick this step has lived through.
+        std::vector<TickRecord> rolls;
+
+        // The numbers that SIZED this step, kept so the dashboard can
+        // show why the race was winnable or not. Without them a resolved
+        // step reports what happened but not what it was ever up
+        // against.
+        float sizingTravel = 0.0f;
+        float sizingImportance = 0.0f;
+        float sizingCompetence = 0.0f;
+        float sizingSuitability = 0.0f;
+        // The share of the work and of the chance of a mishap the step's
+        // preparations left it, 1 for none. Every tick's mishap roll reads
+        // it, so it is fixed at dispatch and saved.
+        float sizingEase = 1.0f;
+
+        // The odds planning estimated for this step, 0 to 1, when it was one
+        // planning prepares; -1 otherwise. For the plan's log line only, and
+        // not saved: a loaded plan has been planned already.
+        float plannedOdds = -1.0f;
+
+        [[nodiscard]] bool IsTerminal() const noexcept
+        {
+            return state == StepState::Succeeded || state == StepState::Failed;
+        }
+
+        // 0..1, clamped. The dashboard's progress ring and the trace both
+        // want this and neither should be dividing by a threshold that
+        // could be zero.
+        [[nodiscard]] float ProgressFraction() const noexcept;
+    };
+
+    enum class PlotStatus : std::uint8_t
+    {
+        Active,
+        Succeeded,
+        Failed
+    };
+
+    [[nodiscard]] std::string_view PlotStatusId(PlotStatus s) noexcept;
+
+    // Why a plot ended. Kept because "why did that one fail" is the
+    // question the dashboard exists to answer after the fact.
+    enum class PlotOutcome : std::uint8_t
+    {
+        None,
+        ObjectiveAchieved,
+        Conceded,         // the mastermind judged it unreachable
+        AdaptationCapHit, // it would not concede; iPlotMaxAdaptations did
+        MastermindLost,   // dead, or no longer resolvable
+        FinishFailed      // its last step, the one it was all for, failed
+    };
+
+    [[nodiscard]] std::string_view PlotOutcomeId(PlotOutcome o) noexcept;
+
+    // A verb against a person, which a plot has given up on: the way a
+    // failed step went about things, and anything it was there to serve.
+    struct Abandoned
+    {
+        std::string verb;
+        RE::FormID target = 0;
+        // For the trace; the plan never reads it.
+        std::string targetName;
+    };
+
+    // One scheme, one mastermind.
+    struct Plot
+    {
+        std::uint32_t id = 0;
+
+        RE::FormID mastermind = 0;
+        std::string mastermindName;
+
+        // The larger thing the objective serves, in one sentence. Flavour
+        // rather than mechanism, but it is what keeps adaptation coherent
+        // — and from step 11 onward it is LLM-authored, so it is
+        // sanitized at the point of extraction.
+        std::string ambition;
+
+        // THE SCHEME, in one sentence: the concrete thing this plot
+        // exists to achieve, and a stepping stone toward `ambition`
+        // rather than a measure of it.
+        //
+        // Held outside the plan, which is what makes "adaptation
+        // rewrites the path, never the destination" an invariant rather
+        // than a convention, and what keeps the plot's title stable
+        // across a re-plan.
+        //
+        // Free text now, where it used to be a step type plus a resolved
+        // target. A scheme that has to be expressible as one verb
+        // against one form is a much smaller space than the schemes
+        // people actually have.
+        std::string scheme;
+
+        // How the scheme ends, as the ambition call wrote it: its last
+        // step as an act, naming people and any item. The scheme is what
+        // the plot is for; this is what planning builds back from, and
+        // what a re-plan after a failure still has to arrive at.
+        std::string finish;
+
+        // The ladder of steps beneath the objective. Rewritten from
+        // `cursor` onward on adaptation; everything before it has already
+        // moved to `history`.
+        std::vector<Step> plan;
+        std::size_t cursor = 0;
+
+        // Resolved steps in resolution order, failures included. The
+        // dashboard's chain is history ++ live ++ remaining plan, so a
+        // failed step has to stay at the position it occupied rather
+        // than being dropped when the plot moves on. Capped by
+        // iPlotStepHistoryCap.
+        std::vector<Step> history;
+
+        // Why the mastermind gave up, in their own terms -- "she decided
+        // the ledger was not worth what taking it would cost her".
+        //
+        // Empty unless the outcome is Conceded. Kept on the plot rather
+        // than only in the trace because it is the ONLY record of why a
+        // scheme ended: `Conceded` says that it did, and a reader who
+        // wants to know what happened has nowhere else to look. Step 19
+        // writes memories from terminal plots and this is the sentence
+        // they will want.
+        std::string concession;
+
+        // Ways this plot tried and found do not work: each a verb against
+        // the person it acts on. Every step a failure abandons lands here,
+        // and no later plan may use any of them again; see
+        // PlotPlanning::RouteOf.
+        std::vector<Abandoned> abandoned;
+
+        // Everybody who caught one of this plot's agents at work on them.
+        // They are on guard for the rest of it: every later step done to
+        // them is harder. See PlotResolution::Pressure.
+        std::vector<RE::FormID> onGuard;
+
+        int adaptations = 0;
+
+        PlotStatus status = PlotStatus::Active;
+        PlotOutcome outcome = PlotOutcome::None;
+
+        double bornOnGameDay = 0.0;
+        double endedOnGameDay = 0.0;
+
+        [[nodiscard]] bool IsTerminal() const noexcept
+        {
+            return status != PlotStatus::Active;
+        }
+
+        // The live step, or nullptr when the plot is between steps or
+        // finished.
+        [[nodiscard]] const Step* LiveStep() const noexcept;
+        [[nodiscard]] Step* LiveStep() noexcept;
+    };
+
+    // ---- Display derivation -------------------------------------------
+    //
+    // Mechanical, from the manifest's verb plus a cached name. NOT
+    // authored: the dashboard ships in step 8, before any LLM call
+    // exists in this subsystem, and a chain that cannot label its own
+    // nodes until step 11 is not the instrument step 9 needs. It also
+    // keeps every rendered string off the sanitizer's critical path,
+    // because none of it came from a model.
+    //
+    // No articles are inserted. "Acquire Amulet of Kings" reads a little
+    // stiff, but the alternative is a grammar problem with no correct
+    // answer — "Silence the Maven Black-Briar" is worse than stiff, and
+    // there is no reliable way to tell a proper name from a common noun
+    // in a Skyrim display name.
+
+    // Verb plus target, or the bare verb when there is no target name.
+    [[nodiscard]] std::string Label(StepType type, std::string_view targetName);
+
+    // A verb step's dashboard sentence; otherwise the step's own prose when
+    // it has some, and the verb-plus-target form when it does not.
+    [[nodiscard]] std::string Label(const Step& step);
+
+    // The plot's title, as the dashboard card's heading. Same
+    // construction at plot scale: "Acquire Amulet of Kings".
+    [[nodiscard]] std::string Title(const Plot& plot);
+} // namespace NarrativeEngine::PlotModel

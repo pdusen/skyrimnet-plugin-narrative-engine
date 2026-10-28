@@ -56,13 +56,16 @@ you tune the pacing and the individual beats to your taste.
 
 ## Requirements
 
-**SkyrimNet, Beta 25 (0.25.0) or higher — and nothing older.** NarrativeEngine is a plugin for SkyrimNet and cannot
-run without it. Beta 25 is a hard floor in both directions: it reorganised how SkyrimNet discovers plugin content, and
-NarrativeEngine now ships only the new layout. **On Beta 24 or earlier, SkyrimNet will not find any of
-NarrativeEngine's prompts or settings** — the mod loads, the dashboard opens, and then every LLM-driven beat fails
-because the prompt it asked for does not exist. There is no partial-compatibility mode and no configuration that
-restores it; if you are on an older SkyrimNet, update it. NarrativeEngine v0.6.1 was the last release that ran on
-both.
+**SkyrimNet, Beta 26 (0.26.0) or higher — and nothing older.** NarrativeEngine is a plugin for SkyrimNet and cannot
+run without it. Beta 25 reorganised how SkyrimNet discovers plugin content, and NarrativeEngine ships only the new
+layout: **on Beta 24 or earlier, SkyrimNet will not find any of NarrativeEngine's prompts or settings** — the mod
+loads, the dashboard opens, and then every LLM-driven beat fails because the prompt it asked for does not exist.
+NarrativeEngine v0.6.1 was the last release that ran on both. Beta 26 then added the decision API that NPC plots are
+built on, which makes it the floor. There is no partial-compatibility mode; if you are on an older SkyrimNet, update
+it.
+
+NPC plots also need a **decision provider** set up in SkyrimNet. Without one, every other feature works and plots
+stay idle, saying so once in the log.
 
 Install SkyrimNet first and confirm it works on its own — if characters
 aren't speaking and NPCs aren't remembering conversations, NarrativeEngine won't run either. SkyrimNet has its own set
@@ -96,7 +99,7 @@ That EditorID dependency also covers optional configuration: the `[AlphaCanon]` 
 
 1. **Install SkyrimNet and its prerequisites, and confirm SkyrimNet works standalone.** Follow the SkyrimNet install
    guide end to end — SKSE, Address Library, PapyrusUtil, an LLM provider (OpenRouter is the path of least
-   resistance), and SkyrimNet itself. **Check the version: Beta 25 (0.25.0) or newer.** Load a save and verify NPCs
+   resistance), and SkyrimNet itself. **Check the version: Beta 26 (0.26.0) or newer.** Load a save and verify NPCs
    are speaking generated dialogue and remembering past conversations. Do **not** install NarrativeEngine until this
    works — trying to debug both at once is miserable.
 2. **Install MCM Helper.** Not one of SkyrimNet's prerequisites, but NarrativeEngine needs it — the mod's MCM
@@ -114,14 +117,18 @@ That EditorID dependency also covers optional configuration: the `[AlphaCanon]` 
    line reading `DashboardUIManager: initialized`; its absence usually means PrismaUI failed to load, which
    almost always traces back to a SKSE / Address Library mismatch. Close the dashboard the same way you opened
    it, or with Esc.
-6. **Point the Director at a fast, cheap model.** Open the SkyrimNet dashboard (SkyrimNet's own PrismaUI
+6. **Choose models for the Director and the composer.** Open the SkyrimNet dashboard (SkyrimNet's own PrismaUI
    overlay) and navigate to **AI → Models**. The full list of SkyrimNet's model profiles appears there,
-   including two NarrativeEngine registers: `narrative_engine_director` and `narrative_engine_composer`. Only
-   the director needs your attention: it runs on every tick to score dramatic tension and pick beats, so a
-   top-tier model here gets expensive fast. Override it to something small and cheap;
-   `deepseek/deepseek-v4-flash` is a reasonable pick on OpenRouter. The composer profile (letters and
-   briefings written in a specific NPC's voice) fires only when a beat actually starts, so its default —
-   inheriting SkyrimNet's dialogue model — is fine.
+   including two NarrativeEngine registers: `narrative_engine_director` and `narrative_engine_composer`.
+   - The **director** runs on every tick to score dramatic tension and pick beats, so a top-tier model here gets
+     expensive fast. Any model that does well as SkyrimNet's **Meta** model will do well here.
+   - The **composer** writes letters and briefings in a specific NPC's voice, and fires only when a beat actually
+     starts. Any model that does well as SkyrimNet's **Diary** model will do well here.
+
+   These settings have generally worked well on OpenRouter:
+
+   - `narrative_engine_director`: `deepseek/deepseek-v4.1-flash`
+   - `narrative_engine_composer`: `qwen/qwen3-235b-a22b-2507`
 7. **Play.** The Director starts ticking as soon as you're in-world. First few ticks may not fire any beats — the
    arc has to build up tension and the phase has to overstay its ideal duration first. Open the dashboard any time
    to watch what it's thinking, tune the phase durations under the Settings tab if the pacing feels off, or
@@ -140,8 +147,17 @@ this plugin generates to weave seamlessly into your ongoing gameplay.
 
 No, not currently. IntelEngine provides a lot of features and event types that this plugin has no answer for.
 That said, as development continues, the hope is for this plugin to grow feature-rich enough to fill many of the
-same needs. As new features land that overlap with IntelEngine's, this README will be updated with guidance on
-running the two plugins side by side.
+same needs.
+
+### Can I run IntelEngine alongside NarrativeEngine?
+
+You can, but I softly recommend against it. Several of IntelEngine's features now overlap with this plugin's, and
+running both can make for an inconsistent experience: two systems each deciding what happens next, without knowing
+about each other.
+
+If you do want to run both, change this setting in IntelEngine's dashboard:
+
+- **Story Engine: OFF**
 
 ### Was AI used to write this plugin?
 
@@ -199,10 +215,12 @@ current scene's narrative tension, but it won't generate new events while they'r
 There are also safeguards in place to prevent the plugin from taking any action at all while you're in a menu
 or in vanilla dialogue.
 
-### Does the plugin work in non-English Skyrim installations?
+### Does the plugin work in other languages?
 
-It depends. If your SkyrimNet installation is already generating dialogue and other content correctly in your
-preferred language, that should carry over here. I haven't tested it myself, though, so no guarantees.
+For now, I strongly recommend **not** modifying this plugin's prompts to make the LLM write in a language other
+than English. The simulations behind gossip, plots, and the beats read the model's
+output back and act on it, and output in another language can have unintended side effects there. Better support
+for other languages is planned for an upcoming release.
 
 Static content — the PrismaUI dashboard, and certain events the plugin writes to SkyrimNet's event log — is
 currently English-only.

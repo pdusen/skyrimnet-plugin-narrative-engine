@@ -30,9 +30,11 @@ before or after the object.
   candidates list below. Any other value will be rejected and no action
   will fire.
 - `parameters` — object. Free-form; the parameters the chosen action
-  needs. An empty object `{}` is fine for actions that take none. The
-  chosen action validates its own parameter shape — missing or
-  out-of-range fields fall back to defaults.
+  needs. An empty object `{}` is fine for actions that take none. Any
+  value you pick from a list under the chosen action — a sender, a
+  memory number, an attacker group — MUST come from that action's own
+  list; a value from another action's list, or one not listed at all,
+  rejects the whole selection.
 - `narrative_note` — one sentence, ≤200 characters, explaining why this
   action fits this moment. Director-frame commentary — "the beat calls
   for X because Y". Do NOT put words in a sender's mouth here; this is

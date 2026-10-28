@@ -13,8 +13,8 @@
 #include <string>
 #include <string_view>
 
-// Tests for the two Inja decorators that put the Director's narrative state
-// into every NPC's prompt.
+// Tests for the Inja decorators that put the Director's narrative state, and
+// each NPC's part in a plot, into their prompt.
 //
 // These are the only path by which the Director's state reaches the LLM at all,
 // and every failure they can have is silent. A decorator that does not register
@@ -26,7 +26,8 @@
 // The callbacks themselves live in an anonymous namespace, so the only way to
 // reach them is the way SkyrimNet does: through what was registered. The
 // harness's stand-in SkyrimNet.dll calls each callback once as it is registered
-// (with a null actor, which is what these two are documented to ignore), and
+// (with a null actor, which the narrative-state two ignore and the plot one
+// answers empty for), and
 // records what came back — so the registered function is checked rather than a
 // copy of it.
 
@@ -87,13 +88,13 @@ TEST_CASE("Decorators::Register", "[Decorators][engine]")
     REQUIRE(SkyrimNet::Initialize());
     fake.Reset();
 
-    SECTION("when SkyrimNet accepts both")
+    SECTION("when SkyrimNet accepts every one")
     {
         Decorators::Register();
 
-        SECTION("should register exactly two decorators")
+        SECTION("should register exactly three decorators")
         {
-            REQUIRE(fake.registerDecoratorCalls == 2);
+            REQUIRE(fake.registerDecoratorCalls == 3);
         }
 
         SECTION("should register them under the names the prompt expects")
@@ -104,13 +105,23 @@ TEST_CASE("Decorators::Register", "[Decorators][engine]")
             // a decorator that no longer exists, and Inja renders nothing.
             REQUIRE(Registered(fake, "ne_narrative_tension"));
             REQUIRE(Registered(fake, "ne_narrative_phase"));
+            REQUIRE(Registered(fake, "ne_plot_awareness"));
         }
 
         SECTION("should describe what the value means")
         {
             // The description is what the LLM reads to know how to interpret
             // the value, so an empty one is a decorator the model cannot use.
-            REQUIRE(std::string{fake.lastDecoratorDescription}.find("Freytag") != std::string::npos);
+            // Only the last is recorded, and which one that is is not part of
+            // the contract; every one says whose it is.
+            REQUIRE(std::string{fake.lastDecoratorDescription}.starts_with("NarrativeEngine: "));
+        }
+
+        SECTION("should tell an actor who is not there about no plot")
+        {
+            // The fake calls it with a null actor. A template renders nothing
+            // for an empty answer, which is the right reading of nobody.
+            REQUIRE(ResultOf(fake, "ne_plot_awareness").empty());
         }
     }
 
@@ -121,10 +132,10 @@ TEST_CASE("Decorators::Register", "[Decorators][engine]")
         // change.
         fake.hasDecoratorAnswer = true;
 
-        SECTION("should still attempt both registrations")
+        SECTION("should still attempt every registration")
         {
             Decorators::Register();
-            REQUIRE(fake.registerDecoratorCalls == 2);
+            REQUIRE(fake.registerDecoratorCalls == 3);
         }
     }
 
@@ -132,13 +143,13 @@ TEST_CASE("Decorators::Register", "[Decorators][engine]")
     {
         fake.registerDecoratorSucceeds = false;
 
-        SECTION("should attempt both rather than stop at the first")
+        SECTION("should attempt every one rather than stop at the first")
         {
             // A refusal on the tension decorator must not cost the phase one
             // too: they are independent, and half a narrative state in the
             // prompt is worse than none because the template renders around it.
             Decorators::Register();
-            REQUIRE(fake.registerDecoratorCalls == 2);
+            REQUIRE(fake.registerDecoratorCalls == 3);
         }
     }
 }

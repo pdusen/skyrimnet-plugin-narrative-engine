@@ -177,7 +177,7 @@ TEST_CASE("SenderCandidatePool::Build walks for viability", "[SenderCandidatePoo
     auto& fake = FakeState();
     REQUIRE(SkyrimNet::Initialize());
     fake.Reset();
-    (void)engine.AddActor(kYsolda);
+    auto* ysolda = engine.AddActor(kYsolda);
     SetJson(fake.engagementJson, "[" + EngagementRow(kYsolda, "Ysolda", 12.5, 100.0) + "]");
     SetJson(fake.memoriesJson, "[" + MemoryRow("She spoke of the mammoth tusk.", 0.8, 50.0) + "]");
 
@@ -233,6 +233,18 @@ TEST_CASE("SenderCandidatePool::Build walks for viability", "[SenderCandidatePoo
     SECTION("when the actor is disabled")
     {
         engine.forms.actorIsDisabled = true;
+
+        SECTION("should drop them")
+        {
+            REQUIRE(Pool::Build(DefaultOptions()).empty());
+        }
+    }
+
+    SECTION("when the actor is a ghost")
+    {
+        // Engagement is whoever the player has talked to, the dead who still
+        // speak included, and nothing upstream of this walk filters them.
+        engine.SetActorGhost(ysolda, true);
 
         SECTION("should drop them")
         {

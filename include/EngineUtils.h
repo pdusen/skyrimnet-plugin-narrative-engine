@@ -6,6 +6,8 @@ namespace RE
 {
     template <class T> class BSTEventSink;
     struct TESFastTravelEndEvent;
+    class Actor;
+    class TESNPC;
 } // namespace RE
 
 // Small, single-purpose wrappers around commonly-accessed engine
@@ -47,6 +49,29 @@ namespace NarrativeEngine::EngineUtils
     bool IsPlayerInCombat(const MainThread::Token&);
     bool IsPlayerInDialogue();
     bool IsPlayerInDialogue(const MainThread::Token&);
+
+    // Whether a base record is a ghost. Ghosts take part in no beat and
+    // no simulation: several carry the display name of somebody still
+    // alive, and none of them can do what a scheme, a rumor, a letter or
+    // a visit asks of a person.
+    //
+    // True for the ACBS IsGhost flag, which vanilla sets on about seventy
+    // records (Savos Aren's Ghost, Kodlak's, the barrow shades), and for
+    // apparitions built without it whose display name ends in the
+    // standalone word "Ghost" ("Dunmer Ghost", "Helgi's Ghost"). Matched
+    // as the final word, so a Ghostblade's owner or a Ghost Sea
+    // fisherman is untouched.
+    //
+    // Token-free, as is IsGhost below: the callers are availability
+    // checks on the gossip, plot and beat workers that hold no token to
+    // pass, and both reads are safe off the main thread.
+    bool IsGhostRecord(const RE::TESNPC* npc);
+
+    // Whether a live actor is a ghost right now: its base record by the
+    // rule above, or the reference's own ghost state, which a script can
+    // set on a record that carries no flag at all. The engine's
+    // Actor::IsGhost answers the second.
+    bool IsGhost(const RE::Actor* actor);
 
     // Register / unregister a TESFastTravelEndEvent sink.
     //

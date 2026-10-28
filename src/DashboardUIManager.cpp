@@ -7,6 +7,7 @@
 #include <CombatEventLog.h>
 #include <DashboardTimers.h>
 #include <DecisionLog.h>
+#include <DecisionProbe.h>
 #include <GossipClaims.h>
 #include <GossipGraph.h>
 #include <GossipHarvest.h>
@@ -16,6 +17,12 @@
 #include <logger.h>
 #include <MainThread.h>
 #include <PhaseTracker.h>
+#include <PlotDispatch.h>
+#include <PlotFactionRoster.h>
+#include <PlotState.h>
+#include <PlotTestPlots.h>
+#include <PlotTick.h>
+#include <PlotVerbs.h>
 #include <PrismaUI.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -645,6 +652,85 @@ namespace NarrativeEngine::DashboardUIManager
             });
         }
 
+        // Backs the Plots tab's debug buttons.
+        //
+        // These are the manual triggers Steps 2 and 4 left unwired.
+        // Phase A's validation is entirely a question of watching many
+        // ticks go by, and making that a button rather than an hour of
+        // waiting is what keeps Step 11 cheap enough to repeat after a
+        // tuning change.
+        //
+        // Forced ticks go through the normal scheduler, so they carry
+        // the same stamps and cancellation handles as scheduled ones and
+        // nothing observed through them is an artefact of the trigger.
+        void OnForcePlotTicks(const char* argument)
+        {
+            int count = 1;
+            if (argument != nullptr && argument[0] != 0) {
+                try {
+                    count = std::clamp(std::stoi(argument), 1, 200);
+                } catch (const std::exception&) {
+                    logger::warn("DashboardUIManager: ne_forcePlotTicks: '{}' is not a number", argument);
+                    return;
+                }
+            }
+            logger::info("DashboardUIManager: ne_forcePlotTicks({})", count);
+            PlotTick::ForceTicks(static_cast<std::size_t>(count));
+        }
+
+        // Backs the Plots tab's tick checkbox: scheduled plot ticks on or
+        // off, saved to the MCM override so it survives a restart, as the
+        // director's switch is.
+        void OnSetPlotTicksEnabled(const char* argument)
+        {
+            const bool enabled = ParseBoolArg(argument);
+            logger::info("DashboardUIManager: ne_setPlotTicksEnabled({})", enabled ? "true" : "false");
+            PlotTick::SetTicksEnabled(enabled);
+            AsyncDispatch::EnqueueWork([enabled](const PluginThread::Token& pt) {
+                MainThread::FireAndForget(pt, [enabled](const MainThread::Token&) {
+                    Settings::McmOverride mut;
+                    mut.plotTicksEnabled = enabled;
+                    Settings::WriteMcmOverride(mut);
+                    PushFullState();
+                });
+            });
+        }
+
+        // Seeds one hand-built plot, for looking at the chain widget
+        // before plot birth is authored.
+        void OnSeedDebugPlot(const char*)
+        {
+            logger::info("DashboardUIManager: ne_seedDebugPlot");
+            PlotDispatch::EnqueueWork([](const PlotThread::Token& pt) {
+                Plots::SeedDebugPlot(pt, Plots::MutableState(pt).simGameDay);
+                Plots::PublishSnapshot(pt);
+                PushFullState();
+            });
+        }
+
+        // Seeds one of the premade College plots, "brelyna" or "tolfdir",
+        // for checking plots against a known one in game. See
+        // PlotTestPlots.h.
+        void OnSeedTestPlot(const char* argument)
+        {
+            const std::string which = argument != nullptr ? argument : "";
+            logger::info("DashboardUIManager: ne_seedTestPlot('{}')", which);
+            PlotDispatch::EnqueueWork([which](const PlotThread::Token& pt) {
+                PlotTestPlots::Seed(pt, which);
+                Plots::PublishSnapshot(pt);
+                PushFullState();
+            });
+        }
+
+        // Sends the decision API probe and logs what came back. See
+        // DecisionProbe.h; it runs on the plot worker because the request
+        // blocks, and nothing else is waiting on that thread.
+        void OnProbeDecisions(const char*)
+        {
+            logger::info("DashboardUIManager: ne_probeDecisions");
+            PlotDispatch::EnqueueWork([](const PlotThread::Token& pt) { (void)DecisionProbe::Run(pt); });
+        }
+
         // Backs the Dispatch tab's Abort button (after confirmation).
         // No-ops backend-side if no beat is in flight.
         void OnAbortRunningBeat(const char* /*argument*/)
@@ -975,6 +1061,11 @@ namespace NarrativeEngine::DashboardUIManager
         PrismaUI_API::RegisterJSListener(g_view, "ne_setAllActionsEnabled", &OnSetAllActionsEnabled);
         PrismaUI_API::RegisterJSListener(g_view, "ne_dispatchAction", &OnDispatchAction);
         PrismaUI_API::RegisterJSListener(g_view, "ne_abortRunningBeat", &OnAbortRunningBeat);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_forcePlotTicks", &OnForcePlotTicks);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_setPlotTicksEnabled", &OnSetPlotTicksEnabled);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_seedDebugPlot", &OnSeedDebugPlot);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_seedTestPlot", &OnSeedTestPlot);
+        PrismaUI_API::RegisterJSListener(g_view, "ne_probeDecisions", &OnProbeDecisions);
         // Phase 08 Settings tab listeners.
         PrismaUI_API::RegisterJSListener(g_view, "ne_setDebugMode", &OnSetDebugMode);
         PrismaUI_API::RegisterJSListener(g_view, "ne_setDebugNotifications", &OnSetDebugNotifications);
@@ -1433,6 +1524,139 @@ namespace NarrativeEngine::DashboardUIManager
                 {"harvest_sent_for_generation", harvest.sentForGeneration},
                 {"claims_outstanding", GossipClaims::Count(*snap)},
                 {"rumors", std::move(rumorsJson)},
+            };
+        }
+
+        // --- Plots ---------------------------------------------------
+        //
+        // Read from the PUBLISHED SNAPSHOT, never live state: a read
+        // taken mid-tick shows a half-advanced simulation, with some
+        // plots stepped to the new game day and some not.
+        //
+        // The chain is history ++ live ++ remaining plan, numbered
+        // 1..N over that concatenation -- NOT the `plan` array, which
+        // adaptation rewrites. That is what keeps a failed node in the
+        // position it occupied and stops the nodes left of the cursor
+        // renumbering when the tail is replaced.
+        {
+            const auto plots = Plots::Snapshot();
+            const auto& cfg2 = Settings::Get();
+
+            const auto stepJson = [](const PlotModel::Step& step, std::size_t number, const char* state) {
+                nlohmann::json rolls = nlohmann::json::array();
+                for (const auto& r : step.rolls) {
+                    rolls.push_back({
+                        {"added", r.progressAdded},
+                        {"after", r.progressAfter},
+                        {"held", r.held},
+                        {"caught", r.caught},
+                    });
+                }
+                return nlohmann::json{
+                    {"number", number},
+                    // The node's caption is the step TYPE. Its own
+                    // sentence goes in `description`, which the widget
+                    // shows only when the node is expanded: a chain of
+                    // eight nodes each captioned with fifteen words of
+                    // prose is unreadable at a glance, and the glance is
+                    // what the chain is for.
+                    {"label", PlotModel::Label(step)},
+                    // A verb step's own caption; otherwise the model's
+                    // caption when it wrote one, and the type verb when
+                    // it did not -- an older plan, or an answer that
+                    // omitted it.
+                    {"type", PlotVerbs::Caption(step)},
+                    // A verb step's sentence is its label; there is no
+                    // prose behind it to show instead.
+                    {"description", step.verb.empty() ? step.description : PlotModel::Label(step)},
+                    {"state", state},
+                    {"outcome", PlotModel::StepOutcomeId(step.outcome)},
+                    {"actor", step.actorName},
+                    {"target", step.targetName},
+                    {"progress", step.progress},
+                    {"threshold", step.threshold},
+                    {"fraction", step.ProgressFraction()},
+                    {"elapsed", step.elapsed},
+                    {"budget", step.budget},
+                    {"held_ticks", step.heldTicks},
+                    {"sizing",
+                     {{"travel", step.sizingTravel},
+                      {"importance", step.sizingImportance},
+                      {"competence", step.sizingCompetence},
+                      {"suitability", step.sizingSuitability}}},
+                    {"rolls", std::move(rolls)},
+                };
+            };
+
+            nlohmann::json plotsJson = nlohmann::json::array();
+            for (const auto& plot : plots->plots) {
+                nlohmann::json chain = nlohmann::json::array();
+                std::size_t number = 1;
+
+                for (const auto& step : plot.history) {
+                    chain.push_back(stepJson(
+                        step, number++, step.outcome == PlotModel::StepOutcome::Succeeded ? "completed" : "failed"));
+                }
+                for (std::size_t i = plot.cursor; i < plot.plan.size(); ++i) {
+                    const auto& step = plot.plan[i];
+                    const char* state = "pending";
+                    if (step.state == PlotModel::StepState::InProgress) {
+                        state = "in_progress";
+                    } else if (step.state == PlotModel::StepState::Succeeded) {
+                        state = "completed";
+                    } else if (step.state == PlotModel::StepState::Failed) {
+                        state = "failed";
+                    }
+                    chain.push_back(stepJson(step, number++, state));
+                }
+
+                plotsJson.push_back({
+                    {"id", plot.id},
+                    {"title", PlotModel::Title(plot)},
+                    {"mastermind", plot.mastermindName},
+                    {"ambition", plot.ambition},
+                    {"concession", plot.concession},
+                    {"status", PlotModel::PlotStatusId(plot.status)},
+                    {"outcome", PlotModel::PlotOutcomeId(plot.outcome)},
+                    {"adaptations", plot.adaptations},
+                    {"max_adaptations", cfg2.plotMaxAdaptations},
+                    {"born_game_day", plot.bornOnGameDay},
+                    {"ended_game_day", plot.endedOnGameDay},
+                    {"chain", std::move(chain)},
+                });
+            }
+
+            nlohmann::json factionsJson = nlohmann::json::array();
+            for (const auto& e : PlotFactionRoster::Entries()) {
+                factionsJson.push_back({
+                    {"id", e.id},
+                    {"name", e.displayName},
+                    {"method", PlotFactionRoster::MethodId(e.method)},
+                    {"overrides", e.overrides.size()},
+                });
+            }
+
+            j["plots"] = {
+                {"enabled", cfg2.plotsEnabled},
+                {"active", plots->ActivePlotCount()},
+                {"budget", cfg2.plotMaxConcurrent},
+                {"sim_game_day", plots->simGameDay},
+                {"ticks_run", plots->counters.ticksRun},
+                {"plots_born", plots->counters.plotsBorn},
+                {"plots_succeeded", plots->counters.plotsSucceeded},
+                {"plots_failed", plots->counters.plotsFailed},
+                {"steps_succeeded", plots->counters.stepsSucceeded},
+                {"steps_timed_out", plots->counters.stepsTimedOut},
+                {"steps_caught", plots->counters.stepsCaught},
+                {"adaptations", plots->counters.adaptations},
+                // Queued or running ticks. Non-zero means a tick is out
+                // there making LLM calls, which is what the Plots tab
+                // locks its debug buttons on.
+                {"ticks_pending", PlotTick::OutstandingTicks()},
+                {"debug_buttons", cfg2.plotDebugButtons},
+                {"ticks_enabled", PlotTick::TicksEnabled()},
+                {"factions", std::move(factionsJson)},
+                {"list", std::move(plotsJson)},
             };
         }
 

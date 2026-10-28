@@ -6,6 +6,7 @@
 #include <BeatRegistry.h>
 #include <BeatSystem.h>
 #include <BeatWorkDispatch.h>
+#include <CharacterBios.h>
 #include <CombatEventLog.h>
 #include <CourierUtils.h>
 #include <DashboardUIManager.h>
@@ -29,6 +30,16 @@
 #include <NPCLetterBeat.h>
 #include <NPCVisitBeat.h>
 #include <PhaseTracker.h>
+#include <PlotDispatch.h>
+#include <PlotFactionRoster.h>
+#include <PlotItemPool.h>
+#include <PlotLog.h>
+#include <PlotMenus.h>
+#include <PlotPopulation.h>
+#include <PlotRecipes.h>
+#include <PlotSerialize.h>
+#include <PlotState.h>
+#include <PlotTick.h>
 #include <PrismaUI.h>
 #include <Settings.h>
 #include <SkyrimNetAPI.h>
@@ -226,6 +237,42 @@ namespace NarrativeEngine
                 // so that whenever a shutdown path does appear, it can
                 // stop this worker without waiting out an LLM timeout.
                 GossipDispatch::Start();
+                // The plot simulation's own worker. Fourth instance of
+                // the same pattern, and the case for it is the strongest
+                // yet: a plot tick can make several blocking LLM calls
+                // in sequence (birth, adaptation, and a memory
+                // composition per step transition).
+                //
+                // Started even when bPlotsEnabled is false. The worker
+                // is idle at rest -- nothing is enqueued unless the
+                // scheduler runs -- and starting it unconditionally
+                // keeps the enable flag a question about the simulation
+                // rather than about thread lifetime.
+                // PlotLog only registers here; the trace file itself is
+                // opened per save-game session in OnSessionStart.
+                PlotLog::Initialize();
+                Plots::Initialize();
+                PlotTick::Initialize();
+                // After GossipGraph::Initialize: plots read their
+                // population from the graph gossip already builds, plus
+                // the faction ranks it does not carry.
+                // Before the population is built: casting reads
+                // standing out of the roster, so the roster has to
+                // exist first.
+                PlotFactionRoster::Load();
+                // Same shape as the roster and for the same reason: the
+                // model is handed a menu of resolved forms rather than
+                // being trusted to name an object that exists.
+                PlotItemPool::Load();
+                // The recipes a crafting step names, read the same way and
+                // for the same reason.
+                PlotRecipes::Load();
+                PlotPopulation::Build();
+                // After both: the menus are drawn from the population's
+                // settlements, the roster's factions and the item pool,
+                // so all three have to exist first.
+                PlotMenus::BuildWorld();
+                PlotDispatch::Start();
                 // Must start before BeatSystem::Initialize — the poll
                 // starts enqueuing here as soon as a beat is running.
                 BeatWorkDispatch::Start();
@@ -285,6 +332,18 @@ namespace NarrativeEngine
                 GossipDispatch::CancelAll();
                 GossipSim::OnRevert();
                 GossipClaims::OnRevert();
+                PlotDispatch::CancelAll();
+                PlotSerialize::OnRevert();
+                // Before PlotTick::OnSessionStart, which re-bases the
+                // schedule: the first tick after it should already have
+                // real travel distances rather than the hold proxy.
+                PlotPopulation::OnSessionStart();
+                // Per save, not per session: display names are the save's.
+                // Publishes the engine facts every plot tick's profile
+                // refresh resolves from.
+                CharacterBios::OnSessionStart();
+                PlotTick::OnSessionStart();
+                PlotLog::OnSessionStart();
                 PhaseTracker::Reset(PhaseTracker::Phase::Exposition);
                 // Rotate the history log for the new session BEFORE
                 // Tick starts polling — the first Poll cycle needs the
@@ -323,6 +382,7 @@ namespace NarrativeEngine
                 // file.
                 GossipSim::OnSessionEnd();
                 GossipLog::OnSessionEnd();
+                PlotLog::OnSessionEnd();
                 VisitorTravelLog::OnSessionEnd();
                 DecisionLog::Clear();
                 CourierUtils::OnRevert();
@@ -337,6 +397,10 @@ namespace NarrativeEngine
                 GossipDispatch::CancelAll();
                 GossipSim::OnRevert();
                 GossipClaims::OnRevert();
+                PlotDispatch::CancelAll();
+                PlotSerialize::OnRevert();
+                PlotTick::OnSessionStart();
+                PlotLog::OnSessionStart();
                 PhaseTracker::Reset();
                 break;
             case SKSE::MessagingInterface::kPostLoadGame:
@@ -352,6 +416,14 @@ namespace NarrativeEngine
                 // Seed TravelEventLog's baseline snapshot too, for the
                 // same reason.
                 TravelEventLog::OnPostLoadGame();
+                // Place the population on the road graph now that a
+                // game exists. kPreLoadGame above re-bases the plot
+                // schedule; this is the other half, and it has to be
+                // here rather than there because the map-marker
+                // references it reads do not resolve until a save is
+                // actually loaded.
+                PlotPopulation::OnSessionStart();
+                CharacterBios::OnSessionStart();
                 // Rotate + open the history log for the loaded
                 // session BEFORE Tick starts polling.
                 EventHistoryWriter::OnSessionStart();
@@ -397,6 +469,10 @@ namespace NarrativeEngine
             const auto gossipSnapshot = GossipSim::Snapshot();
             GossipSim::OnSave(intfc, *gossipSnapshot);
             GossipClaims::OnSave(intfc, *gossipSnapshot);
+            // Also snapshot-sourced, and for the same reason: a save
+            // taken mid-tick must not capture a half-advanced
+            // simulation.
+            PlotSerialize::OnSave(intfc);
             // Future subsystems append their OnSave calls here.
         }
 
@@ -448,6 +524,9 @@ namespace NarrativeEngine
                 case GossipSim::kRecordTypeId:
                     GossipSim::OnLoad(intfc, version, length);
                     break;
+                case PlotSerialize::kRecordTypeId:
+                    PlotSerialize::OnLoad(intfc, version);
+                    break;
                 case GossipClaims::kRecordTypeId:
                     GossipClaims::OnLoad(intfc, version, length);
                     break;
@@ -467,6 +546,10 @@ namespace NarrativeEngine
         void OnRevert(SKSE::SerializationInterface*)
         {
             logger::debug("OnRevert");
+            // Profile facts are per SAVE, not per process. Dropped here
+            // rather than at load because revert also fires on quit to
+            // main menu, where nothing loads afterwards.
+            CharacterBios::OnRevert();
             PhaseTracker::OnRevert();
             DecisionLog::OnRevert();
             CombatEventLog::OnRevert();
@@ -487,6 +570,12 @@ namespace NarrativeEngine
             GossipDispatch::CancelAll();
             GossipSim::OnRevert();
             GossipClaims::OnRevert();
+            // Same argument, and stronger: a plot tick that keeps
+            // running past a load writes memories AND mutates
+            // inventories and relationship ranks, none of which the load
+            // un-writes on our behalf.
+            PlotDispatch::CancelAll();
+            PlotSerialize::OnRevert();
             // Future subsystems append their OnRevert calls here.
         }
     } // namespace

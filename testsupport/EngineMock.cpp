@@ -142,6 +142,16 @@ namespace NarrativeEngine::Testing
             return nullptr;
         }
 
+        // TESActorBaseData::GetIsGhost, slot 05 of that base's own table,
+        // which TESActorBaseData::IsGhost forwards to. The engine's body is
+        // a read of the ACBS flag word, so this reads the same flag rather
+        // than keeping a second answer beside it.
+        bool ActorBaseDataGetIsGhostImpl(void* self)
+        {
+            return static_cast<RE::TESActorBaseData*>(self)->actorData.actorBaseFlags.all(
+                RE::ACTOR_BASE_DATA::Flag::kIsGhost);
+        }
+
         // TESObjectREFR::GetCurrentScene is VIRTUAL, at slot 0x4A. An
         // out-of-line definition of it would never be called: the caller goes
         // through the vtable, so the stand-in has to live in a slot.
@@ -430,6 +440,18 @@ RE::PlayerCharacter* RE::PlayerCharacter::GetSingleton()
     if (!mock || !mock->player.present)
         return nullptr;
     return NarrativeEngine::Testing::BuildFakePlayer();
+}
+
+// The reference's own ghost state, which SetActorGhost records. Whatever the
+// engine's body makes of the base record's ACBS flag besides, nothing under
+// test relies on it: the base is asked separately, through its own slot.
+bool RE::Actor::IsGhost() const
+{
+    auto* mock = EngineMock::Current();
+    if (mock == nullptr)
+        return false;
+    const auto& ghosts = mock->forms.ghostActors;
+    return std::find(ghosts.begin(), ghosts.end(), this) != ghosts.end();
 }
 
 bool RE::Actor::IsInCombat() const
@@ -928,6 +950,14 @@ namespace NarrativeEngine::Testing
             bleedingOut ? RE::ACTOR_LIFE_STATE::kBleedout : RE::ACTOR_LIFE_STATE::kAlive;
     }
 
+    void EngineMock::SetActorGhost(const RE::Actor* actor, bool ghost)
+    {
+        auto& ghosts = forms.ghostActors;
+        std::erase(ghosts, actor);
+        if (ghost && actor != nullptr)
+            ghosts.push_back(actor);
+    }
+
     RE::TESWorldSpace* EngineMock::AddWorldSpace(std::uint32_t formID, std::string editorID)
     {
         auto& pool = Worlds();
@@ -1248,6 +1278,11 @@ namespace NarrativeEngine::Testing
         // records by name pattern reads it.
         object.Slot(0x32, reinterpret_cast<void*>(&FormEditorIDImpl));
         auto* npc = object.As<RE::TESNPC>();
+        // TESActorBaseData is a secondary base with its own vtable, nine
+        // slots long; IsGhost reaches slot 05 through it.
+        const auto actorBaseDataOffset = static_cast<std::size_t>(
+            reinterpret_cast<std::byte*>(static_cast<RE::TESActorBaseData*>(npc)) - reinterpret_cast<std::byte*>(npc));
+        object.BaseSlot(actorBaseDataOffset, 9, 0x05, reinterpret_cast<void*>(&ActorBaseDataGetIsGhostImpl));
         npc->formType = RE::FormType::NPC;
         npc->formID = formID;
         if (female)
@@ -1637,6 +1672,13 @@ RE::BSTArray<RE::TESForm*>& RE::TESDataHandler::GetFormArray(RE::FormType a_form
     if (a_formType == RE::FormType::WorldSpace)
         return NarrativeEngine::Testing::WorldSpaceForms();
     return NarrativeEngine::Testing::FormsOfType(a_formType);
+}
+
+RE::TESForm* RE::TESDataHandler::LookupForm(RE::FormID, std::string_view)
+{
+    // The mocked world loads no plugins, so no plugin-local id resolves --
+    // what the engine answers for a plugin that is not in the load order.
+    return nullptr;
 }
 
 RE::EXTERIOR_DATA* RE::TESObjectCELL::GetCoordinates()
@@ -3168,6 +3210,16 @@ RE::TESObjectCELL* RE::TESObjectREFR::GetSaveParentCell() const
     return parentCell;
 }
 
+RE::TESWorldSpace* RE::TESObjectREFR::GetWorldspace() const
+{
+    // The engine answers from the attached cell, or the save cell for a
+    // reference outside the loaded grid -- which is exactly the pair
+    // GetSaveParentCell already resolves. An interior cell, or no cell at
+    // all, has no worldspace.
+    auto* cell = GetSaveParentCell();
+    return cell != nullptr ? cell->GetRuntimeData().worldSpace : nullptr;
+}
+
 RE::BGSLocation* RE::TESObjectREFR::GetEditorLocation() const
 {
     // Where a reference was placed in the editor, which is not where it is
@@ -3420,6 +3472,15 @@ const char* RE::TESForm::GetName() const
         return named;
     auto* mock = NarrativeEngine::Testing::EngineMock::Current();
     return mock ? mock->modEvents.senderName.c_str() : "";
+}
+
+// TESForm::GetGoldValue is out-of-line, and PlotRecipes reads it off every
+// ingredient it weighs. No test fabricates a recipe's forms -- the data
+// handler's arrays are empty here -- so nothing is ever worth anything.
+
+std::int32_t RE::TESForm::GetGoldValue() const
+{
+    return 0;
 }
 
 const char* RE::TESObjectREFR::GetDisplayFullName()

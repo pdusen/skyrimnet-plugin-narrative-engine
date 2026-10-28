@@ -465,6 +465,11 @@ namespace NarrativeEngine::Testing
         // would be a value nothing consults.
         static void SetActorBleedingOut(RE::Actor* actor, bool bleedingOut);
 
+        // Make an actor's reference a ghost, the way SetGhost does, or undo
+        // it. Its base record is untouched: that is the ACBS flag, set on the
+        // TESNPC itself.
+        void SetActorGhost(const RE::Actor* actor, bool ghost);
+
         // Fabricate a worldspace the data handler will hand back when asked for
         // every WorldSpace form. Its cell map starts empty.
         //
@@ -793,6 +798,11 @@ namespace NarrativeEngine::Testing
         {
             bool actorIsDead = false;
             bool actorIsDisabled = false;
+            // The references a script has made ghosts, which is state on the
+            // placed actor rather than on its base record. Per actor, unlike
+            // the two flags above, because what gossip and plots have to get
+            // right is turning away one person among others who are fine.
+            std::vector<const RE::Actor*> ghostActors;
         } forms;
 
         // What containers and the player are carrying. Only counts are

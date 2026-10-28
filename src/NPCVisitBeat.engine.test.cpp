@@ -79,6 +79,7 @@ namespace
                                       "[BeatSystem]\niBeatSystemPollIntervalMs=1000\n"
                                       "[Director]\niVisitMinSenderCandidates=1\n"
                                       "[Beats]\niVisitSenderCooldownGameHours=72\n"
+                                      "iVisitBeatCooldownGameHours=24\n"
                                       "iVisitApproachTimeoutSeconds=1\n"
                                       "iVisitSalutationApproachDistanceUnits=1000\n"
                                       "iVisitReEngageApproachDistanceUnits=1000\n"
@@ -102,6 +103,9 @@ namespace
 
     constexpr std::uint32_t kSender = 0x0001A6A0u;
     constexpr std::uint32_t kSenderBase = 0x0001A6A2u;
+    // Somebody who is not in the engagement list, for stamping the beat's own
+    // cooldown without also taking the only candidate off the list.
+    constexpr std::uint32_t kOtherSender = 0x0001A6A4u;
     constexpr std::uint32_t kVisitQuest = 0x0E010000u;
     constexpr std::uint32_t kReturnAnchor = 0x0E010A02u;
     constexpr std::uint32_t kXMarkerHeading = 0x00000034u;
@@ -116,7 +120,7 @@ namespace
     constexpr std::uint32_t kStageRollback = 60;
     constexpr std::uint32_t kStageShutdown = 200;
 
-    constexpr std::uint32_t kRecordVersion = 2;
+    constexpr std::uint32_t kRecordVersion = 3;
 
     FakeSkyrimNetState& FakeLLM()
     {
@@ -467,6 +471,25 @@ namespace
         });
     }
 
+    void FastTravelFromMainThread()
+    {
+        PluginThread::detail::JobDispatcher::Invoke([](const PluginThread::Token& pt) {
+            NarrativeEngine::MainThread::Run(pt, [](const NarrativeEngine::MainThread::Token& mt) {
+                NarrativeEngine::NPCVisitBeat_Testing::FastTravel(mt);
+            });
+        });
+    }
+
+    // Where in the dispatch log a method was first sent, or -1.
+    int DispatchIndex(const EngineMock& engine, const std::string& method)
+    {
+        for (std::size_t i = 0; i < engine.papyrus.dispatches.size(); ++i) {
+            if (engine.papyrus.dispatches[i].methodName == method)
+                return static_cast<int>(i);
+        }
+        return -1;
+    }
+
     bool DispatchedMethod(const EngineMock& engine, const std::string& method)
     {
         for (const auto& sent : engine.papyrus.dispatches) {
@@ -562,6 +585,33 @@ TEST_CASE("NPCVisitBeat says when it can be offered", "[NPCVisitBeat][engine]")
         SECTION("should stay out of it")
         {
             REQUIRE_FALSE(beat.IsAvailable(ctx));
+        }
+    }
+
+    SECTION("when a visit arrived within the cooldown")
+    {
+        // The per-sender cooldown only stops the same NPC calling twice. With
+        // a wide enough engagement list that leaves visits free to fire back
+        // to back, one new face after another.
+        engine.calendar.hoursPassed = 100.0f;
+        Cooldowns::OnVisitCompleted(kOtherSender);
+        engine.calendar.hoursPassed = 110.0f;
+
+        SECTION("should stay out of it")
+        {
+            REQUIRE_FALSE(beat.IsAvailable(ctx));
+        }
+    }
+
+    SECTION("when the cooldown has run out")
+    {
+        engine.calendar.hoursPassed = 100.0f;
+        Cooldowns::OnVisitCompleted(kOtherSender);
+        engine.calendar.hoursPassed = 130.0f;
+
+        SECTION("should offer itself again")
+        {
+            REQUIRE(beat.IsAvailable(ctx));
         }
     }
 
@@ -1040,6 +1090,11 @@ TEST_CASE("NPCVisitBeat waits for the sender to walk over", "[NPCVisitBeat][engi
             REQUIRE(Cooldowns::IsSenderOnCooldown(kSender));
         }
 
+        SECTION("should start the beat's own cooldown")
+        {
+            REQUIRE(beat.RemainingCooldownGameHours() == 24.0);
+        }
+
         SECTION("should not speak the line twice while the stage change lands")
         {
             // The Papyrus stage change is asynchronous, so the stage stays at
@@ -1142,6 +1197,401 @@ TEST_CASE("NPCVisitBeat waits for the sender to walk over", "[NPCVisitBeat][engi
             // sender stays eligible.
             REQUIRE_FALSE(Cooldowns::IsSenderOnCooldown(kSender));
         }
+
+        SECTION("should not start the beat's own cooldown")
+        {
+            // Same reasoning: a visit that never arrived should not hold the
+            // next one back for a day.
+            REQUIRE(beat.RemainingCooldownGameHours() == 0.0);
+        }
+    }
+}
+
+TEST_CASE("NPCVisitBeat calls off a visit the player has walked away from", "[NPCVisitBeat][engine]")
+{
+    // A visit is offered only where a stranger walking up would not be
+    // absurd. The player can walk into a barrow while the visitor is still on
+    // the road, and a visit that would never have been offered there should
+    // not arrive there either -- until the visitor has spoken, when the player
+    // has met them and there is nothing left to take back.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    PrimeModel();
+    const auto world = BuildWorld(engine);
+    Init::Initialize();
+    const RunningDispatch dispatch;
+    NPCVisitBeat beat;
+    FillAliases(engine, world);
+    engine.calendar.hoursPassed = 100.0f;
+    PlaceSenderAway(engine, world.sender, 3000.0f);
+    auto* barrow = engine.AddLocation(0x0E010C01u, "Bleak Falls Barrow", {"LocTypeBanditCamp"});
+    const auto enterBarrow = [&] {
+        engine.world.cellFormID = 0x0E010C02u;
+        engine.world.playerLocationOverride = barrow;
+    };
+
+    SECTION("when the visitor is still on the road")
+    {
+        beat.OnStart(BeatContext{}, SenderParams());
+        REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageSalutation);
+        engine.papyrus.dispatches.clear();
+        engine.papyrus.packedInts.clear();
+        engine.papyrus.packedStrings.clear();
+        engine.questControl.teleports.clear();
+
+        SECTION("and the player walks into a barrow")
+        {
+            enterBarrow();
+            StageTick(beat);
+
+            SECTION("should send the visitor back where they came from")
+            {
+                REQUIRE_FALSE(engine.questControl.teleports.empty());
+                REQUIRE(engine.questControl.teleports.back().moverFormID == kSender);
+                REQUIRE(engine.questControl.teleports.back().destinationFormID == kReturnAnchor);
+            }
+
+            SECTION("should roll the quest back")
+            {
+                REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+            }
+
+            SECTION("should record the visit as rolled back")
+            {
+                const auto history = VisitState::GetHistory();
+                REQUIRE_FALSE(history.empty());
+                REQUIRE(history.back().outcome == VisitState::Outcome::RolledBack);
+            }
+
+            SECTION("should leave both cooldowns unstamped")
+            {
+                // Nothing happened as far as the player is concerned.
+                REQUIRE_FALSE(Cooldowns::IsSenderOnCooldown(kSender));
+                REQUIRE(beat.RemainingCooldownGameHours() == 0.0);
+            }
+
+            SECTION("should hand the beat to cleanup")
+            {
+                REQUIRE(Tick(beat, BeatState::RUNNING).transitionTo == BeatState::CLEANUP);
+            }
+        }
+
+        SECTION("and the player walks into a barrow with the visitor close and in view")
+        {
+            // Rolling back is a MoveTo home, and in plain view that is
+            // somebody vanishing in front of the player. Short of the
+            // approach distance, so the visitor does not arrive meanwhile.
+            PlaceSenderAway(engine, world.sender, 1500.0f);
+            engine.visibility.engineLineOfSight = true;
+            engine.visibility.pickHitFraction = 1.0f;
+            enterBarrow();
+            StageTick(beat);
+
+            SECTION("should wait")
+            {
+                REQUIRE_FALSE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+                REQUIRE(engine.questControl.teleports.empty());
+            }
+
+            SECTION("and the visitor then drops out of sight")
+            {
+                engine.visibility.engineLineOfSight = false;
+                engine.visibility.target3DPresent = false;
+                StageTick(beat);
+
+                SECTION("should roll back")
+                {
+                    REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+                    REQUIRE(engine.questControl.teleports.back().destinationFormID == kReturnAnchor);
+                }
+            }
+
+            SECTION("and the visitor then falls far enough behind")
+            {
+                PlaceSenderAway(engine, world.sender, 3500.0f);
+                StageTick(beat);
+
+                SECTION("should roll back")
+                {
+                    REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+                }
+            }
+
+            SECTION("and the player walks back out before the visitor is out of sight")
+            {
+                // The reason for the rollback is gone, so it is withdrawn
+                // rather than left to fire later on a visit that can stand.
+                engine.world.cellFormID = 0x0E010C03u;
+                engine.world.playerLocationOverride = nullptr;
+                StageTick(beat);
+                engine.visibility.engineLineOfSight = false;
+                engine.visibility.target3DPresent = false;
+                StageTick(beat);
+
+                SECTION("should leave the visitor to it")
+                {
+                    REQUIRE_FALSE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+                    REQUIRE(engine.questControl.teleports.empty());
+                }
+            }
+        }
+
+        SECTION("and the player goes indoors somewhere blocked, with the visitor in view")
+        {
+            // Through a door the visit rolls back at once: sight and distance
+            // only hold back a change of cell on the same side of one. The
+            // visitor is put in the same interior, close and visible, which
+            // is the case that would otherwise wait.
+            enterBarrow();
+            engine.world.cellIsInterior = true;
+            world.sender->parentCell = RE::PlayerCharacter::GetSingleton()->GetParentCell();
+            PlaceSenderAway(engine, world.sender, 1500.0f);
+            engine.visibility.engineLineOfSight = true;
+            engine.visibility.pickHitFraction = 1.0f;
+            StageTick(beat);
+
+            SECTION("should roll back")
+            {
+                REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+            }
+        }
+
+        SECTION("and the player walks somewhere ordinary")
+        {
+            engine.world.cellFormID = 0x0E010C03u;
+            StageTick(beat);
+
+            SECTION("should leave the visitor to it")
+            {
+                REQUIRE(engine.papyrus.dispatches.empty());
+                REQUIRE(engine.questControl.teleports.empty());
+            }
+        }
+
+        SECTION("and the place turns hostile without the player moving")
+        {
+            // Only a change of cell is a reason to look again. The beat was
+            // offered here, so whatever this place is, it was fine then.
+            engine.world.playerLocationOverride = barrow;
+            StageTick(beat);
+
+            SECTION("should leave the visitor to it")
+            {
+                REQUIRE(engine.papyrus.dispatches.empty());
+            }
+        }
+    }
+
+    SECTION("when the visitor has already spoken")
+    {
+        beat.OnStart(BeatContext{}, SenderParams());
+        REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageSalutation);
+        PlaceSenderAway(engine, world.sender, 100.0f);
+        StageTick(beat);
+        REQUIRE(DispatchedMethod(engine, "RunSenderNarration"));
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageDiscuss);
+        engine.papyrus.dispatches.clear();
+        engine.papyrus.packedInts.clear();
+
+        SECTION("and the player then walks into a barrow")
+        {
+            enterBarrow();
+            StageTick(beat);
+
+            SECTION("should not roll anything back")
+            {
+                REQUIRE_FALSE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+            }
+        }
+    }
+
+    SECTION("when the player moves before the visitor has set out")
+    {
+        // The first tick takes the player's bearings and asks for the
+        // briefing; the move lands while the model is still writing it.
+        beat.OnStart(BeatContext{}, SenderParams());
+        Tick(beat, BeatState::COMPOSE);
+        enterBarrow();
+
+        SECTION("should give up without moving anybody")
+        {
+            REQUIRE(RunCompose(beat) == BeatState::CLEANUP);
+            REQUIRE(engine.questControl.teleports.empty());
+        }
+    }
+}
+
+TEST_CASE("NPCVisitBeat ends a visit the player fast-travels away from", "[NPCVisitBeat][engine]")
+{
+    // Fast travel is the player leaving, and nobody follows them. Before the
+    // visitor has spoken the visit is undone as if it never happened; after,
+    // the visitor knows they were walked out on.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    REQUIRE(NarrativeEngine::SkyrimNetAPI::Initialize());
+    PrimeModel();
+    const auto world = BuildWorld(engine);
+    Init::Initialize();
+    const RunningDispatch dispatch;
+    NPCVisitBeat beat;
+    FillAliases(engine, world);
+    engine.calendar.hoursPassed = 100.0f;
+    PlaceSenderAway(engine, world.sender, 3000.0f);
+    const auto clearDispatches = [&] {
+        engine.papyrus.dispatches.clear();
+        engine.papyrus.packedInts.clear();
+        engine.papyrus.packedStrings.clear();
+        engine.questControl.teleports.clear();
+    };
+
+    SECTION("when the visitor is still on the road")
+    {
+        beat.OnStart(BeatContext{}, SenderParams());
+        REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageSalutation);
+        clearDispatches();
+        FastTravelFromMainThread();
+        StageTick(beat);
+
+        SECTION("should send the visitor back where they came from")
+        {
+            REQUIRE_FALSE(engine.questControl.teleports.empty());
+            REQUIRE(engine.questControl.teleports.back().moverFormID == kSender);
+            REQUIRE(engine.questControl.teleports.back().destinationFormID == kReturnAnchor);
+        }
+
+        SECTION("should roll the quest back")
+        {
+            REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageRollback)));
+        }
+
+        SECTION("should leave no trace in the visitor's history")
+        {
+            // The player never met them, so there is nothing to have walked
+            // out on.
+            REQUIRE_FALSE(DispatchedMethod(engine, "RecordPlayerLeftAbruptly"));
+            REQUIRE_FALSE(DispatchedMethod(engine, "RunSenderNarration"));
+        }
+
+        SECTION("should record the visit as rolled back")
+        {
+            const auto history = VisitState::GetHistory();
+            REQUIRE_FALSE(history.empty());
+            REQUIRE(history.back().outcome == VisitState::Outcome::RolledBack);
+            REQUIRE_FALSE(Cooldowns::IsSenderOnCooldown(kSender));
+        }
+    }
+
+    SECTION("when the visitor has not set out yet")
+    {
+        beat.OnStart(BeatContext{}, SenderParams());
+        Tick(beat, BeatState::COMPOSE);
+        FastTravelFromMainThread();
+
+        SECTION("should give up without moving anybody")
+        {
+            REQUIRE(RunCompose(beat) == BeatState::CLEANUP);
+            REQUIRE(engine.questControl.teleports.empty());
+        }
+    }
+
+    SECTION("when the player leaves in the middle of the conversation")
+    {
+        beat.OnStart(BeatContext{}, SenderParams());
+        REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageSalutation);
+        PlaceSenderAway(engine, world.sender, 100.0f);
+        StageTick(beat);
+        REQUIRE(DispatchedMethod(engine, "RunSenderNarration"));
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageDiscuss);
+        clearDispatches();
+        FastTravelFromMainThread();
+
+        SECTION("should record the walk-out against the visitor, silently")
+        {
+            REQUIRE(DispatchedMethod(engine, "RecordPlayerLeftAbruptly"));
+            REQUIRE_FALSE(DispatchedMethod(engine, "RunSenderNarration"));
+            REQUIRE_FALSE(engine.papyrus.packedStrings.empty());
+            REQUIRE(engine.papyrus.packedStrings.front().find("left abruptly") != std::string::npos);
+            REQUIRE(engine.papyrus.packedStrings.front().find("Ysolda") != std::string::npos);
+            REQUIRE_FALSE(engine.papyrus.packedInts.empty());
+            REQUIRE(engine.papyrus.packedInts.front() == static_cast<std::int32_t>(kSender));
+        }
+
+        SECTION("should record it before the quest shuts down")
+        {
+            // The shutdown empties the alias, which is why the trampoline is
+            // handed the visitor's id; the order is the other half of that.
+            const auto recorded = DispatchIndex(engine, "RecordPlayerLeftAbruptly");
+            const auto shutdown = DispatchIndex(engine, "SetStage");
+            REQUIRE(recorded >= 0);
+            REQUIRE(shutdown > recorded);
+            REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageShutdown)));
+        }
+
+        SECTION("should send the visitor home")
+        {
+            REQUIRE_FALSE(engine.questControl.teleports.empty());
+            REQUIRE(engine.questControl.teleports.back().destinationFormID == kReturnAnchor);
+        }
+
+        SECTION("should record the visit as aborted")
+        {
+            const auto history = VisitState::GetHistory();
+            REQUIRE_FALSE(history.empty());
+            REQUIRE(history.back().outcome == VisitState::Outcome::Aborted);
+        }
+
+        SECTION("should hand the beat to cleanup")
+        {
+            REQUIRE(Tick(beat, BeatState::RUNNING).transitionTo == BeatState::CLEANUP);
+        }
+    }
+
+    SECTION("when the visitor has already said goodbye")
+    {
+        beat.OnStart(BeatContext{}, SenderParams());
+        REQUIRE(RunCompose(beat) == BeatState::RUNNING);
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageSalutation);
+        PlaceSenderAway(engine, world.sender, 100.0f);
+        StageTick(beat);
+        engine.courier.questStage = static_cast<std::uint16_t>(kStageValediction);
+        clearDispatches();
+        FastTravelFromMainThread();
+
+        SECTION("should finish the visit as it would have finished anyway")
+        {
+            // There is no conversation left to walk out of.
+            REQUIRE_FALSE(DispatchedMethod(engine, "RecordPlayerLeftAbruptly"));
+            REQUIRE(DispatchedStage(engine, static_cast<std::int32_t>(kStageShutdown)));
+            const auto history = VisitState::GetHistory();
+            REQUIRE_FALSE(history.empty());
+            REQUIRE(history.back().outcome == VisitState::Outcome::Completed);
+        }
+    }
+}
+
+TEST_CASE("NPCVisitBeat ignores a fast travel when nobody is visiting", "[NPCVisitBeat][engine]")
+{
+    // The sink is registered for the whole session and fires on every fast
+    // travel, visit or no visit. Its own process under ctest, because which
+    // visit last ran is state the module keeps.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    (void)BuildWorld(engine);
+    Init::Initialize();
+    engine.courier.questStage = 0;
+    FastTravelFromMainThread();
+
+    SECTION("should do nothing at all")
+    {
+        REQUIRE(engine.papyrus.dispatches.empty());
+        REQUIRE(engine.questControl.teleports.empty());
     }
 }
 
@@ -1615,6 +2065,67 @@ TEST_CASE("NPCVisitBeat tears the visit down", "[NPCVisitBeat][engine]")
     }
 }
 
+TEST_CASE("NPCVisitBeat says how long until the next visit", "[NPCVisitBeat][engine]")
+{
+    // What the dashboard's visit-beat timer reads, and what IsAvailable gates
+    // on.
+    EngineMock engine;
+    const ConfiguredSettings settings{kSettings};
+    Persistence::OnRevert();
+    const NPCVisitBeat beat;
+
+    SECTION("when no visit has ever arrived")
+    {
+        engine.calendar.hoursPassed = 100.0f;
+
+        SECTION("should report nothing left to wait for")
+        {
+            // A fresh save, where the stamp is zero rather than long ago.
+            REQUIRE(beat.RemainingCooldownGameHours() == 0.0);
+        }
+    }
+
+    SECTION("when one has just arrived")
+    {
+        engine.calendar.hoursPassed = 100.0f;
+        Cooldowns::OnVisitCompleted(kSender);
+
+        SECTION("should report the whole window")
+        {
+            REQUIRE(beat.RemainingCooldownGameHours() == 24.0);
+        }
+
+        SECTION("should count it down as the hours pass")
+        {
+            engine.calendar.hoursPassed = 110.0f;
+            REQUIRE(beat.RemainingCooldownGameHours() == 14.0);
+        }
+
+        SECTION("should report nothing once the window is out")
+        {
+            engine.calendar.hoursPassed = 130.0f;
+            REQUIRE(beat.RemainingCooldownGameHours() == 0.0);
+        }
+
+        SECTION("should report nothing when the cooldown is switched off")
+        {
+            const ConfiguredSettings uncapped{"[Beats]\niVisitBeatCooldownGameHours=0\n"};
+            REQUIRE(beat.RemainingCooldownGameHours() == 0.0);
+        }
+    }
+
+    SECTION("when the arrival named nobody")
+    {
+        engine.calendar.hoursPassed = 100.0f;
+        Cooldowns::OnVisitCompleted(0);
+
+        SECTION("should start no cooldown")
+        {
+            REQUIRE(beat.RemainingCooldownGameHours() == 0.0);
+        }
+    }
+}
+
 TEST_CASE("NPCVisitBeat remembers who has called", "[NPCVisitBeat][engine]")
 {
     // Two ledgers with different jobs. The cooldown decays and stops the same
@@ -1715,9 +2226,35 @@ TEST_CASE("NPCVisitBeat carries its ledgers across a save", "[NPCVisitBeat][engi
             REQUIRE(Cooldowns::GetSenderMemoryWatermarkGameHours(migrated) == 100.0);
         }
 
+        SECTION("should bring the beat's own cooldown back")
+        {
+            REQUIRE(NPCVisitBeat{}.RemainingCooldownGameHours() == 24.0);
+        }
+
         SECTION("should put the ids it read through the incoming load order")
         {
             REQUIRE_FALSE(Cooldowns::IsSenderOnCooldown(kSender));
+        }
+    }
+
+    SECTION("when the save predates the beat's own cooldown")
+    {
+        // A v2 record carries both tables and stops.
+        Persistence::OnSave(FakeInterface());
+        engine.cosave.readable = engine.cosave.written;
+        engine.cosave.readCursor = 0;
+        Persistence::OnRevert();
+        Persistence::OnLoad(FakeInterface(), 2, 0);
+
+        SECTION("should restore both tables")
+        {
+            REQUIRE(Cooldowns::IsSenderOnCooldown(engine.cosave.resolvedFormID));
+            REQUIRE(Cooldowns::GetSenderMemoryWatermarkGameHours(engine.cosave.resolvedFormID) == 100.0);
+        }
+
+        SECTION("should start the beat's own cooldown clear")
+        {
+            REQUIRE(NPCVisitBeat{}.RemainingCooldownGameHours() == 0.0);
         }
     }
 
@@ -1755,6 +2292,7 @@ TEST_CASE("NPCVisitBeat carries its ledgers across a save", "[NPCVisitBeat][engi
             // belongs to the save being left, not the one being entered.
             REQUIRE_FALSE(Cooldowns::IsSenderOnCooldown(kSender));
             REQUIRE_FALSE(Cooldowns::IsSenderOnCooldown(engine.cosave.resolvedFormID));
+            REQUIRE(NPCVisitBeat{}.RemainingCooldownGameHours() == 0.0);
         }
     }
 
@@ -1768,6 +2306,7 @@ TEST_CASE("NPCVisitBeat carries its ledgers across a save", "[NPCVisitBeat][engi
             Persistence::OnLoad(FakeInterface(), kRecordVersion, 0);
             REQUIRE_FALSE(Cooldowns::IsSenderOnCooldown(kSender));
             REQUIRE_FALSE(Cooldowns::GetSenderMemoryWatermarkGameHours(kSender).has_value());
+            REQUIRE(NPCVisitBeat{}.RemainingCooldownGameHours() == 0.0);
         }
     }
 

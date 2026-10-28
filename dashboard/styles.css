@@ -1046,6 +1046,136 @@ body {
     color: #a8b2be;
 }
 
+/* --- Plots tab ---------------------------------------------------------- */
+
+.plot-header { margin-bottom: 10px; }
+/* The budget on the left, the tick switch pushed to the right by its own
+   margin-left: auto. */
+.plot-header-top { display: flex; align-items: center; }
+.plot-budget { font-size: 15px; }
+.plot-budget strong { font-size: 20px; }
+.plot-counters { display: flex; flex-wrap: wrap; gap: 14px; color: #98a0ab; font-size: 12px; margin-top: 4px; }
+.plot-debug-actions { display: flex; gap: 8px; margin-top: 8px; }
+.plot-debug-actions button {
+    background: #2a3038; color: #d6dbe2; border: 1px solid #3d444e;
+    border-radius: 4px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+}
+.plot-debug-actions button:hover:not(:disabled) { background: #343b45; }
+.plot-debug-actions button:disabled { opacity: 0.45; cursor: default; }
+
+/* Shown while a tick is queued or running. The buttons alone going grey
+   reads as "broken" without something saying the wait is expected. */
+.plot-busy { display: inline-flex; align-items: center; gap: 6px; color: #98a0ab; font-size: 12px; }
+.plot-spinner {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    border: 2px solid #3d444e; border-top-color: #4b93f5;
+    animation: plot-spin 0.7s linear infinite;
+}
+@keyframes plot-spin { to { transform: rotate(360deg); } }
+
+.plot-legend { display: flex; gap: 18px; color: #98a0ab; font-size: 12px; margin: 6px 0 14px; }
+.plot-legend i { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 6px; }
+.plot-swatch.completed { background: #63c94b; }
+.plot-swatch.in-progress { background: #4b93f5; }
+.plot-swatch.pending { background: #4a515b; }
+.plot-swatch.failed { background: none; color: #e5484d; height: auto; font-weight: 700; }
+
+.plot-card {
+    background: #1b2029; border: 1px solid #2b313a; border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 14px;
+}
+.plot-card.succeeded, .plot-card.failed { opacity: 0.72; }
+.plot-card-header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.plot-title { margin: 0; font-size: 19px; font-weight: 700; }
+.plot-meta { color: #98a0ab; font-size: 12px; }
+.plot-ambition { color: #98a0ab; font-size: 12px; margin: 4px 0 0; font-style: italic; }
+
+/* A chain wider than its card scrolls; nodes keep their size. */
+.plot-chain-scroll { overflow-x: auto; padding: 14px 0 2px; }
+.plot-chain { display: flex; min-width: min-content; }
+.plot-node-column { display: flex; flex-direction: column; align-items: flex-start; }
+.plot-node-row { display: flex; align-items: center; }
+
+.plot-node {
+    position: relative; border-radius: 50%; border: 2px solid;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px; font-weight: 700; cursor: pointer; padding: 0; flex: none;
+}
+.plot-node:focus-visible { outline: 2px solid #4b93f5; outline-offset: 3px; }
+.plot-node.expanded { box-shadow: 0 0 0 3px rgba(75, 147, 245, 0.35); }
+/* Offsets and size come from the component, which already owns NODE and
+   BORDER. An absolutely positioned child resolves against the PADDING
+   box, which `box-sizing: border-box` makes two border-widths smaller
+   than the node, so the ring has to be pulled back out over the border
+   to stay concentric with it — see ProgressRing. */
+.plot-node-ring { position: absolute; }
+.plot-node-number { position: relative; line-height: 1; }
+.plot-node-pct { position: absolute; bottom: 5px; font-size: 8px; font-weight: 600; opacity: 0.85; }
+.plot-node-cross {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #e5484d; font-size: 30px; font-weight: 700; pointer-events: none;
+}
+.plot-connector { height: 3px; flex: none; }
+/* Centred on the NODE, not on the node-plus-connector column: the
+   component sizes the box to one column pitch and pulls it half a
+   connector left, so the caption sits under the circle it belongs to
+   rather than half a connector to the right of it.
+
+   IT WRAPS, and it is clipped at two lines. This used to be
+   `white-space: nowrap; overflow: visible`, on the reasoning that the
+   longest caption possible was the step type's verb -- "Cover Tracks"
+   -- which is narrower than the node pitch and so could never collide
+   with its neighbour. That stopped being true when the caption became a
+   short phrase the model writes: "obtain records" ran straight into
+   "find gaps" beside it.
+
+   The two-line box height is reserved whether or not both lines are
+   used, so a one-line caption next to a two-line one does not leave the
+   chain sitting on a ragged baseline. */
+.plot-node-label {
+    font-size: 11px; color: #b6bdc6; line-height: 1.3; padding-top: 8px;
+    text-align: center; overflow-wrap: anywhere;
+    display: -webkit-box; -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2; line-clamp: 2;
+    overflow: hidden; min-height: calc(8px + 2.6em);
+}
+
+.plot-node-detail {
+    margin-top: 10px; padding: 10px 12px; background: #151a21;
+    border: 1px solid #2b313a; border-radius: 6px; font-size: 12px;
+}
+.plot-detail-row { display: flex; gap: 10px; padding: 2px 0; }
+.plot-detail-label { color: #7d8590; min-width: 62px; flex: none; }
+.plot-rolls { display: flex; flex-wrap: wrap; gap: 4px; }
+.plot-roll {
+    background: #232a33; border-radius: 3px; padding: 0 5px;
+    font-variant-numeric: tabular-nums; color: #b6bdc6;
+}
+.plot-roll.held { color: #7d8590; }
+.plot-roll.caught { color: #e5484d; }
+
+/* The step's own sentence, last in the panel and the only prose in it.
+   Separated and italic so it does not read as another measurement, and
+   given a rule above because it belongs to a different register than the
+   numbers. */
+.plot-detail-description {
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid #2b313a;
+}
+.plot-detail-description span:last-child { color: #c8ced6; font-style: italic; }
+
+.plot-section-heading { margin: 20px 0 10px; font-size: 13px; color: #98a0ab; text-transform: uppercase; }
+.plot-empty { color: #98a0ab; font-size: 13px; }
+/* A section heading that is also its section's toggle: a button reset that
+   keeps the heading's own size, colour and margins. */
+.plot-section-toggle {
+    display: block; background: none; border: none; padding: 0;
+    font-family: inherit; text-align: left; cursor: pointer;
+}
+.plot-section-toggle:hover { color: #d6dbe2; }
+.plot-factions ul { list-style: none; padding: 0; margin: 0; font-size: 12px; }
+.plot-factions li { padding: 2px 0; }
+.plot-factions span { color: #98a0ab; }
+
 /* ---------- Timing readouts (shared across tabs) ------------------------- */
 
 /* Deliberately static. The dashboard is only on screen with the game paused

@@ -1,0 +1,17 @@
+{# narrative_engine/probe — one question of the decision API probe.
+   Sent once per question and order by the Plots tab's "Probe decisions"
+   button; DecisionProbe logs what came back. Not part of any feature.
+   Receives: sentence, question,
+     options [{ key, text }] — keys c1 onward: every run of consecutive
+     words in the sentence, and one saying the sentence does not name it.
+   NOTE: no fenced blocks and no literal braces anywhere in this file. #}
+[ state sentence ]
+{{ sentence }}
+[ end state ]
+
+[ question pick choice ]
+{{ question }} Choose the words of the sentence that answer it: all of the words that name the answer, and no others. If the sentence does not say, choose that it is not named.
+[ criteria ]
+{% for o in options %}{{ o.key }}: {{ o.text }}
+{% endfor %}[ end criteria ]
+[ end question ]

@@ -1,5 +1,6 @@
 #include <NPCVisitBeat.h>
 
+#include <AlphaCanon.h>
 #include <AsyncDispatch.h>
 #include <BeatParamHelpers.h>
 #include <BeatUtils.h>
@@ -169,6 +170,10 @@ namespace NarrativeEngine
                 quest, "_ne_VisitQuest"sv, "RunSenderSilentSceneEvent"sv, RE::BSFixedString(content.c_str()));
         }
 
+        // Per-beat cooldown stamp — persisted via NPCVisitBeat_Persistence 'NBVS'.
+        std::mutex g_cooldownMutex;
+        double g_lastVisitGameHours = 0.0;
+
         // Per-sender cooldowns — persisted via NPCVisitBeat_Persistence 'NBVS'.
         SenderCooldownTable g_senderCooldowns;
 
@@ -269,6 +274,42 @@ namespace NarrativeEngine
 
         StageTransitionLatch g_salutationDiscussLatch;
 
+        // Set when the opening line is dispatched, and never cleared until
+        // the next visit. Unlike the latch above it survives the stage
+        // moving on, because what it answers is whether the player has met
+        // the visitor yet. Until then the visit can be undone without a
+        // trace; after it, the player knows somebody came.
+        std::atomic<bool> g_salutationNarrationFired = false;
+
+        // The player's cell when the beat last looked, so it can tell when
+        // they have moved. 0 until the first look of a visit.
+        std::atomic<RE::FormID> g_lastPlayerCellFormID = 0;
+        std::atomic<bool> g_lastPlayerCellInterior = false;
+
+        // True from OnStart until the beat is back at NOT_RUNNING. The event
+        // sinks fire whether or not anybody is visiting, and this is how
+        // they tell.
+        std::atomic<bool> g_visitInFlight = false;
+
+        // Why the visit has to be rolled back, held until the beat reaches
+        // a point where that can be done cleanly: before the sender has
+        // been moved, or once RUNNING can send them home. A string literal,
+        // or null when nothing is pending.
+        std::atomic<const char*> g_pendingRollbackReason = nullptr;
+
+        // The two reasons the player's movements give, compared by address.
+        // Through a door, indoors or out, the visit rolls back at once. A
+        // change of cell on the same side of one waits until the visitor is
+        // out of view, rather than vanishing them in front of the player.
+        constexpr const char* kRollbackInOrOut = "player_went_in_or_out_to_blocked_area";
+        constexpr const char* kRollbackCellChange = "player_entered_blocked_area";
+
+        // Rolling a visitor back MoveTos them home, which in plain view is
+        // somebody vanishing. Within this distance and in sight of the
+        // camera a same-side cell change waits.
+        constexpr float kRollbackOutOfViewUnits = 3000.0f;
+        std::atomic<bool> g_rollbackDeferralLogged = false;
+
         // Discuss sub-state machine. Cyclic and mostly one-directional:
         //   Discussing --(hold trigger tripped)--------------> OnHold
         //   OnHold     --(all hold triggers cleared)---------> ReEngage
@@ -358,6 +399,11 @@ namespace NarrativeEngine
                 g_arrival = {};
             }
             g_salutationDiscussLatch.Reset();
+            g_salutationNarrationFired.store(false, std::memory_order_release);
+            g_lastPlayerCellFormID.store(0, std::memory_order_release);
+            g_lastPlayerCellInterior.store(false, std::memory_order_release);
+            g_pendingRollbackReason.store(nullptr, std::memory_order_release);
+            g_rollbackDeferralLogged.store(false, std::memory_order_release);
             g_discussSubPhase.store(DiscussSubPhase::Discussing, std::memory_order_release);
             {
                 std::scoped_lock lock(g_hardAbortReasonMutex);
@@ -604,6 +650,97 @@ namespace NarrativeEngine
         };
 
         VisitDeathSink g_deathSink;
+
+        void RunReturnHomeShutdown(const char* triggerReason);
+        void RequestRollback(const char* reason);
+
+        // Leave a note in the sender's history that the player walked out
+        // on them. Silent -- RegisterPersistentEvent, not DirectNarration --
+        // because there is nobody left to say anything to.
+        //
+        // The sender goes to Papyrus as a FormID rather than through the
+        // alias, because the shutdown dispatched right after this one
+        // empties the alias and the two calls race in the VM.
+        void RecordPlayerLeftAbruptly()
+        {
+            const auto snap = VisitState::GetSnapshot();
+            std::string senderName;
+            if (auto* form = RE::TESForm::LookupByID(snap.senderFormID)) {
+                if (auto* actor = form->As<RE::Actor>()) {
+                    if (const auto* n = actor->GetName())
+                        senderName = n;
+                }
+            }
+            if (senderName.empty())
+                senderName = "their visitor";
+            std::string playerName;
+            if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+                if (const auto* n = player->GetName())
+                    playerName = n;
+            }
+            if (playerName.empty())
+                playerName = "The player";
+            const std::string content =
+                playerName + " left abruptly, in the middle of their conversation with " + senderName + ".";
+            logger::info("NPCVisitBeat[FAST-TRAVEL]: recording the walk-out silently ({} chars)", content.size());
+            QuestUtils::VMDispatchOnQuest(g_visitQuest,
+                                          kQuestScriptName,
+                                          "RecordPlayerLeftAbruptly",
+                                          static_cast<std::int32_t>(snap.senderFormID),
+                                          RE::BSFixedString(content.c_str()));
+        }
+
+        // The player fast-travelled. Runs on the main thread.
+        //
+        // Before the opening line the player has not met the visitor, so
+        // the visit is undone as though it never happened. After it they
+        // have, and simply vanishing is something the visitor would notice:
+        // the walk-out goes into the sender's history and the visit ends
+        // the way any other interrupted one does.
+        //
+        // Once the closing line has been said there is no conversation left
+        // to walk out of, so the visit is finished as it would have been
+        // anyway, only sooner.
+        void OnPlayerFastTraveled()
+        {
+            if (!g_visitInFlight.load(std::memory_order_acquire) || g_hardAbortFired.load()
+                || g_terminalCleanupDone.load()) {
+                return;
+            }
+            if (!g_salutationNarrationFired.load(std::memory_order_acquire)) {
+                RequestRollback("player_fast_traveled");
+                return;
+            }
+            if (!g_visitQuest) {
+                return;
+            }
+            switch (g_visitQuest->GetCurrentStageID()) {
+            case kStageSalutation: // the opening line is out; the stage change is still landing
+            case kStageDiscuss:
+                logger::warn("NPCVisitBeat[FAST-TRAVEL]: the player left mid-conversation");
+                RecordPlayerLeftAbruptly();
+                HardAbortVisit("player_fast_traveled");
+                return;
+            case kStageValediction:
+            case kStageReturnHome:
+                RunReturnHomeShutdown("fast-travel");
+                return;
+            default:
+                return;
+            }
+        }
+
+        struct VisitFastTravelSink : public RE::BSTEventSink<RE::TESFastTravelEndEvent>
+        {
+            RE::BSEventNotifyControl ProcessEvent(const RE::TESFastTravelEndEvent*,
+                                                  RE::BSTEventSource<RE::TESFastTravelEndEvent>*) override
+            {
+                OnPlayerFastTraveled();
+                return RE::BSEventNotifyControl::kContinue;
+            }
+        };
+
+        VisitFastTravelSink g_fastTravelSink;
         std::atomic<bool> g_sinksRegistered = false;
 
         void RegisterSinks()
@@ -616,6 +753,10 @@ namespace NarrativeEngine
             } else {
                 logger::warn("NPCVisitBeat: ScriptEventSourceHolder unavailable — "
                              "death sink NOT registered");
+            }
+            // False on VR, which has no fast travel to watch for.
+            if (EngineUtils::AddFastTravelEndSink(&g_fastTravelSink)) {
+                logger::info("NPCVisitBeat: fast-travel sink registered");
             }
         }
 
@@ -668,6 +809,110 @@ namespace NarrativeEngine
                     entry.senderName = n;
             }
             VisitState::PushHistory(std::move(entry));
+        }
+
+        // Undo a visit the player has not yet seen arrive: the sender goes
+        // back where the beat found them, the quest rolls back, and neither
+        // cooldown is stamped. Runs on the main thread.
+        void RollBackVisit(const char* tag)
+        {
+            auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
+            auto* senderActor = senderRef ? senderRef->As<RE::Actor>() : nullptr;
+            if (senderActor) {
+                SendSenderHome(senderActor, tag);
+            }
+            QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
+            VisitConclusionPoll::Disarm();
+            PushRolledBackHistory(senderActor);
+            g_terminalCleanupDone.store(true);
+        }
+
+        // Ask for the visit to be rolled back. The first reason wins, with
+        // one exception: a rollback that would wait for the visitor to be
+        // out of view gives way to one that would not.
+        void RequestRollback(const char* reason)
+        {
+            const char* current = g_pendingRollbackReason.load(std::memory_order_acquire);
+            for (;;) {
+                const bool replaceable =
+                    current == nullptr || (current == kRollbackCellChange && reason != kRollbackCellChange);
+                if (!replaceable) {
+                    return;
+                }
+                if (g_pendingRollbackReason.compare_exchange_weak(current, reason, std::memory_order_acq_rel)) {
+                    logger::info("NPCVisitBeat: rollback requested ({})", reason);
+                    return;
+                }
+            }
+        }
+
+        // Why a visit could not start where the player is standing now, or
+        // null if one could. The location gates the beat is offered behind:
+        // the two every beat shares and the visit's own.
+        const char* WhyNoVisitHere()
+        {
+            if (AlphaCanon::IsInDoNotDisturbCell())
+                return "do-not-disturb cell";
+            if (AlphaCanon::IsInBlacklistedLocation())
+                return "blacklisted location";
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (player && LocationKeywords::IsVisitHostile(player->GetCurrentLocation()))
+                return "visit-hostile location";
+            return nullptr;
+        }
+
+        // Roll the visit back if the player has moved somewhere it could
+        // not have started, before the visitor has reached them.
+        //
+        // Asked only when the player's cell changes. The gates are the ones
+        // that kept the beat from being offered in the first place, so the
+        // question is whether the Director would still have chosen this
+        // visit here. Once the opening line has been spoken the answer no
+        // longer matters: the player has met them.
+        //
+        // Going indoors or out rolls back at once. A change of cell that
+        // keeps the player on the same side of a door rolls back only once
+        // the visitor is out of view; see VisitorInPlainView. Moving on to
+        // somewhere a visit could start again withdraws that second kind,
+        // since the reason for it is gone.
+        //
+        // The reads are the same off-main-thread ones the beat-select
+        // preconditions make.
+        void WatchPlayerArea()
+        {
+            if (g_salutationNarrationFired.load(std::memory_order_acquire)) {
+                return;
+            }
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            auto* cell = player ? player->GetParentCell() : nullptr;
+            if (!cell) {
+                return;
+            }
+            const auto cellID = cell->GetFormID();
+            const bool interior = cell->IsInteriorCell();
+            const auto previous = g_lastPlayerCellFormID.exchange(cellID, std::memory_order_acq_rel);
+            const bool wasInterior = g_lastPlayerCellInterior.exchange(interior, std::memory_order_acq_rel);
+            if (previous == 0 || previous == cellID) {
+                return;
+            }
+            const char* why = WhyNoVisitHere();
+            if (!why) {
+                const char* expected = kRollbackCellChange;
+                if (g_pendingRollbackReason.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel)) {
+                    logger::info("NPCVisitBeat: the player moved on to cell 0x{:08X}, where a visit could start -- "
+                                 "rollback withdrawn",
+                                 cellID);
+                }
+                return;
+            }
+            const bool throughDoor = interior != wasInterior;
+            logger::info("NPCVisitBeat: the player moved from cell 0x{:08X} to 0x{:08X}{}, a {} -- a visit could "
+                         "not start here",
+                         previous,
+                         cellID,
+                         throughDoor ? (interior ? " indoors" : " outdoors") : "",
+                         why);
+            RequestRollback(throughDoor ? kRollbackInOrOut : kRollbackCellChange);
         }
 
         void HardAbortVisit(const char* reason)
@@ -1018,6 +1263,24 @@ namespace NarrativeEngine
             const auto senderWs = WorldSpaceOf(senderRef);
             const auto playerWs = WorldSpaceOf(player);
             return senderWs != 0 && senderWs == playerWs;
+        }
+
+        // Whether rolling the visitor back now would mean the player
+        // watching them vanish: within kRollbackOutOfViewUnits and visible
+        // from the camera. Somewhere the two positions cannot be compared
+        // counts as far, which is what an unrelated worldspace or another
+        // interior is. Main thread.
+        bool VisitorInPlainView()
+        {
+            auto* senderRef = g_senderAlias ? g_senderAlias->GetReference() : nullptr;
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (!senderRef || !player || !DistancesAreComparable(senderRef, player)) {
+                return false;
+            }
+            if (senderRef->GetPosition().GetDistance(player->GetPosition()) >= kRollbackOutOfViewUnits) {
+                return false;
+            }
+            return CameraVisibility::IsAnyPartVisibleFromCamera(senderRef);
         }
 
         // ---- COMPOSE sub-phases ------------------------------------
@@ -1582,6 +1845,33 @@ namespace NarrativeEngine
                     return;
                 if (CheckHardAbortConditions())
                     return;
+                if (const char* reason = g_pendingRollbackReason.load(std::memory_order_acquire)) {
+                    // Asked for on another thread, so the opening line may
+                    // have gone out in between. Then the player has met the
+                    // visitor and there is nothing left to undo.
+                    if (g_salutationNarrationFired.load(std::memory_order_acquire)) {
+                        if (g_pendingRollbackReason.compare_exchange_strong(
+                                reason, nullptr, std::memory_order_acq_rel)) {
+                            logger::info("NPCVisitBeat: rollback ({}) arrived after the opening line -- ignored",
+                                         reason);
+                        }
+                    } else if (reason == kRollbackCellChange && VisitorInPlainView()) {
+                        // Left pending, and asked again next time. The
+                        // visitor may yet reach the player first, and then
+                        // the line above drops it.
+                        if (!g_rollbackDeferralLogged.exchange(true, std::memory_order_acq_rel)) {
+                            logger::info("NPCVisitBeat: rollback ({}) waits -- the visitor is within {:.0f}u and in "
+                                         "view",
+                                         reason,
+                                         kRollbackOutOfViewUnits);
+                        }
+                    } else if (g_pendingRollbackReason.compare_exchange_strong(
+                                   reason, nullptr, std::memory_order_acq_rel)) {
+                        logger::warn("NPCVisitBeat: rolling the visit back ({})", reason);
+                        RollBackVisit("ROLLBACK");
+                        return;
+                    }
+                }
 
                 const auto stage = g_visitQuest->GetCurrentStageID();
                 const auto& cfg = Settings::Get();
@@ -1629,6 +1919,7 @@ namespace NarrativeEngine
                                      dist);
                         const auto snap = VisitState::GetSnapshot();
                         VMDispatchRunSenderNarration(g_visitQuest, snap.narrationText);
+                        g_salutationNarrationFired.store(true, std::memory_order_release);
                         QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageDiscuss);
                         g_salutationDiscussLatch.MarkDispatched(now);
                         VisitConclusionPoll::Arm(snap);
@@ -1646,14 +1937,7 @@ namespace NarrativeEngine
                                      "{}s) — rolling back",
                                      elapsed,
                                      timeoutSec);
-                        auto* senderActor = senderRef->As<RE::Actor>();
-                        if (senderActor) {
-                            SendSenderHome(senderActor, "SALUTATION");
-                        }
-                        QuestUtils::VMDispatchQuestSetStage(g_visitQuest, kStageRollback);
-                        VisitConclusionPoll::Disarm();
-                        PushRolledBackHistory(senderActor);
-                        g_terminalCleanupDone.store(true);
+                        RollBackVisit("SALUTATION");
                     }
                     return;
                 }
@@ -2024,6 +2308,14 @@ namespace NarrativeEngine
         if (g_pointersCriticallyMissing.load()) {
             return blocked("critical forms missing at kDataLoaded");
         }
+        if (const auto remaining = RemainingCooldownGameHours(); remaining > 0.0) {
+            if (debug) {
+                logger::debug("NPCVisitBeat::IsAvailable: blocked (per-beat cooldown: {:.2f}h remaining of {}h)",
+                              remaining,
+                              Settings::Get().visitBeatCooldownGameHours);
+            }
+            return false;
+        }
         if (ctx.player) {
             if (LocationKeywords::IsVisitHostile(ctx.player->GetCurrentLocation())) {
                 return blocked("LocationKeywords::IsVisitHostile");
@@ -2048,6 +2340,25 @@ namespace NarrativeEngine
         return true;
     }
 
+    double NPCVisitBeat::RemainingCooldownGameHours() const
+    {
+        const int cooldownHours = Settings::Get().visitBeatCooldownGameHours;
+        if (cooldownHours <= 0) {
+            return 0.0;
+        }
+        double last = 0.0;
+        {
+            std::scoped_lock lock(g_cooldownMutex);
+            last = g_lastVisitGameHours;
+        }
+        if (last <= 0.0) {
+            return 0.0;
+        }
+        const double elapsed = EngineUtils::GetCurrentGameHours() - last;
+        const double remaining = static_cast<double>(cooldownHours) - elapsed;
+        return remaining > 0.0 ? remaining : 0.0;
+    }
+
     void NPCVisitBeat::OnStart(const BeatContext& /*ctx*/, const nlohmann::json& parameters)
     {
         std::string failureReason;
@@ -2068,6 +2379,7 @@ namespace NarrativeEngine
         ResetSessionState();
         VisitState::Reset();
         VisitState::SetComposingSender(true);
+        g_visitInFlight.store(true, std::memory_order_release);
         if (!senderParsed) {
             g_subPhase.Fail(ComposeSubPhase::Failed, std::move(failureReason));
         } else {
@@ -2121,11 +2433,36 @@ namespace NarrativeEngine
         if (mode == TickMode::Paused || mode == TickMode::Dialogue)
             return {};
 
+        if (state == BeatState::COMPOSE || state == BeatState::RUNNING) {
+            WatchPlayerArea();
+        }
+
         switch (state) {
         case BeatState::COMPOSE: {
             if (mode != TickMode::Normal)
                 return {};
             const auto sub = g_subPhase.Get();
+            // A rollback asked for during COMPOSE is honoured here only
+            // while nothing is in flight and the sender has not been moved:
+            // failing then leaves nothing behind but a quest the cleanup
+            // already knows how to stop. Mid-LLM-call it waits for the
+            // answer, which would otherwise land on a beat that has moved
+            // on; once the sender is warped it waits for RUNNING, which can
+            // send them home.
+            if (const char* reason = g_pendingRollbackReason.load(std::memory_order_acquire)) {
+                switch (sub) {
+                case ComposeSubPhase::Start:
+                case ComposeSubPhase::LLMResultReady:
+                case ComposeSubPhase::SelectingPoint:
+                case ComposeSubPhase::StartingQuest:
+                case ComposeSubPhase::Warping:
+                    g_pendingRollbackReason.store(nullptr, std::memory_order_release);
+                    SetSubPhase(ComposeSubPhase::Failed, reason);
+                    return {};
+                default:
+                    break;
+                }
+            }
             switch (sub) {
             case ComposeSubPhase::Start:
                 SetSubPhase(ComposeSubPhase::ComposingLLM);
@@ -2186,6 +2523,7 @@ namespace NarrativeEngine
                     logger::info("NPCVisitBeat: CLEANUP done; returning to NOT_RUNNING");
                     VisitState::Reset();
                     VisitState::SetComposingSender(false);
+                    g_visitInFlight.store(false, std::memory_order_release);
                     return {BeatState::NOT_RUNNING};
                 }
                 // If we haven't yet dispatched a terminal stage
@@ -2199,6 +2537,7 @@ namespace NarrativeEngine
             } else {
                 VisitState::Reset();
                 VisitState::SetComposingSender(false);
+                g_visitInFlight.store(false, std::memory_order_release);
                 return {BeatState::NOT_RUNNING};
             }
             return {};
@@ -2227,6 +2566,7 @@ namespace NarrativeEngine
         HardAbortVisit("user_abort");
         VisitState::Reset();
         VisitState::SetComposingSender(false);
+        g_visitInFlight.store(false, std::memory_order_release);
     }
 
     // ---------------------------------------------------------------
@@ -2238,6 +2578,11 @@ namespace NarrativeEngine
         void SetClock(double (*clock)())
         {
             g_clockOverride.store(clock, std::memory_order_release);
+        }
+
+        void FastTravel(const MainThread::Token&)
+        {
+            OnPlayerFastTraveled();
         }
     } // namespace NPCVisitBeat_Testing
 
@@ -2268,8 +2613,16 @@ namespace NarrativeEngine
         {
             if (senderNpcFormID == 0)
                 return;
-            g_senderCooldowns.Stamp(senderNpcFormID, EngineUtils::GetCurrentGameHours());
-            logger::info("NPCVisitBeat: per-sender cooldown stamp set for 0x{:08X}", senderNpcFormID);
+            const double now = EngineUtils::GetCurrentGameHours();
+            g_senderCooldowns.Stamp(senderNpcFormID, now);
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                g_lastVisitGameHours = now;
+            }
+            logger::info("NPCVisitBeat: per-sender cooldown stamp set for 0x{:08X}, per-beat cooldown stamped at "
+                         "gameHours={:.2f}",
+                         senderNpcFormID,
+                         now);
         }
 
         void OnVisitReachedValediction(RE::FormID senderNpcFormID)
@@ -2325,21 +2678,25 @@ namespace NarrativeEngine
 
     // ---------------------------------------------------------------
     // Cosave — 'NBVS' record.
-    // Layout (v2, current):
+    // Layout (v3, current):
     //   u32    senderCooldownCount
     //   [FormID(u32) + stamp(double)] * senderCooldownCount
     //   u32    senderMemoryWatermarkCount
     //   [FormID(u32) + stamp(double)] * senderMemoryWatermarkCount
-    // Layout (v1, legacy — accepted on load):
-    //   u32    senderCooldownCount
-    //   [FormID(u32) + stamp(double)] * senderCooldownCount
+    //   double lastVisitGameHours
+    // Layout (v2, legacy — accepted on load): v3 without the trailing
+    //   lastVisitGameHours.
+    // Layout (v1, legacy — accepted on load): v2 without the watermark
+    //   table.
     // v1 loads leave the watermark table empty; the first Valediction
-    // reached on the loaded save re-arms the filter from there.
+    // reached on the loaded save re-arms the filter from there. v1 and
+    // v2 loads leave the per-beat cooldown clear, so the first visit on
+    // the loaded save is not held back.
     // ---------------------------------------------------------------
 
     namespace NPCVisitBeat_Persistence
     {
-        constexpr std::uint32_t kRecordVersion = 2;
+        constexpr std::uint32_t kRecordVersion = 3;
 
         void OnSave(SKSE::SerializationInterface* intfc)
         {
@@ -2352,13 +2709,19 @@ namespace NarrativeEngine
             SKSECosaveIO io{intfc};
             g_senderCooldowns.Serialize(io);
             g_senderMemoryWatermarks.Serialize(io);
+            double lastVisit = 0.0;
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                lastVisit = g_lastVisitGameHours;
+            }
+            intfc->WriteRecordData(lastVisit);
         }
 
         void OnLoad(SKSE::SerializationInterface* intfc, std::uint32_t version, std::uint32_t length)
         {
             if (!intfc)
                 return;
-            if (version != 1 && version != kRecordVersion) {
+            if (version < 1 || version > kRecordVersion) {
                 logger::warn("NPCVisitBeat::OnLoad: unknown version {} (length={}); "
                              "clearing cooldown state",
                              version,
@@ -2371,6 +2734,10 @@ namespace NarrativeEngine
                 logger::error("NPCVisitBeat::OnLoad: sender-cooldown deserialize failed; "
                               "cleared");
                 g_senderMemoryWatermarks.Clear();
+                {
+                    std::scoped_lock lock(g_cooldownMutex);
+                    g_lastVisitGameHours = 0.0;
+                }
                 return;
             }
             // Watermark table was added in v2; older saves have no
@@ -2384,11 +2751,27 @@ namespace NarrativeEngine
             } else {
                 g_senderMemoryWatermarks.Clear();
             }
-            logger::info("NPCVisitBeat::OnLoad: restored per-sender cooldowns (record v{})", version);
+            // Per-beat cooldown stamp was added in v3; same treatment.
+            double lastVisit = 0.0;
+            if (version >= 3 && intfc->ReadRecordData(lastVisit) != sizeof(lastVisit)) {
+                logger::error("NPCVisitBeat::OnLoad: short read on lastVisitGameHours; cleared");
+                lastVisit = 0.0;
+            }
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                g_lastVisitGameHours = lastVisit;
+            }
+            logger::info("NPCVisitBeat::OnLoad: restored per-sender cooldowns, lastVisitGameHours={:.2f} (record v{})",
+                         lastVisit,
+                         version);
         }
 
         void OnRevert()
         {
+            {
+                std::scoped_lock lock(g_cooldownMutex);
+                g_lastVisitGameHours = 0.0;
+            }
             g_senderCooldowns.Clear();
             g_senderMemoryWatermarks.Clear();
         }

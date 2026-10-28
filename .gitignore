@@ -42,5 +42,12 @@ dashboard/dist/
 
 node_modules/
 
+# Scratch space. Nothing here is ever committed -- see CLAUDE.md on where
+# throwaway probes, harnesses and captured data belong.
+tmp/*
+
+__pycache__/
+*.pyc
+
 # Trace files the mocked-engine tests write, via EngineMock's log directory.
 Data/SKSE/Plugins/NarrativeEngineTestLogs/

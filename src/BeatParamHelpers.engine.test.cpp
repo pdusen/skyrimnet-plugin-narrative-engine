@@ -444,6 +444,17 @@ TEST_CASE("BeatParamHelpers::ResolveLiveSenderActor", "[BeatParamHelpers][engine
         }
     }
 
+    SECTION("when the sender is a ghost")
+    {
+        engine.SetActorGhost(sender, true);
+
+        SECTION("should say the sender is a ghost")
+        {
+            REQUIRE(Params::ResolveLiveSenderActor(kSenderFormID, &reason) == nullptr);
+            REQUIRE(reason == "sender_ghost_during_compose");
+        }
+    }
+
     SECTION("when the caller wants no failure reason")
     {
         SECTION("should reject without writing anywhere")

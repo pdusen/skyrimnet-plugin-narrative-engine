@@ -1,5 +1,7 @@
 #include <BeatParamHelpers.h>
 
+#include <EngineUtils.h>
+
 #include <nlohmann/json.hpp>
 
 #include <RE/A/Actor.h>
@@ -85,6 +87,8 @@ namespace NarrativeEngine::BeatParamHelpers
             return fail("sender_died_during_compose");
         if (sender->IsDisabled())
             return fail("sender_disabled_during_compose");
+        if (EngineUtils::IsGhost(sender))
+            return fail("sender_ghost_during_compose");
         return sender;
     }
 } // namespace NarrativeEngine::BeatParamHelpers

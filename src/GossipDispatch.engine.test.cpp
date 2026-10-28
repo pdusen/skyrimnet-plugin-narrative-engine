@@ -85,14 +85,21 @@ namespace
     // return -- turning one failed assertion into a suite that hangs and
     // reports nothing at all. The wait inside the job is bounded for the same
     // reason.
+    //
+    // The job waits on its OWN copy of the release future, never on this
+    // object's. Releasing is what destroys this object, and the worker is
+    // still on its way out of the wait when it does: waiting through `self`
+    // read freed memory there, once in every one or two hundred runs. `self` is
+    // only touched to signal `entered`, while the constructor is still
+    // waiting on it.
     struct WorkerBlocker
     {
         WorkerBlocker()
         {
             auto* self = this;
-            GossipDispatch::EnqueueWork([self](const GossipThread::Token&) {
+            GossipDispatch::EnqueueWork([self, released = releaseFuture](const GossipThread::Token&) {
                 self->entered.set_value();
-                (void)self->releaseFuture.wait_for(kTimeout);
+                (void)released.wait_for(kTimeout);
             });
             REQUIRE(Arrived(running));
         }

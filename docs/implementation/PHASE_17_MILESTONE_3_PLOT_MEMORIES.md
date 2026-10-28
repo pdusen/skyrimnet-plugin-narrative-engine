@@ -1,0 +1,393 @@
+# Phase 17 — Milestone 3: Plot Memories
+
+Milestone 2 ([`PHASE_17_MILESTONE_2_RIGID_STEPS.md`](PHASE_17_MILESTONE_2_RIGID_STEPS.md)) made every step a verb with
+fixed sentence templates and wrote memories from them at dispatch, at resolution and on giving up. Those memories cover
+the agent completely and the mastermind only in part, and the people a step is done to remember nothing. This
+milestone fills in the rest, so that everybody a plot touches can talk about it.
+
+> **Doc status: Steps 1–7 complete; Step 8's in-game check outstanding.** Steps 1–2 complete the mastermind's
+> side, Steps 3–5 give the people a step reaches memories of their own, and Step 6 is the in-game check. Phase 17's
+> Steps 20–22 (world effects, gossip seeding and their validation) still follow this milestone.
+
+---
+
+## Why this milestone exists
+
+What plots produce is memory, and an NPC can only talk about a plot they remember. Today:
+
+| Who            | Event                                                       | Remembered                                                                                |
+| -------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| **Mastermind** | Sending an agent, and who                                   | Yes: `mastermind_dispatched`, or `self_dispatched` when they act themselves               |
+|                | The agent succeeded                                         | **No.** Milestone 2's open question 5                                                     |
+|                | The agent failed, caught or out of time                     | Yes: `mastermind_told_failed`, `mastermind_told_timed_out`                                |
+|                | Went on by another way after a failure                      | **No**                                                                                    |
+|                | Gave up, or ran out of attempts                             | Yes: `mastermind_conceded`                                                                |
+|                | Brought the scheme off                                      | **No**                                                                                    |
+|                | Failed at the finish                                        | **Only** the step's "reported back" memory; nothing says the scheme is over               |
+| **Agent**      | Being sent, or acting for themselves                        | Yes: `agent_dispatched`, `self_dispatched`                                                |
+|                | Succeeded, ran out of time, was caught                      | Yes: `agent_succeeded`, `agent_timed_out`, `agent_failed`                                 |
+| **Target**     | Anything                                                    | **No.** Milestone 2's open question 4. They are only listed as related on others' memories |
+
+**A plot's creation is deliberately not remembered.** The mastermind's first dispatch memory already says what they
+set out to do -- "I sent Aeta to steal a ruby from Hulda, as part of my plan to ruin Hulda" -- and a second memory
+saying only that they decided to ruin Hulda would repeat it.
+
+---
+
+## Design
+
+### Who a step reaches
+
+Every person slot already carries an **awareness** (Milestone 2's design): `contact` (the attempt reached them,
+whether it worked or not), `failure` (they know only if it goes wrong), or `never`. Today it decides only who a later
+`silence` can count on knowing about the plot. It now also decides who remembers the step:
+
+| Awareness | Fires on            | Whose                                                        |
+| --------- | ------------------- | ------------------------------------------------------------ |
+| `contact` | Success and failure | Somebody dealt with face to face                             |
+| `failure` | Failure only        | Somebody worked against without being met                    |
+| `success` | Success only        | **New.** Whoever a denunciation or exposure accuses          |
+| `never`   | Nothing             | Nobody, once those two accused move from `never` to `success` |
+
+By verb: `contact` is buy's seller, deliver's recipient, the mark of bribe, win_over, threaten and blackmail,
+silence's witness, and the authority of denounce, expose and petition. `failure` is the mark of watch, ask_around,
+steal, plant, spread_rumors, sabotage, dig_up and destroy, and falsify's subject.
+
+A **timeout reaches nobody**, as before: the agent ran out of time before the attempt got that far.
+
+**`success` is new** because a denunciation that works is done in the open. The jarl acts on it, and the accused
+learns who accused them and before whom. One that fails -- the authority is not convinced -- never reaches the
+person accused. That gives `denounce` and `expose` two people a step can reach -- the accused on success, the
+authority either way -- so target templates belong to the **slot**, not the verb: the accused and the authority
+remember the same denunciation in different words.
+
+The crafting verbs have no person slot, and reach nobody.
+
+### Three ways a step reaches somebody
+
+- **It went wrong in front of them.** The step failed and their awareness fires on failure: a watched mark spotted
+  the watcher, a guard refused the bribe, a jarl was not convinced. They know who the agent was, because they saw
+  them. `target_failed`.
+- **It was done to them openly.** The step succeeded and their awareness fires on success: they took the coin, were
+  handed the parcel, were won over, were denounced before the jarl. They know who the agent was. `target_succeeded`.
+
+  **An authority who is appealed to and swayed remembers being swayed.** When Hulda's denunciation of Ysolda to
+  Balgruuf works, Balgruuf remembers that Hulda came to him about Ysolda and that he was convinced; the same holds for
+  proof shown in an exposure, and for a petition granted. It is the authority's `target_succeeded`, worded for each
+  kind of appeal, and the accused's own `target_succeeded` is a separate memory of the same act. An appeal that fails
+  leaves the authority remembering that they were not swayed, and the accused nothing.
+- **It was done to them quietly, and left a mark.** The step succeeded, their awareness fires only on failure, and
+  the verb leaves something behind they would notice. They know something happened and **not who did it**.
+  `target_noticed`. Of the `failure` verbs, these leave a mark:
+
+  | Verb            | What they notice                                   |
+  | --------------- | -------------------------------------------------- |
+  | `steal`         | The thing is gone                                  |
+  | `destroy`       | The thing is ruined                                |
+  | `sabotage`      | Their livelihood is suffering                      |
+  | `spread_rumors` | People are saying ugly things about them           |
+
+  and these leave nothing to notice: `watch` and `ask_around` learned something without touching them, `dig_up`
+  found what was already there, `falsify` made a document nobody has used yet, and `plant` hid a thing that stays
+  hidden until a later step -- a denunciation or rumors -- gives somebody a reason to look. That later step is what
+  the mark then remembers.
+
+### Templates
+
+Each verb gains one template beside Milestone 2's nine, each person slot whose awareness can fire gains up to three,
+and the plot gains two templates and one clause:
+
+| Template                    | Voice                                                               | Written                                         | To                                  |
+| --------------------------- | ------------------------------------------------------------------- | ----------------------------------------------- | ----------------------------------- |
+| `mastermind_told_succeeded` | The mastermind, on being told the step was done                     | When the step succeeds                          | The mastermind, unless self-agent   |
+| `target_failed`             | The person reached, on the attempt going wrong in front of them     | When the step fails, awareness firing           | That person                         |
+| `target_succeeded`          | The person reached, on it being done to them openly                 | When the step succeeds, awareness firing        | That person                         |
+| `target_noticed`            | The person reached, on noticing what was done, not by whom          | When the step succeeds, on a verb that marks    | That person                         |
+| `mastermind_adapted`        | A clause ending the mastermind's failure memory. Per plot           | When a re-plan is taken                         | The mastermind                      |
+| `mastermind_succeeded`      | The mastermind, on bringing the scheme off. Per plot                | When the finish succeeds                        | The mastermind                      |
+| `mastermind_failed`         | The mastermind, on the scheme failing at its finish. Per plot       | When the finish fails                           | The mastermind                      |
+
+A slot carries only the target templates its awareness can fire: a `contact` slot has `target_failed` and
+`target_succeeded`, a `failure` slot has `target_failed` and, if its verb leaves a mark, `target_noticed`, a `success`
+slot has `target_succeeded`, and a `never` slot none. The verb suite asserts every slot carries exactly the ones it
+can use.
+
+**Going on after a failure is one memory, not two.** When a step fails and the plot finds another way, the
+mastermind's memory of the failure ends with `mastermind_adapted` rather than being followed by a memory of its own:
+
+```text
+Aeta reported back that Hulda had caught them trying to steal a ruby, but I found another way to go on with my plan to
+ruin Hulda.
+```
+
+So the mastermind's failure memory is no longer written when the step resolves. It waits for the plot's answer to the
+failure -- the next tick at the latest, since adapting is decided in the same pass -- and is written once, with the
+clause when a re-plan is taken and without it otherwise. That holds for `mastermind_told_failed` and
+`mastermind_told_timed_out`, and for a mastermind who did the step themselves, whose `agent_failed` or
+`agent_timed_out` takes the clause the same way. The agent's own memory is still written at resolution.
+
+Drafts, for review at the step that writes them:
+
+```text
+steal       mastermind_told_succeeded   Aeta reported back that they had stolen a ruby from Hulda.
+steal       target_failed               I caught Aeta trying to steal a ruby from me.
+steal       target_noticed              Someone stole a ruby from me.
+bribe       target_failed               Aeta offered me coin to look the other way, and I refused it.
+bribe       target_succeeded            Aeta paid me to look the other way.
+win_over    target_succeeded            Aeta won me over to Thonar's side.
+denounce    target_succeeded (mark)     Aeta denounced me to Igmund.
+denounce    target_succeeded (auth.)    Aeta came to me denouncing Thongvor, and I believed them.
+denounce    target_failed (authority)   Aeta came to me denouncing Thongvor, and I was not convinced.
+expose      target_succeeded (auth.)    Aeta showed me a merchant's ledger as proof against Thongvor, and it convinced me.
+expose      target_failed (authority)   Aeta showed me a merchant's ledger as proof against Thongvor; I was not convinced.
+petition    target_succeeded (auth.)    Aeta petitioned me on Thonar's behalf, and I granted it.
+petition    target_failed (authority)   Aeta petitioned me on Thonar's behalf, and I turned them away.
+spread_rum. target_noticed              Somebody has been spreading ugly talk about me around Markarth.
+plot        mastermind_adapted          ..., but I found another way to go on with my plan to ruin Hulda.
+plot        mastermind_succeeded        I brought off my plan to ruin Hulda.
+plot        mastermind_failed           My plan to ruin Hulda came to nothing.
+```
+
+Rules the suite holds every template to, beside Milestone 2's:
+
+- **`target_noticed` names neither `{agent}` nor `{mastermind}`, and relates nobody.** The memory's related actors
+  would otherwise tell SkyrimNet, and through it the NPC, exactly who they do not know did it.
+- **The target templates name `{mastermind}` only where the verb's own sentence does.** Being won over to Thonar's
+  side, or petitioned on his behalf, says whose side it is; being robbed by Aeta does not say who sent her.
+- **The target templates never name `{scheme}`.** The person reached does not know the plan.
+- **The plot templates name nothing but `{scheme}`**, as `mastermind_conceded` already does: the step memories kept
+  before them say what happened. `mastermind_adapted` is a clause, not a sentence: it opens with ", but" and is joined
+  to a failure memory with that memory's own final stop dropped.
+
+### Importance and type
+
+| Template                    | Importance | Type         | Why                                                                     |
+| --------------------------- | ---------- | ------------ | ----------------------------------------------------------------------- |
+| `mastermind_told_succeeded` | 0.5        | `KNOWLEDGE`  | Level with being told of a timeout; hearing about a step, not doing it  |
+| `target_failed`             | 0.75       | `EXPERIENCE` | Level with the agent's failure: catching somebody is what gets talked of |
+| `target_succeeded`          | 0.55       | `EXPERIENCE` | Level with the agent's success                                          |
+| `target_noticed`            | 0.6        | `EXPERIENCE` | Being wronged by nobody one can name lingers                            |
+| `mastermind_adapted`        | --         | --           | A clause: the failure memory it ends keeps that memory's importance     |
+| `mastermind_succeeded`      | 0.7        | `EXPERIENCE` | The plan done is the most a mastermind has to show                      |
+| `mastermind_failed`         | 0.65       | `EXPERIENCE` | Above giving up: it was lost, not let go                                |
+
+Every new memory carries the plot tag, and a step memory takes the step's place as its location, as Milestone 2's do.
+A target memory relates the agent, and the mastermind where it names them; `target_noticed` relates nobody. The plot
+memories relate nobody.
+
+**Only the living remember.** A keeper who has died by the time the memory is written keeps nothing, as a mastermind
+who dies already does.
+
+---
+
+## Implementation plan
+
+Every step is owned by `[CLAUDE]` or `[USER]` and verified on its own. The co-save is not touched: nothing here is
+state, only memories written as things happen.
+
+### Step 1 — The mastermind hears of a success
+
+- [x] Complete
+
+**[CLAUDE]**
+
+`mastermind_told_succeeded` on every verb, written to a mastermind who sent somebody else when that somebody succeeds.
+A mastermind who did the step themselves keeps `agent_succeeded` alone, as now. Settles Milestone 2's open question 5.
+
+**Verification:** the memory suite asserts, per verb, that a success writes `agent_succeeded` to the agent and
+`mastermind_told_succeeded` to a mastermind who sent them, and only the first to a mastermind who acted themselves.
+
+Done. `Template::MastermindToldSucceeded` is each verb's tenth template, worded as the other reports are ("Aeta reported
+back that they had stolen a ruby from Hulda."), and `PlotMemories::OnResolve` writes it on a success exactly as it
+writes the failure and timeout reports. The verb suite holds all ten templates to the existing rules and requires the
+new one to name the agent; the memory suite's success case now expects both memories, the report as `KNOWLEDGE`. 496
+tests pass.
+
+### Step 2 — The mastermind remembers how the scheme went
+
+- [x] Complete
+
+**[CLAUDE]**
+
+The three plot templates, written by the plot worker where it already decides each outcome:
+
+- the mastermind's failure memory, held back from resolution until the plot answers the failure, and written once:
+  ending in `mastermind_adapted` when a re-plan is taken, and as it stands otherwise;
+- `mastermind_succeeded` when the finish succeeds and the plot ends achieved;
+- `mastermind_failed` when the finish fails and the plot ends, after the step's own failure memory.
+
+`mastermind_conceded` stays as it is for a plot given up, by decision, by the cap or by a hopeless re-plan. A plot
+whose mastermind is gone writes none of them.
+
+**Verification:** the memory suite asserts each plot template goes to the mastermind alone, names only the scheme and
+relates nobody; a plot-worker suite, or the memory suite over the outcomes that decide them, asserts a taken re-plan
+writes the mastermind exactly one memory of the failure, ending in the clause, for a step they sent somebody on and for
+one they did themselves, while the agent's memory is written at resolution as before; a conceded re-plan writes the
+failure memory without the clause and then `mastermind_conceded`; an achieved plot writes `mastermind_succeeded`, a plot
+that fails at its finish writes `mastermind_failed` and not `mastermind_conceded`, and a plot ended by its mastermind's
+death writes none.
+
+Done. `PlotMemories` gains three pure functions beside `OnResolve`, which no longer writes the mastermind anything on a
+failure:
+
+- `OnFailureAnswered(plot, step, wentOn)` is the mastermind's one memory of a failed or timed-out step -- the report,
+  or their own failure when they did it -- ending in `PlotVerbs::kWentOnClause` when the plot went on.
+- `OnSucceeded` and `OnFinishFailed` write `kSucceededTemplate` and `kFailedTemplate`, rendered as the concession is
+  by the new `PlotVerbs::RenderPlotLine`.
+
+`PlotTick` writes the answered failure in `AdaptPlot` once `Adapt` has decided, before any concession, and on the
+finish failing before the plot ends; `EndPlot` writes the success or the loss beside the concession. 498 tests pass.
+
+**The wiring in `PlotTick` is not under test.** There is no plot-worker suite, so the memory suite drives the four
+outcomes through the pure functions -- going on, not going on, a self-agent going on, and a step that did not fail --
+and the two plot endings, and the tick's part is three calls at the points that already decide them.
+
+### Step 3 — Awareness that fires on success
+
+- [x] Complete
+
+**[CLAUDE]**
+
+`Awareness::Success`, fired only when the step succeeds, and `denounce`'s and `expose`'s marks moved to it from `never`.
+Target templates are carried per slot from here on, ready for Steps 4 and 5. Who a later `silence` may count as knowing
+of the plot follows it, as it follows the others: somebody denounced before the jarl knows of the plot against them.
+
+**Verification:** the verb suite asserts `denounce`'s and `expose`'s marks are `success`, and the candidates suite
+asserts a successful denunciation makes its mark aware and a failed one does not.
+
+Done. `PlotVerbs::Awareness::Success`, which `PlotCandidates::AwarenessFired` fires on a success alone, and the two
+marks moved to it; no verb's slot is `never` any more. The candidates suite checks the new value against every outcome
+and a denunciation's accused against both, and the verb suite pins the two marks. 498 tests pass.
+
+**The per-slot templates moved to Step 4**, which is the first step to write any: carrying an empty table here would
+have been structure with nothing to hold.
+
+### Step 4 — The person a step reaches remembers it
+
+- [x] Complete
+
+**[CLAUDE]**
+
+`target_failed` and `target_succeeded` on every person slot whose awareness can fire for them, written at resolution
+to the person in that slot when it fires: on failure for `contact` and `failure`, on success for `contact` and `success`.
+Nothing on a timeout. A keeper who is not alive keeps nothing, for these and every other plot memory.
+
+**Verification:** the verb suite asserts each slot carries exactly the target templates its awareness can use, and that
+they name `{mastermind}` only where the verb's sentence does and never `{scheme}`. The memory suite asserts, per verb
+and per outcome, exactly who receives which template: a caught `steal` writes `target_failed` to its mark, a successful
+`bribe` writes `target_succeeded` to its mark, a successful `denounce` or `expose` writes it to the mark and the
+authority, a successful `petition` to the authority, a failed appeal `target_failed` to the authority alone, a timeout
+to no target, and a dead target keeps nothing.
+
+Done. `PlotVerbs::Slot` carries `remembers`, indexed by the new `TargetTemplate` (failed, succeeded, noticed), and
+the 21 person slots whose awareness can fire carry their lines; `RenderTarget` fills one from a step. `OnResolve`
+appends a memory for everybody in a slot whose awareness fired for the outcome. 499 tests pass:
+
+- the verb suite holds every slot to exactly the templates its awareness can fire, each naming the agent, never the
+  keeper's own slot or the scheme, and the mastermind only where the verb's sentence does;
+- the memory suite checks, across every verb and outcome, that exactly the people whose awareness fired are reached,
+  and pins the cases the plan names, wording and relations included.
+
+**A target memory relates everybody it names**, not only the agent and the mastermind: the authority who believed a
+denunciation relates the accused as well. Somebody remembers who they dealt with, and nobody else.
+
+**Only the living remember** is enforced in `PlotMemories::Write`, which skips a keeper `PlotPopulation::IsAlive`
+refuses, for every plot memory. `Write` calls SkyrimNet and is not under test, so that rule is checked by Step 6 rather
+than the suite.
+
+### Step 5 — A quiet success that leaves a mark is noticed
+
+- [x] Complete
+
+**[CLAUDE]**
+
+A per-verb flag for leaving a mark, set on `steal`, `destroy`, `sabotage` and `spread_rumors`, and `target_noticed`
+on those four, written to the mark when the step succeeds. It names and relates neither the agent nor the
+mastermind.
+
+**Verification:** the verb suite asserts exactly the four verbs carry the flag and the template, and that the template
+names neither `{agent}` nor `{mastermind}`. The memory suite asserts a successful `steal` writes `target_noticed` to
+its mark with no related actors, and a successful `watch`, `dig_up` or `plant` writes nothing to theirs.
+
+Done. The flag is the template itself: a `failure` slot that carries a `target_noticed` line leaves a mark, and the
+four marks named above are the only ones that do. `OnResolve` writes it to them on a success, relating nobody, at 0.6.
+The verb suite pins the four and holds the line to naming nobody; the memory suite checks a theft noticed without a
+name or a relation, five quiet verbs leaving nothing, and the every-verb case now expects the noticed. 500 tests pass,
+and the plugin builds with no warnings.
+
+### Step 6 — In-game validation
+
+- [x] Complete
+
+**[USER]**
+
+With plots running over a session long enough for several to end:
+
+1. Ask a mastermind whose agent succeeded what came of it. Do they know?
+2. Ask a mastermind whose plot succeeded, one whose plot failed at its finish, and one who went on after a failure.
+   Does each know how it stands?
+3. Find a mark who caught an agent. Do they know who it was?
+4. Find somebody bribed, won over or denounced. Do they know who came to them?
+5. Find somebody robbed, or talked about. Do they know it happened, and not who did it?
+6. Find somebody watched without noticing. Do they know nothing?
+
+Record findings, and any wording or importance changes, under this step.
+
+**Accepted (2026-10-15).** Every kind of memory was found as described. One finding led to Step 7: Keerava, acting for
+herself, failed the last step of her plot and kept two memories written at the same moment -- "I tried to win Indaryn
+over, but they would not be swayed." and "My plan to win over Indaryn to refuse Thieves Guild protection payments came
+to nothing." -- where one would do.
+
+### Step 7 — One memory per person per plot per tick
+
+- [x] Complete
+
+**[CLAUDE]**
+
+Everything one plot writes to one person in one tick is a single memory: its statements joined, in the order they
+were made, into a paragraph. Keerava's two become
+
+```text
+I tried to win Indaryn over, but they would not be swayed. My plan to win over Indaryn to refuse Thieves Guild
+protection payments came to nothing.
+```
+
+and the same holds for a failure followed by giving up, and for any other pair a tick produces. Step 2's clause is
+untouched: going on after a failure is part of the failure's own sentence.
+
+- **Collected, then combined.** The plot worker gathers each plot's memories while it advances that plot, and writes
+  them once it is done with it: one per keeper, in the order keepers first appear.
+- **The combined memory** takes the most important statement's importance and type, everybody any statement relates,
+  the first location any statement has, and every statement's source.
+- **Per plot.** Two plots that both reach somebody in the same tick still give them two memories; each is its own
+  story.
+
+**Verification:** the memory suite asserts that combining leaves one memory per keeper with the statements joined in
+order, the highest importance and its type, the union of related people and the first location, and leaves a keeper
+with a single statement as they were.
+
+Done. `PlotMemories::Combine` does the merging, and `Memory::source` became a string so a combined memory can list
+every statement's source ("agent_failed+mastermind_failed"). `PlotTick` gathers into a plot-worker buffer wherever it
+wrote before and writes the combined batch after each plot is advanced. 501 tests pass, with a new memory-suite case,
+and the plugin builds with no warnings. As with Step 2, the gathering in `PlotTick` is not under test; the suite drives
+`Combine` itself.
+
+### Step 8 — In-game check of combined memories
+
+- [x] Complete
+
+**[USER]**
+
+Find a mastermind who did a plot's last step themselves and failed it, or one who gave a plot up after a failure. Do
+they keep one memory saying both things, rather than two?
+
+---
+
+## Open questions
+
+1. **Does a target learn who sent the agent?** The drafts give a target the agent's name and the mastermind's only
+   where the verb's sentence says it. A caught agent might give up who sent them; whether that should be a chance, a
+   rule by verb, or nothing is left for after Step 6 shows how the plain version plays.
+2. **Is a planted item ever found without a later step?** As drafted, `plant` reaches its mark only through the
+   denunciation or rumors that follow it. A plot that plants and then fails before that leaves the item unnoticed for
+   good.
