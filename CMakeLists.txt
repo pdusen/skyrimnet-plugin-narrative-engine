@@ -378,8 +378,8 @@ if(DEFINED OUTPUT_FOLDER)
     #     pattern only fired when the DLL actually re-linked, so prompt-only
     #     edits would silently skip the deploy.
     #   * Adding/removing a file is picked up by CONFIGURE_DEPENDS on the next
-    #     build. (Removed files leave their previous deploy behind in the mod
-    #     folder — we don't currently sweep stale outputs.)
+    #     build. Removed files leave their previous deploy behind in the mod
+    #     folder; `build.ps1 build` sweeps those afterwards (see its header).
     #
     # `make_directory` is idempotent, so multiple files in the same destination
     # subdir cause no issues. `copy_if_different` skips no-op writes.

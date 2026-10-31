@@ -34,6 +34,16 @@
 # with no matching .psc under esp/Source/Scripts/ (basename match — the
 # compiler names output after the Scriptname declaration, which matches the
 # filename for every script in this project).
+#
+# They prune orphaned statics the same way, for the same packaging reason.
+# CMake mirrors statics/ into the mod folder file by file and never deletes,
+# so switching to a branch whose statics/ lacks a file leaves the previous
+# branch's copy deployed. Unlike Scripts/, the mod folder can't be diffed
+# against statics/ directly — SKSE/Plugins/ also holds the DLL and anything
+# SkyrimNet writes at runtime — so each build records the statics it
+# deployed in build/deployed-statics.txt (outside build/<preset>, so `clean`
+# keeps it) and the next build deletes only recorded files that statics/ no
+# longer has.
 
 [CmdletBinding()]
 param(
@@ -103,6 +113,7 @@ function Invoke-Build {
     cmake --build $buildDir
     if ($LASTEXITCODE -ne 0) { throw "Build failed (exit $LASTEXITCODE)." }
     Invoke-PapyrusPrune
+    Invoke-StaticsPrune
 }
 
 # Delete .pex files in the deployed mod folder that no longer have a
@@ -140,6 +151,61 @@ function Invoke-PapyrusPrune {
         Write-Host "    removed $($orphan.Name)" -ForegroundColor DarkGray
         Remove-Item -LiteralPath $orphan.FullName -Force
     }
+}
+
+# Delete files an earlier build deployed from statics/ that statics/ no longer
+# contains, then record what this build deployed. See the header comment.
+function Invoke-StaticsPrune {
+    $modsRoot = $env:SKYRIM_MODS_FOLDER
+    if (-not $modsRoot) { return }
+
+    $modFolder = [System.IO.Path]::GetFullPath((Join-Path $modsRoot 'NarrativeEngine'))
+    if (-not (Test-Path -LiteralPath $modFolder -PathType Container)) { return }
+
+    # Case-insensitive, like the filesystem: a case-only rename must not read
+    # as "old name gone", or we'd delete the file this build just deployed.
+    $staticsRoot = Join-Path $PSScriptRoot 'statics'
+    $deployed = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    Get-ChildItem -LiteralPath $staticsRoot -Recurse -File -Force -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            [void]$deployed.Add([System.IO.Path]::GetRelativePath($staticsRoot, $_.FullName).Replace('\', '/'))
+        }
+
+    # Same guard as the Papyrus prune: a missing statics/ would make every
+    # recorded file look orphaned.
+    if ($deployed.Count -eq 0) {
+        Write-Warning "Statics prune: no files found under $staticsRoot; skipping prune."
+        return
+    }
+
+    $recordPath = Join-Path $PSScriptRoot 'build/deployed-statics.txt'
+    $orphans = @()
+    if (Test-Path -LiteralPath $recordPath -PathType Leaf) {
+        $orphans = @(
+            Get-Content -LiteralPath $recordPath |
+                Where-Object { $_ -and -not $deployed.Contains($_) } |
+                ForEach-Object { [System.IO.Path]::GetFullPath((Join-Path $modFolder $_)) } |
+                Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+        )
+    }
+
+    if ($orphans.Count -gt 0) {
+        Write-Host "==> pruning $($orphans.Count) orphaned statics from $modFolder" -ForegroundColor Cyan
+        foreach ($orphan in $orphans) {
+            Write-Host "    removed $([System.IO.Path]::GetRelativePath($modFolder, $orphan))" -ForegroundColor DarkGray
+            Remove-Item -LiteralPath $orphan -Force
+
+            # Remove the directories that deletion emptied, stopping at the mod folder.
+            $dir = Split-Path -Parent $orphan
+            while ($dir.Length -gt $modFolder.Length -and
+                -not (Get-ChildItem -LiteralPath $dir -Force | Select-Object -First 1)) {
+                Remove-Item -LiteralPath $dir -Force
+                $dir = Split-Path -Parent $dir
+            }
+        }
+    }
+
+    Set-Content -LiteralPath $recordPath -Value ($deployed | Sort-Object)
 }
 
 # Build and run the Catch2 unit tests.
