@@ -12,6 +12,7 @@
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
 #include <Decorators.h>
+#include <EditorIds.h>
 #include <EvalDispatch.h>
 #include <EventHistoryWriter.h>
 #include <FineRoads.h>
@@ -157,6 +158,12 @@ namespace NarrativeEngine
                 // Settings::Load() runs FIRST so later subsystems can
                 // consult the populated Config when they initialize.
                 Settings::Load();
+                // EditorIds inverts the engine's EditorID table, which is
+                // complete by kDataLoaded. Before every subsystem below:
+                // HoldGrid, gossip and plots all read forms' EditorIDs while
+                // they initialize, and most forms can only name themselves
+                // through this index.
+                EditorIds::Initialize();
                 // MCMEventSink listens for _ne_MCM.psc's ModEvent so the
                 // MCM-rebound hotkey can overwrite the INI-loaded default
                 // once a save fires OnGameReload. Register before any

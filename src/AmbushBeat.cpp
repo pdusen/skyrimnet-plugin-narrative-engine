@@ -4,6 +4,7 @@
 #include <AmbushSpawnPoints.h>
 #include <BeatRegistry.h>
 #include <DebugNotify.h>
+#include <EditorIds.h>
 #include <EngineUtils.h>
 #include <JsonUtils.h>
 #include <LLMTextSanitizer.h>
@@ -600,7 +601,7 @@ namespace NarrativeEngine
                         if (!base) {
                             logger::warn("AmbushBeat: leveled list '{}' (0x{:08X}) resolved to no NPC at "
                                          "player level {}",
-                                         list->GetFormEditorID() ? list->GetFormEditorID() : "?",
+                                         EditorIds::Of(list),
                                          list->GetFormID(),
                                          playerLevel);
                             return false;
@@ -667,7 +668,7 @@ namespace NarrativeEngine
                                      i,
                                      ref->GetFormID(),
                                      base->GetFormID(),
-                                     base->GetFormEditorID() ? base->GetFormEditorID() : "?",
+                                     EditorIds::Of(base),
                                      ref->As<RE::Actor>() != nullptr,
                                      handleOk,
                                      landedCell ? landedCell->GetFormID() : 0u,

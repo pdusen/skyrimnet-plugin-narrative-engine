@@ -1,5 +1,6 @@
 #include <Region.h>
 
+#include <EditorIds.h>
 #include <HoldGrid.h>
 #include <logger.h>
 
@@ -106,7 +107,7 @@ namespace NarrativeEngine::Region
             static std::unordered_set<RE::FormID> logged;
             const auto id = loc->GetFormID();
             if (logged.insert(id).second) {
-                const char* edid = loc->GetFormEditorID();
+                const char* edid = EditorIds::Of(loc);
                 const char* full = loc->GetFullName();
                 logger::info("Region: hold-level location [0x{:08X}] EditorID='{}' FullName='{}' has no "
                              "Climate mapping (Climate::Unknown returned)",
@@ -129,7 +130,7 @@ namespace NarrativeEngine::Region
             r.holdFormID = holdLoc->GetFormID();
             if (const char* full = holdLoc->GetFullName(); full && *full) {
                 r.holdDisplayName = full;
-            } else if (const char* edid = holdLoc->GetFormEditorID(); edid && *edid) {
+            } else if (const char* edid = EditorIds::Of(holdLoc); edid && *edid) {
                 r.holdDisplayName = edid;
             }
             const auto& table = ResolvedClimateTable();

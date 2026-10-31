@@ -1,5 +1,6 @@
 #include <LocationKeywords.h>
 
+#include <EditorIds.h>
 #include <logger.h>
 
 #include <array>
@@ -96,7 +97,7 @@ namespace NarrativeEngine::LocationKeywords
             if (const char* full = loc->GetFullName(); full && *full) {
                 return std::string(full);
             }
-            if (const char* edid = loc->GetFormEditorID(); edid && *edid) {
+            if (const char* edid = EditorIds::Of(loc); edid && *edid) {
                 return std::string(edid);
             }
             char buf[16];
@@ -132,7 +133,7 @@ namespace NarrativeEngine::LocationKeywords
                 chain.push_back(loc);
                 for (auto* kw : keywords) {
                     if (kw && loc->HasKeyword(kw)) {
-                        const char* kwEdid = kw->GetFormEditorID();
+                        const char* kwEdid = EditorIds::Of(kw);
                         logger::debug("LocationKeywords: {} is {} because keyword {} is on {}",
                                       LocationLabel(startLoc),
                                       setLabel,

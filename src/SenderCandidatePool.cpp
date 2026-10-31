@@ -1,6 +1,7 @@
 #include <SenderCandidatePool.h>
 
 #include <AliasWalkFilter.h>
+#include <EditorIds.h>
 #include <EngineUtils.h>
 #include <LLMTextSanitizer.h>
 #include <logger.h>
@@ -274,7 +275,7 @@ namespace NarrativeEngine::SenderCandidatePool
                 {
                     std::string_view editorID;
                     if (auto* base = actor->GetActorBase()) {
-                        if (const char* edid = base->GetFormEditorID(); edid && *edid) {
+                        if (const char* edid = EditorIds::Of(base); edid && *edid) {
                             editorID = edid;
                         }
                     }

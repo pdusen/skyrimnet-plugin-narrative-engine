@@ -1,5 +1,6 @@
 #include <AlphaCanon.h>
 
+#include <EditorIds.h>
 #include <logger.h>
 #include <Settings.h>
 
@@ -91,10 +92,10 @@ namespace NarrativeEngine::AlphaCanon
 
         // Cell EditorIDs are only retained at runtime when an EditorID-
         // recovery mod (e.g. powerofthree's Tweaks) is installed. Without
-        // one, GetFormEditorID() returns "" for cells and this predicate is
+        // one, EditorIds::Of() returns "" for cells and this predicate is
         // effectively always false — the do-not-disturb feature is opt-in
         // and assumes that infrastructure is in place.
-        const char* edid = cell->GetFormEditorID();
+        const char* edid = EditorIds::Of(cell);
         if (!edid || *edid == '\0') {
             return false;
         }
@@ -123,7 +124,7 @@ namespace NarrativeEngine::AlphaCanon
             // Location EditorIDs need runtime retention (powerofthree's
             // Tweaks or equivalent); without it this is "" for every
             // Location and the blacklist degrades open.
-            if (const char* edid = loc->GetFormEditorID(); edid && *edid && CsvContains(csv, edid)) {
+            if (const char* edid = EditorIds::Of(loc); edid && *edid && CsvContains(csv, edid)) {
                 logger::debug("AlphaCanon: player location blacklisted via '{}'", edid);
                 return true;
             }

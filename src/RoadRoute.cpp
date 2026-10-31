@@ -1,5 +1,6 @@
 #include <RoadRoute.h>
 
+#include <EditorIds.h>
 #include <FineRoads.h>
 #include <logger.h>
 #include <TravelGraph.h>
@@ -159,7 +160,7 @@ namespace NarrativeEngine::RoadRoute
     bool MarkerFromLocation(RE::BGSLocation* location, Origin& out, std::string& trail)
     {
         for (int depth = 0; location && depth < kMaxParentDepth; ++depth) {
-            const char* edid = location->GetFormEditorID();
+            const char* edid = EditorIds::Of(location);
             trail += (depth == 0 ? "" : "->");
             trail += (edid && *edid) ? edid : "?";
 

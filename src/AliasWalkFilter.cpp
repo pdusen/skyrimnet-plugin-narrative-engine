@@ -1,5 +1,6 @@
 #include <AliasWalkFilter.h>
 
+#include <EditorIds.h>
 #include <logger.h>
 #include <Settings.h>
 
@@ -88,7 +89,7 @@ namespace NarrativeEngine::AliasWalkFilter
                                   "owned by quest '{}' (0x{:X}) — story-active",
                                   formId,
                                   scene->GetFormID(),
-                                  sceneQuest ? sceneQuest->GetFormEditorID() : "?",
+                                  sceneQuest ? EditorIds::Of(sceneQuest) : "?",
                                   sceneQuest ? sceneQuest->GetFormID() : 0u);
                 }
                 if (reasonOut) {
@@ -182,7 +183,7 @@ namespace NarrativeEngine::AliasWalkFilter
             const auto* quest = entry->quest;
             const auto* alias = entry->alias;
 
-            const char* qEid = (quest && quest->GetFormEditorID()) ? quest->GetFormEditorID() : "?";
+            const char* qEid = quest ? EditorIds::Of(quest) : "?";
             const std::uint32_t qId = quest ? quest->GetFormID() : 0u;
             const char* aName = (alias && !alias->aliasName.empty()) ? alias->aliasName.c_str() : "?";
             const std::uint32_t aId = alias ? alias->aliasID : 0u;
