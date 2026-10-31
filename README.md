@@ -117,14 +117,18 @@ That EditorID dependency also covers optional configuration: the `[AlphaCanon]` 
    line reading `DashboardUIManager: initialized`; its absence usually means PrismaUI failed to load, which
    almost always traces back to a SKSE / Address Library mismatch. Close the dashboard the same way you opened
    it, or with Esc.
-6. **Point the Director at a fast, cheap model.** Open the SkyrimNet dashboard (SkyrimNet's own PrismaUI
+6. **Choose models for the Director and the composer.** Open the SkyrimNet dashboard (SkyrimNet's own PrismaUI
    overlay) and navigate to **AI → Models**. The full list of SkyrimNet's model profiles appears there,
-   including two NarrativeEngine registers: `narrative_engine_director` and `narrative_engine_composer`. Only
-   the director needs your attention: it runs on every tick to score dramatic tension and pick beats, so a
-   top-tier model here gets expensive fast. Override it to something small and cheap;
-   `deepseek/deepseek-v4-flash` is a reasonable pick on OpenRouter. The composer profile (letters and
-   briefings written in a specific NPC's voice) fires only when a beat actually starts, so its default —
-   inheriting SkyrimNet's dialogue model — is fine.
+   including two NarrativeEngine registers: `narrative_engine_director` and `narrative_engine_composer`.
+   - The **director** runs on every tick to score dramatic tension and pick beats, so a top-tier model here gets
+     expensive fast. Any model that does well as SkyrimNet's **Meta** model will do well here.
+   - The **composer** writes letters and briefings in a specific NPC's voice, and fires only when a beat actually
+     starts. Any model that does well as SkyrimNet's **Diary** model will do well here.
+
+   These settings have generally worked well on OpenRouter:
+
+   - `narrative_engine_director`: `deepseek/deepseek-v4.1-flash`
+   - `narrative_engine_composer`: `qwen/qwen3-235b-a22b-2507`
 7. **Play.** The Director starts ticking as soon as you're in-world. First few ticks may not fire any beats — the
    arc has to build up tension and the phase has to overstay its ideal duration first. Open the dashboard any time
    to watch what it's thinking, tune the phase durations under the Settings tab if the pacing feels off, or

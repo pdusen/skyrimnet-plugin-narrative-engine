@@ -4,9 +4,10 @@
   // extension's own legacy "kit" UI.
   "cmake.useCMakePresets": "always",
 
-  // Default to local-release for both configure and build so the IDE's
-  // build button (Ctrl+Shift+B / status-bar Build) lands the same DLL as
-  // `pwsh -File build.ps1 build` (whose default is also local-release).
+  // Default to local-release for both configure and build so the CMake Tools
+  // status-bar Build button lands the same DLL as `pwsh -File build.ps1 build`
+  // (whose default is also local-release). Ctrl+Shift+B runs build.ps1
+  // itself; see tasks.json.
   //
   // Without these pins, CMake Tools picks the first non-hidden preset
   // listed in CMakePresets.json — which is `debug`, an unprefixed preset
@@ -35,6 +36,11 @@
   // per-configuration setting in c_cpp_properties.json but harmless to
   // also state explicitly here.
   "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+
+  // Keep tasks contributed by extensions (CMake Tools' "CMake: build" and
+  // others) out of the Ctrl+Shift+B picker, so it lists only the build.ps1
+  // tasks in tasks.json.
+  "task.autoDetect": "off",
 
   // SkyrimNet's `.prompt` files are Jinja templates whose rendered output
   // is Markdown fed to an LLM. `jinja-md` (provided by Better Jinja —

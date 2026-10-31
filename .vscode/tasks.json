@@ -1,5 +1,77 @@
 {
-  // created by vscode papyrus-lang papyrus.skyrimSpecialEdition.generateProject
+  // Ctrl+Shift+B lists every task in the "build" group. None is marked as the
+  // default, so the picker always opens. Each task runs one verb of build.ps1.
+  // settings.json sets "task.autoDetect": "off" so that tasks contributed by
+  // extensions (CMake Tools, for one) don't show up in the list next to these.
   "version": "2.0.0",
-  "tasks": []
+  "tasks": [
+    {
+      "label": "build.ps1: build",
+      "detail": "cmake --build build/local-release, then prune orphaned output",
+      "type": "process",
+      "command": "pwsh",
+      "args": ["-NoProfile", "-File", "${workspaceFolder}/build.ps1", "build"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "build.ps1: rebuild",
+      "detail": "configure + build (no clean)",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-File",
+        "${workspaceFolder}/build.ps1",
+        "rebuild"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "build.ps1: configure",
+      "detail": "cmake --preset local-release",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile",
+        "-File",
+        "${workspaceFolder}/build.ps1",
+        "configure"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "build.ps1: test",
+      "detail": "build + run the C++ and dashboard unit tests",
+      "type": "process",
+      "command": "pwsh",
+      "args": ["-NoProfile", "-File", "${workspaceFolder}/build.ps1", "test"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "build.ps1: clean",
+      "detail": "remove build/local-release",
+      "type": "process",
+      "command": "pwsh",
+      "args": ["-NoProfile", "-File", "${workspaceFolder}/build.ps1", "clean"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "build.ps1: clean rebuild",
+      "detail": "clean, then configure + build from scratch",
+      "dependsOn": ["build.ps1: clean", "build.ps1: rebuild"],
+      "dependsOrder": "sequence",
+      "group": "build",
+      "problemMatcher": []
+    }
+  ]
 }
