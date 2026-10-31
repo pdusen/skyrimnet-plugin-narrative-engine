@@ -14,11 +14,6 @@
 
 #include <SKSE/Interfaces.h>
 
-// RE/Skyrim.h (via the PCH) doesn't pull in RE/Offsets.h, only
-// RE/Offsets_VTABLE.h. Pull in explicitly so RE::Offset::TESDescription
-// is in scope below. Namespace is `RE::Offset` (singular), not Offsets.
-#include <RE/Offsets.h>
-
 // BookMenu::OpenBookMenu is the path through which the rendered book
 // body actually reaches the Scaleform page renderer. The smoke test
 // established BookMenu doesn't go through TESDescription::GetDescription
@@ -983,7 +978,9 @@ namespace NarrativeEngine::LetterPool
         // (the latter is a call-site patcher, not a function-entry detour).
 
         {
-            REL::Relocation<std::uintptr_t> target{RE::Offset::TESDescription::GetDescription};
+            // TESDescription::GetDescription. CommonLibSSE-NG keeps this id
+            // private to its own wrapper, so it is restated here.
+            REL::Relocation<std::uintptr_t> target{RELOCATION_ID(14399, 14552)};
             InstallHook("TESDescription::GetDescription",
                         target.address(),
                         reinterpret_cast<void*>(&HookedGetDescription),

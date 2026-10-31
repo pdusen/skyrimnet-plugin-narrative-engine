@@ -20,7 +20,7 @@
 //
 // == Threading ==
 //
-// Callable from ANY thread. `RE::DebugNotification` touches the UI and
+// Callable from ANY thread. `RE::SendHUDMessage::ShowHUDMessage` touches the UI and
 // must run on the main thread, so every post is marshalled: onto the
 // plugin thread via AsyncDispatch (the one API that needs no token from
 // its caller, which is what lets the gossip and SkyrimNet threads use

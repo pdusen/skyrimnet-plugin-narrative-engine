@@ -174,7 +174,7 @@ namespace NarrativeEngine::CameraVisibility
             // default 0 (kUnidentified) the ray collides by whatever
             // rules layer 0 carries, which is not the question being
             // asked and yields spurious "blocked" results.
-            pd.rayInput.filterInfo = static_cast<std::uint32_t>(RE::COL_LAYER::kLOS);
+            pd.rayInput.filterInfo.filter = static_cast<std::uint32_t>(RE::COL_LAYER::kLOS);
             // Default rayOutput fields are initialized to "no hit"
             // (rootCollidable=nullptr, hitFraction=1.0). We rely on
             // that: a no-hit result correctly reads as "reached."

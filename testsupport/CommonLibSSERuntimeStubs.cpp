@@ -167,7 +167,7 @@ namespace REL
     // stand-ins and `REL::Relocation` resolves straight to it. The table must
     // be sorted by id because `id2offset` binary-searches it. See
     // RelocationMocks.h for the reasoning and the limits.
-    bool IDDatabase::load_file(stl::zwstring, Version, std::uint8_t, bool)
+    bool IDDatabase::load_file(stl::zwstring, Version, std::initializer_list<std::int32_t>, bool)
     {
         static std::vector<mapping_t> table = [] {
             std::vector<mapping_t> t;
@@ -208,7 +208,7 @@ namespace REL
     bool IDDatabase::load_csv(stl::zwstring a_filename, Version a_version, bool a_failOnError)
     {
         // The VR path into the same table.
-        return load_file(a_filename, a_version, 1, a_failOnError);
+        return load_file(a_filename, a_version, {kFormatSE}, a_failOnError);
     }
 
     std::optional<Version> GetFileVersion(stl::zwstring)

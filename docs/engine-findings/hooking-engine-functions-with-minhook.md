@@ -21,7 +21,7 @@ ReturnT HookedFn(Arg1 a1, Arg2 a2, ...)
 
 void Install()
 {
-    REL::Relocation<std::uintptr_t> target{ RE::Offset::Module::Function };
+    REL::Relocation<std::uintptr_t> target{ RELOCATION_ID(seID, aeID) };
     const auto targetAddr = target.address();
 
     // MH_Initialize is idempotent under MH_ERROR_ALREADY_INITIALIZED, so
@@ -141,9 +141,9 @@ newer commit where the port has been updated. The known-working baseline
 at the time of this writing is `f7805f1a46ba696714b74479ac358305cb087fd4`
 (also what chattelsys uses).
 
-The `commonlibsse-ng-fork` is pinned through a separate registry
-(`Monitor221hz/modding-vcpkg-ports`) with its own baseline, so bumping
-the default registry doesn't drag CommonLibSSE-NG along with it.
+CommonLibSSE-NG comes from the in-repo overlay port at
+`cmake/ports/commonlibsse-ng/`, which pins its own source commit, so
+bumping the default registry doesn't drag CommonLibSSE-NG along with it.
 
 ## When to use `write_branch` instead
 

@@ -26,8 +26,8 @@ Measured on Beta 26 RC4 (68 MB DLL, 26 MB of code):
 - **Log format strings**, which document intent (`Plugin '{}' v{} in '{}' is superseded by …`).
 - **About 4,300 RTTI type names**, which give class names and vtables.
 - **CommonLibSSE-NG relocation thunks.** An engine call is a lazy-initialised `REL::Relocation` whose SE / AE / VR
-  ids are visible as immediates: `mov qword ptr [rsp+0x20], 0x4b9a` is id 19354. Look that id up in
-  `include/RE/Offsets.h` in the CommonLibSSE-NG source in the vcpkg buildtree to name the engine function
+  ids are visible as immediates: `mov qword ptr [rsp+0x20], 0x4b9a` is id 19354. Search for that id under
+  `src/RE/` in the CommonLibSSE-NG source in the vcpkg buildtree to name the engine function
   (`TESObjectREFR::GetDisplayFullName`). SkyrimNet's AE ids do not always match our fork's, so trust the SE id.
 
 ## The method

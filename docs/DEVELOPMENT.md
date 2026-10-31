@@ -227,8 +227,13 @@ Notes:
 
 - **Do not invoke `cmake` directly from Bash** — `cl.exe` and Ninja aren't on the Bash `PATH`, and CMake
   won't pick up the user presets without the VS Dev Shell. The script handles all of that.
-- First-time configure is slow (vcpkg installs `commonlibsse-ng-fork`, `simpleini`, etc. — ~5 min on a
+- First-time configure is slow (vcpkg installs `commonlibsse-ng`, `simpleini`, etc. — ~5 min on a
   fresh checkout). Subsequent builds are seconds.
+- CommonLibSSE-NG is [MinLL/CommonLibVR](https://github.com/MinLL/CommonLibVR), the MIT continuation that
+  supports Skyrim SE 1.7.x. It comes from the overlay port in `cmake/ports/commonlibsse-ng/`, which pins a
+  release commit and its SHA512. To move to a newer release, change `REF` and `SHA512` in the portfile (and the
+  openvr `REF` if that release moved its `extern/openvr` submodule) along with `version-semver` in the port's
+  `vcpkg.json`.
 - A `'vswhere.exe' is not recognized` warning at the top of the dev-shell load output is harmless and
   expected; ignore it.
 - `CMakeUserPresets.json` is gitignored on purpose — it pins absolute paths specific to this machine

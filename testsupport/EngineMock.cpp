@@ -685,7 +685,7 @@ std::uint32_t SKSE::SerializationInterface::ReadRecordData(void* a_buf, std::uin
 // callbacks and then to call them the way SKSE would, because the whole
 // wiring-up of the mod happens inside them and there is no other door.
 
-void SKSE::Init(const SKSE::LoadInterface*) noexcept
+void SKSE::Init(const SKSE::LoadInterface*, const bool) noexcept
 {
     if (auto* mock = EngineMock::Current())
         ++mock->skse.initCalls;
@@ -2126,7 +2126,7 @@ bool RE::Actor::HasLineOfSight(RE::TESObjectREFR*, bool&)
     return mock != nullptr && mock->visibility.engineLineOfSight;
 }
 
-void RE::DebugNotification(const char* a_notification, const char*, bool)
+void RE::SendHUDMessage::ShowHUDMessage(const char* a_notification, const char*, bool)
 {
     auto* mock = NarrativeEngine::Testing::EngineMock::Current();
     if (!mock || !a_notification)
@@ -2351,6 +2351,13 @@ bool RE::TESObjectREFR::IsDead(bool) const
 {
     auto* mock = EngineMock::Current();
     return mock != nullptr && mock->forms.actorIsDead;
+}
+
+// Actor declares its own IsDead, hiding the reference's, so a call through an
+// Actor* lands here. Same answer either way.
+bool RE::Actor::IsDead(bool a_notEssential) const
+{
+    return TESObjectREFR::IsDead(a_notEssential);
 }
 
 bool RE::TESObjectREFR::IsDisabled() const
@@ -2925,7 +2932,7 @@ bool RE::TESObjectREFR::IsInWater() const
     return mock != nullptr && mock->spawn.placedInWater;
 }
 
-void RE::TESObjectREFR::SetPosition(RE::NiPoint3 a_pos)
+void RE::TESObjectREFR::SetPosition(const RE::NiPoint3& a_pos)
 {
     data.location = a_pos;
     if (auto* mock = EngineMock::Current()) {
@@ -3141,6 +3148,13 @@ bool RE::BSPointerHandle<RE::Actor, RE::BSUntypedPointerHandle<21, 5>>::get_smar
     return true;
 }
 
+// The non-const overload, which non-const get() calls. Same lookup.
+bool RE::BSPointerHandle<RE::Actor, RE::BSUntypedPointerHandle<21, 5>>::get_smartptr(
+    RE::NiPointer<RE::Actor>& a_smartPointerOut)
+{
+    return std::as_const(*this).get_smartptr(a_smartPointerOut);
+}
+
 bool RE::BSPointerHandle<RE::TESObjectREFR, RE::BSUntypedPointerHandle<21, 5>>::get_smartptr(
     RE::NiPointer<RE::TESObjectREFR>& a_smartPointerOut) const
 {
@@ -3151,6 +3165,12 @@ bool RE::BSPointerHandle<RE::TESObjectREFR, RE::BSUntypedPointerHandle<21, 5>>::
     auto* ref = NarrativeEngine::Testing::ReferenceForHandle(raw);
     a_smartPointerOut.reset(ref);
     return ref != nullptr;
+}
+
+bool RE::BSPointerHandle<RE::TESObjectREFR, RE::BSUntypedPointerHandle<21, 5>>::get_smartptr(
+    RE::NiPointer<RE::TESObjectREFR>& a_smartPointerOut)
+{
+    return std::as_const(*this).get_smartptr(a_smartPointerOut);
 }
 
 RE::TESNPC* RE::Actor::GetActorBase()

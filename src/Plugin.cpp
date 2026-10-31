@@ -582,7 +582,10 @@ namespace NarrativeEngine
 
     bool Startup(const SKSE::LoadInterface* skse)
     {
-        SKSE::Init(skse);
+        // `false`: SetupLog owns the log. CommonLibSSE's own logger would
+        // open and truncate the same file before SetupLog rotates it, losing
+        // the previous session's log.
+        SKSE::Init(skse, false);
         SetupLog();
         // First line of every log. The version belongs here because a log
         // is usually read long after the build that wrote it, and "which

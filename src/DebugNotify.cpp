@@ -32,7 +32,7 @@ namespace NarrativeEngine::DebugNotify
                     return;
                 }
                 logger::debug("DebugNotify: {}", text);
-                RE::DebugNotification(text.c_str());
+                RE::SendHUDMessage::ShowHUDMessage(text.c_str());
             });
         });
     }
@@ -63,7 +63,7 @@ namespace NarrativeEngine::DebugNotify
                     text = pattern;
                 }
                 logger::debug("DebugNotify: {}", text);
-                RE::DebugNotification(text.c_str());
+                RE::SendHUDMessage::ShowHUDMessage(text.c_str());
             });
         });
     }
