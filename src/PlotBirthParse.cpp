@@ -110,6 +110,13 @@ namespace NarrativeEngine::PlotBirth
                 rejection = Make(Code::NamesPlayer, {{"key", key}});
                 return false;
             }
+            // Half a name in one alphabet and half in another, as a Russian
+            // answer wrote "Солitude": shown and remembered as written, and a
+            // name no matcher can find.
+            if (const auto mixed = TextUtf8::MixedScriptWord(out); !mixed.empty()) {
+                rejection = Make(Code::MixedScript, {{"key", key}, {"word", std::string{mixed}}});
+                return false;
+            }
             if (out.size() > limit) {
                 rejection = Make(Code::TooLong, {{"key", key}, {"length", out.size()}, {"limit", limit}});
                 return false;

@@ -139,8 +139,9 @@ object.
   kind of step the scheme ends in.
 - `roles` — an object with one key for every role listed for `goal`,
   each holding who or what fills that role, written exactly as this
-  prompt spells it, never translated: a person by their name, a place by
-  its settlement, an object as it is written in the list. A description
+  prompt spells it, never translated and never declined into another
+  case: a person by their name, a place by its settlement, an object as
+  it is written in the list. A description
   such as "the palace servant" is not a name. For `expose`, the keys are
   item, mark and authority, holding say "a merchant's ledger", "Erikur"
   and "Elisif the Fair". The finish says it again as a sentence; `roles`
@@ -197,7 +198,7 @@ this person would actually know.
   and `finish`, in that order.
 - `roles` MUST name every role listed for `goal`, each a name that
   exists in Skyrim, written exactly as this prompt spells it -- never
-  translated or transliterated, and never a description. A role left
+  translated, transliterated or declined, and never a description. A role left
   out, or a name nobody has, is thrown away. A person's role is one
   person's name, never a group or a place, save for the exposure of a
   jarl or a chief.

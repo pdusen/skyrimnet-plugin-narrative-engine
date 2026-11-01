@@ -2830,3 +2830,57 @@ The proposal is rules in the language file, read by `PlotText::ItemPhrase` and n
 Each language's rules are checked by a throwaway script against every craftable vanilla item's name in that language,
 which the Spriggit export carries, as the `[Matching]` citations were. The alternative, a carrier noun per language
 ("изделие — {name}", "ein Stück: {name}"), is data only but reads as stilted in every language that needs it.
+
+#### Step 33 — What the second translation reviews found, closed
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** Close what a fresh review of the fifth trial run found, after Step 31's changes went live.
+
+That run accepted English 7 of 8, German 8, Russian 7 and Japanese 8. The reviews found Step 31's template and
+form changes working: no template error, every ambition in its language's form, Russian schemes perfective and
+without ё, no doubled という. What they found instead:
+
+- **Names, made worse in two places by Step 31's lines.** The permission to add "the ending grammar requires" reached
+  `roles`, which are matched as written: Russian roles came back declined ("Ульфрика Буревестника"). "Titles are
+  translated" reached epithets ("Elisif die Fair"). Japanese wrote one person two ways in one answer.
+- **The forms' examples are copied, not followed.** German's finish example put the object before a bare-name dative,
+  and the model did the same, which no reader can parse when both are names. Every Japanese ambition ended in the
+  example's 目論んでいる, and its リフト taught the model to transliterate a place.
+- **Templates.** German's `ask_around` says "rund um" a settlement, which is its countryside. Japanese's
+  `denounce.agent_failed` and `denounce.mastermind_told_succeeded` still name the authority twice, and
+  `bribe`'s and `silence`'s `mastermind_told_succeeded` read "口をつぐむと報告があった", a possible conditional.
+- **Japanese particles.** 警告する took を, and the new "quote with と" reached 見せる.
+- **Mixed scripts.** A Russian answer wrote "Солitude", a word half Cyrillic and half Latin, which nothing caught.
+
+Done.
+
+- **Names.** The output-language line allows a name its grammatical ending only inside the content fields, says an
+  epithet ("the Fair") is part of the name, and adds a rank and a school of magic to what is translated. The ambition
+  prompt says a role is never declined into another case.
+- **Forms.**
+  - German's finish puts whoever receives or loses something before the thing, as its example now does ("dem Jarl den
+    Brief vorzulegen").
+  - Japanese's ambition offers four endings and names nobody.
+  - Japanese's scheme and finish allow と only before a verb of saying or claiming, show 警告する with に, and write a
+    jarl as 首長 after the name.
+- **Templates.**
+  - German's 21 `ask_around` and `spread_rumors` keys say "in {place}", and the unfilled place is "irgendeinem Ort", the
+    dative "in" now takes.
+  - Japanese's two `denounce` keys no longer name the authority twice, and `bribe`'s and `silence`'s reports say
+    "…ことを承知した".
+  - Japanese's 私の事 in the `threaten` lines stays in kanji: it means "my affairs", which the file's kana rule exempts.
+- **`mixed_script`** is a new rejection, numbered last so no code moves. `TextUtf8::MixedScriptWord` finds a word whose
+  letters are part Latin and part Cyrillic, every content field is refused for one, and the retry is told the word. A
+  Latin name run into Japanese is not counted.
+
+**Verification.**
+
+- **New tests:** "Солitude" is found and named; Cyrillic and Latin words side by side, a Latin name run into Japanese
+  and accented Latin are not; an ambition answer with the word is refused as `mixed_script` with its key and word.
+- Every example in every form still passes its language's `Scheme` check, and every language loads with no key
+  refused.
+
+`pwsh -File build.ps1 test`: 598 of 598 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.

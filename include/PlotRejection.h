@@ -44,6 +44,7 @@
 //                        below, or place_unknown or thing_unknown
 //   scheme_not_verb      scheme
 //   scheme_is_ambition   (none)
+//   mixed_script         key, word -- a word part Latin and part Cyrillic
 //
 //   role_unnamed         role
 //   role_is_mastermind   role, who, admitted
@@ -91,6 +92,8 @@ namespace NarrativeEngine::PlotRejection
         RoleNotAdmitted,
         PlaceUnknown,
         ThingUnknown,
+        // Last, so no code before it changes number.
+        MixedScript,
 
         Count
     };

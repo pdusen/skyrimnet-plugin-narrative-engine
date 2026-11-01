@@ -42,6 +42,7 @@ namespace NarrativeEngine::PlotRejection
             "role_not_admitted",
             "place_unknown",
             "thing_unknown",
+            "mixed_script",
         };
     } // namespace
 

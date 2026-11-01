@@ -344,4 +344,23 @@ namespace NarrativeEngine::TextUtf8
         }
         return !IsWordChar(next);
     }
+
+    std::string_view MixedScriptWord(std::string_view text)
+    {
+        for (const auto word : Words(text)) {
+            bool latin = false;
+            bool cyrillic = false;
+            for (std::size_t at = 0; at < word.size();) {
+                const auto decoded = DecodeAt(word, at);
+                const auto cp = decoded.codePoint;
+                latin = latin || (IsLetter(cp) && cp < 0x0250);
+                cyrillic = cyrillic || (cp >= 0x0400 && cp <= 0x052F);
+                at += decoded.length;
+            }
+            if (latin && cyrillic) {
+                return word;
+            }
+        }
+        return {};
+    }
 } // namespace NarrativeEngine::TextUtf8

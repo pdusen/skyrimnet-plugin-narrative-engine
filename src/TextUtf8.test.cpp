@@ -357,3 +357,21 @@ TEST_CASE("TextUtf8::StandsAlone", "[TextUtf8]")
         CHECK_FALSE(StandsAlone(text, 0, kDragon.size()));
     }
 }
+
+TEST_CASE("TextUtf8::MixedScriptWord", "[TextUtf8]")
+{
+    SECTION("a word part Cyrillic and part Latin is found")
+    {
+        // "Солitude", word for word from a Russian trial answer.
+        const std::string text = "\xD0\xB2 \xD0\xA1\xD0\xBE\xD0\xBBitude \xD0\xB8 Whiterun";
+        CHECK(MixedScriptWord(text) == "\xD0\xA1\xD0\xBE\xD0\xBBitude");
+    }
+    SECTION("words in one script each are not, whichever scripts they are")
+    {
+        // "Хронгар" beside "Hrongar", and a Latin name run into Japanese.
+        CHECK(MixedScriptWord("\xD0\xA5\xD1\x80\xD0\xBE\xD0\xBD\xD0\xB3\xD0\xB0\xD1\x80 Hrongar").empty());
+        CHECK(MixedScriptWord("Raerek\xE3\x81\xAB\xE3\x81\xA4\xE3\x81\x84\xE3\x81\xA6").empty());
+        CHECK(MixedScriptWord("J\xC3\xB6rgen Battle-Born").empty());
+        CHECK(MixedScriptWord("").empty());
+    }
+}

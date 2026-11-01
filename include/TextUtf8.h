@@ -107,4 +107,11 @@ namespace NarrativeEngine::TextUtf8
                                    std::size_t at,
                                    std::size_t length,
                                    TrailingApostrophe trailing = TrailingApostrophe::PartOfWord) noexcept;
+
+    // The first word of `text` whose letters are part Latin and part
+    // Cyrillic, or empty when there is none. No word of either language is
+    // both: "Солitude" is a model losing its place inside a name. A Latin
+    // name run into Japanese ("Raerekについて") is not counted, since that is
+    // the session's spelling of a name and not a broken word.
+    [[nodiscard]] std::string_view MixedScriptWord(std::string_view text);
 } // namespace NarrativeEngine::TextUtf8

@@ -1213,6 +1213,27 @@ TEST_CASE("PlotBirth::ParseAmbition reads the goal", "[PlotBirth][engine]")
     }
 }
 
+TEST_CASE("PlotBirth::ParseAmbition refuses a word in two alphabets", "[PlotBirth][engine]")
+{
+    using NarrativeEngine::PlotBirth::ParseAmbition;
+    using NarrativeEngine::PlotBirth::TextLimits;
+
+    nlohmann::json j;
+    j["reasoning"] = "x";
+    j["goal"] = "denounce";
+    j["roles"] = RolesFor("denounce");
+    j["finish"] = "denounce Hulda to Balgruuf";
+    // "spread rumors in Солitude", as a Russian answer half-wrote Solitude.
+    j["ambition"] = "He means to own Whiterun.";
+    j["scheme"] = "spread rumors in \xD0\xA1\xD0\xBE\xD0\xBBitude";
+
+    const auto out = ParseAmbition(j.dump(), TextLimits{});
+    REQUIRE_FALSE(out.ok);
+    CHECK(out.rejection.code == NarrativeEngine::PlotRejection::Code::MixedScript);
+    CHECK(out.rejection.args["key"] == "scheme");
+    CHECK(out.rejection.args["word"] == "\xD0\xA1\xD0\xBE\xD0\xBBitude");
+}
+
 TEST_CASE("PlotBirth::IsCutOff", "[PlotBirth][engine]")
 {
     using NarrativeEngine::PlotBirth::IsCutOff;
