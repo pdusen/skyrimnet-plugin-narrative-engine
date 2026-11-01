@@ -2539,7 +2539,7 @@ them, which a script can generate from the include files.
 
 #### Step 30 — Language trial
 
-- [ ] Complete
+- [x] Complete
 
 **[USER]**
 
@@ -2553,6 +2553,31 @@ Then send the dashboard's result, or `NarrativeEngine_Plots.log`.
 - no role resolves to "names nobody" for a person the model copied correctly from the menu.
 
 Anything outside that is a draft-rule problem. Fixing it is a follow-up `[CLAUDE]` step, and the trial is re-run.
+
+Done, on the fourth run. The first three each failed a criterion; Steps 30a, 30b and 30c below close what they found.
+
+| Run | English | German | Russian | Japanese |
+| --- | ------- | ------ | ------- | -------- |
+| 1   | 7 of 8  | 1      | 3       | 3        |
+| 2   | 5       | 6      | 3       | 6        |
+| 3   | 7       | 6      | 7       | 6        |
+| 4   | 7       | 7      | 7       | 6        |
+
+The fourth run against the criteria:
+
+- **Acceptance.** Every language is within a third of English's 7 of 8.
+- **No check refuses a quarter of births.** The most any check refused was one: Japanese's `names_player`, a true
+  refusal, since its scheme made the player Arch-Mage.
+- **No copied name resolves to nobody.** Two roles named nobody, and neither was a name copied from the menus. "Ra'jirr"
+  is Frostmere Crypt's dungeon thief, who lives in no settlement and is in no population; the retry named somebody
+  else. "the court of Solitude" was the authority over Erikur, a thane, where a court stands in only for a jarl or a
+  chief.
+
+Everything else refused was the plot's: a mark or an authority who is dead, left out or out of reach, a place that is
+not a settlement, a goal not on the list. One answer was cut off and asked again.
+
+The memories name people and places in English in every language, as they should: those come from the game, which ran
+in English.
 
 #### Step 30a — What the first trial found, closed
 
