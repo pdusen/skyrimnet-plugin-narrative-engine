@@ -8,6 +8,7 @@
 #include <LanguageTable.h>
 #include <Localization.h>
 #include <PlotCasting.h>
+#include <PlotMenus.h>
 #include <PlotModel.h>
 #include <PlotPlanning.h>
 #include <PlotRejection.h>
@@ -80,6 +81,13 @@ namespace NarrativeEngine::PlotBirth
         // this pipeline that still validates the way the menus did.
         std::size_t choice = 0;
     };
+
+    // Pure. True when a response opens as a JSON object and does not parse
+    // as one: an answer cut off on its way back, rather than one that
+    // ignored the format. The provider has cut answers off mid-object, more
+    // often the more tokens a language takes, and nothing the model is told
+    // on a retry would prevent that.
+    [[nodiscard]] bool IsCutOff(const std::string& response);
 
     // Pure. Response text in, a shortlist index out.
     //
@@ -252,9 +260,11 @@ namespace NarrativeEngine::PlotBirth
     // `decisions` is how many decisions planning asked, kept or not, for
     // the trace.
     //
-    // `table` is the language the birth is asked and read in: the
-    // output-language line, [Prompt.Form], [Matching] and the name
-    // matchers. The session's, except for the language trial.
+    // `world` is what the birth may name, and `table` the language it is
+    // asked and read in: the output-language line, [Prompt.Form],
+    // [Matching] and the name matchers. Both the session's, except for the
+    // language trial, whose world has its items and factions worded in the
+    // trial's table (PlotMenus::Translated).
     //
     // `refusals`, when given, collects every answer refused along the way,
     // a retried one included, by stage ("cast", "ambition", "steps") and
@@ -270,6 +280,7 @@ namespace NarrativeEngine::PlotBirth
                                const std::vector<PlotModel::PastScheme>& past,
                                PlotModel::Plot& plot,
                                std::size_t& decisions,
+                               const PlotMenus::World& world = PlotMenus::CurrentWorld(),
                                const LanguageTable::Table& table = Localization::Get(),
                                std::vector<Refusal>* refusals = nullptr);
 } // namespace NarrativeEngine::PlotBirth

@@ -591,6 +591,20 @@ namespace NarrativeEngine::PlotCandidates
             const auto lives = [&request](RE::FormID npc) { return !request.alive || request.alive(npc); };
 
             Called out;
+            // A role holding somebody's whole name, as the prompt asks, names
+            // them, whatever a part of it also says. In a script written
+            // without spaces a name part is found as a run of characters, and
+            // "Bor" was found inside "Olfrid Battle-Born": a tie, refused as
+            // ambiguous, for a name copied letter for letter. The text arrives
+            // sanitized, so already trimmed.
+            for (const auto& member : members) {
+                if (member.name == text && member.npc != request.mastermind && lives(member.npc)) {
+                    out.living.push_back(&member);
+                }
+            }
+            if (!out.living.empty()) {
+                return out;
+            }
             for (const auto i : Closest(
                      names,
                      text,

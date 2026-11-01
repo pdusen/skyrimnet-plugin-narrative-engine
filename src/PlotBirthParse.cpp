@@ -133,6 +133,16 @@ namespace NarrativeEngine::PlotBirth
         }
     } // namespace
 
+    bool IsCutOff(const std::string& response)
+    {
+        const auto body = EvaluationPipeline::StripMarkdownFences(response);
+        if (body.empty() || body.front() != '{') {
+            return false;
+        }
+        nlohmann::json json;
+        return !ReadObject(response, json);
+    }
+
     CastOutcome ParseCast(const std::string& response, const std::vector<RE::FormID>& shortlist)
     {
         CastOutcome out;

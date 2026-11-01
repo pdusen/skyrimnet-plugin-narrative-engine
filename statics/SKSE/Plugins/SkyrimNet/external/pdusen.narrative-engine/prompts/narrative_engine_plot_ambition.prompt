@@ -132,8 +132,29 @@ Return a JSON object. No markdown fences. No prose before or after the
 object.
 
 - `reasoning` — a short explanation of how finishing this scheme brings
-  the ambition nearer, in one or two sentences. Write it FIRST: it is
-  where you check that the scheme and the ambition are one story.
+  the ambition nearer, in one or two sentences, in English whatever
+  language the other fields are asked in. Write it FIRST: it is where you
+  check that the scheme and the ambition are one story.
+- `goal` — the id, exactly as listed under "how the scheme ends", of the
+  kind of step the scheme ends in.
+- `roles` — an object with one key for every role listed for `goal`,
+  each holding who or what fills that role, written exactly as this
+  prompt spells it, never translated: a person by their name, a place by
+  its settlement, an object as it is written in the list. A description
+  such as "the palace servant" is not a name. For `expose`, the keys are
+  item, mark and authority, holding say "a merchant's ledger", "Erikur"
+  and "Elisif the Fair". The finish says it again as a sentence; `roles`
+  says which name is which, and nothing in the finish may be left out of
+  it. A person in a role is somebody this person could reach -- someone
+  they know, work with or live near -- and a denunciation, an exposure or
+  a petition goes to whoever has authority over the person it is about.
+  Authority runs only upward: a steward answers to the jarl, never to the
+  guard captain. A person's role holds ONE person's name -- never a
+  company, a family, a business or a guild, which are not people and
+  cannot be found. The one exception follows.
+  A jarl, or an orc chief, has nobody above them: denouncing or exposing
+  one is done before the whole of what they lead, so name that as the
+  authority, such as their court. A jarl has nobody to petition.
 - `ambition` — one sentence, third person, about twenty words. The
   lifetime thing, written as a complete sentence with a pronoun subject:
   "She means to own everyone in the Rift who matters."
@@ -157,29 +178,10 @@ object.
   Concrete enough that you could tell whether it had worked: name the
   person, the place or the thing it turns on. This is what the scheme
   IS, not how it is done.
-- `goal` — the id, exactly as listed under "how the scheme ends", of the
-  kind of step it ends in.
 - `finish` — that last step as an act, in the same instruction voice and
-  no more than fifteen words, naming its people and any object from the
-  list: "steal the logbook from the bookkeeper", with the bookkeeper
+  no more than fifteen words, naming the people and any object `roles`
+  holds: "steal the logbook from the bookkeeper", with the bookkeeper
   named. It opens with a verb that says the same thing as `goal`.
-- `roles` — an object with one key for every role listed for `goal`,
-  each holding who or what fills that role, named as they are known: a
-  person by their name, a place by its settlement, an object as it is
-  written in the list. For `expose`, the keys are item, mark and
-  authority, holding say "a merchant's ledger", "Erikur" and "Elisif the
-  Fair". The finish says it as a sentence; `roles` says which name is
-  which, and nothing in the finish may be left out of it. A person in a
-  role is somebody this person could reach -- someone they know, work
-  with or live near -- and a denunciation, an exposure or a petition goes
-  to whoever has authority over the person it is about. Authority runs
-  only upward: a steward answers to the jarl, never to the guard captain.
-  A person's role holds ONE person's name -- never a company, a family, a
-  business or a guild, which are not people and cannot be found. The one
-  exception follows.
-  A jarl, or an orc chief, has nobody above them: denouncing or exposing
-  one is done before the whole of what they lead, so name that as the
-  authority, such as their court. A jarl has nobody to petition.
 
 Write plainly. No markdown, no headings, no bullet points inside either
 line. Name only people and places that exist in Skyrim, and prefer ones
@@ -191,12 +193,14 @@ this person would actually know.
 - The scheme MUST NOT restage a quest that already exists in the game.
 - Neither the ambition nor the scheme may involve the player{% if length(player) > 0 %}, {{ player }}{% endif %}.
   One that names them is thrown away.
-- Return only the keys `reasoning`, `ambition`, `scheme`, `goal`,
-  `finish` and `roles`.
+- Return only the keys `reasoning`, `goal`, `roles`, `ambition`, `scheme`
+  and `finish`, in that order.
 - `roles` MUST name every role listed for `goal`, each a name that
-  exists in Skyrim. A role left out, or a name nobody has, is thrown
-  away. A person's role is one person's name, never a group or a place,
-  save for the exposure of a jarl or a chief.
+  exists in Skyrim, written exactly as this prompt spells it -- never
+  translated or transliterated, and never a description. A role left
+  out, or a name nobody has, is thrown away. A person's role is one
+  person's name, never a group or a place, save for the exposure of a
+  jarl or a chief.
 - The scheme MUST NOT be one this person has already accomplished.
 - `goal` MUST be one of the ids listed under "how the scheme ends". Any
   other word is thrown away.

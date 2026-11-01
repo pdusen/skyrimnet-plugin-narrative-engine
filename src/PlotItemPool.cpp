@@ -15,10 +15,6 @@ namespace NarrativeEngine::PlotItemPool
 {
     namespace
     {
-        // Where a language file rewords an item's phrase, by its EditorID:
-        // [Data.Item] TG04GoldenglowDeed = ...
-        constexpr std::string_view kDataSection = "Data.Item";
-
         constexpr const char* kIniPath = "Data/SKSE/Plugins/NarrativeEngine/PlotItems.ini";
 
         std::vector<Item> g_items;
@@ -82,7 +78,8 @@ namespace NarrativeEngine::PlotItemPool
 
             // A language file may reword it, by the line's EditorID.
             const auto* text = Localization::Get().DataText(kDataSection, raw.editorId);
-            g_items.push_back({object->GetFormID(), text != nullptr ? *text : raw.displayName, raw.category});
+            g_items.push_back(
+                {object->GetFormID(), text != nullptr ? *text : raw.displayName, raw.category, raw.editorId});
         }
 
         {

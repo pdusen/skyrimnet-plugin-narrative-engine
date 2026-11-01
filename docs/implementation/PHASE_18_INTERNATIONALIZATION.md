@@ -2553,3 +2553,152 @@ Then send the dashboard's result, or `NarrativeEngine_Plots.log`.
 - no role resolves to "names nobody" for a person the model copied correctly from the menu.
 
 Anything outside that is a draft-rule problem. Fixing it is a follow-up `[CLAUDE]` step, and the trial is re-run.
+
+#### Step 30a — What the first trial found, closed
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** Every rejection the first full trial run blamed on our side is gone, so the re-run of Step 30 measures the
+drafts and the model rather than the trial.
+
+The first run (English 7 of 8, German 1, Russian 3, Japanese 3) failed every pass criterion. Its rejections had five
+causes:
+
+- **A trial pressed before the session's first tick skipped every birth.** It read a plot state and a profile library
+  that only a tick fills, so nobody was castable.
+- **German's `finish` was never asked for the form its check requires.** `SchemeOpensWithVerb` holds `finish` to the
+  `Scheme` rule, which in German ends in a *zu*-infinitive, but `[Prompt.Form]` gives that form for `scheme` alone. The
+  model followed the English "open with a plain verb", and the retry repeated it: 12 `finish_not_verb`.
+- **The model translated names.** Roles held "Мэйв Черный Вереск" and "ラエレク" for Maven Black-Briar and Raerek.
+  Nothing told the model to copy a name as it is spelled, and the Russian, Japanese and Chinese `scheme` examples
+  transliterate J'zargo and Tolfdir themselves. This breaks **Names are tokens in the player's script**.
+- **The trial's world stayed in the session's language.** Item and faction names are translated once, at load, so a
+  trial offered Russian answers an English item pool (`thing_unknown`) and spliced English items into Japanese
+  memories ("a private journalを盗む"). It breaks **The language trial**'s rule that each run uses its own table for
+  everything plot birth reads.
+- **The provider cut answers off mid-JSON.** All seven `not_json` answers stop partway through the object, well under
+  the token limit, more often the more tokens a language takes (English 0, Japanese 4). Six fell on the correction
+  retry, which a cut-off then wasted.
+
+Done.
+
+- **The trial does what a tick does first.** It installs the loaded plot state and refreshes the profile library
+  before it reads either.
+- **`finish` has a form wherever `scheme` has one.** Every language file's `[Prompt.Form]` has a `finish` line in the
+  shape its `Scheme` rule checks, with a note in the file's own language saying why. German's names the command form
+  ("zeige") as wrong. The `finish_not_verb` and `scheme_not_verb` retry notes ask for "the form asked for below"
+  outside English, instead of the verb-first form German's rule refuses.
+- **Names are copied, never translated.** The output-language line now forbids translating or transliterating the
+  name of a person, place or faction, allowing only the ending the language's grammar adds. It reaches every prompt
+  that includes it, letters and visits too. The ambition prompt's `roles` and its hard constraints say a role is
+  written exactly as spelled here and is never a description, and the `role_names_nobody` note says to copy the name
+  untranslated. The Russian, Japanese and Chinese `scheme` examples name nobody. Their `[Plot.Test]` rows keep their
+  names: those are player-visible text, and the game's own translation is the right spelling there.
+- **The trial translates its world.** `PlotMenus::Translated` copies a world with its item and faction names taken
+  from a table's `[Data.Item]` and `[Data.Faction]` rows, by the keys the load reads, falling back to the name already
+  there. `PlotItemPool::Item` keeps its EditorID and `FactionOption` its roster id for it. The trial builds one per
+  language, and `PlotBirth::Compose` takes the world it reads, defaulting to the session's.
+- **A cut-off answer is asked again.** `PlotBirth::IsCutOff` says whether an answer opens as a JSON object and does not
+  parse. `AskTwice` asks such an answer again once, with the same request, without spending the correction retry, and
+  logs the raw text as a warning. The refusal is still counted, so the trial reports how often it happens.
+
+**Verification.**
+
+- **New tests:**
+  - **Prompt forms.** Every shipped language asking a form of `scheme` asks one of `finish`, and every example either
+    form quotes passes that language's own `Scheme` check.
+  - **German finishes.** The trial's bare-infinitive and command finishes are refused by the shipped `german.ini`, and
+    the same finishes in the *zu* form are accepted.
+  - **`IsCutOff`.** Answers stopped partway through, fenced or not, are cut off. Whole answers, prose and empty ones
+    are not.
+  - **The re-ask.** A trial birth whose first answer is cut off makes three calls, not two.
+  - **The translated world.** A table's rows rename items and factions, a missing row keeps the old name,
+    settlements and recipes are untouched, and the session's world does not change.
+
+`pwsh -File build.ps1 test`: 596 of 596 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 30b — What the second trial found, closed
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** Russian roles hold the names they were given, and made items carry no English article outside English.
+
+The second run (English 5 of 8, German 6, Russian 3, Japanese 6) left Russian under the acceptance bar, with 13 of its
+retries `role_names_nobody`. English, German and Japanese were refused mostly for `role_not_admitted`, who the
+mastermind cannot reach, which is about the plot and not the language. Two causes were left:
+
+- **Russian answered in Russian from the first word, and copied its own names.** The model wrote even `reasoning` in
+  Russian, choosing a Cyrillic form for each person there ("Хронгер" for Hrongar), repeated it in `finish`, and then
+  copied it from `finish` into `roles`, the last field. It did so again on the retry that listed "Hrongar" among the
+  people it could name. The instruction to keep a name's spelling arrives at the end of the prompt, after the model has
+  already chosen.
+- **Made items kept English's article.** Recipes are phrased once, at load, through the session's table ("an Iron
+  Sword"), and the trial's world translated items and factions but left recipes alone, so a Russian memory read
+  "выковать an Iron Sword".
+
+Done.
+
+- **Names are chosen before the language changes.** The ambition prompt asks for `reasoning`, `goal` and `roles` before
+  `ambition`, `scheme` and `finish`, and asks for `reasoning` in English whatever language the others take. Nothing
+  reads `reasoning`. With the roles written while the answer is still in English, there is no translated name yet to
+  copy, and the prose that follows names the people the roles already hold.
+- **The trial phrases its recipes.** A `PlotRecipes::Recipe` keeps the game's bare name and whether it is ammunition,
+  and `PlotMenus::Translated` phrases it again through `PlotText::ItemPhrase` with the run's table.
+
+**Verification.**
+
+- **The translated-world test** now holds recipes to it: a weapon and a sheaf of arrows are phrased again through the
+  table's `[Plot.Item]`, a recipe with no game name keeps its phrase, and the session's are untouched.
+- The prompt change is measured by re-running Step 30, the only place a model answers it.
+
+`pwsh -File build.ps1 test`: 596 of 596 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 30c — What the third trial found, closed
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** German's *zu*-clause may go on after a comma, and a whole name copied into a role is that person in any
+script.
+
+The third run (English 7 of 8, German 6, Russian 7, Japanese 6) put every language within the acceptance bar. Most of
+what it refused was the plot's: a dead or unreachable mark, a faction named as an authority. Three refusals were ours:
+
+- **German refused a *zu*-clause with a clause after it.** "den Kontrakt … zu vernichten, der bei Torbjorn
+  Shatter-Shield liegt" and "… zuzustellen, damit er ihn retten kann" are good German, and read as well after "als Teil
+  meines Plans," as a bare clause does, but `Scheme.Require.End` reads the end of the whole text: three
+  `finish_not_verb` and one `scheme_not_verb`.
+- **A whole name tied with a short one inside it.** A Japanese role held "Olfrid Battle-Born" exactly. In a script
+  written without spaces a name part is found as a run of characters, so "Bor" was found in "Battle-Born", and with the
+  surname too common to count, Bor and Olfrid tied: `role_ambiguous`, for a name copied letter for letter.
+- **The trial did not count `finish_not_verb` against the `Scheme` check** that refused it, so the "no check refuses a
+  quarter" criterion under-read it.
+
+The memories' people and places stay in English in every trial language, and are meant to: they come from the game,
+which this session runs in English. A game run in German or Russian hands the same templates its own names.
+
+Done.
+
+- **`<Check>.Trailing`** is a new `[Matching]` list: the words that may open a clause after a comma. The End lists read
+  only the text before the first comma such a word follows. It can only accept a clause whose own end passes, so a
+  sentence about somebody stays refused with a clause after it ("Hulda bestiehlt Lars, um reich zu werden", which
+  passed before). It reads nothing in a script written without spaces. German lists 17 words, each cited.
+- **A role holding a person's whole name names them**, before any part of it is weighed. The match is exact, so a name
+  in lowercase still names nobody, and it claims only the living who are not the mastermind; anyone else falls through
+  to the reasons given before.
+- **`PlotTrial::CheckOf` counts `finish_not_verb` under `Scheme`.**
+
+**Verification.**
+
+- **New tests:**
+  - **German trailing clauses.** Both of the trial's refused finishes pass the shipped `german.ini`. A command and a
+    sentence about somebody stay refused with a clause after them.
+  - **A whole name in an unspaced script.** "Jon Battle-Born" beside "Bor" and two more Battle-Borns resolves to Jon.
+    Without the change it is refused as ambiguous, as the trial was.
+
+`pwsh -File build.ps1 test`: 596 of 596 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.

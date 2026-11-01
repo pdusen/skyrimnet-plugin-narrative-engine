@@ -1,5 +1,6 @@
 #include <Localization.h>
 #include <PlotDispatch.h>
+#include <PlotMenus.h>
 #include <PlotRejection.h>
 #include <PlotTrial.h>
 #include <SkyrimNetAPI.h>
@@ -13,18 +14,20 @@
 #include <Windows.h>
 
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <future>
 #include <string>
 
-// The language trial's two promises: a trial birth leaves the live plot state
-// as it found it, and a trial's tables are its own, read beside the session's
-// without touching it.
+// The language trial's three promises: a trial birth leaves the live plot
+// state as it found it, a trial's tables are its own, read beside the
+// session's without touching it, and so is the world its births name.
 
 namespace
 {
     namespace Localization = NarrativeEngine::Localization;
     namespace PlotCasting = NarrativeEngine::PlotCasting;
+    namespace PlotMenus = NarrativeEngine::PlotMenus;
     namespace PlotModel = NarrativeEngine::PlotModel;
     namespace PlotTrial = NarrativeEngine::PlotTrial;
     using NarrativeEngine::PlotState;
@@ -81,6 +84,11 @@ namespace
         return state;
     }
 
+    template <std::size_t N> void CopyTo(char (&dest)[N], const char* text)
+    {
+        ::strncpy_s(dest, text, _TRUNCATE);
+    }
+
     PlotTrial::Predicates Everyone()
     {
         const auto yes = [](RE::FormID) { return true; };
@@ -131,6 +139,86 @@ TEST_CASE("A language trial's tables are its own", "[PlotTrial][Localization][en
     }
 }
 
+TEST_CASE("A language trial's world is worded in its own table", "[PlotTrial][PlotMenus][engine]")
+{
+    using NarrativeEngine::PlotRecipes::Recipe;
+
+    // A session's world as the load leaves it: English names, each beside
+    // the key a language file rewords it by.
+    PlotMenus::World session;
+    session.settlements.push_back({0x00020001, "Whiterun"});
+    session.factions.push_back({0x00030001, "the College of Winterhold", "college"});
+    session.factions.push_back({0x00030002, "the Moonlit Order", "moonlit_order"});
+    session.items.push_back({0x00040001, "a deed of ownership", {}, "TG04GoldenglowDeed"});
+    session.items.push_back({0x00040002, "a silver locket", {}, "ModdedLocket"});
+    // Recipes phrased in English at load, from the game's bare names, and one
+    // with no name kept, as a test fabricates them.
+    Recipe sword;
+    sword.form = 0x00050001;
+    sword.displayName = "an Iron Sword";
+    sword.name = "Iron Sword";
+    session.recipes.push_back(sword);
+    Recipe arrows;
+    arrows.form = 0x00050002;
+    arrows.displayName = "a sheaf of Elven Arrows";
+    arrows.name = "Elven Arrow";
+    arrows.ammo = true;
+    session.recipes.push_back(arrows);
+    Recipe unnamed;
+    unnamed.form = 0x00050003;
+    unnamed.displayName = "a Steel Sword";
+    session.recipes.push_back(unnamed);
+
+    // Rows for one item and one faction, and none for the other two:
+    // "купчая", a bill of sale, and "Коллегия", the College. A made thing
+    // takes no article, and arrows come by the quiver ("колчан").
+    constexpr const char* kDeed = "\xD0\xBA\xD1\x83\xD0\xBF\xD1\x87\xD0\xB0\xD1\x8F";
+    constexpr const char* kCollege = "\xD0\x9A\xD0\xBE\xD0\xBB\xD0\xBB\xD0\xB5\xD0\xB3\xD0\xB8\xD1\x8F";
+    constexpr const char* kQuiver = "\xD0\xBA\xD0\xBE\xD0\xBB\xD1\x87\xD0\xB0\xD0\xBD";
+    const auto russian = NarrativeEngine::Testing::Synthetic(
+        "ru",
+        "",
+        "",
+        std::string{"[Data.Item]\nTG04GoldenglowDeed = "} + kDeed + "\n[Data.Faction]\ncollege = " + kCollege
+            + "\n[Plot.Item]\nmade = {name}\nammo = " + kQuiver + " {name}\n");
+
+    const auto world = PlotMenus::Translated(session, russian);
+
+    SECTION("an item or faction the table has a row for takes the table's name")
+    {
+        REQUIRE(world.items.size() == 2);
+        CHECK(world.items[0].displayName == kDeed);
+        CHECK(world.items[0].form == 0x00040001);
+        CHECK(world.items[0].editorId == "TG04GoldenglowDeed");
+        REQUIRE(world.factions.size() == 2);
+        CHECK(world.factions[0].name == kCollege);
+        CHECK(world.factions[0].faction == 0x00030001);
+    }
+    SECTION("one it has no row for keeps the name it had")
+    {
+        CHECK(world.items[1].displayName == "a silver locket");
+        CHECK(world.factions[1].name == "the Moonlit Order");
+    }
+    SECTION("settlements are left as the game spells them")
+    {
+        REQUIRE(world.settlements.size() == 1);
+        CHECK(world.settlements[0].name == "Whiterun");
+    }
+    SECTION("a made thing keeps the game's name, phrased as the table phrases it")
+    {
+        REQUIRE(world.recipes.size() == 3);
+        CHECK(world.recipes[0].displayName == "Iron Sword");
+        CHECK(world.recipes[1].displayName == std::string{kQuiver} + " Elven Arrow");
+        CHECK(world.recipes[2].displayName == "a Steel Sword");
+        CHECK(session.recipes[0].displayName == "an Iron Sword");
+    }
+    SECTION("the world it was given, the session's, is untouched")
+    {
+        CHECK(session.items[0].displayName == "a deed of ownership");
+        CHECK(session.factions[0].name == "the College of Winterhold");
+    }
+}
+
 TEST_CASE("A trial birth leaves the live plot state as it found it", "[PlotTrial][engine]")
 {
     EngineMock engine;
@@ -146,7 +234,7 @@ TEST_CASE("A trial birth leaves the live plot state as it found it", "[PlotTrial
 
     std::uint64_t rng = 42;
     const auto birth = OnPlotWorker([&](const NarrativeEngine::PlotThread::Token& pt) {
-        return PlotTrial::TrialBirth(pt, population, live, rng, *german, Everyone());
+        return PlotTrial::TrialBirth(pt, population, live, rng, PlotMenus::CurrentWorld(), *german, Everyone());
     });
 
     SECTION("it composed, and was refused, as a real birth would be")
@@ -160,6 +248,22 @@ TEST_CASE("A trial birth leaves the live plot state as it found it", "[PlotTrial
     SECTION("it drew from its own stream")
     {
         CHECK(rng != 42);
+    }
+    SECTION("an answer cut off on its way back is asked again without spending the correction")
+    {
+        FakeLLM().Reset();
+        CopyTo(FakeLLM().promptResponse, R"({"reasoning": "Olfrid has the motive", "choice": "0x000)");
+        std::uint64_t again = 42;
+        const auto cut = OnPlotWorker([&](const NarrativeEngine::PlotThread::Token& pt) {
+            return PlotTrial::TrialBirth(pt, population, live, again, PlotMenus::CurrentWorld(), *german, Everyone());
+        });
+
+        // The cut-off, the same question asked again, and the correction.
+        REQUIRE(cut.refusals.size() == 3);
+        for (const auto& refusal : cut.refusals) {
+            CHECK(refusal.stage == "cast");
+            CHECK(refusal.code == NarrativeEngine::PlotRejection::Code::NotJson);
+        }
     }
     SECTION("no plot, occupancy row, id, count or random draw of the live state moved")
     {

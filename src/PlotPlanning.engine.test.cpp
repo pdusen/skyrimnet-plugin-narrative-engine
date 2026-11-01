@@ -1213,6 +1213,33 @@ TEST_CASE("PlotBirth::ParseAmbition reads the goal", "[PlotBirth][engine]")
     }
 }
 
+TEST_CASE("PlotBirth::IsCutOff", "[PlotBirth][engine]")
+{
+    using NarrativeEngine::PlotBirth::IsCutOff;
+
+    SECTION("when an answer opens as an object and stops partway")
+    {
+        SECTION("should say it was cut off, fenced or not")
+        {
+            // From a trial run, word for word but for the name.
+            CHECK(IsCutOff(R"({"reasoning": "x", "roles": {"mark": "Maven Black)"));
+            CHECK(IsCutOff("```json\n{\"goal\": \""));
+            CHECK(IsCutOff("  {"));
+        }
+    }
+
+    SECTION("when an answer is whole, or never was JSON")
+    {
+        SECTION("should not, since asking again would get the same answer")
+        {
+            CHECK_FALSE(IsCutOff(R"({"goal": "steal"})"));
+            CHECK_FALSE(IsCutOff("```json\n{\"goal\": \"steal\"}\n```"));
+            CHECK_FALSE(IsCutOff("I would rather not."));
+            CHECK_FALSE(IsCutOff(""));
+        }
+    }
+}
+
 TEST_CASE("PlotStepParse::NamesThePlayer", "[PlotBirth][engine]")
 {
     using NarrativeEngine::PlotStepParse::NamesThePlayer;

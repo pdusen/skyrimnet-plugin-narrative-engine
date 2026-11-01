@@ -2,6 +2,7 @@
 
 #include <EngineMock.h>
 #include <PlotPopulation.h>
+#include <ShippedLanguage.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -1198,5 +1199,30 @@ TEST_CASE("PlotCandidates reads a role's name as it is written", "[PlotCandidate
         const auto out = resolve("hulda");
         REQUIRE(out.problems.size() == 1);
         CHECK(out.problems.front().ToJson()["code"] == "role_names_nobody");
+    }
+
+    SECTION("a whole name, in a script written without spaces, is that person and not a shorter name inside it")
+    {
+        // As a Japanese trial found it: "Bor" is a run inside "Battle-Born",
+        // and the surname is too common to count, so the two tied.
+        constexpr RE::FormID kJon = 0x00010009;
+        f.population.members.push_back(Person(kJon, "Jon Battle-Born", kWhiterunHold, kWhiterun));
+        f.population.members.push_back(Person(0x0001000A, "Alfhild Battle-Born", kWhiterunHold, kWhiterun));
+        f.population.members.push_back(Person(0x0001000B, "Idolaf Battle-Born", kWhiterunHold, kWhiterun));
+        f.population.members.push_back(Person(0x0001000C, "Bor", kWhiterunHold, kWhiterun));
+        const auto unspaced = NarrativeEngine::Testing::Synthetic("ja", "", "WordSeparated = false\n");
+        auto request = f.Request();
+        request.table = &unspaced;
+
+        const auto out = PlotCandidates::ResolveRoles(
+            *PlotVerbs::Find("steal"), {{"item", 0, "a ruby"}, {"mark", 0, "Jon Battle-Born"}}, request);
+        for (const auto& problem : out.problems) {
+            CHECK(problem.ToJson()["code"] != "role_ambiguous");
+        }
+        if (out.problems.empty()) {
+            CHECK(out.values[1].form == kJon);
+        } else {
+            CHECK(out.problems.front().ToJson()["who"] == "Jon Battle-Born");
+        }
     }
 }

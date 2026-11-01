@@ -108,6 +108,8 @@ namespace NarrativeEngine::PlotRecipes
                 Recipe r;
                 r.form = recipe->createdItem->GetFormID();
                 r.displayName = PlotText::ItemPhrase(Localization::Get(), name, made == Made::Ammo);
+                r.name = name;
+                r.ammo = made == Made::Ammo;
                 r.craft = *craft;
                 r.skill = SkillAsked(*recipe);
                 recipe->requiredItems.ForEachContainerObject([&r](RE::ContainerObject& entry) {
@@ -169,6 +171,7 @@ namespace NarrativeEngine::PlotRecipes
                 Recipe r;
                 r.form = potion->GetFormID();
                 r.displayName = PlotText::ItemPhrase(Localization::Get(), name, false);
+                r.name = name;
                 r.craft = Craft::Concoct;
                 r.ingredientValue = prices[0] + prices[1];
                 r.ingredientCount = 2;
@@ -203,6 +206,7 @@ namespace NarrativeEngine::PlotRecipes
                 Recipe r;
                 r.form = item->GetFormID();
                 r.displayName = PlotText::ItemPhrase(Localization::Get(), name, false);
+                r.name = name;
                 r.craft = Craft::Enchant;
                 r.ingredientValue = baseValue + soul;
                 r.ingredientCount = 2;

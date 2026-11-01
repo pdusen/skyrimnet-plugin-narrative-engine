@@ -21,10 +21,6 @@ namespace NarrativeEngine::PlotFactionRoster
 {
     namespace
     {
-        // Where a language file rewords a faction's display name, by the
-        // section's own id: [Data.Faction] college = ...
-        constexpr std::string_view kDataSection = "Data.Faction";
-
         constexpr const char* kIniPath = "Data/SKSE/Plugins/NarrativeEngine/PlotFactions.ini";
 
         std::vector<Entry> g_entries;

@@ -22,6 +22,8 @@
 //   <Check>.Match.Start     a detector: fires when the text begins with one
 //   <Check>.Match.End       ... ends with one
 //   <Check>.Match.Anywhere  ... holds one anywhere
+//   <Check>.Trailing        words that may open a clause after a comma at the
+//                           end; the End lists read only what comes before it
 //   <Check>.Disabled        the check is off in this language, and why
 //
 // A list is comma-separated. Each entry is a sequence of word patterns
@@ -90,6 +92,11 @@ namespace NarrativeEngine::TextMatch
         List matchStart;
         List matchEnd;
         List matchAnywhere;
+        // What may open a clause after a comma that the End lists do not read,
+        // so a German scheme may end in its zu-infinitive and then go on:
+        // "den Vertrag zu vernichten, bevor ihn jemand findet". Read only in a
+        // script written with spaces.
+        List trailing;
         // Non-empty when the check is off in this language: the file's reason.
         std::string disabled;
 

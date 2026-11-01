@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include <string>
+#include <vector>
 
 // Characterization of the five checks that read what a model or the game
 // wrote, with English's rules: whether a scheme reads as an instruction,
@@ -358,5 +359,84 @@ TEST_CASE("Content checks: under other languages' rules", "[ContentChecks][engin
         j["roles"] = {{"mark", "Hulda"}, {"authority", "Balgruuf"}};
         j["scheme"] = "ruin \xC3\x96lfr\xC3\xBAn's trade";
         CHECK_FALSE(ParseAmbition(j.dump(), TextLimits{}, {}, {}, {"Ruin \xC3\xB6lfr\xC3\xBAn's trade."}).ok);
+    }
+}
+
+TEST_CASE("Content checks: the shipped languages' prompt forms", "[ContentChecks][engine]")
+{
+    // The examples a form quotes after "e.g.": what the model imitates.
+    const auto examples = [](const std::string& form) {
+        std::vector<std::string> out;
+        const auto from = form.find("e.g.");
+        if (from == std::string::npos) {
+            return out;
+        }
+        for (auto open = form.find('"', from); open != std::string::npos; open = form.find('"', open + 1)) {
+            const auto close = form.find('"', open + 1);
+            if (close == std::string::npos) {
+                break;
+            }
+            out.push_back(form.substr(open + 1, close - open - 1));
+            open = close;
+        }
+        return out;
+    };
+
+    for (const auto* stem : {"chinese", "french", "german", "italian", "japanese", "polish", "russian", "spanish"}) {
+        const auto file = NarrativeEngine::Testing::ShippedLanguageFile(stem);
+        REQUIRE_FALSE(file.empty());
+        const auto table = Language(file);
+        const auto* scheme = table.PromptForm("scheme");
+        if (scheme == nullptr) {
+            continue;
+        }
+        INFO(stem);
+
+        SECTION(
+            std::string{"a language asking a form of the scheme asks it of the finish, which the same check reads: "}
+            + stem)
+        {
+            REQUIRE(table.PromptForm("finish") != nullptr);
+        }
+
+        SECTION(std::string{"every example a form gives passes that language's own check: "} + stem)
+        {
+            for (const auto* form : {scheme, table.PromptForm("finish")}) {
+                REQUIRE(form != nullptr);
+                const auto quoted = examples(*form);
+                CHECK_FALSE(quoted.empty());
+                for (const auto& example : quoted) {
+                    INFO(example);
+                    CHECK(SchemeOpensWithVerb(example, table));
+                }
+            }
+        }
+    }
+
+    SECTION("German's finish, as the first trial's model wrote it, is refused, and its form is accepted")
+    {
+        const auto german = Language(NarrativeEngine::Testing::ShippedLanguageFile("german"));
+        // Word for word from the trial: a bare infinitive at the end, and a
+        // command at the start.
+        CHECK_FALSE(SchemeOpensWithVerb("Maven Black-Briar eine Grundbesitzurkunde stehlen", german));
+        CHECK_FALSE(SchemeOpensWithVerb("zeige Lleril Morvayn das private Andachtsbuch als Beweis gegen Aphia Velothi",
+                                        german));
+        CHECK(SchemeOpensWithVerb("Maven Black-Briar eine Grundbesitzurkunde zu stehlen", german));
+        CHECK(SchemeOpensWithVerb("die Forschungsnotizen dem Jarl Igmund vorzulegen", german));
+    }
+
+    SECTION("German's zu-clause may go on after a comma, but what comes before the comma is still read")
+    {
+        const auto german = Language(NarrativeEngine::Testing::ShippedLanguageFile("german"));
+        // Word for word from the second trial, both refused before.
+        CHECK(SchemeOpensWithVerb("den unterzeichneten Kontrakt der Blut-Horker zu vernichten, der bei Torbjorn "
+                                  "Shatter-Shield liegt",
+                                  german));
+        CHECK(SchemeOpensWithVerb("Raerek den belastenden Brief in Windhelm zuzustellen, damit er ihn retten kann",
+                                  german));
+        // A command, or a sentence about somebody, is no better for a clause
+        // after it.
+        CHECK_FALSE(SchemeOpensWithVerb("zeige Lleril Morvayn das Andachtsbuch, damit er es liest", german));
+        CHECK_FALSE(SchemeOpensWithVerb("Hulda bestiehlt Lars, um reich zu werden", german));
     }
 }

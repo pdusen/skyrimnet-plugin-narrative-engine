@@ -1,5 +1,8 @@
 #include <PlotMenus.h>
 
+#include <PlotFactionRoster.h>
+#include <PlotText.h>
+
 #include <algorithm>
 #include <unordered_set>
 
@@ -193,5 +196,28 @@ namespace NarrativeEngine::PlotMenus
         }
 
         return menus;
+    }
+
+    World Translated(const World& world, const LanguageTable::Table& table)
+    {
+        World out = world;
+        for (auto& item : out.items) {
+            if (const auto* text = table.DataText(PlotItemPool::kDataSection, item.editorId)) {
+                item.displayName = *text;
+            }
+        }
+        for (auto& faction : out.factions) {
+            if (const auto* text = table.DataText(PlotFactionRoster::kDataSection, faction.id)) {
+                faction.name = *text;
+            }
+        }
+        // The game names a made thing in the session's language, but the
+        // phrase around it -- an article, a quiver of -- is the table's.
+        for (auto& recipe : out.recipes) {
+            if (!recipe.name.empty()) {
+                recipe.displayName = PlotText::ItemPhrase(table, recipe.name, recipe.ammo);
+            }
+        }
+        return out;
     }
 } // namespace NarrativeEngine::PlotMenus

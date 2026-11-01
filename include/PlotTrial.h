@@ -3,6 +3,7 @@
 #include <LanguageTable.h>
 #include <PlotBirth.h>
 #include <PlotCasting.h>
+#include <PlotMenus.h>
 #include <PlotModel.h>
 #include <PlotRejection.h>
 #include <PlotState.h>
@@ -22,8 +23,9 @@
 // rules hold against the real model. The session's language never changes.
 //
 // Each run reads everything plot birth reads from a language table -- the
-// output-language line, [Prompt.Form], [Matching] and the name matchers --
-// from that language's shipped table (Localization::LoadShipped). Nothing a
+// output-language line, [Prompt.Form], [Matching], the name matchers, and the
+// item and faction names its world offers -- from that language's shipped
+// table (Localization::LoadShipped). Nothing a
 // trial produces is kept. A trial birth draws its shortlist from the live
 // state's occupancy with an RNG of its own, and its plot is discarded: no plot
 // is added, no occupancy row engaged, no budget spent, and the live state's
@@ -69,12 +71,14 @@ namespace NarrativeEngine::PlotTrial
     // The live game's: PlotPopulation's, and PlotBirth::IsCastable.
     [[nodiscard]] Predicates LivePredicates();
 
-    // One trial birth under `table`. Reads `live`, which it cannot change;
-    // draws from `rng`, the trial's own.
+    // One trial birth under `table`, naming what `world` offers: the
+    // session's world as PlotMenus::Translated words it in `table`. Reads
+    // `live`, which it cannot change; draws from `rng`, the trial's own.
     [[nodiscard]] Birth TrialBirth(const PlotThread::Token& pt,
                                    const PlotCasting::Population& population,
                                    const PlotState& live,
                                    std::uint64_t& rng,
+                                   const PlotMenus::World& world,
                                    const LanguageTable::Table& table,
                                    const Predicates& predicates);
 

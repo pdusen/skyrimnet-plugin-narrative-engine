@@ -10,7 +10,7 @@ namespace NarrativeEngine::TextMatch
 {
     namespace
     {
-        constexpr std::array<std::pair<std::string_view, List Check::*>, 7> kLists{{
+        constexpr std::array<std::pair<std::string_view, List Check::*>, 8> kLists{{
             {".Reject.Start", &Check::rejectStart},
             {".Reject.End", &Check::rejectEnd},
             {".Require.Start", &Check::requireStart},
@@ -18,6 +18,7 @@ namespace NarrativeEngine::TextMatch
             {".Match.Start", &Check::matchStart},
             {".Match.End", &Check::matchEnd},
             {".Match.Anywhere", &Check::matchAnywhere},
+            {".Trailing", &Check::trailing},
         }};
         constexpr std::string_view kDisabled = ".Disabled";
 
@@ -152,6 +153,23 @@ namespace NarrativeEngine::TextMatch
             return Glob(anchored, Core(folded));
         }
 
+        // The text up to the first comma that a `trailing` entry follows: what
+        // the End lists read. All of it when there is no such clause.
+        std::string_view BeforeTrailing(std::string_view folded, const List& trailing, const Options& options)
+        {
+            if (trailing.empty() || !options.wordSeparated) {
+                return folded;
+            }
+            for (auto comma = folded.find(','); comma != std::string_view::npos; comma = folded.find(',', comma + 1)) {
+                for (const auto& entry : trailing) {
+                    if (MatchesWords(folded.substr(comma + 1), entry, Position::Start)) {
+                        return folded.substr(0, comma);
+                    }
+                }
+            }
+            return folded;
+        }
+
         bool AnyMatch(std::string_view folded, const List& list, Position position, const Options& options)
         {
             for (const auto& entry : list) {
@@ -233,14 +251,15 @@ namespace NarrativeEngine::TextMatch
             return true;
         }
         const auto folded = TextUtf8::Fold(text);
+        const auto main = BeforeTrailing(folded, trailing, options);
         if (AnyMatch(folded, rejectStart, Position::Start, options)
-            || AnyMatch(folded, rejectEnd, Position::End, options)) {
+            || AnyMatch(main, rejectEnd, Position::End, options)) {
             return false;
         }
         if (!requireStart.empty() && !AnyMatch(folded, requireStart, Position::Start, options)) {
             return false;
         }
-        if (!requireEnd.empty() && !AnyMatch(folded, requireEnd, Position::End, options)) {
+        if (!requireEnd.empty() && !AnyMatch(main, requireEnd, Position::End, options)) {
             return false;
         }
         return true;
@@ -253,7 +272,7 @@ namespace NarrativeEngine::TextMatch
         }
         const auto folded = TextUtf8::Fold(text);
         return AnyMatch(folded, matchStart, Position::Start, options)
-               || AnyMatch(folded, matchEnd, Position::End, options)
+               || AnyMatch(BeforeTrailing(folded, trailing, options), matchEnd, Position::End, options)
                || AnyMatch(folded, matchAnywhere, Position::Anywhere, options);
     }
 

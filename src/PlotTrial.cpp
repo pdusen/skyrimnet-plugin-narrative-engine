@@ -1,11 +1,13 @@
 #include <PlotTrial.h>
 
+#include <CharacterBios.h>
 #include <DashboardUIManager.h>
 #include <Localization.h>
 #include <logger.h>
 #include <PlotDispatch.h>
 #include <PlotLog.h>
 #include <PlotPopulation.h>
+#include <PlotState.h>
 #include <PlotText.h>
 #include <PlotVerbs.h>
 
@@ -75,6 +77,12 @@ namespace NarrativeEngine::PlotTrial
                 });
                 return;
             }
+            // What a tick does before it reads anything. A trial run before
+            // the session's first tick would otherwise read the state from
+            // before the load, and find no profile for anyone: every birth
+            // was skipped as nobody SkyrimNet could describe.
+            Plots::TakePendingState(pt);
+            CharacterBios::Refresh(pt);
             const auto& population = PlotPopulation::Get();
             const auto& live = Plots::MutableState(pt);
             const auto predicates = LivePredicates();
@@ -100,10 +108,16 @@ namespace NarrativeEngine::PlotTrial
                 result.loaded = true;
                 result.name = table->GetHeader().name;
                 result.nativeName = table->GetHeader().nativeName;
+                // The session's world worded in this table, once for all its
+                // births. Its item and faction names were translated at load
+                // through the session's table, so a run left on it would offer
+                // a Russian answer an English pool and splice English items
+                // into Japanese memories.
+                const auto world = PlotMenus::Translated(PlotMenus::CurrentWorld(), *table);
 
                 std::set<RE::FormID> masterminds;
                 for (int i = 0; i < kBirthsPerLanguage; ++i) {
-                    const auto birth = TrialBirth(pt, population, live, rng, *table, predicates);
+                    const auto birth = TrialBirth(pt, population, live, rng, world, *table, predicates);
                     ++result.attempted;
                     for (const auto& refusal : birth.refusals) {
                         const auto code = PlotRejection::Id(refusal.code);
@@ -154,7 +168,9 @@ namespace NarrativeEngine::PlotTrial
     {
         using enum PlotRejection::Code;
         switch (code) {
+        // The finish is held to the scheme's rule.
         case SchemeNotVerb:
+        case FinishNotVerb:
             return "Scheme";
         case NamesPlayer:
         case RoleNamesPlayer:
@@ -180,6 +196,7 @@ namespace NarrativeEngine::PlotTrial
                      const PlotCasting::Population& population,
                      const PlotState& live,
                      std::uint64_t& rng,
+                     const PlotMenus::World& world,
                      const LanguageTable::Table& table,
                      const Predicates& predicates)
     {
@@ -214,8 +231,8 @@ namespace NarrativeEngine::PlotTrial
 
         std::size_t decisions = 0;
         birth.plot.bornOnGameDay = live.simGameDay;
-        birth.accepted =
-            PlotBirth::Compose(pt, population, shortlist, live.past, birth.plot, decisions, table, &birth.refusals);
+        birth.accepted = PlotBirth::Compose(
+            pt, population, shortlist, live.past, birth.plot, decisions, world, table, &birth.refusals);
         return birth;
     }
 

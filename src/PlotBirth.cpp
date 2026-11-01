@@ -233,10 +233,10 @@ namespace NarrativeEngine::PlotBirth
 
         // The item pool as it is said: what the ambition call is shown, and
         // what a finish that takes an item has to name.
-        std::vector<std::string> PoolItemNames()
+        std::vector<std::string> PoolItemNames(const PlotMenus::World& world)
         {
             std::vector<std::string> out;
-            for (const auto& item : PlotMenus::CurrentWorld().items) {
+            for (const auto& item : world.items) {
                 out.push_back(item.displayName);
             }
             return out;
@@ -248,12 +248,14 @@ namespace NarrativeEngine::PlotBirth
         constexpr std::size_t kMadeExamplesPerCraft = 4;
 
         // What the mastermind's own craftsmen can make, as it is said.
-        std::vector<std::string> MadeNames(const PlotCasting::Population& population, const PlotCasting::Member& boss)
+        std::vector<std::string> MadeNames(const PlotCasting::Population& population,
+                                           const PlotCasting::Member& boss,
+                                           const PlotMenus::World& world)
         {
             const std::vector<PlotModel::SlotValue> none;
             const std::vector<const PlotModel::Step*> earlier;
             const PlotCandidates::Request request{
-                population, boss.npc, PlotMenus::CurrentWorld(), none, earlier, PlotPopulation::AlivePredicate(), {}};
+                population, boss.npc, world, none, earlier, PlotPopulation::AlivePredicate(), {}};
             return PlotCandidates::MadeExamples(request, kMadeExamplesPerCraft);
         }
 
@@ -275,6 +277,7 @@ namespace NarrativeEngine::PlotBirth
         nlohmann::json AmbitionContext(const PlotCasting::Member& boss,
                                        const std::vector<std::string>& made,
                                        const std::vector<PlotModel::PastScheme>& past,
+                                       const PlotMenus::World& world,
                                        const LanguageTable::Table& table)
         {
             nlohmann::json ctx;
@@ -312,7 +315,7 @@ namespace NarrativeEngine::PlotBirth
                                  {"roles", std::move(roles)}});
             }
             ctx["verbs"] = std::move(verbs);
-            ctx["items"] = PoolItemNames();
+            ctx["items"] = PoolItemNames(world);
             ctx["made"] = made;
             ctx["accomplished"] = PastSchemes(past, boss, true);
             ctx["failed"] = PastSchemes(past, boss, false);
@@ -393,6 +396,10 @@ namespace NarrativeEngine::PlotBirth
             // Why the last answer was refused, as plot_rejection.prompt words
             // it; empty on the first attempt.
             nlohmann::json retry = nlohmann::json::array();
+            // An answer cut off on its way back is asked again, once, as it
+            // was asked: there is nothing to correct, so it must not spend
+            // the one correction a wrong answer gets.
+            bool reasked = false;
 
             for (int attempt = 0; attempt < 2; ++attempt) {
                 auto ctx = build();
@@ -426,6 +433,13 @@ namespace NarrativeEngine::PlotBirth
                 }
                 if (refusals != nullptr) {
                     refusals->push_back({stage, outcome.rejection.code});
+                }
+                if (!reasked && IsCutOff(call.response)) {
+                    reasked = true;
+                    logger::warn(
+                        "PlotBirth[{}]: the answer for {} was cut off; asking again: {}", stage, who, call.response);
+                    --attempt;
+                    continue;
                 }
                 retry = nlohmann::json::array({outcome.rejection.ToJson()});
                 logger::info("PlotBirth[{}]: retrying for {} after: {}", stage, who, Logged(outcome.rejection));
@@ -535,6 +549,7 @@ namespace NarrativeEngine::PlotBirth
                  const std::vector<PlotModel::PastScheme>& past,
                  PlotModel::Plot& plot,
                  std::size_t& decisions,
+                 const PlotMenus::World& world,
                  const LanguageTable::Table& table,
                  std::vector<Refusal>* refusals)
     {
@@ -582,30 +597,26 @@ namespace NarrativeEngine::PlotBirth
         //
         // A gift's item may be a thing the mastermind's people can make, as
         // well as one from the pool, so the call is shown some of those too.
-        const auto made = MadeNames(population, *boss);
+        const auto made = MadeNames(population, *boss, world);
         const auto accomplished = PastSchemes(past, *boss, true);
         const auto ambition = AskTwice<AmbitionOutcome>(
             pt,
             kAmbitionPrompt,
-            [&] { return AmbitionContext(*boss, made, past, table); },
-            [player = PlayerName(), &population, boss, &accomplished, &table](const std::string& response) {
-                const auto resolveRoles = [&population, boss, &table](const PlotVerbs::Verb& goal,
-                                                                      const std::vector<PlotModel::SlotValue>& named,
-                                                                      std::vector<PlotModel::SlotValue>& resolved) {
-                    const std::vector<PlotModel::SlotValue> none;
-                    const std::vector<const PlotModel::Step*> earlier;
-                    PlotCandidates::Request request{population,
-                                                    boss->npc,
-                                                    PlotMenus::CurrentWorld(),
-                                                    none,
-                                                    earlier,
-                                                    PlotPopulation::AlivePredicate(),
-                                                    {}};
-                    request.table = &table;
-                    auto resolution = PlotCandidates::ResolveRoles(goal, named, request);
-                    resolved = std::move(resolution.values);
-                    return std::move(resolution.problems);
-                };
+            [&] { return AmbitionContext(*boss, made, past, world, table); },
+            [player = PlayerName(), &population, boss, &accomplished, &world, &table](const std::string& response) {
+                const auto resolveRoles =
+                    [&population, boss, &world, &table](const PlotVerbs::Verb& goal,
+                                                        const std::vector<PlotModel::SlotValue>& named,
+                                                        std::vector<PlotModel::SlotValue>& resolved) {
+                        const std::vector<PlotModel::SlotValue> none;
+                        const std::vector<const PlotModel::Step*> earlier;
+                        PlotCandidates::Request request{
+                            population, boss->npc, world, none, earlier, PlotPopulation::AlivePredicate(), {}};
+                        request.table = &table;
+                        auto resolution = PlotCandidates::ResolveRoles(goal, named, request);
+                        resolved = std::move(resolution.values);
+                        return std::move(resolution.problems);
+                    };
                 return ParseAmbition(response, TextLimits{}, player, resolveRoles, accomplished, table);
             },
             boss->name,
@@ -621,7 +632,7 @@ namespace NarrativeEngine::PlotBirth
         // A sequence of decisions rather than one prompt: the step that
         // accomplishes the scheme, then what must come before it. See
         // PlotPlanning.
-        PlotPlanning::Input input{population, PlotMenus::CurrentWorld()};
+        PlotPlanning::Input input{population, world};
         input.mastermind = boss->npc;
         input.mastermindName = boss->name;
         input.standing = StandingId(BestStanding(*boss));
