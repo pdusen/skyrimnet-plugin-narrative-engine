@@ -50,7 +50,7 @@ authored or ambient. No special-case pathway required; no observation suppressio
 - The beat's whole lifecycle runs synchronously inside `OnStart` on the main thread: validate the LLM's
   chosen weather name against the manifest + current climate, call
   `RE::Sky::GetSingleton()->SetWeather(w, /*override=*/false, /*accelerate=*/false)` (the `sw`-equivalent
-  gradual fade), post the LLM's framing line via `RE::DebugNotification`, stamp the per-beat cooldown. First
+  gradual fade), post the LLM's framing line via `RE::SendHUDMessage::ShowHUDMessage`, stamp the per-beat cooldown. First
   `Tick` returns `{BeatState::NOT_RUNNING}` unconditionally.
 - A new INI section `[ChangeWeatherEvents]` with two tunables: the per-beat cooldown in in-game hours and
   a debug toggle for logging the manifest filter's per-tick result.
@@ -199,8 +199,8 @@ void ChangeWeatherBeat::OnStart(const BeatContext& ctx, const nlohmann::json& pa
 
     // 6. Post the framing notification.
     if (!framingLine.empty()) {
-        RE::DebugNotification(framingLine.c_str(), /*a_soundToPlay=*/nullptr,
-                              /*a_cancelIfAlreadyQueued=*/false);
+        RE::SendHUDMessage::ShowHUDMessage(framingLine.c_str(), /*a_soundToPlay=*/nullptr,
+                                           /*a_cancelIfAlreadyQueued=*/false);
     }
 
     // 7. Stamp the per-beat cooldown.
@@ -432,8 +432,8 @@ plugin side; only the LLM prompt authoring in Step 4 is missing to make it fire 
 
 **Specifics:**
 
-- `RE::DebugNotification` is a free function in `RE/M/Misc.h` — no bridge required. Signature:
-  `DebugNotification(const char* text, const char* sound = nullptr, bool cancelIfAlreadyQueued = true)`.
+- `RE::SendHUDMessage::ShowHUDMessage` is a free function in `RE/S/SendHUDMessage.h` — no bridge required.
+  Signature: `ShowHUDMessage(const char* text, const char* sound = nullptr, bool cancelIfAlreadyQueued = true)`.
   Pass `cancelIfAlreadyQueued=false` so consecutive weather beats don't silently drop each other's
   notifications.
 - `OnStart` runs on the main thread with the single-beat lock held (see `BeatSystem::StartBeatInternal`

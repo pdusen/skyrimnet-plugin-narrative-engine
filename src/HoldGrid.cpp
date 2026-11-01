@@ -1,6 +1,7 @@
 #include <HoldGrid.h>
 
 #include <BmpWriter.h>
+#include <EditorIds.h>
 #include <logger.h>
 #include <Settings.h>
 
@@ -128,12 +129,12 @@ namespace NarrativeEngine::HoldGrid
             }
 
             // Log the palette so the user can decode the image.
-            const char* wsEdid = ws->GetFormEditorID();
+            const char* wsEdid = EditorIds::Of(ws);
             logger::info("HoldGrid: bitmap palette for worldspace '{}':", (wsEdid && *wsEdid) ? wsEdid : "?");
             for (const auto id : holds) {
                 auto* form = RE::TESForm::LookupByID(id);
                 auto* loc = form ? form->As<RE::BGSLocation>() : nullptr;
-                const char* edid = loc ? loc->GetFormEditorID() : nullptr;
+                const char* edid = EditorIds::Of(loc);
                 const char* full = loc ? loc->GetFullName() : nullptr;
                 const auto& c = colorByHold[id];
                 logger::info("HoldGrid:   [0x{:08X}] EditorID='{}' FullName='{}' RGB=({},{},{})",
@@ -429,7 +430,7 @@ namespace NarrativeEngine::HoldGrid
             totalFilledCount += wsFilledCount;
             ++worldSpaceProcessed;
 
-            const char* wsEdid = ws->GetFormEditorID();
+            const char* wsEdid = EditorIds::Of(ws);
             if (Settings::Get().traceMode) {
                 logger::trace("HoldGrid: worldspace [0x{:08X}] '{}' — pruned {} isolated "
                               "singleton(s), seeded {} cells, filled {} more "

@@ -12,6 +12,7 @@
 #include <DashboardUIManager.h>
 #include <DecisionLog.h>
 #include <Decorators.h>
+#include <EditorIds.h>
 #include <EvalDispatch.h>
 #include <EventHistoryWriter.h>
 #include <FineRoads.h>
@@ -162,6 +163,12 @@ namespace NarrativeEngine
                 // Settings, and must publish the session's language table
                 // before any subsystem below can render a sentence.
                 Localization::Load();
+                // EditorIds inverts the engine's EditorID table, which is
+                // complete by kDataLoaded. Before every subsystem below:
+                // HoldGrid, gossip and plots all read forms' EditorIDs while
+                // they initialize, and most forms can only name themselves
+                // through this index.
+                EditorIds::Initialize();
                 // MCMEventSink listens for _ne_MCM.psc's ModEvent so the
                 // MCM-rebound hotkey can overwrite the INI-loaded default
                 // once a save fires OnGameReload. Register before any
@@ -587,7 +594,10 @@ namespace NarrativeEngine
 
     bool Startup(const SKSE::LoadInterface* skse)
     {
-        SKSE::Init(skse);
+        // `false`: SetupLog owns the log. CommonLibSSE's own logger would
+        // open and truncate the same file before SetupLog rotates it, losing
+        // the previous session's log.
+        SKSE::Init(skse, false);
         SetupLog();
         // First line of every log. The version belongs here because a log
         // is usually read long after the build that wrote it, and "which

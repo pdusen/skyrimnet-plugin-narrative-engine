@@ -1,5 +1,6 @@
 #include <GossipContent.h>
 
+#include <EditorIds.h>
 #include <EngineUtils.h>
 #include <EvaluationPipeline.h>
 #include <EventLogUtil.h>
@@ -111,7 +112,7 @@ namespace NarrativeEngine::GossipContent
             // man's yuefu in Chinese -- so a row may be refined by the
             // listener's sex, and that one is tried first. A type no row
             // names, a modded one say, keeps its record's word.
-            if (const char* id = rel->assocType->GetFormEditorID(); id != nullptr && *id != '\0') {
+            if (const char* id = EditorIds::Of(rel->assocType); *id != '\0') {
                 const auto key = std::format("{}.{}.{}", id, parent ? "parent" : "child", female ? "female" : "male");
                 const auto refined = key + (nb->GetSex() == RE::SEX::kFemale ? ".listener_female" : ".listener_male");
                 const auto& table = Localization::Get();

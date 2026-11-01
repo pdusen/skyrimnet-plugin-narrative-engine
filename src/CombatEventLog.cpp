@@ -1,5 +1,6 @@
 #include <CombatEventLog.h>
 
+#include <EditorIds.h>
 #include <EventLogUtil.h>
 #include <EventText.h>
 #include <Localization.h>
@@ -427,7 +428,7 @@ namespace NarrativeEngine::CombatEventLog
                         sourceDesc += fn;
                         sourceDesc += "'";
                     }
-                    if (const char* edid = form->GetFormEditorID(); edid && *edid) {
+                    if (const char* edid = EditorIds::Of(form); edid && *edid) {
                         sourceDesc += " edid=";
                         sourceDesc += edid;
                     }
@@ -441,7 +442,7 @@ namespace NarrativeEngine::CombatEventLog
             if (evt.projectile != 0) {
                 projectileDesc = std::format("{:08X}", evt.projectile);
                 if (auto* form = RE::TESForm::LookupByID(evt.projectile)) {
-                    if (const char* edid = form->GetFormEditorID(); edid && *edid) {
+                    if (const char* edid = EditorIds::Of(form); edid && *edid) {
                         projectileDesc += " edid=";
                         projectileDesc += edid;
                     }

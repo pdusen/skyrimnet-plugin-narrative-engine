@@ -922,6 +922,7 @@ if(NARRATIVEENGINE_BUILD_TESTS)
         "${CMAKE_SOURCE_DIR}/src/AmbushSpawnPoints.cpp"
         "${CMAKE_SOURCE_DIR}/src/VisitArrivalPoint.cpp"
         "${CMAKE_SOURCE_DIR}/src/DebugNotify.cpp"
+        "${CMAKE_SOURCE_DIR}/src/EditorIds.cpp"
         "${CMAKE_SOURCE_DIR}/src/EvaluationPipeline.cpp"
         "${CMAKE_SOURCE_DIR}/src/EvaluationPipelineText.cpp"
         "${CMAKE_SOURCE_DIR}/src/DecisionProbe.cpp"

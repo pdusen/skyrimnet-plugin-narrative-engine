@@ -1,6 +1,7 @@
 #include <TravelGraph.h>
 
 #include <BmpWriter.h>
+#include <EditorIds.h>
 #include <HoldGrid.h>
 #include <logger.h>
 #include <Settings.h>
@@ -579,12 +580,11 @@ namespace NarrativeEngine::TravelGraph
                     }
 
                     // Log the palette so the image can be decoded.
-                    logger::info("TravelGraph: hold background palette for '{}':",
-                                 ws->GetFormEditorID() ? ws->GetFormEditorID() : "?");
+                    logger::info("TravelGraph: hold background palette for '{}':", EditorIds::Of(ws));
                     for (const auto hold : distinctHolds) {
                         auto* form = RE::TESForm::LookupByID(hold);
                         auto* loc = form ? form->As<RE::BGSLocation>() : nullptr;
-                        const char* edid = loc ? loc->GetFormEditorID() : nullptr;
+                        const char* edid = EditorIds::Of(loc);
                         const char* full = loc ? loc->GetFullName() : nullptr;
                         const auto& c = colorByHold[hold];
                         logger::info("TravelGraph:   [0x{:08X}] EditorID='{}' FullName='{}' RGB=({},{},{})",
@@ -635,7 +635,7 @@ namespace NarrativeEngine::TravelGraph
                 logger::warn("TravelGraph: cannot write bitmap - SKSE log_directory unavailable");
                 return;
             }
-            const char* wsEdid = ws ? ws->GetFormEditorID() : nullptr;
+            const char* wsEdid = EditorIds::Of(ws);
             const std::string wsName =
                 (wsEdid && *wsEdid) ? std::string{wsEdid} : std::format("{:08X}", static_cast<std::uint32_t>(wsID));
             const auto path = *logsFolder / ("NarrativeEngine_TravelGraph_" + wsName + ".bmp");

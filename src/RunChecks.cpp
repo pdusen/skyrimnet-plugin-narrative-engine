@@ -68,7 +68,7 @@ namespace NarrativeEngine::RunChecks
         MainThread::FireAndForget(pt, [](const MainThread::Token&) {
             const auto text = DebugNotify::Text::FontSample(Localization::Get());
             logger::info("RunChecks: font sample queued: {}", text);
-            RE::DebugNotification(text.c_str());
+            RE::SendHUDMessage::ShowHUDMessage(text.c_str());
         });
 
         const bool queued = SkyrimNetAPI::SendCustomPromptToLLM(

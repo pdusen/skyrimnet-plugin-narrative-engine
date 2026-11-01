@@ -1,5 +1,6 @@
 #include <GossipGraph.h>
 
+#include <EditorIds.h>
 #include <EngineUtils.h>
 
 #include <logger.h>
@@ -435,7 +436,7 @@ namespace NarrativeEngine::GossipGraph
             if (EngineUtils::IsGhostRecord(npc)) {
                 return false;
             }
-            if (const char* eid = npc->GetFormEditorID(); eid && *eid) {
+            if (const char* eid = EditorIds::Of(npc); eid && *eid) {
                 const auto lowered = ToLower(eid);
                 if (lowered.find("preset") != std::string::npos || lowered.rfind("test", 0) == 0
                     || lowered.find("dummy") != std::string::npos) {
@@ -474,7 +475,7 @@ namespace NarrativeEngine::GossipGraph
                 }
                 if (const char* n = loc->GetFullName(); n && *n) {
                     g_locNames[id] = n;
-                } else if (const char* eid = loc->GetFormEditorID(); eid && *eid) {
+                } else if (const char* eid = EditorIds::Of(loc); eid && *eid) {
                     g_locNames[id] = eid;
                 }
             }
@@ -700,16 +701,16 @@ namespace NarrativeEngine::GossipGraph
                 // because GovRuling is 42 members against a ceiling of 40 --
                 // with nothing in the log to say the third had been ignored.
                 auto* faction = RE::TESForm::LookupByID<RE::TESFaction>(factionId);
-                const char* eid = faction ? faction->GetFormEditorID() : nullptr;
-                const bool allowed = IsExplicitlyAllowed(eid ? eid : "");
+                const char* eid = EditorIds::Of(faction);
+                const bool allowed = IsExplicitlyAllowed(eid);
                 if (!allowed && (size < lo || size > hi)) {
                     continue;
                 }
-                if (!allowed && IsBucketFaction(eid ? eid : "")) {
+                if (!allowed && IsBucketFaction(eid)) {
                     continue;
                 }
                 ++g_census.factionsAdmitted;
-                g_factionNames[factionId] = (eid && *eid) ? eid : std::format("0x{:08X}", factionId);
+                g_factionNames[factionId] = *eid ? eid : std::format("0x{:08X}", factionId);
                 for (std::size_t i = 0; i < mem.size(); ++i) {
                     for (std::size_t j = i + 1; j < mem.size(); ++j) {
                         g_factionEdges[mem[i]].push_back({mem[j], -1, true, Channel::Faction, factionId});
