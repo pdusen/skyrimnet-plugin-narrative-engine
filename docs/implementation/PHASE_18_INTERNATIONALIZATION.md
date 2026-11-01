@@ -2727,3 +2727,106 @@ Done.
     Without the change it is refused as ambiguous, as the trial was.
 
 `pwsh -File build.ps1 test`: 596 of 596 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 31 — What the translation reviews found, closed
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** The German, Russian and Japanese memories and model content from Step 30's last run read as a native speaker
+would write them, as far as the language files, the prompt forms and the code can make them.
+
+Each language's memories and model answers from the fourth trial run were reviewed against that language's
+translation guidance, with every Skyrim term checked against the game's own strings. English names for people and
+places were not counted: the session ran in English. The findings, by where they are fixed:
+
+- **Templates.**
+  - German: "selbst" placed straight after a name in the `*.self_dispatched` keys reads as that person's
+    ("Hemming Black-Briar selbst zu beobachten"). `went_on` stacks two *zu*-clauses, and `destroy.*` is a calque.
+  - Russian: "в окрестностях места {place}" reads as a form label in every `ask_around` and `spread_rumors` key.
+  - Japanese: grammatical 事 where the game writes こと (ことにした 50 times to 事にした 8), 習慣 for a target's routine,
+    and two templates naming the same person twice.
+- **Prompt forms.**
+  - No language had an `ambition` form, so the English "complete sentence with a pronoun subject" leaked: seven of
+    twelve Japanese ambitions opened with 彼は or 彼女は, and Russian's varied.
+  - "Never translate a name" was read as "leave English words in English": Japanese kept "Jarl", "Imperial" and
+    "arcanaeum".
+  - Russian's scheme is read after «мне удалось», so it must be perfective. "Perfective where natural" let "распускать
+    слухи" through.
+  - A Japanese scheme with its own という doubles the template's.
+  - German put articles before people's names ("den Silus Vesuius").
+- **Code.**
+  - Russian model text uses ё, which the `ru` font set cannot draw (see **Encoding**).
+  - German's `led` audience, "der eigenen Gefolgschaft", refers back to the speaker; it needs the leader's name.
+  - The audience was worded in the session's table, not the request's, so a trial run's was English.
+  - Made items take no article in German, French, Italian and Spanish ("Eisenschwert selbst zu schmieden"), ammunition
+    stays singular ("ein Bündel Eisenpfeil"), and Russian and Polish put the game's nominative into accusative slots.
+
+Wrong lore terms and names translated inside free text were left as model variance.
+
+Done, but for made items, which are Step 32's.
+
+- **Templates.** German's `*.self_dispatched` keys put "selbst" with the speaker ("Ich habe mich selbst auf den Weg
+  gemacht, um {mark} zu beobachten"), and `falsify` says "eigenhändig"; `went_on` takes the scheme as an apposition;
+  `destroy` says "im Besitz von"; a granted petition is "stattgegeben". Russian's 24 place keys say "в поселении
+  {place}", and every dispatched memory says "Это часть моего плана:". Japanese writes grammatical こと in kana (38
+  places, the file's header saying so), 日々の行動 for a routine, and names nobody twice.
+- **Prompt forms.** Every language file has an `ambition` form in its own shape: a pronoun subject in German, French,
+  Russian and Chinese, none in Italian, Spanish and Polish, which leave it out, and none in Japanese, in plain style.
+  Russian's scheme and finish must be perfective and never use ё. Japanese's quote with と, never という. German's put
+  no article before a name.
+- **The output-language line** says a title, a rank or a common noun is translated like any other word; only names
+  keep their spelling.
+- **The sanitizer** writes ё and Ё as е and Е; `docs/LLM_RESPONSE_HANDLING.md` and CLAUDE.md say so.
+- **`[Plot.Audience]`** passes `{mark}`, the leader. German's `led` is "den Gefolgsleuten von {mark}": it repeats the
+  name in a denunciation and names the leader in their own memory, both clumsy, but the audience is one text shared by
+  every point of view, and the reflexive it replaces pointed at the speaker. The audience is worded in the request's
+  table, so a trial's is in its language.
+
+**Verification.**
+
+- **New tests:** the sanitizer writes "неё Ёлка" as "нее Елка", and every language asking a form of the scheme asks
+  one of the ambition.
+- The shipped-files test loads every edited language with no key refused.
+
+`pwsh -File build.ps1 test`: 596 of 596 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 32 — Made-item grammar
+
+- [ ] Complete
+
+**[CLAUDE]**
+
+**Goal:** a made thing reads as its language writes it wherever `{item}` stands: with its article, in the plural for
+ammunition, and in the case its slot needs.
+
+**Design, for review.** A made thing reaches `{item}` as the game names it, bare and in the
+nominative ("Eisenschwert", "Épée en acier", "Стальная булава"). The pool's items do not have this problem: their
+`[Data.Item]` rows are written in the form their slots need. Made things cannot be: there are hundreds, read from the
+game. Three things are missing, and which a language needs differs:
+
+| Language                  | Article by gender | Plural for ammunition | Case of the name |
+| ------------------------- | ----------------- | --------------------- | ---------------- |
+| German                    | yes (accusative)  | yes                   | no               |
+| French, Italian, Spanish  | yes               | yes                   | no               |
+| Russian, Polish           | no                | no (a carrier noun)   | accusative       |
+| English, Japanese, Chinese| as now            | as now                | no               |
+
+The proposal is rules in the language file, read by `PlotText::ItemPhrase` and nothing else:
+
+- **`[Grammar] Item.Head`** says which word of a name decides its grammar: `last` in German, Russian and Polish
+  ("Elfen*bogen*", "Стальная *булава*"), `first` in French, Italian and Spanish ("*Épée* en acier").
+- **`Item.Gender.<gender>`** lists endings of that head word, in the `[Matching]` pattern form: German
+  `Item.Gender.feminine = *axt, *rüstung, *keule, …`. The gender, or `other`, reaches the `made` template as
+  `{gender}`, which selects the article: German `made = {gender, select, feminine {eine} neuter {ein} plural {} other
+  {einen}} {name}`.
+- **`Item.Plural`** rewrites the head word's ending for ammunition: German `*pfeil > *pfeile, *bolzen > *bolzen`.
+- **`Item.Case`** rewrites endings of every word for the case a slot needs: Russian `*ая > *ую, *яя > *юю, *а > *у,
+  *я > *ю`, longest ending first. Polish needs the head word and its modifiers told apart (`-a` is `-ę` on a noun
+  and `-ą` on an adjective), which `Item.Head` already gives.
+- A name no rule matches takes `other` and is left as it is, so a modded item reads no worse than today.
+
+Each language's rules are checked by a throwaway script against every craftable vanilla item's name in that language,
+which the Spriggit export carries, as the `[Matching]` citations were. The alternative, a carrier noun per language
+("изделие — {name}", "ein Stück: {name}"), is data only but reads as stilted in every language that needs it.

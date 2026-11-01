@@ -36,7 +36,8 @@ payloads). The sanitizer is a single canonical pass that maps these to
 ASCII equivalents or drops them, drops invalid UTF-8, and trims
 surrounding whitespace. Everything else passes through verbatim:
 accented letters, ligatures and every other script, so a player's own
-language keeps its letters.
+language keeps its letters. The one exception is Russian ё, written е,
+because no Skyrim font draws it.
 
 When adding a new LLM-driven feature, wrap every `get<std::string>()`
 call for a free-form field in `LLMTextSanitizer::Sanitize(...)` — do

@@ -52,8 +52,10 @@ namespace NarrativeEngine::PlotText
         constexpr std::array kItemAmmoParams{TextKeys::Param{"name", Kind::Text}};
         constexpr TextKeys::Key kItemMade{"Plot.Item", "made", kItemMadeParams};
         constexpr TextKeys::Key kItemAmmo{"Plot.Item", "ammo", kItemAmmoParams};
-        constexpr std::array kAudienceParams{TextKeys::Param{"settlement", Kind::Text}};
-        constexpr TextKeys::Key kAudienceLed{"Plot.Audience", "led", {}};
+        constexpr std::array kAudienceParams{TextKeys::Param{"settlement", Kind::Text},
+                                             TextKeys::Param{"mark", Kind::Text}};
+        constexpr std::array kAudienceLedParams{TextKeys::Param{"mark", Kind::Text}};
+        constexpr TextKeys::Key kAudienceLed{"Plot.Audience", "led", kAudienceLedParams};
         constexpr TextKeys::Key kAudienceSettlement{"Plot.Audience", "settlement", kAudienceParams};
 
         constexpr std::array kTestKeys{TextKeys::Key{"Plot.Test", "brelyna.ambition", {}},
@@ -325,12 +327,13 @@ namespace NarrativeEngine::PlotText
         return table.Render(kTestKeys[static_cast<std::size_t>(line)], {});
     }
 
-    std::string Audience(const LanguageTable::Table& table, std::string_view settlement)
+    std::string Audience(const LanguageTable::Table& table, std::string_view settlement, std::string_view leader)
     {
-        if (settlement.empty()) {
-            return table.Render(kAudienceLed, {});
-        }
         TextTemplate::Arguments args;
+        args.Set("mark", std::string{leader});
+        if (settlement.empty()) {
+            return table.Render(kAudienceLed, args);
+        }
         args.Set("settlement", std::string{settlement});
         return table.Render(kAudienceSettlement, args);
     }

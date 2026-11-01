@@ -1075,10 +1075,12 @@ namespace NarrativeEngine::PlotCandidates
                         audience = option.name;
                     }
                 }
-                // In the session's language, as it is kept with the step and
-                // remembered by everyone the step reaches.
+                // In the request's language: the session's, as it is kept with
+                // the step and remembered by everyone the step reaches, or a
+                // language trial's.
                 if (audience.empty()) {
-                    audience = PlotText::Audience(Localization::Get(), SettlementName(request, mark->settlement));
+                    audience =
+                        PlotText::Audience(TableOf(request), SettlementName(request, mark->settlement), mark->name);
                 }
                 return Keyed({{{}, {std::string{slot.name}, 0, audience}, {}}}, limits.people);
             }

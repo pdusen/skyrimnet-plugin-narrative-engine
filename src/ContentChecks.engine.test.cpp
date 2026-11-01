@@ -399,6 +399,14 @@ TEST_CASE("Content checks: the shipped languages' prompt forms", "[ContentChecks
             REQUIRE(table.PromptForm("finish") != nullptr);
         }
 
+        // Without one, the English prompt's "a complete sentence with a
+        // pronoun subject" is what the model follows: Japanese ambitions opened
+        // with a pronoun Japanese leaves out.
+        SECTION(std::string{"a language asking a form of the scheme asks one of the ambition: "} + stem)
+        {
+            REQUIRE(table.PromptForm("ambition") != nullptr);
+        }
+
         SECTION(std::string{"every example a form gives passes that language's own check: "} + stem)
         {
             for (const auto* form : {scheme, table.PromptForm("finish")}) {

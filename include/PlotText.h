@@ -105,7 +105,11 @@ namespace NarrativeEngine::PlotText
     // Whom a step is done before when it is done before a whole community
     // rather than a person: "the people of Whiterun", or, with no settlement,
     // "the people they lead". What an exposure of a top official is shown to.
-    [[nodiscard]] std::string Audience(const LanguageTable::Table& table, std::string_view settlement);
+    // `leader` is that official, for a language that has to say whose people
+    // they are: German's "der eigenen Gefolgschaft" was the speaker's own.
+    [[nodiscard]] std::string Audience(const LanguageTable::Table& table,
+                                       std::string_view settlement,
+                                       std::string_view leader);
 
     // What a made item is called in a step: "an Iron Sword", "a sheaf of
     // Elven Arrows". Empty for an empty name.

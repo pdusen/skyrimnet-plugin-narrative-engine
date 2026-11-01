@@ -42,6 +42,7 @@ artifacts; we don't romanize the text.
 | Non-breaking and exotic spaces (`U+00A0`, `U+2002..A`, `U+202F`, `U+205F`, `U+3000`) | Replace with ASCII `' '` |
 | Short dashes (hyphen `U+2010`, non-breaking hyphen `U+2011`, figure dash `U+2012`, en-dash `U+2013`, math minus `U+2212`) | Replace with `'-'` |
 | Em-dash `U+2014` `—` | Replace with `'--'` (per house style — em-dashes consistently render badly in inventory tooltips and dialogue; the doubled-hyphen convention reads as an em-dash to an ASCII-era reader without shifting the sentence's grammar) |
+| Cyrillic `U+0451` `ё` and `U+0401` `Ё` | Replace with `е` and `Е` (no Skyrim font set draws ё; the game's own Russian text writes е throughout) |
 | Ellipsis `U+2026` `…` | Replace with literal `"..."` |
 | Smart double quotes (`U+201C..F`) | Replace with `'"'` |
 | Smart apostrophes (`U+2018..B`, `U+2032` prime) | Replace with `'\''` |
