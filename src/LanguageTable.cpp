@@ -35,7 +35,7 @@ namespace NarrativeEngine::LanguageTable
 
         constexpr std::array<std::string_view, 6> kHeaderKeys =
             {"Name", "NativeName", "Code", "Status", "PluralRule", "Fonts"};
-        constexpr std::array<std::string_view, 10> kGrammarKeys = {"ListSeparator",
+        constexpr std::array<std::string_view, 13> kGrammarKeys = {"ListSeparator",
                                                                    "ListPairSeparator",
                                                                    "ListFinalSeparator",
                                                                    "CapitalizeSentenceStart",
@@ -44,7 +44,13 @@ namespace NarrativeEngine::LanguageTable
                                                                    "IndefiniteArticle",
                                                                    "IndefiniteArticleBeforeVowel",
                                                                    "WordSeparated",
-                                                                   "ElideBeforeVowel"};
+                                                                   "ElideBeforeVowel",
+                                                                   "Item.Case.Modifier",
+                                                                   "Item.Case.Head",
+                                                                   "Item.Plural"};
+        // Open-ended: Item.Gender.<class>, one key per class a language's
+        // articles tell apart.
+        constexpr std::string_view kItemGenderPrefix = "item.gender.";
 
         [[nodiscard]] char AsciiLower(char c) noexcept
         {
@@ -327,6 +333,47 @@ namespace NarrativeEngine::LanguageTable
             grammar.elideBeforeVowel = *v;
         }
 
+        // [Grammar] Item.*: each rewrite list from the first source that
+        // has it, and each Item.Gender class likewise.
+        {
+            auto& items = table.itemRules_;
+            const auto rewrites = [](const std::string& value) { return ItemGrammar::ParseRewrites(value); };
+            if (auto v = grammarValue("Item.Case.Modifier", rewrites)) {
+                items.caseModifier = std::move(*v);
+            }
+            if (auto v = grammarValue("Item.Case.Head", rewrites)) {
+                items.caseHead = std::move(*v);
+            }
+            if (auto v = grammarValue("Item.Plural", rewrites)) {
+                items.plural = std::move(*v);
+            }
+            std::unordered_set<std::string> classes;
+            for (const auto* source : order) {
+                for (const auto& [section, name] : Entries(*source)) {
+                    if (!SameName(section, kGrammarSection) || !Lowered(name).starts_with(kItemGenderPrefix)) {
+                        continue;
+                    }
+                    const auto label = name.substr(kItemGenderPrefix.size());
+                    if (label.empty() || classes.contains(Lowered(label))) {
+                        continue;
+                    }
+                    const auto value = source->Value(section, name);
+                    const auto patterns = value ? ItemGrammar::ParsePatterns(*value) : std::nullopt;
+                    if (!patterns) {
+                        census.rejected.push_back(std::format("{}: {} '{}' is not a usable value",
+                                                              source->label,
+                                                              Where(kGrammarSection, name),
+                                                              value.value_or("")));
+                        continue;
+                    }
+                    classes.insert(Lowered(label));
+                    for (const auto& pattern : *patterns) {
+                        items.classes.emplace_back(pattern, label);
+                    }
+                }
+            }
+        }
+
         // [Matching]: open-ended, since which keys a check needs depends on
         // the language -- English rejects at the start, German requires at the
         // end. A check (or a plain list) is one unit, taken from the overlay
@@ -471,7 +518,7 @@ namespace NarrativeEngine::LanguageTable
                 return Contains(kHeaderKeys, name);
             }
             if (SameName(section, kGrammarSection)) {
-                return Contains(kGrammarKeys, name);
+                return Contains(kGrammarKeys, name) || Lowered(name).starts_with(kItemGenderPrefix);
             }
             return declared.contains(Id(section, name));
         };

@@ -112,6 +112,8 @@ namespace NarrativeEngine::PlotText
                                        std::string_view leader);
 
     // What a made item is called in a step: "an Iron Sword", "a sheaf of
-    // Elven Arrows". Empty for an empty name.
+    // Elven Arrows", "einen Daedrischen Bogen". The name is first fitted to
+    // its slot by the language's [Grammar] Item.* rules (see ItemGrammar.h).
+    // Empty for an empty name.
     [[nodiscard]] std::string ItemPhrase(const LanguageTable::Table& table, std::string_view name, bool ammo);
 } // namespace NarrativeEngine::PlotText

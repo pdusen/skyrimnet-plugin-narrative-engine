@@ -393,12 +393,13 @@ namespace NarrativeEngine::PlotCandidates
         // Diamond Necklace". The articles are the language's [Matching]
         // Item.Articles, the words a thing's name may open with: followed by
         // a space, in a script that separates words, and straight on in one
-        // that does not (Chinese "一袋金幣").
+        // that does not (Chinese "一袋金幣"), or straight on after an
+        // apostrophe (Italian "un'Ascia").
         bool Says(std::string_view text, std::string_view displayName, const LanguageTable::Table& table)
         {
             const auto& rules = table.Matching();
             for (const auto& article : rules.List("Item.Articles")) {
-                const auto opening = rules.options.wordSeparated ? article + " " : article;
+                const auto opening = rules.options.wordSeparated && !article.ends_with('\'') ? article + " " : article;
                 if (displayName.size() > opening.size() && displayName.starts_with(opening)) {
                     displayName.remove_prefix(opening.size());
                     break;

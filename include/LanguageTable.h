@@ -1,5 +1,6 @@
 #pragma once
 
+#include <ItemGrammar.h>
 #include <TextKeys.h>
 #include <TextMatch.h>
 #include <TextTemplate.h>
@@ -104,6 +105,14 @@ namespace NarrativeEngine::LanguageTable
             return census_;
         }
 
+        // [Grammar] Item.*: how a made thing's name is fitted to its slot.
+        // Each list is taken from the first of overlay, shipped file and
+        // English that has it, and Item.Gender class by class.
+        [[nodiscard]] const ItemGrammar::Rules& ItemRules() const noexcept
+        {
+            return itemRules_;
+        }
+
         // The content checks and word lists of [Matching], in this language.
         // A check, or a plain list, is taken whole from the first of overlay
         // and shipped file that says anything of it, else from English: a
@@ -155,6 +164,7 @@ namespace NarrativeEngine::LanguageTable
     private:
         Header header_;
         TextTemplate::Grammar grammar_;
+        ItemGrammar::Rules itemRules_;
         TextMatch::Rules matching_;
         std::unordered_map<std::string, std::string> promptForms_;
         std::vector<std::string> dashboardKeys_;

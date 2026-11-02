@@ -1201,6 +1201,20 @@ TEST_CASE("PlotCandidates reads a role's name as it is written", "[PlotCandidate
         CHECK(out.problems.front().ToJson()["code"] == "role_names_nobody");
     }
 
+    SECTION("a thing's article ending in an apostrophe is set aside with no space after it")
+    {
+        // Italian's made things open "un'" before a feminine vowel.
+        f.world.items.front().displayName = "un'Ascia d'ebano";
+        const auto italian = NarrativeEngine::Testing::Synthetic("it", "Item.Articles = un', un\n");
+        auto request = f.Request();
+        request.table = &italian;
+
+        const auto out = PlotCandidates::ResolveRoles(
+            *PlotVerbs::Find("steal"), {{"item", 0, "l'ascia d'ebano"}, {"mark", 0, "Hulda"}}, request);
+        REQUIRE(out.problems.empty());
+        CHECK(out.values[0].form == 0x0000D001);
+    }
+
     SECTION("a whole name, in a script written without spaces, is that person and not a shorter name inside it")
     {
         // As a Japanese trial found it: "Bor" is a run inside "Battle-Born",

@@ -1,5 +1,6 @@
 #include <PlotText.h>
 
+#include <ItemGrammar.h>
 #include <TextUtf8.h>
 
 #include <array>
@@ -48,7 +49,8 @@ namespace NarrativeEngine::PlotText
         constexpr TextKeys::Key kUnfilledScheme{"Plot.Unfilled", "scheme", {}};
 
         constexpr std::array kItemMadeParams{TextKeys::Param{"name", Kind::Text},
-                                             TextKeys::Param{"article", Kind::Text}};
+                                             TextKeys::Param{"article", Kind::Text},
+                                             TextKeys::Param{"gender", Kind::Text}};
         constexpr std::array kItemAmmoParams{TextKeys::Param{"name", Kind::Text}};
         constexpr TextKeys::Key kItemMade{"Plot.Item", "made", kItemMadeParams};
         constexpr TextKeys::Key kItemAmmo{"Plot.Item", "ammo", kItemAmmoParams};
@@ -343,11 +345,13 @@ namespace NarrativeEngine::PlotText
         if (name.empty()) {
             return {};
         }
+        auto fitted = ItemGrammar::Fit(table.ItemRules(), name, ammo);
         TextTemplate::Arguments args;
-        args.Set("name", std::string{name});
+        args.Set("name", std::move(fitted.name));
         if (ammo) {
             return table.Render(kItemAmmo, args);
         }
+        args.Set("gender", std::move(fitted.gender));
         const auto first = TextUtf8::DecodeAt(name, 0).codePoint;
         const bool vowel = first == U'a' || first == U'e' || first == U'i' || first == U'o' || first == U'u'
                            || first == U'A' || first == U'E' || first == U'I' || first == U'O' || first == U'U';

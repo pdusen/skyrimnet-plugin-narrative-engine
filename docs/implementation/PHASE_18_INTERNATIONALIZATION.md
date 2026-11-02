@@ -2794,7 +2794,7 @@ Done, but for made items, which are Step 32's.
 
 #### Step 32 — Made-item grammar
 
-- [ ] Complete
+- [x] Complete
 
 **[CLAUDE]**
 
@@ -2813,23 +2813,58 @@ game. Three things are missing, and which a language needs differs:
 | Russian, Polish           | no                | no (a carrier noun)   | accusative       |
 | English, Japanese, Chinese| as now            | as now                | no               |
 
-The proposal is rules in the language file, read by `PlotText::ItemPhrase` and nothing else:
+Rules in the language's `[Grammar]`, read by a new pure `ItemGrammar` and, through it, by `PlotText::ItemPhrase`
+alone. An entry is a word (`hacha`) or an ending (`*axt`), compared without case; the longest match wins, and a whole
+word beats any ending. Checked against the 4,818 things the game lets a craftsman make, a first proposal keyed on a
+fixed head position failed: a genitive after the head ("Яд нетча", "Dekokt otwierania") ends like a word to decline,
+and an adjective before it shifts the head.
 
-- **`[Grammar] Item.Head`** says which word of a name decides its grammar: `last` in German, Russian and Polish
-  ("Elfen*bogen*", "Стальная *булава*"), `first` in French, Italian and Spanish ("*Épée* en acier").
-- **`Item.Gender.<gender>`** lists endings of that head word, in the `[Matching]` pattern form: German
-  `Item.Gender.feminine = *axt, *rüstung, *keule, …`. The gender, or `other`, reaches the `made` template as
-  `{gender}`, which selects the article: German `made = {gender, select, feminine {eine} neuter {ein} plural {} other
-  {einen}} {name}`.
-- **`Item.Plural`** rewrites the head word's ending for ammunition: German `*pfeil > *pfeile, *bolzen > *bolzen`.
-- **`Item.Case`** rewrites endings of every word for the case a slot needs: Russian `*ая > *ую, *яя > *юю, *а > *у,
-  *я > *ю`, longest ending first. Polish needs the head word and its modifiers told apart (`-a` is `-ę` on a noun
-  and `-ą` on an adjective), which `Item.Head` already gives.
-- A name no rule matches takes `other` and is left as it is, so a modded item reads no worse than today.
+- **`Item.Gender.<class>`** lists the words, or endings, that decide which article a name takes. The first word of
+  the name any list knows decides, and its class reaches the `made` template as `{gender}`: German `made = {gender,
+  select, masculine {einen {name}} feminine {eine {name}} neuter {ein {name}} other {{name}}}`. A class is whatever
+  the article needs: Italian has `masculine_s` for "uno" and `feminine_vowel` for "un'", Spanish puts `hacha` with
+  the masculine for "un". A language with lists that knows no word of a name leaves it as it is, as `other`.
+- **`Item.Case.Modifier`** and **`Item.Case.Head`** rewrite a made thing's name into the case its slots need, from
+  its first word: a word a modifier rule matches is rewritten and the next one read, a word a head rule matches is
+  rewritten and reading stops, and a word neither matches stops it. Russian `*ая > *ую` before `*а > *у` turns
+  "Стальная булава летаргии" into "Стальную булаву летаргии"; the masculine and neuter need nothing, and their first
+  word stops it. German `*ischer > *ischen` gives "einen Daedrischen Bogen".
+- **`Item.Plural`** rewrites every word of ammunition's name: German `*pfeil > *pfeile`, French `carreau >
+  carreaux, *if > *ifs`.
 
-Each language's rules are checked by a throwaway script against every craftable vanilla item's name in that language,
-which the Spriggit export carries, as the `[Matching]` citations were. The alternative, a carrier noun per language
-("изделие — {name}", "ein Stück: {name}"), is data only but reads as stilted in every language that needs it.
+The alternative, a carrier noun per language ("изделие — {name}", "ein Stück: {name}"), is data only but reads as
+stilted in every language that needs it.
+
+Done.
+
+- **`ItemGrammar`** reads the rules and fits a name; `LanguageTable` loads them from `[Grammar]`, each list from the
+  first of overlay, shipped file and English that has it, and refuses an entry that is not a word, an ending or a
+  rewrite with a `*` on both sides or neither.
+- **`PlotText::ItemPhrase`** fits the name before `made` or `ammo` renders it, and passes `{gender}` to `made`.
+- **Rules** in German, Russian, Polish, French, Italian and Spanish, with `made` templates choosing the article by
+  class. English, Japanese and Chinese need none. French, Italian and Spanish `Item.Articles` gain their plural
+  articles and Italian's "un'".
+- **`Item.Articles` ending in an apostrophe** is set aside with no space after it, so "un'Ascia d'ebano" is named by a
+  text saying "l'ascia d'ebano".
+
+Every name was checked by a throwaway script reading the rules as the files ship them. Of 4,818 names per language,
+the article is left out of German's 12, French's 5, Italian's 10 and Spanish's 13, all of them proper names such as
+"Kordirs Skooma" and "Stros M'Kais Rum", which read right bare. Two are known wrong: German "Esberns Zaubertrank" takes
+"einen", and Polish "Woda święcona" keeps its adjective after the noun in the nominative.
+
+**Verification.**
+
+- **New tests:**
+  - **`ItemGrammar`:** parsing, the first known word deciding past an adjective, an unknown name left whole, the case
+    rules stopping at a genitive, a whole word beating an ending, punctuation and capitals kept, and ammunition
+    rewritten word by word.
+  - **The shipped files,** through `PlotText::ItemPhrase`, one game name per rule in each of the six languages.
+    Examples: "einen Daedrischen Bogen der Angst", "Стеклянную булаву летаргии", "Słabą truciznę", "un lot de
+    Carreaux d'acier explosifs de glace", "un'Ascia d'ebano" and "un Hacha de combate de cristal".
+  - **An article ending in an apostrophe** is set aside when a role names the thing.
+- Every language still loads with no key refused.
+
+`pwsh -File build.ps1 test`: 600 of 600 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
 
 #### Step 33 — What the second translation reviews found, closed
 
