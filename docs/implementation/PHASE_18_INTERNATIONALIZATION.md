@@ -2962,3 +2962,39 @@ before. Only one written in other letters is held to them.
 - Whether the model keeps Latin names in Latin letters is for the next language trial to show.
 
 `pwsh -File build.ps1 test`: 601 of 601 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 35 — German indirect speech and denunciations
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** A German finish that reports a rumor in indirect speech passes the `Scheme` check, and a German finish never
+puts two bare names side by side.
+
+The seventh trial run accepted English 8 of 8, German 6, Russian 5 and Japanese 8. Japanese now keeps Latin names in
+Latin letters; Russian does in about half its answers. German lost a birth and misread three others:
+
+- **Indirect speech refused.** "in Markarth das Gerücht zu streuen, Raerek diene heimlich den Thalmor" is good German,
+  but the clause after the comma opens with a name, which no `Scheme.Trailing` entry can list. The same answer came
+  back three times.
+- **Step 33's order over-applied.** "Put whoever receives or loses something before the thing" reached denunciations,
+  which take "bei": "Laila Law-Giver Erikur zu denunzieren", "Maven Maul als Verräter … zu denunzieren".
+
+- **`<Check>.Require.End`**, when no trailing entry cuts the text and the whole of it fails, also reads the text before
+  its first comma. A clause a trailing entry opens still cuts the text first, so "Hulda bestiehlt Lars, um reich zu
+  werden" stays refused; a sentence with a subject is refused by `Reject.Start`, which this does not touch.
+- **German's finish form** keeps the receiver first only for a verb that gives, shows or takes something, gives a
+  denunciation its "bei" ("Erikur bei Laila Law-Giver anzuschwärzen"), and says never to put two names side by side.
+
+Done, as above. The finish form keeps its examples quoted and nothing else, since the shipped-forms test reads every
+quoted text after an "e.g." as one.
+
+**Verification.**
+
+- **New test:** the trial's "in Markarth das Gerücht zu streuen, Raerek diene heimlich den Thalmor" passes German's
+  `Scheme` check, and a bare infinitive before the comma ("Raerek den Thalmor dienen, sagt man in Markarth") is still
+  refused. The trailing-clause cases from Step 30c pass unchanged, and so does the finish form's new example.
+- Whether German stops setting two names side by side is for the next language trial to show.
+
+`pwsh -File build.ps1 test`: 601 of 601 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.

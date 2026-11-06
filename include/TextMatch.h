@@ -18,7 +18,9 @@
 //   <Check>.Reject.Start    passes when the text does not begin with an entry
 //   <Check>.Reject.End      passes when it does not end with one
 //   <Check>.Require.Start   passes when it begins with one, if any are listed
-//   <Check>.Require.End     passes when it ends with one, if any are listed
+//   <Check>.Require.End     passes when it ends with one, if any are listed, or
+//                           when no trailing clause is cut off and the text
+//                           before its first comma ends with one
 //   <Check>.Match.Start     a detector: fires when the text begins with one
 //   <Check>.Match.End       ... ends with one
 //   <Check>.Match.Anywhere  ... holds one anywhere

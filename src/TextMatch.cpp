@@ -260,7 +260,15 @@ namespace NarrativeEngine::TextMatch
             return false;
         }
         if (!requireEnd.empty() && !AnyMatch(main, requireEnd, Position::End, options)) {
-            return false;
+            // With no trailing clause cut off, what follows the first comma
+            // may be a clause no word can list: German indirect speech opens
+            // with whoever it is about ("das Gerücht zu streuen, Raerek diene
+            // den Thalmor"). The text before that comma may pass instead.
+            const auto comma = folded.find(',');
+            if (main.size() != folded.size() || !options.wordSeparated || comma == std::string::npos
+                || !AnyMatch(std::string_view{folded}.substr(0, comma), requireEnd, Position::End, options)) {
+                return false;
+            }
         }
         return true;
     }

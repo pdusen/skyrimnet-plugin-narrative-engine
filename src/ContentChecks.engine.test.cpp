@@ -447,4 +447,15 @@ TEST_CASE("Content checks: the shipped languages' prompt forms", "[ContentChecks
         CHECK_FALSE(SchemeOpensWithVerb("zeige Lleril Morvayn das Andachtsbuch, damit er es liest", german));
         CHECK_FALSE(SchemeOpensWithVerb("Hulda bestiehlt Lars, um reich zu werden", german));
     }
+
+    SECTION("German indirect speech after a comma is read past, as no trailing word can open it")
+    {
+        const auto german = Language(NarrativeEngine::Testing::ShippedLanguageFile("german"));
+        // Word for word from the seventh trial, refused three times.
+        CHECK(SchemeOpensWithVerb("in Markarth das Ger\xC3\xBC"
+                                  "cht zu streuen, Raerek diene heimlich den Thalmor",
+                                  german));
+        // What comes before the comma must still end in its zu-verb.
+        CHECK_FALSE(SchemeOpensWithVerb("Raerek den Thalmor dienen, sagt man in Markarth", german));
+    }
 }
