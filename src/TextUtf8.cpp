@@ -345,19 +345,42 @@ namespace NarrativeEngine::TextUtf8
         return !IsWordChar(next);
     }
 
+    unsigned Scripts(std::string_view text)
+    {
+        unsigned out = 0;
+        for (std::size_t at = 0; at < text.size();) {
+            const auto decoded = DecodeAt(text, at);
+            const auto cp = decoded.codePoint;
+            at += decoded.length;
+            if (!IsLetter(cp)) {
+                continue;
+            }
+            if (cp < 0x0250 || (cp >= 0x1E00 && cp <= 0x1EFF)) {
+                out |= Script::Latin;
+            } else if (cp >= 0x0370 && cp <= 0x03FF) {
+                out |= Script::Greek;
+            } else if (cp >= 0x0400 && cp <= 0x052F) {
+                out |= Script::Cyrillic;
+            } else if ((cp >= 0x3040 && cp <= 0x30FF) || (cp >= 0x31F0 && cp <= 0x31FF)
+                       || (cp >= 0xFF66 && cp <= 0xFF9D)) {
+                out |= Script::Kana;
+            } else if ((cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0x3400 && cp <= 0x4DBF)
+                       || (cp >= 0xF900 && cp <= 0xFAFF)) {
+                out |= Script::Han;
+            } else if ((cp >= 0xAC00 && cp <= 0xD7AF) || (cp >= 0x1100 && cp <= 0x11FF)) {
+                out |= Script::Hangul;
+            } else {
+                out |= Script::Other;
+            }
+        }
+        return out;
+    }
+
     std::string_view MixedScriptWord(std::string_view text)
     {
+        constexpr auto kBoth = Script::Latin | Script::Cyrillic;
         for (const auto word : Words(text)) {
-            bool latin = false;
-            bool cyrillic = false;
-            for (std::size_t at = 0; at < word.size();) {
-                const auto decoded = DecodeAt(word, at);
-                const auto cp = decoded.codePoint;
-                latin = latin || (IsLetter(cp) && cp < 0x0250);
-                cyrillic = cyrillic || (cp >= 0x0400 && cp <= 0x052F);
-                at += decoded.length;
-            }
-            if (latin && cyrillic) {
+            if ((Scripts(word) & kBoth) == kBoth) {
                 return word;
             }
         }

@@ -375,3 +375,26 @@ TEST_CASE("TextUtf8::MixedScriptWord", "[TextUtf8]")
         CHECK(MixedScriptWord("").empty());
     }
 }
+
+TEST_CASE("TextUtf8::Scripts", "[TextUtf8]")
+{
+    SECTION("each alphabet is told apart, accented Latin as Latin")
+    {
+        CHECK(Scripts("Kjar") == Script::Latin);
+        CHECK(Scripts("J\xC3\xB6rgen") == Script::Latin);
+        // "Кьяр", Kjar transliterated by a Russian trial answer.
+        CHECK(Scripts("\xD0\x9A\xD1\x8C\xD1\x8F\xD1\x80") == Script::Cyrillic);
+        // "ファリオン", Falion in katakana.
+        CHECK(Scripts("\xE3\x83\x95\xE3\x82\xA1\xE3\x83\xAA\xE3\x82\xAA\xE3\x83\xB3") == Script::Kana);
+    }
+    SECTION("a text in several alphabets has each of them")
+    {
+        // "Markarthの宮廷": a Latin name, a kana particle, a kanji noun.
+        CHECK(Scripts("Markarth\xE3\x81\xAE\xE5\xAE\xAE\xE5\xBB\xB7") == (Script::Latin | Script::Kana | Script::Han));
+    }
+    SECTION("digits, spaces and punctuation are in no alphabet")
+    {
+        CHECK(Scripts("12 - ,.") == 0);
+        CHECK(Scripts("") == 0);
+    }
+}

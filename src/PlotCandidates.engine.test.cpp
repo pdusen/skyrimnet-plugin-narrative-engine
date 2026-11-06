@@ -951,6 +951,21 @@ TEST_CASE("PlotCandidates resolves a goal's roles", "[PlotCandidates][engine]")
             REQUIRE(p["text"] == "Jarl Vigilia Rulcanella");
         }
 
+        SECTION("should say when the name is written in another alphabet than any it could be")
+        {
+            // "Кьяр": Kjar, transliterated by a Russian trial answer.
+            const auto p =
+                only(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "\xD0\x9A\xD1\x8C\xD1\x8F\xD1\x80"}}));
+            REQUIRE(p["code"] == "role_names_nobody");
+            REQUIRE(p["alphabet"] == true);
+        }
+
+        SECTION("should not say so of a name in the same alphabet")
+        {
+            const auto p = only(resolve("steal", {{"item", 0, "a ruby"}, {"mark", 0, "Jarl Vigilia Rulcanella"}}));
+            REQUIRE_FALSE(p.contains("alphabet"));
+        }
+
         SECTION("should say a role takes one person's name when the words are a group's")
         {
             // The wording of role_names_nobody says so.

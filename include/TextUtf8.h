@@ -108,6 +108,22 @@ namespace NarrativeEngine::TextUtf8
                                    std::size_t length,
                                    TrailingApostrophe trailing = TrailingApostrophe::PartOfWord) noexcept;
 
+    // The alphabets a text's letters are written in, as a set of these bits.
+    // Anything that is not a letter counts for none, so a text of digits and
+    // punctuation is in no alphabet at all.
+    namespace Script
+    {
+        constexpr unsigned Latin = 1U << 0;
+        constexpr unsigned Greek = 1U << 1;
+        constexpr unsigned Cyrillic = 1U << 2;
+        constexpr unsigned Kana = 1U << 3;
+        constexpr unsigned Han = 1U << 4;
+        constexpr unsigned Hangul = 1U << 5;
+        constexpr unsigned Other = 1U << 6;
+    } // namespace Script
+
+    [[nodiscard]] unsigned Scripts(std::string_view text);
+
     // The first word of `text` whose letters are part Latin and part
     // Cyrillic, or empty when there is none. No word of either language is
     // both: "Солitude" is a model losing its place inside a name. A Latin

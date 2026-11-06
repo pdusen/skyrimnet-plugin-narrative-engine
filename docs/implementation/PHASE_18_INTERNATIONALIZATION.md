@@ -2919,3 +2919,46 @@ Done.
   refused.
 
 `pwsh -File build.ps1 test`: 598 of 598 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 34 — Names keep their alphabet
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** A name the prompt writes in one alphabet comes back in that alphabet, in the content fields as in the roles,
+and a role refused for being written in another is told so.
+
+The sixth trial run accepted 7 of 8 in every language, but Russian and Japanese wrote the session's names in their own
+alphabet inside the scheme and finish: "Тонгвору Серебряному Кровью", "Мейвен Black-Briar", "ファリオン". A memory
+then names one person two ways ("ファリオンの…自らMorthalでFalionの…"). Russian twice wrote a role that way ("Рольф",
+"Кьяр" for Kjar), and the retry, told to copy the name exactly, did it again. Step 33's permission for a name to take
+"the ending grammar requires" is the likely cause: a Latin name can take a Russian ending only once it is written in
+Cyrillic. A Russian or Japanese game hands the model Latin names the same way, for every NPC a mod did not translate.
+
+- **The output-language line** allows a name its grammatical ending only when the prompt writes it in the content
+  language's own alphabet. A name in another alphabet is copied letter for letter everywhere, the content fields
+  included.
+- **`role_names_nobody`** carries `alphabet` when the role's text shares no alphabet with any name the role could
+  hold, and the retry is told the name is written in another alphabet than all of them and to copy one letter for
+  letter. A text sharing one, such as "Markarthの宮廷", is refused as before.
+
+Done.
+
+- **`TextUtf8::Scripts`** says which alphabets a text's letters are in: Latin, Greek, Cyrillic, kana, Han, Hangul or
+  another. `MixedScriptWord` now reads it.
+- **The output-language line** and **`role_names_nobody`'s `alphabet`** are as above. The retry reads "'Кьяр' is
+  written in another alphabet than every name that can be the mark (…); it could be, among others, Kjar, …; copy one
+  of those names letter for letter, in the letters this prompt writes it in, never transliterated".
+
+A name the game gives in the content language's own letters, in a Russian or Japanese game, still takes its ending as
+before. Only one written in other letters is held to them.
+
+**Verification.**
+
+- **New tests:** `Scripts` tells Latin, accented Latin, Cyrillic and kana apart, gives "Markarthの宮廷" all three of
+  its alphabets and digits none; a role written "Кьяр" among Latin names is refused with `alphabet`, and one in Latin
+  letters without it.
+- Whether the model keeps Latin names in Latin letters is for the next language trial to show.
+
+`pwsh -File build.ps1 test`: 601 of 601 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.

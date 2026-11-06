@@ -733,6 +733,17 @@ namespace NarrativeEngine::PlotCandidates
             return {{"names", std::move(names)}, {"more", list.size() > kReadable}};
         }
 
+        // Whether `text` is written in an alphabet none of `list` is: a name
+        // the model transliterated ("Кьяр" for Kjar) rather than one nobody
+        // has. A text sharing an alphabet with any of them is not.
+        bool InAnotherAlphabet(std::string_view text, const std::vector<Candidate>& list)
+        {
+            const auto said = TextUtf8::Scripts(text);
+            return said != 0 && !list.empty() && std::none_of(list.begin(), list.end(), [said](const Candidate& c) {
+                       return (TextUtf8::Scripts(c.value.text) & said) != 0;
+                   });
+        }
+
         PlotRejection::Rejection Problem(PlotRejection::Code code,
                                          const PlotVerbs::Verb& goal,
                                          const PlotVerbs::Slot& slot,
@@ -794,6 +805,9 @@ namespace NarrativeEngine::PlotCandidates
                 if (called.living.empty()) {
                     auto args = called.args;
                     args["admitted"] = Admitted(list);
+                    if (called.why == PlotRejection::Code::RoleNamesNobody && InAnotherAlphabet(text, list)) {
+                        args["alphabet"] = true;
+                    }
                     problems.push_back(Problem(called.why, goal, slot, std::move(args)));
                     markLost = markLost || slot.name == "mark";
                     continue;

@@ -51,7 +51,8 @@
 //   role_dead            role, who, admitted
 //   role_left_out        role, who, why, admitted. `why` is ghost,
 //                        not_person, no_location, no_hold or child
-//   role_names_nobody    role, text, admitted
+//   role_names_nobody    role, text, admitted, and alphabet (true) when the
+//                        text shares no alphabet with any name it could be
 //   role_ambiguous       role, text, people [string]
 //   role_not_admitted    role, who, admitted
 //   place_unknown        role, text, admitted
