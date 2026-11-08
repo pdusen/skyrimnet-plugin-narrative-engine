@@ -2998,3 +2998,31 @@ quoted text after an "e.g." as one.
 - Whether German stops setting two names side by side is for the next language trial to show.
 
 `pwsh -File build.ps1 test`: 601 of 601 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.
+
+#### Step 36 — A Russian adverb before the infinitive
+
+- [x] Complete
+
+**[CLAUDE]**
+
+**Goal:** A Russian scheme or finish that opens with an adverb before its infinitive passes the `Scheme` check.
+
+The eighth trial run, with the game itself in German, refused a Russian birth three times for "окончательно опозорить
+Рерика Орейуса перед ярлом Игмундом". It is a subjectless infinitive clause and reads well after "Это часть моего
+плана:", but `Scheme.Require.Start` asks for the infinitive as the first word. The game's own dialogue opens a plan
+the same way: "Тайно убить тройняшек, а затем переложить вину на мать."
+
+- **`Scheme.Require.Start`** in `russian.ini` gains `*о *ть`, `*о *ться`, `*о *ти` and `*о *чь`: a word in -о, the
+  ending of most adverbs ("тайно", "окончательно", "публично"), then the infinitive. A subject still cannot open the
+  text: a pronoun or a name in -о before an infinitive is not Russian a model writes.
+- The forms still ask for the verb first; only the check stops refusing an adverb ahead of it.
+
+Done, as above, citing the game's "Тайно убить тройняшек" for the new entries.
+
+**Verification.**
+
+- **New test:** the trial's "окончательно опозорить Рерика Орейуса перед ярлом Игмундом" and the game's "Тайно убить
+  тройняшек" pass Russian's `Scheme` check; "тайно Ульфрик убил ярла", an adverb before a sentence about somebody, is
+  still refused. Without the new entries the first two fail.
+
+`pwsh -File build.ps1 test`: 601 of 601 C++ tests and 4 of 4 dashboard tests passed. `build.ps1 build` is clean.

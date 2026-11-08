@@ -458,4 +458,27 @@ TEST_CASE("Content checks: the shipped languages' prompt forms", "[ContentChecks
         // What comes before the comma must still end in its zu-verb.
         CHECK_FALSE(SchemeOpensWithVerb("Raerek den Thalmor dienen, sagt man in Markarth", german));
     }
+
+    SECTION("a Russian adverb may stand before the infinitive, but not before a subject")
+    {
+        const auto russian = Language(NarrativeEngine::Testing::ShippedLanguageFile("russian"));
+        // "окончательно опозорить Рерика Орейуса перед ярлом Игмундом", word
+        // for word from the eighth trial, refused three times.
+        CHECK(SchemeOpensWithVerb("\xD0\xBE\xD0\xBA\xD0\xBE\xD0\xBD\xD1\x87\xD0\xB0\xD1\x82\xD0\xB5\xD0\xBB\xD1\x8C"
+                                  "\xD0\xBD\xD0\xBE \xD0\xBE\xD0\xBF\xD0\xBE\xD0\xB7\xD0\xBE\xD1\x80\xD0\xB8\xD1\x82"
+                                  "\xD1\x8C \xD0\xA0\xD0\xB5\xD1\x80\xD0\xB8\xD0\xBA\xD0\xB0 \xD0\x9E\xD1\x80\xD0\xB5"
+                                  "\xD0\xB9\xD1\x83\xD1\x81\xD0\xB0 \xD0\xBF\xD0\xB5\xD1\x80\xD0\xB5\xD0\xB4 \xD1\x8F"
+                                  "\xD1\x80\xD0\xBB\xD0\xBE\xD0\xBC \xD0\x98\xD0\xB3\xD0\xBC\xD1\x83\xD0\xBD\xD0\xB4"
+                                  "\xD0\xBE\xD0\xBC",
+                                  russian));
+        // "Тайно убить тройняшек", as the game's own dialogue opens a plan.
+        CHECK(SchemeOpensWithVerb("\xD0\xA2\xD0\xB0\xD0\xB9\xD0\xBD\xD0\xBE \xD1\x83\xD0\xB1\xD0\xB8\xD1\x82\xD1\x8C "
+                                  "\xD1\x82\xD1\x80\xD0\xBE\xD0\xB9\xD0\xBD\xD1\x8F\xD1\x88\xD0\xB5\xD0\xBA",
+                                  russian));
+        // "тайно Ульфрик убил ярла": an adverb, then a sentence about somebody.
+        CHECK_FALSE(SchemeOpensWithVerb("\xD1\x82\xD0\xB0\xD0\xB9\xD0\xBD\xD0\xBE \xD0\xA3\xD0\xBB\xD1\x8C\xD1\x84"
+                                        "\xD1\x80\xD0\xB8\xD0\xBA \xD1\x83\xD0\xB1\xD0\xB8\xD0\xBB \xD1\x8F\xD1\x80"
+                                        "\xD0\xBB\xD0\xB0",
+                                        russian));
+    }
 }
