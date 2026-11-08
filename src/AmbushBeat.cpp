@@ -1364,6 +1364,14 @@ namespace NarrativeEngine
         if (AmbushAttackerGroups::EnabledGroupCount() == 0) {
             return blocked("no enabled attacker groups");
         }
+        // Groups load fine but none can come here, now: every one is gated
+        // to another hold, hour or quest state, or cooling down. Offered
+        // anyway, the Director gets an empty group list and COMPOSE fails
+        // with nobody to spawn. Same off-main read the beat-select prompt
+        // makes for its group list.
+        if (AmbushAttackerGroups::EligibleGroups(AmbushAttackerGroups::CaptureContext()).empty()) {
+            return blocked("no attacker group eligible here, or every eligible one is on cooldown");
+        }
         return true;
     }
 

@@ -283,7 +283,7 @@ Unknown keys log a warning and are ignored, so a group file written for a later 
 earlier plugin.
 
 **`CooldownGameHours`** is a per-group cooldown, defaulting to
-`kDefaultGroupCooldownHours` (24). A group is stamped when an ambush using it **actually spawns** — at `Arming`,
+`kDefaultGroupCooldownHours` (72). A group is stamped when an ambush using it **actually spawns** — at `Arming`,
 the first point where attackers demonstrably exist in the world — so a compose that fails anywhere earlier never
 costs a group its turn. While cooling down the group is filtered out of `EligibleGroups`, which means the
 Director never sees it rather than being asked to avoid it. `0` disables the cooldown for that group.

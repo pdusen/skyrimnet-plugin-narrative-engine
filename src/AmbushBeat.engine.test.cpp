@@ -357,6 +357,18 @@ TEST_CASE("AmbushBeat says when it can be offered", "[AmbushBeat][engine]")
             REQUIRE_FALSE(beat.IsAvailable(ctx));
         }
     }
+
+    SECTION("when every group that could come is cooling down")
+    {
+        Groups::StampGroupUsed("bandits");
+
+        SECTION("should stay out of it")
+        {
+            // Offered anyway, the Director would be handed an empty group
+            // list and COMPOSE would fail with nobody to spawn.
+            REQUIRE_FALSE(beat.IsAvailable(ctx));
+        }
+    }
 }
 
 TEST_CASE("AmbushBeat puts a group in the player's path", "[AmbushBeat][engine]")

@@ -77,12 +77,19 @@ namespace NarrativeEngine::VisitComposer
     // visit-specific viability rules (unique / not in combat / not
     // follower / has resolvable location) and returns the surviving
     // candidates with their memory tails attached. Bounded output
-    // size (12 by default). Empty when SkyrimNet is unavailable or
-    // no viable candidates exist.
+    // size (kSenderCandidateRenderCap). Empty when SkyrimNet is
+    // unavailable or no viable candidates exist.
     //
     // Called by BeatSystem::ConsiderBeat when npc_visit is among the
     // beat-select candidates.
     std::vector<SenderCandidate> CollectSenderCandidates();
+
+    // How many visit senders CollectSenderCandidates hands the
+    // beat-select prompt. NPCVisitBeat::IsAvailable passes the same
+    // value to SenderCandidatePool::CountViable, so the availability
+    // count walks exactly as far down the engagement ranking as the
+    // build that follows it.
+    inline constexpr int kSenderCandidateRenderCap = 12;
 
     // Serialize a candidate list into the JSON shape the beat-select
     // prompt consumes: [{form_id (hex str), name, engagement_score,

@@ -131,7 +131,14 @@ namespace NarrativeEngine::SenderCandidatePool
     // once `min` viable candidates have been counted. Returns the
     // count seen, capped at `min` (may exceed `min` if the sample walked
     // beyond it before the early-exit tick fired).
-    std::size_t CountViable(const ViabilityFilter& extraFilter, std::size_t min);
+    //
+    // `buildMaxCandidates` is the `maxCandidates` of the Build this
+    // count stands in for, and sets how far down the engagement ranking
+    // the walk may go -- the same depth that Build fetches. Sized from
+    // `min` instead, the walk saw only the top few rows, and a load
+    // order whose closest NPCs all sit in other mods' quest aliases
+    // counted short every time although Build had plenty to offer.
+    std::size_t CountViable(const ViabilityFilter& extraFilter, std::size_t min, int buildMaxCandidates);
 
     // Player display name — cached lookup, used as the semantic-search
     // bias when pulling per-candidate memories. Empty when the player
