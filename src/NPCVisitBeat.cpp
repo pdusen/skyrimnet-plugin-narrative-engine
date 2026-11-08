@@ -2277,8 +2277,8 @@ namespace NarrativeEngine
         }
         const std::size_t minCandidates =
             static_cast<std::size_t>(std::max(1, Settings::Get().visitMinSenderCandidates));
-        const std::size_t viable =
-            SenderCandidatePool::CountViable(&VisitViabilityFilter_ForCountViable, minCandidates);
+        const std::size_t viable = SenderCandidatePool::CountViable(
+            &VisitViabilityFilter_ForCountViable, minCandidates, VisitComposer::kSenderCandidateRenderCap);
         if (viable < minCandidates) {
             if (debug) {
                 logger::debug("NPCVisitBeat::IsAvailable: blocked (only {} viable "

@@ -76,10 +76,10 @@ namespace SKSE
 namespace NarrativeEngine::AmbushAttackerGroups
 {
     // Default for a group's `CooldownGameHours` when the key is absent.
-    // Long enough that the same faction doesn't feel like it's stalking
-    // the player, short enough that a group isn't effectively retired
-    // after one use.
-    inline constexpr int kDefaultGroupCooldownHours = 24;
+    // Three ambush cooldowns: the group the Director favours where it is
+    // eligible sits out the next two ambushes, so it can't be every one,
+    // yet comes back within a few in-game days.
+    inline constexpr int kDefaultGroupCooldownHours = 72;
 
     // Comparison operator for the predicate-shaped eligibility keys
     // (RequireGlobal, RequireQuestStage).

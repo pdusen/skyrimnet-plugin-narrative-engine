@@ -205,7 +205,7 @@ namespace NarrativeEngine::VisitComposer
         const auto& cfg = Settings::Get();
 
         SenderCandidatePool::BuildOptions opts;
-        opts.maxCandidates = 12;
+        opts.maxCandidates = kSenderCandidateRenderCap;
         opts.maxMemoriesPerCandidate = cfg.actionSelectVisitMemoryRenderCap;
         // Reuse the letter's importance floor for memory quality —
         // separate visit-specific floor isn't worth wiring up.

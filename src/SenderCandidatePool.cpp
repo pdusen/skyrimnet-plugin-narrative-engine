@@ -452,13 +452,16 @@ namespace NarrativeEngine::SenderCandidatePool
         return FetchAndShapeMemories(formId, GetPlayerDisplayName(), opts);
     }
 
-    std::size_t CountViable(const ViabilityFilter& extraFilter, std::size_t min)
+    std::size_t CountViable(const ViabilityFilter& extraFilter, std::size_t min, int buildMaxCandidates)
     {
         if (!SkyrimNetAPI::IsAvailable() || !SkyrimNetAPI::IsMemorySystemReady()) {
             return 0;
         }
 
-        const int fetchCap = std::max<int>(static_cast<int>(min), 1) * kEngagementFetchMultiplier;
+        // Build's depth, not one derived from `min`: a count that walks
+        // fewer rows than Build reports the beat unavailable while Build
+        // would have found senders further down.
+        const int fetchCap = std::max(1, buildMaxCandidates) * kEngagementFetchMultiplier;
 
         std::size_t count = 0;
         WalkEngagement(

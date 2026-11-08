@@ -89,13 +89,17 @@ namespace
                + emotion + R"(","location":"Whiterun"})";
     }
 
+    // The render cap DefaultOptions builds with, and so the depth a count
+    // standing in for that build walks to.
+    constexpr int kRenderCap = 12;
+
     Pool::BuildOptions DefaultOptions()
     {
         Pool::BuildOptions opts;
         // Deterministic order, so a case can say which candidate came back
         // rather than only how many.
         opts.shuffleResult = false;
-        opts.maxCandidates = 12;
+        opts.maxCandidates = kRenderCap;
         opts.maxMemoriesPerCandidate = 6;
         opts.requireMemories = true;
         return opts;
@@ -679,7 +683,7 @@ TEST_CASE("SenderCandidatePool::CountViable", "[SenderCandidatePool][engine]")
     {
         SECTION("should count them")
         {
-            REQUIRE(Pool::CountViable(nullptr, 2) >= 2);
+            REQUIRE(Pool::CountViable(nullptr, 2, kRenderCap) >= 2);
         }
 
         SECTION("should fetch no memories")
@@ -687,7 +691,7 @@ TEST_CASE("SenderCandidatePool::CountViable", "[SenderCandidatePool][engine]")
             // The whole reason this exists rather than calling Build and
             // measuring its size.
             fake.memoriesForActorCalls = 0;
-            (void)Pool::CountViable(nullptr, 2);
+            (void)Pool::CountViable(nullptr, 2, kRenderCap);
             REQUIRE(fake.memoriesForActorCalls == 0);
         }
     }
@@ -696,7 +700,23 @@ TEST_CASE("SenderCandidatePool::CountViable", "[SenderCandidatePool][engine]")
     {
         SECTION("should count none")
         {
-            REQUIRE(Pool::CountViable([](RE::Actor*, std::string*) { return false; }, 2) == 0);
+            REQUIRE(Pool::CountViable([](RE::Actor*, std::string*) { return false; }, 2, kRenderCap) == 0);
+        }
+
+        SECTION("should look as far down the ranking as the build it stands in for")
+        {
+            // A count that stops short of Build's depth reports the beat
+            // unavailable while Build would have found senders further down:
+            // a tester whose closest NPCs all sat in other mods' quest
+            // aliases had every visit refused on the top nine rows alone.
+            const auto rejectAll = [](RE::Actor*, std::string*) { return false; };
+            auto opts = DefaultOptions();
+            opts.extraViabilityFilter = rejectAll;
+            (void)Pool::Build(opts);
+            const int buildDepth = fake.lastMaxCount;
+
+            (void)Pool::CountViable(rejectAll, 2, kRenderCap);
+            REQUIRE(fake.lastMaxCount == buildDepth);
         }
     }
 
@@ -706,7 +726,7 @@ TEST_CASE("SenderCandidatePool::CountViable", "[SenderCandidatePool][engine]")
 
         SECTION("should count none")
         {
-            REQUIRE(Pool::CountViable(nullptr, 2) == 0);
+            REQUIRE(Pool::CountViable(nullptr, 2, kRenderCap) == 0);
         }
     }
 }
@@ -830,7 +850,7 @@ TEST_CASE("SenderCandidatePool::Build honours the sender blacklist", "[SenderCan
             // The gate has to hold on this path too. A beat that counts a
             // candidate it may not use reports itself available, spends a
             // compose LLM call, and then has nobody to send.
-            REQUIRE(Pool::CountViable(nullptr, 2) == 1);
+            REQUIRE(Pool::CountViable(nullptr, 2, kRenderCap) == 1);
         }
     }
 }
