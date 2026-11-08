@@ -46,6 +46,10 @@ node_modules/
 # throwaway probes, harnesses and captured data belong.
 tmp/*
 
+# Logs and other material testers send in for a bug report. Players'
+# data, kept locally while the report is investigated, never committed.
+/temp/
+
 __pycache__/
 *.pyc
 
